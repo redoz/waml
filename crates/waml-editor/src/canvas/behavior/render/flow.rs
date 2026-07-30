@@ -10,12 +10,22 @@ use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
 use waml::model::FlowNodeKind;
 use waml::solve::SolvedGroup;
+use waml::solve::flow::FlowConfig;
 
 /// Behavior accent bucket wash, at low alpha, for a node fill.
 const NODE_ALPHA: f32 = 0.16;
 const GROUP_ALPHA: f32 = 0.06;
 /// Resting route stroke, in lpx at zoom 1.
 const ROUTE_THICKNESS: f64 = 2.0;
+
+/// Where the text inside a node starts, and how far each following line steps,
+/// in lpx at zoom 1. Read off the SAME `FlowConfig` the solver sized the node
+/// with -- a literal ladder here drifts from the box the moment either side
+/// moves, which is how text used to spill out of a state box.
+fn text_ladder() -> (f64, f64, f64) {
+    let cfg = FlowConfig::default();
+    (cfg.pad_x, cfg.pad_y, cfg.line_advance)
+}
 
 pub(in crate::canvas::behavior) struct FlowDrawResources<'a> {
     pub(super) node_box: &'a mut DrawColor,
@@ -252,11 +262,9 @@ fn draw_node(
             draws.node_box.draw_abs(cx, screen);
             draw_title(cx, screen, zoom, &node.title, draws);
             if let Some(ty) = &node.type_name {
-                draws.text_body.draw_abs(
-                    cx,
-                    dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 20.0 * zoom),
-                    &format!(":{ty}"),
-                );
+                draws
+                    .text_body
+                    .draw_abs(cx, line_pos(screen, zoom, 0), &format!(":{ty}"));
             }
         }
         FlowNodeKind::Plain => {
@@ -266,14 +274,8 @@ fn draw_node(
             draws.node_box.color = wash;
             draws.node_box.draw_abs(cx, screen);
             draw_title(cx, screen, zoom, &node.title, draws);
-            let mut y = 24.0 * zoom;
-            for line in &node.lines {
-                draws.text_body.draw_abs(
-                    cx,
-                    dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + y),
-                    line,
-                );
-                y += 16.0 * zoom;
+            for (i, line) in node.lines.iter().enumerate() {
+                draws.text_body.draw_abs(cx, line_pos(screen, zoom, i), line);
             }
             if node.refines {
                 let glyph = Rect {
@@ -297,11 +299,21 @@ fn draw_title(
     title: &str,
     draws: &mut FlowDrawResources<'_>,
 ) {
+    let (pad_x, pad_y, _) = text_ladder();
     draws.text_heading.draw_abs(
         cx,
-        dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 4.0 * zoom),
+        dvec2(screen.pos.x + pad_x * zoom, screen.pos.y + pad_y * zoom),
         title,
     );
+}
+
+/// Top-left of the `index`-th line UNDER a node's title, in screen space.
+fn line_pos(screen: Rect, zoom: f64, index: usize) -> DVec2 {
+    let (pad_x, pad_y, advance) = text_ladder();
+    dvec2(
+        screen.pos.x + pad_x * zoom,
+        screen.pos.y + (pad_y + advance * (index + 1) as f64) * zoom,
+    )
 }
 
 #[cfg(test)]

@@ -12,6 +12,10 @@ use ttf_parser::Face;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Font {
     Sans,
+    /// IBM Plex Sans SemiBold: the cut the `text_heading` chrome role draws
+    /// headings in. Its advances are WIDER than `Sans`, so a heading measured
+    /// against `Sans` sizes its box too narrow.
+    SansSemiBold,
     Mono,
 }
 
@@ -21,14 +25,19 @@ pub enum Font {
 pub const PT_TO_LPX: f64 = 96.0 / 72.0;
 
 static SANS: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf");
+static SANS_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSans-SemiBold.ttf");
 static MONO: &[u8] = include_bytes!("../../assets/fonts/IBMPlexMono-Regular.ttf");
 
 fn face(font: Font) -> &'static Face<'static> {
     static SANS_FACE: OnceLock<Face<'static>> = OnceLock::new();
+    static SEMIBOLD_FACE: OnceLock<Face<'static>> = OnceLock::new();
     static MONO_FACE: OnceLock<Face<'static>> = OnceLock::new();
     match font {
         Font::Sans => SANS_FACE
             .get_or_init(|| Face::parse(SANS, 0).expect("embedded IBM Plex Sans face parses")),
+        Font::SansSemiBold => SEMIBOLD_FACE.get_or_init(|| {
+            Face::parse(SANS_SEMIBOLD, 0).expect("embedded IBM Plex Sans SemiBold face parses")
+        }),
         Font::Mono => MONO_FACE
             .get_or_init(|| Face::parse(MONO, 0).expect("embedded IBM Plex Mono face parses")),
     }
@@ -72,6 +81,77 @@ pub fn descent(font_size: f64, font: Font) -> f64 {
 /// font units to px. Used as the row height of a text leaf in the card box-tree.
 pub fn line_height(font_size: f64, font: Font) -> f64 {
     ascent(font_size, font) + descent(font_size, font)
+}
+
+/// The em fudges every behavior-canvas chrome text role carries
+/// (`FontMember{asc: -0.1 desc: 0.0}` in `waml-editor`'s `mod.fonts`). makepad
+/// ADDS these to the face's own ascender/descender in ems before scaling, so a
+/// box sized from the raw face metrics does not match the glyphs drawn into it.
+pub const CHROME_ASC_FUDGE_EM: f64 = -0.1;
+/// See [`CHROME_ASC_FUDGE_EM`]. Note makepad adds this to a NEGATIVE descender,
+/// so a positive value pulls the descender up.
+pub const CHROME_DESC_FUDGE_EM: f64 = 0.0;
+/// `line_spacing` on the behavior-canvas chrome text roles. makepad multiplies
+/// the whole baseline-to-baseline distance by it, so it scales the STACKING
+/// advance but not a single row's height.
+pub const CHROME_LINE_SPACING: f64 = 1.2;
+
+/// What a run of text actually occupies once makepad has drawn it. The two
+/// heights differ and are not interchangeable: `row_height` is how tall ONE
+/// drawn line is (use it to size a single-line label's rect), `line_advance` is
+/// the baseline-to-baseline step between stacked lines (use it to size a
+/// multi-line box, and to place each line inside one).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnMetrics {
+    /// Baseline to the top of the drawn line, fudges applied.
+    pub ascent: f64,
+    /// Baseline to the bottom of the drawn line, as a POSITIVE number.
+    pub descent: f64,
+    /// Height of a single drawn line: `ascent + descent`.
+    pub row_height: f64,
+    /// Distance from one line's top edge to the next line's top edge.
+    pub line_advance: f64,
+}
+
+/// Metrics for `font` at `font_size` lpx as makepad DRAWS it, mirroring
+/// `makepad_draw`'s layouter: the face's ascender/descender in ems are shifted
+/// by the `FontMember` fudges, then the baseline-to-baseline step is
+/// `(line_gap - descender + ascender) * line_spacing`.
+///
+/// This is the seam. `solve` sizes boxes with it and the editor places glyphs
+/// with it, so the two cannot drift apart the way a hardcoded line height did.
+pub fn drawn_metrics(
+    font_size: f64,
+    font: Font,
+    asc_fudge_em: f64,
+    desc_fudge_em: f64,
+    line_spacing: f64,
+) -> DrawnMetrics {
+    let face = face(font);
+    let upem = face.units_per_em() as f64;
+    let ascent = (face.ascender() as f64 / upem + asc_fudge_em) * font_size;
+    // `face.descender()` is negative; makepad adds the fudge in that signed
+    // space and keeps it negative, so negate once at the end for a magnitude.
+    let descent = -((face.descender() as f64 / upem + desc_fudge_em) * font_size);
+    let line_gap = face.line_gap() as f64 / upem * font_size;
+    DrawnMetrics {
+        ascent,
+        descent,
+        row_height: ascent + descent,
+        line_advance: (line_gap + descent + ascent) * line_spacing,
+    }
+}
+
+/// [`drawn_metrics`] with the behavior-canvas chrome role's fudges and line
+/// spacing applied. Every behavior solver and renderer measures through this.
+pub fn chrome_metrics(font_size: f64, font: Font) -> DrawnMetrics {
+    drawn_metrics(
+        font_size,
+        font,
+        CHROME_ASC_FUDGE_EM,
+        CHROME_DESC_FUDGE_EM,
+        CHROME_LINE_SPACING,
+    )
 }
 
 #[cfg(test)]
@@ -141,6 +221,53 @@ mod tests {
         // can't silently drift from the font.
         let d = descent(11.0 * PT_TO_LPX, Font::Sans);
         assert!((d - 4.03).abs() < 0.05, "descent = {d} lpx");
+    }
+
+    #[test]
+    fn semibold_is_wider_than_regular_at_the_same_size() {
+        // The `text_heading` role draws SemiBold. Measuring a heading against
+        // Regular sizes its box too narrow, which is why this face is embedded.
+        let regular = text_width("Validate Order", 17.33, Font::Sans);
+        let semi = text_width("Validate Order", 17.33, Font::SansSemiBold);
+        assert!(semi > regular, "semi = {semi}, regular = {regular}");
+    }
+
+    #[test]
+    fn chrome_metrics_match_the_drawn_behavior_canvas_role() {
+        // The behavior canvases draw 13pt text. These are the numbers makepad
+        // actually produces for `mod.fonts.text_body` (asc -0.1, desc 0.0,
+        // line_spacing 1.2) at that size; the solvers size their boxes from
+        // them. If a `mod.fonts` role changes, this fails rather than letting
+        // text silently overflow its box again.
+        let m = chrome_metrics(13.0 * PT_TO_LPX, Font::Sans);
+        assert!((m.row_height - 20.8).abs() < 0.01, "row = {}", m.row_height);
+        assert!(
+            (m.line_advance - 24.96).abs() < 0.01,
+            "advance = {}",
+            m.line_advance
+        );
+        // The stacking step is NOT the row height -- the bug this replaced used
+        // one number for both.
+        assert!(m.line_advance > m.row_height);
+    }
+
+    #[test]
+    fn chrome_ascent_fudge_shortens_the_row_against_the_raw_face() {
+        // A negative `asc` fudge trims the drawn line; the raw face metric is
+        // taller. Sizing from `line_height` would over-size, from the old 18.0
+        // literal under-size.
+        let fs = 13.0 * PT_TO_LPX;
+        let m = chrome_metrics(fs, Font::Sans);
+        assert!(m.row_height < line_height(fs, Font::Sans));
+        assert!(m.row_height > 18.0);
+    }
+
+    #[test]
+    fn drawn_metrics_scale_linearly_in_font_size() {
+        let small = chrome_metrics(10.0, Font::Sans);
+        let big = chrome_metrics(20.0, Font::Sans);
+        assert!((big.row_height - 2.0 * small.row_height).abs() < 1e-9);
+        assert!((big.line_advance - 2.0 * small.line_advance).abs() < 1e-9);
     }
 
     #[test]

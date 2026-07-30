@@ -21,7 +21,13 @@ pub struct FlowConfig {
     pub pad_x: f64,
     pub pad_y: f64,
     pub font_size: f64,
+    /// Height of ONE drawn line, from [`sizing::chrome_metrics`]. Sizes a
+    /// single-line box; do NOT multiply it to stack lines.
     pub line_height: f64,
+    /// Top-edge to top-edge step between stacked lines, from
+    /// [`sizing::chrome_metrics`]. Larger than `line_height` because makepad
+    /// scales the baseline-to-baseline distance by `line_spacing`.
+    pub line_advance: f64,
     pub diamond_min: f64,
     pub bar_thickness: f64,
     pub bar_min_len: f64,
@@ -31,14 +37,20 @@ pub struct FlowConfig {
 
 impl Default for FlowConfig {
     fn default() -> Self {
+        // Both heights come off the SAME measurement the editor draws with, so
+        // a `mod.fonts` change moves box and glyph together instead of leaving
+        // text hanging out of its box.
+        let font_size = 13.0 * sizing::PT_TO_LPX;
+        let metrics = sizing::chrome_metrics(font_size, Font::Sans);
         FlowConfig {
             row_gap: 56.0,
             node_gap: 32.0,
             lane_pad: 24.0,
             pad_x: 14.0,
             pad_y: 10.0,
-            font_size: 13.0 * sizing::PT_TO_LPX,
-            line_height: 18.0,
+            font_size,
+            line_height: metrics.row_height,
+            line_advance: metrics.line_advance,
             diamond_min: 36.0,
             bar_thickness: 6.0,
             bar_min_len: 80.0,
@@ -146,7 +158,10 @@ pub fn measure_flow(nodes: &[&ActivityNode], flavor: FlowFlavor, cfg: &FlowConfi
                 h: cfg.final_r * 2.0,
             },
             FlowNodeKind::Decision | FlowNodeKind::Merge => {
-                let text_w = sizing::text_width(label_for(node), cfg.font_size, Font::Sans);
+                // A node title is drawn in the `text_heading` SemiBold cut, so
+                // it must be measured in that cut too.
+                let text_w =
+                    sizing::text_width(label_for(node), cfg.font_size, Font::SansSemiBold);
                 let side = (text_w + cfg.pad_x * 2.0).max(cfg.diamond_min);
                 Size { w: side, h: side }
             }
@@ -159,7 +174,10 @@ pub fn measure_flow(nodes: &[&ActivityNode], flavor: FlowFlavor, cfg: &FlowConfi
                 // not just the title: the state-machine `entry:`/`do:`/`exit:`
                 // behavior lines and an object node's `:Type` line all sit in
                 // this same glyph, so the widest of them sets the width.
-                let mut text_w = sizing::text_width(label_for(node), cfg.font_size, Font::Sans);
+                // The title is SemiBold (`text_heading`); every line under it is
+                // Regular (`text_body`).
+                let mut text_w =
+                    sizing::text_width(label_for(node), cfg.font_size, Font::SansSemiBold);
                 let mut lines = 1.0;
                 if flavor == FlowFlavor::StateMachine {
                     for (keyword, body) in [
@@ -182,9 +200,13 @@ pub fn measure_flow(nodes: &[&ActivityNode], flavor: FlowFlavor, cfg: &FlowConfi
                     let line = format!(":{object_ref}");
                     text_w = text_w.max(sizing::text_width(&line, cfg.font_size, Font::Sans));
                 }
+                // One drawn row, plus one STACKING advance per line after it.
+                // Multiplying the row height by the line count under-sizes the
+                // box, because makepad steps further than one row between
+                // baselines (`line_spacing`).
                 Size {
                     w: (text_w + cfg.pad_x * 2.0).max(cfg.diamond_min * 2.0),
-                    h: cfg.pad_y * 2.0 + cfg.line_height * lines,
+                    h: cfg.pad_y * 2.0 + cfg.line_height + cfg.line_advance * (lines - 1.0),
                 }
             }
         };

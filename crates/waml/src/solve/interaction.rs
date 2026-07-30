@@ -19,11 +19,16 @@ pub struct InteractionConfig {
     pub nesting_step: f64,
     pub frame_inset: f64,
     pub font_size: f64,
+    /// Height of ONE drawn line, from [`sizing::chrome_metrics`] -- the same
+    /// measurement the editor draws glyphs with. A label rect shorter than this
+    /// puts its glyphs across whatever sits under its bottom edge.
     pub line_height: f64,
 }
 
 impl Default for InteractionConfig {
     fn default() -> Self {
+        let font_size = 13.0 * sizing::PT_TO_LPX;
+        let metrics = sizing::chrome_metrics(font_size, Font::Sans);
         InteractionConfig {
             column_gap: 48.0,
             row_gap: 40.0,
@@ -32,8 +37,8 @@ impl Default for InteractionConfig {
             bar_width: 12.0,
             nesting_step: 6.0,
             frame_inset: 12.0,
-            font_size: 13.0 * sizing::PT_TO_LPX,
-            line_height: 18.0,
+            font_size,
+            line_height: metrics.row_height,
         }
     }
 }
@@ -115,7 +120,10 @@ pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMa
                 Some(r) => format!("{title}:{r}"),
                 None => title.clone(),
             };
-            let w = sizing::text_width(&label, cfg.font_size, Font::Sans) + cfg.head_pad_x * 2.0;
+            // A head label is drawn in the `text_heading` SemiBold cut, whose
+            // advances are wider than Regular's.
+            let w = sizing::text_width(&label, cfg.font_size, Font::SansSemiBold)
+                + cfg.head_pad_x * 2.0;
             let h = cfg.line_height + cfg.head_pad_y * 2.0;
             sizes.insert(lifeline_size_key(id), Size { w, h });
         }
