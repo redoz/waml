@@ -1636,9 +1636,7 @@ impl App {
         // zoom percentage was equally stale. The behavior surface is its own
         // widget (`behavior_canvas`), so the active tab's category selects it.
         let behavior_active = matches!(
-            self.documents
-                .active_tab()
-                .map(|t| t.presentation.category),
+            self.documents.active_tab().map(|t| t.presentation.category),
             Some(NavCategory::Behavior | NavCategory::Sequence)
         );
         let (node_count, zoom_pct) = if behavior_active {
@@ -2803,7 +2801,7 @@ mod tests {
         PendingFragment, SaveFeedback, TransitionCause,
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
-    use crate::doc_view::{BodyWidgets, DocView, DocumentHeaderChrome, ViewData};
+    use crate::doc_view::{BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData};
     use crate::dock::DockState;
     use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
     use crate::document_host::DocumentCommand;
@@ -2836,6 +2834,10 @@ mod tests {
     struct ResettingAnchorView(Rc<RefCell<ViewAnchor>>);
 
     impl DocView for ResettingAnchorView {
+        fn identity(&self) -> DocViewIdentity {
+            DocViewIdentity::GenericOkf
+        }
+
         fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {
             *self.0.borrow_mut() = ViewAnchor::None;
         }
@@ -2963,6 +2965,107 @@ mod tests {
             widget_uid: uid,
             group: None,
         })
+    }
+
+    fn diagram_properties_app() -> (Cx, App) {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.widget_tree_mark_dirty(WidgetUid(0));
+        let mut app = cx.with_vm(App::script_new_with_default);
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "orders.md",
+            "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\ndescription: Initial\n---\n# Orders\n",
+        )])
+        .unwrap();
+        app.session.replace(source).unwrap();
+
+        let tool_dock = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::tool_dock::ToolDock::script_new_with_default),
+        ));
+        let diagram_properties = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::diagram_properties::DiagramProperties::script_new_with_default),
+        ));
+        let mut diagram_properties_wrap = cx.with_vm(View::script_new_with_default);
+        diagram_properties_wrap
+            .children
+            .push((live_id!(diagram_properties), diagram_properties));
+        let diagram_properties_wrap = WidgetRef::new_with_inner(Box::new(diagram_properties_wrap));
+        let mut ui = cx.with_vm(View::script_new_with_default);
+        ui.children.push((live_id!(tool_dock), tool_dock));
+        ui.children
+            .push((live_id!(diagram_properties_wrap), diagram_properties_wrap));
+        app.ui = WidgetRef::new_with_inner(Box::new(ui));
+
+        let document = crate::documents::open(
+            app.session.okf_analysis(),
+            app.session.uml_analysis(),
+            "orders",
+        )
+        .unwrap();
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Open {
+                document,
+                persistent: true,
+            },
+        );
+        (cx, app)
+    }
+
+    #[test]
+    fn consecutive_diagram_property_edits_keep_the_live_properties_view() {
+        let (mut cx, mut app) = diagram_properties_app();
+        let initial_revision = app.session.revision();
+        let tool_dock_uid = app.ui.widget(&cx, ids!(tool_dock)).widget_uid();
+        let diagram_properties_uid = app
+            .ui
+            .widget(&cx, ids!(diagram_properties_wrap.diagram_properties))
+            .widget_uid();
+
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                tool_dock_uid,
+                crate::tool_dock::ToolDockAction::Triggered(crate::tool_dock::Tool::DiagramProps),
+            )],
+        );
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                diagram_properties_uid,
+                crate::diagram_properties::DiagramPropertiesAction::DescriptionChanged(Some(
+                    "First edit".into(),
+                )),
+            )],
+        );
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                diagram_properties_uid,
+                crate::diagram_properties::DiagramPropertiesAction::DescriptionChanged(Some(
+                    "Second edit".into(),
+                )),
+            )],
+        );
+
+        assert_eq!(app.session.revision(), initial_revision + 2);
+        assert_eq!(
+            app.session
+                .uml_analysis()
+                .projection
+                .diagrams
+                .iter()
+                .find(|diagram| diagram.key == "orders")
+                .and_then(|diagram| diagram.description.as_deref()),
+            Some("Second edit"),
+        );
+        let text = app.session.source().documents()[0].text();
+        assert!(text.contains("description: Second edit"), "{text}");
+        assert!(
+            !app.documents.active_chrome().tool_dock,
+            "properties mode remains active after both edits",
+        );
     }
 
     fn mount_markdown_surface(cx: &mut Cx, app: &mut App) {
@@ -4240,6 +4343,10 @@ mod tests {
         struct NonMarkdownView;
 
         impl DocView for NonMarkdownView {
+            fn identity(&self) -> DocViewIdentity {
+                DocViewIdentity::ClassDiagram
+            }
+
             fn sync(
                 &mut self,
                 cx: &mut Cx,

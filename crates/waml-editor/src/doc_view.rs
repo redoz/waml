@@ -355,7 +355,19 @@ impl ViewData<'_> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocViewIdentity {
+    ClassDiagram,
+    BehaviorFlow,
+    BehaviorInteraction,
+    ClassifierPreview(crate::document::NavCategory),
+    GenericOkf,
+    Source,
+}
+
 pub trait DocView {
+    fn identity(&self) -> DocViewIdentity;
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>);
 
     fn handle(

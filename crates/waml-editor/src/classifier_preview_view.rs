@@ -2,7 +2,7 @@
 //! without-picker, no tool dock). Real behavior lands in Task 4.
 
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
 };
 use crate::document::NavCategory;
 use crate::icons::Icon;
@@ -22,6 +22,10 @@ impl ClassifierPreviewView {
 }
 
 impl DocView for ClassifierPreviewView {
+    fn identity(&self) -> DocViewIdentity {
+        DocViewIdentity::ClassifierPreview(self.category)
+    }
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.show_canvas(cx);
         let model = &data.uml_analysis.projection;

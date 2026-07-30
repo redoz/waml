@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
 };
 use crate::navigation::NavigationIntent;
 use crate::view_history::ViewAnchor;
@@ -30,6 +30,10 @@ impl GenericOkfView {
 }
 
 impl DocView for GenericOkfView {
+    fn identity(&self) -> DocViewIdentity {
+        DocViewIdentity::GenericOkf
+    }
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         let markdown = self.markdown(data);
         body.show_markdown(cx);

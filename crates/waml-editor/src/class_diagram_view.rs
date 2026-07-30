@@ -9,7 +9,8 @@ use crate::canvas::ConstraintVisibility;
 use crate::diagram_display::resolve_display;
 use crate::diagram_properties::{DiagramPropertiesAction, DiagramPropertiesWidgetRefExt};
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, PopupRequest, ViewData, ViewOutcome,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, PopupRequest,
+    ViewData, ViewOutcome,
 };
 use crate::editor_session::SessionChange;
 use crate::icons::Icon;
@@ -315,6 +316,10 @@ impl ClassDiagramView {
 }
 
 impl DocView for ClassDiagramView {
+    fn identity(&self) -> DocViewIdentity {
+        DocViewIdentity::ClassDiagram
+    }
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.show_canvas(cx);
         let model = &data.uml_analysis.projection;

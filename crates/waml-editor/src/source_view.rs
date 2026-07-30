@@ -6,7 +6,7 @@
 //! hides the diagram tool dock and the inspector's element picker explicitly.
 
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
 };
 use crate::icons::Icon;
 use crate::inspector::Subject;
@@ -35,6 +35,10 @@ impl SourceView {
 }
 
 impl DocView for SourceView {
+    fn identity(&self) -> DocViewIdentity {
+        DocViewIdentity::Source
+    }
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.show_markdown(cx);
         let markdown = self.markdown(data);

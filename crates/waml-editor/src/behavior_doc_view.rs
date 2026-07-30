@@ -10,7 +10,7 @@ use crate::canvas::{
     FlowOffPageGeo, FragmentGeo, LifelineGeo, MessageGeo, OperandGeo,
 };
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
 };
 use crate::icons::Icon;
 use crate::inspector::Subject;
@@ -448,6 +448,13 @@ impl BehaviorDocView {
 }
 
 impl DocView for BehaviorDocView {
+    fn identity(&self) -> DocViewIdentity {
+        match self.kind {
+            BehaviorKind::Flow => DocViewIdentity::BehaviorFlow,
+            BehaviorKind::Interaction => DocViewIdentity::BehaviorInteraction,
+        }
+    }
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.set_behavior_canvas_visible(cx, true);
         let model = &data.uml_analysis.projection;

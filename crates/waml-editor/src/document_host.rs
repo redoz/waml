@@ -26,6 +26,11 @@ pub struct DocumentHost {
 
 type RemovedViews = Vec<(LiveId, Box<dyn DocView>)>;
 
+enum ActiveReconciliation {
+    Retained,
+    Replaced { old_view: Option<Box<dyn DocView>> },
+}
+
 fn data(session: &EditorSession) -> ViewData<'_> {
     session.snapshot().into()
 }
@@ -290,12 +295,27 @@ impl DocumentHost {
         change: SessionChange,
         prepared: Vec<Option<crate::document::OpenDocument>>,
     ) {
-        if change.okf_changed || change.uml_changed {
-            self.reconcile_documents(prepared);
-        }
+        let reconciliation = if change.okf_changed || change.uml_changed {
+            self.reconcile_documents(prepared)
+        } else {
+            ActiveReconciliation::Retained
+        };
         let body = BodyWidgets::new(cx, ui);
-        if let Some(view) = self.views.get_mut(&self.tabs.active) {
-            view.after_session_change(cx, &body, data(session), change);
+        match reconciliation {
+            ActiveReconciliation::Retained => {
+                if let Some(view) = self.views.get_mut(&self.tabs.active) {
+                    view.after_session_change(cx, &body, data(session), change);
+                }
+            }
+            ActiveReconciliation::Replaced { mut old_view } => {
+                if let Some(old_view) = old_view.as_mut() {
+                    old_view.on_deactivate(cx, &body);
+                }
+                if let Some(view) = self.views.get_mut(&self.tabs.active) {
+                    view.on_activate(cx, &body);
+                    view.sync(cx, &body, data(session));
+                }
+            }
         }
         self.refresh_tabs(cx, ui);
     }
@@ -303,7 +323,8 @@ impl DocumentHost {
     fn reconcile_documents(
         &mut self,
         prepared_documents: Vec<Option<crate::document::OpenDocument>>,
-    ) {
+    ) -> ActiveReconciliation {
+        let mut reconciliation = ActiveReconciliation::Retained;
         for (index, prepared) in prepared_documents.into_iter().enumerate() {
             if index >= self.tabs.tabs.len() {
                 break;
@@ -313,23 +334,31 @@ impl DocumentHost {
             let Some(prepared) = prepared else {
                 continue;
             };
-            if prepared.tab_id == current_id {
+            let compatible = prepared.tab_id == current_id
+                && self.views.get(&current_id).is_some_and(|current_view| {
+                    current_view.identity() == prepared.view.identity()
+                });
+            if compatible {
                 self.tabs.tabs[index].title = prepared.title;
                 self.tabs.tabs[index].presentation = prepared.presentation;
-                self.views.insert(current_id, prepared.view);
                 continue;
             }
             let preview = current.preview;
             let old_id = current.id;
             let (mut tab, view) = prepared.into_tab(preview);
             tab.preview = preview;
-            if self.tabs.active == old_id {
+            let active_replacement = self.tabs.active == old_id;
+            if active_replacement {
                 self.tabs.active = tab.id;
             }
-            self.views.remove(&old_id);
+            let old_view = self.views.remove(&old_id);
             self.views.insert(tab.id, view);
             self.tabs.tabs[index] = tab;
+            if active_replacement {
+                reconciliation = ActiveReconciliation::Replaced { old_view };
+            }
         }
+        reconciliation
     }
 
     pub fn handle_active(
@@ -384,16 +413,36 @@ impl DocumentHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::doc_view::DocumentHeaderChrome;
+    use crate::doc_view::{DocViewIdentity, DocumentHeaderChrome};
     use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
     use crate::icons::Icon;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    struct ProbeView(Rc<Cell<usize>>);
+    #[derive(Default)]
+    struct ProbeLifecycle {
+        sync: usize,
+        after_session_change: usize,
+        on_activate: usize,
+        on_deactivate: usize,
+        chrome: usize,
+    }
+
+    struct ProbeView {
+        identity: DocViewIdentity,
+        chrome_calls: Rc<Cell<usize>>,
+        lifecycle: Rc<RefCell<ProbeLifecycle>>,
+    }
 
     impl DocView for ProbeView {
-        fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {}
+        fn identity(&self) -> DocViewIdentity {
+            self.identity
+        }
+
+        fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {
+            self.lifecycle.borrow_mut().sync += 1;
+        }
+
         fn handle(
             &mut self,
             _: &mut Cx,
@@ -403,8 +452,20 @@ mod tests {
         ) -> ViewOutcome {
             ViewOutcome::default()
         }
+
+        fn after_session_change(
+            &mut self,
+            _: &mut Cx,
+            _: &BodyWidgets,
+            _: ViewData<'_>,
+            _: SessionChange,
+        ) {
+            self.lifecycle.borrow_mut().after_session_change += 1;
+        }
+
         fn chrome(&self) -> BodyChrome {
-            self.0.set(self.0.get() + 1);
+            self.chrome_calls.set(self.chrome_calls.get() + 1);
+            self.lifecycle.borrow_mut().chrome += 1;
             BodyChrome {
                 tool_dock: true,
                 view_bar: false,
@@ -415,9 +476,33 @@ mod tests {
                 },
             }
         }
+
+        fn on_activate(&mut self, _: &mut Cx, _: &BodyWidgets) {
+            self.lifecycle.borrow_mut().on_activate += 1;
+        }
+
+        fn on_deactivate(&mut self, _: &mut Cx, _: &BodyWidgets) {
+            self.lifecycle.borrow_mut().on_deactivate += 1;
+        }
     }
 
-    fn prepared(key: &str, category: NavCategory, calls: Rc<Cell<usize>>) -> OpenDocument {
+    fn identity_for(category: NavCategory) -> DocViewIdentity {
+        match category {
+            NavCategory::Diagram => DocViewIdentity::ClassDiagram,
+            NavCategory::Behavior => DocViewIdentity::BehaviorFlow,
+            NavCategory::Sequence => DocViewIdentity::BehaviorInteraction,
+            NavCategory::OkfDocument => DocViewIdentity::GenericOkf,
+            category => DocViewIdentity::ClassifierPreview(category),
+        }
+    }
+
+    fn prepared_with_identity(
+        key: &str,
+        category: NavCategory,
+        identity: DocViewIdentity,
+        calls: Rc<Cell<usize>>,
+        lifecycle: Rc<RefCell<ProbeLifecycle>>,
+    ) -> OpenDocument {
         OpenDocument {
             tab_id: LiveId::from_str(&format!("test-{key}")),
             concept_id: key.into(),
@@ -428,8 +513,22 @@ mod tests {
                 accent: None,
                 category,
             },
-            view: Box::new(ProbeView(calls)),
+            view: Box::new(ProbeView {
+                identity,
+                chrome_calls: calls,
+                lifecycle,
+            }),
         }
+    }
+
+    fn prepared(key: &str, category: NavCategory, calls: Rc<Cell<usize>>) -> OpenDocument {
+        prepared_with_identity(
+            key,
+            category,
+            identity_for(category),
+            calls,
+            Rc::new(RefCell::new(ProbeLifecycle::default())),
+        )
     }
 
     #[test]
@@ -575,27 +674,103 @@ mod tests {
     }
 
     #[test]
-    fn same_provider_prepared_document_replaces_revision_bound_live_view() {
+    fn compatible_prepared_document_keeps_the_live_view() {
         let old_calls = Rc::new(Cell::new(0));
         let new_calls = Rc::new(Cell::new(0));
+        let old_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let new_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
         let mut host = DocumentHost::default();
         host.apply_command(DocumentCommand::Open {
-            document: prepared("order", NavCategory::Class, old_calls.clone()),
+            document: prepared_with_identity(
+                "order",
+                NavCategory::Class,
+                DocViewIdentity::ClassifierPreview(NavCategory::Class),
+                old_calls.clone(),
+                old_lifecycle.clone(),
+            ),
             persistent: true,
         });
-        assert!(host.active_chrome().tool_dock);
-        assert_eq!(old_calls.get(), 1);
-
-        host.reconcile_documents(vec![Some(prepared(
+        let mut replacement = prepared_with_identity(
             "order",
             NavCategory::Class,
+            DocViewIdentity::ClassifierPreview(NavCategory::Class),
             new_calls.clone(),
-        ))]);
+            new_lifecycle.clone(),
+        );
+        replacement.title = "Purchase Order".into();
+        replacement.presentation.icon = Icon::Package;
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        host.after_session_change(
+            &mut cx,
+            &WidgetRef::empty(),
+            &EditorSession::default(),
+            SessionChange {
+                revision: 1,
+                source_changed: false,
+                okf_changed: false,
+                uml_changed: true,
+                navigation_changed: false,
+                conflicts_changed: false,
+            },
+            vec![Some(replacement)],
+        );
 
-        assert!(host.active_chrome().tool_dock);
-        assert_eq!(old_calls.get(), 1);
-        assert_eq!(new_calls.get(), 1);
+        assert_eq!(host.active_tab().unwrap().title, "Purchase Order");
+        assert_eq!(host.active_tab().unwrap().presentation.icon, Icon::Package);
+        assert_eq!(old_lifecycle.borrow().after_session_change, 1);
+        assert_eq!(old_lifecycle.borrow().sync, 0);
+        assert_eq!(new_lifecycle.borrow().after_session_change, 0);
+        assert_eq!(new_lifecycle.borrow().sync, 0);
+        assert_eq!(new_calls.get(), 0);
+        assert_eq!(old_calls.get(), 0);
         assert!(!host.active_tab().unwrap().preview);
+    }
+
+    #[test]
+    fn incompatible_active_replacement_runs_full_lifecycle() {
+        let old_calls = Rc::new(Cell::new(0));
+        let new_calls = Rc::new(Cell::new(0));
+        let old_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let new_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let mut host = DocumentHost::default();
+        host.apply_command(DocumentCommand::Open {
+            document: prepared_with_identity(
+                "order",
+                NavCategory::Class,
+                DocViewIdentity::ClassifierPreview(NavCategory::Class),
+                old_calls,
+                old_lifecycle.clone(),
+            ),
+            persistent: true,
+        });
+        let mut replacement = prepared_with_identity(
+            "order",
+            NavCategory::OkfDocument,
+            DocViewIdentity::GenericOkf,
+            new_calls,
+            new_lifecycle.clone(),
+        );
+        replacement.tab_id = host.active_id();
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        host.after_session_change(
+            &mut cx,
+            &WidgetRef::empty(),
+            &EditorSession::default(),
+            SessionChange {
+                revision: 1,
+                source_changed: false,
+                okf_changed: false,
+                uml_changed: true,
+                navigation_changed: false,
+                conflicts_changed: false,
+            },
+            vec![Some(replacement)],
+        );
+
+        assert_eq!(old_lifecycle.borrow().on_deactivate, 1);
+        assert_eq!(new_lifecycle.borrow().on_activate, 1);
+        assert_eq!(new_lifecycle.borrow().sync, 1);
+        assert_eq!(new_lifecycle.borrow().after_session_change, 0);
     }
 
     #[test]
