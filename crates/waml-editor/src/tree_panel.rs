@@ -28,6 +28,7 @@ use makepad_widgets::*;
 use std::collections::{HashMap, HashSet};
 
 pub(crate) const PROJECT_TREE_W: f64 = 280.0;
+const REVEAL_PULSE_SECS: f64 = 0.7;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -462,6 +463,16 @@ pub struct ProjectTree {
     // `set_selected_key` from the app's `sync_active_tab`.
     #[rust]
     selected_key: Option<String>,
+    #[rust]
+    reveal_key: Option<String>,
+    #[rust]
+    pending_scroll_key: Option<String>,
+    #[rust]
+    reveal_strength: f32,
+    #[rust]
+    reveal_started_at: f64,
+    #[rust]
+    reveal_next_frame: NextFrame,
 }
 
 // Tree-row selection highlight is click-only, provided by `FileTree`'s own
@@ -540,6 +551,35 @@ fn directory_addresses(tree: &ProjectTreeData) -> Vec<String> {
     let mut out = Vec::new();
     collect(&tree.roots, &mut out);
     out
+}
+
+fn reveal_path(
+    nodes: &[TreeNode],
+    target: &NavigationTarget,
+    ancestors: &mut Vec<String>,
+) -> Option<(String, Vec<String>)> {
+    for node in nodes {
+        let matches = match target {
+            NavigationTarget::Document { concept_id, .. } => {
+                node.concept_id.as_deref() == Some(concept_id.as_str())
+            }
+            NavigationTarget::Directory { address } => {
+                node.is_directory && node.key == address.as_str()
+            }
+            NavigationTarget::ExternalUrl(_) => false,
+        };
+        if matches {
+            return Some((node.key.clone(), ancestors.clone()));
+        }
+        if node.is_directory {
+            ancestors.push(node.key.clone());
+            if let Some(path) = reveal_path(&node.children, target, ancestors) {
+                return Some(path);
+            }
+            ancestors.pop();
+        }
+    }
+    None
 }
 
 fn reconcile_open_directories(
@@ -1124,6 +1164,25 @@ impl ProjectTree {
         }
     }
 
+    pub fn reveal_target(&mut self, cx: &mut Cx, target: &NavigationTarget) -> bool {
+        let Some((key, ancestors)) = reveal_path(&self.tree.roots, target, &mut Vec::new()) else {
+            return false;
+        };
+        let file_tree = self.view.file_tree(cx, ids!(file_tree));
+        for address in ancestors {
+            self.open_directories.insert(address.clone());
+            file_tree.set_folder_is_open(cx, LiveId::from_str(&address), true, Animate::No);
+        }
+        self.selected_key = Some(key.clone());
+        self.reveal_key = Some(key.clone());
+        self.pending_scroll_key = Some(key);
+        self.reveal_strength = 1.0;
+        self.reveal_started_at = -1.0;
+        self.reveal_next_frame = cx.new_next_frame();
+        self.view.redraw(cx);
+        true
+    }
+
     pub fn navigation(&self, actions: &Actions) -> Option<NavigationIntent> {
         let item = actions.find_widget_action(self.widget_uid())?;
         if let ProjectTreeAction::Navigate(intent) = item.cast() {
@@ -1336,6 +1395,108 @@ mod tests {
                 )],
             )],
         }
+    }
+
+    fn reveal_state(
+        panel: &ProjectTree,
+    ) -> (
+        HashSet<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        f32,
+        f64,
+        NextFrame,
+    ) {
+        (
+            panel.open_directories.clone(),
+            panel.selected_key.clone(),
+            panel.reveal_key.clone(),
+            panel.pending_scroll_key.clone(),
+            panel.reveal_strength,
+            panel.reveal_started_at,
+            panel.reveal_next_frame,
+        )
+    }
+
+    fn set_distinct_reveal_state(panel: &mut ProjectTree) {
+        panel.open_directories = HashSet::from(["/sales".into()]);
+        panel.selected_key = Some("/before".into());
+        panel.reveal_key = Some("/pulse".into());
+        panel.pending_scroll_key = Some("/scroll".into());
+        panel.reveal_strength = 0.25;
+        panel.reveal_started_at = 12.0;
+        panel.reveal_next_frame = NextFrame(41);
+    }
+
+    #[test]
+    fn reveal_document_opens_ancestors_selects_target_and_queues_scroll() {
+        let (mut cx, mut panel, _) = mounted_project_tree_test_context();
+        panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
+        panel.open_directories.clear();
+
+        assert!(panel.reveal_target(
+            &mut cx,
+            &NavigationTarget::Document {
+                concept_id: "/sales/archive/order".into(),
+                fragment: None,
+            },
+        ));
+        assert_eq!(
+            panel.open_directories,
+            HashSet::from(["/sales".into(), "/sales/archive".into()])
+        );
+        assert_eq!(panel.selected_key.as_deref(), Some("/sales/archive/order"));
+        assert_eq!(
+            panel.pending_scroll_key.as_deref(),
+            Some("/sales/archive/order")
+        );
+    }
+
+    #[test]
+    fn reveal_directory_preserves_the_target_fold() {
+        let (mut cx, mut panel, _) = mounted_project_tree_test_context();
+        panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
+        panel.open_directories.clear();
+
+        assert!(panel.reveal_target(
+            &mut cx,
+            &NavigationTarget::Directory {
+                address: "/sales/archive".into(),
+            },
+        ));
+        assert_eq!(panel.open_directories, HashSet::from(["/sales".into()]));
+    }
+
+    #[test]
+    fn reveal_external_target_does_not_change_tree_state() {
+        let (mut cx, mut panel, _) = mounted_project_tree_test_context();
+        panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
+        set_distinct_reveal_state(&mut panel);
+        let before = reveal_state(&panel);
+
+        assert!(!panel.reveal_target(
+            &mut cx,
+            &NavigationTarget::ExternalUrl("https://example.com".into()),
+        ));
+        assert_eq!(reveal_state(&panel), before);
+    }
+
+    #[test]
+    fn reveal_unknown_document_does_not_change_tree_state() {
+        let (mut cx, mut panel, _) = mounted_project_tree_test_context();
+        panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
+        set_distinct_reveal_state(&mut panel);
+        let before = reveal_state(&panel);
+
+        assert!(!panel.reveal_target(
+            &mut cx,
+            &NavigationTarget::Document {
+                concept_id: "/missing".into(),
+                fragment: None,
+            },
+        ));
+        assert_eq!(reveal_state(&panel), before);
     }
 
     #[test]
