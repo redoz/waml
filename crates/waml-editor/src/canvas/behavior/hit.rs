@@ -121,6 +121,63 @@ pub(crate) fn hit_test(scene: &BehaviorScene, world: (f64, f64)) -> Option<Behav
     }
 }
 
+/// The world-space bounding rect of one target's geometry, or `None` when the
+/// target is not in `scene` (a stale selection). Drives Fit to Selection.
+pub(crate) fn target_bounds(
+    scene: &BehaviorScene,
+    target: &BehaviorTarget,
+) -> Option<waml::solve::Rect> {
+    match (scene, target) {
+        (BehaviorScene::Empty { .. }, _) => None,
+        (BehaviorScene::Flow { nodes, .. }, BehaviorTarget::FlowNode(key)) => {
+            nodes.iter().find(|n| &n.key == key).map(|n| n.rect)
+        }
+        (BehaviorScene::Flow { edges, .. }, BehaviorTarget::FlowEdge(key)) => edges
+            .iter()
+            .find(|e| &e.key == key)
+            .and_then(|e| polyline_bounds(&e.points)),
+        (BehaviorScene::Interaction { lifelines, .. }, BehaviorTarget::Lifeline(id)) => lifelines
+            .iter()
+            .find(|l| &l.id == id)
+            .map(|l| waml::solve::Rect {
+                x: l.head.x.min(l.stem_x),
+                y: l.head.y.min(l.stem_top),
+                w: (l.head.x + l.head.w).max(l.stem_x) - l.head.x.min(l.stem_x),
+                h: (l.head.y + l.head.h).max(l.stem_bottom) - l.head.y.min(l.stem_top),
+            }),
+        (BehaviorScene::Interaction { messages, .. }, BehaviorTarget::Message(id)) => messages
+            .iter()
+            .find(|m| &m.id == id)
+            .and_then(|m| match m.self_loop {
+                Some(rect) => Some(rect),
+                None => polyline_bounds(&[(m.from_x, m.y), (m.to_x, m.y)]),
+            }),
+        (BehaviorScene::Interaction { fragments, .. }, BehaviorTarget::Fragment(id)) => {
+            fragments.iter().find(|f| &f.id == id).map(|f| f.rect)
+        }
+        // A target from the other scene family: not in this scene.
+        (BehaviorScene::Flow { .. }, _) | (BehaviorScene::Interaction { .. }, _) => None,
+    }
+}
+
+fn polyline_bounds(points: &[(f64, f64)]) -> Option<waml::solve::Rect> {
+    let (first, rest) = points.split_first()?;
+    let (mut min_x, mut min_y) = *first;
+    let (mut max_x, mut max_y) = *first;
+    for (x, y) in rest {
+        min_x = min_x.min(*x);
+        min_y = min_y.min(*y);
+        max_x = max_x.max(*x);
+        max_y = max_y.max(*y);
+    }
+    Some(waml::solve::Rect {
+        x: min_x,
+        y: min_y,
+        w: max_x - min_x,
+        h: max_y - min_y,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::scene::{FlowEdgeGeo, FlowNodeGeo};

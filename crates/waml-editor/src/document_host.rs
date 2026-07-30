@@ -225,7 +225,9 @@ impl DocumentHost {
         if let Some(view) = self.views.get_mut(&active) {
             view.sync(cx, &body, data(session));
         } else {
+            // No active view at all: neither canvas may take input.
             body.set_canvas_interaction_enabled(cx, false);
+            body.set_behavior_canvas_interaction_enabled(cx, false);
         }
     }
 

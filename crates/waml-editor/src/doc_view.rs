@@ -117,6 +117,10 @@ impl BodyWidgets {
             .set_visible(cx, visible);
     }
 
+    /// Toggle the CLASS-diagram canvas' interaction only. The behavior canvas
+    /// has its own toggle (`set_behavior_canvas_interaction_enabled`): the two
+    /// surfaces are never visible at once, so a class-diagram path must not
+    /// re-enable the hidden behavior surface.
     pub fn set_canvas_interaction_enabled(&self, cx: &mut Cx, enabled: bool) {
         if let Some(mut canvas) = self
             .canvas(cx)
@@ -124,15 +128,11 @@ impl BodyWidgets {
         {
             canvas.set_interaction_enabled(cx, enabled);
         }
-        if let Some(mut canvas) = self
-            .behavior_canvas(cx)
-            .borrow_mut::<crate::canvas::BehaviorSurface>()
-        {
-            canvas.set_interaction_enabled(cx, enabled);
-        }
     }
 
-    fn set_behavior_canvas_interaction_enabled(&self, cx: &mut Cx, enabled: bool) {
+    /// Toggle the BEHAVIOR canvas' interaction only (the sibling of
+    /// `set_canvas_interaction_enabled`).
+    pub fn set_behavior_canvas_interaction_enabled(&self, cx: &mut Cx, enabled: bool) {
         if let Some(mut canvas) = self
             .behavior_canvas(cx)
             .borrow_mut::<crate::canvas::BehaviorSurface>()

@@ -508,10 +508,19 @@ impl DocView for BehaviorDocView {
         let mut out = ViewOutcome::default();
         let model = &data.uml_analysis.projection;
 
+        // Keep the bar's fit-to-selection button in step with the canvas
+        // selection, exactly as `ClassDiagramView` does.
+        let has_selection = body
+            .behavior_canvas(cx)
+            .borrow::<crate::canvas::BehaviorSurface>()
+            .is_some_and(|c| c.has_selection());
+        if let Some(mut bar) = body.view_bar(cx).borrow_mut::<crate::view_bar::ViewBar>() {
+            bar.set_fit_to_selection_enabled(cx, has_selection);
+        }
+
         // The four camera one-shots are thin wrappers over the `Camera` API
         // on `BehaviorSurface` (mirrors `ClassDiagramView`'s view-bar wiring).
-        // The veil/x-ray toggles and fit-to-* one-shots have no behavior-canvas
-        // equivalent yet.
+        // The veil/x-ray toggles have no behavior-canvas equivalent.
         if let Some(crate::view_bar::ViewBarAction::Triggered(opt)) = body
             .view_bar(cx)
             .borrow_mut::<crate::view_bar::ViewBar>()
@@ -528,6 +537,8 @@ impl DocView for BehaviorDocView {
                     crate::view_bar::ViewOption::ZoomOut => {
                         canvas.zoom_step(cx, 1.0 / crate::canvas::ZOOM_STEP)
                     }
+                    crate::view_bar::ViewOption::FitToSize => canvas.fit_to_scene(cx),
+                    crate::view_bar::ViewOption::FitToSelection => canvas.fit_to_selection(cx),
                     _ => {}
                 }
             }
@@ -591,6 +602,13 @@ impl DocView for BehaviorDocView {
 
     fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         body.set_behavior_canvas_visible(cx, false);
+        // `last_diagnostics` is per-view state gating a GLOBAL statusbar field:
+        // leaving this document's line up while another tab is active (a class
+        // diagram, or a clean behavior doc whose fresh view skips the push
+        // because its own `last_diagnostics` is already `None`) would show a
+        // diagnostic for a document nobody is looking at.
+        body.set_solver_diagnostics(cx, None);
+        self.last_diagnostics = None;
     }
 
     fn on_escape(&mut self, cx: &mut Cx, body: &BodyWidgets) {
@@ -1031,6 +1049,26 @@ mod tests {
         }
     }
 
+    /// `show_canvas` is a CLASS-diagram path: it must not re-enable the hidden
+    /// behavior surface (the two canvases toggle independently).
+    #[test]
+    fn show_canvas_leaves_the_hidden_behavior_surface_disabled() {
+        use crate::doc_view::BodyWidgets;
+
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = BodyWidgets::new(cx, &ui);
+
+        body.set_behavior_canvas_visible(cx, false);
+        body.show_canvas(cx);
+        let canvas = body.behavior_canvas(cx);
+        let canvas = canvas
+            .borrow::<crate::canvas::BehaviorSurface>()
+            .expect("behavior surface");
+        assert!(!canvas.interaction_enabled());
+    }
+
     #[test]
     fn view_source_requested_populates_the_outcome() {
         use crate::doc_view::{BodyWidgets, ViewData};
@@ -1121,5 +1159,15 @@ mod tests {
             line.contains("unreachable"),
             "unexpected status line: {line}"
         );
+        drop(statusbar);
+
+        // Leaving this tab must clear the GLOBAL line: it belongs to THIS
+        // document, and the next tab's view has no way to know it is stale.
+        view.on_deactivate(cx, &body);
+        let statusbar = ui.widget(cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("statusbar widget");
+        assert_eq!(crate::statusbar::solver_diagnostics(&statusbar), None);
     }
 }

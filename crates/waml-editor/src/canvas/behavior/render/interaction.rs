@@ -246,6 +246,28 @@ fn draw_activation(
     fill_rect(cx, draws.fill, screen, accent_with_alpha(accent, alpha));
 }
 
+type Segment = ((f64, f64), (f64, f64));
+
+/// A self-message's loop: the THREE outer sides of its `self_loop` rect (out
+/// along the top, down the far side, back along the bottom) plus the arrow
+/// segment whose head returns to the stem (spec §4.2). The stem is the rect's
+/// LEFT edge, so the return side ends on it and the head points back inward,
+/// never down at the far corner.
+fn self_loop_geometry(rect: waml::solve::Rect) -> ([Segment; 3], Segment) {
+    let top_left = (rect.x, rect.y);
+    let top_right = (rect.x + rect.w, rect.y);
+    let bottom_right = (rect.x + rect.w, rect.y + rect.h);
+    let bottom_left = (rect.x, rect.y + rect.h);
+    (
+        [
+            (top_left, top_right),
+            (top_right, bottom_right),
+            (bottom_right, bottom_left),
+        ],
+        (bottom_right, bottom_left),
+    )
+}
+
 fn draw_message(
     cx: &mut Cx2d,
     viewport: ViewportSnapshot,
@@ -259,39 +281,17 @@ fn draw_message(
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let dashed = matches!(message.verb, MessageVerb::Replies | MessageVerb::Creates);
 
-    let (from, to, tip_from) = match message.self_loop {
+    let (from, to) = match message.self_loop {
         Some(rect) => {
-            let top_left = (rect.x, rect.y);
-            let top_right = (rect.x + rect.w, rect.y);
-            let bottom_right = (rect.x + rect.w, rect.y + rect.h);
-            if dashed {
-                draw_dashed_segment(
-                    cx, &camera, rect_pos, draws.fill, top_left, top_right, thickness,
-                );
-                draw_dashed_segment(
-                    cx,
-                    &camera,
-                    rect_pos,
-                    draws.fill,
-                    top_right,
-                    bottom_right,
-                    thickness,
-                );
-            } else {
-                draw_solid_segment(
-                    cx, &camera, rect_pos, draws.fill, top_left, top_right, thickness,
-                );
-                draw_solid_segment(
-                    cx,
-                    &camera,
-                    rect_pos,
-                    draws.fill,
-                    top_right,
-                    bottom_right,
-                    thickness,
-                );
+            let (sides, arrow) = self_loop_geometry(rect);
+            for (a, b) in sides {
+                if dashed {
+                    draw_dashed_segment(cx, &camera, rect_pos, draws.fill, a, b, thickness);
+                } else {
+                    draw_solid_segment(cx, &camera, rect_pos, draws.fill, a, b, thickness);
+                }
             }
-            (top_right, bottom_right, top_right)
+            arrow
         }
         None => {
             let from = (message.from_x, message.y);
@@ -301,10 +301,9 @@ fn draw_message(
             } else {
                 draw_solid_segment(cx, &camera, rect_pos, draws.fill, from, to, thickness);
             }
-            (from, to, from)
+            (from, to)
         }
     };
-    let _ = tip_from;
 
     let filled_head = matches!(message.verb, MessageVerb::Calls | MessageVerb::Destroys);
     draw_arrowhead(cx, &camera, rect_pos, from, to, filled_head, draws);
@@ -441,5 +440,36 @@ fn draw_fragment(
             dvec2(guard_screen.pos.x, guard_screen.pos.y),
             &format!("[{}]", operand.guard_text),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A self-message draws all THREE outer sides of its loop rect and its head
+    /// returns to the stem (the rect's left edge), not down at the far corner.
+    #[test]
+    fn a_self_loop_walks_three_sides_and_returns_to_the_stem() {
+        let rect = waml::solve::Rect {
+            x: 100.0,
+            y: 40.0,
+            w: 30.0,
+            h: 24.0,
+        };
+        let (sides, (from, to)) = self_loop_geometry(rect);
+        assert_eq!(
+            sides,
+            [
+                ((100.0, 40.0), (130.0, 40.0)),
+                ((130.0, 40.0), (130.0, 64.0)),
+                ((130.0, 64.0), (100.0, 64.0)),
+            ]
+        );
+        // The arrow runs back along the bottom side, leftward into the stem.
+        assert_eq!(from, (130.0, 64.0));
+        assert_eq!(to, (100.0, 64.0));
+        assert!(to.0 < from.0, "the head must point back at the lifeline");
+        assert_eq!(to.1, from.1, "the head must not point downward");
     }
 }

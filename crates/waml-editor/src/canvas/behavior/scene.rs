@@ -113,10 +113,183 @@ pub(crate) enum BehaviorScene {
     },
 }
 
+impl BehaviorScene {
+    /// The world-space bounding box of everything this scene draws, or `None`
+    /// for an `Empty` scene (mirrors `crate::scene::bounding_box`). Drives the
+    /// load-time fit and the view bar's Fit to Size (spec §4, Task 6).
+    pub(crate) fn bounds(&self) -> Option<Rect> {
+        let mut points: Vec<(f64, f64)> = Vec::new();
+        match self {
+            BehaviorScene::Empty { .. } => {}
+            BehaviorScene::Flow {
+                nodes,
+                edges,
+                off_page,
+                groups,
+            } => {
+                for node in nodes {
+                    points.push((node.rect.x, node.rect.y));
+                    points.push((node.rect.x + node.rect.w, node.rect.y + node.rect.h));
+                }
+                for group in groups {
+                    points.push((group.rect.x, group.rect.y));
+                    points.push((group.rect.x + group.rect.w, group.rect.y + group.rect.h));
+                }
+                for point in edges
+                    .iter()
+                    .flat_map(|e| e.points.iter())
+                    .chain(off_page.iter().flat_map(|s| s.points.iter()))
+                {
+                    points.push(*point);
+                }
+            }
+            BehaviorScene::Interaction {
+                lifelines,
+                activations,
+                messages,
+                fragments,
+            } => {
+                for lifeline in lifelines {
+                    points.push((lifeline.head.x, lifeline.head.y));
+                    points.push((
+                        lifeline.head.x + lifeline.head.w,
+                        lifeline.head.y + lifeline.head.h,
+                    ));
+                    points.push((lifeline.stem_x, lifeline.stem_top));
+                    points.push((lifeline.stem_x, lifeline.stem_bottom));
+                }
+                for rect in activations
+                    .iter()
+                    .map(|a| a.rect)
+                    .chain(fragments.iter().map(|f| f.rect))
+                    .chain(messages.iter().filter_map(|m| m.self_loop))
+                    .chain(messages.iter().filter_map(|m| m.label_rect))
+                {
+                    points.push((rect.x, rect.y));
+                    points.push((rect.x + rect.w, rect.y + rect.h));
+                }
+                for message in messages {
+                    points.push((message.from_x, message.y));
+                    points.push((message.to_x, message.y));
+                }
+            }
+        }
+        let (first, rest) = points.split_first()?;
+        let (mut min_x, mut min_y) = *first;
+        let (mut max_x, mut max_y) = *first;
+        for (x, y) in rest {
+            min_x = min_x.min(*x);
+            min_y = min_y.min(*y);
+            max_x = max_x.max(*x);
+            max_y = max_y.max(*y);
+        }
+        Some(Rect {
+            x: min_x,
+            y: min_y,
+            w: max_x - min_x,
+            h: max_y - min_y,
+        })
+    }
+}
+
 impl Default for BehaviorScene {
     fn default() -> Self {
         BehaviorScene::Empty {
             message: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_scene_has_no_bounds() {
+        assert_eq!(
+            BehaviorScene::Empty {
+                message: "x".into()
+            }
+            .bounds(),
+            None
+        );
+    }
+
+    #[test]
+    fn flow_bounds_cover_nodes_and_route_points() {
+        let scene = BehaviorScene::Flow {
+            nodes: vec![FlowNodeGeo {
+                key: "n1".into(),
+                kind: FlowNodeKind::Plain,
+                rect: Rect {
+                    x: 10.0,
+                    y: 20.0,
+                    w: 100.0,
+                    h: 40.0,
+                },
+                title: "n1".into(),
+                lines: Vec::new(),
+                type_name: None,
+                refines: false,
+            }],
+            edges: vec![FlowEdgeGeo {
+                key: "e1".into(),
+                points: vec![(-30.0, 60.0), (60.0, 200.0)],
+                label: None,
+            }],
+            off_page: Vec::new(),
+            groups: Vec::new(),
+        };
+        assert_eq!(
+            scene.bounds(),
+            Some(Rect {
+                x: -30.0,
+                y: 20.0,
+                w: 140.0,
+                h: 180.0,
+            })
+        );
+    }
+
+    #[test]
+    fn interaction_bounds_cover_heads_stems_and_messages() {
+        let scene = BehaviorScene::Interaction {
+            lifelines: vec![LifelineGeo {
+                id: "a".into(),
+                head: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 40.0,
+                    h: 20.0,
+                },
+                stem_x: 20.0,
+                stem_top: 20.0,
+                stem_bottom: 300.0,
+                destroyed: false,
+                label: "a".into(),
+                bucket: AccentBucket::None,
+            }],
+            activations: Vec::new(),
+            messages: vec![MessageGeo {
+                id: "m0".into(),
+                verb: MessageVerb::Calls,
+                from_x: 20.0,
+                to_x: 220.0,
+                y: 60.0,
+                self_loop: None,
+                label: None,
+                label_rect: None,
+            }],
+            fragments: Vec::new(),
+        };
+        assert_eq!(
+            scene.bounds(),
+            Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 300.0,
+            })
+        );
     }
 }

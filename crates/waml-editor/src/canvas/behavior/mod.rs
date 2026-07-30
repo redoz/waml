@@ -8,7 +8,8 @@ mod render;
 pub(crate) mod scene;
 
 use crate::canvas::viewport::{
-    TimerCommand as ViewportTimerCommand, ViewportController, ViewportEffects,
+    InitialFit, TimerCommand as ViewportTimerCommand, ViewportController, ViewportEffects,
+    ViewportSnapshot,
 };
 use hit::BehaviorTarget;
 use makepad_widgets::*;
@@ -252,6 +253,10 @@ pub struct BehaviorSurface {
 
     #[rust]
     scene: BehaviorScene,
+    /// Bounds of the scene the load-time fit was last requested for, so an
+    /// unchanged re-`sync` does not stomp the user's settled camera.
+    #[rust]
+    fitted_bounds: Option<waml::solve::Rect>,
     #[rust]
     viewport: ViewportController,
     #[rust]
@@ -288,6 +293,25 @@ fn should_handle_surface_event(interaction_enabled: bool, event: &Event) -> bool
 /// `class::SELECT_SLOP`).
 const CLICK_SLOP: f64 = 4.0;
 
+/// The behavior element under the raw absolute pointer position `abs`, or
+/// `None` when `abs` is outside the canvas rect entirely -- the pointer is over
+/// the inspector dock, tree panel, or caption, none of which may tint this
+/// canvas (the containment check the raw-`MouseMove` idiom requires).
+fn hover_target_at(
+    scene: &BehaviorScene,
+    viewport: ViewportSnapshot,
+    abs: DVec2,
+) -> Option<BehaviorTarget> {
+    let view_rect = viewport.view_rect;
+    if !view_rect.contains(abs) {
+        return None;
+    }
+    let (wx, wy) = viewport
+        .camera
+        .local_to_world(abs.x - view_rect.pos.x, abs.y - view_rect.pos.y);
+    hit::hit_test(scene, (wx, wy))
+}
+
 /// Canvas -> App action (same convention as `ClassDiagramSurfaceAction`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum BehaviorSurfaceAction {
@@ -317,12 +341,7 @@ impl Widget for BehaviorSurface {
         // event carries absolute coords, so translate before hit-testing).
         if let Event::MouseMove(me) = event {
             if self.pointer_down_abs.is_none() {
-                let view_rect = self.viewport.snapshot().view_rect;
-                let (wx, wy) = self
-                    .viewport
-                    .camera()
-                    .local_to_world(me.abs.x - view_rect.pos.x, me.abs.y - view_rect.pos.y);
-                let target = hit::hit_test(&self.scene, (wx, wy));
+                let target = hover_target_at(&self.scene, self.viewport.snapshot(), me.abs);
                 if target != self.hovered {
                     self.hovered = target;
                     self.draw_bg.redraw(cx);
@@ -446,9 +465,55 @@ impl BehaviorSurface {
         }
     }
 
+    /// Install `scene` and, when its bounds differ from the scene this surface
+    /// last fitted (a first load or a switch to another behavior document),
+    /// request a load-time fit the next `draw_walk` applies through
+    /// `Camera::fit`/`FIT_PAD` (spec §4, Task 6). An identical re-`sync` (the
+    /// per-revision case) leaves the settled camera alone.
+    #[cfg(test)]
+    pub(crate) fn interaction_enabled(&self) -> bool {
+        self.interaction_enabled
+    }
+
     pub(crate) fn set_scene(&mut self, cx: &mut Cx, scene: BehaviorScene) {
+        let bounds = scene.bounds();
+        if bounds != self.fitted_bounds {
+            self.fitted_bounds = bounds;
+            self.viewport.request_initial_fit(match bounds {
+                Some(bounds) => InitialFit::Scene(bounds),
+                None => InitialFit::ScenePending,
+            });
+        }
         self.scene = scene;
         self.draw_bg.redraw(cx);
+    }
+
+    /// Frame the whole scene (the view bar's Fit to Size). An `Empty` scene or a
+    /// not-yet-drawn canvas is a no-op (mirrors
+    /// `ClassDiagramSurface::fit_to_scene`).
+    pub(crate) fn fit_to_scene(&mut self, cx: &mut Cx) {
+        let effects = self.viewport.fit_to_bounds(self.scene.bounds());
+        self.apply_viewport_effects(cx, effects);
+    }
+
+    /// Frame the selected element (the view bar's Fit to Selection). No
+    /// selection, or a selection with no geometry in this scene, is a no-op.
+    pub(crate) fn fit_to_selection(&mut self, cx: &mut Cx) {
+        let Some(bounds) = self
+            .selected
+            .as_ref()
+            .and_then(|target| hit::target_bounds(&self.scene, target))
+        else {
+            return;
+        };
+        let effects = self.viewport.fit_to_bounds(Some(bounds));
+        self.apply_viewport_effects(cx, effects);
+    }
+
+    /// Whether an element is currently selected -- drives the view bar's
+    /// fit-to-selection button between enabled and dim.
+    pub(crate) fn has_selection(&self) -> bool {
+        self.selected.is_some()
     }
 
     /// `Esc` clears the selection (spec §5.2).
@@ -512,5 +577,82 @@ mod tests {
 
         assert!(should_handle_surface_event(true, &scroll));
         assert!(!should_handle_surface_event(false, &scroll));
+    }
+
+    /// One node big enough to extend PAST the canvas rect in world space, so a
+    /// pointer outside the canvas still maps inside it.
+    fn flow_scene() -> BehaviorScene {
+        BehaviorScene::Flow {
+            nodes: vec![scene::FlowNodeGeo {
+                key: "n1".into(),
+                kind: waml::model::FlowNodeKind::Plain,
+                rect: waml::solve::Rect {
+                    x: -500.0,
+                    y: -500.0,
+                    w: 1000.0,
+                    h: 1000.0,
+                },
+                title: "n1".into(),
+                lines: Vec::new(),
+                type_name: None,
+                refines: false,
+            }],
+            edges: Vec::new(),
+            off_page: Vec::new(),
+            groups: Vec::new(),
+        }
+    }
+
+    /// Hover tracks the RAW `MouseMove`, so it must reject a position outside
+    /// the canvas rect -- otherwise the cursor over the inspector dock or tree
+    /// panel still tints behavior elements.
+    #[test]
+    fn hover_ignores_positions_outside_the_canvas_rect() {
+        let scene = flow_scene();
+        let snapshot = ViewportSnapshot {
+            camera: crate::canvas::viewport::Camera::default(),
+            view_rect: Rect {
+                pos: dvec2(200.0, 100.0),
+                size: dvec2(400.0, 300.0),
+            },
+        };
+        // Inside the canvas, over the node.
+        assert_eq!(
+            hover_target_at(&scene, snapshot, dvec2(250.0, 120.0)),
+            Some(BehaviorTarget::FlowNode("n1".into()))
+        );
+        // Up and left of the canvas (the tree panel / caption): the world point
+        // it maps to is still INSIDE the node, so only containment can reject
+        // it.
+        assert_eq!(hover_target_at(&scene, snapshot, dvec2(100.0, 50.0)), None);
+    }
+
+    /// A newly-installed scene must be FRAMED, not left at pan(0,0)/zoom 1; an
+    /// unchanged re-`sync` must leave the settled camera alone.
+    #[test]
+    fn a_new_scene_requests_a_load_time_fit_and_a_resync_does_not() {
+        use makepad_widgets::ScriptNew;
+        let mut vm = crate::script_gate::boot_test_vm();
+        let mut surface = BehaviorSurface::script_new(&mut vm);
+        let cx = vm.cx_mut();
+        surface.viewport.set_view_rect(Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        });
+
+        surface.set_scene(cx, flow_scene());
+        assert!(
+            surface.viewport.apply_initial_fit(),
+            "a new scene must request a load-time fit"
+        );
+        let fitted = surface.viewport.camera();
+        assert_ne!(fitted, crate::canvas::viewport::Camera::default());
+
+        surface.set_scene(cx, flow_scene());
+        assert!(
+            !surface.viewport.apply_initial_fit(),
+            "an unchanged re-sync must not refit"
+        );
+        assert_eq!(surface.viewport.camera(), fitted);
     }
 }
