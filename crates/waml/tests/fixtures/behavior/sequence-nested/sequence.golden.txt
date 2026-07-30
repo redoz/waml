@@ -16,3 +16,8 @@ message m6 calls 129->332 y=320
 message m7 replies 332->129 y=440
 message m8 calls 27->129 y=560
 message m9 destroys 27->332 y=640
+fragment f1 opt d1 @ 117,360 215x160
+  operand y=start guard=extra
+fragment f0 alt d0 @ 15,240 329x400
+  operand y=start guard=ready
+  operand y=520 guard=else

@@ -1,7 +1,6 @@
 //! Sequence-diagram layout: lifeline columns, time rows, message geometry,
-//! and activation bars derived from the calls/replies stack (design spec
-//! §3.1-§3.4, §3.6). Fragment frames (§3.5) land in Task 5 — `fragments`
-//! solves to an empty vec until then.
+//! activation bars derived from the calls/replies stack, and combined
+//! fragment frames with operand dividers/guards (design spec §3.1-§3.6).
 
 use super::sizing::{self, Font};
 use super::{Rect, Size, SizeMap};
@@ -68,7 +67,7 @@ pub struct SolvedMessage {
     pub label: Option<Rect>,
 }
 
-/// One operand of a solved fragment (filled in Task 5).
+/// One operand of a solved fragment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolvedOperand {
     pub divider_y: Option<f64>,
@@ -76,8 +75,7 @@ pub struct SolvedOperand {
     pub guard_rect: Rect,
 }
 
-/// A solved combined fragment frame (filled in Task 5; `operands` stays
-/// empty until then since a fragment is never emitted this task).
+/// A solved combined fragment frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolvedFragment {
     pub id: String,
@@ -154,6 +152,7 @@ struct WalkState<'a> {
     stacks: BTreeMap<String, Vec<ActiveBar>>,
     messages: Vec<SolvedMessage>,
     activations: Vec<SolvedActivation>,
+    fragments: Vec<SolvedFragment>,
     created_at: BTreeMap<String, f64>,
     destroyed_at: BTreeMap<String, f64>,
     involved: BTreeSet<String>,
@@ -169,19 +168,34 @@ impl<'a> WalkState<'a> {
             .max(self.cfg.row_gap)
     }
 
-    fn walk_items(&mut self, items: &[SeqChild]) {
+    /// Walk an ordered item stream, returning the horizontal extent (leftmost,
+    /// rightmost lifeline stem x) involved anywhere in this subtree —
+    /// transitively through nested fragments (design spec §3.5).
+    fn walk_items(&mut self, items: &[SeqChild], depth: u8) -> (f64, f64) {
+        let mut min_x = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
         for child in items {
             match child {
-                SeqChild::Message { edge } => self.walk_message(edge),
-                SeqChild::Fragment { node } => self.walk_fragment(node),
+                SeqChild::Message { edge } => {
+                    if let Some((lo, hi)) = self.walk_message(edge) {
+                        min_x = min_x.min(lo);
+                        max_x = max_x.max(hi);
+                    }
+                }
+                SeqChild::Fragment { node } => {
+                    let (_, _, lo, hi) = self.walk_fragment(node, depth);
+                    if lo.is_finite() {
+                        min_x = min_x.min(lo);
+                        max_x = max_x.max(hi);
+                    }
+                }
             }
         }
+        (min_x, max_x)
     }
 
-    fn walk_message(&mut self, edge_id: &str) {
-        let Some(edge) = self.edges_by_id.get(edge_id).copied() else {
-            return;
-        };
+    fn walk_message(&mut self, edge_id: &str) -> Option<(f64, f64)> {
+        let edge = self.edges_by_id.get(edge_id).copied()?;
         if !self.lifeline_ids.contains(edge.from.as_str())
             || !self.lifeline_ids.contains(edge.to.as_str())
         {
@@ -194,7 +208,7 @@ impl<'a> WalkState<'a> {
                 self.doc_key.to_string(),
                 0,
             ));
-            return;
+            return None;
         }
         self.involved.insert(edge.from.clone());
         self.involved.insert(edge.to.clone());
@@ -222,7 +236,7 @@ impl<'a> WalkState<'a> {
                 label: self.label_rect(edge_id, from_x, to_x, y),
             });
             self.y += row_h * 2.0;
-            return;
+            return Some((from_x, from_x + rect.w));
         }
 
         let y = self.y;
@@ -282,6 +296,7 @@ impl<'a> WalkState<'a> {
             label: self.label_rect(edge_id, from_x, to_x, y),
         });
         self.y += row_h;
+        Some((from_x.min(to_x), from_x.max(to_x)))
     }
 
     fn label_rect(&self, edge_id: &str, from_x: f64, to_x: f64, y: f64) -> Option<Rect> {
@@ -295,29 +310,127 @@ impl<'a> WalkState<'a> {
         })
     }
 
-    fn walk_fragment(&mut self, node_id: &str) {
-        let nodes_by_id = self.nodes_by_id;
-        let Some(SeqNode::Fragment { operands, .. }) = nodes_by_id.get(node_id).copied() else {
-            return;
+    /// Solve one combined fragment bottom-up (design spec §3.5): rows are
+    /// assigned top-down as we walk (header, per-operand guard row + items,
+    /// closing padding), but the frame rect can only be known once every
+    /// descendant row/extent is known, so it is computed after the walk and
+    /// any already-recorded nested-fragment rects are clamped inside it.
+    /// Returns (top, bottom, min_x, max_x) for the parent's own extent.
+    fn walk_fragment(&mut self, node_id: &str, depth: u8) -> (f64, f64, f64, f64) {
+        let Some(SeqNode::Fragment { id, kind, operands }) = self.nodes_by_id.get(node_id).copied()
+        else {
+            return (self.y, self.y, f64::INFINITY, f64::NEG_INFINITY);
         };
-        // Header row.
-        self.y += self.cfg.row_gap;
-        for operand_id in operands {
-            // Guard row.
-            self.y += self.cfg.row_gap;
-            if let Some(SeqNode::Operand { items, .. }) = nodes_by_id.get(operand_id.as_str()) {
-                let items = items.clone();
-                self.walk_items(&items);
-            }
+        let id = id.clone();
+        let kind = *kind;
+        let operands = operands.clone();
+
+        let top = self.y;
+        self.y += self.cfg.row_gap; // header row
+
+        if operands.is_empty() {
+            self.diagnostics.push(Diagnostic::new(
+                DiagCode::FragmentZeroOperands,
+                format!("fragment '{id}' has zero operands"),
+                self.doc_key.to_string(),
+                0,
+            ));
         }
-        // Closing padding.
-        self.y += self.cfg.row_gap;
+
+        let frag_start_idx = self.fragments.len();
+        let mut min_x = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut solved_operands = Vec::with_capacity(operands.len());
+
+        for (i, operand_id) in operands.iter().enumerate() {
+            let operand_start = self.y;
+            let divider_y = if i == 0 { None } else { Some(operand_start) };
+            self.y += self.cfg.row_gap; // guard row
+
+            let mut guard: Option<String> = None;
+            if let Some(SeqNode::Operand {
+                guard: g, items, ..
+            }) = self.nodes_by_id.get(operand_id.as_str()).copied()
+            {
+                guard = g.clone();
+                if items.is_empty() {
+                    self.diagnostics.push(Diagnostic::new(
+                        DiagCode::EmptyOperandStream,
+                        format!("operand '{operand_id}' has an empty item stream"),
+                        self.doc_key.to_string(),
+                        0,
+                    ));
+                }
+                let items = items.clone();
+                let (op_min, op_max) = self.walk_items(&items, depth + 1);
+                if op_min.is_finite() {
+                    min_x = min_x.min(op_min);
+                    max_x = max_x.max(op_max);
+                }
+            }
+
+            let guard_text = guard.clone().unwrap_or_else(|| "else".to_string());
+            let guard_rect = Rect {
+                x: 0.0, // fixed up below once the frame's left edge is known
+                y: operand_start,
+                w: sizing::text_width(&format!("[{guard_text}]"), self.cfg.font_size, Font::Sans),
+                h: self.cfg.line_height,
+            };
+            solved_operands.push(SolvedOperand {
+                divider_y,
+                guard,
+                guard_rect,
+            });
+        }
+
+        self.y += self.cfg.row_gap; // closing padding
+        let bottom = self.y;
+
+        if !min_x.is_finite() {
+            // No messages anywhere inside — fall back to a zero-width frame
+            // at the header's own y so the rect is still well-formed.
+            min_x = 0.0;
+            max_x = 0.0;
+        }
+
+        let pad = self.cfg.frame_inset;
+        let rect = Rect {
+            x: min_x - pad,
+            y: top,
+            w: (max_x - min_x) + 2.0 * pad,
+            h: bottom - top,
+        };
+
+        for op in &mut solved_operands {
+            op.guard_rect.x = rect.x + pad;
+        }
+
+        // Clamp already-recorded descendant fragment rects to sit strictly
+        // inside this one, inset by frame_inset when their spans coincide
+        // with ours (design spec §3.5).
+        let min_allowed_x = rect.x + pad;
+        let max_allowed_right = rect.x + rect.w - pad;
+        for child in &mut self.fragments[frag_start_idx..] {
+            let new_x = child.rect.x.max(min_allowed_x);
+            let new_right = (child.rect.x + child.rect.w).min(max_allowed_right);
+            child.rect.x = new_x;
+            child.rect.w = (new_right - new_x).max(0.0);
+        }
+
+        self.fragments.push(SolvedFragment {
+            id,
+            kind,
+            rect,
+            depth,
+            operands: solved_operands,
+        });
+
+        (top, bottom, min_x, max_x)
     }
 }
 
-/// Solve one `SequenceDoc` into columns, rows, messages, and activation bars
-/// (design spec §3.1-§3.4, §3.6). Fragment rects are not computed this task —
-/// `SolvedInteraction::fragments` is always empty (Task 5 fills it in).
+/// Solve one `SequenceDoc` into columns, rows, messages, activation bars, and
+/// fragment frames (design spec §3.1-§3.6).
 pub fn solve_interaction(
     doc: &SequenceDoc,
     sizes: &SizeMap,
@@ -377,12 +490,13 @@ pub fn solve_interaction(
         stacks: BTreeMap::new(),
         messages: Vec::new(),
         activations: Vec::new(),
+        fragments: Vec::new(),
         created_at: BTreeMap::new(),
         destroyed_at: BTreeMap::new(),
         involved: BTreeSet::new(),
         diagnostics: Vec::new(),
     };
-    state.walk_items(&doc.items);
+    let _ = state.walk_items(&doc.items, 0);
 
     let bottom = state.y;
     // Any activation still open at the end closes at the interaction bottom,
@@ -465,7 +579,7 @@ pub fn solve_interaction(
         lifelines,
         activations: state.activations,
         messages: state.messages,
-        fragments: Vec::new(),
+        fragments: state.fragments,
         size: Size {
             w: total_w,
             h: bottom,

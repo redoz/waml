@@ -38,6 +38,8 @@ pub enum DiagCode {
     UnknownLifelineHandle,
     UnmatchedReply,
     UninvolvedLifeline,
+    FragmentZeroOperands,
+    EmptyOperandStream,
 }
 
 impl DiagCode {
@@ -68,6 +70,8 @@ impl DiagCode {
             DiagCode::UnknownLifelineHandle => "unknown-lifeline-handle",
             DiagCode::UnmatchedReply => "unmatched-reply",
             DiagCode::UninvolvedLifeline => "uninvolved-lifeline",
+            DiagCode::FragmentZeroOperands => "fragment-zero-operands",
+            DiagCode::EmptyOperandStream => "empty-operand-stream",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
@@ -81,7 +85,9 @@ impl DiagCode {
             | DiagCode::UnreachableFlowNode
             | DiagCode::UnknownLifelineHandle
             | DiagCode::UnmatchedReply
-            | DiagCode::UninvolvedLifeline => Severity::Warning,
+            | DiagCode::UninvolvedLifeline
+            | DiagCode::FragmentZeroOperands
+            | DiagCode::EmptyOperandStream => Severity::Warning,
             _ => Severity::Error,
         }
     }
