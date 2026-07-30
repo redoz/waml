@@ -516,6 +516,18 @@ impl BehaviorSurface {
         self.selected.is_some()
     }
 
+    /// Element count of the current scene, for the status bar (mirrors
+    /// `ClassDiagramSurface::node_count`).
+    pub(crate) fn node_count(&self) -> usize {
+        self.scene.element_count()
+    }
+
+    /// Current zoom as a whole-number percentage, for the status bar (mirrors
+    /// `ClassDiagramSurface::zoom_pct`).
+    pub(crate) fn zoom_pct(&self) -> i32 {
+        (self.viewport.camera().zoom * 100.0).round() as i32
+    }
+
     /// `Esc` clears the selection (spec §5.2).
     pub(crate) fn clear_selection(&mut self, cx: &mut Cx) {
         if self.selected.is_some() {

@@ -1630,12 +1630,30 @@ impl App {
             .first()
             .map(|t| t.title.clone())
             .unwrap_or_default();
-        let (node_count, zoom_pct) = self
-            .ui
-            .widget(cx, ids!(canvas))
-            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
-            .map(|c| (c.node_count(), c.zoom_pct()))
-            .unwrap_or((0, 100));
+        // Read the surface the ACTIVE document actually draws on. Reading only
+        // `ClassDiagramSurface` left a behavior document reporting whatever the
+        // last class diagram had — an 11-node activity showed "1 node", and the
+        // zoom percentage was equally stale. The behavior surface is its own
+        // widget (`behavior_canvas`), so the active tab's category selects it.
+        let behavior_active = matches!(
+            self.documents
+                .active_tab()
+                .map(|t| t.presentation.category),
+            Some(NavCategory::Behavior | NavCategory::Sequence)
+        );
+        let (node_count, zoom_pct) = if behavior_active {
+            self.ui
+                .widget(cx, ids!(behavior_canvas))
+                .borrow_mut::<crate::canvas::BehaviorSurface>()
+                .map(|b| (b.node_count(), b.zoom_pct()))
+                .unwrap_or((0, 100))
+        } else {
+            self.ui
+                .widget(cx, ids!(canvas))
+                .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+                .map(|c| (c.node_count(), c.zoom_pct()))
+                .unwrap_or((0, 100))
+        };
         let tool_label = self
             .ui
             .widget(cx, ids!(tool_dock))

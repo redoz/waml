@@ -114,6 +114,20 @@ pub(crate) enum BehaviorScene {
 }
 
 impl BehaviorScene {
+    /// How many elements the status bar counts for this scene: flow nodes for a
+    /// flow, participant lifelines for an interaction, nothing for `Empty`.
+    ///
+    /// `App::sync_statusbar` needs this because it previously only ever read
+    /// `ClassDiagramSurface`, which left a behavior document showing whatever
+    /// count the last class diagram had.
+    pub(crate) fn element_count(&self) -> usize {
+        match self {
+            BehaviorScene::Empty { .. } => 0,
+            BehaviorScene::Flow { nodes, .. } => nodes.len(),
+            BehaviorScene::Interaction { lifelines, .. } => lifelines.len(),
+        }
+    }
+
     /// The world-space bounding box of everything this scene draws, or `None`
     /// for an `Empty` scene (mirrors `crate::scene::bounding_box`). Drives the
     /// load-time fit and the view bar's Fit to Size (spec §4, Task 6).
