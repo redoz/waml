@@ -87,9 +87,7 @@ impl App {
                 ExclusiveHandler::TreeContextMenu => self.handle_tree_context_menu(cx, actions),
                 ExclusiveHandler::TreeNavigation => self.handle_tree_navigation(cx, actions),
                 ExclusiveHandler::HistoryControls => self.handle_history_controls(cx, actions),
-                ExclusiveHandler::DocumentHeader => {
-                    self.handle_document_header_navigation(cx, actions)
-                }
+                ExclusiveHandler::DocumentHeader => self.handle_document_header_action(cx, actions),
                 ExclusiveHandler::DiagramSwitcher => self.handle_diagram_switcher(cx, actions),
                 ExclusiveHandler::ConflictBadge => self.handle_conflict_badge(cx, actions),
                 ExclusiveHandler::ActiveDocumentView => {
@@ -579,22 +577,28 @@ impl App {
         ActionFlow::Consumed
     }
 
-    fn handle_document_header_navigation(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+    fn handle_document_header_action(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
         let action = self
             .ui
             .widget(cx, ids!(document_header))
             .borrow::<crate::document_header::DocumentHeader>()
             .and_then(|header| header.action(actions));
         match action {
-            Some(crate::document_header::DocumentHeaderAction::Navigate(target)) => {
-                self.clear_history_feedback(cx);
-                self.handle_navigation_intent(
-                    cx,
-                    crate::navigation::NavigationIntent::Resolved {
-                        target,
-                        disposition: crate::navigation::OpenDisposition::Preview,
-                    },
-                );
+            Some(crate::document_header::DocumentHeaderAction::RevealInTree(target)) => {
+                let accepted = self
+                    .ui
+                    .widget(cx, ids!(project_tree))
+                    .borrow_mut::<crate::tree_panel::ProjectTree>()
+                    .is_some_and(|mut tree| tree.reveal_target(cx, &target));
+                if accepted {
+                    let (_, inspector) = self.dock_states(cx);
+                    let inspector = if self.narrow {
+                        crate::dock::DockState::Flag
+                    } else {
+                        inspector
+                    };
+                    self.apply_dock_states(cx, crate::dock::DockState::Pinned, inspector);
+                }
                 ActionFlow::Consumed
             }
             _ => ActionFlow::Continue,

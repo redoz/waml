@@ -84,7 +84,6 @@ const TEXT_DY: f64 = 1.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DocumentHeaderAction {
-    Navigate(NavigationTarget),
     RevealInTree(NavigationTarget),
     ToggleRightDock,
 }

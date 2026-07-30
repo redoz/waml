@@ -3441,6 +3441,21 @@ mod tests {
         is_open
     }
 
+    fn mounted_project_tree_state(cx: &Cx, app: &App) -> DockState {
+        app.ui
+            .widget(cx, ids!(project_tree))
+            .borrow::<crate::tree_panel::ProjectTree>()
+            .expect("production shell mounts project_tree")
+            .dock_state()
+    }
+
+    fn project_tree_selected_key(cx: &Cx, app: &App) -> Option<String> {
+        app.ui
+            .widget(cx, ids!(project_tree))
+            .borrow::<crate::tree_panel::ProjectTree>()
+            .and_then(|tree| tree.test_selected_key().map(str::to_owned))
+    }
+
     #[test]
     fn navigation_external_target_invokes_only_the_browser_adapter_once() {
         let (mut cx, mut app) = navigation_app();
@@ -3951,7 +3966,100 @@ mod tests {
     }
 
     #[test]
-    fn navigation_document_ingresses_share_target_and_preview_command() {
+    fn breadcrumb_reveal_pins_tree_without_navigation() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        app.apply_dock_states(&mut cx, DockState::Flag, DockState::Pinned);
+        let active = app.documents.active_id();
+        let history_len = app.view_history.len();
+        let uid = app.ui.widget(&cx, ids!(document_header)).widget_uid();
+
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                uid,
+                crate::document_header::DocumentHeaderAction::RevealInTree(
+                    NavigationTarget::Directory {
+                        address: "/sales".into(),
+                    },
+                ),
+            )],
+        );
+
+        assert_eq!(app.documents.active_id(), active);
+        assert_eq!(app.view_history.len(), history_len);
+        assert_eq!(mounted_project_tree_state(&cx, &app), DockState::Pinned);
+        assert_eq!(
+            project_tree_selected_key(&cx, &app).as_deref(),
+            Some("/sales")
+        );
+        assert_eq!(
+            app.dock_states(&mut cx),
+            (DockState::Pinned, DockState::Pinned)
+        );
+    }
+
+    #[test]
+    fn breadcrumb_reveal_in_narrow_mode_closes_inspector() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        app.narrow = true;
+        app.apply_dock_states(&mut cx, DockState::Flag, DockState::Pinned);
+        let active = app.documents.active_id();
+        let history_len = app.view_history.len();
+        let uid = app.ui.widget(&cx, ids!(document_header)).widget_uid();
+
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                uid,
+                crate::document_header::DocumentHeaderAction::RevealInTree(
+                    NavigationTarget::Directory {
+                        address: "/sales".into(),
+                    },
+                ),
+            )],
+        );
+
+        assert_eq!(app.documents.active_id(), active);
+        assert_eq!(app.view_history.len(), history_len);
+        assert_eq!(
+            app.dock_states(&mut cx),
+            (DockState::Pinned, DockState::Flag)
+        );
+    }
+
+    #[test]
+    fn breadcrumb_reveal_rejects_unknown_target_without_changes() {
+        let (mut cx, mut app) = navigation_app_with_active_order();
+        app.apply_dock_states(&mut cx, DockState::Flag, DockState::Pinned);
+        let active = app.documents.active_id();
+        let history_len = app.view_history.len();
+        let selected = project_tree_selected_key(&cx, &app);
+        let uid = app.ui.widget(&cx, ids!(document_header)).widget_uid();
+
+        app.handle_action_batch(
+            &mut cx,
+            &[widget_action(
+                uid,
+                crate::document_header::DocumentHeaderAction::RevealInTree(
+                    NavigationTarget::Document {
+                        concept_id: "/missing".into(),
+                        fragment: None,
+                    },
+                ),
+            )],
+        );
+
+        assert_eq!(app.documents.active_id(), active);
+        assert_eq!(app.view_history.len(), history_len);
+        assert_eq!(project_tree_selected_key(&cx, &app), selected);
+        assert_eq!(
+            app.dock_states(&mut cx),
+            (DockState::Flag, DockState::Pinned)
+        );
+    }
+
+    #[test]
+    fn navigation_document_ingresses_from_tree_and_markdown_share_preview_command() {
         let target = NavigationTarget::Document {
             concept_id: "sales/customer".into(),
             fragment: None,
@@ -3960,39 +4068,19 @@ mod tests {
             target: target.clone(),
             disposition: OpenDisposition::Preview,
         };
-        let (breadcrumb_intent, markdown_resolved_intent) = {
+        let markdown_resolved_intent = {
             let (_cx, fixture_app) = navigation_app();
-            let breadcrumb_target = crate::navigation::breadcrumb_for(
-                fixture_app.session.okf_analysis(),
-                fixture_app.session.uml_analysis(),
-                "sales/customer",
-            )
-            .expect("customer has a canonical breadcrumb")
-            .into_iter()
-            .last()
-            .expect("breadcrumb ends at the document")
-            .target;
-            (
-                NavigationIntent::Resolved {
-                    target: breadcrumb_target,
-                    disposition: OpenDisposition::Preview,
-                },
-                NavigationIntent::Resolved {
-                    target: crate::navigation::resolve_link(
-                        fixture_app.session.okf(),
-                        "sales/order",
-                        "./customer.md",
-                    )
-                    .expect("relative customer link resolves"),
-                    disposition: OpenDisposition::Preview,
-                },
-            )
+            NavigationIntent::Resolved {
+                target: crate::navigation::resolve_link(
+                    fixture_app.session.okf(),
+                    "sales/order",
+                    "./customer.md",
+                )
+                .expect("relative customer link resolves"),
+                disposition: OpenDisposition::Preview,
+            }
         };
 
-        assert_eq!(
-            resolved_target(&tree_intent),
-            resolved_target(&breadcrumb_intent)
-        );
         assert_eq!(
             resolved_target(&tree_intent),
             resolved_target(&markdown_resolved_intent)
@@ -4000,20 +4088,15 @@ mod tests {
 
         enum Ingress {
             Tree,
-            Header,
             Markdown,
         }
-        for ingress in [Ingress::Tree, Ingress::Header, Ingress::Markdown] {
+        for ingress in [Ingress::Tree, Ingress::Markdown] {
             let (mut cx, mut app) = navigation_app_with_active_order();
             let order_id = app.documents.active_id();
             let action = match ingress {
                 Ingress::Tree => widget_action(
                     app.ui.widget(&cx, ids!(project_tree)).widget_uid(),
                     crate::tree_panel::ProjectTreeAction::Navigate(tree_intent.clone()),
-                ),
-                Ingress::Header => widget_action(
-                    app.ui.widget(&cx, ids!(document_header)).widget_uid(),
-                    crate::document_header::DocumentHeaderAction::Navigate(target.clone()),
                 ),
                 Ingress::Markdown => widget_action(
                     app.ui.widget(&cx, ids!(markdown_surface.md)).widget_uid(),
@@ -4173,14 +4256,13 @@ mod tests {
     }
 
     #[test]
-    fn navigation_directory_intents_share_one_app_owned_toggle_path() {
+    fn navigation_directory_intents_from_tree_and_markdown_share_one_toggle_path() {
         enum Ingress {
             Tree,
-            Header,
             Markdown,
         }
 
-        for ingress in [Ingress::Tree, Ingress::Header, Ingress::Markdown] {
+        for ingress in [Ingress::Tree, Ingress::Markdown] {
             let (mut cx, mut app) = navigation_app();
             mount_markdown_surface(&mut cx, &mut app);
             let mut browser = FakeBrowser::default();
@@ -4220,17 +4302,6 @@ mod tests {
                                     address: "/sales".into(),
                                 },
                                 disposition: OpenDisposition::Preview,
-                            },
-                        ),
-                    )
-                }
-                Ingress::Header => {
-                    let uid = app.ui.widget(&cx, ids!(document_header)).widget_uid();
-                    widget_action(
-                        uid,
-                        crate::document_header::DocumentHeaderAction::Navigate(
-                            NavigationTarget::Directory {
-                                address: "/sales".into(),
                             },
                         ),
                     )

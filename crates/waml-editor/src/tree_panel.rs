@@ -1222,6 +1222,11 @@ impl ProjectTree {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_selected_key(&self) -> Option<&str> {
+        self.selected_key.as_deref()
+    }
+
     fn update_reveal_pulse(&mut self, cx: &mut Cx, time: f64) {
         if self.reveal_started_at < 0.0 {
             self.reveal_started_at = time;
@@ -1475,26 +1480,27 @@ mod tests {
         }
     }
 
-    fn reveal_state(
-        panel: &ProjectTree,
-    ) -> (
-        HashSet<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        f32,
-        f64,
-        NextFrame,
-    ) {
-        (
-            panel.open_directories.clone(),
-            panel.selected_key.clone(),
-            panel.reveal_key.clone(),
-            panel.pending_scroll_key.clone(),
-            panel.reveal_strength,
-            panel.reveal_started_at,
-            panel.reveal_next_frame,
-        )
+    #[derive(Clone, Debug, PartialEq)]
+    struct RevealState {
+        open_directories: HashSet<String>,
+        selected_key: Option<String>,
+        reveal_key: Option<String>,
+        pending_scroll_key: Option<String>,
+        reveal_strength: f32,
+        reveal_started_at: f64,
+        reveal_next_frame: NextFrame,
+    }
+
+    fn reveal_state(panel: &ProjectTree) -> RevealState {
+        RevealState {
+            open_directories: panel.open_directories.clone(),
+            selected_key: panel.selected_key.clone(),
+            reveal_key: panel.reveal_key.clone(),
+            pending_scroll_key: panel.pending_scroll_key.clone(),
+            reveal_strength: panel.reveal_strength,
+            reveal_started_at: panel.reveal_started_at,
+            reveal_next_frame: panel.reveal_next_frame,
+        }
     }
 
     fn set_distinct_reveal_state(panel: &mut ProjectTree) {
