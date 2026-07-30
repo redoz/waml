@@ -175,10 +175,10 @@ script_mod! {
     // Hidden-group border pen (the x-ray, spec §3): a dashed hairline on the
     // group rect with NO fill. The dash rides the (x+y) diagonal so the pattern
     // stays continuous across all four sides and around the corners, unlike
-    // per-side stamping. `dash_px` is pushed per draw so the dash grows with
-    // zoom. Branch-free: an `if` on a uniform silently no-ops in this fork's
-    // shader VM (see EdgeMarker above), so the on/off duty is a 0..1 mask
-    // multiplied into the stroke alpha.
+    // per-side stamping. Dash period and stroke width are pushed from the active
+    // linework mode; CAD keeps both fixed in screen space. Branch-free: an `if`
+    // on a uniform silently no-ops in this fork's shader VM (see EdgeMarker
+    // above), so the on/off duty is a 0..1 mask multiplied into the stroke alpha.
     //
     // Task 6 visual review (`tests/fixtures/groups`, x-ray on), RE-RUN after the
     // duty mask below was reworked -- the first review predates that rework and

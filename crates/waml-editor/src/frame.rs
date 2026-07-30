@@ -100,10 +100,11 @@ script_mod! {
     use mod.atlas
 
     // The gradient stops default to the Atlas tokens; a consumer overrides only
-    // the per-instance `color` fill. `zoom` scales the 1.5px border inset +
-    // stroke width so a canvas node's frame thickens with its zoomed box instead
-    // of staying a fixed screen-pixel hairline; the canvas pushes it per frame
-    // via set_uniform. Panels leave it at the default 1.0 (screen-space, no zoom).
+    // the per-instance `color` fill. Frame geometry scales by `zoom *
+    // stroke_scale`: the canvas pushes both per frame, and CAD supplies inverse
+    // zoom for `stroke_scale` to hold linework fixed in screen space. Other
+    // consumers leave `stroke_scale` at 1.0, preserving their raw-zoom behavior;
+    // panels also leave `zoom` at its default 1.0.
     // `selected` (0.0/1.0) widens the inset+stroke ~1.5x for the canvas's picked
     // node; the canvas pushes it per node before draw_abs, same as `zoom`.
     // Everyone else leaves it at 0.0 (the common, visually-unchanged path).
@@ -144,15 +145,16 @@ script_mod! {
             let inset = 1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected)
             // Stroke width floors to a 1px screen-space hairline so the frame
             // never smears sub-pixel (and fades) when zoomed out, mirroring the
-            // canvas EdgeLine pen. The rect inset stays proportional; only the
-            // stroke is floored, so it centers on the box edge at low zoom.
+            // canvas EdgeLine pen. The rect inset follows `zoom * stroke_scale`;
+            // only the stroke is floored, so it centers on the box edge.
             let sw = max(1.25, inset)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
 
             // --- depth shadow, under every other layer -------------------
-            // The shadow belongs to the surface in WORLD space, exactly as the
-            // border inset does, so offset and blur scale with `zoom` -- floored
-            // so it doesn't evaporate at fit-zoom.
+            // Shadow scaling is independent of `stroke_scale`: offset and blur
+            // use raw `zoom`, floored so they do not evaporate at fit-zoom.
+            // Low-zoom stroke contrast below likewise continues to read raw
+            // `zoom`, even when CAD fixes the frame geometry in screen space.
             let z = max(0.35, self.zoom)
             // Box distance to the true surface rect (the quad minus the bleed),
             // pushed down by `depth_y`. Longhand and component-wise: `sdf.box`
