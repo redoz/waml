@@ -1,0 +1,16 @@
+node flow#Archive @ 390,644 86x38
+node flow#Check @ 24,168 76x76
+node flow#End @ 390,832 22x22
+node flow#Merge @ 164,582 80x6
+node flow#Notify @ 268,488 75x38
+node flow#Order @ 390,738 73x38
+node flow#Pack @ 164,488 72x38
+node flow#Retry @ 24,394 72x38
+node flow#Review @ 24,300 84x38
+node flow#Ship @ 164,300 72x38
+node flow#Split @ 164,394 80x6
+node flow#Start @ 390,0 18x18
+node flow#Validate @ 24,74 92x38
+group Frame "Intake" d0 @ 0,0 140x878
+group Frame "Fulfillment" d0 @ 140,0 227x878
+group Frame "" d0 @ 366,0 134x878

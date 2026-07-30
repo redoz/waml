@@ -5,6 +5,7 @@ use crate::diagnostic::Diagnostic;
 use crate::layout::{Axis, Direction, Edge, Margin, Shape};
 use std::collections::BTreeMap;
 
+pub mod flow;
 pub mod geometry;
 pub mod potentials;
 pub mod resolve;
@@ -176,6 +177,24 @@ pub fn pretty(solved: &Solved) -> String {
                 f.emphasized, f.collapsed
             ));
         }
+    }
+    out
+}
+
+/// Deterministic dump of a solved flow: `pretty(solved)` plus one line per
+/// route (`route <source> -> <target> : x,y x,y ...`, coords `{:.0}`), in
+/// `routes` order.
+pub fn pretty_flow(solved: &Solved) -> String {
+    let mut out = pretty(solved);
+    for r in &solved.routes {
+        out.push_str(&format!("route {} -> {} : ", r.source, r.target));
+        let pts: Vec<String> = r
+            .points
+            .iter()
+            .map(|(x, y)| format!("{x:.0},{y:.0}"))
+            .collect();
+        out.push_str(&pts.join(" "));
+        out.push('\n');
     }
     out
 }

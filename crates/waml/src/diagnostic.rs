@@ -31,6 +31,9 @@ pub enum DiagCode {
     SlotUnknownAttribute,
     InstanceOfNonClassifier,
     InstanceOfUnresolved,
+    UnreachableFlowNode,
+    DecisionWithoutGuard,
+    EmptyFlowDocument,
 }
 
 impl DiagCode {
@@ -54,6 +57,9 @@ impl DiagCode {
             DiagCode::SlotUnknownAttribute => "slot-unknown-attribute",
             DiagCode::InstanceOfNonClassifier => "instance-of-non-classifier",
             DiagCode::InstanceOfUnresolved => "instance-of-unresolved",
+            DiagCode::UnreachableFlowNode => "unreachable-flow-node",
+            DiagCode::DecisionWithoutGuard => "decision-without-guard",
+            DiagCode::EmptyFlowDocument => "empty-flow-document",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
@@ -63,7 +69,8 @@ impl DiagCode {
             | DiagCode::UnresolvedLayoutRef
             | DiagCode::SlotUnknownAttribute
             | DiagCode::InstanceOfNonClassifier
-            | DiagCode::InstanceOfUnresolved => Severity::Warning,
+            | DiagCode::InstanceOfUnresolved
+            | DiagCode::UnreachableFlowNode => Severity::Warning,
             _ => Severity::Error,
         }
     }
