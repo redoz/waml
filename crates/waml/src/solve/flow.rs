@@ -193,14 +193,15 @@ pub fn measure_flow(nodes: &[&ActivityNode], flavor: FlowFlavor, cfg: &FlowConfi
     sizes
 }
 
-/// Cycle-break by DFS: from `Initial` nodes, else in-degree-0 nodes, else the
-/// first declared node. Returns the set of edge keys whose direction was
-/// reversed for ranking purposes.
-fn break_cycles(rf: &ResolvedFlow, adj: &BTreeMap<&str, Vec<&FlowEdge>>) -> BTreeSet<String> {
-    let mut reversed = BTreeSet::new();
-    let mut visited: BTreeSet<&str> = BTreeSet::new();
-    let mut on_stack: BTreeSet<&str> = BTreeSet::new();
-
+/// The traversal seed for a flow, per spec §2.3: `Initial` nodes, else every
+/// in-degree-0 node, else the first declared node.
+///
+/// SINGLE SOURCE OF TRUTH. Both cycle-breaking and the reachability check that
+/// feeds `UnreachableFlowNode` must use this same set. When the reachability
+/// pass had its own copy that omitted the in-degree-0 tier, a legitimate flow
+/// with no `initial` and two roots reported every node of the second component
+/// as unreachable.
+fn traversal_starts<'a>(rf: &'a ResolvedFlow) -> Vec<&'a str> {
     let indegree: BTreeMap<&str, usize> = {
         let mut d: BTreeMap<&str, usize> = rf.nodes.iter().map(|n| (n.key.as_str(), 0)).collect();
         for e in &rf.edges {
@@ -228,6 +229,17 @@ fn break_cycles(rf: &ResolvedFlow, adj: &BTreeMap<&str, Vec<&FlowEdge>>) -> BTre
             starts.push(first.key.as_str());
         }
     }
+    starts
+}
+
+/// Cycle-break by DFS from `traversal_starts`. Returns the set of edge keys
+/// whose direction was reversed for ranking purposes.
+fn break_cycles(rf: &ResolvedFlow, adj: &BTreeMap<&str, Vec<&FlowEdge>>) -> BTreeSet<String> {
+    let mut reversed = BTreeSet::new();
+    let mut visited: BTreeSet<&str> = BTreeSet::new();
+    let mut on_stack: BTreeSet<&str> = BTreeSet::new();
+
+    let starts = traversal_starts(rf);
 
     /// Iterative (explicit-stack) DFS: a user document can carry an arbitrarily
     /// long node chain, and recursion here would overflow the editor's stack.
@@ -644,17 +656,9 @@ pub fn solve_flow(
                 .push(e.to.as_str());
         }
         let mut seen: BTreeSet<&str> = BTreeSet::new();
-        let mut queue: VecDeque<&str> = rf
-            .nodes
-            .iter()
-            .filter(|n| n.kind == FlowNodeKind::Initial)
-            .map(|n| n.key.as_str())
-            .collect();
-        if queue.is_empty() {
-            if let Some(first) = rf.nodes.first() {
-                queue.push_back(first.key.as_str());
-            }
-        }
+        // Same seed as `break_cycles` — see `traversal_starts`. Diverging here
+        // reports whole components of a multi-root flow as unreachable.
+        let mut queue: VecDeque<&str> = traversal_starts(&rf).into_iter().collect();
         while let Some(n) = queue.pop_front() {
             if !seen.insert(n) {
                 continue;

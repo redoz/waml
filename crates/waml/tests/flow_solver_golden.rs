@@ -286,6 +286,80 @@ fn decision_without_guards_diagnoses_but_still_solves() {
     assert!(!sol.solved.nodes.is_empty());
 }
 
+/// Regression: a flow with NO `initial` node and two disconnected roots must not
+/// report the second component as unreachable. The reachability BFS once seeded
+/// itself with `Initial` nodes only (falling back to the FIRST declared node),
+/// while `break_cycles` also fell back to every in-degree-0 node — so `C -> D`
+/// below produced "node 'C' is unreachable" / "node 'D' is unreachable", which
+/// reached the status bar verbatim and inflated the empty-state count. Both now
+/// share `traversal_starts`.
+#[test]
+fn multi_root_flow_without_initial_reports_nothing_unreachable() {
+    fn plain(id: &str) -> ActivityNode {
+        ActivityNode {
+            key: format!("synthetic#{id}"),
+            id: id.into(),
+            behavior: "synthetic".into(),
+            kind: FlowNodeKind::Plain,
+            object_ref: None,
+            partition: None,
+            entry: None,
+            do_: None,
+            exit: None,
+            refines: None,
+            notes: vec![],
+        }
+    }
+    fn control(key: &str, from: &str, to: &str) -> FlowEdge {
+        FlowEdge {
+            key: format!("synthetic#{key}"),
+            kind: waml::model::FlowEdgeKind::ControlFlow,
+            behavior: "synthetic".into(),
+            from: format!("synthetic#{from}"),
+            to: format!("synthetic#{to}"),
+            to_ref: None,
+            trigger: None,
+            guard: None,
+            is_else: false,
+            effect: None,
+            carries: None,
+        }
+    }
+
+    // Two independent chains, no Initial anywhere: A -> B and C -> D.
+    let doc = FlowDoc {
+        key: "synthetic".into(),
+        title: "Synthetic".into(),
+        flavor: FlowFlavor::Activity,
+        describes: None,
+        nodes: ["A", "B", "C", "D"]
+            .iter()
+            .map(|id| format!("synthetic#{id}"))
+            .collect(),
+        edges: vec!["synthetic#e0".into(), "synthetic#e1".into()],
+    };
+    let nodes = vec![plain("A"), plain("B"), plain("C"), plain("D")];
+    let edges = vec![control("e0", "A", "B"), control("e1", "C", "D")];
+
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    let cfg = FlowConfig::default();
+    let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
+
+    let unreachable: Vec<&str> = sol
+        .diagnostics
+        .iter()
+        .map(|d| d.message.as_str())
+        .filter(|m| m.contains("unreachable"))
+        .collect();
+    assert!(
+        unreachable.is_empty(),
+        "multi-root flow wrongly reported unreachable nodes: {unreachable:?}"
+    );
+    // All four nodes still laid out.
+    assert_eq!(sol.solved.nodes.len(), 4);
+}
+
 #[test]
 fn empty_flow_doc_diagnoses_and_returns_empty_solved() {
     let doc = FlowDoc {
