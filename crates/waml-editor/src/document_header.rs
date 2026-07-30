@@ -85,6 +85,7 @@ const TEXT_DY: f64 = 1.0;
 #[derive(Clone, Debug, PartialEq)]
 pub enum DocumentHeaderAction {
     Navigate(NavigationTarget),
+    RevealInTree(NavigationTarget),
     ToggleRightDock,
 }
 
@@ -261,7 +262,7 @@ impl DocumentHeaderState {
             .rev()
             .find(|(_, rect)| rect.size.x > 0.0 && rect.size.y > 0.0 && rect.contains(position))
             .and_then(|(index, _)| self.segments.get(*index))
-            .map(|segment| DocumentHeaderAction::Navigate(segment.target.clone()))
+            .map(|segment| DocumentHeaderAction::RevealInTree(segment.target.clone()))
     }
 }
 
@@ -546,7 +547,7 @@ mod tests {
             assert!(rect.size.x >= 12.0);
             assert_eq!(
                 state.action_at(rect.pos + rect.size * 0.5),
-                Some(DocumentHeaderAction::Navigate(
+                Some(DocumentHeaderAction::RevealInTree(
                     segments[*index].target.clone()
                 ))
             );
@@ -712,7 +713,7 @@ mod tests {
 
         assert_eq!(
             state.action_at(dvec2(80.0, 15.0)),
-            Some(DocumentHeaderAction::Navigate(expected))
+            Some(DocumentHeaderAction::RevealInTree(expected))
         );
     }
 
@@ -745,7 +746,7 @@ mod tests {
             assert!(rect.size.x > 0.0);
             assert_eq!(
                 state.action_at(rect.pos + rect.size * 0.5),
-                Some(DocumentHeaderAction::Navigate(
+                Some(DocumentHeaderAction::RevealInTree(
                     segments[*index].target.clone()
                 )),
                 "hit for visible segment {index}"
