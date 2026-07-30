@@ -17,10 +17,8 @@
 //! struct). Any widget declares a field `draw_x: DrawColor`, points its DSL at
 //! `mod.draw.AccentFrame{ ... }`, and calls `draw_abs`; the caller owns layout.
 //!
-//! Phase C fills in the rest of the material one layer at a time (see
-//! `docs/superpowers/specs/2026-07-24-hud-material-phase-c-design.md`). Layer 3,
-//! the depth shadow, is in. Bloom glow, frost-gradient fill and the
-//! panel/node/button knob presets still land on this same prototype.
+//! Phase C adds the rest of the material: depth shadow, accent bloom,
+//! theme-aware frost fill, and panel/node/button knob presets.
 //!
 //! Shadow and bloom paint OUTSIDE the surface, but the SDF is clamped to
 //! `rect_size` -- so the drawn quad has to be bigger than the surface it frames.
@@ -42,6 +40,48 @@ use makepad_widgets::*;
 /// that binary even though the editor uses all of it.
 #[allow(dead_code)]
 pub const SURFACE_SHADOW_ZOOM_FLOOR: f64 = 0.35;
+
+/// Master scale and CSS radius for the resting accent bloom. These values are
+/// repeated in the shader because the script VM cannot read Rust constants.
+#[allow(dead_code)]
+pub const SURFACE_GLOW: f64 = 0.4;
+#[allow(dead_code)]
+pub const SURFACE_BLOOM_PX: f64 = 14.0;
+
+/// Selected canvas-node depth and bloom values. Rust uses them to size the
+/// padded quad; the shader uses the matching literals to draw the material.
+#[allow(dead_code)]
+pub const SURFACE_SEL_DEPTH_Y: f64 = 8.0;
+#[allow(dead_code)]
+pub const SURFACE_SEL_DEPTH_BLUR: f64 = 22.0;
+#[allow(dead_code)]
+pub const SURFACE_SEL_DEPTH_A: f64 = 0.14;
+#[allow(dead_code)]
+pub const SURFACE_SEL_BLOOM_PX: f64 = 26.0;
+#[allow(dead_code)]
+pub const SURFACE_SEL_BLOOM_A: f64 = 0.28;
+
+/// Total CSS border thickness in logical pixels at zoom 1.0.
+#[allow(dead_code)]
+pub const SURFACE_BORDER_PX: f64 = 1.5;
+
+/// Round a logical coordinate to the device-pixel grid.
+#[allow(dead_code)]
+pub fn surface_snap(value: f64, dpi: f64) -> f64 {
+    (value * dpi).round() / dpi
+}
+
+/// Round padding up so snapping cannot clip an outside-the-box layer.
+#[allow(dead_code)]
+pub fn surface_snap_up(value: f64, dpi: f64) -> f64 {
+    (value * dpi).ceil() / dpi
+}
+
+/// Mirror the shader's selected-value mix for padding calculations.
+#[allow(dead_code)]
+pub fn surface_lift(base: f64, selected_value: f64, selected: f64) -> f64 {
+    base + (selected_value - base) * selected.clamp(0.0, 1.0)
+}
 
 /// Pixels of padding a surface needs on every side for its shadow and bloom to
 /// fall outside the frame without clipping.
@@ -76,22 +116,38 @@ impl SurfaceExt for DrawColor {
             pen.get_uniform(cx, id, &mut slot);
             slot[0] as f64
         };
-        // `bloom` doesn't exist yet; get_uniform leaves the slot untouched, so an
-        // absent knob reads as 0.0 and simply doesn't widen the bleed.
+        let bloom_px = if read(self, cx, live_id!(bloom)) > 0.0 {
+            SURFACE_BLOOM_PX * SURFACE_GLOW
+        } else {
+            0.0
+        };
+        let selected = read(self, cx, live_id!(selected));
         let bleed = surface_bleed(
-            read(self, cx, live_id!(depth_y)),
-            read(self, cx, live_id!(depth_blur)),
-            read(self, cx, live_id!(bloom)),
+            surface_lift(
+                read(self, cx, live_id!(depth_y)),
+                SURFACE_SEL_DEPTH_Y,
+                selected,
+            ),
+            surface_lift(
+                read(self, cx, live_id!(depth_blur)),
+                SURFACE_SEL_DEPTH_BLUR,
+                selected,
+            ),
+            surface_lift(bloom_px, SURFACE_SEL_BLOOM_PX, selected),
             read(self, cx, live_id!(zoom)).max(SURFACE_SHADOW_ZOOM_FLOOR),
         );
-        self.set_uniform(cx, live_id!(bleed), &[bleed as f32]);
-        self.draw_abs(
-            cx,
-            Rect {
-                pos: rect.pos - dvec2(bleed, bleed),
-                size: rect.size + dvec2(bleed * 2.0, bleed * 2.0),
-            },
+        let dpi = cx.current_dpi_factor();
+        let bleed = surface_snap_up(bleed, dpi);
+        let pos = dvec2(
+            surface_snap(rect.pos.x, dpi) - bleed,
+            surface_snap(rect.pos.y, dpi) - bleed,
         );
+        let size = dvec2(
+            surface_snap(rect.size.x, dpi) + bleed * 2.0,
+            surface_snap(rect.size.y, dpi) + bleed * 2.0,
+        );
+        self.set_uniform(cx, live_id!(bleed), &[bleed as f32]);
+        self.draw_abs(cx, Rect { pos, size });
     }
 }
 
@@ -139,75 +195,85 @@ script_mod! {
         depth_blur: uniform(0.0)
         depth_a: uniform(0.0)
         shadow_col: uniform(atlas.shadow)
+        bloom: uniform(0.0)
+        accent_col: uniform(atlas.accent)
+        frost_top: uniform(1.0)
+        frost_bot: uniform(1.0)
+        frost_tint: uniform(0.0)
+        ground_col: uniform(atlas.ground)
         pixel: fn() {
-            // Selection widens the border ~1.5x: mix() lifts the 1.5px base to
-            // 2.25px when selected == 1.0, leaving the unselected path untouched.
-            let inset = 1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected)
-            // Stroke width floors to a 1px screen-space hairline so the frame
-            // never smears sub-pixel (and fades) when zoomed out, mirroring the
-            // canvas EdgeLine pen. The rect inset follows `zoom * stroke_scale`;
-            // only the stroke is floored, so it centers on the box edge.
-            let sw = max(1.25, inset)
+            // Border size uses `zoom * stroke_scale`: CAD supplies inverse zoom
+            // through stroke_scale for stable screen-space linework.
+            let dpi = max(1.0, self.draw_pass.dpi_factor)
+            let bw_dev = max(1.0, floor(1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected) * dpi + 0.5))
+            // `stroke` takes a half-width. The extra half device pixel moves
+            // its antialias ramp away from the crisp border samples.
+            let sw = (bw_dev * 0.5 + 0.5) / dpi
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
 
-            // --- depth shadow, under every other layer -------------------
-            // Shadow scaling is independent of `stroke_scale`: offset and blur
-            // use raw `zoom`, floored so they do not evaporate at fit-zoom.
-            // Low-zoom stroke contrast below likewise continues to read raw
-            // `zoom`, even when CAD fixes the frame geometry in screen space.
+            // Outside layers use raw zoom, never stroke_scale. Linework stays
+            // screen-space while material remains attached to the surface.
             let z = max(0.35, self.zoom)
-            // Box distance to the true surface rect (the quad minus the bleed),
-            // pushed down by `depth_y`. Longhand and component-wise: `sdf.box`
-            // degenerates at radius 0 and floods the fill, and assigning
-            // sdf.shape/dist from a pixel fn silently fails this fork's VM, so
-            // this stays plain float math outside the Sdf2d entirely.
+            let dy = mix(self.depth_y, 8.0, self.selected)
+            let dblur = mix(self.depth_blur, 22.0, self.selected)
+            let da = mix(self.depth_a, 0.14, self.selected)
             let hw = (self.rect_size.x - self.bleed * 2.0) * 0.5
             let hh = (self.rect_size.y - self.bleed * 2.0) * 0.5
             let p = self.pos * self.rect_size
             let qx = abs(p.x - (self.bleed + hw)) - hw
-            let qy = abs(p.y - (self.bleed + hh + self.depth_y * z)) - hh
             let ox = max(qx, 0.0)
-            let oy = max(qy, 0.0)
-            let sd = sqrt(ox * ox + oy * oy) + min(max(qx, qy), 0.0)
-            // CSS blur radius B ramps the shadow across roughly [-B/2, +B/2] of
-            // the edge. Floored at 1px so the smoothstep never has equal edges.
-            let sblur = max(1.0, self.depth_blur * z)
-            let salpha = self.depth_a * (1.0 - smoothstep(-sblur * 0.5, sblur * 0.5, sd))
-            // `clear` writes premultiplied straight into a still-empty result;
-            // the fill/stroke below then composite source-over on top, so the
-            // shadow is correctly hidden under the opaque card.
-            sdf.clear(vec4(self.shadow_col.rgb, salpha))
+            let sqy = abs(p.y - (self.bleed + hh + dy * z)) - hh
+            let soy = max(sqy, 0.0)
+            let sd = sqrt(ox * ox + soy * soy) + min(max(qx, sqy), 0.0)
+            let sblur = max(1.0, dblur * z)
+            let salpha = da * (1.0 - smoothstep(-sblur, sblur, sd))
 
-            // --- frame: stroke + flat fill, inset past the bleed ----------
-            let x0 = self.bleed + inset
-            let y0 = self.bleed + inset
-            sdf.rect(x0, y0, self.rect_size.x - x0 * 2.0, self.rect_size.y - y0 * 2.0)
-            sdf.fill_keep(self.color)
+            // Bloom is un-displaced, so it rings the surface evenly.
+            let glow = 0.4
+            let bpx = mix(14.0 * glow, 26.0, self.selected)
+            let ba = mix(self.bloom * glow, 0.28, self.selected)
+            let bqy = abs(p.y - (self.bleed + hh)) - hh
+            let boy = max(bqy, 0.0)
+            let bd = sqrt(ox * ox + boy * boy) + min(max(qx, bqy), 0.0)
+            let bblur = max(1.0, bpx * z)
+            let balpha = ba * (1.0 - smoothstep(-bblur, bblur, bd))
+            let orgb = self.accent_col.rgb * balpha + self.shadow_col.rgb * salpha * (1.0 - balpha)
+            let oa = balpha + salpha * (1.0 - balpha)
+            sdf.clear(vec4(orgb / max(oa, 0.0001), oa))
+
+            // Draw from the snapped padding plus half the border, which puts
+            // both edges on device-pixel boundaries.
+            let ctr = (self.bleed * dpi + bw_dev * 0.5) / dpi
+            sdf.rect(ctr, ctr, self.rect_size.x - ctr * 2.0, self.rect_size.y - ctr * 2.0)
             let dir = vec2(0.5, 0.8660254)
             let span = 1.3660254
-            // `self.pos` normalizes over the PADDED quad, so renormalize onto the
-            // true surface or the gradient's stops drift off the frame corners
-            // once bleed is non-zero. At bleed = 0 this is `self.pos` exactly.
             let ux = (p.x - self.bleed) / max(1.0, self.rect_size.x - self.bleed * 2.0)
             let uy = (p.y - self.bleed) / max(1.0, self.rect_size.y - self.bleed * 2.0)
+            let ghost = mix(self.ground_col, self.accent_col, self.frost_tint)
+            let frost = mix(self.frost_top, self.frost_bot, uy)
+            sdf.fill_keep(mix(ghost, self.color, frost))
             let t = clamp((ux * dir.x + uy * dir.y) / span, 0.0, 1.0)
-            // Zoomed out the 1px hairline of pale accent (frame_lo fades to 50%
-            // alpha) washes into the near-white field. Lift the stroke alpha
-            // toward opaque as zoom drops -- non-linearly, so the border stays
-            // legible at fit-zoom. At zoom >= 1 (panels, near cards) k = 0, so
-            // the common path is unchanged.
             let col = mix(self.border_hi, self.border_lo, t)
             let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
-            // Constraint-focus mute: collapse the stroke's chroma to its own
-            // Rec.601 luminance when `grey == 1.0`, leaving the coloured path
-            // (grey == 0.0) byte-for-byte. `dot()` silently fails this VM, so the
-            // weighted sum is longhand -- same rule as the gradient projection.
             let g = col.rgb
             let lum = g.x * 0.299 + g.y * 0.587 + g.z * 0.114
             let scol = mix(col.rgb, vec3(lum, lum, lum), self.grey)
             sdf.stroke(vec4(scol, mix(col.a, 1.0, k)), sw)
             return sdf.result
         }
+    }
+
+    mod.draw.PanelSurface = mod.draw.AccentFrame{
+        frost_top: 0.95 frost_bot: 0.82 frost_tint: 0.06
+        depth_y: 12.0 depth_blur: 30.0 depth_a: 0.20 bloom: 0.16
+    }
+    mod.draw.NodeSurface = mod.draw.AccentFrame{
+        frost_top: 0.94 frost_bot: 0.80 frost_tint: 0.06
+        depth_y: 8.0 depth_blur: 22.0 depth_a: 0.14 bloom: 0.18
+    }
+    mod.draw.ButtonSurface = mod.draw.AccentFrame{
+        frost_top: 0.92 frost_bot: 0.74 frost_tint: 0.10
+        depth_y: 6.0 depth_blur: 18.0 depth_a: 0.14 bloom: 0.22
     }
 }
 
@@ -241,6 +307,70 @@ mod tests {
     fn scales_with_zoom() {
         approx(surface_bleed(8.0, 22.0, 0.0, 0.5), 17.0);
         approx(surface_bleed(8.0, 22.0, 0.0, 2.0), 62.0);
+    }
+
+    #[test]
+    fn snapping_lands_on_the_device_grid() {
+        approx(surface_snap(10.4, 1.0), 10.0);
+        approx(surface_snap(10.6, 1.0), 11.0);
+        approx(surface_snap(10.5, 2.0), 10.5);
+        approx(surface_snap(10.3, 2.0), 10.5);
+        approx(surface_snap_up(10.1, 1.0), 11.0);
+        approx(surface_snap_up(10.0, 1.0), 10.0);
+        approx(surface_snap_up(10.1, 2.0), 10.5);
+    }
+
+    #[test]
+    fn selection_lifts_each_knob_to_the_reference_value() {
+        approx(surface_lift(12.0, SURFACE_SEL_DEPTH_Y, 0.0), 12.0);
+        approx(surface_lift(12.0, SURFACE_SEL_DEPTH_Y, 1.0), 8.0);
+        approx(surface_lift(0.0, SURFACE_SEL_BLOOM_PX, 1.0), 26.0);
+        approx(surface_lift(0.0, SURFACE_SEL_BLOOM_PX, 2.0), 26.0);
+        approx(surface_lift(0.0, SURFACE_SEL_BLOOM_PX, -1.0), 0.0);
+    }
+
+    #[test]
+    fn selection_grows_the_bleed_for_a_shallow_surface() {
+        let bleed_at = |depth_y: f64, depth_blur: f64, bloom: bool, selected: f64| {
+            let bloom_px = if bloom {
+                SURFACE_BLOOM_PX * SURFACE_GLOW
+            } else {
+                0.0
+            };
+            surface_bleed(
+                surface_lift(depth_y, SURFACE_SEL_DEPTH_Y, selected),
+                surface_lift(depth_blur, SURFACE_SEL_DEPTH_BLUR, selected),
+                surface_lift(bloom_px, SURFACE_SEL_BLOOM_PX, selected),
+                1.0,
+            )
+        };
+
+        approx(bleed_at(6.0, 18.0, true, 0.0), 26.0);
+        approx(bleed_at(6.0, 18.0, true, 1.0), 32.0);
+    }
+
+    #[test]
+    fn shader_constants_match_the_padding_contract() {
+        let src = include_str!("frame.rs");
+        assert!(src.contains(&format!("let glow = {SURFACE_GLOW:.1}")));
+        assert!(src.contains(&format!(
+            "let bpx = mix({SURFACE_BLOOM_PX:.1} * glow, {SURFACE_SEL_BLOOM_PX:.1}, self.selected)"
+        )));
+        assert!(src.contains(&format!(
+            "let dy = mix(self.depth_y, {SURFACE_SEL_DEPTH_Y:.1}, self.selected)"
+        )));
+        assert!(src.contains(&format!(
+            "let dblur = mix(self.depth_blur, {SURFACE_SEL_DEPTH_BLUR:.1}, self.selected)"
+        )));
+        assert!(src.contains(&format!(
+            "let da = mix(self.depth_a, {SURFACE_SEL_DEPTH_A:.2}, self.selected)"
+        )));
+        assert!(src.contains(&format!(
+            "let ba = mix(self.bloom * glow, {SURFACE_SEL_BLOOM_A:.2}, self.selected)"
+        )));
+        assert!(src.contains(&format!(
+            "let bw_dev = max(1.0, floor({SURFACE_BORDER_PX} * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected) * dpi + 0.5))"
+        )));
     }
 
     #[test]
