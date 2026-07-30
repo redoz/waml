@@ -1,0 +1,4 @@
+---
+type: uml.Class
+---
+# C

@@ -1,0 +1,18 @@
+lifeline a head @ 0,0 53x38 stem x=27 38..680
+lifeline b head @ 101,0 54x38 stem x=129 38..680
+lifeline c head @ 204,0 53x38 stem x=230 38..680
+lifeline d head @ 304,200 55x38 stem x=332 238..640 destroyed
+activation c d0 @ 230,40 12x40
+activation b d0 @ 129,0 12x120
+activation d d0 @ 332,320 12x120
+activation b d0 @ 129,560 12x120 unclosed
+message m0 calls 27->129 y=0
+message m1 calls 129->230 y=40
+message m2 replies 230->129 y=80
+message m3 replies 129->27 y=120
+message m4 sends 27->129 y=160
+message m5 creates 27->332 y=200
+message m6 calls 129->332 y=320
+message m7 replies 332->129 y=440
+message m8 calls 27->129 y=560
+message m9 destroys 27->332 y=640

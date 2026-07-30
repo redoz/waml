@@ -35,6 +35,9 @@ pub enum DiagCode {
     DecisionWithoutGuard,
     EmptyFlowDocument,
     UnknownFlowTarget,
+    UnknownLifelineHandle,
+    UnmatchedReply,
+    UninvolvedLifeline,
 }
 
 impl DiagCode {
@@ -62,6 +65,9 @@ impl DiagCode {
             DiagCode::DecisionWithoutGuard => "decision-without-guard",
             DiagCode::EmptyFlowDocument => "empty-flow-document",
             DiagCode::UnknownFlowTarget => "unknown-flow-target",
+            DiagCode::UnknownLifelineHandle => "unknown-lifeline-handle",
+            DiagCode::UnmatchedReply => "unmatched-reply",
+            DiagCode::UninvolvedLifeline => "uninvolved-lifeline",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
@@ -72,7 +78,10 @@ impl DiagCode {
             | DiagCode::SlotUnknownAttribute
             | DiagCode::InstanceOfNonClassifier
             | DiagCode::InstanceOfUnresolved
-            | DiagCode::UnreachableFlowNode => Severity::Warning,
+            | DiagCode::UnreachableFlowNode
+            | DiagCode::UnknownLifelineHandle
+            | DiagCode::UnmatchedReply
+            | DiagCode::UninvolvedLifeline => Severity::Warning,
             _ => Severity::Error,
         }
     }
