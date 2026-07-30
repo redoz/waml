@@ -67,6 +67,10 @@ script_mod! {
                 return sdf.result
             }
         }
+        draw_reveal: mod.draw.DrawColor{
+            color: atlas.accent
+        }
+        reveal_color: atlas.accent
         // Flat, opaque `field_bg` -- no ring, no corner radius, no divider. The
         // panel used to inline the `frame.rs` / `AccentFrame` material (a 1.5px
         // accent stroke round the fill) because it floated as a HUD card; it is
@@ -402,6 +406,10 @@ pub struct ProjectTree {
     // Translucent accent fill painted over the active row (see the DSL).
     #[live]
     draw_selection: DrawColor,
+    #[live]
+    draw_reveal: DrawColor,
+    #[live]
+    reveal_color: Vec4,
     // Header band ink. `draw_title` is the scope-title label; `draw_dim` is
     // everything subdued (the `⌄`, plus the search/chip/note tint source), and
     // is also the tint source for the hand-drawn header glyphs.
@@ -668,19 +676,35 @@ fn draw_nodes(
     depth: usize,
     color: Vec4,
     selected: Option<&str>,
-) {
+    draw_reveal: &mut DrawColor,
+    reveal_color: Vec4,
+    reveal_key: Option<&str>,
+    reveal_strength: f32,
+) -> bool {
+    let mut reveal_was_drawn = false;
     for node in nodes {
         let id = LiveId::from_str(&node.key);
         let row_top = cx.turtle().pos();
         let is_selected = selected == Some(node.key.as_str());
+        let is_reveal = reveal_key == Some(node.key.as_str());
         if node.is_directory {
             let opened = ft.begin_folder(cx, id, &node.title).is_ok();
             if is_selected {
                 draw_row_highlight(cx, draw_selection, row_top);
             }
+            if is_reveal {
+                draw_reveal.color = vec4(
+                    reveal_color.x,
+                    reveal_color.y,
+                    reveal_color.z,
+                    0.24 * reveal_strength,
+                );
+                draw_row_highlight(cx, draw_reveal, row_top);
+                reveal_was_drawn = true;
+            }
             draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color);
             if opened {
-                draw_nodes(
+                reveal_was_drawn |= draw_nodes(
                     cx,
                     ft,
                     &node.children,
@@ -689,6 +713,10 @@ fn draw_nodes(
                     depth + 1,
                     color,
                     selected,
+                    draw_reveal,
+                    reveal_color,
+                    reveal_key,
+                    reveal_strength,
                 );
                 ft.end_folder();
             }
@@ -697,9 +725,20 @@ fn draw_nodes(
             if is_selected {
                 draw_row_highlight(cx, draw_selection, row_top);
             }
+            if is_reveal {
+                draw_reveal.color = vec4(
+                    reveal_color.x,
+                    reveal_color.y,
+                    reveal_color.z,
+                    0.24 * reveal_strength,
+                );
+                draw_row_highlight(cx, draw_reveal, row_top);
+                reveal_was_drawn = true;
+            }
             draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color);
         }
     }
+    reveal_was_drawn
 }
 
 impl Widget for ProjectTree {
@@ -753,9 +792,10 @@ impl Widget for ProjectTree {
         walk.margin.top = 0.0;
         walk.margin.bottom = 0.0;
 
+        let mut reveal_was_drawn = false;
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut file_tree) = step.as_file_tree().borrow_mut() {
-                draw_nodes(
+                reveal_was_drawn |= draw_nodes(
                     cx,
                     &mut file_tree,
                     &self.tree.roots,
@@ -764,8 +804,23 @@ impl Widget for ProjectTree {
                     0,
                     self.icon_color,
                     self.selected_key.as_deref(),
+                    &mut self.draw_reveal,
+                    self.reveal_color,
+                    self.reveal_key.as_deref(),
+                    self.reveal_strength,
                 );
             }
+        }
+        let pending_scroll = self.pending_scroll_key.take();
+        if reveal_was_drawn && pending_scroll.is_some() {
+            let file_tree_area = self.view.file_tree(cx, ids!(file_tree)).area();
+            cx.send_trigger(
+                file_tree_area,
+                Trigger {
+                    id: live_id!(scroll_focus_nav),
+                    from: self.draw_selection.area(),
+                },
+            );
         }
 
         // Header band: the scope-title trigger, drawn immediate-mode over the
@@ -946,6 +1001,9 @@ impl Widget for ProjectTree {
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        if let Some(frame) = self.reveal_next_frame.is_event(event) {
+            self.update_reveal_pulse(cx, frame.time);
+        }
         let uid = self.widget_uid();
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         self.view.handle_event(cx, event, scope);
@@ -1162,6 +1220,26 @@ impl ProjectTree {
             self.selected_key = key;
             self.view.redraw(cx);
         }
+    }
+
+    fn update_reveal_pulse(&mut self, cx: &mut Cx, time: f64) {
+        if self.reveal_started_at < 0.0 {
+            self.reveal_started_at = time;
+            self.reveal_strength = 1.0;
+        } else {
+            let elapsed = (time - self.reveal_started_at).max(0.0);
+            self.reveal_strength = if time >= self.reveal_started_at + REVEAL_PULSE_SECS {
+                0.0
+            } else {
+                (1.0 - elapsed / REVEAL_PULSE_SECS).clamp(0.0, 1.0) as f32
+            };
+        }
+        if self.reveal_strength > 0.0 {
+            self.reveal_next_frame = cx.new_next_frame();
+        } else {
+            self.reveal_key = None;
+        }
+        self.view.redraw(cx);
     }
 
     pub fn reveal_target(&mut self, cx: &mut Cx, target: &NavigationTarget) -> bool {
@@ -1429,6 +1507,10 @@ mod tests {
         panel.reveal_next_frame = NextFrame(41);
     }
 
+    fn advance_reveal_pulse(panel: &mut ProjectTree, cx: &mut Cx, time: f64) {
+        panel.update_reveal_pulse(cx, time);
+    }
+
     #[test]
     fn reveal_document_opens_ancestors_selects_target_and_queues_scroll() {
         let (mut cx, mut panel, _) = mounted_project_tree_test_context();
@@ -1497,6 +1579,41 @@ mod tests {
             },
         ));
         assert_eq!(reveal_state(&panel), before);
+    }
+
+    #[test]
+    fn repeated_reveal_restarts_the_pulse() {
+        let (mut cx, mut panel, _) = mounted_project_tree_test_context();
+        panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
+        let target = NavigationTarget::Directory {
+            address: "/sales/archive".into(),
+        };
+        assert!(panel.reveal_target(&mut cx, &target));
+        advance_reveal_pulse(&mut panel, &mut cx, 10.0);
+        let middle = panel.reveal_started_at + 0.5;
+        advance_reveal_pulse(&mut panel, &mut cx, middle);
+        assert!(panel.reveal_strength < 1.0);
+
+        assert!(panel.reveal_target(&mut cx, &target));
+        assert_eq!(panel.reveal_strength, 1.0);
+    }
+
+    #[test]
+    fn completed_pulse_clears_the_reveal_overlay() {
+        let (mut cx, mut panel, _) = mounted_project_tree_test_context();
+        panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
+        assert!(panel.reveal_target(
+            &mut cx,
+            &NavigationTarget::Directory {
+                address: "/sales/archive".into(),
+            },
+        ));
+        advance_reveal_pulse(&mut panel, &mut cx, 10.0);
+
+        let end = panel.reveal_started_at + REVEAL_PULSE_SECS;
+        advance_reveal_pulse(&mut panel, &mut cx, end);
+        assert_eq!(panel.reveal_strength, 0.0);
+        assert_eq!(panel.reveal_key, None);
     }
 
     #[test]
