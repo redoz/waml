@@ -2,10 +2,13 @@
 //! partition lanes. Routing (Task 3) is layered on top of the `Solved` this
 //! module produces. See docs/superpowers/specs/2026-07-12-... §2.1-2.4.
 
+use super::route;
 use super::sizing::{self, Font};
-use super::{FlagSet, Rect, Size, SizeMap, Solved, SolvedGroup};
+use super::{
+    Box, BoxId, BoxKind, FlagSet, Rect, Route, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
+};
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::layout::Shape;
+use crate::layout::{Margin, Shape};
 use crate::model::{ActivityNode, FlowDoc, FlowEdge, FlowFlavor, FlowNodeKind};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -60,7 +63,7 @@ pub fn resolve_flow<'a>(
     nodes: &'a [ActivityNode],
     edges: &'a [FlowEdge],
 ) -> (ResolvedFlow<'a>, Vec<Diagnostic>) {
-    let diagnostics = Vec::new();
+    let mut diagnostics = Vec::new();
     let node_by_key: BTreeMap<&str, &ActivityNode> =
         nodes.iter().map(|n| (n.key.as_str(), n)).collect();
     let edge_by_key: BTreeMap<&str, &FlowEdge> =
@@ -83,6 +86,13 @@ pub fn resolve_flow<'a>(
             off_page.push(edge);
         } else if node_keys.contains(edge.to.as_str()) {
             rf_edges.push(edge);
+        } else {
+            diagnostics.push(Diagnostic::new(
+                DiagCode::UnknownFlowTarget,
+                format!("edge '{}' targets unknown local id '{}'", edge.key, edge.to),
+                doc.key.clone(),
+                0,
+            ));
         }
     }
 
@@ -107,13 +117,15 @@ pub struct FlowSolution {
     pub off_page: Vec<OffPageStub>,
 }
 
-/// A dangling cross-document edge target, rendered as a small labelled stub
-/// at the source node's rank (populated by Task 3).
+/// A dangling cross-document edge target, rendered as a short outbound stub
+/// leaving the source node's border (spec §2.1, §4.1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OffPageStub {
     pub edge_key: String,
-    pub label: String,
-    pub rect: Rect,
+    /// 2-3 points, leaving the source border.
+    pub points: Vec<(f64, f64)>,
+    /// Resolved from `to_ref`'s document title, else the raw `to` text.
+    pub target_title: String,
 }
 
 fn label_for(node: &ActivityNode) -> &str {
@@ -668,15 +680,161 @@ pub fn solve_flow(
         .map(|k| (k.to_string(), FlagSet::default()))
         .collect();
 
+    let routes = route_edges(&rf, &node_rects, &reversed, cfg);
+    let off_page = build_off_page_stubs(&rf, &node_rects, cfg);
+
     FlowSolution {
         solved: Solved {
             nodes: node_rects,
             groups,
             flags,
-            routes: Vec::new(),
+            routes,
         },
         diagnostics,
         reversed,
-        off_page: Vec::new(),
+        off_page,
     }
+}
+
+/// Left/right border midpoint of `rect`.
+fn border_mid(rect: Rect, right: bool) -> (f64, f64) {
+    if right {
+        (rect.x + rect.w, rect.y + rect.h / 2.0)
+    } else {
+        (rect.x, rect.y + rect.h / 2.0)
+    }
+}
+
+/// A 4-point orthogonal loop out the node's right border into a side channel
+/// and back in (spec §2.5); the router skips self-edges, flow owns them.
+fn self_edge_route(rect: Rect, cfg: &FlowConfig) -> Vec<(f64, f64)> {
+    let out_x = rect.x + rect.w + cfg.node_gap / 2.0;
+    let y_top = rect.y + rect.h * 0.3;
+    let y_bot = rect.y + rect.h * 0.7;
+    vec![
+        (rect.x + rect.w, y_top),
+        (out_x, y_top),
+        (out_x, y_bot),
+        (rect.x + rect.w, y_bot),
+    ]
+}
+
+/// Route a reversed (loop) back-edge outside the whole rank-stack's bounding
+/// column via a side channel, biased toward whichever side the source sits
+/// closer to (spec §2.5). `Route.source`/`target` stay the TRUE direction.
+fn back_edge_route(
+    src: Rect,
+    tgt: Rect,
+    all_rects: &BTreeMap<String, Rect>,
+    cfg: &FlowConfig,
+) -> Vec<(f64, f64)> {
+    let min_left = all_rects
+        .values()
+        .map(|r| r.x)
+        .fold(f64::INFINITY, f64::min);
+    let max_right = all_rects
+        .values()
+        .map(|r| r.x + r.w)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let center_x = (min_left + max_right) / 2.0;
+    let src_center = src.x + src.w / 2.0;
+    let use_right = src_center >= center_x;
+    let channel_x = if use_right {
+        max_right + cfg.node_gap
+    } else {
+        min_left - cfg.node_gap
+    };
+    let (_, sy) = border_mid(src, use_right);
+    let (_, ty) = border_mid(tgt, use_right);
+    vec![
+        border_mid(src, use_right),
+        (channel_x, sy),
+        (channel_x, ty),
+        border_mid(tgt, use_right),
+    ]
+}
+
+/// Build `Solved.routes` for a resolved flow: normal edges via the shared
+/// orthogonal router, self-edges and reversed back-edges routed directly
+/// (spec §2.5).
+fn route_edges(
+    rf: &ResolvedFlow,
+    node_rects: &BTreeMap<String, Rect>,
+    reversed: &BTreeSet<String>,
+    cfg: &FlowConfig,
+) -> Vec<Route> {
+    let mut routes = Vec::new();
+    let mut normal_pairs: Vec<(BoxId, BoxId)> = Vec::new();
+
+    for e in &rf.edges {
+        if e.from == e.to {
+            if let Some(&rect) = node_rects.get(&e.from) {
+                routes.push(Route {
+                    points: self_edge_route(rect, cfg),
+                    source: e.from.clone(),
+                    target: e.to.clone(),
+                });
+            }
+            continue;
+        }
+        if reversed.contains(&e.key) {
+            if let (Some(&src), Some(&tgt)) = (node_rects.get(&e.from), node_rects.get(&e.to)) {
+                routes.push(Route {
+                    points: back_edge_route(src, tgt, node_rects, cfg),
+                    source: e.from.clone(),
+                    target: e.to.clone(),
+                });
+            }
+            continue;
+        }
+        normal_pairs.push((BoxId::Node(e.from.clone()), BoxId::Node(e.to.clone())));
+    }
+
+    if !normal_pairs.is_empty() {
+        let boxes: Vec<Box> = node_rects
+            .keys()
+            .map(|k| Box {
+                id: BoxId::Node(k.clone()),
+                kind: BoxKind::Leaf,
+                children: Vec::new(),
+                axis: None,
+                shape: Shape::Box,
+                margin: Margin::Small,
+                flags: FlagSet::default(),
+                title: None,
+                depth: 0,
+            })
+            .collect();
+        let rects: BTreeMap<BoxId, Rect> = node_rects
+            .iter()
+            .map(|(k, r)| (BoxId::Node(k.clone()), *r))
+            .collect();
+        let normal_routes = route::route(&boxes, &rects, &normal_pairs, &SolveConfig::default());
+        routes.extend(normal_routes);
+    }
+
+    routes
+}
+
+/// Build the off-page stub for each cross-document edge: a short outbound
+/// polyline leaving the source node's border (spec §2.1, §4.1).
+fn build_off_page_stubs(
+    rf: &ResolvedFlow,
+    node_rects: &BTreeMap<String, Rect>,
+    cfg: &FlowConfig,
+) -> Vec<OffPageStub> {
+    let mut stubs = Vec::new();
+    for e in &rf.off_page {
+        let Some(&src) = node_rects.get(&e.from) else {
+            continue;
+        };
+        let out_x = src.x + src.w + cfg.node_gap / 2.0;
+        let y = src.y + src.h / 2.0;
+        stubs.push(OffPageStub {
+            edge_key: e.key.clone(),
+            points: vec![(src.x + src.w, y), (out_x, y)],
+            target_title: e.to.clone(),
+        });
+    }
+    stubs
 }

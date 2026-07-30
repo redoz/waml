@@ -1,7 +1,17 @@
 use waml::model::{ActivityNode, FlowDoc, FlowEdge, FlowFlavor, FlowNodeKind};
 use waml::solve::flow::{measure_flow, resolve_flow, solve_flow, FlowConfig};
 use waml::solve::pretty_flow;
+use waml::solve::Rect;
 use waml::source::SourceBundle;
+
+fn point_on_border(p: (f64, f64), rect: Rect) -> bool {
+    let eps = 0.5;
+    let on_vertical = (p.0 - rect.x).abs() <= eps || (p.0 - (rect.x + rect.w)).abs() <= eps;
+    let on_horizontal = (p.1 - rect.y).abs() <= eps || (p.1 - (rect.y + rect.h)).abs() <= eps;
+    let within_x = p.0 >= rect.x - eps && p.0 <= rect.x + rect.w + eps;
+    let within_y = p.1 >= rect.y - eps && p.1 <= rect.y + rect.h + eps;
+    (on_vertical && within_y) || (on_horizontal && within_x)
+}
 
 fn load(name: &str) -> (FlowDoc, Vec<ActivityNode>, Vec<FlowEdge>) {
     let source = match name {
@@ -276,4 +286,194 @@ fn state_machine_fixture_layout_golden() {
     let sol = solve("state-machine", FlowFlavor::StateMachine);
     assert!(sol.diagnostics.is_empty(), "{:?}", sol.diagnostics);
     assert!(!sol.solved.nodes.is_empty());
+}
+
+#[test]
+fn every_route_endpoint_lies_on_its_node_border() {
+    for (name, flavor) in [
+        ("activity", FlowFlavor::Activity),
+        ("state-machine", FlowFlavor::StateMachine),
+    ] {
+        let sol = solve(name, flavor);
+        for route in &sol.solved.routes {
+            let src_rect = sol.solved.nodes.get(&route.source).copied();
+            let tgt_rect = sol.solved.nodes.get(&route.target).copied();
+            if let Some(src_rect) = src_rect {
+                let first = *route.points.first().unwrap();
+                assert!(
+                    point_on_border(first, src_rect),
+                    "{name}: route {} -> {} start {:?} not on source border {:?}",
+                    route.source,
+                    route.target,
+                    first,
+                    src_rect
+                );
+            }
+            if let Some(tgt_rect) = tgt_rect {
+                let last = *route.points.last().unwrap();
+                assert!(
+                    point_on_border(last, tgt_rect),
+                    "{name}: route {} -> {} end {:?} not on target border {:?}",
+                    route.source,
+                    route.target,
+                    last,
+                    tgt_rect
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn self_transition_routes_out_and_back() {
+    let sol = solve("state-machine", FlowFlavor::StateMachine);
+    let (_, _, edges) = load("state-machine");
+    let self_edge = edges
+        .iter()
+        .find(|e| e.from == e.to)
+        .expect("fixture has a self-transition");
+    let route = sol
+        .solved
+        .routes
+        .iter()
+        .find(|r| r.source == self_edge.from && r.target == self_edge.to)
+        .expect("self-edge route exists");
+    assert!(route.points.len() >= 4, "{:?}", route.points);
+    let rect = sol.solved.nodes[&self_edge.from];
+    for (i, p) in route.points.iter().enumerate() {
+        let is_endpoint = i == 0 || i == route.points.len() - 1;
+        if !is_endpoint {
+            assert!(
+                p.0 >= rect.x + rect.w - 0.5,
+                "interior point {p:?} should be outside node interior {rect:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn loop_back_edge_routes_outside_the_rank_stack() {
+    let sol = solve("activity", FlowFlavor::Activity);
+    let max_right = sol
+        .solved
+        .nodes
+        .values()
+        .map(|r| r.x + r.w)
+        .fold(0.0_f64, f64::max);
+    let min_left = sol
+        .solved
+        .nodes
+        .values()
+        .map(|r| r.x)
+        .fold(f64::INFINITY, f64::min);
+    let has_outside_route = sol.solved.routes.iter().any(|r| {
+        sol.reversed.iter().any(|k| {
+            let (_, _, edges) = load("activity");
+            edges
+                .iter()
+                .find(|e| &e.key == k)
+                .is_some_and(|e| e.from == r.source && e.to == r.target)
+        }) && r
+            .points
+            .iter()
+            .any(|p| p.0 > max_right + 0.5 || p.0 < min_left - 0.5)
+    });
+    assert!(
+        has_outside_route,
+        "expected at least one reversed-edge route to leave the rank-stack column: {:?}",
+        sol.solved.routes
+    );
+}
+
+#[test]
+fn unknown_target_without_to_ref_drops_with_diagnostic() {
+    let doc = FlowDoc {
+        key: "synthetic".into(),
+        title: "Synthetic".into(),
+        flavor: FlowFlavor::Activity,
+        describes: None,
+        nodes: vec!["synthetic#Start".into()],
+        edges: vec!["synthetic#e0".into()],
+    };
+    let nodes = vec![ActivityNode {
+        key: "synthetic#Start".into(),
+        id: "Start".into(),
+        behavior: "synthetic".into(),
+        kind: FlowNodeKind::Initial,
+        object_ref: None,
+        partition: None,
+        entry: None,
+        do_: None,
+        exit: None,
+        refines: None,
+        notes: vec![],
+    }];
+    let edges = vec![FlowEdge {
+        key: "synthetic#e0".into(),
+        kind: waml::model::FlowEdgeKind::ControlFlow,
+        behavior: "synthetic".into(),
+        from: "synthetic#Start".into(),
+        to: "Nowhere".into(),
+        to_ref: None,
+        trigger: None,
+        guard: None,
+        is_else: false,
+        effect: None,
+        carries: None,
+    }];
+    let (rf, diags) = resolve_flow(&doc, &nodes, &edges);
+    assert!(rf.edges.is_empty());
+    assert!(rf.off_page.is_empty());
+    assert!(!diags.is_empty());
+}
+
+#[test]
+fn cross_document_edge_becomes_off_page_stub() {
+    let doc = FlowDoc {
+        key: "synthetic".into(),
+        title: "Synthetic".into(),
+        flavor: FlowFlavor::Activity,
+        describes: None,
+        nodes: vec!["synthetic#Start".into()],
+        edges: vec!["synthetic#e0".into()],
+    };
+    let nodes = vec![ActivityNode {
+        key: "synthetic#Start".into(),
+        id: "Start".into(),
+        behavior: "synthetic".into(),
+        kind: FlowNodeKind::Initial,
+        object_ref: None,
+        partition: None,
+        entry: None,
+        do_: None,
+        exit: None,
+        refines: None,
+        notes: vec![],
+    }];
+    let edges = vec![FlowEdge {
+        key: "synthetic#e0".into(),
+        kind: waml::model::FlowEdgeKind::ControlFlow,
+        behavior: "synthetic".into(),
+        from: "synthetic#Start".into(),
+        to: "Other Behavior".into(),
+        to_ref: Some("other".into()),
+        trigger: None,
+        guard: None,
+        is_else: false,
+        effect: None,
+        carries: None,
+    }];
+    let cfg = FlowConfig::default();
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg);
+    assert!(sol
+        .solved
+        .routes
+        .iter()
+        .all(|r| r.source != "synthetic#Start" || r.target != "Other Behavior"));
+    assert_eq!(sol.off_page.len(), 1);
+    assert_eq!(sol.off_page[0].edge_key, "synthetic#e0");
+    assert_eq!(sol.off_page[0].target_title, "Other Behavior");
+    assert!(sol.off_page[0].points.len() >= 2);
 }

@@ -34,6 +34,7 @@ pub enum DiagCode {
     UnreachableFlowNode,
     DecisionWithoutGuard,
     EmptyFlowDocument,
+    UnknownFlowTarget,
 }
 
 impl DiagCode {
@@ -60,6 +61,7 @@ impl DiagCode {
             DiagCode::UnreachableFlowNode => "unreachable-flow-node",
             DiagCode::DecisionWithoutGuard => "decision-without-guard",
             DiagCode::EmptyFlowDocument => "empty-flow-document",
+            DiagCode::UnknownFlowTarget => "unknown-flow-target",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
