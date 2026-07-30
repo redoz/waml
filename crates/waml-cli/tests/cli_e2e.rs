@@ -8,10 +8,30 @@ fn tmp() -> std::path::PathBuf {
     // `line!()` alone would collide: every call site is *inside this function*,
     // so it always expands to the same line. Mix in a per-process counter so
     // concurrently-running tests each get their own directory.
+    //
+    // The pid is NOT enough on its own: these directories are never cleaned up,
+    // and the OS recycles pids. A later run that draws a recycled pid used to
+    // land on a leftover directory, so a test doing `create_dir(...).unwrap()`
+    // inside it failed with AlreadyExists — an intermittent red gate with no
+    // relation to the code under test. Mix in a monotonic clock reading, and
+    // clear any directory we somehow still collide with, so each test always
+    // starts from an empty one.
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
     static N: AtomicUsize = AtomicUsize::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed);
-    let d = std::env::temp_dir().join(format!("waml_e2e_{}_{}_{n}", std::process::id(), line!()));
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after the unix epoch")
+        .as_nanos();
+    let d = std::env::temp_dir().join(format!(
+        "waml_e2e_{}_{}_{stamp}_{n}",
+        std::process::id(),
+        line!()
+    ));
+    if d.exists() {
+        std::fs::remove_dir_all(&d).unwrap();
+    }
     std::fs::create_dir_all(&d).unwrap();
     d
 }
