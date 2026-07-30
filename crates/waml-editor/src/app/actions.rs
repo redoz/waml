@@ -35,6 +35,7 @@ enum ExclusiveHandler {
     NavigationFilter,
     TreeContextMenu,
     TreeNavigation,
+    HistoryControls,
     DocumentHeader,
     DiagramSwitcher,
     ConflictBadge,
@@ -48,12 +49,13 @@ enum ExclusiveHandler {
     DocumentTabs,
 }
 
-const EXCLUSIVE_ORDER: [ExclusiveHandler; 16] = [
+const EXCLUSIVE_ORDER: [ExclusiveHandler; 17] = [
     ExclusiveHandler::NavigationScope,
     ExclusiveHandler::NavigationQuery,
     ExclusiveHandler::NavigationFilter,
     ExclusiveHandler::TreeContextMenu,
     ExclusiveHandler::TreeNavigation,
+    ExclusiveHandler::HistoryControls,
     ExclusiveHandler::DocumentHeader,
     ExclusiveHandler::DiagramSwitcher,
     ExclusiveHandler::ConflictBadge,
@@ -84,6 +86,7 @@ impl App {
                 ExclusiveHandler::NavigationFilter => self.handle_navigation_filter(cx, actions),
                 ExclusiveHandler::TreeContextMenu => self.handle_tree_context_menu(cx, actions),
                 ExclusiveHandler::TreeNavigation => self.handle_tree_navigation(cx, actions),
+                ExclusiveHandler::HistoryControls => self.handle_history_controls(cx, actions),
                 ExclusiveHandler::DocumentHeader => {
                     self.handle_document_header_navigation(cx, actions)
                 }
@@ -543,6 +546,39 @@ impl App {
         ActionFlow::Consumed
     }
 
+    /// `tab_row`'s view-history pair. Matched on the action TAG rather than the
+    /// button uid so the pair can move within the chrome without this seam
+    /// caring where it is mounted.
+    fn handle_history_controls(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let mut direction = None;
+        for action in actions {
+            let Some(item) = action.as_widget_action() else {
+                continue;
+            };
+            if let Some(crate::icon_button::IconButtonAction::TaggedClicked(tag)) =
+                item.action.downcast_ref::<crate::icon_button::IconButtonAction>()
+            {
+                if *tag == live_id!(history_back) {
+                    direction = Some((crate::view_history::HistoryDirection::Back, "No previous view"));
+                    break;
+                }
+                if *tag == live_id!(history_forward) {
+                    direction = Some((crate::view_history::HistoryDirection::Forward, "No next view"));
+                    break;
+                }
+            }
+        }
+        let Some((direction, problem)) = direction else {
+            return ActionFlow::Continue;
+        };
+        if self.traverse_view_history(cx, direction) {
+            self.clear_history_feedback(cx);
+        } else {
+            self.set_history_problem(cx, Some(problem));
+        }
+        ActionFlow::Consumed
+    }
+
     fn handle_document_header_navigation(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
         let action = self
             .ui
@@ -550,22 +586,6 @@ impl App {
             .borrow::<crate::document_header::DocumentHeader>()
             .and_then(|header| header.action(actions));
         match action {
-            Some(crate::document_header::DocumentHeaderAction::Back) => {
-                if self.traverse_view_history(cx, crate::view_history::HistoryDirection::Back) {
-                    self.clear_history_feedback(cx);
-                } else {
-                    self.set_history_problem(cx, Some("No previous view"));
-                }
-                ActionFlow::Consumed
-            }
-            Some(crate::document_header::DocumentHeaderAction::Forward) => {
-                if self.traverse_view_history(cx, crate::view_history::HistoryDirection::Forward) {
-                    self.clear_history_feedback(cx);
-                } else {
-                    self.set_history_problem(cx, Some("No next view"));
-                }
-                ActionFlow::Consumed
-            }
             Some(crate::document_header::DocumentHeaderAction::Navigate(target)) => {
                 self.clear_history_feedback(cx);
                 self.handle_navigation_intent(
@@ -1182,6 +1202,7 @@ mod tests {
                 ExclusiveHandler::NavigationFilter,
                 ExclusiveHandler::TreeContextMenu,
                 ExclusiveHandler::TreeNavigation,
+                ExclusiveHandler::HistoryControls,
                 ExclusiveHandler::DocumentHeader,
                 ExclusiveHandler::DiagramSwitcher,
                 ExclusiveHandler::ConflictBadge,

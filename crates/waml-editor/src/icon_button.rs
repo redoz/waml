@@ -319,6 +319,11 @@ impl IconButtonRef {
             .map(|inner| inner.rect(cx))
             .unwrap_or_default()
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_dim(&self) -> bool {
+        self.borrow().is_some_and(|inner| inner.dim)
+    }
 }
 
 #[cfg(test)]

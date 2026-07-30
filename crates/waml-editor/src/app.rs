@@ -282,6 +282,16 @@ script_mod! {
                             // 0 while the tree is collapsed, so the strip falls back
                             // against `[T]` with only that inset between them.
                             tree_gap := View{ width: 0.0, height: Fill }
+                            // View history, on the ROW rather than inside the
+                            // document header: one pair for the whole shell, so
+                            // it does not blink in and out with the per-document
+                            // breadcrumb band. Placed AFTER `tree_gap`, so the
+                            // pair -- not the first tab card -- starts on the
+                            // tree column's right edge and the strip follows it.
+                            // Hidden until a document is active
+                            // (`sync_history_controls`).
+                            history_back_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{top: 1.0} visible: false }
+                            history_forward_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{top: 1.0} visible: false }
                             doc_tabs := DocTabs{
                                 width: Fill
                                 height: Fill
@@ -709,6 +719,11 @@ pub struct App {
     /// writes, even when the computed gap is 0 (collapsed tree).
     #[rust(-1.0)]
     tree_gap_w: f64,
+    /// Whether `tab_row`'s history pair is mounted (guards the visibility
+    /// writes; the pair sits after `tree_gap`, so it does not enter the spacer
+    /// arithmetic).
+    #[rust]
+    history_controls_visible: bool,
     /// Last-applied `DocTabs::left_overshoot` (see `sync_tree_gap`). Guarded
     /// separately from `tree_gap_w` because it is measured off `doc_tabs`' own
     /// rect, which settles one frame AFTER the gap that moved it. Negative so
@@ -800,9 +815,39 @@ impl App {
             .widget(cx, ids!(document_header))
             .borrow_mut::<crate::document_header::DocumentHeader>()
         {
-            header.set_history_visible(cx, has_active_document);
-            header.set_history_enabled(cx, can_back, can_forward);
+            header.set_document_active(cx, has_active_document);
         }
+
+        let back = self.ui.widget(cx, ids!(history_back_btn));
+        let forward = self.ui.widget(cx, ids!(history_forward_btn));
+        if self.history_controls_visible != has_active_document {
+            self.history_controls_visible = has_active_document;
+            back.set_visible(cx, has_active_document);
+            forward.set_visible(cx, has_active_document);
+        }
+        let back = back.as_icon_button();
+        back.set_icon(cx, crate::icons::Icon::ArrowLeft);
+        back.set_action_tag(live_id!(history_back));
+        back.set_dim(cx, !can_back);
+        let forward = forward.as_icon_button();
+        forward.set_icon(cx, crate::icons::Icon::ArrowRight);
+        forward.set_action_tag(live_id!(history_forward));
+        forward.set_dim(cx, !can_forward);
+    }
+
+    #[cfg(test)]
+    fn test_history_enabled(&mut self, cx: &mut Cx) -> (bool, bool) {
+        let dim_back = self
+            .ui
+            .widget(cx, ids!(history_back_btn))
+            .as_icon_button()
+            .test_dim();
+        let dim_forward = self
+            .ui
+            .widget(cx, ids!(history_forward_btn))
+            .as_icon_button()
+            .test_dim();
+        (!dim_back, !dim_forward)
     }
 
     fn handle_navigation_intent(
@@ -2954,6 +2999,12 @@ mod tests {
         ui.children
             .push((live_id!(document_header), document_header));
         ui.children.push((live_id!(inspector), inspector));
+        for id in [live_id!(history_back_btn), live_id!(history_forward_btn)] {
+            let button = WidgetRef::new_with_inner(Box::new(
+                cx.with_vm(crate::icon_button::IconButton::script_new_with_default),
+            ));
+            ui.children.push((id, button));
+        }
         app.ui = WidgetRef::new_with_inner(Box::new(ui));
         (cx, app)
     }
@@ -3315,42 +3366,58 @@ mod tests {
         assert!(!drawn_header_right_dock_active(&mut cx, &app));
     }
 
+    fn draw_tab_row(cx: &mut Cx, app: &App, size: DVec2) {
+        let draw_event = DrawEvent {
+            redraw_all: true,
+            ..DrawEvent::default()
+        };
+        let pass = DrawPass::new_with_name(cx, "tab-row-test");
+        let mut draw_list = DrawList2d::new(cx);
+        let mut draw_cx = CxDraw::new(cx, &draw_event);
+        draw_cx.begin_pass(&pass, None);
+        draw_list.begin_always(&mut draw_cx);
+        {
+            let mut cx_2d = Cx2d::new(&mut draw_cx);
+            cx_2d.begin_root_turtle(size, Layout::default());
+            app.ui.widget(&cx_2d, ids!(tab_row)).draw_walk_all(
+                &mut cx_2d,
+                &mut Scope::empty(),
+                Walk::fill(),
+            );
+            cx_2d.end_turtle();
+            draw_list.end(&mut cx_2d);
+        }
+        draw_cx.end_pass(&pass);
+    }
+
+    /// The history pair belongs to the TAB ROW, not the per-document header,
+    /// and sits past the tree column (after `tree_gap`) directly ahead of the
+    /// tab strip.
     #[test]
-    fn mounted_history_buttons_occupy_the_fixed_leading_strip() {
-        let size = dvec2(600.0, 30.0);
-        let (mut cx, mut app) = mounted_production_shell();
-        configure_mounted_dock(
-            &mut cx,
-            &mut app,
-            size,
-            DockState::Flag,
-            DockState::Flag,
-            true,
-        );
-        app.ui
-            .widget(&cx, ids!(document_header))
-            .borrow_mut::<crate::document_header::DocumentHeader>()
-            .expect("production shell mounts document_header")
-            .set_history_visible(&mut cx, true);
+    fn mounted_history_buttons_lead_the_tab_strip_past_the_tree_column() {
+        let size = dvec2(600.0, 32.0);
+        let (mut cx, app) = mounted_production_shell();
+        for id in [ids!(tree_btn), ids!(history_back_btn), ids!(history_forward_btn)] {
+            app.ui.widget(&cx, id).set_visible(&mut cx, true);
+        }
 
-        draw_document_header(&mut cx, &app, size);
+        draw_tab_row(&mut cx, &app, size);
 
-        let back = app
-            .ui
-            .widget(&cx, ids!(document_header.back_button))
-            .area()
-            .rect(&cx);
+        let tree = app.ui.widget(&cx, ids!(tree_btn)).area().rect(&cx);
+        let back = app.ui.widget(&cx, ids!(history_back_btn)).area().rect(&cx);
         let forward = app
             .ui
-            .widget(&cx, ids!(document_header.forward_button))
+            .widget(&cx, ids!(history_forward_btn))
             .area()
             .rect(&cx);
-        assert_eq!(back.size.x, crate::document_header::DOCUMENT_HEADER_H);
-        assert_eq!(forward.size.x, crate::document_header::DOCUMENT_HEADER_H);
-        assert_eq!(
-            forward.pos.x,
-            back.pos.x + crate::document_header::DOCUMENT_HEADER_H
-        );
+        let tabs = app.ui.widget(&cx, ids!(doc_tabs)).area().rect(&cx);
+
+        assert_eq!(back.size.x, 30.0);
+        assert_eq!(forward.size.x, 30.0);
+        assert!(back.pos.x >= tree.pos.x + tree.size.x);
+        assert_eq!(forward.pos.x, back.pos.x + back.size.x);
+        assert!(forward.pos.x + forward.size.x <= tabs.pos.x);
+        assert_eq!(back.pos.y, tree.pos.y);
     }
 
     fn project_tree_folder_is_open(cx: &mut Cx, app: &App, address: &str) -> bool {
@@ -3564,21 +3631,12 @@ mod tests {
     }
 
     #[test]
-    fn header_history_actions_traverse_once_and_report_unavailable_targets() {
+    fn tab_row_history_actions_traverse_once_and_report_unavailable_targets() {
         let (mut cx, mut app) = navigation_app_with_active_order();
         assert!(app.transition_document(&mut cx, "sales/customer", false));
-        {
-            let header = app.ui.widget(&cx, ids!(document_header));
-            let header = header
-                .borrow::<crate::document_header::DocumentHeader>()
-                .expect("test header is mounted");
-            assert_eq!(header.test_history_enabled(), (true, false));
-        }
+        assert_eq!(app.test_history_enabled(&mut cx), (true, false));
 
-        let back_button_uid = app
-            .ui
-            .widget(&cx, ids!(document_header.back_button))
-            .widget_uid();
+        let back_button_uid = app.ui.widget(&cx, ids!(history_back_btn)).widget_uid();
         app.handle_action_batch(
             &mut cx,
             &[widget_action(
@@ -3592,18 +3650,9 @@ mod tests {
                 .map(|tab| tab.concept_id.as_str()),
             Some("sales/order")
         );
-        {
-            let header = app.ui.widget(&cx, ids!(document_header));
-            let header = header
-                .borrow::<crate::document_header::DocumentHeader>()
-                .expect("test header is mounted");
-            assert_eq!(header.test_history_enabled(), (false, true));
-        }
+        assert_eq!(app.test_history_enabled(&mut cx), (false, true));
 
-        let forward_button_uid = app
-            .ui
-            .widget(&cx, ids!(document_header.forward_button))
-            .widget_uid();
+        let forward_button_uid = app.ui.widget(&cx, ids!(history_forward_btn)).widget_uid();
         app.handle_action_batch(
             &mut cx,
             &[widget_action(
