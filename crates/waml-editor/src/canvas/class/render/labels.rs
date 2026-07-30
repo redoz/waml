@@ -1,6 +1,6 @@
 use super::{primitives::ClassDrawResources, RenderSnapshot};
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, font_raster_size};
-use crate::edge_labels::{edge_end_labels, EdgeLabel, LabelAlign};
+use crate::edge_labels::{aligned_text_pos, edge_end_labels, EdgeLabel};
 use makepad_widgets::*;
 
 const LABEL_PAD: f64 = 3.0;
@@ -51,15 +51,6 @@ fn draw_label(
     draws.edge_label.draw_abs(cx, text_pos, &label.text);
 }
 
-fn aligned_text_pos(anchor: DVec2, size: DVec2, align: LabelAlign) -> DVec2 {
-    match align {
-        LabelAlign::Left => dvec2(anchor.x - size.x, anchor.y),
-        LabelAlign::Right => anchor,
-        LabelAlign::Above => dvec2(anchor.x - size.x * 0.5, anchor.y - size.y),
-        LabelAlign::Below => dvec2(anchor.x - size.x * 0.5, anchor.y),
-    }
-}
-
 fn scaled_text_size(measured: DVec2, font_scale: f64) -> DVec2 {
     measured * font_scale
 }
@@ -67,25 +58,7 @@ fn scaled_text_size(measured: DVec2, font_scale: f64) -> DVec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn text_alignment_keeps_each_label_in_its_declared_open_direction() {
-        let anchor = dvec2(100.0, 100.0);
-        let size = dvec2(24.0, 10.0);
-        assert_eq!(
-            aligned_text_pos(anchor, size, LabelAlign::Left),
-            dvec2(76.0, 100.0)
-        );
-        assert_eq!(aligned_text_pos(anchor, size, LabelAlign::Right), anchor);
-        assert_eq!(
-            aligned_text_pos(anchor, size, LabelAlign::Above),
-            dvec2(88.0, 90.0)
-        );
-        assert_eq!(
-            aligned_text_pos(anchor, size, LabelAlign::Below),
-            dvec2(88.0, 100.0)
-        );
-    }
+    use crate::edge_labels::LabelAlign;
 
     #[test]
     fn measured_text_size_scales_before_alignment() {

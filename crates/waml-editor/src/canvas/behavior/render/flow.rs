@@ -106,11 +106,23 @@ pub(super) fn draw(
         let emphasis = edge_emphasis(hovered, selected, &edge.key);
         draw_route(cx, viewport, &edge.points, emphasis, draws);
         if let Some(label) = &edge.label {
-            if let Some((x, y)) =
-                crate::edge_labels::mid_route_label(&edge.points, label.clone()).map(|l| l.anchor)
-            {
-                let pos = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, (x, y));
-                draws.text_body.draw_abs(cx, pos, label);
+            if let Some(placed) = crate::edge_labels::mid_route_label(&edge.points, label.clone()) {
+                let anchor =
+                    edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, placed.anchor);
+                // Drawing at the raw anchor put the glyphs ON the route. Size
+                // the run and step it off the line the way the label asks.
+                let size = draws
+                    .text_body
+                    .prepare_single_line_run(cx, &placed.text)
+                    .map(|run| {
+                        dvec2(
+                            run.width_in_lpxs as f64,
+                            (run.ascender_in_lpxs - run.descender_in_lpxs) as f64,
+                        )
+                    })
+                    .unwrap_or_default();
+                let pos = crate::edge_labels::aligned_text_pos(anchor, size, placed.align);
+                draws.text_body.draw_abs(cx, pos, &placed.text);
             }
         }
     }

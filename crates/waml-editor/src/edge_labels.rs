@@ -1,6 +1,7 @@
 //! Pure relationship-label policy and terminal geometry for the native canvas.
 
 use crate::{diagram_display::ResolvedDiagramDisplay, scene::SceneEdge};
+use makepad_widgets::{dvec2, DVec2};
 use waml::{adornment::End, model::AssocName};
 
 const TERMINAL_OFFSET: f64 = 12.0;
@@ -76,11 +77,83 @@ pub fn edge_end_labels(edge: &SceneEdge, display: &ResolvedDiagramDisplay) -> Ve
 /// arc-length midpoint math.
 pub fn mid_route_label(points: &[(f64, f64)], text: String) -> Option<EdgeLabel> {
     let (x, y) = polyline_midpoint(points)?;
-    Some(EdgeLabel {
-        text,
-        anchor: (x, y),
-        align: LabelAlign::Above,
-    })
+    // Which side the text clears the route on depends on how the route runs
+    // THERE: `Above` lifts it off a horizontal segment, but on a vertical one it
+    // centres the text on the line and the stroke runs straight through the
+    // glyphs. Step a vertical segment's label out to the right instead.
+    match midpoint_orientation(points) {
+        Orientation::Vertical => Some(EdgeLabel {
+            text,
+            anchor: (x + TERMINAL_OFFSET, y),
+            align: LabelAlign::Right,
+        }),
+        Orientation::Horizontal => Some(EdgeLabel {
+            text,
+            anchor: (x, y - LABEL_GAP),
+            align: LabelAlign::Above,
+        }),
+    }
+}
+
+/// Clearance between a route and the label riding alongside it, in world units.
+const LABEL_GAP: f64 = 3.0;
+
+enum Orientation {
+    Horizontal,
+    Vertical,
+}
+
+/// Orientation of the segment the arc-length midpoint falls on. Ties (a
+/// zero-length or perfectly diagonal segment) read as horizontal, which is the
+/// resting case for these orthogonal routes.
+fn midpoint_orientation(points: &[(f64, f64)]) -> Orientation {
+    let Some(segment) = midpoint_segment(points) else {
+        return Orientation::Horizontal;
+    };
+    let dx = (segment[1].0 - segment[0].0).abs();
+    let dy = (segment[1].1 - segment[0].1).abs();
+    if dy > dx {
+        Orientation::Vertical
+    } else {
+        Orientation::Horizontal
+    }
+}
+
+fn midpoint_segment(points: &[(f64, f64)]) -> Option<[(f64, f64); 2]> {
+    let total: f64 = points
+        .windows(2)
+        .map(|segment| (segment[1].0 - segment[0].0).hypot(segment[1].1 - segment[0].1))
+        .sum();
+    if total <= f64::EPSILON {
+        return None;
+    }
+    let mut remaining = total / 2.0;
+    for segment in points.windows(2) {
+        let length = (segment[1].0 - segment[0].0).hypot(segment[1].1 - segment[0].1);
+        if length <= f64::EPSILON {
+            continue;
+        }
+        if remaining <= length {
+            return Some([segment[0], segment[1]]);
+        }
+        remaining -= length;
+    }
+    points
+        .windows(2)
+        .last()
+        .map(|segment| [segment[0], segment[1]])
+}
+
+/// Top-left corner at which to DRAW a label of `size`, given its anchor and
+/// which way it aligns. Shared by the class and behavior canvases so a label
+/// clears its route the same way on both.
+pub fn aligned_text_pos(anchor: DVec2, size: DVec2, align: LabelAlign) -> DVec2 {
+    match align {
+        LabelAlign::Left => dvec2(anchor.x - size.x, anchor.y),
+        LabelAlign::Right => anchor,
+        LabelAlign::Above => dvec2(anchor.x - size.x * 0.5, anchor.y - size.y),
+        LabelAlign::Below => dvec2(anchor.x - size.x * 0.5, anchor.y),
+    }
 }
 
 fn relationship_name(name: &AssocName) -> Option<&str> {
@@ -246,8 +319,46 @@ mod tests {
     fn mid_route_label_anchors_at_the_route_midpoint() {
         let label = mid_route_label(&[(0.0, 0.0), (100.0, 0.0)], "guard".into()).unwrap();
         assert_eq!(label.text, "guard");
-        assert_eq!(label.anchor, (50.0, 0.0));
+        // Lifted clear of a horizontal route, not centred on it.
+        assert_eq!(label.anchor, (50.0, -LABEL_GAP));
         assert_eq!(label.align, LabelAlign::Above);
+    }
+
+    #[test]
+    fn a_vertical_route_takes_its_label_beside_the_line() {
+        // `Above` on a vertical segment centres the glyphs on the stroke, so
+        // the route runs through the text. Step out to the right instead.
+        let label = mid_route_label(&[(0.0, 0.0), (0.0, 100.0)], "else".into()).unwrap();
+        assert_eq!(label.anchor, (TERMINAL_OFFSET, 50.0));
+        assert_eq!(label.align, LabelAlign::Right);
+    }
+
+    #[test]
+    fn orientation_follows_the_segment_the_midpoint_lands_on() {
+        // The midpoint of this bend falls on the long vertical leg, even though
+        // the route starts out horizontal.
+        let label =
+            mid_route_label(&[(0.0, 0.0), (10.0, 0.0), (10.0, 90.0)], "x".into()).unwrap();
+        assert_eq!(label.align, LabelAlign::Right);
+    }
+
+    #[test]
+    fn text_alignment_keeps_each_label_in_its_declared_open_direction() {
+        let anchor = dvec2(100.0, 100.0);
+        let size = dvec2(24.0, 10.0);
+        assert_eq!(
+            aligned_text_pos(anchor, size, LabelAlign::Left),
+            dvec2(76.0, 100.0)
+        );
+        assert_eq!(aligned_text_pos(anchor, size, LabelAlign::Right), anchor);
+        assert_eq!(
+            aligned_text_pos(anchor, size, LabelAlign::Above),
+            dvec2(88.0, 90.0)
+        );
+        assert_eq!(
+            aligned_text_pos(anchor, size, LabelAlign::Below),
+            dvec2(88.0, 100.0)
+        );
     }
 
     #[test]

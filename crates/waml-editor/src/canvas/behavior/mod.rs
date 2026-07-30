@@ -26,13 +26,18 @@ script_mod! {
     mod.widgets.BehaviorSurfaceBase = #(BehaviorSurface::register_widget(vm))
 
     // Flow node pen: rounded rect (`Plain`, radius pushed to a real value) or
-    // sharp rect (`Object`, radius pushed to 0) -- one shader covers both
-    // since a box with radius 0 IS a sharp rect (spec §4.1).
+    // sharp rect (`Object`, radius pushed to 0) (spec §4.1). The two need
+    // different SDF calls: `sdf.box` DEGENERATES at radius 0 and draws nothing,
+    // which is why an object node used to render as bare text with no box.
     mod.draw.FlowBox = mod.draw.DrawColor{
         radius: uniform(6.0)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius)
+            if self.radius <= 0.0 {
+                sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
+            } else {
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius)
+            }
             sdf.fill(self.color)
             return sdf.result
         }

@@ -199,6 +199,10 @@ pub fn measure_flow(nodes: &[&ActivityNode], flavor: FlowFlavor, cfg: &FlowConfi
                     // text modulo case, so it is the right-length stand-in.
                     let line = format!(":{object_ref}");
                     text_w = text_w.max(sizing::text_width(&line, cfg.font_size, Font::Sans));
+                    // The classifier line is a DRAWN row like the behavior
+                    // lines above, so it has to raise the box too; counting it
+                    // for width alone left it hanging under the box.
+                    lines += 1.0;
                 }
                 // One drawn row, plus one STACKING advance per line after it.
                 // Multiplying the row height by the line count under-sizes the
