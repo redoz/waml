@@ -228,6 +228,11 @@ pub struct ViewOutcome {
     /// A focus/selection boundary that must stop older text edits coalescing.
     pub break_merge_group: bool,
     pub navigation: Option<NavigationIntent>,
+    /// Ask the shell to open this key's raw markdown source, through the same
+    /// path the node context menu's "View Source" item uses (spec §5.2). Read-
+    /// only surfaces without a context menu (the behavior canvas) reach this
+    /// path from their own selection affordance instead.
+    pub view_source: Option<String>,
 }
 
 /// A popup a view wants placed. The view describes it; the shell computes window
@@ -461,6 +466,7 @@ mod tests {
         assert!(!o.statusbar_dirty);
         assert!(!o.break_merge_group);
         assert!(o.navigation.is_none());
+        assert!(o.view_source.is_none());
     }
 
     #[test]

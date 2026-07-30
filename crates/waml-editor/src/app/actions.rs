@@ -270,14 +270,7 @@ impl App {
                 let key = self.node_menu_key.clone().unwrap_or_default();
                 match command {
                     crate::popup::node_menu::NodeMenuCommand::ViewSource => {
-                        self.transition_to_location(
-                            cx,
-                            crate::view_history::ViewLocation {
-                                document: crate::navigation::DocumentLocator::source(&key),
-                                anchor: crate::view_history::ViewAnchor::None,
-                            },
-                            super::TransitionCause::UserNavigation,
-                        );
+                        self.open_view_source(cx, &key);
                     }
                     crate::popup::node_menu::NodeMenuCommand::FindInDiagrams => {
                         log!("find in diagrams: {key}");
@@ -1074,6 +1067,11 @@ impl App {
 
         if let Some(intent) = outcome.navigation {
             self.handle_navigation_intent(cx, intent);
+            flow = ActionFlow::Consumed;
+        }
+
+        if let Some(key) = outcome.view_source {
+            self.open_view_source(cx, &key);
             flow = ActionFlow::Consumed;
         }
 

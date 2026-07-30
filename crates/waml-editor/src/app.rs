@@ -1033,6 +1033,22 @@ impl App {
         changed
     }
 
+    /// Open `key`'s raw markdown source through the shared history-aware
+    /// transition path (spec §5.2). Factored out of the node context menu's
+    /// `ViewSource` handler so a read-only surface with no context menu (the
+    /// behavior canvas, Task 9) can reach the same code path from its own
+    /// selection affordance.
+    fn open_view_source(&mut self, cx: &mut Cx, key: &str) {
+        self.transition_to_location(
+            cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::source(key),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        );
+    }
+
     fn transition_to_location(
         &mut self,
         cx: &mut Cx,

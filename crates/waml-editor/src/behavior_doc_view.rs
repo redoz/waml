@@ -6,15 +6,16 @@ use makepad_widgets::*;
 use std::collections::BTreeMap;
 
 use crate::canvas::{
-    ActivationGeo, BehaviorScene, FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo, FragmentGeo,
-    LifelineGeo, MessageGeo, OperandGeo,
+    ActivationGeo, BehaviorScene, BehaviorSurfaceAction, BehaviorTarget, FlowEdgeGeo, FlowNodeGeo,
+    FlowOffPageGeo, FragmentGeo, LifelineGeo, MessageGeo, OperandGeo,
 };
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocumentHeaderChrome, ViewData, ViewOutcome,
 };
 use crate::icons::Icon;
+use crate::inspector::Subject;
 use crate::node_style::AccentBucket;
-use waml::model::{FlowDoc, FlowEdge, FlowFlavor, SequenceDoc};
+use waml::model::{FlowDoc, FlowEdge, FlowFlavor, SeqNode, SequenceDoc};
 use waml::solve::flow::{measure_flow, resolve_flow, solve_flow, FlowConfig};
 use waml::solve::interaction::{measure_interaction, solve_interaction, InteractionConfig};
 
@@ -55,7 +56,10 @@ fn flow_edge_label(edge: &FlowEdge) -> Option<String> {
 /// and edges, or `Empty` when the document has no flow nodes to draw.
 fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> BehaviorScene {
     let cfg = FlowConfig::default();
-    let (rf, _diagnostics) = resolve_flow(doc, &model.activity_nodes, &model.flow_edges);
+    let (rf, diagnostics) = resolve_flow(doc, &model.activity_nodes, &model.flow_edges);
+    for d in &diagnostics {
+        log!("diagnostic: {d:?}");
+    }
     if rf.nodes.is_empty() {
         return BehaviorScene::Empty {
             message: NO_RENDERABLE_ELEMENTS.to_string(),
@@ -63,6 +67,9 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> BehaviorScene 
     }
     let sizes = measure_flow(&rf.nodes, doc.flavor, &cfg);
     let solution = solve_flow(doc, &model.activity_nodes, &model.flow_edges, &sizes, &cfg);
+    for d in &solution.diagnostics {
+        log!("diagnostic: {d:?}");
+    }
     if solution.solved.nodes.is_empty() {
         return BehaviorScene::Empty {
             message: NO_RENDERABLE_ELEMENTS.to_string(),
@@ -157,7 +164,10 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> BehaviorScene 
 fn build_interaction_scene(model: &waml::model::Model, doc: &SequenceDoc) -> BehaviorScene {
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(doc, &cfg);
-    let (solved, _diagnostics) = solve_interaction(doc, &sizes, &cfg);
+    let (solved, diagnostics) = solve_interaction(doc, &sizes, &cfg);
+    for d in &diagnostics {
+        log!("diagnostic: {d:?}");
+    }
     if solved.lifelines.is_empty() {
         return BehaviorScene::Empty {
             message: NO_RENDERABLE_ELEMENTS.to_string(),
@@ -274,8 +284,51 @@ enum BehaviorKind {
     Interaction,
 }
 
+/// Resolve a `Lifeline`'s `ref_` classifier key from the interaction doc, if
+/// the lifeline both exists and declares one.
+fn lifeline_ref_key(interaction: Option<&SequenceDoc>, lifeline_id: &str) -> Option<String> {
+    interaction?.nodes.iter().find_map(|n| match n {
+        SeqNode::Lifeline { id, ref_, .. } if id == lifeline_id => ref_.clone(),
+        _ => None,
+    })
+}
+
+/// Map a selected `BehaviorTarget` to the `Subject` the inspector should point
+/// at (spec §5.2, Task 9 handoff): `FlowNode`/`FlowEdge` resolve to their own
+/// model pool key; `Lifeline` prefers its resolved `ref_` classifier else the
+/// interaction doc itself; `Message`/`Fragment` have no richer model of their
+/// own, so both resolve to the interaction doc (spec §5.3: an unresolved
+/// subject converges on an explicit fallback, never a panic). Pure -- no
+/// `Cx`, unit-tested below.
+fn subject_for_target(
+    target: &BehaviorTarget,
+    doc_key: &str,
+    interaction: Option<&SequenceDoc>,
+) -> Subject {
+    match target {
+        BehaviorTarget::FlowNode(key) => Subject::Classifier(key.clone()),
+        BehaviorTarget::FlowEdge(key) => Subject::Edge(key.clone()),
+        BehaviorTarget::Lifeline(id) => lifeline_ref_key(interaction, id)
+            .map(Subject::Classifier)
+            .unwrap_or_else(|| Subject::Diagram(doc_key.to_string())),
+        BehaviorTarget::Message(_) | BehaviorTarget::Fragment(_) => {
+            Subject::Diagram(doc_key.to_string())
+        }
+    }
+}
+
+/// The concept key a `Subject` resolves to -- what `ViewOutcome::view_source`
+/// asks the shell to open (spec §5.2).
+fn subject_key(subject: &Subject) -> Option<String> {
+    match subject {
+        Subject::Diagram(k) | Subject::Classifier(k) | Subject::Group(k) | Subject::Edge(k) => {
+            Some(k.clone())
+        }
+        Subject::None => None,
+    }
+}
+
 pub struct BehaviorDocView {
-    #[allow(dead_code)]
     key: String,
     kind: BehaviorKind,
 }
@@ -292,6 +345,23 @@ impl BehaviorDocView {
         BehaviorDocView {
             key,
             kind: BehaviorKind::Interaction,
+        }
+    }
+
+    /// Push `subject` to the inspector exactly as `ClassDiagramView::sync_selection`
+    /// does (spec §5.2).
+    fn sync_inspector_subject(
+        &self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        model: &waml::model::Model,
+        subject: Subject,
+    ) {
+        if let Some(mut inspector) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            inspector.set_subject(cx, model, subject);
         }
     }
 }
@@ -331,14 +401,15 @@ impl DocView for BehaviorDocView {
         cx: &mut Cx,
         body: &BodyWidgets,
         actions: &Actions,
-        _data: ViewData<'_>,
+        data: ViewData<'_>,
     ) -> ViewOutcome {
-        let out = ViewOutcome::default();
+        let mut out = ViewOutcome::default();
+        let model = &data.uml_analysis.projection;
 
         // The four camera one-shots are thin wrappers over the `Camera` API
         // on `BehaviorSurface` (mirrors `ClassDiagramView`'s view-bar wiring).
         // The veil/x-ray toggles and fit-to-* one-shots have no behavior-canvas
-        // equivalent yet -- Tasks 7-9 add selection and a real scene to fit.
+        // equivalent yet.
         if let Some(crate::view_bar::ViewBarAction::Triggered(opt)) = body
             .view_bar(cx)
             .borrow_mut::<crate::view_bar::ViewBar>()
@@ -360,12 +431,35 @@ impl DocView for BehaviorDocView {
             }
         }
 
-        // No hit-testable target exists yet (the scene is always `Empty`),
-        // but reading the action keeps the seam exercised for Tasks 7-9.
-        let _ = body
+        // Selection drives the inspector; a double-click reaches the same
+        // View Source path the node context menu uses (spec §5.2, Task 9).
+        // No mutation ever reaches the document from this read-only surface.
+        let surface_action = body
             .behavior_canvas(cx)
             .borrow_mut::<crate::canvas::BehaviorSurface>()
             .and_then(|canvas| canvas.surface_action(actions));
+        if let Some(action) = surface_action {
+            let interaction_doc = (self.kind == BehaviorKind::Interaction)
+                .then(|| model.interactions.iter().find(|d| d.key == self.key))
+                .flatten();
+            match action {
+                BehaviorSurfaceAction::Selected(Some(target)) => {
+                    let subject = subject_for_target(&target, &self.key, interaction_doc);
+                    self.sync_inspector_subject(cx, body, model, subject);
+                    return out;
+                }
+                BehaviorSurfaceAction::Selected(None) | BehaviorSurfaceAction::Cleared => {
+                    self.sync_inspector_subject(cx, body, model, Subject::None);
+                    return out;
+                }
+                BehaviorSurfaceAction::ViewSourceRequested(target) => {
+                    let subject = subject_for_target(&target, &self.key, interaction_doc);
+                    out.view_source = subject_key(&subject);
+                    return out;
+                }
+                BehaviorSurfaceAction::None => {}
+            }
+        }
 
         out
     }
@@ -389,11 +483,27 @@ impl DocView for BehaviorDocView {
     fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         body.set_behavior_canvas_visible(cx, false);
     }
+
+    fn on_escape(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        if let Some(mut canvas) = body
+            .behavior_canvas(cx)
+            .borrow_mut::<crate::canvas::BehaviorSurface>()
+        {
+            canvas.clear_selection(cx);
+        }
+        if let Some(mut inspector) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            inspector.set_subject(cx, &waml::model::Model::default(), Subject::None);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use makepad_widgets::{live_id, Area, Cx, LiveId, WidgetNode, WidgetRef, WidgetUid};
 
     #[test]
     fn flow_and_interaction_constructors_pick_distinct_kinds() {
@@ -402,5 +512,228 @@ mod tests {
             BehaviorDocView::interaction("a".into()).kind,
             BehaviorKind::Interaction
         );
+    }
+
+    fn interaction_doc_with_lifeline(id: &str, ref_: Option<&str>) -> SequenceDoc {
+        SequenceDoc {
+            key: "seq".into(),
+            title: "Seq".into(),
+            describes: None,
+            nodes: vec![SeqNode::Lifeline {
+                id: id.into(),
+                title: id.into(),
+                alias: None,
+                ref_: ref_.map(str::to_string),
+            }],
+            edges: Vec::new(),
+            items: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn subject_for_target_maps_every_arm() {
+        assert_eq!(
+            subject_for_target(&BehaviorTarget::FlowNode("n1".into()), "doc", None),
+            Subject::Classifier("n1".into())
+        );
+        assert_eq!(
+            subject_for_target(&BehaviorTarget::FlowEdge("e1".into()), "doc", None),
+            Subject::Edge("e1".into())
+        );
+
+        let with_ref = interaction_doc_with_lifeline("a", Some("customer"));
+        assert_eq!(
+            subject_for_target(
+                &BehaviorTarget::Lifeline("a".into()),
+                "doc",
+                Some(&with_ref)
+            ),
+            Subject::Classifier("customer".into())
+        );
+
+        let without_ref = interaction_doc_with_lifeline("a", None);
+        assert_eq!(
+            subject_for_target(
+                &BehaviorTarget::Lifeline("a".into()),
+                "doc",
+                Some(&without_ref)
+            ),
+            Subject::Diagram("doc".into())
+        );
+        // No interaction doc at all (e.g. wrong kind) converges the same way.
+        assert_eq!(
+            subject_for_target(&BehaviorTarget::Lifeline("a".into()), "doc", None),
+            Subject::Diagram("doc".into())
+        );
+
+        assert_eq!(
+            subject_for_target(&BehaviorTarget::Message("m0".into()), "doc", None),
+            Subject::Diagram("doc".into())
+        );
+        assert_eq!(
+            subject_for_target(&BehaviorTarget::Fragment("f0".into()), "doc", None),
+            Subject::Diagram("doc".into())
+        );
+    }
+
+    #[test]
+    fn subject_key_reads_every_subject_variant() {
+        assert_eq!(subject_key(&Subject::None), None);
+        assert_eq!(subject_key(&Subject::Diagram("d".into())), Some("d".into()));
+        assert_eq!(
+            subject_key(&Subject::Classifier("c".into())),
+            Some("c".into())
+        );
+        assert_eq!(subject_key(&Subject::Group("g".into())), Some("g".into()));
+        assert_eq!(subject_key(&Subject::Edge("e".into())), Some("e".into()));
+    }
+
+    struct TestBody {
+        uid: WidgetUid,
+        children: Vec<(LiveId, WidgetRef)>,
+    }
+
+    impl makepad_widgets::ScriptApply for TestBody {}
+
+    impl WidgetNode for TestBody {
+        fn widget_uid(&self) -> WidgetUid {
+            self.uid
+        }
+
+        fn walk(&mut self, _cx: &mut Cx) -> makepad_widgets::Walk {
+            makepad_widgets::Walk::default()
+        }
+
+        fn area(&self) -> Area {
+            Area::Empty
+        }
+
+        fn redraw(&mut self, _cx: &mut Cx) {}
+
+        fn children(&self, visit: &mut dyn FnMut(LiveId, WidgetRef)) {
+            for (id, child) in &self.children {
+                visit(*id, child.clone());
+            }
+        }
+    }
+
+    impl makepad_widgets::Widget for TestBody {}
+
+    fn test_body(vm: &mut makepad_widgets::ScriptVm) -> WidgetRef {
+        use makepad_widgets::ScriptNew;
+        WidgetRef::new_with_inner(Box::new(TestBody {
+            uid: WidgetUid::new(),
+            children: vec![
+                (
+                    live_id!(behavior_canvas),
+                    WidgetRef::new_with_inner(Box::new(
+                        crate::canvas::BehaviorSurface::script_new(vm),
+                    )),
+                ),
+                (
+                    live_id!(inspector),
+                    WidgetRef::new_with_inner(Box::new(
+                        crate::inspector_panel::Inspector::script_new(vm),
+                    )),
+                ),
+            ],
+        }))
+    }
+
+    /// `BehaviorSurfaceAction::Selected`/`Cleared`/`ViewSourceRequested` must
+    /// never produce a document edit -- this surface is read-only by
+    /// construction (spec §5.2).
+    #[test]
+    fn selected_and_view_source_actions_never_return_an_edit() {
+        use crate::doc_view::{BodyWidgets, ViewData};
+        use makepad_widgets::{Action, ActionsBuf, WidgetAction};
+
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = BodyWidgets::new(cx, &ui);
+        let canvas_uid = body.behavior_canvas(cx).widget_uid();
+
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "flow.md",
+            "---\ntype: Diagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
+        )])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+
+        fn widget_action(uid: WidgetUid, action: BehaviorSurfaceAction) -> Action {
+            Box::new(WidgetAction {
+                data: None,
+                action: Box::new(action),
+                widget_uid: uid,
+                group: None,
+            })
+        }
+
+        let cases = [
+            BehaviorSurfaceAction::Selected(Some(BehaviorTarget::FlowNode("n1".into()))),
+            BehaviorSurfaceAction::Selected(None),
+            BehaviorSurfaceAction::Cleared,
+            BehaviorSurfaceAction::ViewSourceRequested(BehaviorTarget::Message("m0".into())),
+        ];
+        for case in cases {
+            let actions: ActionsBuf = vec![widget_action(canvas_uid, case)];
+            let mut view = BehaviorDocView::flow("flow".into());
+            let outcome = view.handle(
+                cx,
+                &body,
+                &actions,
+                ViewData {
+                    source: &source,
+                    okf_analysis: &okf_analysis,
+                    uml_analysis: &uml_analysis,
+                    revision,
+                },
+            );
+            assert!(outcome.edit.is_none());
+        }
+    }
+
+    #[test]
+    fn view_source_requested_populates_the_outcome() {
+        use crate::doc_view::{BodyWidgets, ViewData};
+        use makepad_widgets::{ActionsBuf, WidgetAction};
+
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = BodyWidgets::new(cx, &ui);
+        let canvas_uid = body.behavior_canvas(cx).widget_uid();
+
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "flow.md",
+            "---\ntype: Diagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
+        )])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(BehaviorSurfaceAction::ViewSourceRequested(
+                BehaviorTarget::FlowNode("n1".into()),
+            )),
+            widget_uid: canvas_uid,
+            group: None,
+        })];
+        let mut view = BehaviorDocView::flow("flow".into());
+        let outcome = view.handle(
+            cx,
+            &body,
+            &actions,
+            ViewData {
+                source: &source,
+                okf_analysis: &okf_analysis,
+                uml_analysis: &uml_analysis,
+                revision,
+            },
+        );
+        assert_eq!(outcome.view_source, Some("n1".into()));
     }
 }

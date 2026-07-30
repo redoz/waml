@@ -245,6 +245,11 @@ pub struct BehaviorSurface {
     pointer_down_abs: Option<DVec2>,
     #[rust]
     hovered: Option<BehaviorTarget>,
+    /// The persistently-selected target (spec §5.2). `Esc`/`clear_selection`
+    /// clears it; a click replaces it; a double-click leaves it untouched and
+    /// instead requests the View Source path.
+    #[rust]
+    selected: Option<BehaviorTarget>,
     #[live(true)]
     interaction_enabled: bool,
 }
@@ -275,6 +280,10 @@ pub enum BehaviorSurfaceAction {
     None,
     Selected(Option<BehaviorTarget>),
     Cleared,
+    /// A double-click landed on `BehaviorTarget` (spec §5.2 View Source, Task
+    /// 9): the surface has no context menu, so this is the read-only
+    /// equivalent affordance that reaches the same navigation path.
+    ViewSourceRequested(BehaviorTarget),
 }
 
 impl Widget for BehaviorSurface {
@@ -330,9 +339,17 @@ impl Widget for BehaviorSurface {
                         fe.abs.x - self.viewport.snapshot().view_rect.pos.x,
                         fe.abs.y - self.viewport.snapshot().view_rect.pos.y,
                     );
-                    let action = match hit::hit_test(&self.scene, (wx, wy)) {
-                        Some(target) => BehaviorSurfaceAction::Selected(Some(target)),
-                        None => BehaviorSurfaceAction::Cleared,
+                    let target = hit::hit_test(&self.scene, (wx, wy));
+                    let action = match (fe.tap_count >= 2, target) {
+                        (true, Some(target)) => BehaviorSurfaceAction::ViewSourceRequested(target),
+                        (_, Some(target)) => {
+                            self.selected = Some(target.clone());
+                            BehaviorSurfaceAction::Selected(Some(target))
+                        }
+                        (_, None) => {
+                            self.selected = None;
+                            BehaviorSurfaceAction::Cleared
+                        }
                     };
                     cx.widget_action(self.widget_uid(), action);
                 }
@@ -410,6 +427,20 @@ impl BehaviorSurface {
     pub(crate) fn set_scene(&mut self, cx: &mut Cx, scene: BehaviorScene) {
         self.scene = scene;
         self.draw_bg.redraw(cx);
+    }
+
+    /// The current persistent selection, if any (spec §5.2).
+    #[allow(dead_code)]
+    pub(crate) fn selected(&self) -> Option<&BehaviorTarget> {
+        self.selected.as_ref()
+    }
+
+    /// `Esc` clears the selection (spec §5.2).
+    pub(crate) fn clear_selection(&mut self, cx: &mut Cx) {
+        if self.selected.is_some() {
+            self.selected = None;
+            self.draw_bg.redraw(cx);
+        }
     }
 
     /// Zoom by `factor` about the viewport centre (mirrors
