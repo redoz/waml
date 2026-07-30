@@ -1,6 +1,8 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in super::super) enum LineworkMode {
     Cad,
+    // Retained as the legacy branch for future comparison or setting.
+    #[allow(dead_code)]
     Scaled,
 }
 
