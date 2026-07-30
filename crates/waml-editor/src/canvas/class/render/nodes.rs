@@ -59,16 +59,12 @@ pub(super) fn draw_nodes(
     let focus_active = !focus_keys.is_empty();
     let selected_key = snapshot.selection.selected_key.as_deref();
 
-    for (index, node) in snapshot.scene.nodes.iter().enumerate() {
+    for node in &snapshot.scene.nodes {
         let screen = world_rect_to_screen(snapshot.viewport, node.rect);
         draws.node.set_uniform(
             cx,
             live_id!(selected),
-            &[if snapshot.selection.selected_index == Some(index) {
-                1.0
-            } else {
-                0.0
-            }],
+            &[snapshot.selection.lift_for(&node.key) as f32],
         );
         let focus = node_focus_state(&node.key, selected_key, &focus_keys);
         let muted = focus_active && !focus.coloured();

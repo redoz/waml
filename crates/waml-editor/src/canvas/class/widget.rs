@@ -9,7 +9,7 @@ use super::{
     interaction::ClassInteraction,
     placement::PlacementInteraction,
     render::{self, ClassDrawResources, LineworkMetrics, RenderSnapshot, DEFAULT_LINEWORK_MODE},
-    selection::{ConstraintVisibility, SelectionPolicy, SelectionState},
+    selection::{ConstraintVisibility, SelectionPolicy, SelectionState, SELECTION_TICK},
     DialPlacement, FrameCommand, InteractionEffects, SceneUpdate, SurfaceIntent, TimerCommand,
     Zone,
 };
@@ -397,6 +397,9 @@ pub struct ClassDiagramSurface {
     /// schedule and paces the glide evenly.
     #[rust]
     cam_timer: Timer,
+    /// Animation clock for the render-only node selection lift.
+    #[rust]
+    selection_timer: Timer,
     /// Makepad handle for the controller-owned dwell timeout.
     #[rust]
     dwell_timer: Timer,
@@ -483,6 +486,13 @@ impl Widget for ClassDiagramSurface {
         if let Some(te) = self.cam_timer.is_event(event) {
             let effects = self.viewport.tick_camera(te.time.unwrap_or(0.0));
             self.apply_viewport_effects(cx, effects);
+        }
+        if let Some(te) = self.selection_timer.is_event(event) {
+            self.selection.tick_lift(te.time.unwrap_or(0.0));
+            self.draw_bg.redraw(cx);
+            if !self.selection.lift_animation_active() {
+                cx.stop_timer(self.selection_timer);
+            }
         }
         if let Event::KeyDown(ke) = event {
             if ke.key_code == KeyCode::Escape && self.placement.snapshot().dragged_key.is_some() {
@@ -576,6 +586,7 @@ impl Widget for ClassDiagramSurface {
             }
             _ => {}
         }
+        self.sync_selection_lift_timer(cx);
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
@@ -747,6 +758,7 @@ impl ClassDiagramSurface {
         self.apply_interaction_effects(cx, interaction_effects);
         self.apply_viewport_effects(cx, viewport_effects);
         self.scene = scene;
+        self.sync_selection_lift_timer(cx);
         self.draw_bg.redraw(cx);
     }
 
@@ -793,11 +805,13 @@ impl ClassDiagramSurface {
     /// selection but is otherwise a no-op. Repaints the highlight.
     pub fn select_by_key(&mut self, cx: &mut Cx, key: &str) {
         self.selection.select(key, &self.scene.nodes);
+        self.sync_selection_lift_timer(cx);
         self.draw_bg.redraw(cx);
     }
 
     pub fn clear_selection(&mut self, cx: &mut Cx) {
         self.selection.clear();
+        self.sync_selection_lift_timer(cx);
         self.draw_bg.redraw(cx);
     }
 
@@ -1023,6 +1037,17 @@ impl ClassDiagramSurface {
         if effects.redraw {
             self.draw_bg.redraw(cx);
         }
+    }
+
+    fn sync_selection_lift_timer(&mut self, cx: &mut Cx) {
+        if !self.selection.take_lift_target_changed() {
+            return;
+        }
+        cx.stop_timer(self.selection_timer);
+        if self.selection.lift_animation_active() {
+            self.selection_timer = cx.start_interval(SELECTION_TICK);
+        }
+        self.draw_bg.redraw(cx);
     }
 
     fn apply_interaction_effects(&mut self, cx: &mut Cx, effects: InteractionEffects) {
