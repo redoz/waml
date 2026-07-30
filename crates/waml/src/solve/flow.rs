@@ -209,28 +209,37 @@ fn break_cycles(rf: &ResolvedFlow, adj: &BTreeMap<&str, Vec<&FlowEdge>>) -> BTre
         }
     }
 
+    /// Iterative (explicit-stack) DFS: a user document can carry an arbitrarily
+    /// long node chain, and recursion here would overflow the editor's stack.
     fn dfs<'a>(
-        node: &'a str,
+        start: &'a str,
         adj: &BTreeMap<&'a str, Vec<&'a FlowEdge>>,
         visited: &mut BTreeSet<&'a str>,
         on_stack: &mut BTreeSet<&'a str>,
         reversed: &mut BTreeSet<String>,
     ) {
-        if visited.contains(node) {
+        if visited.contains(start) {
             return;
         }
-        visited.insert(node);
-        on_stack.insert(node);
-        if let Some(edges) = adj.get(node) {
-            for e in edges {
-                if on_stack.contains(e.to.as_str()) {
-                    reversed.insert(e.key.clone());
-                } else {
-                    dfs(e.to.as_str(), adj, visited, on_stack, reversed);
-                }
+        visited.insert(start);
+        on_stack.insert(start);
+        let mut stack: Vec<(&'a str, usize)> = vec![(start, 0)];
+        while let Some((node, idx)) = stack.pop() {
+            let edges: &[&'a FlowEdge] = adj.get(node).map(|v| v.as_slice()).unwrap_or(&[]);
+            let Some(e) = edges.get(idx).copied() else {
+                on_stack.remove(node);
+                continue;
+            };
+            stack.push((node, idx + 1));
+            let to = e.to.as_str();
+            if on_stack.contains(to) {
+                reversed.insert(e.key.clone());
+            } else if !visited.contains(to) {
+                visited.insert(to);
+                on_stack.insert(to);
+                stack.push((to, 0));
             }
         }
-        on_stack.remove(node);
     }
 
     for s in &starts {
@@ -304,21 +313,37 @@ fn order_ranks<'a>(
 
     // DFS-discovery seed order, declaration order as tie-break.
     let mut seeded: BTreeSet<&str> = BTreeSet::new();
+    /// Iterative (explicit-stack) pre-order DFS, for the same stack-depth
+    /// reason `break_cycles::dfs` is iterative.
     fn dfs_seed<'a>(
-        node: &'a str,
+        start: &'a str,
         adj: &BTreeMap<&'a str, Vec<&'a str>>,
         seeded: &mut BTreeSet<&'a str>,
         rank: &BTreeMap<&'a str, usize>,
         rows: &mut [Vec<&'a str>],
     ) {
-        if seeded.contains(node) {
+        let seed = |k: &'a str, rows: &mut [Vec<&'a str>], seeded: &mut BTreeSet<&'a str>| {
+            if let Some(r) = rank.get(k).copied() {
+                if r < rows.len() {
+                    rows[r].push(k);
+                }
+            }
+            seeded.insert(k);
+        };
+        if seeded.contains(start) {
             return;
         }
-        seeded.insert(node);
-        rows[rank[node]].push(node);
-        if let Some(tos) = adj.get(node) {
-            for to in tos {
-                dfs_seed(to, adj, seeded, rank, rows);
+        seed(start, rows, seeded);
+        let mut stack: Vec<(&'a str, usize)> = vec![(start, 0)];
+        while let Some((node, idx)) = stack.pop() {
+            let tos: &[&'a str] = adj.get(node).map(|v| v.as_slice()).unwrap_or(&[]);
+            let Some(to) = tos.get(idx).copied() else {
+                continue;
+            };
+            stack.push((node, idx + 1));
+            if !seeded.contains(to) {
+                seed(to, rows, seeded);
+                stack.push((to, 0));
             }
         }
     }
@@ -426,9 +451,99 @@ fn order_ranks<'a>(
     rows
 }
 
+/// How many alternating (down, up) barycenter passes `refine_x` runs.
+const X_REFINE_PASSES: usize = 4;
+
+/// Reverse an adjacency map.
+fn reverse_adj<'a>(adj: &BTreeMap<&'a str, Vec<&'a str>>) -> BTreeMap<&'a str, Vec<&'a str>> {
+    let mut rev: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (from, tos) in adj.iter() {
+        for to in tos {
+            rev.entry(to).or_default().push(from);
+        }
+    }
+    rev
+}
+
+/// The bounded priority passes of spec §2.4 step 4: alternate down/up sweeps,
+/// pulling every node toward the barycenter of its adjacent-rank neighbours
+/// while keeping in-rank order and a `node_gap` separation. `bounds_of` clamps
+/// a node into its band (a partition lane, or the whole row when unbanded) and
+/// `group_of` names the band whose left-to-right cursor the node shares.
+#[allow(clippy::too_many_arguments)]
+fn refine_x<'a>(
+    rows: &[Vec<&'a str>],
+    sizes: &SizeMap,
+    cfg: &FlowConfig,
+    adj: &BTreeMap<&'a str, Vec<&'a str>>,
+    rev_adj: &BTreeMap<&'a str, Vec<&'a str>>,
+    bounds_of: &dyn Fn(&str) -> (f64, f64),
+    group_of: &dyn Fn(&str) -> usize,
+    x: &mut BTreeMap<&'a str, f64>,
+) {
+    let width = |k: &str| sizes.get(k).map(|s| s.w).unwrap_or(0.0);
+    for pass in 0..X_REFINE_PASSES {
+        let down = pass % 2 == 0;
+        let indices: Vec<usize> = if down {
+            (1..rows.len()).collect()
+        } else {
+            (0..rows.len().saturating_sub(1)).rev().collect()
+        };
+        for i in indices {
+            let neighbor_row = if down { i - 1 } else { i + 1 };
+            let neighbors_of = if down { rev_adj } else { adj };
+            let centers: BTreeMap<&str, f64> = rows[neighbor_row]
+                .iter()
+                .map(|k| (*k, x.get(k).copied().unwrap_or(0.0) + width(k) / 2.0))
+                .collect();
+            // What every member still to this node's RIGHT (in the same band)
+            // needs, so centring a node never pushes its followers out of the
+            // band's right edge.
+            let mut tail: BTreeMap<&str, f64> = BTreeMap::new();
+            let mut right_need: BTreeMap<usize, f64> = BTreeMap::new();
+            for k in rows[i].iter().rev() {
+                let group = group_of(k);
+                let right = right_need.get(&group).copied().unwrap_or(0.0);
+                let need = width(k)
+                    + if right > 0.0 {
+                        cfg.node_gap + right
+                    } else {
+                        0.0
+                    };
+                tail.insert(k, need);
+                right_need.insert(group, need);
+            }
+            let mut cursors: BTreeMap<usize, f64> = BTreeMap::new();
+            for k in &rows[i] {
+                let w = width(k);
+                let (lo, hi) = bounds_of(k);
+                let group = group_of(k);
+                let cursor = cursors.get(&group).copied().unwrap_or(lo);
+                let desired = neighbors_of.get(k).and_then(|ns| {
+                    let vals: Vec<f64> =
+                        ns.iter().filter_map(|n| centers.get(*n).copied()).collect();
+                    (!vals.is_empty()).then(|| vals.iter().sum::<f64>() / vals.len() as f64)
+                });
+                let current = x.get(k).copied().unwrap_or(lo);
+                let target = desired.map(|c| c - w / 2.0).unwrap_or(current);
+                let room = hi - tail.get(k).copied().unwrap_or(w);
+                let nx = target.max(lo).max(cursor).min(room.max(lo)).max(cursor);
+                x.insert(k, nx);
+                cursors.insert(group, nx + w + cfg.node_gap);
+            }
+        }
+    }
+}
+
 /// x placement: pack left-to-right by measured width + `node_gap`, then a
 /// bounded number of priority passes toward adjacent-rank barycenters.
-fn place_x<'a>(rows: &[Vec<&'a str>], sizes: &SizeMap, cfg: &FlowConfig) -> BTreeMap<&'a str, f64> {
+fn place_x<'a>(
+    rows: &[Vec<&'a str>],
+    sizes: &SizeMap,
+    cfg: &FlowConfig,
+    adj: &BTreeMap<&'a str, Vec<&'a str>>,
+    rev_adj: &BTreeMap<&'a str, Vec<&'a str>>,
+) -> BTreeMap<&'a str, f64> {
     let mut x: BTreeMap<&str, f64> = BTreeMap::new();
     for row in rows {
         let mut cursor = 0.0;
@@ -438,8 +553,23 @@ fn place_x<'a>(rows: &[Vec<&'a str>], sizes: &SizeMap, cfg: &FlowConfig) -> BTre
             cursor += w + cfg.node_gap;
         }
     }
+    refine_x(
+        rows,
+        sizes,
+        cfg,
+        adj,
+        rev_adj,
+        &|_| (0.0, f64::INFINITY),
+        &|_| 0,
+        &mut x,
+    );
     x
 }
+
+/// Resolves a document key (a cross-document edge's `to_ref`) to that
+/// document's title, for off-page stub labels. `&|_| None` keeps the raw `to`
+/// text.
+pub type TitleLookup<'a> = &'a dyn Fn(&str) -> Option<String>;
 
 /// Assemble the flow into a `Solved`.
 pub fn solve_flow(
@@ -448,6 +578,7 @@ pub fn solve_flow(
     edges: &[FlowEdge],
     sizes: &SizeMap,
     cfg: &FlowConfig,
+    titles: TitleLookup<'_>,
 ) -> FlowSolution {
     let (rf, mut diagnostics) = resolve_flow(doc, nodes, edges);
 
@@ -534,9 +665,15 @@ pub fn solve_flow(
     }
     let reversed = break_cycles(&rf, &adj_orig);
 
-    // Ranking adjacency: reversed edges flipped.
+    // Ranking adjacency: reversed edges flipped. Self-edges are NEVER part of
+    // it -- a self-loop would keep its own node's indegree above 0 forever, so
+    // `rank_nodes`' topo queue would never reach it and everything downstream
+    // would stay pinned at rank 0.
     let mut adj_ranking: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for e in &rf.edges {
+        if e.from == e.to {
+            continue;
+        }
         if reversed.contains(&e.key) {
             adj_ranking
                 .entry(e.to.as_str())
@@ -552,7 +689,8 @@ pub fn solve_flow(
 
     let rank = rank_nodes(&rf, &adj_ranking);
     let rows = order_ranks(&rf, &rank, &adj_ranking);
-    let x = place_x(&rows, sizes, cfg);
+    let rev_ranking = reverse_adj(&adj_ranking);
+    let x = place_x(&rows, sizes, cfg, &adj_ranking, &rev_ranking);
 
     // y = accumulated row heights + row_gap.
     let mut row_y = Vec::with_capacity(rows.len());
@@ -597,7 +735,9 @@ pub fn solve_flow(
     }
 
     let mut groups = Vec::new();
-    if lane_order.len() > 1 {
+    // A single NAMED partition still gets its band (and its per-lane x clamp);
+    // only the all-implicit case (one unnamed lane) draws no lane at all.
+    if lane_order.len() > 1 || lane_order.iter().any(|p| p.is_some()) {
         // Each lane's band width is the widest a single row ever needs for
         // that lane's members (packed left-to-right within the row); node x
         // is repacked per (row, lane) so members sharing a rank never
@@ -640,16 +780,37 @@ pub fn solve_flow(
                 .collect()
         };
 
+        let mut lane_x: BTreeMap<&str, f64> = BTreeMap::new();
         for row in &rows {
             let mut cursor_per_lane = vec![0.0_f64; lane_order.len()];
             for k in row {
                 let li = lane_of[k];
                 let local = cursor_per_lane[li];
                 let w = sizes.get(*k).map(|s| s.w).unwrap_or(0.0);
-                if let Some(rect) = node_rects.get_mut(*k) {
-                    rect.x = lane_x_offset[li] + cfg.lane_pad + local;
-                }
+                lane_x.insert(k, lane_x_offset[li] + cfg.lane_pad + local);
                 cursor_per_lane[li] = local + w + cfg.node_gap;
+            }
+        }
+        // Same bounded priority passes as the unbanded case, but each node is
+        // clamped into (and shares a cursor with) its own lane band.
+        let lane_bounds = |k: &str| {
+            let li = lane_of[k];
+            let lo = lane_x_offset[li] + cfg.lane_pad;
+            (lo, lo + lane_band_w[li])
+        };
+        refine_x(
+            &rows,
+            sizes,
+            cfg,
+            &adj_ranking,
+            &rev_ranking,
+            &lane_bounds,
+            &|k| lane_of[k],
+            &mut lane_x,
+        );
+        for (k, xv) in &lane_x {
+            if let Some(rect) = node_rects.get_mut(*k) {
+                rect.x = *xv;
             }
         }
 
@@ -681,7 +842,7 @@ pub fn solve_flow(
         .collect();
 
     let routes = route_edges(&rf, &node_rects, &reversed, cfg);
-    let off_page = build_off_page_stubs(&rf, &node_rects, cfg);
+    let off_page = build_off_page_stubs(&rf, &node_rects, cfg, titles);
 
     FlowSolution {
         solved: Solved {
@@ -764,7 +925,7 @@ fn route_edges(
     cfg: &FlowConfig,
 ) -> Vec<Route> {
     let mut routes = Vec::new();
-    let mut normal_pairs: Vec<(BoxId, BoxId)> = Vec::new();
+    let mut normal_pairs: Vec<(BoxId, BoxId, Option<String>)> = Vec::new();
 
     for e in &rf.edges {
         if e.from == e.to {
@@ -773,6 +934,7 @@ fn route_edges(
                     points: self_edge_route(rect, cfg),
                     source: e.from.clone(),
                     target: e.to.clone(),
+                    key: Some(e.key.clone()),
                 });
             }
             continue;
@@ -783,11 +945,16 @@ fn route_edges(
                     points: back_edge_route(src, tgt, node_rects, cfg),
                     source: e.from.clone(),
                     target: e.to.clone(),
+                    key: Some(e.key.clone()),
                 });
             }
             continue;
         }
-        normal_pairs.push((BoxId::Node(e.from.clone()), BoxId::Node(e.to.clone())));
+        normal_pairs.push((
+            BoxId::Node(e.from.clone()),
+            BoxId::Node(e.to.clone()),
+            Some(e.key.clone()),
+        ));
     }
 
     if !normal_pairs.is_empty() {
@@ -809,7 +976,8 @@ fn route_edges(
             .iter()
             .map(|(k, r)| (BoxId::Node(k.clone()), *r))
             .collect();
-        let normal_routes = route::route(&boxes, &rects, &normal_pairs, &SolveConfig::default());
+        let normal_routes =
+            route::route_keyed(&boxes, &rects, &normal_pairs, &SolveConfig::default());
         routes.extend(normal_routes);
     }
 
@@ -822,6 +990,7 @@ fn build_off_page_stubs(
     rf: &ResolvedFlow,
     node_rects: &BTreeMap<String, Rect>,
     cfg: &FlowConfig,
+    titles: TitleLookup<'_>,
 ) -> Vec<OffPageStub> {
     let mut stubs = Vec::new();
     for e in &rf.off_page {
@@ -830,10 +999,17 @@ fn build_off_page_stubs(
         };
         let out_x = src.x + src.w + cfg.node_gap / 2.0;
         let y = src.y + src.h / 2.0;
+        // The target document's own title, resolved through `to_ref`; the raw
+        // `to` text is only the fallback (spec §2.1, §4.1).
+        let target_title = e
+            .to_ref
+            .as_deref()
+            .and_then(titles)
+            .unwrap_or_else(|| e.to.clone());
         stubs.push(OffPageStub {
             edge_key: e.key.clone(),
             points: vec![(src.x + src.w, y), (out_x, y)],
-            target_title: e.to.clone(),
+            target_title,
         });
     }
     stubs

@@ -401,6 +401,7 @@ impl Widget for BehaviorSurface {
             self.viewport.snapshot(),
             &self.scene,
             self.hovered.as_ref(),
+            self.selected.as_ref(),
             &mut draws,
         );
         DrawStep::done()

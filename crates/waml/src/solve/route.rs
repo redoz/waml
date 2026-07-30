@@ -22,11 +22,27 @@ pub fn route(
     boxes: &[Box],
     rects: &BTreeMap<BoxId, Rect>,
     edges: &[(BoxId, BoxId)],
+    cfg: &SolveConfig,
+) -> Vec<Route> {
+    let keyed: Vec<(BoxId, BoxId, Option<String>)> = edges
+        .iter()
+        .map(|(s, t)| (s.clone(), t.clone(), None))
+        .collect();
+    route_keyed(boxes, rects, &keyed, cfg)
+}
+
+/// `route`, but each edge carries the authored key the produced `Route` should
+/// be tagged with (`Route::key`). Callers with two edges between the same pair
+/// of boxes need this to map routes back to edges.
+pub fn route_keyed(
+    boxes: &[Box],
+    rects: &BTreeMap<BoxId, Rect>,
+    edges: &[(BoxId, BoxId, Option<String>)],
     _cfg: &SolveConfig,
 ) -> Vec<Route> {
     let membership = build_membership(boxes);
     let mut routes: Vec<Route> = Vec::new();
-    for (s, t) in edges {
+    for (s, t, key) in edges {
         if s == t {
             continue; // self-edge: out of scope
         }
@@ -48,6 +64,7 @@ pub fn route(
             points,
             source,
             target,
+            key: key.clone(),
         });
     }
     hub_spread(&mut routes, rects);
@@ -1001,6 +1018,7 @@ mod tests {
             points: vec![(0.0, 0.0), (0.0, 50.0), (100.0, 50.0), (100.0, 0.0)],
             source: src.into(),
             target: "t".into(),
+            key: None,
         };
         let mut routes = vec![mk("a"), mk("b")];
         nudge(&mut routes);
@@ -1027,6 +1045,7 @@ mod tests {
             points: vec![(100.0, 45.0), (300.0, ty)],
             source: "h".into(),
             target: t.into(),
+            key: None,
         };
         let mut routes = vec![mk("t1", 15.0), mk("t2", 55.0), mk("t3", 95.0)];
         hub_spread(&mut routes, &rects);
@@ -1060,6 +1079,7 @@ mod tests {
             points: vec![(100.0, 45.0), (300.0, ty)],
             source: "h".into(),
             target: t.into(),
+            key: None,
         };
         let mut routes = vec![mk("t1", 15.0), mk("t2", 55.0), mk("t3", 95.0)];
         hub_spread(&mut routes, &rects);

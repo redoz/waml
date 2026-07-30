@@ -40,6 +40,7 @@ pub enum DiagCode {
     UninvolvedLifeline,
     FragmentZeroOperands,
     EmptyOperandStream,
+    FragmentNestingTooDeep,
 }
 
 impl DiagCode {
@@ -72,6 +73,7 @@ impl DiagCode {
             DiagCode::UninvolvedLifeline => "uninvolved-lifeline",
             DiagCode::FragmentZeroOperands => "fragment-zero-operands",
             DiagCode::EmptyOperandStream => "empty-operand-stream",
+            DiagCode::FragmentNestingTooDeep => "fragment-nesting-too-deep",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
@@ -87,7 +89,8 @@ impl DiagCode {
             | DiagCode::UnmatchedReply
             | DiagCode::UninvolvedLifeline
             | DiagCode::FragmentZeroOperands
-            | DiagCode::EmptyOperandStream => Severity::Warning,
+            | DiagCode::EmptyOperandStream
+            | DiagCode::FragmentNestingTooDeep => Severity::Warning,
             _ => Severity::Error,
         }
     }

@@ -85,6 +85,10 @@ pub struct StatusFeedback<'a> {
     pub history_problem: Option<&'a str>,
     pub history_success: Option<&'a str>,
     pub navigation_message: Option<&'a str>,
+    /// The active document's solver diagnostics (behavior canvases, spec §5.3).
+    /// Lowest priority: it is standing state, not feedback about a just-taken
+    /// action, so any of the above replaces it.
+    pub solver_diagnostics: Option<&'a str>,
 }
 
 pub fn prioritized_status_line(
@@ -100,6 +104,7 @@ pub fn prioritized_status_line(
             .history_problem
             .or(feedback.history_success)
             .or(feedback.navigation_message)
+            .or(feedback.solver_diagnostics)
             .map(str::to_owned)
             .unwrap_or_else(|| status_line(diagram_name, node_count, zoom_pct, tool_label)),
     }
@@ -139,6 +144,8 @@ pub struct Statusbar {
     history_success: Option<String>,
     #[rust]
     navigation_message: Option<String>,
+    #[rust]
+    solver_diagnostics: Option<String>,
 }
 
 impl Widget for Statusbar {
@@ -159,6 +166,7 @@ impl Widget for Statusbar {
                 history_problem: self.history_problem.as_deref(),
                 history_success: self.history_success.as_deref(),
                 navigation_message: self.navigation_message.as_deref(),
+                solver_diagnostics: self.solver_diagnostics.as_deref(),
             },
         );
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
@@ -194,6 +202,12 @@ impl Statusbar {
         self.draw_bg.redraw(cx);
     }
 
+    /// Push the active document's solver diagnostics (spec §5.3).
+    pub fn set_solver_diagnostics(&mut self, cx: &mut Cx, message: Option<&str>) {
+        self.solver_diagnostics = message.map(str::to_owned);
+        self.draw_bg.redraw(cx);
+    }
+
     pub fn set_history_problem(&mut self, cx: &mut Cx, message: Option<&str>) {
         self.history_problem = message.map(str::to_owned);
         if message.is_some() {
@@ -220,6 +234,11 @@ impl Statusbar {
 #[cfg(test)]
 pub(crate) fn navigation_message(statusbar: &Statusbar) -> Option<&str> {
     statusbar.navigation_message.as_deref()
+}
+
+#[cfg(test)]
+pub(crate) fn solver_diagnostics(statusbar: &Statusbar) -> Option<&str> {
+    statusbar.solver_diagnostics.as_deref()
 }
 
 #[cfg(test)]
@@ -296,6 +315,37 @@ mod tests {
         );
     }
 
+    /// Solver diagnostics are the lowest-priority line: they show instead of
+    /// the plain status line, and any action feedback replaces them.
+    #[test]
+    fn solver_diagnostics_sit_below_every_action_feedback() {
+        let line = |navigation, diagnostics| {
+            prioritized_status_line(
+                "Orders",
+                3,
+                100,
+                "Select",
+                StatusFeedback {
+                    navigation_message: navigation,
+                    solver_diagnostics: diagnostics,
+                    ..Default::default()
+                },
+            )
+        };
+        assert_eq!(
+            line(None, Some("2 diagnostics: unreachable")),
+            "2 diagnostics: unreachable"
+        );
+        assert_eq!(
+            line(
+                Some("Section not found"),
+                Some("2 diagnostics: unreachable")
+            ),
+            "Section not found"
+        );
+        assert_eq!(line(None, None), status_line("Orders", 3, 100, "Select"));
+    }
+
     #[test]
     fn history_feedback_obeys_error_warning_success_navigation_precedence() {
         let line = |save, problem, success, navigation| {
@@ -309,6 +359,7 @@ mod tests {
                     history_problem: problem,
                     history_success: success,
                     navigation_message: navigation,
+                    solver_diagnostics: None,
                 },
             )
         };

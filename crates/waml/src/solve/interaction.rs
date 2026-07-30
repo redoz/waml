@@ -135,6 +135,10 @@ pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMa
     sizes
 }
 
+/// Deepest fragment nesting the solver walks; deeper fragments are dropped
+/// with a diagnostic rather than risking the stack (and `depth`'s own range).
+const MAX_FRAGMENT_DEPTH: u8 = 32;
+
 struct ActiveBar {
     depth: u8,
     start_y: f64,
@@ -321,6 +325,20 @@ impl<'a> WalkState<'a> {
         else {
             return (self.y, self.y, f64::INFINITY, f64::NEG_INFINITY);
         };
+        // Bound the recursion: a user document can nest fragments arbitrarily
+        // deep, which would otherwise overflow the editor's stack (and, past
+        // 255, overflow `depth` itself).
+        if depth >= MAX_FRAGMENT_DEPTH {
+            self.diagnostics.push(Diagnostic::new(
+                DiagCode::FragmentNestingTooDeep,
+                format!(
+                    "fragment '{id}' nests deeper than {MAX_FRAGMENT_DEPTH} levels and was dropped"
+                ),
+                self.doc_key.to_string(),
+                0,
+            ));
+            return (self.y, self.y, f64::INFINITY, f64::NEG_INFINITY);
+        }
         let id = id.clone();
         let kind = *kind;
         let operands = operands.clone();
@@ -362,7 +380,7 @@ impl<'a> WalkState<'a> {
                     ));
                 }
                 let items = items.clone();
-                let (op_min, op_max) = self.walk_items(&items, depth + 1);
+                let (op_min, op_max) = self.walk_items(&items, depth.saturating_add(1));
                 if op_min.is_finite() {
                     min_x = min_x.min(op_min);
                     max_x = max_x.max(op_max);
@@ -478,6 +496,22 @@ pub fn solve_interaction(
         })
         .collect();
 
+    // Rows start BELOW the tallest lifeline head (plus one line so a message's
+    // label, which sits directly above its line, also clears the head cards --
+    // the heads are drawn last, on top, so anything overlapping them is lost).
+    let head_bottom = lifeline_nodes
+        .iter()
+        .filter_map(|n| match n {
+            SeqNode::Lifeline { id, .. } => sizes.get(&lifeline_size_key(id)).map(|s| s.h),
+            _ => None,
+        })
+        .fold(0.0_f64, f64::max);
+    let first_row_y = if head_bottom > 0.0 {
+        head_bottom + cfg.line_height
+    } else {
+        0.0
+    };
+
     let mut state = WalkState {
         doc_key: doc.key.as_str(),
         lifeline_x: &lifeline_x,
@@ -486,7 +520,7 @@ pub fn solve_interaction(
         nodes_by_id: &nodes_by_id,
         sizes,
         cfg,
-        y: 0.0,
+        y: first_row_y,
         stacks: BTreeMap::new(),
         messages: Vec::new(),
         activations: Vec::new(),

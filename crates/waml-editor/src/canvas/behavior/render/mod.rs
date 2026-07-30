@@ -13,6 +13,71 @@ use makepad_widgets::*;
 pub(super) use flow::FlowDrawResources;
 pub(super) use interaction::InteractionDrawResources;
 
+/// Base body/heading text size, in lpx at zoom 1 -- the same 13pt the two
+/// solvers measure with (`FlowConfig`/`InteractionConfig::font_size`), so the
+/// drawn glyphs match the boxes the solver sized around them.
+const BASE_TEXT_LPX: f32 = 13.0 * (96.0 / 72.0);
+
+/// Point a text pen at `zoom`: pick the nearest raster rung for the zoomed
+/// target size and carry the remainder in `font_scale`, exactly as every class
+/// renderer does. Without this the glyph geometry stays at the DSL size while
+/// the boxes scale, so text detaches from its box at any zoom != 1.
+pub(super) fn apply_text_zoom(text: &mut DrawText, zoom: f64) {
+    let target = (BASE_TEXT_LPX * zoom as f32).max(4.0);
+    let font_size = crate::canvas::primitives::font_raster_size(target);
+    text.text_style.font_size = font_size;
+    text.font_scale = target / font_size;
+}
+
+/// How strongly one element is called out. A click's persistent selection
+/// reads stronger than a transient hover (spec §5.2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Emphasis {
+    #[default]
+    None,
+    Hovered,
+    Selected,
+}
+
+impl Emphasis {
+    /// `selected` wins over `hovered` (the pointer is usually over whatever was
+    /// just clicked).
+    pub(super) fn of(hovered: bool, selected: bool) -> Emphasis {
+        match (selected, hovered) {
+            (true, _) => Emphasis::Selected,
+            (false, true) => Emphasis::Hovered,
+            (false, false) => Emphasis::None,
+        }
+    }
+
+    /// Extra wash alpha over the resting fill.
+    pub(super) fn wash_boost(self) -> f32 {
+        match self {
+            Emphasis::None => 0.0,
+            Emphasis::Hovered => 0.14,
+            Emphasis::Selected => 0.28,
+        }
+    }
+
+    /// Stroke colour for a line/route/stem at this emphasis.
+    pub(super) fn stroke(self, resting: Vec4) -> Vec4 {
+        match self {
+            Emphasis::None => resting,
+            Emphasis::Hovered => vec4(0.85, 0.27, 0.47, 1.0),
+            Emphasis::Selected => vec4(0.98, 0.45, 0.62, 1.0),
+        }
+    }
+
+    /// Stroke thickness multiplier.
+    pub(super) fn thickness(self, resting: f64) -> f64 {
+        match self {
+            Emphasis::None => resting,
+            Emphasis::Hovered => resting * 1.5,
+            Emphasis::Selected => resting * 2.0,
+        }
+    }
+}
+
 pub(super) struct BehaviorDrawResources<'a> {
     pub(super) bg: &'a mut DrawColor,
     pub(super) text: &'a mut DrawText,
@@ -34,10 +99,17 @@ pub(super) fn draw(
     viewport: ViewportSnapshot,
     scene: &BehaviorScene,
     hovered: Option<&BehaviorTarget>,
+    selected: Option<&BehaviorTarget>,
     draws: &mut BehaviorDrawResources<'_>,
 ) {
     let rect = viewport.view_rect;
     draws.bg.draw_abs(cx, rect);
+    if !matches!(scene, BehaviorScene::Empty { .. }) {
+        // The empty-state message is chrome, not scene content: it stays at its
+        // DSL size. Everything else is world-space and scales with the camera.
+        apply_text_zoom(draws.text, viewport.camera.zoom);
+        apply_text_zoom(draws.text_heading, viewport.camera.zoom);
+    }
     match scene {
         BehaviorScene::Empty { message } => draw_message(cx, viewport, message, &mut *draws.text),
         BehaviorScene::Flow {
@@ -64,6 +136,7 @@ pub(super) fn draw(
                 off_page,
                 groups,
                 hovered,
+                selected,
                 &mut flow_draws,
             )
         }
@@ -93,6 +166,7 @@ pub(super) fn draw(
                 messages,
                 fragments,
                 hovered,
+                selected,
                 &mut interaction_draws,
             )
         }

@@ -5,6 +5,7 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
+use super::Emphasis;
 use crate::accent;
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
@@ -13,7 +14,6 @@ use makepad_widgets::*;
 use waml::model::MessageVerb;
 
 const HEAD_ALPHA: f32 = 0.16;
-const HOVER_BOOST: f32 = 0.14;
 const ACTIVATION_ALPHA: f32 = 0.55;
 const ACTIVATION_UNCLOSED_ALPHA: f32 = 0.3;
 const STEM_COLOR: Vec4 = Vec4 {
@@ -48,16 +48,31 @@ fn lifeline_accent(default: Vec4, bucket: AccentBucket) -> Vec4 {
     }
 }
 
-fn is_hovered_lifeline(hovered: Option<&BehaviorTarget>, id: &str) -> bool {
-    matches!(hovered, Some(BehaviorTarget::Lifeline(k)) if k == id)
+fn lifeline_emphasis(
+    hovered: Option<&BehaviorTarget>,
+    selected: Option<&BehaviorTarget>,
+    id: &str,
+) -> Emphasis {
+    let is = |t: Option<&BehaviorTarget>| matches!(t, Some(BehaviorTarget::Lifeline(k)) if k == id);
+    Emphasis::of(is(hovered), is(selected))
 }
 
-fn is_hovered_message(hovered: Option<&BehaviorTarget>, id: &str) -> bool {
-    matches!(hovered, Some(BehaviorTarget::Message(k)) if k == id)
+fn message_emphasis(
+    hovered: Option<&BehaviorTarget>,
+    selected: Option<&BehaviorTarget>,
+    id: &str,
+) -> Emphasis {
+    let is = |t: Option<&BehaviorTarget>| matches!(t, Some(BehaviorTarget::Message(k)) if k == id);
+    Emphasis::of(is(hovered), is(selected))
 }
 
-fn is_hovered_fragment(hovered: Option<&BehaviorTarget>, id: &str) -> bool {
-    matches!(hovered, Some(BehaviorTarget::Fragment(k)) if k == id)
+fn fragment_emphasis(
+    hovered: Option<&BehaviorTarget>,
+    selected: Option<&BehaviorTarget>,
+    id: &str,
+) -> Emphasis {
+    let is = |t: Option<&BehaviorTarget>| matches!(t, Some(BehaviorTarget::Fragment(k)) if k == id);
+    Emphasis::of(is(hovered), is(selected))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -70,6 +85,7 @@ pub(super) fn draw(
     messages: &[MessageGeo],
     fragments: &[FragmentGeo],
     hovered: Option<&BehaviorTarget>,
+    selected: Option<&BehaviorTarget>,
     draws: &mut InteractionDrawResources<'_>,
 ) {
     // Frames first (background layer), then stems, then activation bars,
@@ -79,7 +95,7 @@ pub(super) fn draw(
             cx,
             viewport,
             fragment,
-            is_hovered_fragment(hovered, &fragment.id),
+            fragment_emphasis(hovered, selected, &fragment.id),
             draws,
         );
     }
@@ -88,7 +104,7 @@ pub(super) fn draw(
             cx,
             viewport,
             lifeline,
-            is_hovered_lifeline(hovered, &lifeline.id),
+            lifeline_emphasis(hovered, selected, &lifeline.id),
             draws,
         );
     }
@@ -100,7 +116,7 @@ pub(super) fn draw(
             cx,
             viewport,
             message,
-            is_hovered_message(hovered, &message.id),
+            message_emphasis(hovered, selected, &message.id),
             draws,
         );
     }
@@ -110,7 +126,7 @@ pub(super) fn draw(
             viewport,
             accent,
             lifeline,
-            is_hovered_lifeline(hovered, &lifeline.id),
+            lifeline_emphasis(hovered, selected, &lifeline.id),
             draws,
         );
     }
@@ -172,17 +188,13 @@ fn draw_stem(
     cx: &mut Cx2d,
     viewport: ViewportSnapshot,
     lifeline: &LifelineGeo,
-    hovered: bool,
+    emphasis: Emphasis,
     draws: &mut InteractionDrawResources<'_>,
 ) {
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    let thickness = (if hovered { 2.4 } else { 1.4 }) * camera.zoom.max(0.3);
-    draws.fill.color = if hovered {
-        vec4(0.85, 0.27, 0.47, 1.0)
-    } else {
-        STEM_COLOR
-    };
+    let thickness = emphasis.thickness(1.4) * camera.zoom.max(0.3);
+    draws.fill.color = emphasis.stroke(STEM_COLOR);
     let top = (lifeline.stem_x, lifeline.stem_top);
     let bottom = (lifeline.stem_x, lifeline.stem_bottom);
     draw_dashed_segment(cx, &camera, rect_pos, draws.fill, top, bottom, thickness);
@@ -204,22 +216,21 @@ fn draw_head(
     viewport: ViewportSnapshot,
     accent: Vec4,
     lifeline: &LifelineGeo,
-    hovered: bool,
+    emphasis: Emphasis,
     draws: &mut InteractionDrawResources<'_>,
 ) {
     let screen = world_rect_to_screen(viewport, lifeline.head);
-    let alpha = if hovered {
-        HEAD_ALPHA + HOVER_BOOST
-    } else {
-        HEAD_ALPHA
-    };
-    let wash = accent_with_alpha(lifeline_accent(accent, lifeline.bucket), alpha);
+    let zoom = viewport.camera.zoom;
+    let wash = accent_with_alpha(
+        lifeline_accent(accent, lifeline.bucket),
+        HEAD_ALPHA + emphasis.wash_boost(),
+    );
     draws.node_box.set_uniform(cx, live_id!(radius), &[0.0]);
     draws.node_box.color = wash;
     draws.node_box.draw_abs(cx, screen);
     draws.text_heading.draw_abs(
         cx,
-        dvec2(screen.pos.x + 6.0, screen.pos.y + 4.0),
+        dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 4.0 * zoom),
         &lifeline.label,
     );
 }
@@ -244,17 +255,13 @@ fn draw_message(
     cx: &mut Cx2d,
     viewport: ViewportSnapshot,
     message: &MessageGeo,
-    hovered: bool,
+    emphasis: Emphasis,
     draws: &mut InteractionDrawResources<'_>,
 ) {
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    let thickness = (if hovered { 3.0 } else { 2.0 }) * camera.zoom.max(0.3);
-    draws.fill.color = if hovered {
-        vec4(0.85, 0.27, 0.47, 1.0)
-    } else {
-        STEM_COLOR
-    };
+    let thickness = emphasis.thickness(2.0) * camera.zoom.max(0.3);
+    draws.fill.color = emphasis.stroke(STEM_COLOR);
     let dashed = matches!(message.verb, MessageVerb::Replies | MessageVerb::Creates);
 
     let (from, to, tip_from) = match message.self_loop {
@@ -392,15 +399,14 @@ fn draw_fragment(
     cx: &mut Cx2d,
     viewport: ViewportSnapshot,
     fragment: &FragmentGeo,
-    hovered: bool,
+    emphasis: Emphasis,
     draws: &mut InteractionDrawResources<'_>,
 ) {
     let screen = world_rect_to_screen(viewport, fragment.rect);
-    draws.frame_border.color = if hovered {
-        vec4(0.85, 0.27, 0.47, 1.0)
-    } else {
-        STEM_COLOR
-    };
+    draws.frame_border.color = emphasis.stroke(STEM_COLOR);
+    draws
+        .frame_border
+        .set_uniform(cx, live_id!(stroke_w), &[emphasis.thickness(1.2) as f32]);
     draws.frame_border.draw_abs(cx, screen);
 
     let zoom = viewport.camera.zoom;
@@ -413,7 +419,7 @@ fn draw_fragment(
     draws.pentagon.draw_abs(cx, tab);
     draws.text_heading.draw_abs(
         cx,
-        dvec2(tab.pos.x + 4.0, tab.pos.y + 3.0),
+        dvec2(tab.pos.x + 4.0 * zoom, tab.pos.y + 3.0 * zoom),
         fragment.kind.as_str(),
     );
 

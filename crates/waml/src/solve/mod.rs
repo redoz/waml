@@ -69,6 +69,15 @@ mod wire {
         pub points: Vec<(f64, f64)>,
         pub source: String,
         pub target: String,
+        /// The authored edge this route was built for, when the caller knows it.
+        /// Two edges between the SAME pair of boxes are otherwise
+        /// indistinguishable, so consumers that must map a route back to one
+        /// edge (labels, hit-testing) key off this instead of `source`/`target`.
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        pub key: Option<String>,
     }
 
     #[derive(Debug, Clone, PartialEq)]

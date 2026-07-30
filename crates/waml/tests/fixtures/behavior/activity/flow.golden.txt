@@ -1,31 +1,31 @@
 node flow#Archive @ 390,644 86x38
-node flow#Check @ 24,168 76x76
-node flow#End @ 390,832 22x22
-node flow#Merge @ 164,582 80x6
+node flow#Check @ 40,168 76x76
+node flow#End @ 423,832 22x22
+node flow#Merge @ 262,582 80x6
 node flow#Notify @ 268,488 75x38
-node flow#Order @ 390,738 73x38
+node flow#Order @ 397,738 73x38
 node flow#Pack @ 164,488 72x38
-node flow#Retry @ 24,394 72x38
-node flow#Review @ 24,300 84x38
-node flow#Ship @ 164,300 72x38
-node flow#Split @ 164,394 80x6
+node flow#Retry @ 34,394 72x38
+node flow#Review @ 28,300 84x38
+node flow#Ship @ 216,300 72x38
+node flow#Split @ 212,394 80x6
 node flow#Start @ 390,0 18x18
 node flow#Validate @ 24,74 92x38
 group Frame "Intake" d0 @ 0,0 140x878
 group Frame "Fulfillment" d0 @ 140,0 227x878
 group Frame "" d0 @ 366,0 134x878
-route flow#Retry -> flow#Check : 24,413 -8,413 -8,206 24,206
+route flow#Retry -> flow#Check : 34,413 -8,413 -8,206 40,206
 route flow#Start -> flow#Validate : 390,9 70,9 70,74
-route flow#Validate -> flow#Check : 62,112 62,168
-route flow#Check -> flow#Ship : 100,206 200,206 200,300
-route flow#Check -> flow#Review : 66,244 66,300
-route flow#Check -> flow#Retry : 24,206 0,206 0,413 24,413
-route flow#Review -> flow#Retry : 60,338 60,394
-route flow#Ship -> flow#Split : 204,338 204,394
-route flow#Split -> flow#Pack : 200,400 200,488
-route flow#Split -> flow#Notify : 244,397 305,397 305,488
-route flow#Pack -> flow#Merge : 204,526 204,582
-route flow#Notify -> flow#Merge : 305,526 305,584 244,584
-route flow#Merge -> flow#Archive : 244,586 432,586 432,644
-route flow#Order -> flow#End : 432,776 432,843 412,843
-route flow#Archive -> flow#Order : 427,682 427,738
+route flow#Validate -> flow#Check : 78,112 78,168
+route flow#Check -> flow#Ship : 116,193 238,193 238,300
+route flow#Check -> flow#Review : 70,244 70,300
+route flow#Check -> flow#Retry : 116,219 140,219 140,413 106,413
+route flow#Review -> flow#Retry : 70,338 70,394
+route flow#Ship -> flow#Split : 252,338 252,394
+route flow#Split -> flow#Pack : 212,397 192,397 192,488
+route flow#Split -> flow#Notify : 292,397 305,397 305,488
+route flow#Pack -> flow#Merge : 200,526 200,585 262,585
+route flow#Notify -> flow#Merge : 302,526 302,582
+route flow#Merge -> flow#Archive : 342,585 432,585 432,644
+route flow#Order -> flow#End : 434,776 434,832
+route flow#Archive -> flow#Order : 434,682 434,738

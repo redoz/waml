@@ -76,6 +76,18 @@ impl BodyWidgets {
             .set_visible(cx, visible);
         self.set_behavior_canvas_interaction_enabled(cx, visible);
     }
+    /// Push the active document's solver diagnostics to the shared status bar
+    /// (spec §5.3). `None` clears the line.
+    pub fn set_solver_diagnostics(&self, cx: &mut Cx, message: Option<&str>) {
+        if let Some(mut statusbar) = self
+            .ui
+            .widget(cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
+        {
+            statusbar.set_solver_diagnostics(cx, message);
+        }
+    }
+
     pub fn inspector(&self, cx: &mut Cx) -> WidgetRef {
         self.ui.widget(cx, ids!(inspector))
     }

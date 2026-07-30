@@ -4,6 +4,7 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
+use super::Emphasis;
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
@@ -13,7 +14,14 @@ use waml::solve::SolvedGroup;
 /// Behavior accent bucket wash, at low alpha, for a node fill.
 const NODE_ALPHA: f32 = 0.16;
 const GROUP_ALPHA: f32 = 0.06;
-const HOVER_BOOST: f32 = 0.14;
+/// Resting route stroke, in lpx at zoom 1.
+const ROUTE_THICKNESS: f64 = 2.0;
+const ROUTE_COLOR: Vec4 = Vec4 {
+    x: 0.42,
+    y: 0.47,
+    z: 0.54,
+    w: 1.0,
+};
 
 pub(in crate::canvas::behavior) struct FlowDrawResources<'a> {
     pub(super) node_box: &'a mut DrawColor,
@@ -25,12 +33,24 @@ pub(in crate::canvas::behavior) struct FlowDrawResources<'a> {
     pub(super) text_body: &'a mut DrawText,
 }
 
-fn is_hovered_node(hovered: Option<&BehaviorTarget>, key: &str) -> bool {
-    matches!(hovered, Some(BehaviorTarget::FlowNode(k)) if k == key)
+fn node_emphasis(
+    hovered: Option<&BehaviorTarget>,
+    selected: Option<&BehaviorTarget>,
+    key: &str,
+) -> Emphasis {
+    let is =
+        |t: Option<&BehaviorTarget>| matches!(t, Some(BehaviorTarget::FlowNode(k)) if k == key);
+    Emphasis::of(is(hovered), is(selected))
 }
 
-fn is_hovered_edge(hovered: Option<&BehaviorTarget>, key: &str) -> bool {
-    matches!(hovered, Some(BehaviorTarget::FlowEdge(k)) if k == key)
+fn edge_emphasis(
+    hovered: Option<&BehaviorTarget>,
+    selected: Option<&BehaviorTarget>,
+    key: &str,
+) -> Emphasis {
+    let is =
+        |t: Option<&BehaviorTarget>| matches!(t, Some(BehaviorTarget::FlowEdge(k)) if k == key);
+    Emphasis::of(is(hovered), is(selected))
 }
 
 fn accent_with_alpha(accent: Vec4, alpha: f32) -> Vec4 {
@@ -47,6 +67,7 @@ pub(super) fn draw(
     off_page: &[FlowOffPageGeo],
     groups: &[SolvedGroup],
     hovered: Option<&BehaviorTarget>,
+    selected: Option<&BehaviorTarget>,
     draws: &mut FlowDrawResources<'_>,
 ) {
     let zoom = viewport.camera.zoom;
@@ -69,8 +90,8 @@ pub(super) fn draw(
     }
 
     for edge in edges {
-        let is_hovered = is_hovered_edge(hovered, &edge.key);
-        draw_route(cx, viewport, &edge.points, is_hovered, draws);
+        let emphasis = edge_emphasis(hovered, selected, &edge.key);
+        draw_route(cx, viewport, &edge.points, emphasis, draws);
         if let Some(label) = &edge.label {
             if let Some((x, y)) =
                 crate::edge_labels::mid_route_label(&edge.points, label.clone()).map(|l| l.anchor)
@@ -82,7 +103,7 @@ pub(super) fn draw(
     }
 
     for stub in off_page {
-        draw_route(cx, viewport, &stub.points, false, draws);
+        draw_route(cx, viewport, &stub.points, Emphasis::None, draws);
         if let Some(&(x, y)) = stub.points.last() {
             let pos = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, (x, y));
             draws
@@ -97,7 +118,7 @@ pub(super) fn draw(
             viewport,
             accent,
             node,
-            is_hovered_node(hovered, &node.key),
+            node_emphasis(hovered, selected, &node.key),
             draws,
         );
     }
@@ -107,7 +128,7 @@ fn draw_route(
     cx: &mut Cx2d,
     viewport: ViewportSnapshot,
     points: &[(f64, f64)],
-    hovered: bool,
+    emphasis: Emphasis,
     draws: &mut FlowDrawResources<'_>,
 ) {
     if points.len() < 2 {
@@ -119,16 +140,8 @@ fn draw_route(
         .iter()
         .map(|p| edge_point_to_screen(&camera, rect_pos, *p))
         .collect();
-    let thickness = if hovered {
-        (3.0 * camera.zoom).max(2.0)
-    } else {
-        (2.0 * camera.zoom).max(1.4)
-    };
-    draws.fill.color = if hovered {
-        vec4(0.85, 0.27, 0.47, 1.0)
-    } else {
-        vec4(0.42, 0.47, 0.54, 1.0)
-    };
+    let thickness = (emphasis.thickness(ROUTE_THICKNESS) * camera.zoom).max(1.4);
+    draws.fill.color = emphasis.stroke(ROUTE_COLOR);
     for pair in screen.windows(2) {
         let (a, b) = (pair[0], pair[1]);
         let quad = if (a.x - b.x).abs() >= (a.y - b.y).abs() {
@@ -202,16 +215,12 @@ fn draw_node(
     viewport: ViewportSnapshot,
     accent: Vec4,
     node: &FlowNodeGeo,
-    hovered: bool,
+    emphasis: Emphasis,
     draws: &mut FlowDrawResources<'_>,
 ) {
     let screen = world_rect_to_screen(viewport, node.rect);
-    let alpha = if hovered {
-        NODE_ALPHA + HOVER_BOOST
-    } else {
-        NODE_ALPHA
-    };
-    let wash = accent_with_alpha(accent, alpha);
+    let zoom = viewport.camera.zoom;
+    let wash = accent_with_alpha(accent, NODE_ALPHA + emphasis.wash_boost());
 
     match node.kind {
         FlowNodeKind::Initial => {
@@ -227,7 +236,7 @@ fn draw_node(
         FlowNodeKind::Decision | FlowNodeKind::Merge => {
             draws.diamond.color = wash;
             draws.diamond.draw_abs(cx, screen);
-            draw_title(cx, screen, &node.title, draws);
+            draw_title(cx, screen, zoom, &node.title, draws);
         }
         FlowNodeKind::Fork | FlowNodeKind::Join => {
             draws.fill.color = accent;
@@ -237,34 +246,38 @@ fn draw_node(
             draws.node_box.set_uniform(cx, live_id!(radius), &[0.0]);
             draws.node_box.color = wash;
             draws.node_box.draw_abs(cx, screen);
-            draw_title(cx, screen, &node.title, draws);
+            draw_title(cx, screen, zoom, &node.title, draws);
             if let Some(ty) = &node.type_name {
                 draws.text_body.draw_abs(
                     cx,
-                    dvec2(screen.pos.x + 6.0, screen.pos.y + 20.0),
+                    dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 20.0 * zoom),
                     &format!(":{ty}"),
                 );
             }
         }
         FlowNodeKind::Plain => {
-            draws.node_box.set_uniform(cx, live_id!(radius), &[6.0]);
+            draws
+                .node_box
+                .set_uniform(cx, live_id!(radius), &[(6.0 * zoom) as f32]);
             draws.node_box.color = wash;
             draws.node_box.draw_abs(cx, screen);
-            draw_title(cx, screen, &node.title, draws);
-            let mut y = 24.0;
+            draw_title(cx, screen, zoom, &node.title, draws);
+            let mut y = 24.0 * zoom;
             for line in &node.lines {
-                draws
-                    .text_body
-                    .draw_abs(cx, dvec2(screen.pos.x + 6.0, screen.pos.y + y), line);
-                y += 16.0;
+                draws.text_body.draw_abs(
+                    cx,
+                    dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + y),
+                    line,
+                );
+                y += 16.0 * zoom;
             }
             if node.refines {
                 let glyph = Rect {
                     pos: dvec2(
-                        screen.pos.x + screen.size.x - 12.0,
-                        screen.pos.y + screen.size.y - 10.0,
+                        screen.pos.x + screen.size.x - 12.0 * zoom,
+                        screen.pos.y + screen.size.y - 10.0 * zoom,
                     ),
-                    size: dvec2(6.0, 6.0),
+                    size: dvec2(6.0 * zoom, 6.0 * zoom),
                 };
                 draws.fill.color = accent;
                 draws.fill.draw_abs(cx, glyph);
@@ -273,8 +286,56 @@ fn draw_node(
     }
 }
 
-fn draw_title(cx: &mut Cx2d, screen: Rect, title: &str, draws: &mut FlowDrawResources<'_>) {
-    draws
-        .text_heading
-        .draw_abs(cx, dvec2(screen.pos.x + 6.0, screen.pos.y + 4.0), title);
+fn draw_title(
+    cx: &mut Cx2d,
+    screen: Rect,
+    zoom: f64,
+    title: &str,
+    draws: &mut FlowDrawResources<'_>,
+) {
+    draws.text_heading.draw_abs(
+        cx,
+        dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 4.0 * zoom),
+        title,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A selected element outranks a hovered one, and the two are visibly
+    /// distinct: selection is the state a click leaves behind (spec §5.2).
+    #[test]
+    fn selection_outranks_hover_and_reads_stronger() {
+        let key = "flow#Ship";
+        let node = BehaviorTarget::FlowNode(key.to_string());
+        let other = BehaviorTarget::FlowNode("flow#Pack".to_string());
+
+        assert_eq!(node_emphasis(None, None, key), Emphasis::None);
+        assert_eq!(node_emphasis(Some(&node), None, key), Emphasis::Hovered);
+        assert_eq!(node_emphasis(None, Some(&node), key), Emphasis::Selected);
+        assert_eq!(
+            node_emphasis(Some(&node), Some(&node), key),
+            Emphasis::Selected
+        );
+        assert_eq!(
+            node_emphasis(Some(&other), Some(&other), key),
+            Emphasis::None
+        );
+
+        let edge = BehaviorTarget::FlowEdge(key.to_string());
+        assert_eq!(edge_emphasis(None, Some(&edge), key), Emphasis::Selected);
+        assert_eq!(edge_emphasis(None, Some(&node), key), Emphasis::None);
+
+        assert!(Emphasis::Selected.wash_boost() > Emphasis::Hovered.wash_boost());
+        assert!(
+            Emphasis::Selected.thickness(ROUTE_THICKNESS)
+                > Emphasis::Hovered.thickness(ROUTE_THICKNESS)
+        );
+        assert_ne!(
+            Emphasis::Selected.stroke(ROUTE_COLOR),
+            Emphasis::Hovered.stroke(ROUTE_COLOR)
+        );
+    }
 }

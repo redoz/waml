@@ -15,11 +15,40 @@ use crate::doc_view::{
 use crate::icons::Icon;
 use crate::inspector::Subject;
 use crate::node_style::AccentBucket;
+use waml::diagnostic::Diagnostic;
 use waml::model::{FlowDoc, FlowEdge, FlowFlavor, SeqNode, SequenceDoc};
 use waml::solve::flow::{measure_flow, resolve_flow, solve_flow, FlowConfig};
 use waml::solve::interaction::{measure_interaction, solve_interaction, InteractionConfig};
 
 const NO_RENDERABLE_ELEMENTS: &str = "No renderable elements";
+
+/// The empty-state message, with the solver's diagnostic count when there is
+/// one (spec §5.3): a document that renders nothing usually renders nothing
+/// *because* of those diagnostics.
+fn empty_message(diagnostics: usize) -> String {
+    match diagnostics {
+        0 => NO_RENDERABLE_ELEMENTS.to_string(),
+        1 => format!("{NO_RENDERABLE_ELEMENTS} \u{2014} 1 diagnostic"),
+        n => format!("{NO_RENDERABLE_ELEMENTS} \u{2014} {n} diagnostics"),
+    }
+}
+
+/// The status-bar line for a solve's diagnostics, or `None` when it was clean.
+/// The count plus the first message: the status bar is one line.
+fn diagnostics_status(diagnostics: &[Diagnostic]) -> Option<String> {
+    let first = diagnostics.first()?;
+    let noun = if diagnostics.len() == 1 {
+        "diagnostic"
+    } else {
+        "diagnostics"
+    };
+    Some(format!(
+        "{} {noun}: {} ({})",
+        diagnostics.len(),
+        first.message,
+        first.code.as_str()
+    ))
+}
 
 /// Build the `guard`/`trigger`/`effect`/`else`/carried-type label text for a
 /// resolved flow edge (spec §4.1), or `None` when the edge carries no text.
@@ -54,26 +83,42 @@ fn flow_edge_label(edge: &FlowEdge) -> Option<String> {
 
 /// Solve `doc` into a `BehaviorScene::Flow` against the model's pooled nodes
 /// and edges, or `Empty` when the document has no flow nodes to draw.
-fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> BehaviorScene {
+fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> (BehaviorScene, Vec<Diagnostic>) {
     let cfg = FlowConfig::default();
-    let (rf, diagnostics) = resolve_flow(doc, &model.activity_nodes, &model.flow_edges);
-    for d in &diagnostics {
-        log!("diagnostic: {d:?}");
-    }
+    let (rf, mut diagnostics) = resolve_flow(doc, &model.activity_nodes, &model.flow_edges);
     if rf.nodes.is_empty() {
-        return BehaviorScene::Empty {
-            message: NO_RENDERABLE_ELEMENTS.to_string(),
-        };
+        let message = empty_message(diagnostics.len());
+        return (BehaviorScene::Empty { message }, diagnostics);
     }
     let sizes = measure_flow(&rf.nodes, doc.flavor, &cfg);
-    let solution = solve_flow(doc, &model.activity_nodes, &model.flow_edges, &sizes, &cfg);
-    for d in &solution.diagnostics {
-        log!("diagnostic: {d:?}");
-    }
+    // Off-page stubs label themselves with the TARGET document's title.
+    let titles = |key: &str| {
+        model
+            .flows
+            .iter()
+            .find(|f| f.key == key)
+            .map(|f| f.title.clone())
+            .or_else(|| {
+                model
+                    .interactions
+                    .iter()
+                    .find(|i| i.key == key)
+                    .map(|i| i.title.clone())
+            })
+            .or_else(|| model.node(key).and_then(|n| n.concept.title.clone()))
+    };
+    let solution = solve_flow(
+        doc,
+        &model.activity_nodes,
+        &model.flow_edges,
+        &sizes,
+        &cfg,
+        &titles,
+    );
+    diagnostics.extend(solution.diagnostics.iter().cloned());
     if solution.solved.nodes.is_empty() {
-        return BehaviorScene::Empty {
-            message: NO_RENDERABLE_ELEMENTS.to_string(),
-        };
+        let message = empty_message(diagnostics.len());
+        return (BehaviorScene::Empty { message }, diagnostics);
     }
 
     let node_by_key: BTreeMap<&str, &waml::model::ActivityNode> = model
@@ -127,9 +172,12 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> BehaviorScene 
         .routes
         .iter()
         .filter_map(|route| {
-            let edge = doc_edges
-                .iter()
-                .find(|e| e.from == route.source && e.to == route.target)?;
+            // By KEY, never by (source, target): two transitions between the
+            // same pair of nodes are legal, and matching on the pair would
+            // collapse both onto the first edge's label and make the second
+            // unhittable.
+            let key = route.key.as_deref()?;
+            let edge = doc_edges.iter().find(|e| e.key == key)?;
             Some(FlowEdgeGeo {
                 key: edge.key.clone(),
                 points: route.points.clone(),
@@ -148,12 +196,15 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> BehaviorScene 
         })
         .collect();
 
-    BehaviorScene::Flow {
-        nodes,
-        edges,
-        off_page,
-        groups: solution.solved.groups.clone(),
-    }
+    (
+        BehaviorScene::Flow {
+            nodes,
+            edges,
+            off_page,
+            groups: solution.solved.groups.clone(),
+        },
+        diagnostics,
+    )
 }
 
 /// Solve `doc` into a `BehaviorScene::Interaction`, or `Empty` when it has no
@@ -161,17 +212,16 @@ fn build_flow_scene(model: &waml::model::Model, doc: &FlowDoc) -> BehaviorScene 
 /// classifier through the model's `TreeKind` mapping (the same one the tree
 /// panel/doc tabs use), falling back to the scene's default behavior accent
 /// when `ref_` is absent or unresolved (spec interfaces, Task 8).
-fn build_interaction_scene(model: &waml::model::Model, doc: &SequenceDoc) -> BehaviorScene {
+fn build_interaction_scene(
+    model: &waml::model::Model,
+    doc: &SequenceDoc,
+) -> (BehaviorScene, Vec<Diagnostic>) {
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(doc, &cfg);
     let (solved, diagnostics) = solve_interaction(doc, &sizes, &cfg);
-    for d in &diagnostics {
-        log!("diagnostic: {d:?}");
-    }
     if solved.lifelines.is_empty() {
-        return BehaviorScene::Empty {
-            message: NO_RENDERABLE_ELEMENTS.to_string(),
-        };
+        let message = empty_message(diagnostics.len());
+        return (BehaviorScene::Empty { message }, diagnostics);
     }
 
     let lifeline_nodes: BTreeMap<&str, (&str, Option<&str>)> = doc
@@ -267,12 +317,15 @@ fn build_interaction_scene(model: &waml::model::Model, doc: &SequenceDoc) -> Beh
         })
         .collect();
 
-    BehaviorScene::Interaction {
-        lifelines,
-        activations,
-        messages,
-        fragments,
-    }
+    (
+        BehaviorScene::Interaction {
+            lifelines,
+            activations,
+            messages,
+            fragments,
+        },
+        diagnostics,
+    )
 }
 
 /// Which behavior family this tab renders. Both kinds share one widget/view
@@ -294,31 +347,62 @@ fn lifeline_ref_key(interaction: Option<&SequenceDoc>, lifeline_id: &str) -> Opt
 }
 
 /// Map a selected `BehaviorTarget` to the `Subject` the inspector should point
-/// at (spec §5.2, Task 9 handoff): `FlowNode`/`FlowEdge` resolve to their own
-/// model pool key; `Lifeline` prefers its resolved `ref_` classifier else the
-/// interaction doc itself; `Message`/`Fragment` have no richer model of their
-/// own, so both resolve to the interaction doc (spec §5.3: an unresolved
-/// subject converges on an explicit fallback, never a panic). Pure -- no
-/// `Cx`, unit-tested below.
+/// at (spec §5.2, §5.3). Behavior elements are NOT model classifiers/diagrams
+/// of their own -- an `ActivityNode` pool key and a behavior document key exist
+/// in neither pool -- so every candidate is checked against the model and the
+/// first one the inspector can actually build a view for wins:
+///
+/// * `FlowNode` -> its `object` node's typing classifier, else its behavior
+///   document's `describes` subject,
+/// * `FlowEdge` -> the edge subject, else the document subject,
+/// * `Lifeline` -> its resolved `ref_` classifier, else the document subject,
+/// * `Message`/`Fragment` -> the document subject,
+/// * document subject -> the behavior's `describes` classifier or diagram,
+/// * nothing resolvable -> `Subject::None` (an explicit empty state, never a
+///   key the inspector silently drops).
 fn subject_for_target(
+    model: &waml::model::Model,
     target: &BehaviorTarget,
     doc_key: &str,
+    flow: Option<&FlowDoc>,
     interaction: Option<&SequenceDoc>,
 ) -> Subject {
+    let describes = flow
+        .and_then(|d| d.describes.clone())
+        .or_else(|| interaction.and_then(|d| d.describes.clone()));
+    let mut candidates: Vec<Subject> = Vec::new();
     match target {
-        BehaviorTarget::FlowNode(key) => Subject::Classifier(key.clone()),
-        BehaviorTarget::FlowEdge(key) => Subject::Edge(key.clone()),
-        BehaviorTarget::Lifeline(id) => lifeline_ref_key(interaction, id)
-            .map(Subject::Classifier)
-            .unwrap_or_else(|| Subject::Diagram(doc_key.to_string())),
-        BehaviorTarget::Message(_) | BehaviorTarget::Fragment(_) => {
-            Subject::Diagram(doc_key.to_string())
+        BehaviorTarget::FlowNode(key) => {
+            if let Some(node) = model.activity_nodes.iter().find(|n| &n.key == key) {
+                if let Some(object_ref) = &node.object_ref {
+                    candidates.push(Subject::Classifier(object_ref.clone()));
+                }
+            }
         }
+        BehaviorTarget::FlowEdge(key) => candidates.push(Subject::Edge(key.clone())),
+        BehaviorTarget::Lifeline(id) => {
+            if let Some(ref_) = lifeline_ref_key(interaction, id) {
+                candidates.push(Subject::Classifier(ref_));
+            }
+        }
+        BehaviorTarget::Message(_) | BehaviorTarget::Fragment(_) => {}
     }
+    // The document-level fallback, in resolvability order.
+    if let Some(describes) = describes {
+        candidates.push(Subject::Classifier(describes.clone()));
+        candidates.push(Subject::Diagram(describes));
+    }
+    candidates.push(Subject::Diagram(doc_key.to_string()));
+    candidates.push(Subject::Classifier(doc_key.to_string()));
+
+    candidates
+        .into_iter()
+        .find(|subject| crate::inspector::build_view(model, subject).is_some())
+        .unwrap_or(Subject::None)
 }
 
-/// The concept key a `Subject` resolves to -- what `ViewOutcome::view_source`
-/// asks the shell to open (spec §5.2).
+/// The concept key a `Subject` resolves to (spec §5.2).
+#[allow(dead_code)]
 fn subject_key(subject: &Subject) -> Option<String> {
     match subject {
         Subject::Diagram(k) | Subject::Classifier(k) | Subject::Group(k) | Subject::Edge(k) => {
@@ -331,6 +415,10 @@ fn subject_key(subject: &Subject) -> Option<String> {
 pub struct BehaviorDocView {
     key: String,
     kind: BehaviorKind,
+    /// Last status line pushed for this document's solver diagnostics, so a
+    /// re-`sync` on every revision neither re-logs nor re-pushes unchanged
+    /// feedback.
+    last_diagnostics: Option<String>,
 }
 
 impl BehaviorDocView {
@@ -338,6 +426,7 @@ impl BehaviorDocView {
         BehaviorDocView {
             key,
             kind: BehaviorKind::Flow,
+            last_diagnostics: None,
         }
     }
 
@@ -345,6 +434,7 @@ impl BehaviorDocView {
         BehaviorDocView {
             key,
             kind: BehaviorKind::Interaction,
+            last_diagnostics: None,
         }
     }
 
@@ -370,22 +460,32 @@ impl DocView for BehaviorDocView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.set_behavior_canvas_visible(cx, true);
         let model = &data.uml_analysis.projection;
-        let scene = match self.kind {
+        let (scene, diagnostics) = match self.kind {
             BehaviorKind::Flow => model
                 .flows
                 .iter()
                 .find(|doc| doc.key == self.key)
                 .map(|doc| build_flow_scene(model, doc))
-                .unwrap_or_else(|| BehaviorScene::Empty {
-                    message: NO_RENDERABLE_ELEMENTS.to_string(),
+                .unwrap_or_else(|| {
+                    (
+                        BehaviorScene::Empty {
+                            message: empty_message(0),
+                        },
+                        Vec::new(),
+                    )
                 }),
             BehaviorKind::Interaction => model
                 .interactions
                 .iter()
                 .find(|doc| doc.key == self.key)
                 .map(|doc| build_interaction_scene(model, doc))
-                .unwrap_or_else(|| BehaviorScene::Empty {
-                    message: NO_RENDERABLE_ELEMENTS.to_string(),
+                .unwrap_or_else(|| {
+                    (
+                        BehaviorScene::Empty {
+                            message: empty_message(0),
+                        },
+                        Vec::new(),
+                    )
                 }),
         };
         if let Some(mut canvas) = body
@@ -393,6 +493,17 @@ impl DocView for BehaviorDocView {
             .borrow_mut::<crate::canvas::BehaviorSurface>()
         {
             canvas.set_scene(cx, scene);
+        }
+        // Forward the solve's diagnostics to the shared status-bar channel
+        // (spec §5.3), but only when the line actually changed -- `sync` runs
+        // on every revision.
+        let status = diagnostics_status(&diagnostics);
+        if status != self.last_diagnostics {
+            if let Some(line) = &status {
+                log!("behavior solver: {line}");
+            }
+            body.set_solver_diagnostics(cx, status.as_deref());
+            self.last_diagnostics = status;
         }
     }
 
@@ -442,9 +553,13 @@ impl DocView for BehaviorDocView {
             let interaction_doc = (self.kind == BehaviorKind::Interaction)
                 .then(|| model.interactions.iter().find(|d| d.key == self.key))
                 .flatten();
+            let flow_doc = (self.kind == BehaviorKind::Flow)
+                .then(|| model.flows.iter().find(|d| d.key == self.key))
+                .flatten();
             match action {
                 BehaviorSurfaceAction::Selected(Some(target)) => {
-                    let subject = subject_for_target(&target, &self.key, interaction_doc);
+                    let subject =
+                        subject_for_target(model, &target, &self.key, flow_doc, interaction_doc);
                     self.sync_inspector_subject(cx, body, model, subject);
                     return out;
                 }
@@ -452,9 +567,12 @@ impl DocView for BehaviorDocView {
                     self.sync_inspector_subject(cx, body, model, Subject::None);
                     return out;
                 }
-                BehaviorSurfaceAction::ViewSourceRequested(target) => {
-                    let subject = subject_for_target(&target, &self.key, interaction_doc);
-                    out.view_source = subject_key(&subject);
+                BehaviorSurfaceAction::ViewSourceRequested(_target) => {
+                    // Every behavior element is authored IN this behavior
+                    // document, so its source is this document's markdown --
+                    // not the classifier the inspector happens to point at
+                    // (whose source lives in another document entirely).
+                    out.view_source = Some(self.key.clone());
                     return out;
                 }
                 BehaviorSurfaceAction::None => {}
@@ -518,7 +636,7 @@ mod tests {
         SequenceDoc {
             key: "seq".into(),
             title: "Seq".into(),
-            describes: None,
+            describes: Some("order".into()),
             nodes: vec![SeqNode::Lifeline {
                 id: id.into(),
                 title: id.into(),
@@ -530,62 +648,209 @@ mod tests {
         }
     }
 
+    /// An analysis with a classifier (`order`), a customer classifier, an
+    /// activity document whose `object` node types itself as `order`, and two
+    /// transitions between the SAME pair of nodes.
+    fn analysis() -> waml::uml::Analysis {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            (
+                "order.md",
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+            ),
+            (
+                "customer.md",
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n",
+            ),
+            (
+                "flow.md",
+                concat!(
+                    "---\ntype: uml.Activity\ntitle: Fulfil\ndescribes: ",
+                    "\"[Order](./order.md)\"\n---\n# Fulfil\n\n## Nodes\n",
+                    "### initial Start\n- transitions to Pick\n",
+                    "### Pick\n- transitions to Pack\n- transitions to Pack\n",
+                    "### object [Order](./order.md)\n",
+                    "### Pack\n",
+                ),
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, _, uml_analysis, _) = prepared.into_parts();
+        uml_analysis
+    }
+
+    fn flow_doc(model: &waml::model::Model) -> &FlowDoc {
+        model.flows.first().expect("fixture has one activity doc")
+    }
+
+    /// Every mapped subject must be one the inspector can actually build a view
+    /// for: an `ActivityNode` pool key and a behavior document key exist in
+    /// neither the classifier nor the diagram pool.
     #[test]
-    fn subject_for_target_maps_every_arm() {
+    fn every_mapped_subject_resolves_in_the_model() {
+        let analysis = analysis();
+        let model = &analysis.projection;
+        let doc = flow_doc(model);
+        let object_node = model
+            .activity_nodes
+            .iter()
+            .find(|n| n.object_ref.is_some())
+            .expect("fixture has an object node");
+
+        // An object node resolves to its typing classifier.
         assert_eq!(
-            subject_for_target(&BehaviorTarget::FlowNode("n1".into()), "doc", None),
-            Subject::Classifier("n1".into())
-        );
-        assert_eq!(
-            subject_for_target(&BehaviorTarget::FlowEdge("e1".into()), "doc", None),
-            Subject::Edge("e1".into())
+            subject_for_target(
+                model,
+                &BehaviorTarget::FlowNode(object_node.key.clone()),
+                &doc.key,
+                Some(doc),
+                None,
+            ),
+            Subject::Classifier(object_node.object_ref.clone().unwrap())
         );
 
+        // A plain node has no classifier of its own, so it falls back to the
+        // document's `describes` subject -- which IS resolvable.
+        let plain = model
+            .activity_nodes
+            .iter()
+            .find(|n| n.object_ref.is_none())
+            .unwrap();
+        let subject = subject_for_target(
+            model,
+            &BehaviorTarget::FlowNode(plain.key.clone()),
+            &doc.key,
+            Some(doc),
+            None,
+        );
+        assert_eq!(subject, Subject::Classifier("order".into()));
+        assert!(crate::inspector::build_view(model, &subject).is_some());
+
+        // Message/Fragment carry no model element of their own either.
+        for target in [
+            BehaviorTarget::Message("m0".into()),
+            BehaviorTarget::Fragment("f0".into()),
+        ] {
+            let subject = subject_for_target(model, &target, &doc.key, Some(doc), None);
+            assert!(
+                crate::inspector::build_view(model, &subject).is_some(),
+                "{target:?} mapped to an unresolvable {subject:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lifeline_prefers_its_ref_classifier_then_the_document_subject() {
+        let analysis = analysis();
+        let model = &analysis.projection;
         let with_ref = interaction_doc_with_lifeline("a", Some("customer"));
         assert_eq!(
             subject_for_target(
+                model,
                 &BehaviorTarget::Lifeline("a".into()),
-                "doc",
-                Some(&with_ref)
+                "seq",
+                None,
+                Some(&with_ref),
             ),
             Subject::Classifier("customer".into())
         );
 
         let without_ref = interaction_doc_with_lifeline("a", None);
+        let subject = subject_for_target(
+            model,
+            &BehaviorTarget::Lifeline("a".into()),
+            "seq",
+            None,
+            Some(&without_ref),
+        );
+        assert_eq!(subject, Subject::Classifier("order".into()));
+        assert!(crate::inspector::build_view(model, &subject).is_some());
+    }
+
+    /// Nothing resolvable converges on the explicit empty state, never a key
+    /// the inspector silently drops.
+    #[test]
+    fn an_unresolvable_target_converges_on_the_empty_subject() {
+        let model = waml::model::Model::default();
         assert_eq!(
             subject_for_target(
-                &BehaviorTarget::Lifeline("a".into()),
-                "doc",
-                Some(&without_ref)
+                &model,
+                &BehaviorTarget::FlowNode("nope#n1".into()),
+                "nope",
+                None,
+                None,
             ),
-            Subject::Diagram("doc".into())
+            Subject::None
         );
-        // No interaction doc at all (e.g. wrong kind) converges the same way.
-        assert_eq!(
-            subject_for_target(&BehaviorTarget::Lifeline("a".into()), "doc", None),
-            Subject::Diagram("doc".into())
-        );
+    }
 
+    /// Two transitions between the same pair of nodes are legal: each must get
+    /// its own edge geometry, keyed to its own edge, so both are labelled and
+    /// both are hittable.
+    #[test]
+    fn parallel_transitions_each_get_their_own_edge_geometry() {
+        let analysis = analysis();
+        let model = &analysis.projection;
+        let doc = flow_doc(model);
+        let (scene, _) = build_flow_scene(model, doc);
+        let BehaviorScene::Flow { edges, .. } = scene else {
+            panic!("expected a flow scene");
+        };
+        let pick_to_pack: Vec<&String> = model
+            .flow_edges
+            .iter()
+            .filter(|e| e.from.ends_with("#Pick") && e.to.ends_with("#Pack"))
+            .map(|e| &e.key)
+            .collect();
         assert_eq!(
-            subject_for_target(&BehaviorTarget::Message("m0".into()), "doc", None),
-            Subject::Diagram("doc".into())
+            pick_to_pack.len(),
+            2,
+            "fixture has two parallel transitions"
+        );
+        for key in pick_to_pack {
+            assert_eq!(
+                edges.iter().filter(|e| &e.key == key).count(),
+                1,
+                "edge {key} must appear exactly once in the scene"
+            );
+        }
+    }
+
+    #[test]
+    fn the_empty_state_message_carries_the_diagnostic_count() {
+        assert_eq!(empty_message(0), "No renderable elements");
+        assert_eq!(
+            empty_message(1),
+            "No renderable elements \u{2014} 1 diagnostic"
         );
         assert_eq!(
-            subject_for_target(&BehaviorTarget::Fragment("f0".into()), "doc", None),
-            Subject::Diagram("doc".into())
+            empty_message(3),
+            "No renderable elements \u{2014} 3 diagnostics"
         );
     }
 
     #[test]
-    fn subject_key_reads_every_subject_variant() {
-        assert_eq!(subject_key(&Subject::None), None);
-        assert_eq!(subject_key(&Subject::Diagram("d".into())), Some("d".into()));
+    fn diagnostics_status_summarises_count_and_first_message() {
+        use waml::diagnostic::{DiagCode, Diagnostic};
+        assert_eq!(diagnostics_status(&[]), None);
+        let diagnostics = vec![
+            Diagnostic::new(
+                DiagCode::UnreachableFlowNode,
+                "node 'Pack' is unreachable".to_string(),
+                "flow".to_string(),
+                0,
+            ),
+            Diagnostic::new(
+                DiagCode::EmptyFlowDocument,
+                "second".to_string(),
+                "flow".to_string(),
+                0,
+            ),
+        ];
         assert_eq!(
-            subject_key(&Subject::Classifier("c".into())),
-            Some("c".into())
+            diagnostics_status(&diagnostics).unwrap(),
+            "2 diagnostics: node 'Pack' is unreachable (unreachable-flow-node)"
         );
-        assert_eq!(subject_key(&Subject::Group("g".into())), Some("g".into()));
-        assert_eq!(subject_key(&Subject::Edge("e".into())), Some("e".into()));
     }
 
     struct TestBody {
@@ -635,6 +900,12 @@ mod tests {
                     WidgetRef::new_with_inner(Box::new(
                         crate::inspector_panel::Inspector::script_new(vm),
                     )),
+                ),
+                (
+                    live_id!(statusbar),
+                    WidgetRef::new_with_inner(Box::new(crate::statusbar::Statusbar::script_new(
+                        vm,
+                    ))),
                 ),
             ],
         }))
@@ -734,6 +1005,56 @@ mod tests {
                 revision,
             },
         );
-        assert_eq!(outcome.view_source, Some("n1".into()));
+        // The element's source is the behavior document's own markdown.
+        assert_eq!(outcome.view_source, Some("flow".into()));
+    }
+
+    /// `sync` forwards the solver's diagnostics to the shared status-bar
+    /// channel (spec §5.3) -- they are not merely logged.
+    #[test]
+    fn sync_forwards_solver_diagnostics_to_the_status_bar() {
+        use crate::doc_view::{BodyWidgets, ViewData};
+
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = BodyWidgets::new(cx, &ui);
+
+        // `Orphan` is unreachable from `Start`: one solver diagnostic.
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "flow.md",
+            concat!(
+                "---\ntype: uml.Activity\ntitle: Fulfil\n---\n# Fulfil\n\n",
+                "## Nodes\n### initial Start\n- transitions to Pick\n",
+                "### Pick\n### Orphan\n",
+            ),
+        )])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+        let doc_key = uml_analysis.projection.flows[0].key.clone();
+
+        let mut view = BehaviorDocView::flow(doc_key);
+        view.sync(
+            cx,
+            &body,
+            ViewData {
+                source: &source,
+                okf_analysis: &okf_analysis,
+                uml_analysis: &uml_analysis,
+                revision,
+            },
+        );
+
+        let statusbar = ui.widget(cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("statusbar widget");
+        let line = crate::statusbar::solver_diagnostics(&statusbar)
+            .expect("solver diagnostics must reach the status bar");
+        assert!(
+            line.contains("unreachable"),
+            "unexpected status line: {line}"
+        );
     }
 }

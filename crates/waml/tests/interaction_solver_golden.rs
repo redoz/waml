@@ -1,4 +1,4 @@
-use waml::model::{FragmentKind, MessageVerb, SeqEdge, SeqNode, SequenceDoc};
+use waml::model::{FragmentKind, MessageVerb, SeqChild, SeqEdge, SeqNode, SequenceDoc};
 use waml::solve::interaction::pretty_interaction;
 use waml::solve::interaction::{
     measure_interaction, solve_interaction, InteractionConfig, SolvedInteraction,
@@ -360,4 +360,116 @@ fn empty_operand_stream_diagnoses() {
     assert!(diags
         .iter()
         .any(|d| d.code == waml::diagnostic::DiagCode::EmptyOperandStream));
+}
+
+/// Message rows start BELOW the tallest lifeline head: the heads are drawn last
+/// (on top), so a row sharing their band would be lost behind them.
+#[test]
+fn the_first_message_row_clears_every_lifeline_head() {
+    let doc = load();
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (solved, _) = solve_interaction(&doc, &sizes, &cfg);
+
+    let tallest_head_bottom = solved
+        .lifelines
+        .iter()
+        .filter(|l| l.head.y == 0.0)
+        .map(|l| l.head.y + l.head.h)
+        .fold(0.0_f64, f64::max);
+    assert!(tallest_head_bottom > 0.0);
+
+    let first = solved
+        .messages
+        .iter()
+        .map(|m| m.y)
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        first >= tallest_head_bottom,
+        "first message row y={first} sits inside the head band (bottom {tallest_head_bottom})"
+    );
+    // Its label sits directly above the line and must clear the heads too.
+    let first_label_top = solved
+        .messages
+        .iter()
+        .filter_map(|m| m.label.map(|r| r.y))
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        first_label_top >= tallest_head_bottom,
+        "first message label top {first_label_top} overlaps the head band"
+    );
+}
+
+/// Fragment nesting is BOUNDED: past the cap the solver diagnoses and stops
+/// rather than recursing (which would overflow the editor's stack, and past 255
+/// overflow the depth counter itself).
+#[test]
+fn absurdly_deep_fragment_nesting_diagnoses_instead_of_recursing() {
+    const DEPTH: usize = 300;
+    let mut nodes = vec![
+        SeqNode::Lifeline {
+            id: "a".into(),
+            title: "A".into(),
+            alias: None,
+            ref_: None,
+        },
+        SeqNode::Lifeline {
+            id: "b".into(),
+            title: "B".into(),
+            alias: None,
+            ref_: None,
+        },
+    ];
+    let edges = vec![SeqEdge {
+        id: "m0".into(),
+        from: "a".into(),
+        verb: MessageVerb::Sends,
+        to: "b".into(),
+        signature: Some("ping()".into()),
+    }];
+    // The innermost operand holds the only message; each level wraps the next.
+    let mut inner = vec![SeqChild::Message { edge: "m0".into() }];
+    for level in (0..DEPTH).rev() {
+        nodes.push(SeqNode::Operand {
+            id: format!("o{level}"),
+            guard: Some(format!("g{level}")),
+            items: inner,
+        });
+        nodes.push(SeqNode::Fragment {
+            id: format!("f{level}"),
+            kind: FragmentKind::Opt,
+            operands: vec![format!("o{level}")],
+        });
+        inner = vec![SeqChild::Fragment {
+            node: format!("f{level}"),
+        }];
+    }
+    let doc = SequenceDoc {
+        key: "deep".into(),
+        title: "Deep".into(),
+        describes: None,
+        nodes,
+        edges,
+        items: inner,
+    };
+
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let solved = std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(move || {
+            let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+            (solved.fragments.len(), diagnostics)
+        })
+        .unwrap()
+        .join()
+        .expect("deep nesting must not overflow the stack");
+    let (fragments, diagnostics) = solved;
+    assert!(fragments < DEPTH, "deeper levels must be dropped");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == waml::diagnostic::DiagCode::FragmentNestingTooDeep),
+        "expected a nesting-too-deep diagnostic, got {diagnostics:?}"
+    );
 }

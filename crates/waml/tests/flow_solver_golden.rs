@@ -109,7 +109,7 @@ fn solve(name: &str, flavor: FlowFlavor) -> waml::solve::flow::FlowSolution {
     assert!(resolve_diags.is_empty(), "{resolve_diags:?}");
     let cfg = FlowConfig::default();
     let sizes = measure_flow(&rf.nodes, flavor, &cfg);
-    solve_flow(&doc, &nodes, &edges, &sizes, &cfg)
+    solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None)
 }
 
 const EXPECTED_ACTIVITY_GOLDEN: &str = include_str!("fixtures/behavior/activity/flow.golden.txt");
@@ -123,27 +123,50 @@ fn activity_fixture_layout_golden() {
 
 #[test]
 fn ranks_are_monotone_along_non_reversed_edges() {
-    let sol = solve("activity", FlowFlavor::Activity);
-    let (doc, nodes, edges) = load("activity");
-    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
-    let _ = rf;
-    for e in &edges {
-        if sol.reversed.contains(&e.key) {
-            continue;
+    for (name, flavor) in [
+        ("activity", FlowFlavor::Activity),
+        ("state-machine", FlowFlavor::StateMachine),
+    ] {
+        let sol = solve(name, flavor);
+        let (_, _, edges) = load(name);
+        for e in &edges {
+            if sol.reversed.contains(&e.key) || e.from == e.to {
+                continue;
+            }
+            let (Some(from), Some(to)) =
+                (sol.solved.nodes.get(&e.from), sol.solved.nodes.get(&e.to))
+            else {
+                continue;
+            };
+            assert!(
+                from.y <= to.y + 1.0,
+                "{name}: edge {} -> {} not rank-monotone: {:?} -> {:?}",
+                e.from,
+                e.to,
+                from,
+                to
+            );
         }
-        let (Some(from), Some(to)) = (sol.solved.nodes.get(&e.from), sol.solved.nodes.get(&e.to))
-        else {
-            continue;
-        };
-        assert!(
-            from.y <= to.y + 1.0,
-            "edge {} -> {} not rank-monotone: {:?} -> {:?}",
-            e.from,
-            e.to,
-            from,
-            to
-        );
     }
+}
+
+/// A self-transition must not flatten the ranks of everything downstream of it:
+/// it is excluded from the ranking adjacency entirely, so `Done` (three
+/// transitions past `Start`) sits strictly below `Start`.
+#[test]
+fn self_transition_does_not_flatten_downstream_ranks() {
+    let sol = solve("state-machine", FlowFlavor::StateMachine);
+    let (_, nodes, _) = load("state-machine");
+    let y_of = |id: &str| {
+        let node = nodes
+            .iter()
+            .find(|n| n.id == id)
+            .unwrap_or_else(|| panic!("fixture has no node {id}"));
+        sol.solved.nodes[&node.key].y
+    };
+    assert!(y_of("Start") < y_of("Idle"), "Start must rank above Idle");
+    assert!(y_of("Idle") < y_of("Active"), "Idle must rank above Active");
+    assert!(y_of("Active") < y_of("Done"), "Active must rank above Done");
 }
 
 #[test]
@@ -258,7 +281,7 @@ fn decision_without_guards_diagnoses_but_still_solves() {
     let (rf, _) = resolve_flow(&doc, &nodes, &edges);
     let cfg = FlowConfig::default();
     let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
-    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
     assert!(!sol.diagnostics.is_empty());
     assert!(!sol.solved.nodes.is_empty());
 }
@@ -276,16 +299,19 @@ fn empty_flow_doc_diagnoses_and_returns_empty_solved() {
     let (rf, _) = resolve_flow(&doc, &[], &[]);
     let cfg = FlowConfig::default();
     let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
-    let sol = solve_flow(&doc, &[], &[], &sizes, &cfg);
+    let sol = solve_flow(&doc, &[], &[], &sizes, &cfg, &|_| None);
     assert!(!sol.diagnostics.is_empty());
     assert!(sol.solved.nodes.is_empty());
 }
+
+const EXPECTED_STATE_MACHINE_GOLDEN: &str =
+    include_str!("fixtures/behavior/state-machine/states.golden.txt");
 
 #[test]
 fn state_machine_fixture_layout_golden() {
     let sol = solve("state-machine", FlowFlavor::StateMachine);
     assert!(sol.diagnostics.is_empty(), "{:?}", sol.diagnostics);
-    assert!(!sol.solved.nodes.is_empty());
+    assert_eq!(pretty_flow(&sol.solved), EXPECTED_STATE_MACHINE_GOLDEN);
 }
 
 #[test]
@@ -466,7 +492,7 @@ fn cross_document_edge_becomes_off_page_stub() {
     let cfg = FlowConfig::default();
     let (rf, _) = resolve_flow(&doc, &nodes, &edges);
     let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
-    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
     assert!(sol
         .solved
         .routes
@@ -476,4 +502,259 @@ fn cross_document_edge_becomes_off_page_stub() {
     assert_eq!(sol.off_page[0].edge_key, "synthetic#e0");
     assert_eq!(sol.off_page[0].target_title, "Other Behavior");
     assert!(sol.off_page[0].points.len() >= 2);
+}
+
+/// `to_ref` resolves the stub label to the TARGET DOCUMENT's title; the raw
+/// `to` text is only the fallback (spec 2.1, 4.1).
+#[test]
+fn off_page_stub_label_resolves_the_target_document_title() {
+    let doc = FlowDoc {
+        key: "synthetic".into(),
+        title: "Synthetic".into(),
+        flavor: FlowFlavor::Activity,
+        describes: None,
+        nodes: vec!["synthetic#Start".into()],
+        edges: vec!["synthetic#e0".into()],
+    };
+    let nodes = vec![ActivityNode {
+        key: "synthetic#Start".into(),
+        id: "Start".into(),
+        behavior: "synthetic".into(),
+        kind: FlowNodeKind::Initial,
+        object_ref: None,
+        partition: None,
+        entry: None,
+        do_: None,
+        exit: None,
+        refines: None,
+        notes: vec![],
+    }];
+    let edges = vec![FlowEdge {
+        key: "synthetic#e0".into(),
+        kind: waml::model::FlowEdgeKind::ControlFlow,
+        behavior: "synthetic".into(),
+        from: "synthetic#Start".into(),
+        to: "other".into(),
+        to_ref: Some("other".into()),
+        trigger: None,
+        guard: None,
+        is_else: false,
+        effect: None,
+        carries: None,
+    }];
+    let cfg = FlowConfig::default();
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
+
+    let resolved = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|key| {
+        (key == "other").then(|| "Fulfil Order".to_string())
+    });
+    assert_eq!(resolved.off_page[0].target_title, "Fulfil Order");
+
+    let unresolved = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
+    assert_eq!(unresolved.off_page[0].target_title, "other");
+}
+
+fn chain(len: usize, partition: Option<&str>) -> (FlowDoc, Vec<ActivityNode>, Vec<FlowEdge>) {
+    let nodes: Vec<ActivityNode> = (0..len)
+        .map(|i| ActivityNode {
+            key: format!("chain#n{i}"),
+            id: format!("n{i}"),
+            behavior: "chain".into(),
+            kind: if i == 0 {
+                FlowNodeKind::Initial
+            } else {
+                FlowNodeKind::Plain
+            },
+            object_ref: None,
+            partition: partition.map(str::to_string),
+            entry: None,
+            do_: None,
+            exit: None,
+            refines: None,
+            notes: vec![],
+        })
+        .collect();
+    let edges: Vec<FlowEdge> = (1..len)
+        .map(|i| FlowEdge {
+            key: format!("chain#e{i}"),
+            kind: waml::model::FlowEdgeKind::ControlFlow,
+            behavior: "chain".into(),
+            from: format!("chain#n{}", i - 1),
+            to: format!("chain#n{i}"),
+            to_ref: None,
+            trigger: None,
+            guard: None,
+            is_else: false,
+            effect: None,
+            carries: None,
+        })
+        .collect();
+    let doc = FlowDoc {
+        key: "chain".into(),
+        title: "Chain".into(),
+        flavor: FlowFlavor::Activity,
+        describes: None,
+        nodes: nodes.iter().map(|n| n.key.clone()).collect(),
+        edges: edges.iter().map(|e| e.key.clone()).collect(),
+    };
+    (doc, nodes, edges)
+}
+
+/// A long authored chain must not overflow the stack: every graph walk in the
+/// flow solver is iterative. Solved on a deliberately SMALL stack, so a
+/// per-node recursive frame would blow it long before the chain ends.
+#[test]
+fn a_long_node_chain_solves_on_a_small_stack() {
+    const CHAIN: usize = 400;
+    let solved = std::thread::Builder::new()
+        .stack_size(96 * 1024)
+        .spawn(|| {
+            let (doc, nodes, edges) = chain(CHAIN, None);
+            let cfg = FlowConfig::default();
+            let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+            let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
+            let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
+            sol.solved.nodes.len()
+        })
+        .unwrap()
+        .join()
+        .expect("a long chain must not overflow the stack");
+    assert_eq!(solved, CHAIN);
+}
+
+/// One named partition still draws its lane band (and clamps its nodes into
+/// it) -- the band is not conditional on there being a SECOND lane.
+#[test]
+fn a_single_named_partition_still_emits_its_lane_band() {
+    let (doc, nodes, edges) = chain(3, Some("Sales"));
+    let cfg = FlowConfig::default();
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
+    let lane = sol
+        .solved
+        .groups
+        .iter()
+        .find(|g| g.title.as_deref() == Some("Sales"))
+        .expect("single named partition must still get a lane band");
+    for rect in sol.solved.nodes.values() {
+        assert!(
+            rect.x >= lane.rect.x - 0.5 && rect.x + rect.w <= lane.rect.x + lane.rect.w + 0.5,
+            "node {rect:?} outside lane {:?}",
+            lane.rect
+        );
+    }
+}
+
+fn plain(key: &str, id: &str, kind: FlowNodeKind) -> ActivityNode {
+    ActivityNode {
+        key: key.into(),
+        id: id.into(),
+        behavior: "fan".into(),
+        kind,
+        object_ref: None,
+        partition: None,
+        entry: None,
+        do_: None,
+        exit: None,
+        refines: None,
+        notes: vec![],
+    }
+}
+
+/// Spec 2.4 step 4: a rank is centred under its parents rather than packed hard
+/// left. A single `Initial` with two children must sit over their midpoint.
+#[test]
+fn a_rank_is_centred_under_its_parents() {
+    let nodes = vec![
+        plain("fan#Start", "Start", FlowNodeKind::Initial),
+        plain("fan#Left", "Left", FlowNodeKind::Plain),
+        plain("fan#Right", "Right", FlowNodeKind::Plain),
+    ];
+    let edges: Vec<FlowEdge> = ["Left", "Right"]
+        .iter()
+        .enumerate()
+        .map(|(i, target)| FlowEdge {
+            key: format!("fan#e{i}"),
+            kind: waml::model::FlowEdgeKind::ControlFlow,
+            behavior: "fan".into(),
+            from: "fan#Start".into(),
+            to: format!("fan#{target}"),
+            to_ref: None,
+            trigger: None,
+            guard: None,
+            is_else: false,
+            effect: None,
+            carries: None,
+        })
+        .collect();
+    let doc = FlowDoc {
+        key: "fan".into(),
+        title: "Fan".into(),
+        flavor: FlowFlavor::Activity,
+        describes: None,
+        nodes: nodes.iter().map(|n| n.key.clone()).collect(),
+        edges: edges.iter().map(|e| e.key.clone()).collect(),
+    };
+    let cfg = FlowConfig::default();
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    let sizes = measure_flow(&rf.nodes, FlowFlavor::Activity, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
+    let center = |key: &str| {
+        let r = sol.solved.nodes[key];
+        r.x + r.w / 2.0
+    };
+    let children_mid = (center("fan#Left") + center("fan#Right")) / 2.0;
+    assert!(
+        (center("fan#Start") - children_mid).abs() < 1.0,
+        "Start centre {} not over its children's midpoint {children_mid}",
+        center("fan#Start")
+    );
+}
+
+/// Two transitions between the SAME pair of nodes each get their own route,
+/// tagged with their own edge key, so a consumer can label and hit-test both.
+#[test]
+fn parallel_edges_between_one_pair_each_carry_their_own_route_key() {
+    let nodes = vec![
+        plain("fan#A", "A", FlowNodeKind::Initial),
+        plain("fan#B", "B", FlowNodeKind::Plain),
+    ];
+    let edges: Vec<FlowEdge> = ["press", "timeout"]
+        .iter()
+        .enumerate()
+        .map(|(i, trigger)| FlowEdge {
+            key: format!("fan#e{i}"),
+            kind: waml::model::FlowEdgeKind::ControlFlow,
+            behavior: "fan".into(),
+            from: "fan#A".into(),
+            to: "fan#B".into(),
+            to_ref: None,
+            trigger: Some((*trigger).to_string()),
+            guard: None,
+            is_else: false,
+            effect: None,
+            carries: None,
+        })
+        .collect();
+    let doc = FlowDoc {
+        key: "fan".into(),
+        title: "Fan".into(),
+        flavor: FlowFlavor::StateMachine,
+        describes: None,
+        nodes: nodes.iter().map(|n| n.key.clone()).collect(),
+        edges: edges.iter().map(|e| e.key.clone()).collect(),
+    };
+    let cfg = FlowConfig::default();
+    let (rf, _) = resolve_flow(&doc, &nodes, &edges);
+    let sizes = measure_flow(&rf.nodes, FlowFlavor::StateMachine, &cfg);
+    let sol = solve_flow(&doc, &nodes, &edges, &sizes, &cfg, &|_| None);
+    let keys: Vec<String> = sol
+        .solved
+        .routes
+        .iter()
+        .filter_map(|r| r.key.clone())
+        .collect();
+    assert_eq!(keys, vec!["fan#e0".to_string(), "fan#e1".to_string()]);
 }
