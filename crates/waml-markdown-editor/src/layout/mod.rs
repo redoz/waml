@@ -10,7 +10,7 @@ use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 pub use crate::selection::Affinity;
 pub use engine::{
     BlockSummary, LayoutEngine, LayoutInvalidation, LayoutViewport, ShapedCluster, ShapedRun,
-    TextShaper,
+    ShapedGlyph, TextShaper,
 };
 pub use geometry::{
     BlockGeometry, CaretGeometry, CaretStop, GlyphCluster, LayoutSnapshot, LayoutSnapshotMetadata,

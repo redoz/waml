@@ -6,7 +6,7 @@ use waml_markdown_editor::{
         Affinity, BlockFlow, BlockGeometry, BlockLayoutSpec, CaretStop, EdgeInsets, FontKey,
         FontWeight, GlyphCluster, LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine,
         LayoutError, LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport,
-        ShapedCluster, ShapedRun, TextMetrics, TextShaper, VisualLine,
+        ShapedCluster, ShapedGlyph, ShapedRun, TextMetrics, TextShaper, VisualLine,
     },
     selection::{Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
@@ -156,6 +156,86 @@ fn glyph_clusters_carry_the_metrics_used_for_measurement_and_hit_testing() {
     assert_eq!(first.metrics, document.text_runs[0].metrics);
     assert_eq!(first.metrics.font, FontKey(12));
     assert_eq!(first.metrics.weight, FontWeight(400));
+}
+
+#[test]
+fn renderer_ready_glyph_payload_survives_complex_clusters() {
+    let (document, presentation, _) = fixtures::paragraph();
+    let run = &document.text_runs[0];
+    let start = run.range.start().to_usize();
+    let glyph = |glyph_id, origin_x, advance, baseline| ShapedGlyph {
+        glyph_id,
+        origin: dvec2(origin_x, 1.5),
+        advance,
+        font: None,
+        font_key: FontKey(77),
+        font_size: 19.0,
+        ascender: 14.0,
+        descender: -5.0,
+        line_gap: 2.0,
+        baseline,
+        offset: 0.25,
+        color: None,
+    };
+    let mut shaper = FixedShaper(ShapedRun {
+        clusters: Arc::from([
+            ShapedCluster {
+                source_range: range(start, start + 3),
+                advance: 17.0,
+                bidi_level: 0,
+                caret_offsets: Arc::from([t(start), t(start + 3)]),
+                glyphs: Arc::from([glyph(501, 0.0, 17.0, 14.0)]),
+            },
+            ShapedCluster {
+                source_range: range(start + 3, start + 6),
+                advance: 12.0,
+                bidi_level: 0,
+                caret_offsets: Arc::from([t(start + 3), t(start + 6)]),
+                glyphs: Arc::from([
+                    glyph(601, 0.0, 12.0, 14.0),
+                    glyph(602, 4.0, 0.0, 14.0),
+                ]),
+            },
+            ShapedCluster {
+                source_range: range(start + 6, start + 14),
+                advance: 24.0,
+                bidi_level: 1,
+                caret_offsets: Arc::from([t(start + 6), t(start + 14)]),
+                glyphs: Arc::from([
+                    glyph(701, 0.0, 8.0, 14.0),
+                    glyph(702, 8.0, 8.0, 14.0),
+                    glyph(703, 16.0, 8.0, 14.0),
+                ]),
+            },
+        ]),
+        ascender: 14.0,
+        descender: -5.0,
+        line_gap: 2.0,
+    });
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    let clusters = layout.glyph_clusters();
+    assert_eq!(clusters[0].glyphs.len(), 1, "ligature glyphs must not be expanded");
+    assert_eq!(clusters[0].glyphs[0].glyph_id, 501);
+    assert_eq!(clusters[1].glyphs.len(), 2, "combining glyphs must not be dropped");
+    assert_eq!(clusters[1].glyphs[1].origin, dvec2(21.0, 15.5));
+    assert_eq!(clusters[2].glyphs.iter().map(|glyph| glyph.glyph_id).collect::<Vec<_>>(), vec![701, 702, 703]);
+    assert_eq!(clusters[0].glyphs[0].font_key, FontKey(77));
+    assert_eq!(clusters[0].glyphs[0].font_size, 19.0);
+    assert_eq!(clusters[0].glyphs[0].ascender, 14.0);
+    assert_eq!(clusters[0].glyphs[0].descender, -5.0);
+    assert_eq!(clusters[0].glyphs[0].line_gap, 2.0);
+    assert_eq!(clusters[0].glyphs[0].baseline, 14.0);
+    assert_eq!(clusters[0].glyphs[0].advance, 17.0);
 }
 
 #[test]
@@ -358,6 +438,35 @@ fn content_extent_and_offscreen_virtualization_remain_document_wide() {
 }
 
 #[test]
+fn scrolled_snapshot_separates_local_geometry_from_document_block_indexes() {
+    let (document, presentation, mut shaper) = fixtures::one_hundred_blocks();
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 80.0, 1_200.0, 20.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    let document_range = layout.visible_block_document_range();
+    let local_range = layout.visible_block_local_range();
+    assert!(document_range.start > 0);
+    assert_eq!(local_range, 0..layout.visible_blocks().len());
+    assert_eq!(
+        layout.visible_blocks()[0].id,
+        document.blocks[document_range.start].id
+    );
+    assert_eq!(layout.document_block_index(0), Some(document_range.start));
+    assert_eq!(
+        layout.document_block_index(local_range.end - 1),
+        Some(document_range.end - 1)
+    );
+    assert_eq!(layout.document_block_index(local_range.end), None);
+}
+
+#[test]
 fn scrolled_visible_window_is_recomputed_after_an_earlier_block_wraps() {
     let (document, presentation, mut shaper) = fixtures::fixture(
         &[16.0, 16.0, 16.0, 16.0, 16.0, 16.0],
@@ -460,6 +569,7 @@ fn shaped_cluster(start: usize, end: usize, bidi_level: u8) -> ShapedCluster {
         advance: 10.0,
         bidi_level,
         caret_offsets: Arc::from([t(start), t(end)]),
+        glyphs: Arc::from([]),
     }
 }
 
@@ -496,6 +606,7 @@ impl TextShaper for FakeShaper {
                 advance: run.metrics.font.0 as f64,
                 bidi_level: 0,
                 caret_offsets: Arc::from([t(start), t(end)]),
+                glyphs: Arc::from([]),
             });
         }
         Ok(ShapedRun {

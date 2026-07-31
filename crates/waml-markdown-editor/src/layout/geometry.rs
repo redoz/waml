@@ -8,7 +8,9 @@ use waml_syntax::{
 
 use crate::selection::{Affinity, Selection, TextPosition};
 
-use super::{BlockSummary, FontKey, FontWeight, GeometryElementId, LayoutElementId, TextMetrics};
+use super::{
+    BlockSummary, FontKey, FontWeight, GeometryElementId, LayoutElementId, ShapedGlyph, TextMetrics,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CaretStop {
@@ -37,6 +39,8 @@ pub struct GlyphCluster {
     /// The exact metric record that produced this placement. Renderers must
     /// paint with it rather than reconstructing a parallel text style.
     pub metrics: TextMetrics,
+    /// Exact renderer glyphs and font instances retained by the shaper.
+    pub glyphs: Arc<[ShapedGlyph]>,
 }
 
 impl GlyphCluster {
@@ -56,12 +60,24 @@ impl GlyphCluster {
         caret_stops: Arc<[CaretStop]>,
         metrics: TextMetrics,
     ) -> Self {
+        Self::with_glyphs(id, source_range, rect, caret_stops, metrics, Arc::from([]))
+    }
+
+    pub fn with_glyphs(
+        id: GeometryElementId,
+        source_range: TextRange,
+        rect: Rect,
+        caret_stops: Arc<[CaretStop]>,
+        metrics: TextMetrics,
+        glyphs: Arc<[ShapedGlyph]>,
+    ) -> Self {
         Self {
             id,
             source_range,
             rect,
             caret_stops,
             metrics,
+            glyphs,
         }
     }
 
@@ -205,6 +221,24 @@ impl LayoutSnapshot {
 
     pub fn visible_block_range(&self) -> Range<usize> {
         self.visible_block_range.clone()
+    }
+
+    /// Document indexes covered by the compact visible geometry arrays.
+    pub fn visible_block_document_range(&self) -> Range<usize> {
+        self.visible_block_range.clone()
+    }
+
+    /// Indexes valid for `visible_blocks` in this snapshot.
+    pub fn visible_block_local_range(&self) -> Range<usize> {
+        0..self.blocks.len()
+    }
+
+    pub fn visible_blocks(&self) -> &[BlockGeometry] {
+        &self.blocks
+    }
+
+    pub fn document_block_index(&self, local_index: usize) -> Option<usize> {
+        (local_index < self.blocks.len()).then(|| self.visible_block_range.start + local_index)
     }
 
     pub fn blocks(&self) -> &[BlockGeometry] {

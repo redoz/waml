@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use makepad_widgets::{Align, Cx, DrawText};
+use makepad_widgets::{dvec2, Align, Cx, DrawText};
 use unicode_bidi::BidiInfo;
 use waml_syntax::{SourceText, TextRange, TextSize};
 
 use super::{
-    FontKey, LayoutError, LayoutTextRun, ShapedCluster, ShapedRun, TextMetrics, TextShaper,
+    FontKey, LayoutError, LayoutTextRun, ShapedCluster, ShapedGlyph, ShapedRun, TextMetrics,
+    TextShaper,
 };
 
 pub trait FontResolver {
@@ -72,12 +73,34 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
                     || row.width_in_lpxs - row.glyphs[index].origin_in_lpxs.x,
                     |glyph| glyph.origin_in_lpxs.x - row.glyphs[index].origin_in_lpxs.x,
                 );
+                let cluster_origin = row.glyphs[index].origin_in_lpxs.x;
+                let glyphs = row.glyphs[index..next]
+                    .iter()
+                    .map(|glyph| ShapedGlyph {
+                        glyph_id: glyph.id,
+                        origin: dvec2(
+                            (glyph.origin_in_lpxs.x - cluster_origin) as f64,
+                            (glyph.origin_in_lpxs.y - row.origin_in_lpxs.y) as f64,
+                        ),
+                        advance: glyph.advance_in_lpxs() as f64,
+                        font: Some(glyph.font.clone()),
+                        font_key: run.metrics.font,
+                        font_size: glyph.font_size_in_lpxs,
+                        ascender: glyph.ascender_in_lpxs() as f64,
+                        descender: glyph.descender_in_lpxs() as f64,
+                        line_gap: glyph.line_gap_in_lpxs() as f64,
+                        baseline: row.ascender_in_lpxs as f64,
+                        offset: glyph.offset_in_lpxs() as f64,
+                        color: glyph.color,
+                    })
+                    .collect::<Vec<_>>();
                 clusters.push(ShapedCluster {
                     source_range: TextRange::new(text_size(start), text_size(end))
                         .map_err(|_| LayoutError::ShapingFailed { run: run.id })?,
                     advance: advance as f64,
                     bidi_level: bidi_level_at(&bidi, row_start + cluster),
                     caret_offsets: Arc::from([text_size(start), text_size(end)]),
+                    glyphs: glyphs.into(),
                 });
                 index = next;
             }
@@ -116,7 +139,7 @@ mod tests {
         layout::{
             Affinity, BlockFlow, BlockLayoutSpec, EdgeInsets, FontKey, FontWeight, LayoutBlock,
             LayoutDocument, LayoutElementId, LayoutEngine, LayoutInvalidation, LayoutTextRun,
-            LayoutViewport, TextMetrics,
+            LayoutViewport, TextMetrics, TextShaper,
         },
         selection::TextPosition,
     };
@@ -218,6 +241,112 @@ mod tests {
             .pos
             .x;
         assert!(start > end, "RTL source start must be right of source end");
+    }
+
+    #[test]
+    fn makepad_shaper_retains_exact_ligature_combining_and_arabic_glyphs() {
+        for sample in ["ffi", "e\u{301}", "سلام"] {
+            let source = SourceText::new(format!("# {sample}")).unwrap();
+            let syntax = parse_markdown(
+                DocumentRevision::new(11),
+                source,
+                MarkdownDialect::WAML_DEFAULT,
+            )
+            .unwrap();
+            let heading = syntax.queries().headings().next().unwrap().clone();
+            let id = LayoutElementId {
+                owner: heading.owner,
+                fragment_ordinal: 0,
+            };
+            let run = LayoutTextRun {
+                id,
+                range: heading.content_range,
+                metrics: TextMetrics {
+                    font: FontKey(91),
+                    font_size: 19.0,
+                    line_spacing: 1.0,
+                    weight: FontWeight(400),
+                    italic: false,
+                },
+            };
+            let text = syntax.text().slice(run.range).unwrap().to_owned();
+            let mut cx = Cx::new(Box::new(|_, _| {}));
+            cx.with_vm(|vm| {
+                makepad_widgets::makepad_draw::script_mod(vm);
+                makepad_widgets::script_mod(vm);
+                let mut draw_text = Label::script_new_with_default(vm).draw_text;
+                vm.with_cx_mut(|cx| {
+                    let raw = draw_text.layout(
+                        cx,
+                        0.0,
+                        0.0,
+                        Some(400.0),
+                        true,
+                        Align::default(),
+                        &text,
+                    );
+                    let mut fonts = NoopFonts;
+                    let mut shaper = MakepadTextShaper {
+                        cx,
+                        draw_text: &mut draw_text,
+                        fonts: &mut fonts,
+                    };
+                    let shaped = shaper.shape(syntax.text(), &run, 400.0).unwrap();
+                    let shaped_glyphs = shaped
+                        .clusters
+                        .iter()
+                        .flat_map(|cluster| cluster.glyphs.iter())
+                        .collect::<Vec<_>>();
+                    let mut expected = Vec::new();
+                    for row in &raw.rows {
+                        let mut index = 0;
+                        while index < row.glyphs.len() {
+                            let cluster = row.glyphs[index].cluster;
+                            let cluster_origin = row.glyphs[index].origin_in_lpxs.x;
+                            let mut next = index + 1;
+                            while next < row.glyphs.len()
+                                && row.glyphs[next].cluster == cluster
+                            {
+                                next += 1;
+                            }
+                            for (ordinal, glyph) in row.glyphs[index..next].iter().enumerate() {
+                                expected.push((
+                                    row.text.start_in_parent() + cluster,
+                                    ordinal,
+                                    glyph,
+                                    dvec2(
+                                        (glyph.origin_in_lpxs.x - cluster_origin) as f64,
+                                        (glyph.origin_in_lpxs.y - row.origin_in_lpxs.y) as f64,
+                                    ),
+                                    row.ascender_in_lpxs as f64,
+                                ));
+                            }
+                            index = next;
+                        }
+                    }
+                    expected.sort_by_key(|(cluster, ordinal, _, _, _)| (*cluster, *ordinal));
+                    assert_eq!(shaped_glyphs.len(), expected.len(), "sample {sample:?}");
+                    assert!(!shaped_glyphs.is_empty(), "sample {sample:?}");
+                    for (glyph, (_, _, raw, origin, baseline)) in
+                        shaped_glyphs.into_iter().zip(expected)
+                    {
+                        assert!(glyph.font.is_some(), "sample {sample:?}");
+                        assert_eq!(glyph.font.as_ref(), Some(&raw.font));
+                        assert_eq!(glyph.font_key, FontKey(91));
+                        assert_eq!(glyph.glyph_id, raw.id);
+                        assert_eq!(glyph.origin, origin);
+                        assert_eq!(glyph.advance, raw.advance_in_lpxs() as f64);
+                        assert_eq!(glyph.font_size, raw.font_size_in_lpxs);
+                        assert_eq!(glyph.ascender, raw.ascender_in_lpxs() as f64);
+                        assert_eq!(glyph.descender, raw.descender_in_lpxs() as f64);
+                        assert_eq!(glyph.line_gap, raw.line_gap_in_lpxs() as f64);
+                        assert_eq!(glyph.baseline, baseline);
+                        assert_eq!(glyph.offset, raw.offset_in_lpxs() as f64);
+                        assert_eq!(glyph.color, raw.color);
+                    }
+                });
+            });
+        }
     }
 
     struct NoopFonts;

@@ -1,6 +1,10 @@
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{collections::HashMap, fmt, rc::Rc, sync::Arc};
 
-use makepad_widgets::{dvec2, Rect};
+use makepad_widgets::{
+    dvec2,
+    text::{color::Color, font::Font},
+    DVec2, Rect,
+};
 use waml_syntax::{MarkdownSyntaxUpdate, SourceText, TextRange, TextSize};
 
 use crate::{document::MarkdownDocumentSnapshot, selection::TextPosition};
@@ -35,6 +39,26 @@ pub struct ShapedCluster {
     pub advance: f64,
     pub bidi_level: u8,
     pub caret_offsets: Arc<[TextSize]>,
+    pub glyphs: Arc<[ShapedGlyph]>,
+}
+
+/// Immutable renderer input retained from the shaping authority.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapedGlyph {
+    pub glyph_id: u16,
+    /// Before layout this is relative to the cluster baseline. In a
+    /// `GlyphCluster` it is the exact document-space glyph origin.
+    pub origin: DVec2,
+    pub advance: f64,
+    pub font: Option<Rc<Font>>,
+    pub font_key: super::FontKey,
+    pub font_size: f32,
+    pub ascender: f64,
+    pub descender: f64,
+    pub line_gap: f64,
+    pub baseline: f64,
+    pub offset: f64,
+    pub color: Option<Color>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -361,6 +385,20 @@ fn fallback_block(
             advance: 8.0,
             bidi_level: 0,
             caret_offsets: Arc::from([text_size(start), text_size(end)]),
+            glyphs: Arc::from([ShapedGlyph {
+                glyph_id: u16::try_from(character as u32).unwrap_or(0),
+                origin: dvec2(0.0, 0.0),
+                advance: 8.0,
+                font: None,
+                font_key: document_metrics(block, document).font,
+                font_size: 16.0,
+                ascender: 12.8,
+                descender: -3.2,
+                line_gap: 0.0,
+                baseline: 12.8,
+                offset: 0.0,
+                color: None,
+            }]),
         });
     }
     let run = ShapedRun {
@@ -497,7 +535,20 @@ fn flush_line(
                 )
             })
             .collect::<Vec<_>>();
-        output.clusters.push(GlyphCluster::with_metrics(
+        let glyphs = shaped
+            .glyphs
+            .iter()
+            .cloned()
+            .map(|mut glyph| {
+                glyph.origin = dvec2(
+                    x + glyph.origin.x,
+                    y + glyph.baseline + glyph.origin.y,
+                );
+                glyph.baseline += y;
+                glyph
+            })
+            .collect::<Vec<_>>();
+        output.clusters.push(GlyphCluster::with_glyphs(
             GeometryElementId {
                 layout: layout_id,
                 cluster_ordinal: ordinal as u32,
@@ -509,6 +560,7 @@ fn flush_line(
             },
             stops.into(),
             *metrics,
+            glyphs.into(),
         ));
         x += shaped.advance;
     }
