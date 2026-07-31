@@ -171,6 +171,7 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
         glyph_id,
         origin: dvec2(origin_x, 1.5),
         advance,
+        paint_scale: 1.0,
         font: None,
         font_key: FontKey(77),
         font_size: 19.0,
@@ -187,6 +188,8 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
                 source_range: range(start, start + 3),
                 advance: 17.0,
                 bidi_level: 0,
+                row_ordinal: 0,
+                row_top: 0.0,
                 caret_offsets: Arc::from([t(start), t(start + 3)]),
                 glyphs: Arc::from([glyph(501, 0.0, 17.0, 14.0)]),
             },
@@ -194,6 +197,8 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
                 source_range: range(start + 3, start + 6),
                 advance: 12.0,
                 bidi_level: 0,
+                row_ordinal: 0,
+                row_top: 0.0,
                 caret_offsets: Arc::from([t(start + 3), t(start + 6)]),
                 glyphs: Arc::from([glyph(601, 0.0, 12.0, 14.0), glyph(602, 4.0, 0.0, 14.0)]),
             },
@@ -201,6 +206,8 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
                 source_range: range(start + 6, start + 14),
                 advance: 24.0,
                 bidi_level: 1,
+                row_ordinal: 0,
+                row_top: 0.0,
                 caret_offsets: Arc::from([t(start + 6), t(start + 14)]),
                 glyphs: Arc::from([
                     glyph(701, 0.0, 8.0, 14.0),
@@ -762,6 +769,48 @@ fn quote_hanging_tree_aggregates_children_without_phantom_height() {
 }
 
 #[test]
+fn hanging_wrapped_multi_run_clusters_have_unique_block_ordinals() {
+    let (mut document, presentation, mut shaper) = fixtures::paragraph();
+    let mut blocks = document.blocks.to_vec();
+    let original = document.text_runs[0].clone();
+    let marker_end = original.range.start().to_usize() + 1;
+    blocks[0].spec.flow = BlockFlow::Hanging {
+        marker_range: range(original.range.start().to_usize(), marker_end),
+        content_indent: 20.0,
+    };
+    document.blocks = blocks.into();
+    document.text_runs = Arc::from([
+        LayoutTextRun {
+            id: original.id,
+            range: range(original.range.start().to_usize(), marker_end),
+            metrics: original.metrics,
+        },
+        LayoutTextRun {
+            id: original.id,
+            range: range(marker_end, original.range.end().to_usize()),
+            metrics: original.metrics,
+        },
+    ]);
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(72.0, 500.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let ids = layout
+        .glyph_clusters()
+        .iter()
+        .map(|cluster| cluster.id)
+        .collect::<HashSet<_>>();
+    assert_eq!(ids.len(), layout.glyph_clusters().len());
+    assert!(layout.visual_lines().len() > 2);
+}
+
+#[test]
 fn table_rows_share_column_origins_and_aggregate_cell_heights() {
     let (mut document, presentation, mut shaper) = fixtures::fixture(
         &[16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0],
@@ -882,6 +931,8 @@ fn shaped_cluster(start: usize, end: usize, bidi_level: u8) -> ShapedCluster {
         source_range: range(start, end),
         advance: 10.0,
         bidi_level,
+        row_ordinal: 0,
+        row_top: 0.0,
         caret_offsets: Arc::from([t(start), t(end)]),
         glyphs: Arc::from([]),
     }
@@ -918,6 +969,8 @@ impl TextShaper for FakeShaper {
                     .copied()
                     .unwrap_or(run.metrics.font.0 as f64),
                 bidi_level: 0,
+                row_ordinal: 0,
+                row_top: 0.0,
                 caret_offsets: Arc::from([t(start), t(end)]),
                 glyphs: Arc::from([]),
             });

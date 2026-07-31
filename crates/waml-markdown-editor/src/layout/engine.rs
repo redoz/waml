@@ -43,6 +43,10 @@ pub struct ShapedCluster {
     pub source_range: TextRange,
     pub advance: f64,
     pub bidi_level: u8,
+    /// Row assigned by the shaping authority before block placement.
+    pub row_ordinal: u32,
+    /// Row top relative to the start of the shaped run, after paint scaling.
+    pub row_top: f64,
     pub caret_offsets: Arc<[TextSize]>,
     pub glyphs: Arc<[ShapedGlyph]>,
 }
@@ -55,6 +59,9 @@ pub struct ShapedGlyph {
     /// `GlyphCluster` it is the exact document-space glyph origin.
     pub origin: DVec2,
     pub advance: f64,
+    /// Scale used by Makepad when it converts laid-out logical pixels to
+    /// final paint positions.
+    pub paint_scale: f64,
     pub font: Option<FontId>,
     pub font_key: super::FontKey,
     pub font_size: f32,
@@ -580,9 +587,12 @@ struct BlockOutput {
 fn block_layout_data(
     block: &LayoutBlock,
     width: f64,
-    output: BlockOutput,
+    mut output: BlockOutput,
     fallback: bool,
 ) -> BlockLayoutData {
+    for (ordinal, cluster) in output.clusters.iter_mut().enumerate() {
+        cluster.id.cluster_ordinal = ordinal as u32;
+    }
     let rect = Rect {
         pos: dvec2(0.0, 0.0),
         size: dvec2(width, output.height),
@@ -745,11 +755,14 @@ fn fallback_block(
             source_range: text_range(start, end),
             advance: 8.0,
             bidi_level: 0,
+            row_ordinal: 0,
+            row_top: 0.0,
             caret_offsets: Arc::from([text_size(start), text_size(end)]),
             glyphs: Arc::from([ShapedGlyph {
                 glyph_id: u16::try_from(character as u32).unwrap_or(0),
                 origin: dvec2(0.0, 0.0),
                 advance: 8.0,
+                paint_scale: 1.0,
                 font: None,
                 font_key: document_metrics(block, document).font,
                 font_size: 16.0,
@@ -791,6 +804,7 @@ fn append_run(
     let mut line_clusters: Vec<(usize, &ShapedCluster, f64)> = Vec::new();
     let mut x = 0.0;
     let mut y = start_y;
+    let mut row_ordinal = None;
     let mut source_order: Vec<_> = run
         .clusters
         .iter()
@@ -802,7 +816,8 @@ fn append_run(
         let ordinal = source_order
             .binary_search_by_key(&shaped.source_range.start(), |range| range.start())
             .expect("a shaped cluster appears in source order");
-        if x > 0.0 && x + shaped.advance > max_width {
+        let starts_new_row = row_ordinal.is_some_and(|row| row != shaped.row_ordinal);
+        if !line_clusters.is_empty() && (starts_new_row || x + shaped.advance > max_width) {
             flush_line(
                 output,
                 layout_id,
@@ -814,8 +829,13 @@ fn append_run(
             );
             line_clusters.clear();
             x = 0.0;
-            y += line_height;
+            if starts_new_row {
+                y = start_y + shaped.row_top;
+            } else {
+                y += line_height;
+            }
         }
+        row_ordinal = Some(shaped.row_ordinal);
         line_clusters.push((ordinal, shaped, x));
         x += shaped.advance;
     }
