@@ -327,28 +327,9 @@ pub fn reparse_markdown(
             requested: revision,
         });
     }
-    let old = previous.text();
-    let map = ChangeMap::checked(old, changes).ok();
-    let references_changed = map.as_ref().is_some_and(|map| {
-        super::reparse::reference_definition_changed(old, &new_text, changes, map)
-    });
     let (outcome, structure) =
         reparse_okf_markdown_with_structure(previous.tree.as_ref(), new_text.clone(), changes)?;
-    // A definition supplies destination metadata to every matching reference.
-    // Parse the final snapshot as a single consistent tree before publishing it;
-    // the incremental outcome still records its precise affected work set.
-    let outcome = if references_changed {
-        let parsed =
-            crate::parse_okf_markdown(new_text.clone(), MarkdownDialect::CommonMarkCurrent)?;
-        ReparseOutcome::Incremental {
-            tree: parsed.tree,
-            shared_source_independent_green: 0,
-            reparsed_range: super::reparse::full_range(&new_text),
-        }
-    } else {
-        outcome
-    };
-    let (tree, outcome, mut affected_ranges): (_, _, Vec<TextRange>) = match outcome {
+    let (mut tree, shared_source_independent_green, reparsed_range) = match outcome {
         ReparseOutcome::Incremental {
             tree,
             shared_source_independent_green,
@@ -359,54 +340,121 @@ pub fn reparse_markdown(
                     reason: "incremental reparse range exceeds the new Markdown snapshot".into(),
                 });
             }
-            (
-                tree,
-                MarkdownReparseOutcome::Incremental {
-                    shared_source_independent_green,
-                    reparsed_range: Some(reparsed_range),
-                },
-                if references_changed {
-                    map.as_ref()
-                        .map(|map| map.segments().iter().map(|segment| segment.new).collect())
-                        .unwrap_or_else(|| vec![reparsed_range])
-                } else {
-                    vec![reparsed_range]
-                },
-            )
+            (tree, shared_source_independent_green, reparsed_range)
         }
-        ReparseOutcome::Full { tree, reason } => (
-            tree,
-            MarkdownReparseOutcome::Full { reason },
-            vec![super::reparse::full_range(&new_text)],
-        ),
+        ReparseOutcome::Full { tree, reason } => {
+            let affected_ranges: Arc<[TextRange]> =
+                Arc::from([super::reparse::full_range(&new_text)]);
+            return Ok(MarkdownSyntaxUpdate {
+                snapshot: MarkdownSyntaxSnapshot::from_tree(revision, new_text, tree, structure)?,
+                affected_ranges,
+                outcome: MarkdownReparseOutcome::Full { reason },
+            });
+        }
     };
-    let snapshot = MarkdownSyntaxSnapshot::from_tree(revision, new_text, tree, structure)?;
-    if references_changed {
-        affected_ranges.extend(
-            snapshot
-                .queries()
-                .links()
-                .filter(|link| link.kind == MarkdownLinkKind::Reference)
-                .map(|link| link.source_range),
-        );
+    let map = ChangeMap::checked(previous.text(), changes).map_err(|_| {
+        ParseError::StructuralInvariant {
+            reason: "incremental bridge returned a tree for an invalid change map".into(),
+        }
+    })?;
+    let mut affected_ranges = vec![reparsed_range];
+    let mut dependent_ranges = Vec::new();
+    if super::reparse::change_touches_reference_definition(
+        previous.text(),
+        &new_text,
+        changes,
+        &map,
+    ) {
+        let parsed = crate::parse_okf_markdown(new_text.clone(), previous.tree().dialect())?;
+        let labels = super::reparse::changed_reference_labels(
+            previous.text(),
+            previous.tree().root_green(),
+            &new_text,
+            parsed.tree.root_green(),
+        )?;
+        if !labels.is_empty() {
+            let oracle_queries = queries(&parsed.tree, parsed.structure.islands.clone())?;
+            for label in &labels {
+                dependent_ranges.extend(
+                    backlink_ranges(previous.queries(), label)
+                        .into_iter()
+                        .filter_map(|range| map.translate_unchanged(range)),
+                );
+                dependent_ranges.extend(backlink_ranges(&oracle_queries, label));
+            }
+            dependent_ranges = super::reparse::normalize_affected_ranges(dependent_ranges);
+            affected_ranges = super::reparse::changed_definition_ranges(
+                &new_text,
+                parsed.tree.root_green(),
+                &labels,
+            )?;
+            if affected_ranges.is_empty() {
+                affected_ranges.extend(map.segments().iter().map(|segment| segment.new));
+            }
+            if !dependent_ranges.is_empty() {
+                let root = super::reparse::splice_reference_dependents(
+                    tree.root_green(),
+                    parsed.tree.root_green(),
+                    &dependent_ranges,
+                )?;
+                tree = Arc::new(SyntaxTree::new(
+                    root,
+                    Arc::from(parsed.tree.diagnostics()),
+                    previous.tree().dialect(),
+                ));
+                affected_ranges.extend(dependent_ranges.iter().copied());
+            }
+        }
     }
+    let restored_root = super::reparse::restore_unchanged_subtrees(
+        previous.tree().root_green(),
+        tree.root_green(),
+        &new_text,
+        &map,
+        &dependent_ranges,
+    )?;
+    let restored_tree = SyntaxTree::new(
+        restored_root,
+        Arc::from(tree.diagnostics()),
+        previous.tree().dialect(),
+    );
+    let restored_root = super::reparse::preserve_unchanged_island_identities(
+        previous.tree(),
+        &restored_tree,
+        &map,
+    )?;
+    tree = Arc::new(SyntaxTree::new(
+        restored_root,
+        Arc::from(restored_tree.diagnostics()),
+        previous.tree().dialect(),
+    ));
+    let structure = Arc::new(super::from_tree(&tree, new_text.shared())?);
+    let snapshot = MarkdownSyntaxSnapshot::from_tree(revision, new_text, tree, structure)?;
     let affected_ranges: Arc<[TextRange]> =
         super::reparse::normalize_affected_ranges(affected_ranges).into();
-    let outcome = match outcome {
-        MarkdownReparseOutcome::Incremental {
-            shared_source_independent_green,
-            ..
-        } => MarkdownReparseOutcome::Incremental {
-            shared_source_independent_green,
-            reparsed_range: (affected_ranges.len() == 1).then(|| affected_ranges[0]),
-        },
-        outcome => outcome,
+    let outcome = MarkdownReparseOutcome::Incremental {
+        shared_source_independent_green,
+        reparsed_range: (affected_ranges.len() == 1).then(|| affected_ranges[0]),
     };
     Ok(MarkdownSyntaxUpdate {
         snapshot,
         affected_ranges,
         outcome,
     })
+}
+
+fn backlink_ranges(queries: &MarkdownSyntaxQueries, label: &str) -> Vec<TextRange> {
+    queries
+        .reference_backlinks(label)
+        .iter()
+        .filter_map(|owner| {
+            queries
+                .links()
+                .find(|link| link.identity == *owner)
+                .map(|link| link.source_range)
+                .or_else(|| queries.image(*owner).map(|image| image.source_range))
+        })
+        .collect()
 }
 
 fn source_backed_green_uses(

@@ -760,16 +760,36 @@ pub fn reparse_okf_markdown_with_structure(
             public_structure,
         ))
     };
+    let old_projection = crate::markdown::from_tree(previous, old.shared())?;
+    if old_projection.islands.iter().any(|island| {
+        let island_range = island.heading_range.cover(island.content_range);
+        map.segments().iter().any(|segment| {
+            if segment.old.start() == segment.old.end() {
+                island_range.start() <= segment.old.start()
+                    && segment.old.start() <= island_range.end()
+            } else {
+                segment.old.start() < island_range.end() && island_range.start() < segment.old.end()
+            }
+        })
+    }) {
+        return full(FullReparseReason::IslandBoundaryChanged);
+    }
     if dialect.waml_sections()
         && new_structure
             .headings
             .iter()
             .chain(new_structure.nested_headings.iter())
-            .any(|heading| {
+            .filter(|heading| {
                 crate::markdown::waml_kind(new_text.shared(), heading.text_range).is_some()
             })
+            .any(|heading| {
+                map.segments().iter().any(|segment| {
+                    segment.new.start() < heading.range.end()
+                        && heading.range.start() < segment.new.end()
+                })
+            })
     {
-        return full(FullReparseReason::UnsafeSynchronization);
+        return full(FullReparseReason::IslandBoundaryChanged);
     }
     let old_frontmatter = crate::shell::frontmatter_range(&old, &old_structure)?;
     let new_frontmatter = crate::shell::frontmatter_range(&new_text, &new_structure)?;
