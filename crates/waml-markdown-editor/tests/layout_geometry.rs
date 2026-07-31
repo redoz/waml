@@ -291,7 +291,14 @@ fn default_overscan_owns_exact_320_pixel_boundaries() {
         )
         .unwrap();
 
-    assert_eq!(layout.visible_block_document_range(), 28..60);
+    assert_eq!(
+        layout.visible_blocks().first().unwrap().document_index(),
+        28
+    );
+    assert_eq!(
+        layout.visible_blocks().last().unwrap().document_index() + 1,
+        60
+    );
     assert_eq!(layout.visible_block_local_range(), 0..32);
 }
 
@@ -333,8 +340,8 @@ fn failed_block_uses_editable_plain_text_fallback() {
             &mut shaper,
         )
         .unwrap();
-    assert!(layout.blocks()[1].is_plain_text_fallback());
-    let source = layout.blocks()[1].source_range();
+    assert!(layout.visible_blocks()[1].is_plain_text_fallback());
+    let source = layout.visible_blocks()[1].source_range();
     assert_eq!(
         layout.point_to_source(
             layout
@@ -471,8 +478,8 @@ fn content_extent_and_offscreen_virtualization_remain_document_wide() {
         .unwrap();
     assert_eq!(layout.block_summaries().len(), 100);
     assert!(layout.content_size().y >= 2_000.0);
-    assert!(layout.visible_block_range().start > 0);
-    assert!(layout.visible_block_range().end < 100);
+    assert!(layout.visible_blocks().first().unwrap().document_index() > 0);
+    assert!(layout.visible_blocks().last().unwrap().document_index() < 99);
     assert!(layout.visible_source_range().start() > t(0));
     assert!(layout.visible_blocks().len() < 20);
 }
@@ -490,20 +497,108 @@ fn scrolled_snapshot_separates_local_geometry_from_document_block_indexes() {
         )
         .unwrap();
 
-    let document_range = layout.visible_block_document_range();
     let local_range = layout.visible_block_local_range();
-    assert!(document_range.start > 0);
     assert_eq!(local_range, 0..layout.visible_blocks().len());
+    let first_document_index = layout.visible_blocks()[0].document_index();
+    let last_document_index = layout.visible_blocks().last().unwrap().document_index();
+    assert!(first_document_index > 0);
     assert_eq!(
         layout.visible_blocks()[0].id,
-        document.blocks[document_range.start].id
+        document.blocks[first_document_index].id
     );
-    assert_eq!(layout.document_block_index(0), Some(document_range.start));
+    assert_eq!(layout.document_block_index(0), Some(first_document_index));
     assert_eq!(
         layout.document_block_index(local_range.end - 1),
-        Some(document_range.end - 1)
+        Some(last_document_index)
     );
     assert_eq!(layout.document_block_index(local_range.end), None);
+}
+
+#[test]
+fn sparse_nested_visible_blocks_carry_their_exact_document_indexes() {
+    let (mut document, presentation, mut shaper) = fixtures::one_hundred_blocks();
+    let mut blocks = document.blocks.to_vec();
+    let root = blocks[0].id;
+    blocks[0].spec.flow = BlockFlow::Quote;
+    blocks[0].spec.space_after = 0.0;
+    for block in blocks.iter_mut().skip(1) {
+        block.parent = Some(root);
+    }
+    document.blocks = blocks.into();
+    document.text_runs = document
+        .text_runs
+        .iter()
+        .filter(|run| run.id != root)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 80.0, 1_200.0, 20.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let document_indexes = layout
+        .visible_blocks()
+        .iter()
+        .map(BlockGeometry::document_index)
+        .collect::<Vec<_>>();
+    let consumer_slice = &layout.blocks()[layout.visible_block_range()];
+    assert_eq!(consumer_slice, layout.visible_blocks());
+    assert_eq!(
+        document_indexes[0], 0,
+        "the visible quote root is document block zero"
+    );
+    assert!(document_indexes
+        .windows(2)
+        .any(|pair| pair[1] > pair[0] + 1));
+    for (local_index, visible) in layout.visible_blocks().iter().enumerate() {
+        assert_eq!(document.blocks[visible.document_index()].id, visible.id);
+        assert_eq!(
+            layout.document_block_index(local_index),
+            Some(visible.document_index())
+        );
+    }
+}
+
+#[test]
+fn cold_large_document_and_scroll_only_layout_shape_only_the_overscanned_window() {
+    let (document, presentation, mut shaper) = fixtures::ten_thousand_blocks();
+    let mut engine = LayoutEngine::default();
+    let first = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::default_overscan(400.0, 100.0, 100_000.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(first.block_summaries().len(), 10_000);
+    assert!(first.content_size().y >= 200_000.0);
+    assert!(
+        shaper.shaped.len() <= 50,
+        "cold shaped {} blocks",
+        shaper.shaped.len()
+    );
+    assert!(first.visible_block_layouts().len() <= 50);
+
+    let cold_calls = shaper.shaped.len();
+    let second = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::default_overscan(400.0, 100.0, 100_200.0),
+            LayoutInvalidation::Viewport,
+            &mut shaper,
+        )
+        .unwrap();
+    assert!(shaper.shaped.len() <= cold_calls + 12);
+    assert!(second.visible_block_layouts().len() <= 50);
 }
 
 #[test]
@@ -527,7 +622,7 @@ fn scrolled_visible_window_is_recomputed_after_an_earlier_block_wraps() {
     // The first block grows from its one-line estimate to six wrapped rows, so
     // the scrolled viewport is inside that block, not the initially estimated
     // fifth block.
-    assert_eq!(layout.visible_block_range().start, 0);
+    assert_eq!(layout.visible_blocks().first().unwrap().document_index(), 0);
     assert_eq!(
         layout.visible_source_range().start(),
         document.text_runs[0].range.start()
@@ -625,7 +720,10 @@ fn measurement_growth_and_shrink_converge_before_visible_selection() {
             &mut shaper,
         )
         .unwrap();
-    assert_eq!(initial.visible_block_document_range().start, 4);
+    assert_eq!(
+        initial.visible_blocks().first().unwrap().document_index(),
+        4
+    );
     let target = document.blocks[0].id;
 
     shaper.shaped.clear();
@@ -641,7 +739,7 @@ fn measurement_growth_and_shrink_converge_before_visible_selection() {
         .unwrap();
     assert_eq!(shaper.shaped, HashSet::from([target]));
     assert_eq!(grown.block_summaries()[0].height, 48.0);
-    assert_eq!(grown.visible_block_document_range().start, 2);
+    assert_eq!(grown.visible_blocks().first().unwrap().document_index(), 2);
     assert_eq!(grown.dirty_block_document_range(), 0..6);
 
     shaper.shaped.clear();
@@ -657,7 +755,7 @@ fn measurement_growth_and_shrink_converge_before_visible_selection() {
         .unwrap();
     assert_eq!(shaper.shaped, HashSet::from([target]));
     assert_eq!(shrunk.block_summaries()[0].height, 16.0);
-    assert_eq!(shrunk.visible_block_document_range().start, 4);
+    assert_eq!(shrunk.visible_blocks().first().unwrap().document_index(), 4);
     assert_eq!(shrunk.dirty_block_document_range(), 0..6);
 }
 
@@ -995,6 +1093,10 @@ mod fixtures {
 
     pub fn one_hundred_blocks() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
         fixture(&vec![20.0; 100], &vec![6; 100], None)
+    }
+
+    pub fn ten_thousand_blocks() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        fixture(&vec![20.0; 10_000], &vec![6; 10_000], None)
     }
 
     pub fn paragraph() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {

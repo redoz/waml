@@ -103,6 +103,8 @@ pub enum LayoutInvalidation {
     Document,
     SyntaxUpdate(MarkdownSyntaxUpdate),
     ViewportWidth,
+    /// Only the viewport position or height changed.
+    Viewport,
     BlockMeasurement(LayoutElementId),
 }
 
@@ -112,6 +114,7 @@ impl fmt::Debug for LayoutInvalidation {
             Self::Document => formatter.write_str("Document"),
             Self::SyntaxUpdate(_) => formatter.write_str("SyntaxUpdate(..)"),
             Self::ViewportWidth => formatter.write_str("ViewportWidth"),
+            Self::Viewport => formatter.write_str("Viewport"),
             Self::BlockMeasurement(id) => {
                 formatter.debug_tuple("BlockMeasurement").field(id).finish()
             }
@@ -135,6 +138,7 @@ pub struct BlockSummary {
 struct CachedBlock {
     summary: BlockSummary,
     data: Arc<BlockLayoutData>,
+    measured: bool,
 }
 
 #[derive(Default)]
@@ -170,6 +174,7 @@ impl LayoutEngine {
         let hierarchy = BlockHierarchy::new(document);
         let widths = WidthPlan::new(document, &hierarchy, viewport.width);
         let mut block_data = Vec::with_capacity(document.blocks.len());
+        let mut measured = Vec::with_capacity(document.blocks.len());
 
         for (index, block) in document.blocks.iter().enumerate() {
             let available_width = widths.content[index];
@@ -187,34 +192,60 @@ impl LayoutEngine {
                         && old.summary.width_key == width_key
                         && old.summary.content_fingerprint == content_fingerprint
                 });
-            let data = if can_reuse {
-                cached
-                    .expect("a reusable block has cached data")
-                    .data
-                    .clone()
+            let force_measure = matches!(
+                invalidation,
+                LayoutInvalidation::BlockMeasurement(id) if id == block.id
+            );
+            let (data, is_measured) = if can_reuse {
+                let cached = cached.expect("a reusable block has cached data");
+                (cached.data.clone(), cached.measured)
+            } else if force_measure {
+                (
+                    measure_block(block, document, presentation, available_width, shaper),
+                    true,
+                )
             } else {
-                let (output, fallback) = match layout_block(
-                    block,
-                    document,
-                    presentation,
-                    0.0,
-                    0.0,
-                    available_width,
-                    shaper,
-                ) {
-                    Ok(output) => (output, false),
-                    Err(_) => (
-                        fallback_block(block, document, presentation, 0.0, 0.0, available_width),
-                        true,
-                    ),
-                };
-                Arc::new(block_layout_data(block, available_width, output, fallback))
+                (
+                    Arc::new(estimated_block_layout_data(
+                        block,
+                        document,
+                        available_width,
+                    )),
+                    false,
+                )
             };
             block_data.push(data);
+            measured.push(is_measured);
         }
 
-        let (placements, content_y) =
-            position_block_tree(document, &hierarchy, &widths, &block_data);
+        let visible_min = (viewport.scroll_y - viewport.overscan).max(0.0);
+        let visible_max = viewport.scroll_y + viewport.height + viewport.overscan;
+        let measurement_overscan = viewport.overscan.max(LayoutViewport::DEFAULT_OVERSCAN);
+        let measurement_min = (viewport.scroll_y - measurement_overscan).max(0.0);
+        let measurement_max = viewport.scroll_y + viewport.height + measurement_overscan;
+        let (placements, content_y) = loop {
+            let (placements, content_y) =
+                position_block_tree(document, &hierarchy, &widths, &block_data);
+            let pending = visible_indices(&placements, measurement_min, measurement_max)
+                .iter()
+                .copied()
+                .filter(|index| !measured[*index])
+                .collect::<Vec<_>>();
+            if pending.is_empty() {
+                break (placements, content_y);
+            }
+            for index in pending {
+                block_data[index] = measure_block(
+                    &document.blocks[index],
+                    document,
+                    presentation,
+                    widths.content[index],
+                    shaper,
+                );
+                measured[index] = true;
+            }
+        };
+        let visible_indices = visible_indices(&placements, visible_min, visible_max);
         let mut summaries = Vec::with_capacity(document.blocks.len());
         let mut dirty_first = None;
         let mut dirty_end = 0;
@@ -242,23 +273,13 @@ impl LayoutEngine {
             summaries.push(summary);
         }
         let dirty_block_range = dirty_first.map_or(0..0, |first| first..dirty_end);
-        let visible_min = (viewport.scroll_y - viewport.overscan).max(0.0);
-        let visible_max = viewport.scroll_y + viewport.height + viewport.overscan;
-        let visible_indices: Vec<_> = summaries
-            .iter()
-            .enumerate()
-            .filter_map(|(index, summary)| {
-                (summary.y + summary.height >= visible_min && summary.y <= visible_max)
-                    .then_some(index)
-            })
-            .collect();
-
         let mut visual_lines = Vec::new();
         let mut clusters = Vec::new();
         let mut blocks = Vec::new();
         let mut visible_block_layouts = Vec::new();
         for index in visible_indices.iter().copied() {
             append_positioned_block(
+                index,
                 &block_data[index],
                 placements[index],
                 &mut visual_lines,
@@ -273,7 +294,17 @@ impl LayoutEngine {
             .iter()
             .zip(summaries.iter().cloned())
             .zip(block_data.iter().cloned())
-            .map(|((block, summary), data)| (block.id, CachedBlock { summary, data }))
+            .zip(measured)
+            .map(|(((block, summary), data), measured)| {
+                (
+                    block.id,
+                    CachedBlock {
+                        summary,
+                        data,
+                        measured,
+                    },
+                )
+            })
             .collect();
 
         let visible_source_range = visual_lines
@@ -584,6 +615,70 @@ struct BlockOutput {
     height: f64,
 }
 
+fn visible_indices(
+    placements: &[BlockPlacement],
+    visible_min: f64,
+    visible_max: f64,
+) -> Vec<usize> {
+    placements
+        .iter()
+        .enumerate()
+        .filter_map(|(index, placement)| {
+            let rect = placement.rect;
+            (rect.pos.y + rect.size.y >= visible_min && rect.pos.y <= visible_max).then_some(index)
+        })
+        .collect()
+}
+
+fn estimated_block_layout_data(
+    block: &LayoutBlock,
+    document: &LayoutDocument,
+    width: f64,
+) -> BlockLayoutData {
+    let text_height = document
+        .text_runs
+        .iter()
+        .filter(|run| run.id == block.id)
+        .map(|run| run.metrics.font_size as f64)
+        .fold(0.0, f64::max);
+    let height = document
+        .embedded_blocks
+        .iter()
+        .filter(|embedded| embedded.id == block.id)
+        .map(|embedded| embedded.size.y)
+        .fold(text_height, f64::max);
+    BlockLayoutData {
+        block: BlockGeometry::new(
+            block.id,
+            block.source_range,
+            Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(width, height),
+            },
+        ),
+        visual_lines: Arc::from([]),
+        glyph_clusters: Arc::from([]),
+    }
+}
+
+fn measure_block<S: TextShaper>(
+    block: &LayoutBlock,
+    document: &LayoutDocument,
+    presentation: &MarkdownDocumentSnapshot,
+    width: f64,
+    shaper: &mut S,
+) -> Arc<BlockLayoutData> {
+    let (output, fallback) =
+        match layout_block(block, document, presentation, 0.0, 0.0, width, shaper) {
+            Ok(output) => (output, false),
+            Err(_) => (
+                fallback_block(block, document, presentation, 0.0, 0.0, width),
+                true,
+            ),
+        };
+    Arc::new(block_layout_data(block, width, output, fallback))
+}
+
 fn block_layout_data(
     block: &LayoutBlock,
     width: f64,
@@ -610,6 +705,7 @@ fn block_layout_data(
 }
 
 fn append_positioned_block(
+    document_index: usize,
     data: &BlockLayoutData,
     placement: BlockPlacement,
     lines: &mut Vec<VisualLine>,
@@ -619,11 +715,13 @@ fn append_positioned_block(
     let rect = placement.rect;
     let x = placement.content_origin.x;
     let y = placement.content_origin.y;
-    blocks.push(if data.block.is_plain_text_fallback() {
+    let mut block = if data.block.is_plain_text_fallback() {
         BlockGeometry::fallback(data.block.id, data.block.source_range, rect)
     } else {
         BlockGeometry::new(data.block.id, data.block.source_range, rect)
-    });
+    };
+    block.set_document_index(document_index);
+    blocks.push(block);
     lines.extend(data.visual_lines.iter().map(|line| {
         let mut line = *line;
         line.rect.pos.x += x;
@@ -999,6 +1097,7 @@ fn invalidated_block_range(
         LayoutInvalidation::Document | LayoutInvalidation::ViewportWidth => {
             0..document.blocks.len()
         }
+        LayoutInvalidation::Viewport => 0..0,
         LayoutInvalidation::BlockMeasurement(id) => document
             .blocks
             .iter()

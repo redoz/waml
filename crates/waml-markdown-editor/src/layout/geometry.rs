@@ -130,6 +130,7 @@ pub struct BlockGeometry {
     pub id: LayoutElementId,
     pub source_range: TextRange,
     pub rect: Rect,
+    document_index: usize,
     plain_text_fallback: bool,
 }
 
@@ -161,6 +162,7 @@ impl BlockGeometry {
             id,
             source_range,
             rect,
+            document_index: usize::MAX,
             plain_text_fallback: false,
         }
     }
@@ -170,12 +172,22 @@ impl BlockGeometry {
             id,
             source_range,
             rect,
+            document_index: usize::MAX,
             plain_text_fallback: true,
         }
     }
 
     pub fn source_range(&self) -> TextRange {
         self.source_range
+    }
+
+    /// Exact index of this compact visible entry in `LayoutDocument::blocks`.
+    pub fn document_index(&self) -> usize {
+        self.document_index
+    }
+
+    pub(crate) fn set_document_index(&mut self, document_index: usize) {
+        self.document_index = document_index;
     }
 
     pub fn is_plain_text_fallback(&self) -> bool {
@@ -247,11 +259,14 @@ impl LayoutSnapshot {
         self.visible_source_range
     }
 
+    /// Deprecated compatibility alias. This range is local to `blocks()`.
+    /// Use `visible_block_local_range` and each block's `document_index`.
     pub fn visible_block_range(&self) -> Range<usize> {
-        self.visible_block_range.clone()
+        self.visible_block_local_range()
     }
 
-    /// Document indexes covered by the compact visible geometry arrays.
+    /// Deprecated compatibility envelope. Visible document indexes can be
+    /// sparse; use each visible block's exact `document_index` instead.
     pub fn visible_block_document_range(&self) -> Range<usize> {
         self.visible_block_range.clone()
     }
@@ -266,9 +281,12 @@ impl LayoutSnapshot {
     }
 
     pub fn document_block_index(&self, local_index: usize) -> Option<usize> {
-        (local_index < self.blocks.len()).then(|| self.visible_block_range.start + local_index)
+        self.blocks
+            .get(local_index)
+            .map(BlockGeometry::document_index)
     }
 
+    /// Deprecated compatibility alias for `visible_blocks`.
     pub fn blocks(&self) -> &[BlockGeometry] {
         &self.blocks
     }
