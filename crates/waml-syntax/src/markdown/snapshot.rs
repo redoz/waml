@@ -6,8 +6,28 @@ use crate::{
     SourceText, SyntaxTree, TextChange, TextRange, TreeDiagnostic,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkdownLinkKind {
+    Inline,
+    Reference,
+}
+
+#[derive(Clone, Debug)]
+pub struct MarkdownLink {
+    pub destination: Arc<str>,
+    pub destination_range: Option<TextRange>,
+    pub kind: MarkdownLinkKind,
+}
+
 #[derive(Default)]
-pub struct MarkdownSyntaxQueries;
+pub struct MarkdownSyntaxQueries {
+    links: Arc<[MarkdownLink]>,
+}
+impl MarkdownSyntaxQueries {
+    pub fn links(&self) -> impl Iterator<Item = &MarkdownLink> {
+        self.links.iter()
+    }
+}
 
 pub struct MarkdownSyntaxSnapshot {
     revision: DocumentRevision,
@@ -64,13 +84,14 @@ pub fn parse_markdown(
 ) -> Result<Arc<MarkdownSyntaxSnapshot>, ParseError> {
     let parsed = crate::parse_okf_markdown(text.clone(), dialect)?;
     let diagnostics = Arc::from(parsed.tree.diagnostics());
+    let queries = Arc::new(queries(text.shared())?);
     Ok(Arc::new(MarkdownSyntaxSnapshot {
         revision,
         text,
         tree: parsed.tree,
         structure: parsed.structure,
         diagnostics,
-        queries: Arc::new(MarkdownSyntaxQueries),
+        queries,
     }))
 }
 
@@ -113,6 +134,7 @@ pub fn reparse_markdown(
         }
     };
     let diagnostics = Arc::from(tree.diagnostics());
+    let queries = Arc::new(queries(new_text.shared())?);
     Ok(MarkdownSyntaxUpdate {
         snapshot: Arc::new(MarkdownSyntaxSnapshot {
             revision,
@@ -120,9 +142,74 @@ pub fn reparse_markdown(
             tree,
             structure,
             diagnostics,
-            queries: Arc::new(MarkdownSyntaxQueries),
+            queries,
         }),
         affected_ranges,
         outcome,
+    })
+}
+
+fn queries(source: &str) -> Result<MarkdownSyntaxQueries, ParseError> {
+    let references = super::reference::MarkdownReferenceMap::from_source(source)?;
+    let mut links = Vec::new();
+    let mut at = 0;
+    while let Some(relative) = source[at..].find('[') {
+        let open = at + relative;
+        let Some(label_end_relative) = source[open + 1..].find(']') else {
+            break;
+        };
+        let label_end = open + 1 + label_end_relative;
+        let label = &source[open + 1..label_end];
+        let after = label_end + 1;
+        if source[after..].starts_with(':') {
+            at = after;
+            continue;
+        }
+        if source[after..].starts_with('(') {
+            if let Some(close_relative) = source[after + 1..].find(')') {
+                let destination = &source[after + 1..after + 1 + close_relative];
+                links.push(MarkdownLink {
+                    destination: destination.into(),
+                    destination_range: Some(range(after + 1, after + 1 + destination.len())?),
+                    kind: MarkdownLinkKind::Inline,
+                });
+                at = after + close_relative + 2;
+                continue;
+            }
+        }
+        let (reference_label, next) = if source[after..].starts_with('[') {
+            let Some(close_relative) = source[after + 1..].find(']') else {
+                at = after;
+                continue;
+            };
+            let end = after + close_relative + 2;
+            let value = &source[after + 1..end - 1];
+            (if value.is_empty() { label } else { value }, end)
+        } else {
+            (label, after)
+        };
+        if let Some(normalized) = super::reference::normalize_label(reference_label) {
+            if let Some(definition) = references.definitions.get(&normalized) {
+                links.push(MarkdownLink {
+                    destination: definition.destination.clone(),
+                    destination_range: Some(definition.destination_range),
+                    kind: MarkdownLinkKind::Reference,
+                });
+            }
+        }
+        at = next;
+    }
+    Ok(MarkdownSyntaxQueries {
+        links: links.into(),
+    })
+}
+
+fn range(start: usize, end: usize) -> Result<TextRange, ParseError> {
+    let start = crate::TextSize::try_from_usize(start)
+        .map_err(|_| ParseError::SourceTooLarge { bytes: start })?;
+    let end = crate::TextSize::try_from_usize(end)
+        .map_err(|_| ParseError::SourceTooLarge { bytes: end })?;
+    TextRange::new(start, end).map_err(|_| ParseError::StructuralInvariant {
+        reason: "reversed link range".into(),
     })
 }

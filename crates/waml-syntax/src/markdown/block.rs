@@ -169,6 +169,8 @@ pub(crate) fn parse(
             reason: "block children do not cover their source range".into(),
         });
     }
+    let references = super::reference::MarkdownReferenceMap::from_source(source)?;
+    let root = super::inline::apply(text, &root, &references)?;
     Ok(BlockParse {
         root,
         diagnostics: diagnostics.into(),
