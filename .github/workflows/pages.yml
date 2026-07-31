@@ -55,6 +55,23 @@ jobs:
           --rev 25d78a4d917ea2e943df6af5e037817248443bd7
           --locked
 
+      # binaryen supplies the `wasm-opt` binary that the build step below invokes
+      # via cargo-makepad's --wasm-opt flag. The version is pinned rather than
+      # resolved from `latest` because cargo-makepad degrades silently: if the
+      # binary is missing or errors it prints "wasm-opt: skipped (...)", passes
+      # the unoptimised bytes straight through, and exits zero. A broken install
+      # would therefore look like a perfectly green deploy of an unoptimised
+      # module, which is why the install is pinned here and why the build step
+      # greps its own log for the success line and fails when it is absent.
+      # Installed into the runner's tool dir rather than /usr/local so the exact
+      # pinned binary is the one on PATH.
+      - name: Install binaryen
+        run: |
+          curl -sSfL -o /tmp/binaryen.tar.gz \
+            https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz
+          tar -xzf /tmp/binaryen.tar.gz -C /tmp
+          echo "/tmp/binaryen-version_123/bin" >> "$GITHUB_PATH"
+
       # --no-threads is load-bearing, not an optimisation: the threaded build
       # needs Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy response
       # headers for SharedArrayBuffer, and GitHub Pages cannot set headers.
@@ -65,8 +82,31 @@ jobs:
       # 14.19 MB -> 9.49 MB raw (-33% browser parse/compile work) and
       # 3.46 MB -> 2.88 MB gzipped over the wire (-17%). The cost is that panic
       # backtraces in the browser console lose function names.
+      # --wasm-opt runs `wasm-opt --all-features -Os` over the already-stripped
+      # module. Measured on the deployed artifact: 9.49 MB -> 8.54 MB raw, a 10%
+      # cut in bytes the browser has to parse and compile. It buys almost nothing
+      # over the wire (2.890 MB -> 2.888 MB gzipped) because gzip was already
+      # squeezing the redundancy that -Os removes; the win is startup work, not
+      # download size.
+      #
+      # The output is teed and inspected because cargo-makepad treats every
+      # wasm-opt failure -- missing binary, bad flags, non-zero exit -- as a
+      # no-op: it prints "wasm-opt: skipped (...)", emits the untouched bytes and
+      # succeeds. Without this check a silently unoptimised module would deploy
+      # under a green tick and nobody would notice. Require the success line and
+      # reject the skip line.
       - name: Build
-        run: cargo makepad wasm build -p waml-editor --release --no-threads --strip
+        run: |
+          set -o pipefail
+          cargo makepad wasm build -p waml-editor --release --no-threads --strip --wasm-opt 2>&1 | tee /tmp/build.log
+          if grep -q 'wasm-opt: skipped' /tmp/build.log; then
+            echo "::error::wasm-opt did not run; the module deployed unoptimised. See the 'wasm-opt: skipped' line above."
+            exit 1
+          fi
+          if ! grep -qE 'wasm-opt: [0-9]+ -> [0-9]+ bytes' /tmp/build.log; then
+            echo "::error::no wasm-opt success line in the build log; the --wasm-opt flag or its output format has changed."
+            exit 1
+          fi
 
       # cargo-makepad mirrors every crate's entire resources/ tree next to the
       # wasm, which for waml-editor means 148 font files (~52 MB) when the app
