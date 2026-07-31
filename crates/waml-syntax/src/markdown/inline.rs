@@ -148,6 +148,23 @@ struct Delimiter {
     can_close: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct BracketOpener {
+    start: usize,
+    open: usize,
+    image: bool,
+    active: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BracketMatch {
+    start: usize,
+    open: usize,
+    label_end: usize,
+    end: usize,
+    image: bool,
+}
+
 fn parse_inlines(
     context: &mut InlineContext<'_>,
     start: usize,
@@ -157,6 +174,7 @@ fn parse_inlines(
 ) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
     let source = context.text.shared();
     let emphasis = emphasis_pairs(source, start, end);
+    let brackets = bracket_matches(context, start, end, allow_links);
     let mut out = Vec::new();
     let mut at = start;
     let mut plain = start;
@@ -328,15 +346,13 @@ fn parse_inlines(
                 }
             }
         }
-        let image = rest.starts_with("![");
-        if image || (allow_links && rest.starts_with('[')) {
-            if let Some(parsed) = parse_link(context, at, end, owner, image, allow_links)? {
-                flush(context.text, plain, at, &mut out)?;
-                out.push(GreenElement::Node(parsed.node));
-                at = parsed.end;
-                plain = at;
-                continue;
-            }
+        if let Some(matched) = brackets.iter().find(|matched| matched.start == at) {
+            let parsed = parse_link(context, *matched, end, owner, allow_links)?;
+            flush(context.text, plain, at, &mut out)?;
+            out.push(GreenElement::Node(parsed.node));
+            at = parsed.end;
+            plain = at;
+            continue;
         }
         if rest.starts_with('\r') || rest.starts_with('\n') {
             flush(context.text, plain, at, &mut out)?;
@@ -360,6 +376,135 @@ fn parse_inlines(
     Ok(out)
 }
 
+fn bracket_matches(
+    context: &InlineContext<'_>,
+    start: usize,
+    end: usize,
+    allow_links: bool,
+) -> Vec<BracketMatch> {
+    let source = context.text.shared();
+    let mut openers = Vec::<BracketOpener>::new();
+    let mut matches = Vec::new();
+    let mut at = start;
+    while at < end {
+        let rest = &source[at..end];
+        if rest.starts_with('\\') {
+            at += 1;
+            if at < end {
+                at += source[at..end]
+                    .chars()
+                    .next()
+                    .expect("non-empty escaped range")
+                    .len_utf8();
+            }
+            continue;
+        }
+        if rest.starts_with('`') {
+            let run = rest.bytes().take_while(|byte| *byte == b'`').count();
+            if let Some(close) = code_span_close(source, at + run, end, run) {
+                at = close + run;
+                continue;
+            }
+        }
+        if rest.starts_with('<') {
+            if let Some(relative) = rest.find('>') {
+                let close = at + relative + 1;
+                let inside = &source[at + 1..close - 1];
+                if is_autolink(inside) || is_raw_html(inside) {
+                    at = close;
+                    continue;
+                }
+            }
+        }
+        if rest.starts_with("![") {
+            openers.push(BracketOpener {
+                start: at,
+                open: at + 1,
+                image: true,
+                active: true,
+            });
+            at += 2;
+            continue;
+        }
+        if allow_links && rest.starts_with('[') {
+            openers.push(BracketOpener {
+                start: at,
+                open: at,
+                image: false,
+                active: true,
+            });
+            at += 1;
+            continue;
+        }
+        if rest.starts_with(']') {
+            let Some(opener) = openers.pop() else {
+                at += 1;
+                continue;
+            };
+            if !opener.active {
+                at += 1;
+                continue;
+            }
+            let Some(close) = bracket_match_end(context, opener.open, at, end) else {
+                at += 1;
+                continue;
+            };
+            matches.push(BracketMatch {
+                start: opener.start,
+                open: opener.open,
+                label_end: at,
+                end: close,
+                image: opener.image,
+            });
+            if !opener.image {
+                for earlier in &mut openers {
+                    if !earlier.image {
+                        earlier.active = false;
+                    }
+                }
+            }
+            at = close;
+            continue;
+        }
+        at += rest
+            .chars()
+            .next()
+            .expect("non-empty bracket scan range")
+            .len_utf8();
+    }
+    matches
+}
+
+fn bracket_match_end(
+    context: &InlineContext<'_>,
+    open: usize,
+    label_end: usize,
+    end: usize,
+) -> Option<usize> {
+    let source = context.text.shared();
+    let label = &source[open + 1..label_end];
+    let after_label = label_end + 1;
+    if source[after_label..end].starts_with('(') {
+        return inline_destination(source, after_label, end).map(|parts| parts.close + 1);
+    }
+    let (reference_label, reference_end) = if source[after_label..end].starts_with('[') {
+        let reference_end = find_unescaped(source, after_label + 1, end, ']')?;
+        let explicit = &source[after_label + 1..reference_end];
+        (
+            if explicit.is_empty() { label } else { explicit },
+            reference_end + 1,
+        )
+    } else {
+        (label, after_label)
+    };
+    let normalized = normalize_label(reference_label)?;
+    context
+        .references
+        .definitions
+        .contains_key(&normalized)
+        .then_some(reference_end)
+}
+
 struct ParsedLink {
     node: GreenNode<OkfMarkdownLanguage>,
     end: usize,
@@ -367,17 +512,19 @@ struct ParsedLink {
 
 fn parse_link(
     context: &mut InlineContext<'_>,
-    start: usize,
+    matched: BracketMatch,
     end: usize,
     owner: SyntaxIdentity,
-    image: bool,
     allow_links: bool,
-) -> Result<Option<ParsedLink>, ParseError> {
+) -> Result<ParsedLink, ParseError> {
     let source = context.text.shared();
-    let open = start + usize::from(image);
-    let Some(label_end) = find_unescaped(source, open + 1, end, ']') else {
-        return Ok(None);
-    };
+    let BracketMatch {
+        start,
+        open,
+        label_end,
+        end: matched_end,
+        image,
+    } = matched;
     let label = &source[open + 1..label_end];
     let after_label = label_end + 1;
     let (
@@ -389,9 +536,11 @@ fn parse_link(
         destination_parts,
         link_kind,
     ) = if source[after_label..end].starts_with('(') {
-        let Some(parts) = inline_destination(source, after_label, end) else {
-            return Ok(None);
-        };
+        let parts = inline_destination(source, after_label, end).ok_or_else(|| {
+            ParseError::StructuralInvariant {
+                reason: "matched inline link has no destination".into(),
+            }
+        })?;
         let semantic_title = parts
             .title
             .clone()
@@ -407,9 +556,12 @@ fn parse_link(
         )
     } else {
         let (reference_label, reference_end) = if source[after_label..end].starts_with('[') {
-            let Some(reference_end) = find_unescaped(source, after_label + 1, end, ']') else {
-                return Ok(None);
-            };
+            let reference_end =
+                find_unescaped(source, after_label + 1, end, ']').ok_or_else(|| {
+                    ParseError::StructuralInvariant {
+                        reason: "matched reference link has no closing label".into(),
+                    }
+                })?;
             let explicit = &source[after_label + 1..reference_end];
             (
                 if explicit.is_empty() { label } else { explicit },
@@ -418,12 +570,17 @@ fn parse_link(
         } else {
             (label, after_label)
         };
-        let Some(normalized) = normalize_label(reference_label) else {
-            return Ok(None);
-        };
-        let Some(definition) = context.references.definitions.get(&normalized) else {
-            return Ok(None);
-        };
+        let normalized =
+            normalize_label(reference_label).ok_or_else(|| ParseError::StructuralInvariant {
+                reason: "matched reference link has an invalid label".into(),
+            })?;
+        let definition = context
+            .references
+            .definitions
+            .get(&normalized)
+            .ok_or_else(|| ParseError::StructuralInvariant {
+                reason: "matched reference link has no definition".into(),
+            })?;
         (
             reference_end,
             definition.destination.to_string(),
@@ -561,7 +718,8 @@ fn parse_link(
             owners.push(owner);
         }
     }
-    Ok(Some(ParsedLink {
+    debug_assert_eq!(close, matched_end);
+    Ok(ParsedLink {
         node: semantic_with_identity(
             if image { Kind::Image } else { Kind::Link },
             children,
@@ -569,7 +727,7 @@ fn parse_link(
             annotations,
         )?,
         end: close,
-    }))
+    })
 }
 
 struct InlineDestination {

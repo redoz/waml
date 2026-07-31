@@ -223,6 +223,84 @@ fn heading_content_uses_the_inline_phase_without_changing_markers() {
     assert!(found.contains(&Kind::CodeSpan));
 }
 
+#[test]
+fn nested_link_deactivates_the_outer_link_opener() {
+    let source = "[outer [inner](/x)](/y)\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::CommonMarkCurrent,
+    )
+    .unwrap();
+    assert_eq!(snapshot.tree().write_to_string(), source);
+
+    let links: Vec<_> = snapshot.queries().links().collect();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].destination.as_ref(), "/x");
+    assert_eq!(
+        &source[links[0].source_range.start().to_usize()..links[0].source_range.end().to_usize()],
+        "[inner](/x)"
+    );
+
+    let paragraph = descendant_nodes(&snapshot.tree().root())
+        .into_iter()
+        .find(|node| node.kind() == Kind::Paragraph)
+        .unwrap();
+    assert_eq!(
+        paragraph
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .filter(|node| node.kind() == Kind::Link)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn image_opener_stays_active_after_a_nested_link() {
+    let source = "![outer [inner](/x)][img]\n\n[img]: /image\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::CommonMarkCurrent,
+    )
+    .unwrap();
+    assert_eq!(snapshot.tree().write_to_string(), source);
+
+    let image = descendant_nodes(&snapshot.tree().root())
+        .into_iter()
+        .find(|node| node.kind() == Kind::Image)
+        .unwrap();
+    assert!(
+        descendant_nodes(&image)
+            .iter()
+            .any(|node| node.kind() == Kind::Link),
+        "the image label must contain the nested link"
+    );
+
+    let links: Vec<_> = snapshot.queries().links().collect();
+    assert_eq!(
+        links
+            .iter()
+            .map(|link| link.destination.as_ref())
+            .collect::<Vec<_>>(),
+        ["/image", "/x"]
+    );
+    assert_eq!(
+        &source[links[0].source_range.start().to_usize()..links[0].source_range.end().to_usize()],
+        "![outer [inner](/x)][img]"
+    );
+    assert_eq!(
+        &source[links[1].source_range.start().to_usize()..links[1].source_range.end().to_usize()],
+        "[inner](/x)"
+    );
+    assert_eq!(links[0].owner, links[1].owner);
+    assert_eq!(
+        snapshot.queries().reference_backlinks("img").as_ref(),
+        [links[0].owner]
+    );
+}
+
 fn descendant_nodes(
     node: &SyntaxNode<OkfMarkdownLanguage>,
 ) -> Vec<SyntaxNode<OkfMarkdownLanguage>> {
