@@ -14,6 +14,7 @@ pub(crate) struct BlockParse {
     pub diagnostics: Arc<[TreeDiagnostic<Diagnostic>]>,
     pub inline_roots: Arc<[GreenNode<OkfMarkdownLanguage>]>,
     pub definitions: Arc<[TextRange]>,
+    pub references: super::reference::MarkdownReferenceMap,
 }
 
 pub(crate) fn pulldown_options(dialect: MarkdownDialect) -> Options {
@@ -169,13 +170,14 @@ pub(crate) fn parse(
             reason: "block children do not cover their source range".into(),
         });
     }
-    let references = super::reference::MarkdownReferenceMap::from_source(source)?;
-    let root = super::inline::apply(text, &root, &references)?;
+    let references = super::reference::MarkdownReferenceMap::from_tree(source, &root, start)?;
+    let inline = super::inline::apply(text, &root, references, start)?;
     Ok(BlockParse {
-        root,
+        root: inline.root,
         diagnostics: diagnostics.into(),
-        inline_roots: Arc::from([]),
+        inline_roots: inline.inline_roots,
         definitions: definitions.into(),
+        references: inline.references,
     })
 }
 
@@ -977,4 +979,33 @@ fn diagnostic(
         severity: crate::SyntaxSeverity::Error,
         message: Arc::from(message),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_phase_returns_owner_identities_and_reference_backlinks() {
+        let source = "[x][id]\n\n# *heading*\n\n[id]: /one\n";
+        let text = SourceText::new(source).unwrap();
+        let parsed = parse(&text, MarkdownDialect::CommonMarkCurrent, 0, source.len()).unwrap();
+
+        assert_eq!(parsed.inline_roots.len(), 2);
+        let owners: Vec<_> = parsed
+            .inline_roots
+            .iter()
+            .map(|node| {
+                node.annotations()
+                    .iter()
+                    .find(|annotation| annotation.kind() == "waml.markdown.identity")
+                    .and_then(|annotation| annotation.data())
+                    .and_then(SyntaxIdentity::from_annotation_data)
+                    .unwrap()
+            })
+            .collect();
+        let label = super::super::reference::normalize_label("id").unwrap();
+        assert_eq!(parsed.references.backlinks[&label].len(), 1);
+        assert!(owners.contains(&parsed.references.backlinks[&label][0]));
+    }
 }

@@ -8,8 +8,8 @@ pub use kind::{
     OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity,
 };
 pub use snapshot::{
-    parse_markdown, reparse_markdown, MarkdownLink, MarkdownLinkKind, MarkdownReparseOutcome,
-    MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
+    parse_markdown, reparse_markdown, MarkdownEntity, MarkdownLink, MarkdownLinkKind,
+    MarkdownReparseOutcome, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
 };
 
 use std::sync::Arc;

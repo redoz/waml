@@ -21,10 +21,10 @@ pub use incremental::{
     ReparseOutcome, TextChange,
 };
 pub use markdown::{
-    parse_markdown, reparse_markdown, ConfirmedHeading, MarkdownLink, MarkdownLinkKind,
-    MarkdownReparseOutcome, MarkdownStructureMap, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot,
-    MarkdownSyntaxUpdate, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode,
-    SyntaxIdentity,
+    parse_markdown, reparse_markdown, ConfirmedHeading, MarkdownEntity, MarkdownLink,
+    MarkdownLinkKind, MarkdownReparseOutcome, MarkdownStructureMap, MarkdownSyntaxQueries,
+    MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
+    OkfSyntaxDiagnosticCode, SyntaxIdentity,
 };
 pub use red::{
     RewriteError, SyntaxElement, SyntaxLocator, SyntaxNode, SyntaxPath, SyntaxSeverity,

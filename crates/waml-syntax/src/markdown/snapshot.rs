@@ -16,17 +16,32 @@ pub enum MarkdownLinkKind {
 pub struct MarkdownLink {
     pub destination: Arc<str>,
     pub destination_range: Option<TextRange>,
+    pub title: Option<Arc<str>>,
     pub kind: MarkdownLinkKind,
+    pub identity: super::SyntaxIdentity,
+    pub owner: super::SyntaxIdentity,
+    pub source_range: TextRange,
+}
+
+#[derive(Clone, Debug)]
+pub struct MarkdownEntity {
+    pub value: Arc<str>,
+    pub source_range: TextRange,
+    pub identity: super::SyntaxIdentity,
 }
 
 #[derive(Default)]
 pub struct MarkdownSyntaxQueries {
     links: Arc<[MarkdownLink]>,
+    entities: Arc<[MarkdownEntity]>,
     backlinks: Arc<HashMap<Arc<str>, Arc<[super::SyntaxIdentity]>>>,
 }
 impl MarkdownSyntaxQueries {
     pub fn links(&self) -> impl Iterator<Item = &MarkdownLink> {
         self.links.iter()
+    }
+    pub fn entities(&self) -> impl Iterator<Item = &MarkdownEntity> {
+        self.entities.iter()
     }
     pub fn reference_backlinks(&self, label: &str) -> Arc<[super::SyntaxIdentity]> {
         super::reference::normalize_label(label)
@@ -90,7 +105,7 @@ pub fn parse_markdown(
 ) -> Result<Arc<MarkdownSyntaxSnapshot>, ParseError> {
     let parsed = crate::parse_okf_markdown(text.clone(), dialect)?;
     let diagnostics = Arc::from(parsed.tree.diagnostics());
-    let queries = Arc::new(queries(text.shared(), &parsed.tree)?);
+    let queries = Arc::new(queries(&parsed.tree)?);
     Ok(Arc::new(MarkdownSyntaxSnapshot {
         revision,
         text,
@@ -140,7 +155,7 @@ pub fn reparse_markdown(
         }
     };
     let diagnostics = Arc::from(tree.diagnostics());
-    let queries = Arc::new(queries(new_text.shared(), &tree)?);
+    let queries = Arc::new(queries(&tree)?);
     Ok(MarkdownSyntaxUpdate {
         snapshot: Arc::new(MarkdownSyntaxSnapshot {
             revision,
@@ -156,62 +171,15 @@ pub fn reparse_markdown(
 }
 
 fn queries(
-    source: &str,
     tree: &SyntaxTree<crate::OkfMarkdownLanguage>,
 ) -> Result<MarkdownSyntaxQueries, ParseError> {
-    let references = super::reference::MarkdownReferenceMap::from_source(source)?;
     let mut links = Vec::new();
-    let mut at = 0;
-    while let Some(relative) = source[at..].find('[') {
-        let open = at + relative;
-        let Some(label_end_relative) = source[open + 1..].find(']') else {
-            break;
-        };
-        let label_end = open + 1 + label_end_relative;
-        let label = &source[open + 1..label_end];
-        let after = label_end + 1;
-        if source[after..].starts_with(':') {
-            at = after;
-            continue;
-        }
-        if source[after..].starts_with('(') {
-            if let Some(close_relative) = source[after + 1..].find(')') {
-                let destination = &source[after + 1..after + 1 + close_relative];
-                links.push(MarkdownLink {
-                    destination: destination.into(),
-                    destination_range: Some(range(after + 1, after + 1 + destination.len())?),
-                    kind: MarkdownLinkKind::Inline,
-                });
-                at = after + close_relative + 2;
-                continue;
-            }
-        }
-        let (reference_label, next) = if source[after..].starts_with('[') {
-            let Some(close_relative) = source[after + 1..].find(']') else {
-                at = after;
-                continue;
-            };
-            let end = after + close_relative + 2;
-            let value = &source[after + 1..end - 1];
-            (if value.is_empty() { label } else { value }, end)
-        } else {
-            (label, after)
-        };
-        if let Some(normalized) = super::reference::normalize_label(reference_label) {
-            if let Some(definition) = references.definitions.get(&normalized) {
-                links.push(MarkdownLink {
-                    destination: definition.destination.clone(),
-                    destination_range: Some(definition.destination_range),
-                    kind: MarkdownLinkKind::Reference,
-                });
-            }
-        }
-        at = next;
-    }
+    let mut entities = Vec::new();
     let mut backlinks = HashMap::<Arc<str>, Vec<super::SyntaxIdentity>>::new();
-    collect_backlinks(&tree.root(), source, &references, None, &mut backlinks);
+    collect_queries(&tree.root(), &mut links, &mut entities, &mut backlinks)?;
     Ok(MarkdownSyntaxQueries {
         links: links.into(),
+        entities: entities.into(),
         backlinks: backlinks
             .into_iter()
             .map(|(label, owners)| (label, owners.into()))
@@ -220,41 +188,95 @@ fn queries(
     })
 }
 
-fn collect_backlinks(
+fn collect_queries(
     node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
-    source: &str,
-    references: &super::reference::MarkdownReferenceMap,
-    inline_owner: Option<super::SyntaxIdentity>,
+    links: &mut Vec<MarkdownLink>,
+    entities: &mut Vec<MarkdownEntity>,
     out: &mut HashMap<Arc<str>, Vec<super::SyntaxIdentity>>,
-) {
-    let inline_owner = if node.kind() == crate::OkfMarkdownSyntaxKind::Paragraph {
-        identity(node)
-    } else {
-        inline_owner
-    };
+) -> Result<(), ParseError> {
     if matches!(
         node.kind(),
         crate::OkfMarkdownSyntaxKind::Link | crate::OkfMarkdownSyntaxKind::Image
     ) {
-        let start = node.range().start().to_usize();
-        let end = node.range().end().to_usize();
-        let spelling = &source[start..end];
-        if let Some(label) =
-            reference_label(spelling).filter(|label| references.definitions.contains_key(label))
+        let annotations = node.syntax_annotations();
+        let destination = required_annotation(
+            annotations,
+            super::inline::destination_annotation(),
+            "link destination",
+        )?;
+        let destination_range = required_annotation(
+            annotations,
+            super::inline::destination_range_annotation(),
+            "link destination range",
+        )
+        .and_then(parse_annotation_range)?;
+        let kind = match required_annotation(
+            annotations,
+            super::inline::link_kind_annotation(),
+            "link kind",
+        )?
+        .as_ref()
         {
-            if let Some(owner) = inline_owner.or_else(|| identity(node)) {
-                let owners = out.entry(label).or_default();
-                if !owners.contains(&owner) {
-                    owners.push(owner);
-                }
+            "inline" => MarkdownLinkKind::Inline,
+            "reference" => MarkdownLinkKind::Reference,
+            _ => {
+                return Err(ParseError::StructuralInvariant {
+                    reason: "unknown semantic Markdown link kind".into(),
+                })
+            }
+        };
+        let identity = identity(node).ok_or_else(|| ParseError::StructuralInvariant {
+            reason: "semantic Markdown link has no identity".into(),
+        })?;
+        let owner =
+            required_annotation(annotations, super::inline::owner_annotation(), "link owner")?
+                .parse::<u64>()
+                .ok()
+                .and_then(|value| super::SyntaxIdentity::from_annotation_data(&value.to_string()))
+                .ok_or_else(|| ParseError::StructuralInvariant {
+                    reason: "semantic Markdown link has invalid owner identity".into(),
+                })?;
+        let title = super::inline::link_annotation(annotations, super::inline::title_annotation())
+            .map(Arc::from);
+        if let Some(label) =
+            super::inline::link_annotation(annotations, super::inline::reference_label_annotation())
+                .map(Arc::from)
+        {
+            let owners = out.entry(label).or_default();
+            if !owners.contains(&owner) {
+                owners.push(owner);
             }
         }
+        links.push(MarkdownLink {
+            destination,
+            destination_range: Some(destination_range),
+            title,
+            kind,
+            identity,
+            owner,
+            source_range: node.range(),
+        });
+    } else if node.kind() == crate::OkfMarkdownSyntaxKind::Entity {
+        let value = required_annotation(
+            node.syntax_annotations(),
+            super::inline::entity_value_annotation(),
+            "entity value",
+        )?;
+        let identity = identity(node).ok_or_else(|| ParseError::StructuralInvariant {
+            reason: "semantic Markdown entity has no identity".into(),
+        })?;
+        entities.push(MarkdownEntity {
+            value,
+            source_range: node.range(),
+            identity,
+        });
     }
     for child in node.children() {
         if let SyntaxElement::Node(child) = child {
-            collect_backlinks(&child, source, references, inline_owner, out);
+            collect_queries(&child, links, entities, out)?;
         }
     }
+    Ok(())
 }
 
 fn identity(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Option<super::SyntaxIdentity> {
@@ -265,29 +287,41 @@ fn identity(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Option<supe
         .and_then(super::SyntaxIdentity::from_annotation_data)
 }
 
-fn reference_label(spelling: &str) -> Option<Arc<str>> {
-    let spelling = spelling.strip_prefix('!').unwrap_or(spelling);
-    let close = spelling.find(']')?;
-    let label = &spelling[1..close];
-    let rest = &spelling[close + 1..];
-    let label = if let Some(rest) = rest.strip_prefix('[') {
-        rest.strip_suffix(']')
-            .filter(|value| !value.is_empty())
-            .unwrap_or(label)
-    } else if rest.starts_with('(') {
-        return None;
-    } else {
-        label
-    };
-    super::reference::normalize_label(label)
+fn required_annotation(
+    annotations: &[crate::SyntaxAnnotation],
+    kind: &str,
+    description: &'static str,
+) -> Result<Arc<str>, ParseError> {
+    super::inline::link_annotation(annotations, kind)
+        .map(Arc::from)
+        .ok_or_else(|| ParseError::StructuralInvariant {
+            reason: format!("semantic Markdown node has no {description}").into(),
+        })
 }
 
-fn range(start: usize, end: usize) -> Result<TextRange, ParseError> {
-    let start = crate::TextSize::try_from_usize(start)
-        .map_err(|_| ParseError::SourceTooLarge { bytes: start })?;
-    let end = crate::TextSize::try_from_usize(end)
-        .map_err(|_| ParseError::SourceTooLarge { bytes: end })?;
-    TextRange::new(start, end).map_err(|_| ParseError::StructuralInvariant {
-        reason: "reversed link range".into(),
+fn parse_annotation_range(value: Arc<str>) -> Result<TextRange, ParseError> {
+    let Some((start, end)) = value.split_once(':') else {
+        return Err(ParseError::StructuralInvariant {
+            reason: "semantic Markdown link has invalid destination range".into(),
+        });
+    };
+    let start = start
+        .parse::<usize>()
+        .map_err(|_| ParseError::StructuralInvariant {
+            reason: "semantic Markdown link has invalid destination start".into(),
+        })?;
+    let end = end
+        .parse::<usize>()
+        .map_err(|_| ParseError::StructuralInvariant {
+            reason: "semantic Markdown link has invalid destination end".into(),
+        })?;
+    TextRange::new(
+        crate::TextSize::try_from_usize(start)
+            .map_err(|_| ParseError::SourceTooLarge { bytes: start })?,
+        crate::TextSize::try_from_usize(end)
+            .map_err(|_| ParseError::SourceTooLarge { bytes: end })?,
+    )
+    .map_err(|_| ParseError::StructuralInvariant {
+        reason: "semantic Markdown link has reversed destination range".into(),
     })
 }
