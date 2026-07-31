@@ -39,6 +39,25 @@ pub trait TextShaper {
         self.shape(source, run, full_width)
     }
 
+    fn measure_intrinsic(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+    ) -> Result<IntrinsicRun, LayoutError> {
+        let shaped = self.shape(source, run, 1_000_000.0)?;
+        Ok(IntrinsicRun {
+            clusters: shaped
+                .clusters
+                .iter()
+                .map(|cluster| IntrinsicCluster {
+                    source_range: cluster.source_range,
+                    advance: cluster.advance,
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        })
+    }
+
     fn min_content_width(
         &mut self,
         source: &SourceText,
@@ -68,6 +87,17 @@ pub struct ShapedRun {
     pub ascender: f64,
     pub descender: f64,
     pub line_gap: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct IntrinsicCluster {
+    pub source_range: TextRange,
+    pub advance: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct IntrinsicRun {
+    pub clusters: Arc<[IntrinsicCluster]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -177,31 +207,31 @@ struct CachedBlock {
 #[derive(Clone, Copy)]
 struct BlockMeasurement {
     height: f64,
-    laid_width: f64,
 }
 
 impl BlockMeasurement {
     fn from_data(data: &BlockLayoutData) -> Self {
         Self {
             height: data.block.rect.size.y,
-            laid_width: data
-                .visual_lines
-                .iter()
-                .map(|line| line.rect.pos.x + line.rect.size.x)
-                .fold(0.0, f64::max),
         }
     }
 }
 
 struct DocumentLayoutIndex {
+    block_indices: HashMap<LayoutElementId, usize>,
     run_indices: Vec<Vec<usize>>,
     embedded_indices: Vec<Vec<usize>>,
     content_fingerprints: Vec<u64>,
+    subtree_fingerprints: Vec<u64>,
     estimated_heights: Vec<f64>,
 }
 
 impl DocumentLayoutIndex {
-    fn new(document: &LayoutDocument, presentation: &MarkdownDocumentSnapshot) -> Self {
+    fn new(
+        document: &LayoutDocument,
+        presentation: &MarkdownDocumentSnapshot,
+        hierarchy: &BlockHierarchy,
+    ) -> Self {
         let mut block_indices = HashMap::with_capacity(document.blocks.len());
         let mut run_indices = vec![Vec::new(); document.blocks.len()];
         let mut embedded_indices = vec![Vec::new(); document.blocks.len()];
@@ -253,18 +283,45 @@ impl DocumentLayoutIndex {
                 .map(f64::to_bits)
                 .hash(&mut hashers[block_index]);
         }
+        let content_fingerprints = hashers
+            .into_iter()
+            .map(|hasher| hasher.finish())
+            .collect::<Vec<_>>();
+        let mut subtree_fingerprints = vec![0; document.blocks.len()];
+        for block_index in (0..document.blocks.len()).rev() {
+            let mut hasher = DefaultHasher::new();
+            content_fingerprints[block_index].hash(&mut hasher);
+            flow_fingerprint(&document.blocks[block_index]).hash(&mut hasher);
+            for child in &hierarchy.children[block_index] {
+                subtree_fingerprints[*child].hash(&mut hasher);
+            }
+            subtree_fingerprints[block_index] = hasher.finish();
+        }
         Self {
+            block_indices,
             run_indices,
             embedded_indices,
-            content_fingerprints: hashers.into_iter().map(|hasher| hasher.finish()).collect(),
+            content_fingerprints,
+            subtree_fingerprints,
             estimated_heights,
         }
     }
 }
 
+struct CachedTableIntrinsics {
+    fingerprint: u64,
+    cells: Vec<(LayoutElementId, f64)>,
+}
+
+struct TableIntrinsicState<'a> {
+    widths: &'a mut [f64],
+    cache: &'a mut HashMap<LayoutElementId, CachedTableIntrinsics>,
+}
+
 #[derive(Default)]
 pub struct LayoutEngine {
     blocks: HashMap<LayoutElementId, CachedBlock>,
+    table_intrinsics: HashMap<LayoutElementId, CachedTableIntrinsics>,
 }
 
 impl LayoutEngine {
@@ -306,7 +363,7 @@ impl LayoutEngine {
 
         let invalidated = invalidated_block_range(&invalidation, document);
         let hierarchy = BlockHierarchy::new(document);
-        let layout_index = DocumentLayoutIndex::new(document, presentation);
+        let layout_index = DocumentLayoutIndex::new(document, presentation, &hierarchy);
         let mut intrinsic_widths = vec![0.0; document.blocks.len()];
         let mut table_intrinsics_ready = vec![false; document.blocks.len()];
         let mut widths = WidthPlan::new(document, &hierarchy, viewport.width, &intrinsic_widths);
@@ -387,7 +444,10 @@ impl LayoutEngine {
                         table,
                         presentation.text(),
                         shaper,
-                        &mut intrinsic_widths,
+                        TableIntrinsicState {
+                            widths: &mut intrinsic_widths,
+                            cache: &mut self.table_intrinsics,
+                        },
                     )?;
                     table_intrinsics_ready[table] = true;
                 }
@@ -769,6 +829,8 @@ fn solve_table_columns(
 struct BlockPlacement {
     rect: Rect,
     content_origin: DVec2,
+    content_width: f64,
+    alignment: super::ColumnAlignment,
 }
 
 fn position_block_tree(
@@ -783,6 +845,8 @@ fn position_block_tree(
             size: dvec2(0.0, 0.0),
         },
         content_origin: dvec2(0.0, 0.0),
+        content_width: 0.0,
+        alignment: super::ColumnAlignment::Start,
     };
     let mut placements = vec![empty; document.blocks.len()];
     let mut y = document.content_insets.top;
@@ -858,19 +922,14 @@ fn position_block(
         (cursor - content_y).max(own_height)
     };
     let height = block.spec.insets.top + body_height + block.spec.insets.bottom;
-    let laid_width = measurements[index].laid_width;
-    let free_width = (widths.content[index] - laid_width).max(0.0);
-    let alignment_offset = match widths.alignment[index] {
-        super::ColumnAlignment::Start => 0.0,
-        super::ColumnAlignment::Center => free_width * 0.5,
-        super::ColumnAlignment::End => free_width,
-    };
     placements[index] = BlockPlacement {
         rect: Rect {
             pos: dvec2(x, y),
             size: dvec2(widths.outer[index], height),
         },
-        content_origin: dvec2(content_x + alignment_offset, content_y),
+        content_origin: dvec2(content_x, content_y),
+        content_width: widths.content[index],
+        alignment: widths.alignment[index],
     };
     height
 }
@@ -931,19 +990,76 @@ fn measure_table_min_content<S: TextShaper>(
     table: usize,
     source: &SourceText,
     shaper: &mut S,
-    intrinsic_widths: &mut [f64],
+    state: TableIntrinsicState<'_>,
 ) -> Result<(), LayoutError> {
+    let table_id = document.blocks[table].id;
+    let fingerprint = layout_index.subtree_fingerprints[table];
+    if let Some(cached) = state
+        .cache
+        .get(&table_id)
+        .filter(|cached| cached.fingerprint == fingerprint)
+    {
+        for (cell_id, width) in &cached.cells {
+            if let Some(index) = layout_index.block_indices.get(cell_id) {
+                state.widths[*index] = *width;
+            }
+        }
+        return Ok(());
+    }
+    let mut cells = Vec::new();
     for &row in &hierarchy.children[table] {
         for &cell in &hierarchy.children[row] {
-            let mut width = 0.0_f64;
-            for run_index in &layout_index.run_indices[cell] {
-                let run = &document.text_runs[*run_index];
-                width = width.max(shaper.min_content_width(source, run)?);
-            }
-            intrinsic_widths[cell] = width;
+            let width =
+                measure_block_intrinsic(document, layout_index, hierarchy, cell, source, shaper)?;
+            state.widths[cell] = width;
+            cells.push((document.blocks[cell].id, width));
         }
     }
+    state
+        .cache
+        .insert(table_id, CachedTableIntrinsics { fingerprint, cells });
     Ok(())
+}
+
+fn measure_block_intrinsic<S: TextShaper>(
+    document: &LayoutDocument,
+    layout_index: &DocumentLayoutIndex,
+    hierarchy: &BlockHierarchy,
+    block_index: usize,
+    source: &SourceText,
+    shaper: &mut S,
+) -> Result<f64, LayoutError> {
+    let mut width = layout_index.embedded_indices[block_index]
+        .iter()
+        .map(|index| document.embedded_blocks[*index].size.x)
+        .fold(0.0, f64::max);
+    let mut word_width = 0.0;
+    for run_index in &layout_index.run_indices[block_index] {
+        let run = &document.text_runs[*run_index];
+        let intrinsic = shaper.measure_intrinsic(source, run)?;
+        for cluster in intrinsic.clusters.iter() {
+            let whitespace = source
+                .slice(cluster.source_range)
+                .map_or(true, |text| text.chars().all(char::is_whitespace));
+            if whitespace {
+                word_width = 0.0;
+            } else {
+                word_width += cluster.advance;
+                width = width.max(word_width);
+            }
+        }
+    }
+    for child in &hierarchy.children[block_index] {
+        width = width.max(measure_block_intrinsic(
+            document,
+            layout_index,
+            hierarchy,
+            *child,
+            source,
+            shaper,
+        )?);
+    }
+    Ok(width)
 }
 
 fn estimated_block_measurement(
@@ -952,7 +1068,6 @@ fn estimated_block_measurement(
 ) -> BlockMeasurement {
     BlockMeasurement {
         height: index.estimated_heights[block_index],
-        laid_width: 0.0,
     }
 }
 
@@ -1022,30 +1137,67 @@ fn append_positioned_block(
     };
     block.set_document_index(document_index);
     blocks.push(block);
-    lines.extend(data.visual_lines.iter().map(|line| {
-        let mut line = *line;
-        line.rect.pos.x += x;
-        line.rect.pos.y += y;
-        line
-    }));
+    let line_offsets = data
+        .visual_lines
+        .iter()
+        .map(|line| {
+            (
+                line.source_range,
+                line.rect.pos.y,
+                alignment_offset(
+                    placement.alignment,
+                    placement.content_width,
+                    line.rect.size.x,
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.extend(
+        data.visual_lines
+            .iter()
+            .zip(&line_offsets)
+            .map(|(line, offset)| {
+                let mut line = *line;
+                line.rect.pos.x += x + offset.2;
+                line.rect.pos.y += y;
+                line
+            }),
+    );
     clusters.extend(data.glyph_clusters.iter().cloned().map(|mut cluster| {
-        cluster.rect.pos.x += x;
+        let line_offset = line_offsets
+            .iter()
+            .find(|(range, line_y, _)| {
+                *line_y == cluster.rect.pos.y
+                    && range.start() <= cluster.source_range.start()
+                    && cluster.source_range.end() <= range.end()
+            })
+            .map_or(0.0, |(_, _, offset)| *offset);
+        cluster.rect.pos.x += x + line_offset;
         cluster.rect.pos.y += y;
         let mut stops = cluster.caret_stops.to_vec();
         for stop in &mut stops {
-            stop.point.x += x;
+            stop.point.x += x + line_offset;
             stop.point.y += y;
         }
         cluster.caret_stops = stops.into();
         let mut glyphs = cluster.glyphs.to_vec();
         for glyph in &mut glyphs {
-            glyph.origin.x += x;
+            glyph.origin.x += x + line_offset;
             glyph.origin.y += y;
             glyph.baseline += y;
         }
         cluster.glyphs = glyphs.into();
         cluster
     }));
+}
+
+fn alignment_offset(alignment: super::ColumnAlignment, content_width: f64, line_width: f64) -> f64 {
+    let free_width = (content_width - line_width).max(0.0);
+    match alignment {
+        super::ColumnAlignment::Start => 0.0,
+        super::ColumnAlignment::Center => free_width * 0.5,
+        super::ColumnAlignment::End => free_width,
+    }
 }
 
 fn layout_block<S: TextShaper>(

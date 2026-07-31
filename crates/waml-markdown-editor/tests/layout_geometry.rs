@@ -8,9 +8,9 @@ use waml_markdown_editor::{
     layout::{
         Affinity, BlockFlow, BlockGeometry, BlockLayoutData, BlockLayoutSpec, CaretStop,
         ColumnAlignment, ColumnConstraint, EdgeInsets, FontKey, FontWeight, GlyphCluster,
-        LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine, LayoutError,
-        LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport, ShapedCluster,
-        ShapedGlyph, ShapedRun, TextMetrics, TextShaper, VisualLine,
+        IntrinsicCluster, IntrinsicRun, LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine,
+        LayoutError, LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport,
+        MeasuredBlock, ShapedCluster, ShapedGlyph, ShapedRun, TextMetrics, TextShaper, VisualLine,
     },
     selection::{Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
@@ -1178,6 +1178,195 @@ fn table_uses_measured_min_content_proportions_and_column_alignment() {
 }
 
 #[test]
+fn table_intrinsic_crosses_styles_and_includes_nested_embedded_width() {
+    let (mut document, presentation, mut shaper) =
+        fixtures::fixture(&[16.0; 4], &[1, 1, 2, 4], None);
+    let mut blocks = document.blocks.to_vec();
+    let table = blocks[0].id;
+    let row = blocks[1].id;
+    let cell = blocks[2].id;
+    let nested = blocks[3].id;
+    blocks[0].spec.flow = BlockFlow::Table;
+    blocks[0].spec.space_after = 0.0;
+    blocks[0].spec.columns = Arc::from([ColumnConstraint {
+        min_width: 0.0,
+        max_width: None,
+        alignment: ColumnAlignment::Start,
+    }]);
+    blocks[1].parent = Some(table);
+    blocks[1].spec.flow = BlockFlow::TableRow;
+    blocks[1].spec.space_after = 0.0;
+    blocks[2].parent = Some(row);
+    blocks[2].spec.flow = BlockFlow::TableCell { column: 0 };
+    blocks[2].spec.space_after = 0.0;
+    blocks[3].parent = Some(cell);
+    blocks[3].spec.space_after = 0.0;
+    document.blocks = blocks.into();
+
+    let cell_run = document
+        .text_runs
+        .iter()
+        .find(|run| run.id == cell)
+        .unwrap()
+        .clone();
+    let split = cell_run.range.start().to_usize() + 1;
+    let nested_run = document
+        .text_runs
+        .iter()
+        .find(|run| run.id == nested)
+        .unwrap()
+        .clone();
+    document.text_runs = Arc::from([
+        LayoutTextRun {
+            id: cell,
+            range: range(cell_run.range.start().to_usize(), split),
+            metrics: cell_run.metrics,
+        },
+        LayoutTextRun {
+            id: cell,
+            range: range(split, cell_run.range.end().to_usize()),
+            metrics: TextMetrics {
+                italic: true,
+                ..cell_run.metrics
+            },
+        },
+        nested_run.clone(),
+    ]);
+    document.embedded_blocks = Arc::from([MeasuredBlock {
+        id: nested_run.id,
+        source_range: nested_run.range,
+        size: dvec2(90.0, 12.0),
+        baseline: Some(10.0),
+    }]);
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(60.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let cell_geometry = layout
+        .visible_blocks()
+        .iter()
+        .find(|block| block.id == cell)
+        .unwrap();
+    assert_eq!(cell_geometry.rect.size.x, 90.0);
+}
+
+#[test]
+fn ten_thousand_row_table_reuses_intrinsics_and_bounds_full_shaping() {
+    let (document, presentation, mut shaper) = fixtures::ten_thousand_row_table();
+    let mut engine = LayoutEngine::default();
+    let initial = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(60.0, 80.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let first_cell = document.blocks[10_001].id;
+    assert_eq!(
+        initial
+            .visible_blocks()
+            .iter()
+            .find(|block| block.id == first_cell)
+            .unwrap()
+            .rect
+            .size
+            .x,
+        120.0
+    );
+    assert!(shaper.shaped.len() <= 50);
+    assert_eq!(shaper.intrinsic_measured, 10_000);
+    let intrinsic_measured = shaper.intrinsic_measured;
+
+    shaper.shaped.clear();
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(60.0, 80.0, 120_000.0, 0.0),
+            LayoutInvalidation::Viewport,
+            &mut shaper,
+        )
+        .unwrap();
+    assert!(shaper.shaped.len() <= 50);
+    assert_eq!(shaper.intrinsic_measured, intrinsic_measured);
+}
+
+#[test]
+fn center_and_end_alignment_shift_each_wrapped_line_payload() {
+    let (mut document, presentation, _) = fixtures::fixture(&[16.0; 4], &[1, 1, 5, 5], None);
+    let mut blocks = document.blocks.to_vec();
+    let table = blocks[0].id;
+    let row = blocks[1].id;
+    blocks[0].spec.flow = BlockFlow::Table;
+    blocks[0].spec.space_after = 0.0;
+    blocks[0].spec.columns = Arc::from([
+        ColumnConstraint {
+            min_width: 30.0,
+            max_width: Some(30.0),
+            alignment: ColumnAlignment::Center,
+        },
+        ColumnConstraint {
+            min_width: 30.0,
+            max_width: Some(30.0),
+            alignment: ColumnAlignment::End,
+        },
+    ]);
+    blocks[1].parent = Some(table);
+    blocks[1].spec.flow = BlockFlow::TableRow;
+    blocks[1].spec.space_after = 0.0;
+    for (index, column) in [(2, 0), (3, 1)] {
+        blocks[index].parent = Some(row);
+        blocks[index].spec.flow = BlockFlow::TableCell { column };
+        blocks[index].spec.space_after = 0.0;
+    }
+    let structural = HashSet::from([table, row]);
+    document.blocks = blocks.into();
+    document.text_runs = document
+        .text_runs
+        .iter()
+        .filter(|run| !structural.contains(&run.id))
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    let mut shaper = GlyphCharacterShaper;
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(60.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    for (run, expected_x) in document.text_runs.iter().zip([5.0, 40.0]) {
+        let second_start = t(run.range.start().to_usize() + 3);
+        let line = layout
+            .visual_lines()
+            .iter()
+            .find(|line| line.source_range.start() == second_start)
+            .unwrap();
+        let cluster = layout
+            .glyph_clusters()
+            .iter()
+            .find(|cluster| cluster.source_range.start() == second_start)
+            .unwrap();
+        assert_eq!(line.rect.pos.x, expected_x);
+        assert_eq!(cluster.rect.pos.x, expected_x);
+        assert_eq!(cluster.caret_stops[0].point.x, expected_x);
+        assert_eq!(cluster.glyphs[0].origin.x, expected_x);
+    }
+}
+
+#[test]
 fn hanging_splits_spanning_marker_run_and_aligns_mixed_metrics_baseline() {
     let (mut document, presentation, _) = fixtures::paragraph();
     let original = document.text_runs[0].clone();
@@ -1388,6 +1577,55 @@ fn logical_cluster_ids_survive_bidi_reorder_and_width_changes() {
     assert_eq!(ids_by_source(&wide), ids_by_source(&narrow));
 }
 
+struct GlyphCharacterShaper;
+
+impl TextShaper for GlyphCharacterShaper {
+    fn shape(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+        _max_width: f64,
+    ) -> Result<ShapedRun, LayoutError> {
+        let text = source.slice(run.range).unwrap();
+        let clusters = text
+            .char_indices()
+            .map(|(relative, character)| {
+                let start = run.range.start().to_usize() + relative;
+                let end = start + character.len_utf8();
+                ShapedCluster {
+                    source_range: range(start, end),
+                    advance: 10.0,
+                    bidi_level: 0,
+                    row_ordinal: 0,
+                    row_top: 0.0,
+                    caret_offsets: Arc::from([t(start), t(end)]),
+                    glyphs: Arc::from([ShapedGlyph {
+                        glyph_id: 1,
+                        origin: dvec2(0.0, 0.0),
+                        advance: 10.0,
+                        paint_scale: 1.0,
+                        font: None,
+                        font_key: run.metrics.font,
+                        font_size: run.metrics.font_size,
+                        ascender: 12.8,
+                        descender: -3.2,
+                        line_gap: 0.0,
+                        baseline: 12.8,
+                        offset: 0.0,
+                        color: None,
+                    }]),
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok(ShapedRun {
+            clusters: clusters.into(),
+            ascender: 12.8,
+            descender: 3.2,
+            line_gap: 0.0,
+        })
+    }
+}
+
 struct FixedShaper(ShapedRun);
 
 impl TextShaper for FixedShaper {
@@ -1460,6 +1698,7 @@ struct FakeShaper {
     shaped: HashSet<LayoutElementId>,
     fail_fragment: Option<u32>,
     advance_override: HashMap<u32, f64>,
+    intrinsic_measured: usize,
 }
 
 impl TextShaper for FakeShaper {
@@ -1499,6 +1738,33 @@ impl TextShaper for FakeShaper {
             line_gap: 0.0,
         })
     }
+
+    fn measure_intrinsic(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+    ) -> Result<IntrinsicRun, LayoutError> {
+        self.intrinsic_measured += 1;
+        let text = source.slice(run.range).unwrap();
+        Ok(IntrinsicRun {
+            clusters: text
+                .char_indices()
+                .map(|(relative, character)| {
+                    let start = run.range.start().to_usize() + relative;
+                    let end = start + character.len_utf8();
+                    IntrinsicCluster {
+                        source_range: range(start, end),
+                        advance: self
+                            .advance_override
+                            .get(&run.id.fragment_ordinal)
+                            .copied()
+                            .unwrap_or(run.metrics.font.0 as f64),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        })
+    }
 }
 
 mod fixtures {
@@ -1516,6 +1782,47 @@ mod fixtures {
 
     pub fn ten_thousand_blocks() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
         fixture(&vec![20.0; 10_000], &vec![6; 10_000], None)
+    }
+
+    pub fn ten_thousand_row_table() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        const ROWS: usize = 10_000;
+        let block_count = 1 + ROWS * 2;
+        let (mut document, presentation, mut shaper) =
+            fixture(&vec![16.0; block_count], &vec![1; block_count], None);
+        let mut blocks = document.blocks.to_vec();
+        let table = blocks[0].id;
+        blocks[0].spec.flow = BlockFlow::Table;
+        blocks[0].spec.space_after = 0.0;
+        blocks[0].spec.columns = Arc::from([ColumnConstraint {
+            min_width: 0.0,
+            max_width: None,
+            alignment: ColumnAlignment::Start,
+        }]);
+        let mut structural = HashSet::from([table]);
+        for row_offset in 0..ROWS {
+            let row_index = 1 + row_offset;
+            let cell_index = 1 + ROWS + row_offset;
+            let row = blocks[row_index].id;
+            structural.insert(row);
+            blocks[row_index].parent = Some(table);
+            blocks[row_index].spec.flow = BlockFlow::TableRow;
+            blocks[row_index].spec.space_after = 0.0;
+            blocks[cell_index].parent = Some(row);
+            blocks[cell_index].spec.flow = BlockFlow::TableCell { column: 0 };
+            blocks[cell_index].spec.space_after = 0.0;
+        }
+        shaper
+            .advance_override
+            .insert(blocks[block_count - 1].id.fragment_ordinal, 120.0);
+        document.blocks = blocks.into();
+        document.text_runs = document
+            .text_runs
+            .iter()
+            .filter(|run| !structural.contains(&run.id))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        (document, presentation, shaper)
     }
 
     pub fn paragraph() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
@@ -1590,6 +1897,7 @@ mod fixtures {
                 shaped: HashSet::new(),
                 fail_fragment,
                 advance_override: HashMap::new(),
+                intrinsic_measured: 0,
             },
         )
     }
