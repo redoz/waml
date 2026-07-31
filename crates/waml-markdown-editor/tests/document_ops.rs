@@ -250,3 +250,54 @@ fn paste_cut_and_indent_keep_raw_markdown_in_transactions() {
         "  - a\n  - b\n"
     );
 }
+
+#[test]
+fn history_break_does_not_create_an_empty_undo_step() {
+    let before = snapshot("", 60);
+    let mut session = MarkdownDocumentSession::new(before);
+    session.break_history_group();
+    assert!(!session.can_undo());
+    assert!(session.undo().unwrap().is_none());
+}
+
+#[test]
+fn indent_uses_crlf_logical_lines_and_translates_selection() {
+    let before = snapshot("a\r\nb\r\n", 61);
+    let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+    let selections =
+        SelectionSet::from_selections(&before, vec![Selection::new(p(0), p(4))], 0).unwrap();
+    let mut session = MarkdownDocumentSession::with_selections(before, selections).unwrap();
+    session
+        .execute(EditCommand::Indent { spaces: 2 }, HistoryGroup::isolated())
+        .unwrap();
+    assert_eq!(
+        session.snapshot().text().shared().as_str(),
+        "  a\r\n  b\r\n"
+    );
+    assert_eq!(session.selections().primary().range().start().to_usize(), 2);
+}
+
+#[test]
+fn closing_delimiter_skips_only_its_matching_caret() {
+    let before = snapshot("() x", 62);
+    let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+    let selections = SelectionSet::from_selections(
+        &before,
+        vec![Selection::caret(p(1)), Selection::caret(p(4))],
+        0,
+    )
+    .unwrap();
+    let mut session = MarkdownDocumentSession::with_selections(before, selections).unwrap();
+    session
+        .execute(
+            EditCommand::Insert(Arc::from(")")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "() x)");
+    assert_eq!(session.selections().as_slice().len(), 2);
+    assert_eq!(
+        session.selections().as_slice()[0].cursor.offset.to_usize(),
+        2
+    );
+}
