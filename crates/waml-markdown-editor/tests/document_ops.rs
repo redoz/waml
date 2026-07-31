@@ -2,9 +2,13 @@ use std::sync::Arc;
 
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
+    edit::{HistoryGroup, MarkdownEdit, MarkdownEditError},
     selection::{Affinity, Selection, SelectionError, SelectionSet, TextPosition},
+    session::MarkdownDocumentSession,
 };
-use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextSize};
+use waml_syntax::{
+    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextChange, TextRange, TextSize,
+};
 
 fn snapshot(text: &str, revision: u64) -> Arc<MarkdownDocumentSnapshot> {
     let text = SourceText::from_shared(Arc::new(text.to_owned())).unwrap();
@@ -80,4 +84,89 @@ fn primary_tracks_the_requested_adjacent_selection() {
     .unwrap();
 
     assert_eq!(set.primary_index(), 1);
+}
+
+fn replace(start: usize, end: usize, replacement: &str) -> TextChange {
+    TextChange {
+        old_range: TextRange::new(
+            TextSize::try_from_usize(start).unwrap(),
+            TextSize::try_from_usize(end).unwrap(),
+        )
+        .unwrap(),
+        replacement: Arc::from(replacement),
+    }
+}
+
+#[test]
+fn exact_edit_advances_once_and_reuses_the_returned_syntax_update() {
+    let before = snapshot("# A\n", 10);
+    let expected_text = SourceText::from_shared(Arc::new("# Bee\n".to_owned())).unwrap();
+    let after_selection = SelectionSet::caret_in_text(
+        DocumentRevision::new(11),
+        &expected_text,
+        TextSize::try_from_usize(5).unwrap(),
+    )
+    .unwrap();
+    let mut session = MarkdownDocumentSession::new(before);
+    let proposal = session
+        .apply_edit(MarkdownEdit {
+            base_revision: DocumentRevision::new(10),
+            changes: vec![replace(2, 3, "Bee")],
+            selection_after: after_selection,
+            history_group: HistoryGroup::isolated(),
+        })
+        .unwrap();
+    assert_eq!(session.local_revision().get(), 11);
+    assert_eq!(session.snapshot().text().shared().as_str(), "# Bee\n");
+    assert!(Arc::ptr_eq(
+        session.snapshot().syntax(),
+        &proposal.syntax_update.snapshot
+    ));
+    assert_eq!(proposal.edit.changes.len(), 1);
+}
+
+#[test]
+fn stale_edit_reports_current_revision_without_mutation() {
+    let before = snapshot("abc", 5);
+    let selections = SelectionSet::caret(&before, TextSize::try_from_usize(0).unwrap()).unwrap();
+    let mut session = MarkdownDocumentSession::new(before.clone());
+    let error = session
+        .apply_edit(MarkdownEdit {
+            base_revision: DocumentRevision::new(4),
+            changes: vec![replace(0, 0, "x")],
+            selection_after: selections,
+            history_group: HistoryGroup::isolated(),
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MarkdownEditError::StaleRevision {
+            base,
+            current,
+        } if base == DocumentRevision::new(4)
+            && current == DocumentRevision::new(5)
+    ));
+    assert_eq!(session.snapshot().text().shared().as_str(), "abc");
+}
+
+#[test]
+fn invalid_utf8_change_is_typed_and_does_not_advance() {
+    let before = snapshot("a😀b", 8);
+    let selections = SelectionSet::caret_in_text(
+        DocumentRevision::new(9),
+        before.text(),
+        TextSize::try_from_usize(0).unwrap(),
+    )
+    .unwrap();
+    let mut session = MarkdownDocumentSession::new(before);
+    let error = session
+        .apply_edit(MarkdownEdit {
+            base_revision: DocumentRevision::new(8),
+            changes: vec![replace(2, 2, "x")],
+            selection_after: selections,
+            history_group: HistoryGroup::isolated(),
+        })
+        .unwrap_err();
+    assert!(matches!(error, MarkdownEditError::InvalidBoundary { .. }));
+    assert_eq!(session.local_revision().get(), 8);
 }

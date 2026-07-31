@@ -168,6 +168,14 @@ impl SelectionSet {
         self.primary
     }
 
+    pub(crate) fn validate_for_text(&self, text: &SourceText) -> Result<(), SelectionError> {
+        for selection in &self.selections {
+            Self::validate_position(text, selection.anchor)?;
+            Self::validate_position(text, selection.cursor)?;
+        }
+        Ok(())
+    }
+
     fn validate_position(text: &SourceText, position: TextPosition) -> Result<(), SelectionError> {
         let range =
             TextRange::new(position.offset, position.offset).expect("zero-width range is ordered");
