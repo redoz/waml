@@ -40,19 +40,29 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Pinned to the same makepad rev as crates/waml-editor/Cargo.toml. If that
-      # rev moves, move this one with it -- the build tool and the framework
-      # share the wasm ABI and the generated JS glue.
+      # The build tool and the framework are pinned SEPARATELY and currently sit
+      # on different revs: the framework is whatever crates/waml-editor/Cargo.toml
+      # names (c38f5299 at the time of writing), while this is 25d78a4d plus one
+      # commit, bac58c97, on the fork branch `waml-wasm-dep-dirs`.
+      #
+      # That commit is what makes this deploy produce a working site at all.
+      # Before it, cargo-makepad could not resolve the source directory of a
+      # *git* dependency -- `cargo tree` prints the repository URL rather than a
+      # path, and the `<name>.path` marker its build script writes is absent
+      # whenever the build scripts were cached as fresh, which is exactly what
+      # the rust-cache step above arranges. It then copied no JS glue at all and
+      # exited zero, publishing an index.html importing a runtime that was not
+      # there. The verify step below is the standing guard against a repeat.
       #
       # Note the fork carries several rebase-duplicated lines with identical
       # commit messages but different shas; `waml-scroll-occlusion` is NOT an
-      # ancestor of this rev. Copy the sha out of Cargo.toml rather than reading
-      # a branch tip, or the toolchain and the framework silently diverge.
+      # ancestor of this rev. Copy an exact sha rather than reading a branch
+      # tip, or the toolchain and the framework silently diverge.
       - name: Install cargo-makepad
         run: >
           cargo install cargo-makepad
           --git https://github.com/redoz/makepad.git
-          --rev 25d78a4d917ea2e943df6af5e037817248443bd7
+          --rev bac58c973ea886f3ee03a3a9c2d009c25a3b1dca
           --locked
 
       # binaryen supplies the `wasm-opt` binary that the build step below invokes
@@ -135,6 +145,17 @@ jobs:
           node scripts/inject-runtime-shell.mjs
           target/makepad-wasm-app/release/waml-editor
           ${{ github.sha }}
+
+      # Everything above this line can fail silently by producing an artifact
+      # that is merely incomplete, which is how a blank site shipped under a
+      # green tick. Assert that every file the artifact references -- scripts,
+      # imports, stylesheets, the wasm -- is actually in the artifact, and that
+      # the script's own tests still pass, before anything is uploaded.
+      - name: Test the artifact scripts
+        run: node --test "scripts/*.test.mjs"
+
+      - name: Verify the artifact is complete
+        run: node scripts/verify-web-artifact.mjs target/makepad-wasm-app/release/waml-editor
 
       - uses: actions/configure-pages@v5
 
