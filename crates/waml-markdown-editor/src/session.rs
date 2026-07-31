@@ -8,6 +8,7 @@ use crate::{
     },
     history::{History, HistoryEntry},
     ime::{ImeComposition, ImeError},
+    input::ScrollState,
     layout::{LayoutError, LayoutSnapshot},
     selection::{
         translate_position_with_map, Affinity, Selection, SelectionError, SelectionSet,
@@ -27,6 +28,7 @@ pub struct MarkdownDocumentSession {
     history: History,
     ime: Option<ImeComposition>,
     preferred_x: Option<f64>,
+    scroll: ScrollState,
 }
 
 impl MarkdownDocumentSession {
@@ -40,6 +42,7 @@ impl MarkdownDocumentSession {
             history: History::default(),
             ime: None,
             preferred_x: None,
+            scroll: ScrollState::default(),
         }
     }
 
@@ -63,6 +66,7 @@ impl MarkdownDocumentSession {
             history: History::default(),
             ime: None,
             preferred_x: None,
+            scroll: ScrollState::default(),
         })
     }
 
@@ -77,6 +81,18 @@ impl MarkdownDocumentSession {
     }
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+    pub fn set_read_only(&mut self, read_only: bool) {
+        if read_only {
+            self.cancel_ime();
+        }
+        self.read_only = read_only;
+    }
+    pub fn scroll(&self) -> ScrollState {
+        self.scroll
+    }
+    pub(crate) fn set_scroll(&mut self, scroll: ScrollState) {
+        self.scroll = scroll;
     }
     pub fn can_undo(&self) -> bool {
         !self.history.undo.is_empty()
@@ -318,13 +334,28 @@ impl MarkdownDocumentSession {
         self.replace_primary_selection(selection)
     }
 
-    fn replace_primary_selection(&mut self, selection: Selection) -> Result<(), MarkdownEditError> {
+    pub(crate) fn replace_primary_selection(
+        &mut self,
+        selection: Selection,
+    ) -> Result<(), MarkdownEditError> {
         let primary = self.selections.primary_index();
         let mut selections = self.selections.as_slice().to_vec();
         selections[primary] = selection;
         self.selections =
             SelectionSet::from_selections(self.snapshot.as_ref(), selections, primary)
                 .map_err(map_selection_error)?;
+        Ok(())
+    }
+
+    pub(crate) fn add_selection(&mut self, selection: Selection) -> Result<(), MarkdownEditError> {
+        let mut selections = self.selections.as_slice().to_vec();
+        selections.push(selection);
+        self.selections = SelectionSet::from_selections(
+            self.snapshot.as_ref(),
+            selections,
+            self.selections.as_slice().len(),
+        )
+        .map_err(map_selection_error)?;
         Ok(())
     }
 

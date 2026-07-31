@@ -27,3 +27,16 @@
 - RED: `layout_geometry` failed with unresolved Task 8 layout-engine imports.
 - GREEN: mixed-metric wrapping, viewport virtualization, width-only rewrap, and editable fallback pass.
 - Verification: `layout_geometry` 9 passed, `unicode_ime` 8 passed, full crate 35 passed.
+
+## Task 8 final approval
+
+- Approved at commit `4f7e419e` after the geometry-contract, authoritative-bidi, and double-reorder fixes.
+- No Task 8 follow-up remains open.
+
+## Task 9 start
+
+- Started from base `4f7e419e`.
+- Scope: platform-neutral input, retained selection behavior, read-only behavior, and caret scrolling only.
+- RED: `widget_parity` failed with unresolved Task 9 controller/input/scroll types and missing `set_read_only`.
+- GREEN: retained pointer gestures, additive and extended selection, read-only copy/mutation suppression, and geometry-based caret scrolling pass.
+- Verification: `widget_parity` 4 passed, `layout_geometry` 12 passed, `unicode_ime` 8 passed, full crate 44 passed.
