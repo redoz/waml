@@ -301,3 +301,23 @@ fn closing_delimiter_skips_only_its_matching_caret() {
         2
     );
 }
+
+#[test]
+fn mixed_closer_skip_keeps_the_skipped_primary_selection_primary() {
+    let before = snapshot("() x", 63);
+    let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+    let selections = SelectionSet::from_selections(
+        &before,
+        vec![Selection::caret(p(1)), Selection::caret(p(4))],
+        0,
+    )
+    .unwrap();
+    let mut session = MarkdownDocumentSession::with_selections(before, selections).unwrap();
+    session
+        .execute(
+            EditCommand::Insert(Arc::from(")")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    assert_eq!(session.selections().primary().cursor.offset.to_usize(), 2);
+}

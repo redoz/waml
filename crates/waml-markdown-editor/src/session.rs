@@ -95,6 +95,7 @@ impl MarkdownDocumentSession {
         command: EditCommand,
         group: HistoryGroup,
     ) -> Result<EditOutcome, MarkdownEditError> {
+        let skipped_primary = self.closing_delimiter_target(&command);
         let clipboard = if matches!(command, EditCommand::Cut) {
             Some(
                 self.selections
@@ -122,15 +123,21 @@ impl MarkdownDocumentSession {
                     current: self.snapshot.revision(),
                 })?;
         let after_text = apply_changes(self.snapshot.text(), &changes)?;
-        let selection_after = SelectionSet::from_source(
-            next,
-            &after_text,
-            positions,
+        let primary = if let Some(selection) = skipped_primary {
+            let map = ChangeMap::checked(self.snapshot.text(), &changes)
+                .map_err(MarkdownEditError::InvalidChanges)?;
+            let selection = map_selection(selection, &map).expect("valid selection boundaries map");
+            positions
+                .iter()
+                .position(|candidate| *candidate == selection)
+                .expect("lowering retains each skipped closer")
+        } else {
             self.selections
                 .primary_index()
-                .min(self.selections.as_slice().len() - 1),
-        )
-        .map_err(map_selection_error)?;
+                .min(self.selections.as_slice().len() - 1)
+        };
+        let selection_after = SelectionSet::from_source(next, &after_text, positions, primary)
+            .map_err(map_selection_error)?;
         let edit = MarkdownEdit {
             base_revision: self.snapshot.revision(),
             changes,
@@ -593,53 +600,112 @@ fn inverse_changes(
         .collect::<Result<_, TextError>>()
         .map_err(map_text_error)
 }
-fn diff_change(
-    current: &SourceText,
-    target: &SourceText,
-) -> Result<Vec<TextChange>, MarkdownEditError> {
-    let a = current.shared().as_str();
-    let b = target.shared().as_str();
-    if a == b {
-        return Ok(Vec::new());
-    }
-    let mut prefix = 0;
-    while prefix < a.len() && prefix < b.len() && a.as_bytes()[prefix] == b.as_bytes()[prefix] {
-        prefix += 1;
-    }
-    while prefix > 0 && (!a.is_char_boundary(prefix) || !b.is_char_boundary(prefix)) {
-        prefix -= 1;
-    }
-    let mut suffix = 0;
-    while suffix < a.len() - prefix
-        && suffix < b.len() - prefix
-        && a.as_bytes()[a.len() - 1 - suffix] == b.as_bytes()[b.len() - 1 - suffix]
-    {
-        suffix += 1;
-    }
-    while suffix > 0
-        && (!a.is_char_boundary(a.len() - suffix) || !b.is_char_boundary(b.len() - suffix))
-    {
-        suffix -= 1;
-    }
-    Ok(vec![TextChange {
-        old_range: range(prefix, a.len() - suffix),
-        replacement: Arc::from(&b[prefix..b.len() - suffix]),
-    }])
-}
 fn compose_group_changes<'a>(
     current: &SourceText,
     changes: impl Iterator<Item = &'a TextChange>,
 ) -> Result<Vec<TextChange>, MarkdownEditError> {
-    let mut target = current.clone();
-    let mut saw_change = false;
+    let text = current.shared().as_str();
+    let mut pieces = vec![Piece::original(range(0, text.len()), text.to_owned())];
     for change in changes {
-        target = apply_changes(&target, std::slice::from_ref(change))?;
-        saw_change = true;
+        apply_piece_change(&mut pieces, change);
     }
-    if !saw_change {
-        return Ok(Vec::new());
+    Ok(pieces_to_changes(pieces, text.len()))
+}
+
+#[derive(Clone)]
+struct Piece {
+    original: Option<TextRange>,
+    text: String,
+}
+impl Piece {
+    fn original(range: TextRange, text: String) -> Self {
+        Self {
+            original: Some(range),
+            text,
+        }
     }
-    diff_change(current, &target)
+    fn generated(text: String) -> Self {
+        Self {
+            original: None,
+            text,
+        }
+    }
+    fn fragment(&self, start: usize, end: usize) -> Option<Self> {
+        (start != end).then(|| Self {
+            original: self
+                .original
+                .map(|old| range(old.start().to_usize() + start, old.start().to_usize() + end)),
+            text: self.text[start..end].to_owned(),
+        })
+    }
+}
+fn apply_piece_change(pieces: &mut Vec<Piece>, change: &TextChange) {
+    let start = change.old_range.start().to_usize();
+    let end = change.old_range.end().to_usize();
+    let mut output = Vec::new();
+    let mut cursor = 0;
+    let mut inserted = false;
+    for piece in pieces.drain(..) {
+        let piece_end = cursor + piece.text.len();
+        if piece_end <= start {
+            output.push(piece);
+        } else if cursor >= end {
+            if !inserted {
+                output.push(Piece::generated(change.replacement.to_string()));
+                inserted = true;
+            }
+            output.push(piece);
+        } else {
+            if start > cursor {
+                output.push(piece.fragment(0, start - cursor).unwrap());
+            }
+            if !inserted {
+                output.push(Piece::generated(change.replacement.to_string()));
+                inserted = true;
+            }
+            if end < piece_end {
+                output.push(piece.fragment(end - cursor, piece.text.len()).unwrap());
+            }
+        }
+        cursor = piece_end;
+    }
+    if !inserted {
+        output.push(Piece::generated(change.replacement.to_string()));
+    }
+    *pieces = output;
+}
+fn pieces_to_changes(pieces: Vec<Piece>, original_len: usize) -> Vec<TextChange> {
+    let mut changes = Vec::new();
+    let mut cursor = 0;
+    let mut pending: Option<(usize, usize, String)> = None;
+    let mut flush = |pending: &mut Option<(usize, usize, String)>,
+                     changes: &mut Vec<TextChange>| {
+        if let Some((start, end, replacement)) = pending.take() {
+            changes.push(TextChange {
+                old_range: range(start, end),
+                replacement: Arc::from(replacement),
+            });
+        }
+    };
+    for piece in pieces {
+        if let Some(old) = piece.original {
+            if cursor < old.start().to_usize() {
+                let entry = pending.get_or_insert((cursor, cursor, String::new()));
+                entry.1 = old.start().to_usize();
+            }
+            flush(&mut pending, &mut changes);
+            cursor = old.end().to_usize();
+        } else {
+            let entry = pending.get_or_insert((cursor, cursor, String::new()));
+            entry.2.push_str(&piece.text);
+        }
+    }
+    if cursor < original_len {
+        let entry = pending.get_or_insert((cursor, cursor, String::new()));
+        entry.1 = original_len;
+    }
+    flush(&mut pending, &mut changes);
+    changes
 }
 fn map_selection(selection: Selection, map: &ChangeMap) -> Option<Selection> {
     let point = |p: TextPosition| {
