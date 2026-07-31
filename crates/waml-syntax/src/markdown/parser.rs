@@ -1,23 +1,33 @@
 use std::sync::Arc;
 
 use crate::{
-    shell::{
-        ParseError, ParsedShellWindow, ShellParse, ShellWindow, ShellWindowKind,
-    },
     GreenElement, GreenFactory, GreenText, GreenTrivia, MarkdownDialect, OkfMarkdownLanguage,
     OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SourceText, SyntaxSeverity, SyntaxTree,
     TextRange, TextSize, TreeDiagnostic, TriviaKind,
+    shell::{ParseError, ParsedShellWindow, ShellParse, ShellWindow, ShellWindowKind},
 };
 
 pub(crate) fn parse(text: SourceText, dialect: MarkdownDialect) -> Result<ShellParse, ParseError> {
-    let structure = Arc::new(crate::markdown::map(&text, dialect)?);
+    let structure = match crate::markdown::shell_map(&text, dialect) {
+        Ok(structure) => Arc::new(structure),
+        Err(ParseError::InvalidRange { .. }) => Arc::new(crate::markdown::ShellStructure {
+            headings: [].into(),
+            nested_headings: [].into(),
+            protected_ranges: [].into(),
+            list_item_lines: [].into(),
+            tab_indented_item_lines: [].into(),
+            opaque_ranges: [].into(),
+            dialect,
+        }),
+        Err(error) => return Err(error),
+    };
     parse_with_structure(text, dialect, structure)
 }
 
 pub(crate) fn parse_with_structure(
     text: SourceText,
     dialect: MarkdownDialect,
-    structure: Arc<crate::MarkdownStructureMap>,
+    structure: Arc<crate::markdown::ShellStructure>,
 ) -> Result<ShellParse, ParseError> {
     let factory = GreenFactory::<OkfMarkdownLanguage>::new();
     let source = text.shared();
@@ -67,14 +77,14 @@ struct FrontmatterClass {
 
 pub(crate) fn frontmatter_range(
     text: &SourceText,
-    structure: &crate::MarkdownStructureMap,
+    structure: &crate::markdown::ShellStructure,
 ) -> Result<Option<TextRange>, ParseError> {
     Ok(classify_frontmatter(text, structure)?.map(|class| class.range))
 }
 
 fn classify_frontmatter(
     text: &SourceText,
-    structure: &crate::MarkdownStructureMap,
+    structure: &crate::markdown::ShellStructure,
 ) -> Result<Option<FrontmatterClass>, ParseError> {
     if !structure.dialect.waml_frontmatter() {
         return Ok(None);
@@ -198,7 +208,7 @@ fn frontmatter(
 
 pub(crate) fn parse_window(
     text: &SourceText,
-    structure: &crate::MarkdownStructureMap,
+    structure: &crate::markdown::ShellStructure,
     window: ShellWindow,
 ) -> Result<ParsedShellWindow, ParseError> {
     let source = text.shared();
@@ -508,9 +518,11 @@ fn trivia(
     if start == end {
         return Ok(Vec::new());
     }
-    Ok(vec![factory
-        .trivia(TriviaKind::Whitespace, slice(text, start, end)?)
-        .map_err(|_| ParseError::WidthOverflow)?])
+    Ok(vec![
+        factory
+            .trivia(TriviaKind::Whitespace, slice(text, start, end)?)
+            .map_err(|_| ParseError::WidthOverflow)?,
+    ])
 }
 
 fn slice(text: &SourceText, start: usize, end: usize) -> Result<GreenText, ParseError> {
@@ -652,12 +664,10 @@ mod tests {
     fn supplied_structure_is_only_an_internal_synchronization_map() {
         let text = source("# Class\n## Attributes\nvalue\n");
         let structure =
-            Arc::new(crate::markdown::map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
+            Arc::new(crate::markdown::shell_map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
         let parsed =
             parse_with_structure(text, MarkdownDialect::WAML_DEFAULT, structure.clone()).unwrap();
 
-        assert!(!Arc::ptr_eq(&parsed.structure, &structure));
-        assert!(structure.islands.is_empty());
         assert_eq!(parsed.structure.islands.len(), 1);
     }
 
@@ -665,7 +675,7 @@ mod tests {
     fn frontmatter_classifier_drives_full_and_window_consumption() {
         let text = source("---\ntype: uml.Class\n---\n# Class\n");
         let structure =
-            Arc::new(crate::markdown::map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
+            Arc::new(crate::markdown::shell_map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
         let frontmatter = frontmatter_range(&text, &structure).unwrap().unwrap();
         let full = parse_with_structure(
             text.clone(),
@@ -692,7 +702,7 @@ mod tests {
     fn tail_window_reclassifies_raw_text_and_source_backed_eof_trivia_together() {
         let text = source("body   ");
         let structure =
-            Arc::new(crate::markdown::map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
+            Arc::new(crate::markdown::shell_map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
         let parsed = parse_window(
             &text,
             &structure,

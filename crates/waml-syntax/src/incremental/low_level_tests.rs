@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
-use std::num::NonZeroU64;
 use super::{reparse_okf_markdown, reparse_okf_markdown_with_structure};
 use crate::{
-    annotate_occurrence, markdown::parser::parse as parse_okf_markdown, rebase_unchanged_green,
-    transfer_mapped_annotations, ChangeMap, FullReparseReason, GreenElement, GreenText,
-    MarkdownDialect, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, ReparseOutcome, RewriteError,
-    SourceText, SyntaxAnnotation, SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize,
+    ChangeMap, FullReparseReason, GreenElement, GreenText, MarkdownDialect, OkfMarkdownSyntaxKind,
+    OkfSyntaxDiagnosticCode, ReparseOutcome, RewriteError, SourceText, SyntaxAnnotation,
+    SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize, annotate_occurrence,
+    markdown::parser::parse as parse_okf_markdown, rebase_unchanged_green,
+    transfer_mapped_annotations,
 };
+use std::num::NonZeroU64;
 
 #[test]
 fn incremental_structure_is_derived_from_the_rebuilt_waml_tree() {
@@ -132,13 +133,15 @@ fn source_backed_eof_trivia_moves_through_tail_window() {
         panic!("tail insertion must be incremental")
     };
     assert_eq!(reparsed_range, range(0, 8));
-    assert!(!first_token(
-        &parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent)
-            .unwrap()
-            .tree,
-        OkfMarkdownSyntaxKind::EndOfFileToken
-    )
-    .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken)));
+    assert!(
+        !first_token(
+            &parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent)
+                .unwrap()
+                .tree,
+            OkfMarkdownSyntaxKind::EndOfFileToken
+        )
+        .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken))
+    );
 }
 
 #[test]
@@ -212,8 +215,10 @@ fn unchanged_bytes_on_fresh_source_rebase_source_backed_greens() {
         &new_source
     ));
     assert!(!previous.root().same_green(&tree.root()));
-    assert!(!first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
-        .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)));
+    assert!(
+        !first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
+            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph))
+    );
     assert!(
         first_token(&previous, OkfMarkdownSyntaxKind::EndOfFileToken)
             .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken))
@@ -536,10 +541,14 @@ fn annotation_transfer_reuses_unchanged_source_independent_greens() {
     let final_eof = first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken);
     assert!(previous_eof.same_green(&final_eof));
     assert_eq!(shared_source_independent_green, 1);
-    assert!(!first_token(&previous, OkfMarkdownSyntaxKind::TextToken)
-        .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::TextToken)));
-    assert!(!first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
-        .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)));
+    assert!(
+        !first_token(&previous, OkfMarkdownSyntaxKind::TextToken)
+            .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::TextToken))
+    );
+    assert!(
+        !first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
+            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph))
+    );
     assert_eq!(
         first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)
             .syntax_annotations()
@@ -749,8 +758,9 @@ fn property_sequence_is_incremental_when_selected_window_is_consumed() {
 
 #[test]
 fn safe_edit_matrix_matches_full_oracle() {
-    for (old, new, changes) in [
+    for (case, old, new, changes) in [
         (
+            "replace body middle",
             "body\n",
             "bXdy\n",
             vec![TextChange {
@@ -759,6 +769,7 @@ fn safe_edit_matrix_matches_full_oracle() {
             }],
         ),
         (
+            "insert punctuation",
             "body\n",
             "body!\n",
             vec![TextChange {
@@ -767,6 +778,7 @@ fn safe_edit_matrix_matches_full_oracle() {
             }],
         ),
         (
+            "frontmatter type",
             "---\ntype: uml.Class\n---\n",
             "---\ntype: uml.Interface\n---\n",
             vec![TextChange {
@@ -775,6 +787,7 @@ fn safe_edit_matrix_matches_full_oracle() {
             }],
         ),
         (
+            "bracket value",
             "a: [b, c]\n",
             "a: [b, d]\n",
             vec![TextChange {
@@ -783,6 +796,7 @@ fn safe_edit_matrix_matches_full_oracle() {
             }],
         ),
         (
+            "two lines",
             "one\ntwo\n",
             "ONE\nTWO\n",
             vec![
@@ -797,11 +811,36 @@ fn safe_edit_matrix_matches_full_oracle() {
             ],
         ),
     ] {
-        assert!(matches!(
-            exact_oracle(old, new, &changes),
-            ReparseOutcome::Incremental { .. }
-        ));
+        let outcome = exact_oracle(old, new, &changes);
+        let actual = match &outcome {
+            ReparseOutcome::Incremental { .. } => "Incremental".to_owned(),
+            ReparseOutcome::Full { reason, .. } => format!("Full({reason:?})"),
+        };
+        assert!(
+            matches!(outcome, ReparseOutcome::Incremental { .. }),
+            "{case}: {actual}"
+        );
     }
+}
+
+#[test]
+fn resolved_reference_label_edit_falls_back() {
+    let outcome = exact_oracle(
+        "[n][id]\n\n[id]: /one\n",
+        "[n][ix]\n\n[id]: /one\n",
+        &[TextChange {
+            old_range: range(4, 6),
+            replacement: Arc::from("ix"),
+        }],
+    );
+
+    assert!(matches!(
+        outcome,
+        ReparseOutcome::Full {
+            reason: FullReparseReason::UnsafeSynchronization,
+            ..
+        }
+    ));
 }
 
 #[test]

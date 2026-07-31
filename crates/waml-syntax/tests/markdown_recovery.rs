@@ -1,6 +1,6 @@
 use waml_syntax::{
-    parse_markdown, DocumentRevision, MarkdownDialect, MarkdownSemanticRole, OkfMarkdownSyntaxKind,
-    SourceText, SyntaxElement, SyntaxNode, SyntaxToken, TextRange,
+    DocumentRevision, MarkdownDialect, MarkdownSemanticRole, OkfMarkdownSyntaxKind, SourceText,
+    SyntaxElement, SyntaxNode, SyntaxToken, TextRange, parse_markdown,
 };
 
 fn leaf_tokens(
@@ -119,6 +119,7 @@ fn malformed_markdown_retains_all_source_and_exposes_recovery() {
             "\u{feff}# café\r\n\ttext e\u{301}\r\n",
             false,
         ),
+        ("pulldown-overlap-recovery", "0\n\r\t\u{0800}", true),
         ("mixed-line-endings", "# one\r\nparagraph\nnext\r", false),
         ("unclosed-fence", "```rust\nfn main() {}\n", true),
         ("unclosed-link", "[label](destination\n", false),

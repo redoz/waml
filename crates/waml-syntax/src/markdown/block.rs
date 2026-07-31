@@ -41,12 +41,41 @@ struct BlockFrame {
     table_alignments: Vec<super::gfm::TableAlignment>,
 }
 
+/// A malformed range emitted by the CommonMark event stream.
+///
+/// This stays private because it is a recovery signal, not a public parse
+/// failure. All other parser failures keep their original `ParseError`.
+#[derive(Debug)]
+enum BlockBuildError {
+    MalformedEventRange,
+    Parse(ParseError),
+}
+
+impl From<ParseError> for BlockBuildError {
+    fn from(error: ParseError) -> Self {
+        Self::Parse(error)
+    }
+}
+
 pub(crate) fn parse(
     text: &SourceText,
     dialect: MarkdownDialect,
     start: usize,
     end: usize,
 ) -> Result<BlockParse, ParseError> {
+    match parse_strict(text, dialect, start, end) {
+        Ok(parsed) => Ok(parsed),
+        Err(BlockBuildError::MalformedEventRange) => recover_raw_text(text, start, end),
+        Err(BlockBuildError::Parse(error)) => Err(error),
+    }
+}
+
+fn parse_strict(
+    text: &SourceText,
+    dialect: MarkdownDialect,
+    start: usize,
+    end: usize,
+) -> Result<BlockParse, BlockBuildError> {
     let source = text.shared();
     validate_range(source, start, end)?;
     let event_start = if start == 0 && source.starts_with('\u{feff}') {
@@ -57,13 +86,12 @@ pub(crate) fn parse(
     let mut stack = Vec::<BlockFrame>::new();
     let mut blocks = Vec::<BlockFrame>::new();
     let parser = Parser::new_ext(&source[event_start..end], pulldown_options(dialect));
-    let mut reference_spans: Vec<_> = parser
-        .reference_definitions()
-        .iter()
-        .map(|(_, definition)| {
-            (event_start + definition.span.start)..(event_start + definition.span.end)
-        })
-        .collect();
+    let mut reference_spans = Vec::new();
+    for (_, definition) in parser.reference_definitions().iter() {
+        let span = (event_start + definition.span.start)..(event_start + definition.span.end);
+        validate_event_range(source, event_start, end, &span)?;
+        reference_spans.push(span);
+    }
     reference_spans.sort_by_key(|definition| (definition.start, definition.end));
     for (event, offsets) in parser.into_offset_iter() {
         let mut offsets = (event_start + offsets.start)..(event_start + offsets.end);
@@ -123,7 +151,8 @@ pub(crate) fn parse(
                     let Some(mut frame) = stack.pop() else {
                         return Err(ParseError::StructuralInvariant {
                             reason: "CommonMark closed a block without an open frame".into(),
-                        });
+                        }
+                        .into());
                     };
                     frame.source_range.end = frame.source_range.end.max(offsets.end);
                     frame.cursor = frame.source_range.start;
@@ -169,9 +198,7 @@ pub(crate) fn parse(
     let mut cursor = start;
     for frame in blocks {
         if frame.source_range.start < cursor {
-            return Err(ParseError::StructuralInvariant {
-                reason: "CommonMark block events overlap out of order".into(),
-            });
+            return Err(BlockBuildError::MalformedEventRange);
         }
         emit_uncovered(
             &factory,
@@ -184,7 +211,7 @@ pub(crate) fn parse(
             &reference_spans,
         )?;
         cursor = frame.source_range.end;
-        children.push(GreenElement::Node(build_frame(
+        let node = build_frame(
             &factory,
             text,
             source,
@@ -193,7 +220,9 @@ pub(crate) fn parse(
             dialect,
             &reference_spans,
             &mut definitions,
-        )?));
+        )
+        .map_err(classify_block_build_error)?;
+        children.push(GreenElement::Node(node));
     }
     emit_uncovered(
         &factory,
@@ -211,7 +240,8 @@ pub(crate) fn parse(
     if root.width().to_usize() != end - start {
         return Err(ParseError::StructuralInvariant {
             reason: "block children do not cover their source range".into(),
-        });
+        }
+        .into());
     }
     let references = super::reference::MarkdownReferenceMap::from_tree(source, &root, start)?;
     let inline = super::inline::apply(text, &root, references, start, dialect)?;
@@ -222,6 +252,41 @@ pub(crate) fn parse(
         inline_roots: inline.inline_roots,
         definitions: definitions.into(),
         references: inline.references,
+    })
+}
+
+fn classify_block_build_error(error: BlockBuildError) -> BlockBuildError {
+    match error {
+        BlockBuildError::Parse(ParseError::InvalidRange { .. }) => {
+            BlockBuildError::MalformedEventRange
+        }
+        error => error,
+    }
+}
+
+fn recover_raw_text(text: &SourceText, start: usize, end: usize) -> Result<BlockParse, ParseError> {
+    validate_range(text.shared(), start, end)?;
+    let factory = GreenFactory::<OkfMarkdownLanguage>::new();
+    let children = if start == end {
+        Vec::new()
+    } else {
+        vec![token(&factory, text, start, end, Kind::RawTextToken)?]
+    };
+    let root = factory
+        .node(Kind::Root, children)
+        .map_err(|_| ParseError::WidthOverflow)?;
+    let diagnostics = [diagnostic(
+        Diagnostic::MalformedBlock,
+        start,
+        end,
+        "recovered Markdown after invalid block-event ranges",
+    )?];
+    Ok(BlockParse {
+        root,
+        diagnostics: diagnostics.into(),
+        inline_roots: [].into(),
+        definitions: [].into(),
+        references: super::reference::MarkdownReferenceMap::default(),
     })
 }
 
@@ -311,6 +376,7 @@ fn heading_at(
     Some((level, text_range))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_frame(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
@@ -320,7 +386,7 @@ fn build_frame(
     dialect: MarkdownDialect,
     reference_spans: &[Range<usize>],
     definitions: &mut Vec<TextRange>,
-) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
+) -> Result<GreenNode<OkfMarkdownLanguage>, BlockBuildError> {
     let metadata = frame_metadata(source, &frame, dialect);
     frame
         .children
@@ -338,7 +404,9 @@ fn build_frame(
             diagnostics,
             dialect,
         )?;
-        return semantic_node_with_metadata(factory, frame.kind, children, metadata);
+        return Ok(semantic_node_with_metadata(
+            factory, frame.kind, children, metadata,
+        )?);
     }
     let mut children = Vec::new();
     frame.cursor = frame.source_range.start;
@@ -346,9 +414,7 @@ fn build_frame(
         if child.source_range.start < frame.cursor
             || child.source_range.end > frame.source_range.end
         {
-            return Err(ParseError::StructuralInvariant {
-                reason: "nested CommonMark block escaped its parent frame".into(),
-            });
+            return Err(BlockBuildError::MalformedEventRange);
         }
         emit_frame_gap(
             factory,
@@ -412,7 +478,9 @@ fn build_frame(
         }
         children = grouped;
     }
-    semantic_node_with_metadata(factory, frame.kind, children, metadata)
+    Ok(semantic_node_with_metadata(
+        factory, frame.kind, children, metadata,
+    )?)
 }
 
 fn frame_metadata(
@@ -578,6 +646,7 @@ fn leaf_tokens(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_frame_gap(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
@@ -589,7 +658,7 @@ fn emit_frame_gap(
     dialect: MarkdownDialect,
     reference_spans: &[Range<usize>],
     definitions: &mut Vec<TextRange>,
-) -> Result<(), ParseError> {
+) -> Result<(), BlockBuildError> {
     if start == end {
         return Ok(());
     }
@@ -721,6 +790,7 @@ fn emit_frame_gap(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_uncovered(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
@@ -1323,16 +1393,14 @@ fn validate_event_range(
     start: usize,
     end: usize,
     event: &Range<usize>,
-) -> Result<(), ParseError> {
+) -> Result<(), BlockBuildError> {
     if event.start > event.end
         || event.start < start
         || event.end > end
         || !source.is_char_boundary(event.start)
         || !source.is_char_boundary(event.end)
     {
-        return Err(ParseError::StructuralInvariant {
-            reason: "invalid CommonMark event range".into(),
-        });
+        return Err(BlockBuildError::MalformedEventRange);
     }
     Ok(())
 }
@@ -1417,6 +1485,33 @@ fn diagnostic(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_pulldown_event_range_recovers_as_raw_text() {
+        let source = "0\n\r\t\u{0800}";
+        let text = SourceText::new(source).unwrap();
+        match parse_strict(&text, MarkdownDialect::CommonMarkCurrent, 0, source.len()) {
+            Err(BlockBuildError::MalformedEventRange) => {}
+            Err(error) => panic!("unexpected strict error: {error:?}"),
+            Ok(_) => panic!("strict parser unexpectedly accepted malformed event ranges"),
+        }
+        let parsed = parse(&text, MarkdownDialect::CommonMarkCurrent, 0, source.len()).unwrap();
+
+        let tree = crate::SyntaxTree::new(
+            parsed.root,
+            parsed.diagnostics.clone(),
+            MarkdownDialect::CommonMarkCurrent,
+        );
+        assert_eq!(tree.write_to_string(), source);
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == Diagnostic::MalformedBlock)
+        );
+        assert!(parsed.inline_roots.is_empty());
+        assert!(parsed.references.definitions.is_empty());
+    }
 
     #[test]
     fn inline_phase_returns_owner_identities_and_reference_backlinks() {

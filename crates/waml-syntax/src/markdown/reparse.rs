@@ -4,12 +4,12 @@ use std::{
 };
 
 use crate::{
-    rebase_unchanged_green, ChangeMap, GreenElement, GreenFactory, GreenNode, OkfMarkdownLanguage,
-    OkfMarkdownSyntaxKind, ParseError, SourceText, SyntaxElement, SyntaxNode, SyntaxTree,
-    TextChange, TextRange, TextSize,
+    ChangeMap, GreenElement, GreenFactory, GreenNode, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
+    ParseError, SourceText, SyntaxElement, SyntaxNode, SyntaxTree, TextChange, TextRange, TextSize,
+    rebase_unchanged_green,
 };
 
-use super::reference::{MarkdownReferenceDefinition, MarkdownReferenceMap};
+use super::reference::{MarkdownReferenceDefinition, MarkdownReferenceMap, normalize_label};
 
 /// Returns true when a change touches any reference-definition line.
 ///
@@ -33,14 +33,18 @@ pub(crate) fn change_touches_reference_definition(
 /// that window, so the incremental bridge must use a named full fallback.
 pub(crate) fn change_may_affect_reference_use(
     old: &SourceText,
+    old_root: &GreenNode<OkfMarkdownLanguage>,
     new: &SourceText,
     changes: &[TextChange],
     map: &ChangeMap,
-) -> bool {
-    changes.iter().zip(map.segments()).any(|(change, segment)| {
-        intersecting_lines(old.shared(), change.old_range).any(line_may_reference_use)
-            || intersecting_lines(new.shared(), segment.new).any(line_may_reference_use)
-    })
+) -> Result<bool, ParseError> {
+    let references = MarkdownReferenceMap::from_tree(old.shared(), old_root, 0)?;
+    Ok(changes.iter().zip(map.segments()).any(|(change, segment)| {
+        intersecting_lines(old.shared(), change.old_range)
+            .chain(intersecting_lines(new.shared(), segment.new))
+            .flat_map(reference_labels)
+            .any(|label| references.definitions.contains_key(&label))
+    }))
 }
 
 fn intersecting_lines(source: &str, range: TextRange) -> impl Iterator<Item = &str> {
@@ -56,8 +60,36 @@ fn line_is_definition(line: &str) -> bool {
     line.starts_with('[') && line.contains("]:")
 }
 
-fn line_may_reference_use(line: &str) -> bool {
-    line.contains('[') && !line_is_definition(line)
+fn reference_labels(line: &str) -> Vec<Arc<str>> {
+    if line_is_definition(line) {
+        return Vec::new();
+    }
+    let mut labels = Vec::new();
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        let after_open = &rest[open + 1..];
+        let Some(close) = after_open.find(']') else {
+            break;
+        };
+        let text = &after_open[..close];
+        let after = &after_open[close + 1..];
+        let (label, consumed) = if let Some(after_label) = after.strip_prefix('[') {
+            let Some(label_end) = after_label.find(']') else {
+                break;
+            };
+            let label = &after_label[..label_end];
+            (if label.is_empty() { text } else { label }, label_end + 2)
+        } else if after.starts_with('(') {
+            ("", after.len())
+        } else {
+            (text, 0)
+        };
+        if let Some(label) = normalize_label(label) {
+            labels.push(label);
+        }
+        rest = &after[consumed..];
+    }
+    labels
 }
 
 pub(crate) fn changed_reference_labels(

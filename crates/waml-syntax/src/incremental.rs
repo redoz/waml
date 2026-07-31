@@ -638,6 +638,7 @@ fn recover_exact_source<L: SyntaxLanguage>(root: &GreenNode<L>) -> Option<Source
 
 /// Safely advance an OKF shell tree. A full parse is deliberately retained as
 /// the oracle whenever a local synchronization proof is unavailable.
+#[allow(dead_code)]
 pub(crate) fn reparse_okf_markdown(
     previous: &SyntaxTree<OkfMarkdownLanguage>,
     new_text: SourceText,
@@ -661,7 +662,7 @@ pub(crate) fn reparse_okf_markdown_with_structure(
     ParseError,
 > {
     let dialect = previous.dialect();
-    let new_structure = Arc::new(crate::markdown::map(&new_text, dialect)?);
+    let new_structure = Arc::new(crate::markdown::shell_map(&new_text, dialect)?);
     let Some(old) = recover_exact_source(previous.root_green()) else {
         let parsed = crate::markdown::parser::parse_with_structure(
             new_text,
@@ -749,7 +750,7 @@ pub(crate) fn reparse_okf_markdown_with_structure(
             public_structure,
         ));
     }
-    let old_structure = Arc::new(crate::markdown::map(&old, dialect)?);
+    let old_structure = Arc::new(crate::markdown::shell_map(&old, dialect)?);
     let full = |reason| -> Result<_, ParseError> {
         let parsed = crate::markdown::parser::parse_with_structure(
             new_text.clone(),
@@ -812,7 +813,13 @@ pub(crate) fn reparse_okf_markdown_with_structure(
     if width_change_may_shift_reference_definition(previous, &map) {
         return full(FullReparseReason::UnsafeSynchronization);
     }
-    if crate::markdown::reparse::change_may_affect_reference_use(&old, &new_text, changes, &map) {
+    if crate::markdown::reparse::change_may_affect_reference_use(
+        &old,
+        previous.root_green(),
+        &new_text,
+        changes,
+        &map,
+    )? {
         return full(FullReparseReason::UnsafeSynchronization);
     }
 
@@ -1246,7 +1253,11 @@ fn same_ranges(old: &[TextRange], new: &[TextRange], map: &ChangeMap) -> bool {
     new.sort_by_key(|range| (range.start(), range.end()));
     old == new
 }
-fn same_headings(old: &MarkdownStructureMap, new: &MarkdownStructureMap, map: &ChangeMap) -> bool {
+fn same_headings(
+    old: &crate::markdown::ShellStructure,
+    new: &crate::markdown::ShellStructure,
+    map: &ChangeMap,
+) -> bool {
     let old = old
         .headings
         .iter()
@@ -1285,8 +1296,8 @@ fn has_syntax_annotations(node: &GreenNode<OkfMarkdownLanguage>) -> bool {
 }
 
 fn same_containers(
-    old: &MarkdownStructureMap,
-    new: &MarkdownStructureMap,
+    old: &crate::markdown::ShellStructure,
+    new: &crate::markdown::ShellStructure,
     map: &ChangeMap,
 ) -> bool {
     same_ranges(&old.protected_ranges, &new.protected_ranges, map)
@@ -1430,13 +1441,12 @@ mod tests {
         let factory = GreenFactory::new();
         let parser_source =
             SourceText::from_shared(Arc::new("# Ordinary\nbody\n".to_owned())).unwrap();
-        let parser_tree =
-            crate::markdown::parser::parse(
-                parser_source.clone(),
-                crate::MarkdownDialect::WAML_DEFAULT,
-            )
-            .unwrap()
-            .tree;
+        let parser_tree = crate::markdown::parser::parse(
+            parser_source.clone(),
+            crate::MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap()
+        .tree;
         assert!(Arc::ptr_eq(
             recover_exact_source(parser_tree.root_green())
                 .unwrap()
