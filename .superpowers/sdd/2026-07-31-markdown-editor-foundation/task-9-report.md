@@ -25,3 +25,10 @@
 ## Preservation
 
 - The two pre-existing unstaged hunks in `crates/waml-editor/src/app.rs` remain unchanged and are not part of Task 9.
+
+## Stale geometry review fix
+
+- RED: stale pointer geometry could reach hit testing and stale layout could reach IME-coordinate publication because `MarkdownEditorController::handle` did not verify layout ownership.
+- GREEN: `handle` rejects a revision mismatch before it processes input and returns `ControllerError::Layout(LayoutError::RevisionMismatch)`, consistent with the scroll APIs.
+- The stale-pointer regression confirms that the selection remains unchanged. The stale-IME regression confirms that no response with IME coordinates is published.
+- Review verification: `widget_parity` 6 passed, `layout_geometry` 12 passed, `unicode_ime` 8 passed, full crate 46 passed, and `git diff --check` passed.

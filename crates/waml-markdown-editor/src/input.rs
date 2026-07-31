@@ -4,6 +4,7 @@ use makepad_widgets::{dvec2, DVec2};
 
 use crate::{
     edit::{EditCommand, HistoryGroup, MarkdownEditError, ProposedMarkdownEdit},
+    ime::ImeError,
     layout::{CaretGeometry, LayoutError, LayoutSnapshot},
     selection::{Affinity, Selection, TextPosition},
     session::MarkdownDocumentSession,
@@ -86,6 +87,30 @@ pub struct ScrollAdjustment {
     pub scroll_y: f64,
 }
 
+#[derive(Debug)]
+pub enum ControllerError {
+    Edit(MarkdownEditError),
+    Layout(LayoutError),
+}
+
+impl From<MarkdownEditError> for ControllerError {
+    fn from(error: MarkdownEditError) -> Self {
+        Self::Edit(error)
+    }
+}
+
+impl From<LayoutError> for ControllerError {
+    fn from(error: LayoutError) -> Self {
+        Self::Layout(error)
+    }
+}
+
+impl From<ImeError> for ControllerError {
+    fn from(error: ImeError) -> Self {
+        Self::Edit(error.into())
+    }
+}
+
 #[derive(Default)]
 pub struct MarkdownEditorController {
     drag_anchor: Option<TextPosition>,
@@ -97,7 +122,8 @@ impl MarkdownEditorController {
         session: &mut MarkdownDocumentSession,
         layout: &LayoutSnapshot,
         input: EditorInput,
-    ) -> Result<EditorResponse, MarkdownEditError> {
+    ) -> Result<EditorResponse, ControllerError> {
+        verify_revision(session, layout)?;
         let mut response = EditorResponse::default();
         match input {
             EditorInput::Text(text) => {
@@ -271,7 +297,7 @@ impl MarkdownEditorController {
         command: EditCommand,
         group: HistoryGroup,
         response: &mut EditorResponse,
-    ) -> Result<(), MarkdownEditError> {
+    ) -> Result<(), ControllerError> {
         if session.is_read_only() {
             return Ok(());
         }
@@ -290,7 +316,7 @@ impl MarkdownEditorController {
         layout: &LayoutSnapshot,
         key: EditorKey,
         response: &mut EditorResponse,
-    ) -> Result<(), MarkdownEditError> {
+    ) -> Result<(), ControllerError> {
         match key {
             EditorKey::Enter => self.execute(
                 session,
@@ -338,20 +364,8 @@ impl MarkdownEditorController {
             }
             EditorKey::Left { extend } => session.move_left(extend)?,
             EditorKey::Right { extend } => session.move_right(extend)?,
-            EditorKey::Up { extend } => {
-                session.move_vertical(layout, -1, extend).map_err(|_| {
-                    MarkdownEditError::InvalidBoundary {
-                        offset: session.selections().primary().cursor.offset,
-                    }
-                })?
-            }
-            EditorKey::Down { extend } => {
-                session.move_vertical(layout, 1, extend).map_err(|_| {
-                    MarkdownEditError::InvalidBoundary {
-                        offset: session.selections().primary().cursor.offset,
-                    }
-                })?
-            }
+            EditorKey::Up { extend } => session.move_vertical(layout, -1, extend)?,
+            EditorKey::Down { extend } => session.move_vertical(layout, 1, extend)?,
             EditorKey::SelectAll => session.select_all()?,
         }
         response.request_redraw = true;

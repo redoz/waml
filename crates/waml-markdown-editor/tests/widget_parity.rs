@@ -4,9 +4,10 @@ use makepad_widgets::{dvec2, Rect};
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     input::{
-        EditorInput, EditorResponse, MarkdownEditorController, PointerGesture, SelectionModifier,
+        ControllerError, EditorInput, EditorResponse, MarkdownEditorController, PointerGesture,
+        SelectionModifier,
     },
-    layout::{Affinity, CaretStop, GlyphCluster, LayoutSnapshot, VisualLine},
+    layout::{Affinity, CaretStop, GlyphCluster, LayoutError, LayoutSnapshot, VisualLine},
     selection::TextPosition,
     session::MarkdownDocumentSession,
 };
@@ -58,6 +59,50 @@ fn caret_visibility_and_resize_use_geometry_not_line_numbers() {
     fixture.resize_width(50.0);
     let second = fixture.ensure_caret_visible();
     assert!(second.scroll_y >= first.scroll_y);
+}
+
+#[test]
+fn stale_pointer_geometry_is_rejected_without_mutating_selection() {
+    let mut session = session_at_revision("abc", DocumentRevision::new(1));
+    let before = session.selections().clone();
+    let layout = linear_layout("abc");
+    let error = match MarkdownEditorController::default().handle(
+        &mut session,
+        &layout,
+        EditorInput::PointerDown(PointerGesture {
+            point: dvec2(20.0, 0.0),
+            clicks: 1,
+            modifier: SelectionModifier::Replace,
+        }),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("stale pointer geometry was accepted"),
+    };
+    assert!(matches!(
+        error,
+        ControllerError::Layout(LayoutError::RevisionMismatch { document, layout })
+            if document == DocumentRevision::new(1) && layout == DocumentRevision::INITIAL
+    ));
+    assert_eq!(session.selections().as_slice(), before.as_slice());
+}
+
+#[test]
+fn stale_layout_cannot_publish_ime_coordinates() {
+    let mut session = session_at_revision("abc", DocumentRevision::new(1));
+    let layout = linear_layout("abc");
+    let error = match MarkdownEditorController::default().handle(
+        &mut session,
+        &layout,
+        EditorInput::Copy,
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("stale IME geometry was accepted"),
+    };
+    assert!(matches!(
+        error,
+        ControllerError::Layout(LayoutError::RevisionMismatch { document, layout })
+            if document == DocumentRevision::new(1) && layout == DocumentRevision::INITIAL
+    ));
 }
 
 struct Fixture {
@@ -220,6 +265,12 @@ fn linear_layout(text: &str) -> LayoutSnapshot {
         clusters,
         Vec::new(),
     )
+}
+
+fn session_at_revision(text: &str, revision: DocumentRevision) -> MarkdownDocumentSession {
+    let source = SourceText::new(text.to_owned()).unwrap();
+    let syntax = parse_markdown(revision, source, MarkdownDialect::WAML_DEFAULT).unwrap();
+    MarkdownDocumentSession::new(Arc::new(MarkdownDocumentSnapshot::new(syntax)))
 }
 
 fn variable_layout() -> LayoutSnapshot {
