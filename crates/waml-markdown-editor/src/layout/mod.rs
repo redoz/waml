@@ -1,4 +1,6 @@
+mod engine;
 mod geometry;
+mod makepad;
 
 use std::sync::Arc;
 
@@ -6,9 +8,14 @@ use makepad_widgets::DVec2;
 use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 
 pub use crate::selection::Affinity;
+pub use engine::{
+    BlockSummary, LayoutEngine, LayoutInvalidation, LayoutViewport, ShapedCluster, ShapedRun,
+    TextShaper,
+};
 pub use geometry::{
     BlockGeometry, CaretGeometry, CaretStop, GlyphCluster, LayoutSnapshot, VisualLine,
 };
+pub use makepad::{FontResolver, MakepadTextShaper};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LayoutElementId {
@@ -125,4 +132,7 @@ pub enum LayoutError {
     },
     GeometryUnavailable,
     InvalidSelection,
+    ShapingFailed {
+        run: LayoutElementId,
+    },
 }

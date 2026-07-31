@@ -8,7 +8,7 @@ use waml_syntax::{
 
 use crate::selection::{Affinity, Selection, TextPosition};
 
-use super::{GeometryElementId, LayoutElementId};
+use super::{BlockSummary, GeometryElementId, LayoutElementId};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CaretStop {
@@ -89,6 +89,10 @@ impl VisualLine {
             },
         )
     }
+
+    pub fn height(&self) -> f64 {
+        self.rect.size.y
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,6 +100,7 @@ pub struct BlockGeometry {
     pub id: LayoutElementId,
     pub source_range: TextRange,
     pub rect: Rect,
+    plain_text_fallback: bool,
 }
 
 impl BlockGeometry {
@@ -104,7 +109,25 @@ impl BlockGeometry {
             id,
             source_range,
             rect,
+            plain_text_fallback: false,
         }
+    }
+
+    pub(crate) fn fallback(id: LayoutElementId, source_range: TextRange, rect: Rect) -> Self {
+        Self {
+            id,
+            source_range,
+            rect,
+            plain_text_fallback: true,
+        }
+    }
+
+    pub fn source_range(&self) -> TextRange {
+        self.source_range
+    }
+
+    pub fn is_plain_text_fallback(&self) -> bool {
+        self.plain_text_fallback
     }
 }
 
@@ -118,6 +141,7 @@ pub struct LayoutSnapshot {
     clusters: Arc<[GlyphCluster]>,
     visible_source_range: TextRange,
     visible_block_range: Range<usize>,
+    block_summaries: Arc<[BlockSummary]>,
 }
 
 impl LayoutSnapshot {
@@ -130,6 +154,7 @@ impl LayoutSnapshot {
         clusters: Arc<[GlyphCluster]>,
         visible_source_range: TextRange,
         visible_block_range: Range<usize>,
+        block_summaries: Arc<[BlockSummary]>,
     ) -> Self {
         Self {
             revision,
@@ -140,6 +165,7 @@ impl LayoutSnapshot {
             clusters,
             visible_source_range,
             visible_block_range,
+            block_summaries,
         }
     }
 
@@ -165,6 +191,14 @@ impl LayoutSnapshot {
 
     pub fn blocks(&self) -> &[BlockGeometry] {
         &self.blocks
+    }
+
+    pub fn visual_lines(&self) -> &[VisualLine] {
+        &self.visual_lines
+    }
+
+    pub fn block_summaries(&self) -> &[BlockSummary] {
+        &self.block_summaries
     }
 
     pub fn source_to_point(&self, position: TextPosition) -> Option<CaretGeometry> {
@@ -319,6 +353,7 @@ impl LayoutSnapshot {
             clusters.into(),
             visible_source_range,
             visible_block_range,
+            Arc::from([]),
         )
     }
 

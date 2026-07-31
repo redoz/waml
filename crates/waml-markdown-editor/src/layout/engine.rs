@@ -1,1 +1,477 @@
+use std::{collections::HashMap, fmt, sync::Arc};
 
+use makepad_widgets::{dvec2, Rect};
+use waml_syntax::{MarkdownSyntaxUpdate, SourceText, TextRange, TextSize};
+
+use crate::{document::MarkdownDocumentSnapshot, selection::TextPosition};
+
+use super::{
+    Affinity, BlockGeometry, GeometryElementId, GlyphCluster, LayoutBlock, LayoutDocument,
+    LayoutElementId, LayoutError, LayoutSnapshot, LayoutTextRun, VisualLine,
+};
+use crate::layout::geometry::CaretStop;
+
+pub trait TextShaper {
+    fn shape(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+        max_width: f64,
+    ) -> Result<ShapedRun, LayoutError>;
+}
+
+#[derive(Clone, Debug)]
+pub struct ShapedRun {
+    pub clusters: Arc<[ShapedCluster]>,
+    pub ascender: f64,
+    pub descender: f64,
+    pub line_gap: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapedCluster {
+    pub source_range: TextRange,
+    pub advance: f64,
+    pub bidi_level: u8,
+    pub caret_offsets: Arc<[TextSize]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayoutViewport {
+    pub width: f64,
+    pub height: f64,
+    pub scroll_y: f64,
+    pub overscan: f64,
+}
+
+impl LayoutViewport {
+    pub fn new(width: f64, height: f64, scroll_y: f64, overscan: f64) -> Self {
+        Self {
+            width,
+            height,
+            scroll_y,
+            overscan,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum LayoutInvalidation {
+    Document,
+    SyntaxUpdate(MarkdownSyntaxUpdate),
+    ViewportWidth,
+    BlockMeasurement(LayoutElementId),
+}
+
+impl fmt::Debug for LayoutInvalidation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Document => formatter.write_str("Document"),
+            Self::SyntaxUpdate(_) => formatter.write_str("SyntaxUpdate(..)"),
+            Self::ViewportWidth => formatter.write_str("ViewportWidth"),
+            Self::BlockMeasurement(id) => {
+                formatter.debug_tuple("BlockMeasurement").field(id).finish()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BlockSummary {
+    pub id: LayoutElementId,
+    pub source_range: TextRange,
+    pub parent: Option<LayoutElementId>,
+    pub flow_fingerprint: u64,
+    pub y: f64,
+    pub height: f64,
+    pub width_key: u64,
+    pub content_fingerprint: u64,
+}
+
+#[derive(Default)]
+pub struct LayoutEngine {
+    summaries: HashMap<LayoutElementId, BlockSummary>,
+}
+
+impl LayoutEngine {
+    pub fn layout<S: TextShaper>(
+        &mut self,
+        document: &LayoutDocument,
+        presentation: &MarkdownDocumentSnapshot,
+        viewport: LayoutViewport,
+        invalidation: LayoutInvalidation,
+        shaper: &mut S,
+    ) -> Result<LayoutSnapshot, LayoutError> {
+        if document.revision != presentation.revision() {
+            return Err(LayoutError::RevisionMismatch {
+                document: presentation.revision(),
+                layout: document.revision,
+            });
+        }
+
+        let width_key = viewport.width.to_bits();
+        let mut summaries = Vec::with_capacity(document.blocks.len());
+        let mut y = document.content_insets.top;
+        for (index, block) in document.blocks.iter().enumerate() {
+            y += block.spec.space_before + block.spec.insets.top;
+            let cached = self.summaries.get(&block.id);
+            let invalidated = block_is_invalidated(&invalidation, block, index);
+            let height = if !invalidated && cached.is_some_and(|old| old.width_key == width_key) {
+                cached.map_or(20.0, |old| old.height)
+            } else {
+                estimated_height(block, document)
+            };
+            summaries.push(BlockSummary {
+                id: block.id,
+                source_range: block.source_range,
+                parent: block.parent,
+                flow_fingerprint: flow_fingerprint(block),
+                y,
+                height,
+                width_key,
+                content_fingerprint: content_fingerprint(block),
+            });
+            y += height + block.spec.insets.bottom + block.spec.space_after;
+        }
+
+        let visible_min = (viewport.scroll_y - viewport.overscan).max(0.0);
+        let visible_max = viewport.scroll_y + viewport.height + viewport.overscan;
+        let visible_indices: Vec<_> = summaries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, summary)| {
+                (summary.y + summary.height >= visible_min && summary.y <= visible_max)
+                    .then_some(index)
+            })
+            .collect();
+
+        let mut visual_lines = Vec::new();
+        let mut clusters = Vec::new();
+        let mut blocks = Vec::new();
+        for index in visible_indices.iter().copied() {
+            let block = &document.blocks[index];
+            let available_width = (viewport.width
+                - document.content_insets.left
+                - document.content_insets.right
+                - block.spec.insets.left
+                - block.spec.insets.right)
+                .max(1.0);
+            let output = layout_block(
+                block,
+                document,
+                presentation,
+                summaries[index].y,
+                available_width,
+                shaper,
+            );
+            match output {
+                Ok(output) => {
+                    let delta = output.height - summaries[index].height;
+                    summaries[index].height = output.height;
+                    if delta != 0.0 {
+                        for downstream in summaries.iter_mut().skip(index + 1) {
+                            downstream.y += delta;
+                        }
+                    }
+                    visual_lines.extend(output.lines);
+                    clusters.extend(output.clusters);
+                    blocks.push(BlockGeometry::new(
+                        block.id,
+                        block.source_range,
+                        Rect {
+                            pos: dvec2(document.content_insets.left, summaries[index].y),
+                            size: dvec2(available_width, output.height),
+                        },
+                    ));
+                }
+                Err(_) => {
+                    let output =
+                        fallback_block(block, presentation, summaries[index].y, available_width);
+                    let delta = output.height - summaries[index].height;
+                    summaries[index].height = output.height;
+                    if delta != 0.0 {
+                        for downstream in summaries.iter_mut().skip(index + 1) {
+                            downstream.y += delta;
+                        }
+                    }
+                    visual_lines.extend(output.lines);
+                    clusters.extend(output.clusters);
+                    blocks.push(BlockGeometry::fallback(
+                        block.id,
+                        block.source_range,
+                        Rect {
+                            pos: dvec2(document.content_insets.left, summaries[index].y),
+                            size: dvec2(available_width, output.height),
+                        },
+                    ));
+                }
+            }
+        }
+
+        let mut content_y = document.content_insets.top;
+        for (block, summary) in document.blocks.iter().zip(&mut summaries) {
+            content_y += block.spec.space_before + block.spec.insets.top;
+            summary.y = content_y;
+            content_y += summary.height + block.spec.insets.bottom + block.spec.space_after;
+            self.summaries.insert(block.id, summary.clone());
+        }
+        content_y += document.content_insets.bottom;
+
+        let visible_source_range = visual_lines
+            .first()
+            .zip(visual_lines.last())
+            .and_then(|(first, last)| {
+                TextRange::new(first.source_range.start(), last.source_range.end()).ok()
+            })
+            .unwrap_or_else(empty_range);
+        let visible_block_range = visible_indices
+            .first()
+            .zip(visible_indices.last())
+            .map_or(0..0, |(first, last)| *first..last + 1);
+
+        Ok(LayoutSnapshot::new(
+            document.revision,
+            viewport.width,
+            dvec2(viewport.width, content_y),
+            visual_lines.into(),
+            blocks.into(),
+            clusters.into(),
+            visible_source_range,
+            visible_block_range,
+            summaries.into(),
+        ))
+    }
+}
+
+struct BlockOutput {
+    lines: Vec<VisualLine>,
+    clusters: Vec<GlyphCluster>,
+    height: f64,
+}
+
+fn layout_block<S: TextShaper>(
+    block: &LayoutBlock,
+    document: &LayoutDocument,
+    presentation: &MarkdownDocumentSnapshot,
+    y: f64,
+    max_width: f64,
+    shaper: &mut S,
+) -> Result<BlockOutput, LayoutError> {
+    let runs: Vec<_> = document
+        .text_runs
+        .iter()
+        .filter(|run| run.id == block.id)
+        .collect();
+    let mut output = BlockOutput {
+        lines: Vec::new(),
+        clusters: Vec::new(),
+        height: 0.0,
+    };
+    for run in runs {
+        let shaped = shaper.shape(presentation.text(), run, max_width)?;
+        let run_y = y + output.height;
+        append_run(&mut output, run.id, &shaped, run_y, max_width);
+    }
+    if output.lines.is_empty() {
+        output.height = estimated_height(block, document);
+    }
+    Ok(output)
+}
+
+fn fallback_block(
+    block: &LayoutBlock,
+    presentation: &MarkdownDocumentSnapshot,
+    y: f64,
+    max_width: f64,
+) -> BlockOutput {
+    let text = presentation.text().slice(block.source_range).unwrap_or("");
+    let mut shaped = Vec::new();
+    for (relative, character) in text.char_indices() {
+        let start = block.source_range.start().to_usize() + relative;
+        let end = start + character.len_utf8();
+        shaped.push(ShapedCluster {
+            source_range: text_range(start, end),
+            advance: 8.0,
+            bidi_level: 0,
+            caret_offsets: Arc::from([text_size(start), text_size(end)]),
+        });
+    }
+    let run = ShapedRun {
+        clusters: shaped.into(),
+        ascender: 12.8,
+        descender: 3.2,
+        line_gap: 0.0,
+    };
+    let mut output = BlockOutput {
+        lines: Vec::new(),
+        clusters: Vec::new(),
+        height: 0.0,
+    };
+    append_run(&mut output, block.id, &run, y, max_width);
+    output
+}
+
+fn append_run(
+    output: &mut BlockOutput,
+    layout_id: LayoutElementId,
+    run: &ShapedRun,
+    start_y: f64,
+    max_width: f64,
+) {
+    let line_height = (run.ascender + run.descender.abs() + run.line_gap).max(1.0);
+    let mut line_clusters: Vec<(usize, &ShapedCluster, f64)> = Vec::new();
+    let mut x = 0.0;
+    let mut y = start_y;
+    let mut source_order: Vec<_> = run
+        .clusters
+        .iter()
+        .map(|cluster| cluster.source_range)
+        .collect();
+    source_order.sort_by_key(|range| range.start());
+    source_order.dedup();
+    for shaped in run.clusters.iter() {
+        let ordinal = source_order
+            .binary_search_by_key(&shaped.source_range.start(), |range| range.start())
+            .expect("a shaped cluster appears in source order");
+        if x > 0.0 && x + shaped.advance > max_width {
+            flush_line(output, layout_id, &line_clusters, y, line_height);
+            line_clusters.clear();
+            x = 0.0;
+            y += line_height;
+        }
+        line_clusters.push((ordinal, shaped, x));
+        x += shaped.advance;
+    }
+    if !line_clusters.is_empty() {
+        flush_line(output, layout_id, &line_clusters, y, line_height);
+        y += line_height;
+    }
+    output.height = output.lines.iter().map(VisualLine::height).sum();
+}
+
+fn flush_line(
+    output: &mut BlockOutput,
+    layout_id: LayoutElementId,
+    line_clusters: &[(usize, &ShapedCluster, f64)],
+    y: f64,
+    height: f64,
+) {
+    let Some((_, _, _)) = line_clusters.first() else {
+        return;
+    };
+    let source_start = line_clusters
+        .iter()
+        .map(|(_, cluster, _)| cluster.source_range.start())
+        .min()
+        .expect("a line has a first source boundary");
+    let source_end = line_clusters
+        .iter()
+        .map(|(_, cluster, _)| cluster.source_range.end())
+        .max()
+        .expect("a line has a last source boundary");
+    let width = line_clusters
+        .last()
+        .map_or(0.0, |(_, cluster, x)| x + cluster.advance);
+    output.lines.push(VisualLine::new(
+        TextRange::new(source_start, source_end).expect("shaped clusters remain source ordered"),
+        Rect {
+            pos: dvec2(0.0, y),
+            size: dvec2(width, height),
+        },
+    ));
+    for (ordinal, shaped, x) in line_clusters {
+        let stops = shaped
+            .caret_offsets
+            .iter()
+            .enumerate()
+            .map(|(index, offset)| {
+                let fraction = if shaped.caret_offsets.len() <= 1 {
+                    0.0
+                } else {
+                    index as f64 / (shaped.caret_offsets.len() - 1) as f64
+                };
+                CaretStop::new(
+                    TextPosition::new(
+                        *offset,
+                        if index == 0 {
+                            Affinity::Before
+                        } else {
+                            Affinity::After
+                        },
+                    ),
+                    dvec2(x + shaped.advance * fraction, y),
+                )
+            })
+            .collect::<Vec<_>>();
+        output.clusters.push(GlyphCluster::new(
+            GeometryElementId {
+                layout: layout_id,
+                cluster_ordinal: *ordinal as u32,
+            },
+            shaped.source_range,
+            Rect {
+                pos: dvec2(*x, y),
+                size: dvec2(shaped.advance, height),
+            },
+            stops.into(),
+        ));
+    }
+}
+
+fn estimated_height(block: &LayoutBlock, document: &LayoutDocument) -> f64 {
+    let text_height = document
+        .text_runs
+        .iter()
+        .filter(|run| run.id == block.id)
+        .map(|run| run.metrics.font_size as f64)
+        .fold(20.0, f64::max);
+    document
+        .embedded_blocks
+        .iter()
+        .filter(|embedded| embedded.id == block.id)
+        .map(|embedded| embedded.size.y)
+        .fold(text_height, f64::max)
+}
+
+fn block_is_invalidated(
+    invalidation: &LayoutInvalidation,
+    block: &LayoutBlock,
+    _index: usize,
+) -> bool {
+    match invalidation {
+        LayoutInvalidation::Document | LayoutInvalidation::ViewportWidth => true,
+        LayoutInvalidation::BlockMeasurement(id) => *id == block.id,
+        LayoutInvalidation::SyntaxUpdate(update) => update
+            .affected_ranges
+            .iter()
+            .any(|range| ranges_intersect(*range, block.source_range)),
+    }
+}
+
+fn ranges_intersect(left: TextRange, right: TextRange) -> bool {
+    left.start() < right.end() && right.start() < left.end()
+}
+
+fn flow_fingerprint(block: &LayoutBlock) -> u64 {
+    block.spec.space_before.to_bits()
+        ^ block.spec.space_after.to_bits().rotate_left(7)
+        ^ block.spec.insets.left.to_bits().rotate_left(13)
+        ^ block.spec.insets.right.to_bits().rotate_left(19)
+}
+
+fn content_fingerprint(block: &LayoutBlock) -> u64 {
+    ((block.source_range.start().to_usize() as u64) << 32)
+        ^ block.source_range.end().to_usize() as u64
+}
+
+fn empty_range() -> TextRange {
+    TextRange::new(TextSize::new(0), TextSize::new(0)).expect("zero range is ordered")
+}
+
+fn text_size(value: usize) -> TextSize {
+    TextSize::try_from_usize(value).expect("source offsets fit TextSize")
+}
+
+fn text_range(start: usize, end: usize) -> TextRange {
+    TextRange::new(text_size(start), text_size(end)).expect("source range is ordered")
+}

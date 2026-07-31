@@ -14,3 +14,16 @@
 - RED: `layout_geometry` failed with unresolved Task 7 geometry imports.
 - GREEN: geometry queries, preferred-pixel session motion, reset behavior, and revision rejection pass.
 - Verification: `layout_geometry` 5 passed, `unicode_ime` 8 passed, full crate 31 passed.
+
+## Task 7 approval
+
+- Approved at commit `e0549f4b`.
+- No Task 7 follow-up remains open.
+
+## Task 8 start
+
+- Started from base `e0549f4b`.
+- Scope: shaping, wrapping, fallback, incremental summaries, and viewport virtualization only.
+- RED: `layout_geometry` failed with unresolved Task 8 layout-engine imports.
+- GREEN: mixed-metric wrapping, viewport virtualization, width-only rewrap, and editable fallback pass.
+- Verification: `layout_geometry` 9 passed, `unicode_ime` 8 passed, full crate 35 passed.

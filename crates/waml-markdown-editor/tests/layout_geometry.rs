@@ -1,9 +1,12 @@
 use makepad_widgets::{dvec2, Rect};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     layout::{
-        Affinity, BlockGeometry, CaretStop, GlyphCluster, LayoutError, LayoutSnapshot, VisualLine,
+        Affinity, BlockFlow, BlockGeometry, BlockLayoutSpec, CaretStop, EdgeInsets, FontKey,
+        FontWeight, GlyphCluster, LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine,
+        LayoutError, LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport,
+        ShapedCluster, ShapedRun, TextMetrics, TextShaper, VisualLine,
     },
     selection::{Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
@@ -115,4 +118,224 @@ fn session_vertical_motion_rejects_a_stale_layout_revision() {
         Err(LayoutError::RevisionMismatch { document, layout })
             if document == DocumentRevision::new(1) && layout == DocumentRevision::INITIAL
     ));
+}
+
+#[test]
+fn mixed_metrics_wrap_without_a_cell_width() {
+    let (document, presentation, mut shaper) = fixtures::mixed_heading_and_body(80.0);
+    let mut engine = LayoutEngine::default();
+    let layout = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(80.0, 60.0, 0.0, 24.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(layout.visual_lines()[0].height(), 30.0);
+    assert_eq!(layout.visual_lines()[1].height(), 16.0);
+    assert!(layout.visual_lines().len() > 2);
+}
+
+#[test]
+fn viewport_shapes_only_visible_blocks_plus_overscan() {
+    let (document, presentation, mut shaper) = fixtures::one_hundred_blocks();
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 100.0, 800.0, 40.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert!(shaper.shaped_block_count() < 20);
+    assert_eq!(layout.block_summaries().len(), 100);
+    assert!(layout.content_size().y >= 2_000.0);
+}
+
+#[test]
+fn width_change_rewraps_without_changing_document_revision() {
+    let (document, presentation, mut shaper) = fixtures::paragraph();
+    let mut engine = LayoutEngine::default();
+    let wide = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let narrow = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(120.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::ViewportWidth,
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(wide.revision(), narrow.revision());
+    assert!(narrow.visual_lines().len() > wide.visual_lines().len());
+}
+
+#[test]
+fn failed_block_uses_editable_plain_text_fallback() {
+    let (document, presentation, mut shaper) = fixtures::failing_second_block();
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert!(layout.blocks()[1].is_plain_text_fallback());
+    let source = layout.blocks()[1].source_range();
+    assert_eq!(
+        layout.point_to_source(
+            layout
+                .source_to_point(TextPosition::new(source.start(), Affinity::Before))
+                .unwrap()
+                .rect
+                .pos
+        ),
+        TextPosition::new(source.start(), Affinity::Before)
+    );
+}
+
+#[derive(Default)]
+struct FakeShaper {
+    shaped: HashSet<LayoutElementId>,
+    fail_fragment: Option<u32>,
+}
+
+impl FakeShaper {
+    fn shaped_block_count(&self) -> usize {
+        self.shaped.len()
+    }
+}
+
+impl TextShaper for FakeShaper {
+    fn shape(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+        _max_width: f64,
+    ) -> Result<ShapedRun, LayoutError> {
+        self.shaped.insert(run.id);
+        if self.fail_fragment == Some(run.id.fragment_ordinal) {
+            return Err(LayoutError::ShapingFailed { run: run.id });
+        }
+        let text = source.slice(run.range).unwrap();
+        let mut clusters = Vec::new();
+        for (relative, character) in text.char_indices() {
+            let start = run.range.start().to_usize() + relative;
+            let end = start + character.len_utf8();
+            clusters.push(ShapedCluster {
+                source_range: range(start, end),
+                advance: run.metrics.font.0 as f64,
+                bidi_level: 0,
+                caret_offsets: Arc::from([t(start), t(end)]),
+            });
+        }
+        Ok(ShapedRun {
+            clusters: clusters.into(),
+            ascender: run.metrics.font_size as f64 * 0.8,
+            descender: run.metrics.font_size as f64 * 0.2,
+            line_gap: 0.0,
+        })
+    }
+}
+
+mod fixtures {
+    use super::*;
+
+    pub fn mixed_heading_and_body(
+        _width: f64,
+    ) -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        fixture(&[30.0, 16.0], &[4, 18], None)
+    }
+
+    pub fn one_hundred_blocks() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        fixture(&vec![20.0; 100], &vec![6; 100], None)
+    }
+
+    pub fn paragraph() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        fixture(&[16.0], &[60], None)
+    }
+
+    pub fn failing_second_block() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        fixture(&[16.0, 16.0], &[8, 8], Some(1))
+    }
+
+    fn fixture(
+        sizes: &[f32],
+        content_characters: &[usize],
+        fail_fragment: Option<u32>,
+    ) -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        let source = SourceText::new(
+            content_characters
+                .iter()
+                .map(|characters| format!("# {}\n", "x".repeat(*characters)))
+                .collect::<String>(),
+        )
+        .unwrap();
+        let syntax = parse_markdown(
+            DocumentRevision::new(8),
+            source,
+            MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        let headings: Vec<_> = syntax.queries().headings().cloned().collect();
+        let mut blocks = Vec::new();
+        let mut runs = Vec::new();
+        for (index, (heading, font_size)) in headings.iter().zip(sizes).enumerate() {
+            let id = LayoutElementId {
+                owner: heading.owner,
+                fragment_ordinal: index as u32,
+            };
+            blocks.push(LayoutBlock {
+                id,
+                source_range: heading.range,
+                parent: None,
+                spec: BlockLayoutSpec {
+                    flow: BlockFlow::Paragraph,
+                    insets: EdgeInsets::default(),
+                    space_before: 0.0,
+                    space_after: 4.0,
+                    columns: Arc::from([]),
+                },
+            });
+            runs.push(LayoutTextRun {
+                id,
+                range: heading.content_range,
+                metrics: TextMetrics {
+                    font: FontKey(if *font_size == 30.0 { 12 } else { 8 }),
+                    font_size: *font_size,
+                    line_spacing: 0.0,
+                    weight: FontWeight(400),
+                    italic: false,
+                },
+            });
+        }
+        let presentation = Arc::new(MarkdownDocumentSnapshot::new(syntax));
+        (
+            LayoutDocument {
+                revision: presentation.revision(),
+                content_insets: EdgeInsets::default(),
+                blocks: blocks.into(),
+                text_runs: runs.into(),
+                embedded_blocks: Arc::from([]),
+            },
+            presentation,
+            FakeShaper {
+                shaped: HashSet::new(),
+                fail_fragment,
+            },
+        )
+    }
 }
