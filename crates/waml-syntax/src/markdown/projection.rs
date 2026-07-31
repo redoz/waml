@@ -49,7 +49,10 @@ pub(crate) fn from_tree(
     tree: &SyntaxTree<OkfMarkdownLanguage>,
     source: &str,
 ) -> Result<MarkdownStructureMap, ParseError> {
-    let mut result = Collector::default();
+    let mut result = Collector {
+        collect_headings: tree.dialect().waml_sections(),
+        ..Collector::default()
+    };
     visit(&tree.root(), 0, source, &mut result)?;
     result.headings.sort_by_key(|heading| heading.range.start());
     result
@@ -80,6 +83,7 @@ pub(crate) fn from_tree(
 
 #[derive(Default)]
 struct Collector {
+    collect_headings: bool,
     headings: Vec<ConfirmedHeading>,
     nested_headings: Vec<ConfirmedHeading>,
     protected: Vec<TextRange>,
@@ -111,7 +115,10 @@ fn visit(
     if kind == Kind::IndentedCodeBlock && container_depth == 0 {
         collect_tab_indented_items(source, node.range(), &mut out.tab_indented_item_lines)?;
     }
-    if container_depth == 0 && matches!(kind, Kind::AtxHeading | Kind::SetextHeading) {
+    if out.collect_headings
+        && container_depth == 0
+        && matches!(kind, Kind::AtxHeading | Kind::SetextHeading)
+    {
         let heading = heading(source, node.range())?;
         if heading.level <= 2 {
             out.headings.push(heading);

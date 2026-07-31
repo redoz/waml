@@ -641,8 +641,8 @@ pub fn reparse_okf_markdown(
     Ok(reparse_okf_markdown_with_structure(previous, new_text, changes)?.0)
 }
 
-/// Like [`reparse_okf_markdown`], while retaining the one candidate structure
-/// map used for the synchronization proof and parser call.
+/// Like [`reparse_okf_markdown`], while returning the public structure derived
+/// from the completed tree. A separate internal map drives synchronization.
 #[doc(hidden)]
 pub fn reparse_okf_markdown_with_structure(
     previous: &SyntaxTree<OkfMarkdownLanguage>,
@@ -663,12 +663,13 @@ pub fn reparse_okf_markdown_with_structure(
             dialect,
             new_structure.clone(),
         )?;
+        let public_structure = parsed.structure.clone();
         return Ok((
             ReparseOutcome::Full {
                 tree: parsed.tree,
                 reason: FullReparseReason::UnsafeSynchronization,
             },
-            new_structure,
+            public_structure,
         ));
     };
     let map = match ChangeMap::checked(&old, changes) {
@@ -679,12 +680,13 @@ pub fn reparse_okf_markdown_with_structure(
                 dialect,
                 new_structure.clone(),
             )?;
+            let public_structure = parsed.structure.clone();
             return Ok((
                 ReparseOutcome::Full {
                     tree: parsed.tree,
                     reason,
                 },
-                new_structure,
+                public_structure,
             ));
         }
     };
@@ -726,18 +728,20 @@ pub fn reparse_okf_markdown_with_structure(
                 };
                 (root, rebased.shared_source_independent_green)
             };
+        let tree = Arc::new(SyntaxTree::new(
+            root,
+            Arc::from(previous.diagnostics()),
+            dialect,
+        ));
+        let public_structure = Arc::new(crate::markdown::from_tree(&tree, new_text.shared())?);
         return Ok((
             ReparseOutcome::Incremental {
-                tree: Arc::new(SyntaxTree::new(
-                    root,
-                    Arc::from(previous.diagnostics()),
-                    dialect,
-                )),
+                tree,
                 shared_source_independent_green,
                 reparsed_range: TextRange::new(TextSize::try_from_usize(0).unwrap(), old.len())
                     .unwrap(),
             },
-            new_structure,
+            public_structure,
         ));
     }
     let old_structure = Arc::new(crate::markdown::map(&old, dialect)?);
@@ -747,14 +751,26 @@ pub fn reparse_okf_markdown_with_structure(
             dialect,
             new_structure.clone(),
         )?;
+        let public_structure = parsed.structure.clone();
         Ok((
             ReparseOutcome::Full {
                 tree: parsed.tree,
                 reason,
             },
-            new_structure.clone(),
+            public_structure,
         ))
     };
+    if dialect.waml_sections()
+        && new_structure
+            .headings
+            .iter()
+            .chain(new_structure.nested_headings.iter())
+            .any(|heading| {
+                crate::markdown::waml_kind(new_text.shared(), heading.text_range).is_some()
+            })
+    {
+        return full(FullReparseReason::UnsafeSynchronization);
+    }
     let old_frontmatter = crate::shell::frontmatter_range(&old, &old_structure)?;
     let new_frontmatter = crate::shell::frontmatter_range(&new_text, &new_structure)?;
     if !same_optional_range(old_frontmatter, new_frontmatter, &map)
@@ -842,17 +858,19 @@ pub fn reparse_okf_markdown_with_structure(
     };
     let shared_source_independent_green =
         count_shared_source_independent_greens(previous.root_green(), &root);
+    let tree = Arc::new(SyntaxTree::new(
+        root,
+        Arc::from(candidate.diagnostics()),
+        dialect,
+    ));
+    let public_structure = Arc::new(crate::markdown::from_tree(&tree, new_text.shared())?);
     Ok((
         ReparseOutcome::Incremental {
-            tree: Arc::new(SyntaxTree::new(
-                root,
-                Arc::from(candidate.diagnostics()),
-                dialect,
-            )),
+            tree,
             shared_source_independent_green,
             reparsed_range: new_range,
         },
-        new_structure,
+        public_structure,
     ))
 }
 

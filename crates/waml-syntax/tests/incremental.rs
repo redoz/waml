@@ -9,6 +9,51 @@ use waml_syntax::{
     TextChange, TextRange, TextSize,
 };
 
+#[test]
+fn incremental_structure_is_derived_from_the_rebuilt_waml_tree() {
+    let previous_source = "# Document\n## Attributes\none\n";
+    let next_source = "# Document\n## Attributes\ntwo\n";
+    let previous =
+        parse_okf_markdown(text(previous_source), MarkdownDialect::WAML_DEFAULT).unwrap();
+    let start = previous_source.find("one").unwrap();
+    let (outcome, structure) = reparse_okf_markdown_with_structure(
+        &previous.tree,
+        text(next_source),
+        &[TextChange {
+            old_range: range(start, start + "one".len()),
+            replacement: Arc::from("two"),
+        }],
+    )
+    .unwrap();
+    let tree = match outcome {
+        ReparseOutcome::Incremental { tree, .. } | ReparseOutcome::Full { tree, .. } => tree,
+    };
+    let section = tree
+        .root()
+        .children()
+        .find_map(|child| match child {
+            SyntaxElement::Node(node) if node.kind() == OkfMarkdownSyntaxKind::WamlSection => {
+                Some(node)
+            }
+            _ => None,
+        })
+        .expect("rebuilt tree keeps the WAML section wrapper");
+    let owner = section
+        .syntax_annotations()
+        .iter()
+        .find(|annotation| annotation.kind() == "waml.markdown.identity")
+        .and_then(|annotation| annotation.data())
+        .unwrap();
+
+    assert_eq!(structure.islands.len(), 1);
+    assert_eq!(structure.islands[0].owner.get().to_string(), owner);
+    assert_eq!(structure.islands[0].heading_range, range(11, 25));
+    assert_eq!(
+        structure.islands[0].content_range,
+        range(25, next_source.len())
+    );
+}
+
 fn incremental_outcome(
     previous: &str,
     next: &str,

@@ -36,7 +36,7 @@ fn range(start: usize, end: usize) -> TextRange {
 
 #[test]
 fn waml_extensions_keep_initial_frontmatter_and_mark_only_top_level_sections() {
-    let source = "\u{feff}---\ntype: uml.Class\ntitle: Example\n---\n# Class\n## Attributes\n- field\n### Details\ntext\n## Values\nvalue\n\n---\n\n> ## Slots\n\n```waml\n## Relationships\n```\n\n<div>\n## Members\n</div>\n\n## Layout\nlayout\n## Nodes\nnodes\n## Lifelines\nlifelines\n## Messages\nmessages\n";
+    let source = "\u{feff}---\ntype: uml.Class\ntitle: Example\n---\n# Class\n## Attributes\n- field\n### Details\ntext\n## Values\nvalue\n\n---\n\n> ## Slots\n\n- ## Relationships\n\n```waml\n## Relationships\n```\n\n<div>\n## Members\n</div>\n\n## Notes\nnot a WAML section\n## Layout\nlayout\n## Nodes\nnodes\n## Lifelines\nlifelines\n## Messages\nmessages\n";
     let parsed = parse(source);
 
     assert_eq!(parsed.tree.write_to_string(), source);
@@ -47,7 +47,7 @@ fn waml_extensions_keep_initial_frontmatter_and_mark_only_top_level_sections() {
             .collect::<Vec<_>>(),
         [
             source.find("## Attributes").unwrap()..source.find("## Values").unwrap(),
-            source.find("## Values").unwrap()..source.find("## Layout").unwrap(),
+            source.find("## Values").unwrap()..source.find("## Notes").unwrap(),
             source.find("## Layout").unwrap()..source.find("## Nodes").unwrap(),
             source.find("## Nodes").unwrap()..source.find("## Lifelines").unwrap(),
             source.find("## Lifelines").unwrap()..source.find("## Messages").unwrap(),

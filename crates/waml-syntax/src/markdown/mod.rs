@@ -10,7 +10,7 @@ pub use gfm::{HtmlTagFilter, TableAlignment, TaskListState};
 pub use kind::{
     OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity,
 };
-pub(crate) use projection::from_tree;
+pub(crate) use projection::{from_tree, waml_kind};
 pub use projection::{ConfirmedHeading, MarkdownStructureMap, WamlLanguageIsland, WamlSectionKind};
 pub use snapshot::{
     parse_markdown, reparse_markdown, MarkdownEntity, MarkdownLink, MarkdownLinkKind,

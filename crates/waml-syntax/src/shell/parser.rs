@@ -646,14 +646,16 @@ mod tests {
     }
 
     #[test]
-    fn supplied_structure_arc_is_installed_without_recomputation() {
-        let text = source("# Class\n");
+    fn supplied_structure_is_only_an_internal_synchronization_map() {
+        let text = source("# Class\n## Attributes\nvalue\n");
         let structure =
             Arc::new(crate::markdown::map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
         let parsed =
             parse_with_structure(text, MarkdownDialect::WAML_DEFAULT, structure.clone()).unwrap();
 
-        assert!(Arc::ptr_eq(&parsed.structure, &structure));
+        assert!(!Arc::ptr_eq(&parsed.structure, &structure));
+        assert!(structure.islands.is_empty());
+        assert_eq!(parsed.structure.islands.len(), 1);
     }
 
     #[test]
