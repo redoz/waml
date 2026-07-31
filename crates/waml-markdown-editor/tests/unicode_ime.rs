@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
-    edit::{EditCommand, HistoryGroup},
+    edit::{EditCommand, HistoryGroup, MarkdownEditError},
     selection::{Affinity, Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
     unicode::{offset_to_utf16, utf16_to_offset, Utf16Position},
@@ -12,13 +12,12 @@ use waml_syntax::{
 };
 
 fn session(text: &str) -> MarkdownDocumentSession {
+    session_at_revision(text, DocumentRevision::INITIAL)
+}
+
+fn session_at_revision(text: &str, revision: DocumentRevision) -> MarkdownDocumentSession {
     let source = SourceText::from_shared(Arc::new(text.to_owned())).unwrap();
-    let syntax = parse_markdown(
-        DocumentRevision::INITIAL,
-        source,
-        MarkdownDialect::WAML_DEFAULT,
-    )
-    .unwrap();
+    let syntax = parse_markdown(revision, source, MarkdownDialect::WAML_DEFAULT).unwrap();
     MarkdownDocumentSession::new(Arc::new(MarkdownDocumentSnapshot::new(syntax)))
 }
 
@@ -160,4 +159,24 @@ fn ime_cancel_restores_the_last_committed_snapshot_and_selection() {
     assert!(Arc::ptr_eq(session.snapshot(), &committed));
     assert_eq!(session.selections(), &selection);
     assert!(session.ime().is_none());
+}
+
+#[test]
+fn ime_commit_revision_overflow_does_not_panic_or_discard_composition() {
+    let mut session = session_at_revision("ab", DocumentRevision::new(u64::MAX));
+    session
+        .set_primary_offset(TextSize::try_from_usize(1).unwrap())
+        .unwrap();
+    session.begin_ime().unwrap();
+    session.update_ime("に", 0..1).unwrap();
+
+    let error = session.commit_ime(HistoryGroup::isolated()).unwrap_err();
+
+    assert!(matches!(
+        error,
+        MarkdownEditError::RevisionOverflow { current }
+            if current == DocumentRevision::new(u64::MAX)
+    ));
+    assert_eq!(session.ime().unwrap().preedit(), "に");
+    assert_eq!(session.local_revision(), DocumentRevision::new(u64::MAX));
 }

@@ -31,3 +31,17 @@ The test counts are higher than the brief because Task 5 added an affinity regre
 ## Commit
 
 `feat: add markdown IME composition`
+
+## Review fix: typed commit failures
+
+Review found that `commit_ime` panicked when the current revision was `u64::MAX` and used `expect` for other fallible commit work.
+
+- Added a regression that reproduced the revision-overflow panic.
+- Changed `commit_ime` to return `MarkdownEditError`, consistent with normal committed edits.
+- Added `MarkdownEditError::Ime` for composition lifecycle errors.
+- Replaced fallible commit `expect` calls with typed error propagation.
+- Kept the active composition and committed snapshot unchanged when commit fails.
+- Verified `unicode_ime`: 8 passed.
+- Verified `document_ops`: 16 passed.
+- Verified the full crate: 26 passed.
+- Verified `git diff --check`: passed.

@@ -121,44 +121,47 @@ impl MarkdownDocumentSession {
     pub fn commit_ime(
         &mut self,
         group: HistoryGroup,
-    ) -> Result<Option<ProposedMarkdownEdit>, ImeError> {
+    ) -> Result<Option<ProposedMarkdownEdit>, MarkdownEditError> {
         if self.read_only {
-            return Err(ImeError::ReadOnly);
+            return Err(ImeError::ReadOnly.into());
         }
         let current = self.snapshot.revision();
-        let composition = self.ime.take().ok_or(ImeError::NotActive)?;
+        let composition = self.ime.as_ref().ok_or(ImeError::NotActive)?;
         if composition.base_revision() != current {
-            let base = composition.base_revision();
-            self.ime = Some(composition);
-            return Err(ImeError::StaleRevision { base, current });
+            return Err(ImeError::StaleRevision {
+                base: composition.base_revision(),
+                current,
+            }
+            .into());
         }
         if composition.preedit().is_empty() {
-            self.restore_composition(composition);
+            if let Some(composition) = self.ime.take() {
+                self.restore_composition(composition);
+            }
             return Ok(None);
         }
 
+        let next = current
+            .checked_next()
+            .ok_or(MarkdownEditError::RevisionOverflow { current })?;
         let replacement: Arc<str> = Arc::from(composition.preedit());
         let change = TextChange {
             old_range: composition.replace_range(),
             replacement: replacement.clone(),
         };
-        let next = current.checked_next().expect("an IME revision can advance");
-        let after_text = apply_changes(self.snapshot.text(), std::slice::from_ref(&change))
-            .expect("a captured IME replacement range remains valid");
+        let after_text = apply_changes(self.snapshot.text(), std::slice::from_ref(&change))?;
         let caret = TextSize::try_from_usize(
             composition.replace_range().start().to_usize() + replacement.len(),
-        )
-        .expect("an IME caret fits the source size");
-        let selection_after = SelectionSet::caret_in_text(next, &after_text, caret)
-            .expect("an IME replacement produces a valid caret");
-        let proposal = self
-            .apply_with_history(MarkdownEdit {
-                base_revision: current,
-                changes: vec![change],
-                selection_after,
-                history_group: group,
-            })
-            .expect("a validated IME edit applies to its captured revision");
+        )?;
+        let selection_after =
+            SelectionSet::caret_in_text(next, &after_text, caret).map_err(map_selection_error)?;
+        let proposal = self.apply_with_history(MarkdownEdit {
+            base_revision: current,
+            changes: vec![change],
+            selection_after,
+            history_group: group,
+        })?;
+        self.ime = None;
         Ok(Some(proposal))
     }
 

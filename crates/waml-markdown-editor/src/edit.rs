@@ -1,6 +1,6 @@
 use std::{error::Error, fmt, sync::Arc};
 
-use crate::{document::MarkdownDocumentSnapshot, selection::SelectionSet};
+use crate::{document::MarkdownDocumentSnapshot, ime::ImeError, selection::SelectionSet};
 use waml_syntax::{
     DocumentRevision, FullReparseReason, MarkdownSyntaxUpdate, ParseError, TextChange, TextError,
     TextSize,
@@ -85,6 +85,7 @@ pub enum MarkdownEditError {
     RevisionOverflow {
         current: DocumentRevision,
     },
+    Ime(ImeError),
 }
 
 impl fmt::Display for MarkdownEditError {
@@ -116,6 +117,7 @@ impl fmt::Display for MarkdownEditError {
             Self::RevisionOverflow { current } => {
                 write!(f, "revision {} cannot advance", current.get())
             }
+            Self::Ime(error) => write!(f, "IME error: {error:?}"),
         }
     }
 }
@@ -139,5 +141,11 @@ impl From<TextError> for MarkdownEditError {
 impl From<ParseError> for MarkdownEditError {
     fn from(error: ParseError) -> Self {
         Self::Parse(error)
+    }
+}
+
+impl From<ImeError> for MarkdownEditError {
+    fn from(error: ImeError) -> Self {
+        Self::Ime(error)
     }
 }
