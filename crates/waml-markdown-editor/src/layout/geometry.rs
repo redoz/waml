@@ -130,7 +130,7 @@ pub struct BlockGeometry {
     pub id: LayoutElementId,
     pub source_range: TextRange,
     pub rect: Rect,
-    document_index: usize,
+    document_index: Option<usize>,
     plain_text_fallback: bool,
 }
 
@@ -162,7 +162,7 @@ impl BlockGeometry {
             id,
             source_range,
             rect,
-            document_index: usize::MAX,
+            document_index: None,
             plain_text_fallback: false,
         }
     }
@@ -172,7 +172,7 @@ impl BlockGeometry {
             id,
             source_range,
             rect,
-            document_index: usize::MAX,
+            document_index: None,
             plain_text_fallback: true,
         }
     }
@@ -182,12 +182,12 @@ impl BlockGeometry {
     }
 
     /// Exact index of this compact visible entry in `LayoutDocument::blocks`.
-    pub fn document_index(&self) -> usize {
+    pub fn document_index(&self) -> Option<usize> {
         self.document_index
     }
 
     pub(crate) fn set_document_index(&mut self, document_index: usize) {
-        self.document_index = document_index;
+        self.document_index = Some(document_index);
     }
 
     pub fn is_plain_text_fallback(&self) -> bool {
@@ -283,7 +283,7 @@ impl LayoutSnapshot {
     pub fn document_block_index(&self, local_index: usize) -> Option<usize> {
         self.blocks
             .get(local_index)
-            .map(BlockGeometry::document_index)
+            .and_then(BlockGeometry::document_index)
     }
 
     /// Deprecated compatibility alias for `visible_blocks`.

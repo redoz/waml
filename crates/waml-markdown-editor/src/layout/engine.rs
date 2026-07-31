@@ -29,6 +29,16 @@ pub trait TextShaper {
         max_width: f64,
     ) -> Result<ShapedRun, LayoutError>;
 
+    fn shape_inline(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+        full_width: f64,
+        _first_row_width: f64,
+    ) -> Result<ShapedRun, LayoutError> {
+        self.shape(source, run, full_width)
+    }
+
     fn min_content_width(
         &mut self,
         source: &SourceText,
@@ -756,6 +766,34 @@ struct BlockOutput {
     height: f64,
 }
 
+#[derive(Clone)]
+struct InlinePiece {
+    is_marker: bool,
+    run: LayoutTextRun,
+}
+
+#[derive(Clone)]
+struct PendingCluster {
+    ordinal: u32,
+    shaped: ShapedCluster,
+    metrics: TextMetrics,
+    ascender: f64,
+    descender: f64,
+    line_gap: f64,
+}
+
+struct InlineComposer {
+    layout_id: LayoutElementId,
+    start_x: f64,
+    start_y: f64,
+    max_width: f64,
+    y: f64,
+    line_width: f64,
+    line: Vec<PendingCluster>,
+    output: BlockOutput,
+    first_baseline: Option<f64>,
+}
+
 fn visible_indices(
     placements: &[BlockPlacement],
     visible_min: f64,
@@ -847,12 +885,9 @@ fn measure_block<S: TextShaper>(
 fn block_layout_data(
     block: &LayoutBlock,
     width: f64,
-    mut output: BlockOutput,
+    output: BlockOutput,
     fallback: bool,
 ) -> BlockLayoutData {
-    for (ordinal, cluster) in output.clusters.iter_mut().enumerate() {
-        cluster.id.cluster_ordinal = ordinal as u32;
-    }
     let rect = Rect {
         pos: dvec2(0.0, 0.0),
         size: dvec2(width, output.height),
@@ -922,43 +957,37 @@ fn layout_block<S: TextShaper>(
     max_width: f64,
     shaper: &mut S,
 ) -> Result<BlockOutput, LayoutError> {
-    let runs: Vec<_> = document
+    let runs = document
         .text_runs
         .iter()
         .filter(|run| run.id == block.id)
-        .collect();
+        .cloned()
+        .collect::<Vec<_>>();
     if let super::BlockFlow::Hanging {
         marker_range,
         content_indent,
     } = block.spec.flow
     {
-        let mut marker_output = BlockOutput {
-            lines: Vec::new(),
-            clusters: Vec::new(),
-            height: 0.0,
-        };
-        let mut content_output = BlockOutput {
-            lines: Vec::new(),
-            clusters: Vec::new(),
-            height: 0.0,
-        };
         let mut pieces = Vec::new();
         for run in runs {
-            let marker_start = run.range.start().max(marker_range.start());
-            let marker_end = run.range.end().min(marker_range.end());
-            if run.range.start() < marker_start {
-                pieces.push((
+            let before_end = run.range.end().min(marker_range.start());
+            if run.range.start() < before_end {
+                push_inline_piece(
+                    &mut pieces,
                     false,
                     LayoutTextRun {
                         id: run.id,
-                        range: TextRange::new(run.range.start(), marker_start)
-                            .expect("a hanging prefix stays ordered"),
+                        range: TextRange::new(run.range.start(), before_end)
+                            .expect("a hanging prefix stays inside its run"),
                         metrics: run.metrics,
                     },
-                ));
+                );
             }
+            let marker_start = run.range.start().max(marker_range.start());
+            let marker_end = run.range.end().min(marker_range.end());
             if marker_start < marker_end {
-                pieces.push((
+                push_inline_piece(
+                    &mut pieces,
                     true,
                     LayoutTextRun {
                         id: run.id,
@@ -966,51 +995,49 @@ fn layout_block<S: TextShaper>(
                             .expect("a hanging marker stays ordered"),
                         metrics: run.metrics,
                     },
-                ));
+                );
             }
-            let content_start = marker_end.max(run.range.start());
+            let content_start = run.range.start().max(marker_range.end());
             if content_start < run.range.end() {
-                pieces.push((
+                push_inline_piece(
+                    &mut pieces,
                     false,
                     LayoutTextRun {
                         id: run.id,
                         range: TextRange::new(content_start, run.range.end())
-                            .expect("hanging content stays ordered"),
+                            .expect("hanging content stays inside its run"),
                         metrics: run.metrics,
                     },
-                ));
+                );
             }
         }
-        let mut shaped_pieces = Vec::with_capacity(pieces.len());
-        for (is_marker, run) in pieces {
-            let run_width = if is_marker {
-                content_indent.max(1.0)
+
+        let marker_width = content_indent.max(1.0);
+        let content_width = (max_width - content_indent).max(1.0);
+        let mut marker = InlineComposer::new(block.id, x, y, marker_width);
+        let mut content = InlineComposer::new(block.id, x + content_indent, y, content_width);
+        let mut next_ordinal = 0;
+        for piece in pieces {
+            let composer = if piece.is_marker {
+                &mut marker
             } else {
-                (max_width - content_indent).max(1.0)
+                &mut content
             };
-            let shaped = shaper.shape(presentation.text(), &run, run_width)?;
-            shaped_pieces.push((is_marker, run, shaped, run_width));
+            let shaped = shaper.shape_inline(
+                presentation.text(),
+                &piece.run,
+                composer.max_width,
+                composer.remaining_width(),
+            )?;
+            composer.push_run(piece.run.metrics, shaped, &mut next_ordinal);
         }
-        let shared_ascender = shaped_pieces
-            .iter()
-            .map(|(_, _, shaped, _)| shaped.ascender)
-            .fold(0.0, f64::max);
-        for (is_marker, run, shaped, run_width) in shaped_pieces {
-            let (target, run_x) = if is_marker {
-                (&mut marker_output, x)
-            } else {
-                (&mut content_output, x + content_indent)
-            };
-            let run_y = y + shared_ascender - shaped.ascender;
-            append_run(
-                target,
-                run.id,
-                &run.metrics,
-                &shaped,
-                run_x,
-                run_y,
-                run_width,
-            );
+        let (mut marker_output, marker_baseline) = marker.finish();
+        let (mut content_output, content_baseline) = content.finish();
+        if let (Some(marker_baseline), Some(content_baseline)) = (marker_baseline, content_baseline)
+        {
+            let shared_baseline = marker_baseline.max(content_baseline);
+            shift_output_y(&mut marker_output, shared_baseline - marker_baseline);
+            shift_output_y(&mut content_output, shared_baseline - content_baseline);
         }
         return Ok(BlockOutput {
             height: marker_output.height.max(content_output.height),
@@ -1027,24 +1054,22 @@ fn layout_block<S: TextShaper>(
         });
     }
 
-    let mut output = BlockOutput {
-        lines: Vec::new(),
-        clusters: Vec::new(),
-        height: 0.0,
-    };
+    let mut coalesced = Vec::new();
     for run in runs {
-        let shaped = shaper.shape(presentation.text(), run, max_width)?;
-        let run_y = y + output.height;
-        append_run(
-            &mut output,
-            run.id,
-            &run.metrics,
-            &shaped,
-            x,
-            run_y,
-            max_width,
-        );
+        push_coalesced_run(&mut coalesced, run);
     }
+    let mut composer = InlineComposer::new(block.id, x, y, max_width);
+    let mut next_ordinal = 0;
+    for run in coalesced {
+        let shaped = shaper.shape_inline(
+            presentation.text(),
+            &run,
+            composer.max_width,
+            composer.remaining_width(),
+        )?;
+        composer.push_run(run.metrics, shaped, &mut next_ordinal);
+    }
+    let (mut output, _) = composer.finish();
     if output.lines.is_empty() {
         output.height = document
             .embedded_blocks
@@ -1054,6 +1079,69 @@ fn layout_block<S: TextShaper>(
             .fold(0.0, f64::max);
     }
     Ok(output)
+}
+
+fn push_coalesced_run(runs: &mut Vec<LayoutTextRun>, run: LayoutTextRun) {
+    if let Some(previous) = runs.last_mut() {
+        if previous.id == run.id
+            && previous.metrics == run.metrics
+            && previous.range.end() == run.range.start()
+        {
+            previous.range = TextRange::new(previous.range.start(), run.range.end())
+                .expect("coalesced inline runs stay ordered");
+            return;
+        }
+    }
+    runs.push(run);
+}
+
+fn push_inline_piece(pieces: &mut Vec<InlinePiece>, is_marker: bool, run: LayoutTextRun) {
+    if let Some(previous) = pieces.last_mut() {
+        if previous.is_marker == is_marker
+            && previous.run.id == run.id
+            && previous.run.metrics == run.metrics
+            && previous.run.range.end() == run.range.start()
+        {
+            previous.run.range = TextRange::new(previous.run.range.start(), run.range.end())
+                .expect("coalesced hanging runs stay ordered");
+            return;
+        }
+    }
+    pieces.push(InlinePiece { is_marker, run });
+}
+
+fn shift_output_y(output: &mut BlockOutput, delta: f64) {
+    if delta <= 0.0 {
+        return;
+    }
+    for line in &mut output.lines {
+        line.rect.pos.y += delta;
+    }
+    for cluster in &mut output.clusters {
+        cluster.rect.pos.y += delta;
+        cluster.caret_stops = cluster
+            .caret_stops
+            .iter()
+            .cloned()
+            .map(|mut stop| {
+                stop.point.y += delta;
+                stop
+            })
+            .collect::<Vec<_>>()
+            .into();
+        cluster.glyphs = cluster
+            .glyphs
+            .iter()
+            .cloned()
+            .map(|mut glyph| {
+                glyph.origin.y += delta;
+                glyph.baseline += delta;
+                glyph
+            })
+            .collect::<Vec<_>>()
+            .into();
+    }
+    output.height += delta;
 }
 
 fn fallback_block(
@@ -1099,108 +1187,122 @@ fn fallback_block(
         descender: 3.2,
         line_gap: 0.0,
     };
-    let mut output = BlockOutput {
-        lines: Vec::new(),
-        clusters: Vec::new(),
-        height: 0.0,
-    };
     let metrics = document_metrics(block, document);
-    append_run(&mut output, block.id, &metrics, &run, x, y, max_width);
-    output
+    let mut composer = InlineComposer::new(block.id, x, y, max_width);
+    let mut next_ordinal = 0;
+    composer.push_run(metrics, run, &mut next_ordinal);
+    composer.finish().0
 }
 
-fn append_run(
-    output: &mut BlockOutput,
-    layout_id: LayoutElementId,
-    metrics: &TextMetrics,
-    run: &ShapedRun,
-    start_x: f64,
-    start_y: f64,
-    max_width: f64,
-) {
-    let line_height = (run.ascender + run.descender.abs() + run.line_gap).max(1.0);
-    let mut line_clusters: Vec<(usize, &ShapedCluster, f64)> = Vec::new();
-    let mut x = 0.0;
-    let mut y = start_y;
-    let mut row_ordinal = None;
-    let mut source_order: Vec<_> = run
-        .clusters
-        .iter()
-        .map(|cluster| cluster.source_range)
-        .collect();
-    source_order.sort_by_key(|range| range.start());
-    source_order.dedup();
-    for shaped in run.clusters.iter() {
-        let ordinal = source_order
-            .binary_search_by_key(&shaped.source_range.start(), |range| range.start())
-            .expect("a shaped cluster appears in source order");
-        let starts_new_row = row_ordinal.is_some_and(|row| row != shaped.row_ordinal);
-        if !line_clusters.is_empty() && (starts_new_row || x + shaped.advance > max_width) {
-            flush_line(
-                output,
-                layout_id,
-                metrics,
-                &line_clusters,
-                start_x,
-                y,
-                line_height,
-            );
-            line_clusters.clear();
-            x = 0.0;
-            if starts_new_row {
-                y = start_y + shaped.row_top;
-            } else {
-                y += line_height;
-            }
-        }
-        row_ordinal = Some(shaped.row_ordinal);
-        line_clusters.push((ordinal, shaped, x));
-        x += shaped.advance;
-    }
-    if !line_clusters.is_empty() {
-        flush_line(
-            output,
+impl InlineComposer {
+    fn new(layout_id: LayoutElementId, start_x: f64, start_y: f64, max_width: f64) -> Self {
+        Self {
             layout_id,
-            metrics,
-            &line_clusters,
             start_x,
-            y,
-            line_height,
-        );
+            start_y,
+            max_width: max_width.max(1.0),
+            y: start_y,
+            line_width: 0.0,
+            line: Vec::new(),
+            output: BlockOutput {
+                lines: Vec::new(),
+                clusters: Vec::new(),
+                height: 0.0,
+            },
+            first_baseline: None,
+        }
     }
-    output.height = output
-        .lines
-        .iter()
-        .map(|line| line.rect.pos.y + line.height())
-        .fold(0.0, f64::max);
+
+    fn remaining_width(&self) -> f64 {
+        (self.max_width - self.line_width).max(1.0)
+    }
+
+    fn push_run(&mut self, metrics: TextMetrics, run: ShapedRun, next_ordinal: &mut u32) {
+        let span_start_y = self.y;
+        let mut row_ordinal = None;
+        for shaped in run.clusters.iter() {
+            let starts_new_row = row_ordinal.is_some_and(|row| row != shaped.row_ordinal);
+            if !self.line.is_empty()
+                && (starts_new_row || self.line_width + shaped.advance > self.max_width)
+            {
+                self.flush_line();
+                if starts_new_row {
+                    self.y = self.y.max(span_start_y + shaped.row_top);
+                }
+            }
+            row_ordinal = Some(shaped.row_ordinal);
+            self.line.push(PendingCluster {
+                ordinal: *next_ordinal,
+                shaped: shaped.clone(),
+                metrics,
+                ascender: run.ascender,
+                descender: run.descender,
+                line_gap: run.line_gap,
+            });
+            *next_ordinal = next_ordinal.saturating_add(1);
+            self.line_width += shaped.advance;
+        }
+    }
+
+    fn flush_line(&mut self) {
+        let Some(ascender) = flush_inline_line(
+            &mut self.output,
+            self.layout_id,
+            &self.line,
+            self.start_x,
+            self.y,
+        ) else {
+            return;
+        };
+        self.first_baseline.get_or_insert(self.y + ascender);
+        let height = self.output.lines.last().map_or(0.0, VisualLine::height);
+        self.y += height;
+        self.line.clear();
+        self.line_width = 0.0;
+    }
+
+    fn finish(mut self) -> (BlockOutput, Option<f64>) {
+        self.flush_line();
+        self.output.height = (self.y - self.start_y).max(0.0);
+        (self.output, self.first_baseline)
+    }
 }
 
-fn flush_line(
+fn flush_inline_line(
     output: &mut BlockOutput,
     layout_id: LayoutElementId,
-    metrics: &TextMetrics,
-    line_clusters: &[(usize, &ShapedCluster, f64)],
+    line_clusters: &[PendingCluster],
     start_x: f64,
     y: f64,
-    height: f64,
-) {
-    let Some((_, _, _)) = line_clusters.first() else {
-        return;
-    };
+) -> Option<f64> {
+    line_clusters.first()?;
     let source_start = line_clusters
         .iter()
-        .map(|(_, cluster, _)| cluster.source_range.start())
+        .map(|cluster| cluster.shaped.source_range.start())
         .min()
         .expect("a line has a first source boundary");
     let source_end = line_clusters
         .iter()
-        .map(|(_, cluster, _)| cluster.source_range.end())
+        .map(|cluster| cluster.shaped.source_range.end())
         .max()
         .expect("a line has a last source boundary");
     let width = line_clusters
         .iter()
-        .map(|(_, cluster, _)| cluster.advance)
+        .map(|cluster| cluster.shaped.advance)
         .sum();
+    let ascender = line_clusters
+        .iter()
+        .map(|cluster| cluster.ascender)
+        .fold(0.0, f64::max);
+    let descender = line_clusters
+        .iter()
+        .map(|cluster| cluster.descender.abs())
+        .fold(0.0, f64::max);
+    let line_gap = line_clusters
+        .iter()
+        .map(|cluster| cluster.line_gap)
+        .fold(0.0, f64::max);
+    let height = (ascender + descender + line_gap).max(1.0);
     output.lines.push(VisualLine::new(
         TextRange::new(source_start, source_end).expect("shaped clusters remain source ordered"),
         Rect {
@@ -1211,7 +1313,9 @@ fn flush_line(
     let mut visual_clusters = line_clusters.to_vec();
     reorder_by_bidi_level(&mut visual_clusters);
     let mut x = start_x;
-    for (ordinal, shaped, _) in visual_clusters {
+    for cluster in visual_clusters {
+        let shaped = &cluster.shaped;
+        let metric_y = y + ascender - cluster.ascender;
         let stops = shaped
             .caret_offsets
             .iter()
@@ -1234,7 +1338,7 @@ fn flush_line(
                             Affinity::After
                         },
                     ),
-                    dvec2(x + shaped.advance * fraction, y),
+                    dvec2(x + shaped.advance * fraction, metric_y),
                 )
             })
             .collect::<Vec<_>>();
@@ -1243,15 +1347,18 @@ fn flush_line(
             .iter()
             .cloned()
             .map(|mut glyph| {
-                glyph.origin = dvec2(x + glyph.origin.x, y + glyph.baseline + glyph.origin.y);
-                glyph.baseline += y;
+                glyph.origin = dvec2(
+                    x + glyph.origin.x,
+                    metric_y + glyph.baseline + glyph.origin.y,
+                );
+                glyph.baseline += metric_y;
                 glyph
             })
             .collect::<Vec<_>>();
         output.clusters.push(GlyphCluster::with_glyphs(
             GeometryElementId {
                 layout: layout_id,
-                cluster_ordinal: ordinal as u32,
+                cluster_ordinal: cluster.ordinal,
             },
             shaped.source_range,
             Rect {
@@ -1259,24 +1366,25 @@ fn flush_line(
                 size: dvec2(shaped.advance, height),
             },
             stops.into(),
-            *metrics,
+            cluster.metrics,
             glyphs.into(),
         ));
         x += shaped.advance;
     }
+    Some(ascender)
 }
 
-fn reorder_by_bidi_level(clusters: &mut [(usize, &ShapedCluster, f64)]) {
+fn reorder_by_bidi_level(clusters: &mut [PendingCluster]) {
     let Some(max_level) = clusters
         .iter()
-        .map(|(_, cluster, _)| cluster.bidi_level)
+        .map(|cluster| cluster.shaped.bidi_level)
         .max()
     else {
         return;
     };
     let Some(min_odd_level) = clusters
         .iter()
-        .map(|(_, cluster, _)| cluster.bidi_level)
+        .map(|cluster| cluster.shaped.bidi_level)
         .filter(|level| level % 2 == 1)
         .min()
     else {
@@ -1285,11 +1393,11 @@ fn reorder_by_bidi_level(clusters: &mut [(usize, &ShapedCluster, f64)]) {
     for level in (min_odd_level..=max_level).rev() {
         let mut start = 0;
         while start < clusters.len() {
-            while start < clusters.len() && clusters[start].1.bidi_level < level {
+            while start < clusters.len() && clusters[start].shaped.bidi_level < level {
                 start += 1;
             }
             let mut end = start;
-            while end < clusters.len() && clusters[end].1.bidi_level >= level {
+            while end < clusters.len() && clusters[end].shaped.bidi_level >= level {
                 end += 1;
             }
             clusters[start..end].reverse();

@@ -6,11 +6,11 @@ use std::{
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     layout::{
-        Affinity, BlockFlow, BlockGeometry, BlockLayoutSpec, CaretStop, ColumnAlignment,
-        ColumnConstraint, EdgeInsets, FontKey, FontWeight, GlyphCluster, LayoutBlock,
-        LayoutDocument, LayoutElementId, LayoutEngine, LayoutError, LayoutInvalidation,
-        LayoutSnapshot, LayoutTextRun, LayoutViewport, ShapedCluster, ShapedGlyph, ShapedRun,
-        TextMetrics, TextShaper, VisualLine,
+        Affinity, BlockFlow, BlockGeometry, BlockLayoutData, BlockLayoutSpec, CaretStop,
+        ColumnAlignment, ColumnConstraint, EdgeInsets, FontKey, FontWeight, GlyphCluster,
+        LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine, LayoutError,
+        LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport, ShapedCluster,
+        ShapedGlyph, ShapedRun, TextMetrics, TextShaper, VisualLine,
     },
     selection::{Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
@@ -26,6 +26,30 @@ fn t(n: usize) -> TextSize {
 
 fn range(start: usize, end: usize) -> TextRange {
     TextRange::new(t(start), t(end)).unwrap()
+}
+
+fn assert_send_sync<T: Send + Sync>() {}
+
+#[test]
+fn unpositioned_blocks_use_an_optional_document_index() {
+    let (document, _, _) = fixtures::paragraph();
+    let block = &document.blocks[0];
+    let geometry = BlockGeometry::new(
+        block.id,
+        block.source_range,
+        Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(100.0, 20.0),
+        },
+    );
+    let document_index: Option<usize> = geometry.document_index();
+    assert_eq!(document_index, None);
+}
+
+#[test]
+fn snapshots_and_retained_layout_payloads_are_send_sync() {
+    assert_send_sync::<LayoutSnapshot>();
+    assert_send_sync::<Arc<BlockLayoutData>>();
 }
 
 #[test]
@@ -293,10 +317,16 @@ fn default_overscan_owns_exact_320_pixel_boundaries() {
 
     assert_eq!(
         layout.visible_blocks().first().unwrap().document_index(),
-        28
+        Some(28)
     );
     assert_eq!(
-        layout.visible_blocks().last().unwrap().document_index() + 1,
+        layout
+            .visible_blocks()
+            .last()
+            .unwrap()
+            .document_index()
+            .unwrap()
+            + 1,
         60
     );
     assert_eq!(layout.visible_block_local_range(), 0..32);
@@ -478,8 +508,8 @@ fn content_extent_and_offscreen_virtualization_remain_document_wide() {
         .unwrap();
     assert_eq!(layout.block_summaries().len(), 100);
     assert!(layout.content_size().y >= 2_000.0);
-    assert!(layout.visible_blocks().first().unwrap().document_index() > 0);
-    assert!(layout.visible_blocks().last().unwrap().document_index() < 99);
+    assert!(layout.visible_blocks().first().unwrap().document_index() > Some(0));
+    assert!(layout.visible_blocks().last().unwrap().document_index() < Some(99));
     assert!(layout.visible_source_range().start() > t(0));
     assert!(layout.visible_blocks().len() < 20);
 }
@@ -499,8 +529,13 @@ fn scrolled_snapshot_separates_local_geometry_from_document_block_indexes() {
 
     let local_range = layout.visible_block_local_range();
     assert_eq!(local_range, 0..layout.visible_blocks().len());
-    let first_document_index = layout.visible_blocks()[0].document_index();
-    let last_document_index = layout.visible_blocks().last().unwrap().document_index();
+    let first_document_index = layout.visible_blocks()[0].document_index().unwrap();
+    let last_document_index = layout
+        .visible_blocks()
+        .last()
+        .unwrap()
+        .document_index()
+        .unwrap();
     assert!(first_document_index > 0);
     assert_eq!(
         layout.visible_blocks()[0].id,
@@ -545,7 +580,7 @@ fn sparse_nested_visible_blocks_carry_their_exact_document_indexes() {
     let document_indexes = layout
         .visible_blocks()
         .iter()
-        .map(BlockGeometry::document_index)
+        .map(|block| block.document_index().unwrap())
         .collect::<Vec<_>>();
     let consumer_slice = &layout.blocks()[layout.visible_block_range()];
     assert_eq!(consumer_slice, layout.visible_blocks());
@@ -557,10 +592,11 @@ fn sparse_nested_visible_blocks_carry_their_exact_document_indexes() {
         .windows(2)
         .any(|pair| pair[1] > pair[0] + 1));
     for (local_index, visible) in layout.visible_blocks().iter().enumerate() {
-        assert_eq!(document.blocks[visible.document_index()].id, visible.id);
+        let document_index = visible.document_index().unwrap();
+        assert_eq!(document.blocks[document_index].id, visible.id);
         assert_eq!(
             layout.document_block_index(local_index),
-            Some(visible.document_index())
+            Some(document_index)
         );
     }
 }
@@ -622,7 +658,10 @@ fn scrolled_visible_window_is_recomputed_after_an_earlier_block_wraps() {
     // The first block grows from its one-line estimate to six wrapped rows, so
     // the scrolled viewport is inside that block, not the initially estimated
     // fifth block.
-    assert_eq!(layout.visible_blocks().first().unwrap().document_index(), 0);
+    assert_eq!(
+        layout.visible_blocks().first().unwrap().document_index(),
+        Some(0)
+    );
     assert_eq!(
         layout.visible_source_range().start(),
         document.text_runs[0].range.start()
@@ -722,7 +761,7 @@ fn measurement_growth_and_shrink_converge_before_visible_selection() {
         .unwrap();
     assert_eq!(
         initial.visible_blocks().first().unwrap().document_index(),
-        4
+        Some(4)
     );
     let target = document.blocks[0].id;
 
@@ -739,7 +778,10 @@ fn measurement_growth_and_shrink_converge_before_visible_selection() {
         .unwrap();
     assert_eq!(shaper.shaped, HashSet::from([target]));
     assert_eq!(grown.block_summaries()[0].height, 48.0);
-    assert_eq!(grown.visible_blocks().first().unwrap().document_index(), 2);
+    assert_eq!(
+        grown.visible_blocks().first().unwrap().document_index(),
+        Some(2)
+    );
     assert_eq!(grown.dirty_block_document_range(), 0..6);
 
     shaper.shaped.clear();
@@ -755,7 +797,10 @@ fn measurement_growth_and_shrink_converge_before_visible_selection() {
         .unwrap();
     assert_eq!(shaper.shaped, HashSet::from([target]));
     assert_eq!(shrunk.block_summaries()[0].height, 16.0);
-    assert_eq!(shrunk.visible_blocks().first().unwrap().document_index(), 4);
+    assert_eq!(
+        shrunk.visible_blocks().first().unwrap().document_index(),
+        Some(4)
+    );
     assert_eq!(shrunk.dirty_block_document_range(), 0..6);
 }
 
@@ -1139,6 +1184,165 @@ fn hanging_splits_spanning_marker_run_and_aligns_mixed_metrics_baseline() {
     assert_eq!(marker.rect.pos.x, 0.0);
     assert!(small_content.rect.pos.x >= 20.0);
     assert!((marker.glyphs[0].baseline - small_content.glyphs[0].baseline).abs() < 0.001);
+}
+
+#[test]
+fn adjacent_styled_paragraph_runs_share_one_inline_line() {
+    let (mut document, presentation, mut shaper) = fixtures::paragraph();
+    let original = document.text_runs[0].clone();
+    let start = original.range.start().to_usize();
+    document.text_runs = Arc::from([
+        LayoutTextRun {
+            id: original.id,
+            range: range(start, start + 2),
+            metrics: original.metrics,
+        },
+        LayoutTextRun {
+            id: original.id,
+            range: range(start + 2, start + 4),
+            metrics: TextMetrics {
+                italic: true,
+                ..original.metrics
+            },
+        },
+    ]);
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(100.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    assert_eq!(layout.visual_lines().len(), 1);
+    let positions = layout
+        .glyph_clusters()
+        .iter()
+        .map(|cluster| cluster.rect.pos)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        positions,
+        vec![
+            dvec2(0.0, 0.0),
+            dvec2(8.0, 0.0),
+            dvec2(16.0, 0.0),
+            dvec2(24.0, 0.0),
+        ]
+    );
+}
+
+#[test]
+fn hanging_runs_stay_clamped_and_content_advances_across_styles() {
+    let (mut document, presentation, mut shaper) = fixtures::paragraph();
+    let original = document.text_runs[0].clone();
+    let start = original.range.start().to_usize();
+    let mut blocks = document.blocks.to_vec();
+    blocks[0].spec.flow = BlockFlow::Hanging {
+        marker_range: range(start + 2, start + 3),
+        content_indent: 20.0,
+    };
+    document.blocks = blocks.into();
+    document.text_runs = Arc::from([
+        LayoutTextRun {
+            id: original.id,
+            range: range(start, start + 1),
+            metrics: original.metrics,
+        },
+        LayoutTextRun {
+            id: original.id,
+            range: range(start + 1, start + 2),
+            metrics: original.metrics,
+        },
+        LayoutTextRun {
+            id: original.id,
+            range: range(start + 2, start + 3),
+            metrics: original.metrics,
+        },
+        LayoutTextRun {
+            id: original.id,
+            range: range(start + 3, start + 5),
+            metrics: TextMetrics {
+                italic: true,
+                ..original.metrics
+            },
+        },
+    ]);
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(100.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let mut clusters = layout.glyph_clusters().iter().collect::<Vec<_>>();
+    clusters.sort_by_key(|cluster| cluster.source_range.start());
+    assert_eq!(
+        clusters
+            .iter()
+            .map(|cluster| cluster.source_range)
+            .collect::<Vec<_>>(),
+        vec![
+            range(start, start + 1),
+            range(start + 1, start + 2),
+            range(start + 2, start + 3),
+            range(start + 3, start + 4),
+            range(start + 4, start + 5),
+        ]
+    );
+    let content = clusters
+        .into_iter()
+        .filter(|cluster| cluster.source_range != range(start + 2, start + 3))
+        .collect::<Vec<_>>();
+    assert!(content
+        .windows(2)
+        .all(|pair| pair[0].rect.pos.x < pair[1].rect.pos.x));
+    assert!(content.iter().all(|cluster| cluster.rect.pos.x >= 20.0));
+}
+
+#[test]
+fn logical_cluster_ids_survive_bidi_reorder_and_width_changes() {
+    let (document, presentation, _) = fixtures::paragraph();
+    let start = document.text_runs[0].range.start().to_usize();
+    let shaped = ShapedRun {
+        clusters: Arc::from([
+            shaped_cluster(start, start + 1, 0),
+            shaped_cluster(start + 1, start + 2, 1),
+            shaped_cluster(start + 2, start + 3, 1),
+            shaped_cluster(start + 3, start + 4, 0),
+        ]),
+        ascender: 12.0,
+        descender: 4.0,
+        line_gap: 0.0,
+    };
+    let layout_at = |width| {
+        LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(width, 100.0, 0.0, 0.0),
+                LayoutInvalidation::Document,
+                &mut FixedShaper(shaped.clone()),
+            )
+            .unwrap()
+    };
+    let ids_by_source = |layout: &LayoutSnapshot| {
+        let mut clusters = layout.glyph_clusters().iter().collect::<Vec<_>>();
+        clusters.sort_by_key(|cluster| cluster.source_range.start());
+        clusters
+            .into_iter()
+            .map(|cluster| (cluster.source_range, cluster.id))
+            .collect::<Vec<_>>()
+    };
+
+    let wide = layout_at(100.0);
+    let narrow = layout_at(20.0);
+    assert_eq!(ids_by_source(&wide), ids_by_source(&narrow));
 }
 
 struct FixedShaper(ShapedRun);

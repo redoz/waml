@@ -26,6 +26,16 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
         run: &LayoutTextRun,
         max_width: f64,
     ) -> Result<ShapedRun, LayoutError> {
+        self.shape_inline(source, run, max_width, max_width)
+    }
+
+    fn shape_inline(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+        full_width: f64,
+        first_row_width: f64,
+    ) -> Result<ShapedRun, LayoutError> {
         self.fonts
             .configure_draw_text(run.metrics.font, run.metrics, self.draw_text);
         let text = source
@@ -34,11 +44,12 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
         let bidi = BidiInfo::new(text, None);
         let paint_scale = self.draw_text.font_scale as f64;
         let layout_scale = self.draw_text.font_scale.max(0.0001);
+        let first_row_indent = (full_width - first_row_width).clamp(0.0, full_width);
         let laid_out = self.draw_text.layout(
             self.cx,
+            first_row_indent as f32 / layout_scale,
             0.0,
-            0.0,
-            Some(max_width as f32 / layout_scale),
+            Some(full_width as f32 / layout_scale),
             true,
             Align::default(),
             text,
@@ -350,6 +361,63 @@ mod tests {
                 });
             });
         }
+    }
+
+    #[test]
+    fn makepad_inline_shaping_uses_the_remaining_first_row_width() {
+        let source = SourceText::new("# alpha beta gamma delta epsilon".to_owned()).unwrap();
+        let syntax = parse_markdown(
+            DocumentRevision::new(12),
+            source,
+            MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        let heading = syntax.queries().headings().next().unwrap().clone();
+        let run = LayoutTextRun {
+            id: LayoutElementId {
+                owner: heading.owner,
+                fragment_ordinal: 0,
+            },
+            range: heading.content_range,
+            metrics: TextMetrics {
+                font: FontKey(92),
+                font_size: 19.0,
+                line_spacing: 1.0,
+                weight: FontWeight(400),
+                italic: false,
+            },
+        };
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.with_vm(|vm| {
+            makepad_widgets::makepad_draw::script_mod(vm);
+            makepad_widgets::script_mod(vm);
+            let mut draw_text = Label::script_new_with_default(vm).draw_text;
+            vm.with_cx_mut(|cx| {
+                let mut fonts = NoopFonts;
+                let mut shaper = MakepadTextShaper {
+                    cx,
+                    draw_text: &mut draw_text,
+                    fonts: &mut fonts,
+                };
+                let full = shaper.shape(syntax.text(), &run, 180.0).unwrap();
+                let inline = shaper
+                    .shape_inline(syntax.text(), &run, 180.0, 40.0)
+                    .unwrap();
+                let first_row_width = |shaped: &ShapedRun| {
+                    shaped
+                        .clusters
+                        .iter()
+                        .filter(|cluster| cluster.row_ordinal == 0)
+                        .map(|cluster| cluster.advance)
+                        .sum::<f64>()
+                };
+                assert!(first_row_width(&inline) < first_row_width(&full));
+                assert!(inline
+                    .clusters
+                    .iter()
+                    .any(|cluster| cluster.row_ordinal > 0));
+            });
+        });
     }
 
     #[test]
