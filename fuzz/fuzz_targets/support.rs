@@ -100,7 +100,7 @@ pub fn assert_shell_invariants(value: &str) {
     let parsed = parse_markdown(
         DocumentRevision::INITIAL,
         source(value),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .expect("bounded UTF-8 shell parses");
     assert_eq!(parsed.tree().write_to_string(), value);
