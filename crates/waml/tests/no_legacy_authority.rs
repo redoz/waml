@@ -79,17 +79,242 @@ fn workspace_root() -> PathBuf {
         .to_owned()
 }
 
+fn rust_tokens(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+            continue;
+        }
+        if bytes[cursor..].starts_with(b"//") {
+            cursor += 2;
+            while cursor < bytes.len() && bytes[cursor] != b'\n' {
+                cursor += 1;
+            }
+            continue;
+        }
+        if bytes[cursor..].starts_with(b"/*") {
+            cursor += 2;
+            let mut depth = 1_u32;
+            while cursor < bytes.len() && depth != 0 {
+                if bytes[cursor..].starts_with(b"/*") {
+                    depth += 1;
+                    cursor += 2;
+                } else if bytes[cursor..].starts_with(b"*/") {
+                    depth -= 1;
+                    cursor += 2;
+                } else {
+                    cursor += 1;
+                }
+            }
+            continue;
+        }
+        if bytes[cursor] == b'r' {
+            let mut marker = cursor + 1;
+            while marker < bytes.len() && bytes[marker] == b'#' {
+                marker += 1;
+            }
+            if marker < bytes.len() && bytes[marker] == b'"' {
+                let hashes = marker - cursor - 1;
+                let mut end = marker + 1;
+                while end < bytes.len() {
+                    if bytes[end] == b'"'
+                        && end + hashes < bytes.len()
+                        && bytes[end + 1..=end + hashes]
+                            .iter()
+                            .all(|byte| *byte == b'#')
+                    {
+                        end += hashes + 1;
+                        break;
+                    }
+                    end += 1;
+                }
+                tokens.push(source[cursor..end].to_owned());
+                cursor = end;
+                continue;
+            }
+        }
+        if bytes[cursor] == b'"' || bytes[cursor] == b'\'' {
+            let quote = bytes[cursor];
+            let start = cursor;
+            cursor += 1;
+            while cursor < bytes.len() {
+                if bytes[cursor] == b'\\' {
+                    cursor = (cursor + 2).min(bytes.len());
+                } else {
+                    let end = bytes[cursor] == quote;
+                    cursor += 1;
+                    if end {
+                        break;
+                    }
+                }
+            }
+            tokens.push(source[start..cursor].to_owned());
+            continue;
+        }
+        if bytes[cursor].is_ascii_alphabetic() || bytes[cursor] == b'_' {
+            let start = cursor;
+            cursor += 1;
+            while cursor < bytes.len()
+                && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'_')
+            {
+                cursor += 1;
+            }
+            tokens.push(source[start..cursor].to_owned());
+            continue;
+        }
+        let width = source[cursor..]
+            .chars()
+            .next()
+            .expect("cursor is in source")
+            .len_utf8();
+        tokens.push(source[cursor..cursor + width].to_owned());
+        cursor += width;
+    }
+    tokens
+}
+
+fn contains_tokens(tokens: &[String], expected: &[&str]) -> bool {
+    tokens.windows(expected.len()).any(|window| {
+        window
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
+    })
+}
+
+fn constructs_structure_map(tokens: &[String]) -> bool {
+    tokens.iter().enumerate().any(|(index, token)| {
+        token == "MarkdownStructureMap"
+            && matches!(tokens.get(index + 1).map(String::as_str), Some("{"))
+            || token == "MarkdownStructureMap"
+                && tokens.get(index + 1).map(String::as_str) == Some(":")
+                && tokens.get(index + 2).map(String::as_str) == Some(":")
+                && matches!(
+                    tokens.get(index + 3).map(String::as_str),
+                    Some("new" | "default")
+                )
+    })
+}
+
+fn literal_classifies_markdown(literal: &str) -> bool {
+    let compact = literal.replace(' ', "");
+    [
+        "^#{1,6}",
+        "(?m)^#{1,6}",
+        "^```",
+        "(?m)^```",
+        "^~~~",
+        "(?m)^~~~",
+        "^\\s{0,3}>",
+        "(?m)^\\s{0,3}>",
+        "^\\s{0,3}#{1,6}",
+        "(?m)^\\s{0,3}#{1,6}",
+    ]
+    .iter()
+    .any(|marker| compact.contains(marker))
+}
+
+fn uses_regex_markdown_classifier(tokens: &[String]) -> bool {
+    tokens.iter().enumerate().any(|(index, token)| {
+        let regex_new = token == "Regex"
+            && tokens.get(index + 1).map(String::as_str) == Some(":")
+            && tokens.get(index + 2).map(String::as_str) == Some(":")
+            && tokens.get(index + 3).map(String::as_str) == Some("new")
+            || token == "regex"
+                && tokens.get(index + 1).map(String::as_str) == Some(":")
+                && tokens.get(index + 2).map(String::as_str) == Some(":")
+                && tokens.get(index + 3).map(String::as_str) == Some("Regex")
+                && tokens.get(index + 4).map(String::as_str) == Some(":")
+                && tokens.get(index + 5).map(String::as_str) == Some(":")
+                && tokens.get(index + 6).map(String::as_str) == Some("new");
+        regex_new
+            && tokens[index..]
+                .iter()
+                .take(12)
+                .any(|candidate| literal_classifies_markdown(candidate))
+    })
+}
+
+fn manifest_dependency_violations(path: &str, source: &str) -> Vec<String> {
+    const FORBIDDEN: &[&str] = &[
+        "cmark",
+        "comrak",
+        "commonmark",
+        "discount",
+        "hoedown",
+        "markdown",
+        "markdown-it",
+        "pulldown-cmark",
+    ];
+
+    fn dependency_name(line: &str) -> Option<&str> {
+        let (key, value) = line.split_once('=')?;
+        let key = key
+            .trim()
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .trim_matches(['\'', '"']);
+        if let Some(package) = value.split("package").nth(1) {
+            let (_, package) = package.split_once('=')?;
+            return package
+                .trim_start()
+                .strip_prefix(['\'', '"'])
+                .and_then(|value| value.split(['\'', '"']).next());
+        }
+        Some(key)
+    }
+
+    let mut section = "";
+    let mut violations = Vec::new();
+    for raw_line in source.lines() {
+        let line = raw_line.split('#').next().unwrap_or_default().trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line.trim_matches(['[', ']']).trim();
+            continue;
+        }
+        let is_dependency_section = section == "dependencies" || section.ends_with(".dependencies");
+        let is_dev = section == "dev-dependencies" || section.ends_with(".dev-dependencies");
+        let is_workspace = section.starts_with("workspace.");
+        if !is_dependency_section || is_dev || is_workspace || line.is_empty() {
+            continue;
+        }
+        let Some(dependency) = dependency_name(line) else {
+            continue;
+        };
+        let dependency = dependency.replace('_', "-");
+        if FORBIDDEN.contains(&dependency.as_str())
+            && !(path == "crates/waml-syntax/Cargo.toml" && dependency == "pulldown-cmark")
+        {
+            violations.push(format!(
+                "{path}: production dependency `{dependency}` creates another Markdown authority"
+            ));
+        }
+    }
+    violations
+}
+
 fn authority_violations(files: &[(PathBuf, String)]) -> Vec<String> {
     let mut violations = Vec::new();
     for (path, source) in files {
         let path = path.to_string_lossy().replace('\\', "/");
+        if path.ends_with("Cargo.toml") {
+            violations.extend(manifest_dependency_violations(&path, source));
+            continue;
+        }
+        let tokens = rust_tokens(source);
         let is_waml_authority_consumer = path.starts_with("crates/waml/src/")
             || path.starts_with("crates/waml-editor/src/")
             || path.starts_with("crates/waml-cli/src/lsp/");
-        if is_waml_authority_consumer && source.contains("pulldown_cmark::Parser") {
+        if is_waml_authority_consumer
+            && contains_tokens(&tokens, &["pulldown_cmark", ":", ":", "Parser"])
+        {
             violations.push(format!("{path}: creates pulldown_cmark::Parser"));
         }
-        if source.contains("MarkdownStructureMap {")
+        if constructs_structure_map(&tokens)
             && path != "crates/waml-syntax/src/markdown/projection.rs"
         {
             violations.push(format!(
@@ -97,16 +322,14 @@ fn authority_violations(files: &[(PathBuf, String)]) -> Vec<String> {
             ));
         }
         if path.starts_with("crates/waml-editor/src/")
-            && source.contains(".as_markdown()")
-            && source.contains(".set_text(cx,")
+            && (contains_tokens(&tokens, &["as_markdown", "(", ")", ".", "set_text", "("])
+                || contains_tokens(&tokens, &["Markdown", ":", ":", "set_text", "("]))
         {
             violations.push(format!(
                 "{path}: feeds source through Makepad Markdown parsing"
             ));
         }
-        if path.starts_with("crates/waml-syntax/src/markdown/")
-            && source.contains("regex::Regex::new")
-        {
+        if uses_regex_markdown_classifier(&tokens) {
             violations.push(format!("{path}: classifies Markdown with regex"));
         }
     }
@@ -144,18 +367,52 @@ fn authority_sources(root: &Path) -> Vec<(PathBuf, String)> {
 }
 
 #[test]
-fn authority_guard_rejects_an_in_memory_second_parser_seed() {
-    let violations = authority_violations(&[(
-        PathBuf::from("crates/waml/src/in_memory_seed.rs"),
-        "// pulldown_cmark::Parser::new".into(),
-    )]);
+fn authority_guard_rejects_every_in_memory_forbidden_seed() {
+    let cases = [
+        (
+            "waml pulldown parser",
+            "crates/waml/src/seed.rs",
+            "let _ = pulldown_cmark :: Parser :: new(source);",
+        ),
+        (
+            "editor pulldown parser",
+            "crates/waml-editor/src/seed.rs",
+            "let _ = pulldown_cmark :: Parser :: new(source);",
+        ),
+        (
+            "LSP pulldown parser",
+            "crates/waml-cli/src/lsp/seed.rs",
+            "let _ = pulldown_cmark :: Parser :: new(source);",
+        ),
+        (
+            "Makepad Markdown source parser",
+            "crates/waml-editor/src/seed.rs",
+            "widget . as_markdown ( ) . set_text (cx, source);",
+        ),
+        (
+            "regex Markdown classifier",
+            "crates/waml-cli/src/seed.rs",
+            r##"let _ = regex :: Regex :: new(r"(?m)^#{1,6}\\s+");"##,
+        ),
+        (
+            "off-projection structure map",
+            "crates/waml-syntax/src/markdown/seed.rs",
+            "let _ = MarkdownStructureMap :: new(Default::default());",
+        ),
+        (
+            "forbidden production manifest dependency",
+            "crates/waml/Cargo.toml",
+            "[dependencies]\npulldown-cmark.workspace = true\n",
+        ),
+    ];
 
-    assert!(
-        violations
-            .iter()
-            .any(|violation| violation.contains("pulldown_cmark::Parser")),
-        "the authority guard accepted an in-memory second parser seed: {violations:#?}"
-    );
+    for (case, path, source) in cases {
+        let violations = authority_violations(&[(PathBuf::from(path), source.into())]);
+        assert!(
+            !violations.is_empty(),
+            "the authority guard accepted the in-memory {case} seed"
+        );
+    }
 }
 
 #[test]

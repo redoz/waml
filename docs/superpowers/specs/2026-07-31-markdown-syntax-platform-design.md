@@ -212,22 +212,13 @@ Unicode-boundary edits. Every full fallback must expose an expected reason.
 
 ## Implementation evidence
 
-- Implementation range: `89835eb..Task 12 commit` (amended to the commit ID at Task 12 completion).
-- CommonMark 0.31.2: 652 passed examples. GFM: 24 passed examples. Total: 676.
-- Workspace automated tests: pending final Task 12 command output.
-- `rtk cargo fuzz run parse_write -- -runs=10000`: DEFERRED, 0 Windows iterations. The sanitizer runtime failed to load (`STATUS_DLL_NOT_FOUND`).
-- `rtk cargo fuzz run syntax_edits -- -runs=10000`: DEFERRED, 0 Windows iterations. A no-sanitizer retry cannot link because MSVC has no `sancov` section symbols.
-
-## Implementation evidence
-
 - Date: 2026-07-31.
 - Implementation range: `89835eb..HEAD`.
 - CommonMark 0.31.2: 652 passed; GFM: 24 passed; total: 676.
 - `rtk cargo fuzz run parse_write -- -runs=10000`: DEFERRED, 0 Windows iterations; the sanitizer runtime failed to load with `STATUS_DLL_NOT_FOUND`.
 - `rtk cargo fuzz run syntax_edits -- -runs=10000`: DEFERRED, 0 Windows iterations; the no-sanitizer retry cannot link because MSVC has no `sancov` section symbols.
 - `rtk cargo fmt --all -- --check`: GREEN.
-- `rtk cargo clippy --workspace --all-targets --all-features -- -D warnings`: 0 errors; Cargo reported 2 duplicate-package warnings from Makepad dependencies.
-- `rtk cargo test --workspace --all-features`: 1,651 passed across 61 suite summaries; 0 failed.
-- Date: 2026-07-31.
+- `rtk cargo clippy --workspace --all-targets --all-features -- -D warnings`: 0 errors. Cargo reported two external residual warnings while discovering the pinned Makepad source at revision `c38f529984eda61e258ca69fb50c6712d85c74c1`: duplicate `bitflags v2.10.0` and `cfg-if v1.0.4` manifests under `libs/vulkan`, each skipped in favor of the canonical manifest under `libs`. Resolving them requires an upstream Makepad repository cleanup or dependency-revision migration, not a WAML manifest or lockfile change.
+- `rtk cargo test --workspace --all-features`: 1,652 passed across 61 suite summaries; 0 failed.
 - Existing WAML frontmatter and language-island behavior is preserved.
 - Native UI and LSP can obtain semantic source ranges without parsing Markdown.
