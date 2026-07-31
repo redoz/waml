@@ -1,6 +1,7 @@
 use waml_syntax::{
-    parse_markdown, reparse_markdown, write_green_to, DocumentRevision, MarkdownDialect,
-    MarkdownReparseOutcome, SourceText, TextChange, TextRange, TextSize,
+    parse_markdown, reparse_markdown, write_green_to, DocumentRevision, GreenElement,
+    MarkdownDialect, MarkdownReparseOutcome, OkfMarkdownSyntaxKind, SourceText, TextChange,
+    TextRange, TextSize,
 };
 
 #[test]
@@ -107,6 +108,37 @@ fn width_changing_reparse_reports_new_snapshot_coordinates() {
 }
 
 #[test]
+fn shifted_width_changing_reparse_reports_new_snapshot_coordinates() {
+    let revision = DocumentRevision::INITIAL;
+    let first = parse_markdown(
+        revision,
+        SourceText::new("# first\n\n# one\n").unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &first,
+        revision.checked_next().unwrap(),
+        SourceText::new("# first\n\n# substantially longer\n").unwrap(),
+        &[TextChange {
+            old_range: TextRange::new(TextSize::new(11), TextSize::new(14)).unwrap(),
+            replacement: "substantially longer".into(),
+        }],
+    )
+    .unwrap();
+    let expected = TextRange::new(TextSize::new(9), TextSize::new(32)).unwrap();
+
+    assert_eq!(update.affected_ranges.as_ref(), &[expected]);
+    assert!(matches!(
+        update.outcome,
+        MarkdownReparseOutcome::Incremental {
+            reparsed_range: Some(range),
+            ..
+        } if range == expected
+    ));
+}
+
+#[test]
 fn dialect_profiles_control_existing_markdown_structure_options() {
     let source = "| left | right |\n| --- | --- |\n| one | two |\n";
     let commonmark = parse_markdown(
@@ -124,4 +156,32 @@ fn dialect_profiles_control_existing_markdown_structure_options() {
 
     assert!(commonmark.structure().protected_ranges.is_empty());
     assert!(!waml.structure().protected_ranges.is_empty());
+}
+
+#[test]
+fn dialect_profiles_gate_provisional_frontmatter_and_sections() {
+    let source = "---\ntitle: Dialect\n---\n# Heading\n";
+    let commonmark = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::COMMONMARK_0_31_2,
+    )
+    .unwrap();
+    let waml = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let has_kind =
+        |snapshot: &waml_syntax::MarkdownSyntaxSnapshot, expected| {
+            snapshot.tree().root_green().children().iter().any(
+                |element| matches!(element, GreenElement::Node(node) if node.kind() == expected),
+            )
+        };
+
+    assert!(!has_kind(&commonmark, OkfMarkdownSyntaxKind::Frontmatter));
+    assert!(has_kind(&waml, OkfMarkdownSyntaxKind::Frontmatter));
+    assert!(commonmark.structure().headings.is_empty());
+    assert_eq!(waml.structure().headings.len(), 1);
 }

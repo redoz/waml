@@ -81,6 +81,9 @@ fn classify_frontmatter(
     text: &SourceText,
     structure: &crate::MarkdownStructureMap,
 ) -> Result<Option<FrontmatterClass>, ParseError> {
+    if !structure.dialect.waml_frontmatter() {
+        return Ok(None);
+    }
     let source = text.shared();
     let bom = usize::from(source.starts_with('\u{feff}')) * 3;
     let open = line_at(source, 0, source.len());

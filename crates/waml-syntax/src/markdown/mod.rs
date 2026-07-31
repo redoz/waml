@@ -60,7 +60,11 @@ pub(crate) fn map(
     let source = text.shared();
     let len = source.len();
     let _ = size(len)?;
-    let frontmatter_end = initial_frontmatter_end(source);
+    let frontmatter_end = if dialect.waml_frontmatter() {
+        initial_frontmatter_end(source)
+    } else {
+        0
+    };
     let mut headings = Vec::new();
     let mut nested_headings = Vec::new();
     let mut protected = Vec::new();
@@ -81,7 +85,7 @@ pub(crate) fn map(
             Event::Start(tag) => match tag {
                 Tag::Heading { level, .. } => {
                     let level = heading_level(level);
-                    if containers.is_empty() {
+                    if dialect.waml_sections() && containers.is_empty() {
                         pending = Some((level, start, end));
                     }
                 }
