@@ -82,6 +82,7 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
                 index = next;
             }
         }
+        clusters.sort_by_key(|cluster| cluster.source_range.start());
         Ok(ShapedRun {
             clusters: clusters.into(),
             ascender,
@@ -103,8 +104,22 @@ fn bidi_level_at(bidi: &BidiInfo<'_>, byte_offset: usize) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::bidi_level_at;
+    use std::sync::Arc;
+
+    use makepad_widgets::*;
     use unicode_bidi::BidiInfo;
+    use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
+
+    use super::{bidi_level_at, FontResolver, MakepadTextShaper};
+    use crate::{
+        document::MarkdownDocumentSnapshot,
+        layout::{
+            Affinity, BlockFlow, BlockLayoutSpec, EdgeInsets, FontKey, FontWeight, LayoutBlock,
+            LayoutDocument, LayoutElementId, LayoutEngine, LayoutInvalidation, LayoutTextRun,
+            LayoutViewport, TextMetrics,
+        },
+        selection::TextPosition,
+    };
 
     #[test]
     fn adapter_uses_unicode_embedding_levels_for_rtl_text() {
@@ -112,5 +127,108 @@ mod tests {
         let bidi = BidiInfo::new(text, None);
         assert_eq!(bidi_level_at(&bidi, 0), 0);
         assert_eq!(bidi_level_at(&bidi, 2), 1);
+    }
+
+    #[test]
+    fn makepad_shaper_and_engine_do_not_reorder_rtl_twice() {
+        let source = SourceText::new("# אב".to_owned()).unwrap();
+        let syntax = parse_markdown(
+            DocumentRevision::new(8),
+            source,
+            MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        let heading = syntax.queries().headings().next().unwrap().clone();
+        let id = LayoutElementId {
+            owner: heading.owner,
+            fragment_ordinal: 0,
+        };
+        let presentation = MarkdownDocumentSnapshot::new(syntax);
+        let document = LayoutDocument {
+            revision: presentation.revision(),
+            content_insets: EdgeInsets::default(),
+            blocks: Arc::from([LayoutBlock {
+                id,
+                source_range: heading.range,
+                parent: None,
+                spec: BlockLayoutSpec {
+                    flow: BlockFlow::Paragraph,
+                    insets: EdgeInsets::default(),
+                    space_before: 0.0,
+                    space_after: 0.0,
+                    columns: Arc::from([]),
+                },
+            }]),
+            text_runs: Arc::from([LayoutTextRun {
+                id,
+                range: heading.content_range,
+                metrics: TextMetrics {
+                    font: FontKey(0),
+                    font_size: 16.0,
+                    line_spacing: 1.0,
+                    weight: FontWeight(400),
+                    italic: false,
+                },
+            }]),
+            embedded_blocks: Arc::from([]),
+        };
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let mut geometry = None;
+        cx.with_vm(|vm| {
+            makepad_widgets::makepad_draw::script_mod(vm);
+            makepad_widgets::script_mod(vm);
+            let mut draw_text = Label::script_new_with_default(vm).draw_text;
+            vm.with_cx_mut(|cx| {
+                let mut fonts = NoopFonts;
+                let mut shaper = MakepadTextShaper {
+                    cx,
+                    draw_text: &mut draw_text,
+                    fonts: &mut fonts,
+                };
+                geometry = Some(
+                    LayoutEngine::default()
+                        .layout(
+                            &document,
+                            &presentation,
+                            LayoutViewport::new(400.0, 100.0, 0.0, 0.0),
+                            LayoutInvalidation::Document,
+                            &mut shaper,
+                        )
+                        .unwrap(),
+                );
+            });
+        });
+        let geometry = geometry.unwrap();
+        let start = geometry
+            .source_to_point(TextPosition::new(
+                heading.content_range.start(),
+                Affinity::Before,
+            ))
+            .unwrap()
+            .rect
+            .pos
+            .x;
+        let end = geometry
+            .source_to_point(TextPosition::new(
+                heading.content_range.end(),
+                Affinity::After,
+            ))
+            .unwrap()
+            .rect
+            .pos
+            .x;
+        assert!(start > end, "RTL source start must be right of source end");
+    }
+
+    struct NoopFonts;
+
+    impl FontResolver for NoopFonts {
+        fn configure_draw_text(
+            &mut self,
+            _key: FontKey,
+            _metrics: TextMetrics,
+            _draw: &mut DrawText,
+        ) {
+        }
     }
 }

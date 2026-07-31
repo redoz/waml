@@ -36,3 +36,10 @@
 - GREEN: the adapter now uses the pinned `unicode-bidi` implementation to assign the Unicode embedding level at each cluster byte offset.
 - The adapter does not infer direction from glyph order. The layout engine contract is unchanged.
 - Follow-up verification: adapter RTL regression 1 passed, `layout_geometry` 12 passed, `unicode_ime` 8 passed, full crate 39 passed, and `git diff --check` passed.
+
+## Makepad RTL order follow-up
+
+- RED: a real `MakepadTextShaper` to `LayoutEngine` Hebrew geometry test placed the RTL source start to the left of its source end because Makepad visual rows were reordered a second time by the engine.
+- GREEN: the adapter now normalizes shaped clusters by exact source range before it returns them. The engine applies the single visual reorder from the authoritative embedding levels.
+- No engine contract or public API changed.
+- Follow-up verification: 2 Makepad adapter tests passed, `layout_geometry` 12 passed, `unicode_ime` 8 passed, full crate 40 passed, and `git diff --check` passed.
