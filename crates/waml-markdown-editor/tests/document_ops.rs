@@ -321,3 +321,28 @@ fn mixed_closer_skip_keeps_the_skipped_primary_selection_primary() {
         .unwrap();
     assert_eq!(session.selections().primary().cursor.offset.to_usize(), 2);
 }
+
+#[test]
+fn grouped_history_replays_multi_change_entries_in_one_coordinate_space() {
+    let before = snapshot("ab cd ef", 64);
+    let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+    let selections = SelectionSet::from_selections(
+        &before,
+        vec![
+            Selection::caret(p(1)),
+            Selection::new(p(3), p(5)),
+            Selection::caret(p(8)),
+        ],
+        0,
+    )
+    .unwrap();
+    let mut session = MarkdownDocumentSession::with_selections(before, selections).unwrap();
+    session
+        .execute(EditCommand::Insert(Arc::from("X")), HistoryGroup::named(7))
+        .unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "aXb X efX");
+    session.undo().unwrap().unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "ab cd ef");
+    session.redo().unwrap().unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "aXb X efX");
+}

@@ -164,7 +164,7 @@ impl MarkdownDocumentSession {
             group
                 .iter()
                 .rev()
-                .flat_map(|entry| entry.inverse_changes.iter()),
+                .map(|entry| entry.inverse_changes.as_slice()),
         )?;
         let proposal = self.apply_restoring(changes, selection)?;
         self.history.redo.push(group);
@@ -178,7 +178,7 @@ impl MarkdownDocumentSession {
         let selection = group.last().unwrap().after_selection.clone();
         let changes = compose_group_changes(
             self.snapshot.text(),
-            group.iter().flat_map(|entry| entry.forward_changes.iter()),
+            group.iter().map(|entry| entry.forward_changes.as_slice()),
         )?;
         let proposal = self.apply_restoring(changes, selection)?;
         self.history.undo.push(group);
@@ -602,12 +602,16 @@ fn inverse_changes(
 }
 fn compose_group_changes<'a>(
     current: &SourceText,
-    changes: impl Iterator<Item = &'a TextChange>,
+    entries: impl Iterator<Item = &'a [TextChange]>,
 ) -> Result<Vec<TextChange>, MarkdownEditError> {
     let text = current.shared().as_str();
     let mut pieces = vec![Piece::original(range(0, text.len()), text.to_owned())];
-    for change in changes {
-        apply_piece_change(&mut pieces, change);
+    for entry in entries {
+        let mut changes: Vec<_> = entry.iter().collect();
+        changes.sort_unstable_by_key(|change| std::cmp::Reverse(change.old_range.start()));
+        for change in changes {
+            apply_piece_change(&mut pieces, change);
+        }
     }
     Ok(pieces_to_changes(pieces, text.len()))
 }
