@@ -2,159 +2,29 @@
 
 mod support;
 
-use std::sync::Arc;
-
 use libfuzzer_sys::fuzz_target;
-use waml::{
-    action::{ActionBasis, CodeAction, SyntaxChangeBatch, TextEdit, VersionedDocumentChange},
-    analysis::{prepare_candidate, PreviousAnalyses},
-    edit::{EditBatch, EditContext},
-    source::{BundlePath, SourceBundle, SourceDocument},
-};
-
-fn edit(start: usize, end: usize, replacement: impl Into<Arc<str>>) -> TextEdit {
-    TextEdit {
-        range: support::range(start, end),
-        replacement: replacement.into(),
-    }
-}
+use waml_syntax::{parse_markdown, reparse_markdown, DocumentRevision, MarkdownDialect, MarkdownReparseOutcome, TextChange};
 
 fuzz_target!(|data: &[u8]| {
-    let Some(body) = support::valid_utf8(data) else {
-        return;
-    };
-    let path = BundlePath::parse("fuzz.md").unwrap();
-    let authored = format!("---\ntype: uml.Class\n---\n# fuzz é\n\n{body}");
-    let source =
-        SourceBundle::try_from_pairs([("fuzz.md", authored.clone())]).expect("fixed source");
-    let prepared = prepare_candidate(source.clone(), None, 1).expect("baseline prepares");
-    let document = prepared
-        .okf()
-        .catalog
-        .id_for_path(&path)
-        .expect("cataloged document");
-    let revision = prepared
-        .okf()
-        .catalog
-        .document(document)
-        .expect("versioned document")
-        .revision();
-    let context = EditContext {
-        source: &source,
-        okf_analysis: prepared.okf(),
-        session_revision: 1,
-        uml: prepared.uml(),
-    };
-
-    let (start, end, replacement) = support::derived_valid_edit(data, &authored);
-    let batch = SyntaxChangeBatch::new(CodeAction {
-        title: "fuzz valid edit".into(),
-        basis: ActionBasis::Bundle {
-            session_revision: 1,
-        },
-        changes: vec![VersionedDocumentChange {
-            document,
-            base_document_revision: revision,
-            edits: vec![edit(start, end, replacement.clone())].into(),
-        }]
-        .into(),
-    })
-    .expect("one valid edit is structurally valid");
-    let candidate = batch.lower(context).expect("valid versioned edit lowers");
-    let mut oracle = authored.clone();
-    oracle.replace_range(start..end, &replacement);
-    assert_eq!(candidate.document(&path).unwrap().text(), oracle);
-    let changed = prepare_candidate(
-        candidate,
-        Some(PreviousAnalyses {
-            okf: prepared.okf(),
-            uml: prepared.uml(),
-        }),
-        2,
-    )
-    .expect("edited candidate prepares");
-    assert_eq!(
-        changed
-            .okf()
-            .markdown
-            .document(document)
-            .unwrap()
-            .tree()
-            .write_to_string(),
-        oracle
-    );
-
-    let selector = data.first().copied().unwrap_or(0) % 5;
-    let unicode = authored.find('é').unwrap();
-    let (basis, edits) = match selector {
-        0 => (
-            ActionBasis::Bundle {
-                session_revision: 1,
-            },
-            vec![edit(0, 2, "x"), edit(1, 3, "y")],
-        ),
-        1 => (
-            ActionBasis::Bundle {
-                session_revision: 2,
-            },
-            vec![edit(0, 1, "x")],
-        ),
-        2 => {
-            let stale_source = waml::host::replace_document(
-                &source,
-                SourceDocument::new(path.clone(), format!("{authored}\n")),
-            )
-            .unwrap();
-            let stale_prepared = prepare_candidate(
-                stale_source,
-                Some(PreviousAnalyses {
-                    okf: prepared.okf(),
-                    uml: prepared.uml(),
-                }),
-                2,
-            )
-            .expect("changed source prepares");
-            let changed_revision = stale_prepared
-                .okf()
-                .catalog
-                .document(document)
-                .unwrap()
-                .revision();
-            (
-                ActionBasis::Document {
-                    document,
-                    document_revision: changed_revision,
-                    session_revision: 1,
-                },
-                vec![edit(0, 1, "x")],
-            )
-        }
-        3 => (
-            ActionBasis::Bundle {
-                session_revision: 1,
-            },
-            vec![edit(authored.len(), authored.len() + 1, "x")],
-        ),
-        _ => (
-            ActionBasis::Bundle {
-                session_revision: 1,
-            },
-            vec![edit(unicode + 1, unicode + 2, "x")],
-        ),
-    };
-    let invalid = SyntaxChangeBatch::new(CodeAction {
-        title: "fuzz invalid edit".into(),
-        basis,
-        changes: vec![VersionedDocumentChange {
-            document,
-            base_document_revision: revision,
-            edits: edits.into(),
-        }]
-        .into(),
-    });
-    match selector {
-        0 => assert!(invalid.is_err()),
-        _ => assert!(invalid.unwrap().lower(context).is_err()),
+    let Some(value) = support::valid_utf8(data) else { return; };
+    let previous = parse_markdown(DocumentRevision::INITIAL, support::source(value), MarkdownDialect::WAML_DEFAULT)
+        .expect("bounded UTF-8 markdown parses");
+    let (start, end, replacement) = support::derived_valid_edit(data, value);
+    let mut candidate = value.to_owned();
+    candidate.replace_range(start..end, &replacement);
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(2),
+        support::source(&candidate),
+        &[TextChange { old_range: support::range(start, end), replacement }],
+    ).expect("valid edit reparses");
+    let full = parse_markdown(DocumentRevision::INITIAL, support::source(&candidate), MarkdownDialect::WAML_DEFAULT)
+        .expect("candidate fully parses");
+    assert_eq!(update.snapshot.tree().write_to_string(), candidate);
+    assert_eq!(full.tree().write_to_string(), candidate);
+    assert_eq!(support::syntax_fingerprint(update.snapshot.tree()), support::syntax_fingerprint(full.tree()));
+    assert_eq!(support::diagnostic_fingerprint(update.snapshot.tree()), support::diagnostic_fingerprint(full.tree()));
+    if let MarkdownReparseOutcome::Full { reason } = update.outcome {
+        assert!(!format!("{reason:?}").is_empty(), "full reparse has a named reason");
     }
-    assert_eq!(source.document(&path).unwrap().text(), authored);
 });

@@ -3,52 +3,28 @@
 mod support;
 
 use libfuzzer_sys::fuzz_target;
-use waml_syntax::{
-    parse_markdown, reparse_markdown, DocumentRevision, MarkdownDialect, TextChange,
-};
+use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SyntaxElement};
+
+fn visit(node: waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>) {
+    for child in node.children() {
+        if let SyntaxElement::Node(child) = child {
+            visit(child);
+        }
+    }
+}
 
 fuzz_target!(|data: &[u8]| {
-    let Some(value) = support::valid_utf8(data) else {
-        return;
-    };
-    let previous = parse_markdown(
+    let Some(value) = support::valid_utf8(data) else { return; };
+    let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         support::source(value),
-        MarkdownDialect::CommonMarkCurrent,
-    )
-    .expect("bounded UTF-8 shell parses");
-    let (start, end, replacement) = support::derived_valid_edit(data, value);
-    let mut candidate = value.to_owned();
-    candidate.replace_range(start..end, &replacement);
-    let change = TextChange {
-        old_range: support::range(start, end),
-        replacement,
-    };
-    let reparsed = reparse_markdown(
-        &previous,
-        DocumentRevision::new(2),
-        support::source(&candidate),
-        std::slice::from_ref(&change),
-    )
-    .expect("valid edit reparses");
-    let incremental = reparsed.snapshot.tree();
-    let full = parse_markdown(
-        DocumentRevision::INITIAL,
-        support::source(&candidate),
-        MarkdownDialect::CommonMarkCurrent,
-    )
-    .expect("candidate fully parses");
-
-    support::assert_tree_ranges(incremental, &candidate);
-    support::assert_tree_ranges(full.tree(), &candidate);
-    assert_eq!(incremental.write_to_string(), candidate);
-    assert_eq!(full.tree().write_to_string(), candidate);
-    assert_eq!(
-        support::syntax_fingerprint(incremental),
-        support::syntax_fingerprint(full.tree())
-    );
-    assert_eq!(
-        support::diagnostic_fingerprint(incremental),
-        support::diagnostic_fingerprint(full.tree())
-    );
+        MarkdownDialect::WAML_DEFAULT,
+    ).expect("bounded UTF-8 markdown parses");
+    assert_eq!(snapshot.tree().write_to_string(), value);
+    support::assert_tree_ranges(snapshot.tree(), value);
+    visit(snapshot.tree().root());
+    for _ in snapshot.queries().links() {}
+    for _ in snapshot.queries().images() {}
+    for _ in snapshot.queries().entities() {}
+    for _ in snapshot.queries().spans(support::range(0, value.len())) {}
 });

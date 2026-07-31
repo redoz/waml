@@ -889,6 +889,22 @@ pub(crate) fn reparse_okf_markdown_with_structure(
         dialect,
     ));
     let public_structure = Arc::new(crate::markdown::from_tree(&tree, new_text.shared())?);
+    if dialect.waml_sections() {
+        let oracle = crate::markdown::parser::parse_with_structure(
+            new_text.clone(),
+            dialect,
+            new_structure.clone(),
+        )?;
+        if public_structure.islands.len() != oracle.structure.islands.len() {
+            return Ok((
+                ReparseOutcome::Full {
+                    tree: oracle.tree,
+                    reason: FullReparseReason::IslandBoundaryChanged,
+                },
+                oracle.structure,
+            ));
+        }
+    }
     Ok((
         ReparseOutcome::Incremental {
             tree,
