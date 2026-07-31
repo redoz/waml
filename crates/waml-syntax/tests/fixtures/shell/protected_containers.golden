@@ -44,22 +44,30 @@ T root/9/0 HtmlToken 98..132 missing=false leading="" text="<section>\n# html bl
 T root/10 NewlineToken 132..133 missing=false leading="" text="\n" trailing=""
 N root/11 Table 133..187
 N root/11/0 TableHead 133..153
-T root/11/0/0 TextToken 133..134 missing=false leading="" text="|" trailing=""
+T root/11/0/0 TablePipeToken 133..134 missing=false leading="" text="|" trailing=""
 N root/11/0/1 TableCell 134..143
 T root/11/0/1/0 TextToken 134..143 missing=false leading="" text=" # table " trailing=""
-T root/11/0/2 TextToken 143..144 missing=false leading="" text="|" trailing=""
+T root/11/0/2 TablePipeToken 143..144 missing=false leading="" text="|" trailing=""
 N root/11/0/3 TableCell 144..151
 T root/11/0/3/0 TextToken 144..151 missing=false leading="" text=" value " trailing=""
-T root/11/0/4 TextToken 151..153 missing=false leading="" text="|\n" trailing=""
-T root/11/1 TextToken 153..167 missing=false leading="" text="| --- | --- |\n" trailing=""
-N root/11/2 TableRow 167..187
-T root/11/2/0 TextToken 167..168 missing=false leading="" text="|" trailing=""
-N root/11/2/1 TableCell 168..177
-T root/11/2/1/0 TextToken 168..177 missing=false leading="" text=" ## cell " trailing=""
-T root/11/2/2 TextToken 177..178 missing=false leading="" text="|" trailing=""
-N root/11/2/3 TableCell 178..185
-T root/11/2/3/0 TextToken 178..185 missing=false leading="" text=" value " trailing=""
-T root/11/2/4 TextToken 185..187 missing=false leading="" text="|\n" trailing=""
+T root/11/0/4 TablePipeToken 151..152 missing=false leading="" text="|" trailing=""
+T root/11/0/5 TextToken 152..153 missing=false leading="" text="\n" trailing=""
+T root/11/1 TablePipeToken 153..154 missing=false leading="" text="|" trailing=""
+T root/11/2 TextToken 154..159 missing=false leading="" text=" --- " trailing=""
+T root/11/3 TablePipeToken 159..160 missing=false leading="" text="|" trailing=""
+T root/11/4 TextToken 160..165 missing=false leading="" text=" --- " trailing=""
+T root/11/5 TablePipeToken 165..166 missing=false leading="" text="|" trailing=""
+T root/11/6 TextToken 166..167 missing=false leading="" text="\n" trailing=""
+N root/11/7 TableBody 167..187
+N root/11/7/0 TableRow 167..187
+T root/11/7/0/0 TablePipeToken 167..168 missing=false leading="" text="|" trailing=""
+N root/11/7/0/1 TableCell 168..177
+T root/11/7/0/1/0 TextToken 168..177 missing=false leading="" text=" ## cell " trailing=""
+T root/11/7/0/2 TablePipeToken 177..178 missing=false leading="" text="|" trailing=""
+N root/11/7/0/3 TableCell 178..185
+T root/11/7/0/3/0 TextToken 178..185 missing=false leading="" text=" value " trailing=""
+T root/11/7/0/4 TablePipeToken 185..186 missing=false leading="" text="|" trailing=""
+T root/11/7/0/5 TextToken 186..187 missing=false leading="" text="\n" trailing=""
 T root/12 NewlineToken 187..188 missing=false leading="" text="\n" trailing=""
 N root/13 Paragraph 188..208
 N root/13/0 Text 188..196
