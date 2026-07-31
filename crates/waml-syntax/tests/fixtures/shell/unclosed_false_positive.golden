@@ -1,8 +1,13 @@
 N root Root 0..31
-N root/0 MarkdownRegion 0..20
-T root/0/0 RawTextToken 0..20 missing=false leading="" text="---\nordinary prose\n\n" trailing=""
-N root/1 Heading 20..31
-T root/1/0 HeadingMarkerToken 20..22 missing=false leading="" text="##" trailing=""
-T root/1/1 HeadingText 22..30 missing=false leading=" " text="Section" trailing=""
-T root/1/2 NewlineToken 30..31 missing=false leading="" text="\n" trailing=""
-T root/2 EndOfFileToken 31..31 missing=true leading="" text="" trailing=""
+N root/0 ThematicBreak 0..4
+T root/0/0 ThematicBreakToken 0..3 missing=false leading="" text="---" trailing=""
+T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
+N root/1 Paragraph 4..19
+T root/1/0 TextToken 4..19 missing=false leading="" text="ordinary prose\n" trailing=""
+T root/2 NewlineToken 19..20 missing=false leading="" text="\n" trailing=""
+N root/3 AtxHeading 20..31
+T root/3/0 HeadingMarkerToken 20..22 missing=false leading="" text="##" trailing=""
+T root/3/1 WhitespaceToken 22..23 missing=false leading="" text=" " trailing=""
+T root/3/2 TextToken 23..30 missing=false leading="" text="Section" trailing=""
+T root/3/3 HeadingMarkerToken 30..31 missing=false leading="" text="\n" trailing=""
+T root/4 EndOfFileToken 31..31 missing=true leading="" text="" trailing=""

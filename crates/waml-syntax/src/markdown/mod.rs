@@ -1,3 +1,4 @@
+pub(crate) mod block;
 mod kind;
 mod snapshot;
 
@@ -11,7 +12,7 @@ pub use snapshot::{
 
 use std::sync::Arc;
 
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use crate::{MarkdownDialect, SourceText, TextRange, TextSize};
 
@@ -75,7 +76,7 @@ pub(crate) fn map(
     let mut opaque = Vec::new();
     let mut pending: Option<(u8, usize, usize)> = None;
 
-    for (event, offsets) in Parser::new_ext(source, pulldown_options(dialect)).into_offset_iter() {
+    for (event, offsets) in Parser::new_ext(source, structure_options(dialect)).into_offset_iter() {
         let start = offsets.start;
         let end = offsets.end;
         if start < frontmatter_end {
@@ -168,23 +169,20 @@ pub(crate) fn map(
     })
 }
 
-fn pulldown_options(dialect: MarkdownDialect) -> Options {
-    // Preserve the raw structure map's legacy recognition of protected
-    // constructs while allowing the public dialect to disable its named GFM
-    // extensions. Tasks 2-4 replace this provisional map with the complete
-    // block and inline parser profiles.
-    let mut options = Options::all();
+fn structure_options(dialect: MarkdownDialect) -> pulldown_cmark::Options {
+    // The existing shell structure contract still protects every construct
+    // that pulldown can identify. The syntax tree itself uses the narrower
+    // public profile above; this compatibility map is removed with the shell
+    // structure migration.
+    let mut options = pulldown_cmark::Options::all();
     if !dialect.tables() {
-        options.remove(Options::ENABLE_TABLES);
+        options.remove(pulldown_cmark::Options::ENABLE_TABLES);
     }
     if !dialect.task_lists() {
-        options.remove(Options::ENABLE_TASKLISTS);
+        options.remove(pulldown_cmark::Options::ENABLE_TASKLISTS);
     }
     if !dialect.strikethrough() {
-        options.remove(Options::ENABLE_STRIKETHROUGH);
-    }
-    if !dialect.extended_autolinks() && !dialect.tag_filter() {
-        options.remove(Options::ENABLE_GFM);
+        options.remove(pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
     }
     options
 }

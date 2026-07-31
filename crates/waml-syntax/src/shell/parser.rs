@@ -27,24 +27,11 @@ pub(super) fn parse_with_structure(
         children.push(GreenElement::Node(node));
         at = end;
     }
-    for heading in structure.headings.iter() {
-        let start = heading.range.start().to_usize();
-        if start < at {
-            continue;
-        }
-        if at < start {
-            children.push(raw(&factory, &text, at, start)?);
-        }
-        let line = line_at(source, start, source.len());
-        children.push(GreenElement::Node(heading_node(
-            &factory, &text, source, line,
-        )?));
-        at = structured_end(line);
-    }
-
     let eof_trivia_start = trailing_eof_whitespace_start(source, at);
     if at < eof_trivia_start {
-        children.push(raw(&factory, &text, at, eof_trivia_start)?);
+        let blocks = crate::markdown::block::parse(&text, dialect, at, eof_trivia_start)?;
+        children.extend(blocks.root.children().iter().cloned());
+        diagnostics.extend(blocks.diagnostics.iter().cloned());
     }
     let eof_leading = trivia(&factory, &text, eof_trivia_start, source.len())?;
     children.push(GreenElement::Token(
@@ -243,7 +230,11 @@ pub(super) fn parse_window(
                 &factory, text, source, line,
             )?)]
         }
-        ShellWindowKind::MarkdownRegion => vec![raw(&factory, text, start, end)?],
+        ShellWindowKind::MarkdownRegion => {
+            let blocks = crate::markdown::block::parse(text, structure.dialect, start, end)?;
+            diagnostics.extend(blocks.diagnostics.iter().cloned());
+            blocks.root.children().to_vec()
+        }
         ShellWindowKind::Tail => {
             if end != source.len() {
                 return Err(window_not_consumed());

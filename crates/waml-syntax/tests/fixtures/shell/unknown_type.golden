@@ -9,8 +9,9 @@ T root/0/2/2 FrontmatterValue 9..29 missing=false leading=" " text="never-heard-
 T root/0/2/3 NewlineToken 29..30 missing=false leading="" text="\n" trailing=""
 T root/0/3 FrontmatterCloseFence 30..33 missing=false leading="" text="---" trailing=""
 T root/0/4 NewlineToken 33..34 missing=false leading="" text="\n" trailing=""
-N root/1 Heading 34..58
+N root/1 AtxHeading 34..58
 T root/1/0 HeadingMarkerToken 34..35 missing=false leading="" text="#" trailing=""
-T root/1/1 HeadingText 35..57 missing=false leading=" " text="Unknown is structural" trailing=""
-T root/1/2 NewlineToken 57..58 missing=false leading="" text="\n" trailing=""
+T root/1/1 WhitespaceToken 35..36 missing=false leading="" text=" " trailing=""
+T root/1/2 TextToken 36..57 missing=false leading="" text="Unknown is structural" trailing=""
+T root/1/3 HeadingMarkerToken 57..58 missing=false leading="" text="\n" trailing=""
 T root/2 EndOfFileToken 58..58 missing=true leading="" text="" trailing=""

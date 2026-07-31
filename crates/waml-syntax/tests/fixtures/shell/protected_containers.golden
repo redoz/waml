@@ -1,8 +1,58 @@
 N root Root 0..237
-N root/0 MarkdownRegion 0..231
-T root/0/0 RawTextToken 0..231 missing=false leading="" text="> # quote\n\n- ## unordered item\n\n1. # ordered item\n\n```md\n# fenced code\n```\n\n    ## indented code\n\n<section>\n# html block\n</section>\n\n| # table | value |\n| --- | --- |\n| ## cell | value |\n\n[^note]: # footnote\n\nTerm\n: ## definition\n\n" trailing=""
-N root/1 Heading 231..237
-T root/1/0 HeadingMarkerToken 231..232 missing=false leading="" text="#" trailing=""
-T root/1/1 HeadingText 232..236 missing=false leading=" " text="top" trailing=""
-T root/1/2 NewlineToken 236..237 missing=false leading="" text="\n" trailing=""
-T root/2 EndOfFileToken 237..237 missing=true leading="" text="" trailing=""
+N root/0 BlockQuote 0..10
+T root/0/0 BlockQuoteMarkerToken 0..2 missing=false leading="" text="> " trailing=""
+T root/0/1 TextToken 2..10 missing=false leading="" text="# quote\n" trailing=""
+T root/1 NewlineToken 10..11 missing=false leading="" text="\n" trailing=""
+N root/2 List 11..31
+N root/2/0 ListItem 11..31
+T root/2/0/0 ListMarkerToken 11..12 missing=false leading="" text="-" trailing=""
+T root/2/0/1 TextToken 12..31 missing=false leading="" text=" ## unordered item\n" trailing=""
+T root/3 NewlineToken 31..32 missing=false leading="" text="\n" trailing=""
+N root/4 List 32..50
+N root/4/0 ListItem 32..50
+T root/4/0/0 ListMarkerToken 32..34 missing=false leading="" text="1." trailing=""
+T root/4/0/1 TextToken 34..50 missing=false leading="" text=" # ordered item\n" trailing=""
+T root/5 NewlineToken 50..51 missing=false leading="" text="\n" trailing=""
+N root/6 FencedCodeBlock 51..75
+T root/6/0 CodeFenceToken 51..54 missing=false leading="" text="```" trailing=""
+T root/6/1 InfoStringToken 54..56 missing=false leading="" text="md" trailing=""
+T root/6/2 NewlineToken 56..57 missing=false leading="" text="\n" trailing=""
+T root/6/3 CodeTextToken 57..71 missing=false leading="" text="# fenced code\n" trailing=""
+T root/6/4 CodeFenceToken 71..75 missing=false leading="" text="```\n" trailing=""
+T root/7 NewlineToken 75..76 missing=false leading="" text="\n" trailing=""
+N root/8 IndentedCodeBlock 76..97
+T root/8/0 IndentToken 76..80 missing=false leading="" text="    " trailing=""
+T root/8/1 CodeTextToken 80..97 missing=false leading="" text="## indented code\n" trailing=""
+T root/9 NewlineToken 97..98 missing=false leading="" text="\n" trailing=""
+N root/10 HtmlBlock 98..108
+T root/10/0 HtmlToken 98..108 missing=false leading="" text="<section>\n" trailing=""
+N root/11 AtxHeading 108..121
+T root/11/0 HeadingMarkerToken 108..109 missing=false leading="" text="#" trailing=""
+T root/11/1 WhitespaceToken 109..110 missing=false leading="" text=" " trailing=""
+T root/11/2 TextToken 110..120 missing=false leading="" text="html block" trailing=""
+T root/11/3 HeadingMarkerToken 120..121 missing=false leading="" text="\n" trailing=""
+N root/12 HtmlBlock 121..132
+T root/12/0 HtmlToken 121..132 missing=false leading="" text="</section>\n" trailing=""
+T root/13 NewlineToken 132..133 missing=false leading="" text="\n" trailing=""
+N root/14 Paragraph 133..187
+T root/14/0 TextToken 133..187 missing=false leading="" text="| # table | value |\n| --- | --- |\n| ## cell | value |\n" trailing=""
+T root/15 NewlineToken 187..188 missing=false leading="" text="\n" trailing=""
+N root/16 LinkReferenceDefinition 188..208
+T root/16/0 LinkLabelOpenToken 188..189 missing=false leading="" text="[" trailing=""
+T root/16/1 TextToken 189..194 missing=false leading="" text="^note" trailing=""
+T root/16/2 LinkLabelCloseToken 194..195 missing=false leading="" text="]" trailing=""
+T root/16/3 ColonToken 195..196 missing=false leading="" text=":" trailing=""
+T root/16/4 WhitespaceToken 196..197 missing=false leading="" text=" " trailing=""
+T root/16/5 LinkDestinationToken 197..198 missing=false leading="" text="#" trailing=""
+T root/16/6 WhitespaceToken 198..199 missing=false leading="" text=" " trailing=""
+T root/16/7 WhitespaceToken 199..208 missing=false leading="" text="footnote\n" trailing=""
+T root/17 NewlineToken 208..209 missing=false leading="" text="\n" trailing=""
+N root/18 Paragraph 209..230
+T root/18/0 TextToken 209..230 missing=false leading="" text="Term\n: ## definition\n" trailing=""
+T root/19 NewlineToken 230..231 missing=false leading="" text="\n" trailing=""
+N root/20 AtxHeading 231..237
+T root/20/0 HeadingMarkerToken 231..232 missing=false leading="" text="#" trailing=""
+T root/20/1 WhitespaceToken 232..233 missing=false leading="" text=" " trailing=""
+T root/20/2 TextToken 233..236 missing=false leading="" text="top" trailing=""
+T root/20/3 HeadingMarkerToken 236..237 missing=false leading="" text="\n" trailing=""
+T root/21 EndOfFileToken 237..237 missing=true leading="" text="" trailing=""
