@@ -4,6 +4,9 @@
 
 **Goal:** Add a standalone, WAML-owned Markdown editing crate with immutable revisioned document snapshots, exact edit transactions, Unicode-safe selections and IME, variable-metric layout, viewport virtualization, and a Makepad widget that does not depend on Makepad's `CodeEditor` or `Markdown` widgets.
 
+**Review status:** Whole-plan review NOT SAFE. Assigned fix waves and a new
+whole-plan review are pending; task-level approvals do not establish safety.
+
 **Architecture:** `waml-markdown-editor` separates a framework-independent document session from layout geometry and the Makepad widget adapter. The session consumes the immutable Markdown syntax snapshots from spec 1, and every accepted edit advances one local revision and carries the exact `TextChange` list plus the already-computed `MarkdownSyntaxUpdate`. Spec 3 builds the foundation-owned low-level `LayoutDocument`, the foundation produces immutable `LayoutSnapshot` geometry, and presentation motion interpolates that same snapshot for every draw layer.
 
 **Tech Stack:** Rust 2021 (MSRV 1.80), `waml-syntax`, Makepad low-level widget/drawing/font/input primitives, `unicode-segmentation` 1.12, Cargo unit and integration tests.

@@ -103,3 +103,50 @@
 
 - Independently approved at `c715eff5`.
 - The markdown editor foundation is complete and awaiting whole-plan review.
+
+## Whole-plan review
+
+Status: **NOT SAFE pending fix waves and re-review.** Task-level approvals and
+the Task 12 gates do not prove whole-plan safety.
+
+Critical findings:
+
+1. The widget raw `DrawText` path reshapes source instead of consuming the
+   authoritative `LayoutSnapshot` glyph placements and font attributes.
+2. Task 8 has no stable-boundary dirty-interval convergence or `BlockFlow`
+   convergence proof.
+3. The visible-only block vector is indexed with document indexes and can panic
+   after scrolling. Scroll authority is split, and the authoritative scroll is
+   not applied consistently.
+
+Important findings:
+
+- Accepted edits and all-document invalidation can leave stale widget layout.
+- `apply_edit` cancels IME before validation; undo and redo pop history before
+  fallible application succeeds.
+- The widget erases typed edit errors.
+- Read-only authority is split and still permits mutation leaks.
+- Parity tests depend too heavily on façades instead of the integrated paths.
+
+Minor evidence findings:
+
+- Task 5 had no report. It is reconstructed in `task-5-report.md` with explicit
+  evidence limits.
+- Nine review diff artifacts contained literal `System.Object[]`. They are
+  replaced by the exact commit range index in `review-ranges.md`.
+- The design written-spec status was stale.
+- Syntax fuzzing remains 0 iterations and deferred. No fuzz coverage is
+  claimed.
+- Global formatting remains clean for the foundation crate. The global check
+  differs only at the preserved user-owned `app.rs:1639` formatting hunk.
+  Cargo's two Makepad duplicate-package messages remain external warnings.
+
+Fix-wave assignments:
+
+- Wave A: session atomicity, read-only authority, and typed error behavior —
+  `foundation_controller` and `task5_implementer`.
+- Wave B: authoritative glyph placement, stable-boundary and flow convergence,
+  and virtualization/scroll indexing — `task5_rereview`.
+- Wave C: evidence repair — this evidence owner.
+- Widget integration follows Wave B. Whole-plan re-review follows all assigned
+  waves; no safe status is claimed before that review.

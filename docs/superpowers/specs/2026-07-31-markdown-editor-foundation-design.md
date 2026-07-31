@@ -1,7 +1,7 @@
 # Markdown editor foundation — design
 
 **Date:** 2026-07-31
-**Status:** Approved in conversation; written-spec review pending
+**Status:** Whole-plan review NOT SAFE; fix waves and re-review pending
 **Sequence:** 2 of 4
 **Depends on:** Incremental Markdown syntax platform
 
