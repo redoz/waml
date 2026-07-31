@@ -425,12 +425,13 @@ impl DocView for ClassDiagramView {
         }
 
         // Inline-edit commit: inspector emits `Edited(subject_key)`.
-        if let Some(key) = body
+        if body
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
             .and_then(|inspector| inspector.edited(actions))
+            .is_some()
         {
-            out.promote_subject = Some(key);
+            out.promote_active = true;
             return out;
         }
 

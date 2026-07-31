@@ -1022,10 +1022,14 @@ impl App {
         cx: &mut Cx,
         outcome: crate::doc_view::ViewOutcome,
     ) -> ActionFlow {
+        let outcome_active_id = self.documents.active_id();
         let mut flow = ActionFlow::Continue;
-        if let Some(edit) = outcome.edit {
-            self.apply_session_edit(cx, edit, "view edit failed");
-        }
+        let edit_succeeded = if let Some(edit) = outcome.edit {
+            self.apply_session_edit(cx, edit, "view edit failed")
+                .is_some()
+        } else {
+            true
+        };
 
         if let Some(intent) = outcome.navigation {
             self.handle_navigation_intent(cx, intent);
@@ -1041,12 +1045,12 @@ impl App {
             self.present_view_popup(cx, request);
             flow = ActionFlow::Consumed;
         }
-        if let Some(key) = outcome.promote_subject {
+        if outcome.promote_active && edit_succeeded {
             self.documents.transition(
                 cx,
                 &self.ui,
                 &self.session,
-                DocumentCommand::PromoteSubject(key),
+                DocumentCommand::Promote(outcome_active_id),
             );
             self.sync_document_shell(cx);
             flow = ActionFlow::Consumed;

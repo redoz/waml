@@ -231,8 +231,9 @@ pub struct ViewOutcome {
     /// Ask the shell to open an element preview by key (spec §5). Unused this
     /// A cross-tree popup the shell must place via `popup_root`.
     pub popup: Option<PopupRequest>,
-    /// Ask the shell to promote (pin) the tab whose key matches this subject.
-    pub promote_subject: Option<String>,
+    /// Ask the shell to promote (pin) the tab that was active when this
+    /// outcome entered shell processing.
+    pub promote_active: bool,
     /// Ask the shell to close the active tab.
     pub close_active: bool,
     /// Ask the shell to re-push the statusbar snapshot.
@@ -485,7 +486,7 @@ mod tests {
         let o = ViewOutcome::default();
         assert!(o.edit.is_none());
         assert!(o.popup.is_none());
-        assert!(o.promote_subject.is_none());
+        assert!(!o.promote_active);
         assert!(!o.close_active);
         assert!(!o.statusbar_dirty);
         assert!(!o.break_merge_group);

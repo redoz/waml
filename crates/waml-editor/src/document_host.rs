@@ -14,7 +14,6 @@ pub enum DocumentCommand {
     },
     Activate(LiveId),
     Promote(LiveId),
-    PromoteSubject(String),
     Close(LiveId),
 }
 
@@ -78,17 +77,6 @@ impl DocumentHost {
             DocumentCommand::Promote(id) => {
                 self.tabs.activate(id);
                 self.tabs.promote(id);
-            }
-            DocumentCommand::PromoteSubject(key) => {
-                if let Some(id) = self
-                    .tabs
-                    .tabs
-                    .iter()
-                    .find(|tab| tab.concept_id == key)
-                    .map(|tab| tab.id)
-                {
-                    self.tabs.promote(id);
-                }
             }
             DocumentCommand::Close(id) => self.tabs.close(id),
         }
@@ -592,6 +580,35 @@ mod tests {
             host.tab_id_for_locator(&DocumentLocator::source("order")),
             Some(source_id)
         );
+    }
+
+    #[test]
+    fn promotion_request_pins_active_primary_preview_not_earlier_source_tab() {
+        let mut host = DocumentHost::default();
+
+        let mut source = prepared("order", NavCategory::OkfDocument, Rc::new(Cell::new(0)));
+        source.tab_id = crate::okf_documents::source_document_tab_id("order");
+        source.kind = crate::view_history::DocumentKind::Source;
+        host.apply_command(DocumentCommand::Open {
+            document: source,
+            persistent: true,
+        });
+
+        let primary = prepared("order", NavCategory::Class, Rc::new(Cell::new(0)));
+        let primary_id = primary.tab_id;
+        host.apply_command(DocumentCommand::Open {
+            document: primary,
+            persistent: false,
+        });
+
+        assert_eq!(host.active_id(), primary_id);
+        assert!(host.active_tab().unwrap().preview);
+
+        let active_id = host.active_id();
+        host.apply_command(DocumentCommand::Promote(active_id));
+
+        let primary = host.tabs().iter().find(|tab| tab.id == primary_id).unwrap();
+        assert!(!primary.preview);
     }
 
     #[test]
