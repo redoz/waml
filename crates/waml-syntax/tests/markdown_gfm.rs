@@ -216,7 +216,7 @@ fn gfm_extended_autolinks_trim_punctuation_and_skip_code_raw_html_and_links() {
 
 #[test]
 fn extended_autolinks_publish_destinations_and_trim_gfm_tails() {
-    let source = "www.example.test http://one.test/a(b)) https://two.test&copy; person@example.test HTTPS://three.test:8443/path o'hara+tag@example.test\n";
+    let source = "www.example.test http://one.test/a(b)) https://two.test&copy; person@example.test HTTPS://three.test:8443/path ohara+tag@example.test\n";
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::new(source).unwrap(),
@@ -235,7 +235,7 @@ fn extended_autolinks_publish_destinations_and_trim_gfm_tails() {
             "https://two.test",
             "mailto:person@example.test",
             "HTTPS://three.test:8443/path",
-            "mailto:o'hara+tag@example.test"
+            "mailto:ohara+tag@example.test"
         ]
     );
     assert_eq!(
@@ -250,7 +250,7 @@ fn extended_autolinks_publish_destinations_and_trim_gfm_tails() {
             "https://two.test",
             "person@example.test",
             "HTTPS://three.test:8443/path",
-            "o'hara+tag@example.test"
+            "ohara+tag@example.test"
         ]
     );
 }
@@ -264,7 +264,59 @@ fn extended_autolinks_reject_embedded_and_malformed_candidates() {
         MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
-    assert_eq!(snapshot.queries().links().count(), 0);
+    assert_eq!(
+        snapshot
+            .queries()
+            .links()
+            .map(|link| link.destination.as_ref())
+            .collect::<Vec<_>>(),
+        [] as [&str; 0]
+    );
+}
+
+#[test]
+fn extended_email_autolinks_reject_scheme_and_path_suffixes() {
+    let source = "mailto:person@example.test foo/person@example.test\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot
+            .queries()
+            .links()
+            .map(|link| link.destination.as_ref())
+            .collect::<Vec<_>>(),
+        [] as [&str; 0]
+    );
+}
+
+#[test]
+fn extended_email_autolinks_accept_only_gfm_start_boundaries() {
+    let source = "person@example.test\n person@example.test *person@example.test _person@example.test ~person@example.test (person@example.test\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot
+            .queries()
+            .links()
+            .map(|link| link.destination.as_ref())
+            .collect::<Vec<_>>(),
+        [
+            "mailto:person@example.test",
+            "mailto:person@example.test",
+            "mailto:person@example.test",
+            "mailto:person@example.test",
+            "mailto:person@example.test",
+            "mailto:person@example.test",
+        ]
+    );
 }
 
 #[test]

@@ -1284,9 +1284,12 @@ fn extended_autolink(
         return None;
     }
     let first = rest.as_bytes().first().copied()?;
-    if !first.is_ascii_alphanumeric()
-        || (at > range_start && email_local_byte(source.as_bytes()[at - 1]))
-    {
+    let boundary = at == range_start
+        || source[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '*' | '_' | '~' | '('));
+    if !first.is_ascii_alphanumeric() || !boundary {
         return None;
     }
     let local_len = rest
@@ -1322,29 +1325,7 @@ fn extended_autolink(
 }
 
 fn email_local_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(
-            byte,
-            b'.' | b'!'
-                | b'#'
-                | b'$'
-                | b'%'
-                | b'&'
-                | b'\''
-                | b'*'
-                | b'+'
-                | b'/'
-                | b'='
-                | b'?'
-                | b'^'
-                | b'_'
-                | b'`'
-                | b'{'
-                | b'|'
-                | b'}'
-                | b'~'
-                | b'-'
-        )
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'+')
 }
 
 fn trim_extended_tail(source: &str, start: usize, mut end: usize) -> usize {
