@@ -699,10 +699,9 @@ mod tests {
     fn supplied_structure_arc_is_installed_without_recomputation() {
         let text = source("# Class\n");
         let structure =
-            Arc::new(crate::markdown::map(&text, MarkdownDialect::CommonMarkCurrent).unwrap());
+            Arc::new(crate::markdown::map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
         let parsed =
-            parse_with_structure(text, MarkdownDialect::CommonMarkCurrent, structure.clone())
-                .unwrap();
+            parse_with_structure(text, MarkdownDialect::WAML_DEFAULT, structure.clone()).unwrap();
 
         assert!(Arc::ptr_eq(&parsed.structure, &structure));
     }
@@ -711,11 +710,11 @@ mod tests {
     fn frontmatter_classifier_drives_full_and_window_consumption() {
         let text = source("---\ntype: uml.Class\n---\n# Class\n");
         let structure =
-            Arc::new(crate::markdown::map(&text, MarkdownDialect::CommonMarkCurrent).unwrap());
+            Arc::new(crate::markdown::map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
         let frontmatter = frontmatter_range(&text, &structure).unwrap().unwrap();
         let full = parse_with_structure(
             text.clone(),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
             structure.clone(),
         )
         .unwrap();
@@ -738,7 +737,7 @@ mod tests {
     fn tail_window_reclassifies_raw_text_and_source_backed_eof_trivia_together() {
         let text = source("body   ");
         let structure =
-            Arc::new(crate::markdown::map(&text, MarkdownDialect::CommonMarkCurrent).unwrap());
+            Arc::new(crate::markdown::map(&text, MarkdownDialect::WAML_DEFAULT).unwrap());
         let parsed = parse_window(
             &text,
             &structure,

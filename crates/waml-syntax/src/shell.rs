@@ -1,14 +1,22 @@
 mod parser;
+pub use crate::markdown::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode};
 use crate::{MarkdownDialect, SourceText, SyntaxTree, TextRange, TextSize};
 use std::{fmt, sync::Arc};
-pub use crate::markdown::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode};
 #[derive(Debug)]
 pub enum ParseError {
-    SourceTooLarge { bytes: usize },
-    InvalidRange { range: TextRange },
+    SourceTooLarge {
+        bytes: usize,
+    },
+    InvalidRange {
+        range: TextRange,
+    },
     WidthOverflow,
-    StructuralInvariant { reason: Arc<str> },
-    ParserStalled { offset: TextSize },
+    StructuralInvariant {
+        reason: Arc<str>,
+    },
+    ParserStalled {
+        offset: TextSize,
+    },
     NonMonotonicRevision {
         previous: crate::DocumentRevision,
         requested: crate::DocumentRevision,

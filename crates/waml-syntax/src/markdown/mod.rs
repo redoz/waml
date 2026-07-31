@@ -1,7 +1,9 @@
 mod kind;
 mod snapshot;
 
-pub use kind::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity};
+pub use kind::{
+    OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity,
+};
 pub use snapshot::{
     parse_markdown, reparse_markdown, MarkdownReparseOutcome, MarkdownSyntaxQueries,
     MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
@@ -69,7 +71,7 @@ pub(crate) fn map(
     let mut opaque = Vec::new();
     let mut pending: Option<(u8, usize, usize)> = None;
 
-    for (event, offsets) in Parser::new_ext(source, Options::all()).into_offset_iter() {
+    for (event, offsets) in Parser::new_ext(source, pulldown_options(dialect)).into_offset_iter() {
         let start = offsets.start;
         let end = offsets.end;
         if start < frontmatter_end {
@@ -160,6 +162,27 @@ pub(crate) fn map(
         opaque_ranges: opaque.into(),
         dialect,
     })
+}
+
+fn pulldown_options(dialect: MarkdownDialect) -> Options {
+    // Preserve the raw structure map's legacy recognition of protected
+    // constructs while allowing the public dialect to disable its named GFM
+    // extensions. Tasks 2-4 replace this provisional map with the complete
+    // block and inline parser profiles.
+    let mut options = Options::all();
+    if !dialect.tables() {
+        options.remove(Options::ENABLE_TABLES);
+    }
+    if !dialect.task_lists() {
+        options.remove(Options::ENABLE_TASKLISTS);
+    }
+    if !dialect.strikethrough() {
+        options.remove(Options::ENABLE_STRIKETHROUGH);
+    }
+    if !dialect.extended_autolinks() && !dialect.tag_filter() {
+        options.remove(Options::ENABLE_GFM);
+    }
+    options
 }
 
 fn normalize(mut ranges: Vec<TextRange>) -> Vec<TextRange> {

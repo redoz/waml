@@ -56,13 +56,27 @@ impl MarkdownDialect {
     pub(crate) const fn contains(self, flag: u8) -> bool {
         self.bits & flag != 0
     }
-    pub(crate) const fn tables(self) -> bool { self.contains(Self::TABLES) }
-    pub(crate) const fn task_lists(self) -> bool { self.contains(Self::TASK_LISTS) }
-    pub(crate) const fn strikethrough(self) -> bool { self.contains(Self::STRIKETHROUGH) }
-    pub(crate) const fn extended_autolinks(self) -> bool { self.contains(Self::EXTENDED_AUTOLINKS) }
-    pub(crate) const fn tag_filter(self) -> bool { self.contains(Self::TAG_FILTER) }
-    pub(crate) const fn waml_frontmatter(self) -> bool { self.contains(Self::WAML_FRONTMATTER) }
-    pub(crate) const fn waml_sections(self) -> bool { self.contains(Self::WAML_SECTIONS) }
+    pub(crate) const fn tables(self) -> bool {
+        self.contains(Self::TABLES)
+    }
+    pub(crate) const fn task_lists(self) -> bool {
+        self.contains(Self::TASK_LISTS)
+    }
+    pub(crate) const fn strikethrough(self) -> bool {
+        self.contains(Self::STRIKETHROUGH)
+    }
+    pub(crate) const fn extended_autolinks(self) -> bool {
+        self.contains(Self::EXTENDED_AUTOLINKS)
+    }
+    pub(crate) const fn tag_filter(self) -> bool {
+        self.contains(Self::TAG_FILTER)
+    }
+    pub(crate) const fn waml_frontmatter(self) -> bool {
+        self.contains(Self::WAML_FRONTMATTER)
+    }
+    pub(crate) const fn waml_sections(self) -> bool {
+        self.contains(Self::WAML_SECTIONS)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -70,9 +84,15 @@ pub struct DocumentRevision(u64);
 
 impl DocumentRevision {
     pub const INITIAL: Self = Self(0);
-    pub const fn new(value: u64) -> Self { Self(value) }
-    pub const fn get(self) -> u64 { self.0 }
-    pub fn checked_next(self) -> Option<Self> { self.0.checked_add(1).map(Self) }
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+    pub fn checked_next(self) -> Option<Self> {
+        self.0.checked_add(1).map(Self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,7 +128,9 @@ impl fmt::Display for TextError {
 impl std::error::Error for TextError {}
 
 impl TextSize {
-    pub const fn new(value: u32) -> Self { Self(value) }
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
     pub fn try_from_usize(value: usize) -> Result<Self, TextError> {
         u32::try_from(value)
             .map(Self)

@@ -647,12 +647,12 @@ pub fn reparse_okf_markdown_with_structure(
 > {
     let new_structure = Arc::new(crate::markdown::map(
         &new_text,
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )?);
     let Some(old) = recover_exact_source(previous.root_green()) else {
         let parsed = crate::shell::parse_okf_markdown_with_structure(
             new_text,
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
             new_structure.clone(),
         )?;
         return Ok((
@@ -668,7 +668,7 @@ pub fn reparse_okf_markdown_with_structure(
         Err(reason) => {
             let parsed = crate::shell::parse_okf_markdown_with_structure(
                 new_text,
-                MarkdownDialect::CommonMarkCurrent,
+                MarkdownDialect::WAML_DEFAULT,
                 new_structure.clone(),
             )?;
             return Ok((
@@ -723,7 +723,7 @@ pub fn reparse_okf_markdown_with_structure(
                 tree: Arc::new(SyntaxTree::new(
                     root,
                     Arc::from(previous.diagnostics()),
-                    MarkdownDialect::CommonMarkCurrent,
+                    MarkdownDialect::WAML_DEFAULT,
                 )),
                 shared_source_independent_green,
                 reparsed_range: TextRange::new(TextSize::try_from_usize(0).unwrap(), old.len())
@@ -732,14 +732,11 @@ pub fn reparse_okf_markdown_with_structure(
             new_structure,
         ));
     }
-    let old_structure = Arc::new(crate::markdown::map(
-        &old,
-        MarkdownDialect::CommonMarkCurrent,
-    )?);
+    let old_structure = Arc::new(crate::markdown::map(&old, MarkdownDialect::WAML_DEFAULT)?);
     let full = |reason| -> Result<_, ParseError> {
         let parsed = crate::shell::parse_okf_markdown_with_structure(
             new_text.clone(),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
             new_structure.clone(),
         )?;
         Ok((
@@ -829,7 +826,7 @@ pub fn reparse_okf_markdown_with_structure(
         .collect();
     diagnostics.extend(parsed_window.diagnostics.iter().cloned());
     diagnostics.sort_by_key(|d| (d.range.start(), d.range.end(), d.code as u8));
-    let candidate = SyntaxTree::new(root, diagnostics.into(), MarkdownDialect::CommonMarkCurrent);
+    let candidate = SyntaxTree::new(root, diagnostics.into(), MarkdownDialect::WAML_DEFAULT);
     let root = if has_syntax_annotations(previous.root_green()) {
         transfer_mapped_annotations(previous, &candidate, &map)
     } else {
@@ -842,7 +839,7 @@ pub fn reparse_okf_markdown_with_structure(
             tree: Arc::new(SyntaxTree::new(
                 root,
                 Arc::from(candidate.diagnostics()),
-                MarkdownDialect::CommonMarkCurrent,
+                MarkdownDialect::WAML_DEFAULT,
             )),
             shared_source_independent_green,
             reparsed_range: new_range,
@@ -1318,7 +1315,7 @@ mod tests {
         let parser_source =
             SourceText::from_shared(Arc::new("# Ordinary\nbody\n".to_owned())).unwrap();
         let parser_tree =
-            crate::parse_okf_markdown(parser_source.clone(), MarkdownDialect::CommonMarkCurrent)
+            crate::parse_okf_markdown(parser_source.clone(), MarkdownDialect::WAML_DEFAULT)
                 .unwrap()
                 .tree;
         assert!(Arc::ptr_eq(

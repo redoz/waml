@@ -509,7 +509,7 @@ mod tests {
         let root = factory
             .node(Kind::Root, [GreenElement::Token(token)])
             .unwrap();
-        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
         let valid = tree.root().child_at(0).unwrap().locator();
         let forged = SyntaxLocator {
             tree: valid.tree,
