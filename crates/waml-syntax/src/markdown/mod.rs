@@ -4,6 +4,7 @@ pub(crate) mod inline;
 mod kind;
 mod projection;
 pub(crate) mod reference;
+pub(crate) mod reparse;
 mod snapshot;
 
 pub use gfm::{HtmlTagFilter, TableAlignment, TaskListState};

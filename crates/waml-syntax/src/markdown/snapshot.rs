@@ -1,10 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    reparse_okf_markdown_with_structure, DocumentRevision, FullReparseReason, GreenElement,
-    GreenText, MarkdownDialect, MarkdownStructureMap, OkfMarkdownLanguage, OkfSyntaxDiagnosticCode,
-    ParseError, ReparseOutcome, SourceText, SyntaxElement, SyntaxIdentity, SyntaxTree, TextChange,
-    TextRange, TreeDiagnostic,
+    reparse_okf_markdown_with_structure, ChangeMap, DocumentRevision, FullReparseReason,
+    GreenElement, GreenText, MarkdownDialect, MarkdownStructureMap, OkfMarkdownLanguage,
+    OkfSyntaxDiagnosticCode, ParseError, ReparseOutcome, SourceText, SyntaxElement, SyntaxIdentity,
+    SyntaxTree, TextChange, TextRange, TreeDiagnostic,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -327,9 +327,28 @@ pub fn reparse_markdown(
             requested: revision,
         });
     }
+    let old = previous.text();
+    let map = ChangeMap::checked(old, changes).ok();
+    let references_changed = map.as_ref().is_some_and(|map| {
+        super::reparse::reference_definition_changed(old, &new_text, changes, map)
+    });
     let (outcome, structure) =
         reparse_okf_markdown_with_structure(previous.tree.as_ref(), new_text.clone(), changes)?;
-    let (tree, outcome, affected_ranges): (_, _, Arc<[TextRange]>) = match outcome {
+    // A definition supplies destination metadata to every matching reference.
+    // Parse the final snapshot as a single consistent tree before publishing it;
+    // the incremental outcome still records its precise affected work set.
+    let outcome = if references_changed {
+        let parsed =
+            crate::parse_okf_markdown(new_text.clone(), MarkdownDialect::CommonMarkCurrent)?;
+        ReparseOutcome::Incremental {
+            tree: parsed.tree,
+            shared_source_independent_green: 0,
+            reparsed_range: super::reparse::full_range(&new_text),
+        }
+    } else {
+        outcome
+    };
+    let (tree, outcome, mut affected_ranges): (_, _, Vec<TextRange>) = match outcome {
         ReparseOutcome::Incremental {
             tree,
             shared_source_independent_green,
@@ -346,15 +365,45 @@ pub fn reparse_markdown(
                     shared_source_independent_green,
                     reparsed_range: Some(reparsed_range),
                 },
-                Arc::from([reparsed_range]),
+                if references_changed {
+                    map.as_ref()
+                        .map(|map| map.segments().iter().map(|segment| segment.new).collect())
+                        .unwrap_or_else(|| vec![reparsed_range])
+                } else {
+                    vec![reparsed_range]
+                },
             )
         }
-        ReparseOutcome::Full { tree, reason } => {
-            (tree, MarkdownReparseOutcome::Full { reason }, Arc::from([]))
-        }
+        ReparseOutcome::Full { tree, reason } => (
+            tree,
+            MarkdownReparseOutcome::Full { reason },
+            vec![super::reparse::full_range(&new_text)],
+        ),
+    };
+    let snapshot = MarkdownSyntaxSnapshot::from_tree(revision, new_text, tree, structure)?;
+    if references_changed {
+        affected_ranges.extend(
+            snapshot
+                .queries()
+                .links()
+                .filter(|link| link.kind == MarkdownLinkKind::Reference)
+                .map(|link| link.source_range),
+        );
+    }
+    let affected_ranges: Arc<[TextRange]> =
+        super::reparse::normalize_affected_ranges(affected_ranges).into();
+    let outcome = match outcome {
+        MarkdownReparseOutcome::Incremental {
+            shared_source_independent_green,
+            ..
+        } => MarkdownReparseOutcome::Incremental {
+            shared_source_independent_green,
+            reparsed_range: (affected_ranges.len() == 1).then(|| affected_ranges[0]),
+        },
+        outcome => outcome,
     };
     Ok(MarkdownSyntaxUpdate {
-        snapshot: MarkdownSyntaxSnapshot::from_tree(revision, new_text, tree, structure)?,
+        snapshot,
         affected_ranges,
         outcome,
     })
