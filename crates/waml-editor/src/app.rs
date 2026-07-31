@@ -693,11 +693,6 @@ pub struct App {
     /// Recomputed once per model load (`open_dir`), not per keystroke.
     #[rust]
     nav_kinds: Vec<crate::tree::TreeKind>,
-    /// Maps each scope-dropdown popup item id back to its `PackageRow.key`, so
-    /// the `nav_scope` tag's committed `LiveId` (from `PopupRoot::closed`)
-    /// resolves to a scope to apply. Rebuilt every time the dropdown opens.
-    #[rust]
-    nav_scope_ids: Vec<(LiveId, String)>,
     /// Maps each type-filter dropdown item id back to its filter (`None` = the
     /// "All" row), so the `nav_filter` tag's committed `LiveId` resolves to a
     /// `NavState::filter`. Rebuilt every time the dropdown opens.

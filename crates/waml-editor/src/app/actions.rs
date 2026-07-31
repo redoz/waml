@@ -30,7 +30,6 @@ const DOCUMENT_POPUP_RELAY_ORDER: [PopupRelay; 2] = [PopupRelay::Armed, PopupRel
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ExclusiveHandler {
-    NavigationScope,
     NavigationQuery,
     NavigationFilter,
     TreeContextMenu,
@@ -49,8 +48,7 @@ enum ExclusiveHandler {
     DocumentTabs,
 }
 
-const EXCLUSIVE_ORDER: [ExclusiveHandler; 17] = [
-    ExclusiveHandler::NavigationScope,
+const EXCLUSIVE_ORDER: [ExclusiveHandler; 16] = [
     ExclusiveHandler::NavigationQuery,
     ExclusiveHandler::NavigationFilter,
     ExclusiveHandler::TreeContextMenu,
@@ -81,7 +79,6 @@ impl App {
 
         for handler in EXCLUSIVE_ORDER {
             let flow = match handler {
-                ExclusiveHandler::NavigationScope => self.handle_navigation_scope(cx, actions),
                 ExclusiveHandler::NavigationQuery => self.handle_navigation_query(cx, actions),
                 ExclusiveHandler::NavigationFilter => self.handle_navigation_filter(cx, actions),
                 ExclusiveHandler::TreeContextMenu => self.handle_tree_context_menu(cx, actions),
@@ -204,7 +201,6 @@ impl App {
         let burger_closed = result_for(live_id!(burger));
         let doc_switcher_closed = result_for(live_id!(doc_switcher));
         let node_closed = result_for(live_id!(node_menu));
-        let nav_scope_closed = result_for(live_id!(nav_scope));
         let nav_filter_closed = result_for(live_id!(nav_filter));
         let mut document_armed = popup.armed_event(actions);
         drop(popup);
@@ -277,12 +273,6 @@ impl App {
                         log!("find in diagrams: {key}");
                     }
                 }
-            }
-        }
-        if let Some(PopupResult::Invoked(id)) = nav_scope_closed {
-            if let Some((_, key)) = self.nav_scope_ids.iter().find(|(item, _)| *item == id) {
-                self.nav_state.scope = key.clone();
-                self.refresh_nav(cx, true);
             }
         }
         if let Some(PopupResult::Invoked(id)) = nav_filter_closed {
@@ -368,58 +358,6 @@ impl App {
             }
             Some(crate::popup::conflict_list::ConflictListAction::None) | None => {}
         }
-    }
-
-    fn handle_navigation_scope(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
-        let request = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-            .and_then(|panel| panel.scope_request(actions));
-        let Some(anchor_rect) = request else {
-            return ActionFlow::Continue;
-        };
-
-        self.nav_scope_ids.clear();
-        let items = crate::nav::packages(self.session.okf_analysis(), self.session.uml_analysis())
-            .into_iter()
-            .map(|row| {
-                let id = LiveId::from_str(&format!("scope:{}", row.key));
-                self.nav_scope_ids.push((id, row.key.clone()));
-                crate::popup::base::PopupItem {
-                    id,
-                    label: format!("{}{}", "  ".repeat(row.depth), row.title),
-                    icon: Some(crate::icons::Icon::Folder),
-                    danger: false,
-                    enabled: true,
-                }
-            })
-            .collect();
-        let anchor = dvec2(
-            anchor_rect.pos.x,
-            anchor_rect.pos.y + anchor_rect.size.y + crate::popup::menu::MENU_GAP,
-        );
-        let bounds = self.window_bounds(cx);
-        if let Some(mut popup) = self
-            .ui
-            .widget(cx, ids!(popup_root))
-            .borrow_mut::<PopupRoot>()
-        {
-            popup.show_at(
-                cx,
-                PopupSpec::Menu {
-                    tag: live_id!(nav_scope),
-                    anchor,
-                    bounds,
-                    items,
-                    open: MenuOpen::Popup {
-                        open_marking: None,
-                        max_height: None,
-                    },
-                },
-            );
-        }
-        ActionFlow::Consumed
     }
 
     fn handle_navigation_query(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
@@ -1201,7 +1139,6 @@ mod tests {
         assert_eq!(
             EXCLUSIVE_ORDER,
             [
-                ExclusiveHandler::NavigationScope,
                 ExclusiveHandler::NavigationQuery,
                 ExclusiveHandler::NavigationFilter,
                 ExclusiveHandler::TreeContextMenu,

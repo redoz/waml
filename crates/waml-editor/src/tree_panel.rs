@@ -97,25 +97,23 @@ script_mod! {
         // edges; it used to double as clearance for the 1.5px frame ring.
         padding: 6.0
 
-        // Header band: a real `flow: Down` container of two empty spacers.
-        // `title_row` reserves the upper band, over which the scope-title
-        // trigger is drawn immediate-mode; the pin `IconButton` that used to
-        // sit at its right is gone -- the caption bar's tree toggle owns
-        // collapse/expand now. `search_row` reserves the lower band, over which
-        // the search field + type chip are drawn immediate-mode -- the same
-        // hybrid `inspector::element_bar` uses.
-        // 34 + 30 = 64 keeps the body's top position and `note_band` unchanged.
+        // Header band: one empty spacer. `search_row` reserves it, and the
+        // search field + type chip are drawn immediate-mode over it -- the same
+        // hybrid `inspector::element_bar` uses. The scope title used to sit in
+        // a `title_row` above; the model's identity is the tree's root row now
+        // (see `nav::scope_node`), so the band is search-only.
+        //
+        // `search_row` MUST be `height: Fill`, not a fixed 30.0 matching the
+        // band: a lone fixed-height child that exactly fills its fixed-height
+        // parent degenerates the turtle and silently kills the FileTree's text
+        // draw below (rows keep their immediate-mode glyphs, every label blanks).
         header := View {
             width: Fill
-            height: 64.0
+            height: 30.0
             flow: Down
-            title_row := View {
-                width: Fill
-                height: 34.0
-            }
             search_row := View {
                 width: Fill
-                height: 30.0
+                height: Fill
             }
         }
 
@@ -131,6 +129,7 @@ script_mod! {
             visible: false
         }
 
+        // Load-bearing despite drawing nothing: see `draw_title`'s field comment.
         draw_title +: {
             color: atlas.text
             text_style: fonts.text_heading
@@ -245,16 +244,11 @@ pub enum ProjectTreeAction {
     #[default]
     None,
     Navigate(NavigationIntent),
-    /// The title trigger's open-request; `App` relays it to `PopupRoot` to
-    /// show the scope-picker dropdown.
-    ScopeRequest {
-        anchor: Rect,
-    },
     /// Search-field edit. Emitted by `emit_query` on every keystroke; `App`
     /// applies it to `NavState::query`.
     Query(String),
     /// Type-filter chip click; `App` relays it to `PopupRoot` to show the
-    /// type-filter `SelectFlyout` (mirrors `ScopeRequest`). `anchor` is the
+    /// type-filter `SelectFlyout`. `anchor` is the
     /// chip's window rect so the flyout drops under it, sized to its width.
     FilterRequest {
         anchor: Rect,
@@ -306,15 +300,10 @@ const ICON_LEFT_MARGIN: f64 = 6.0;
 const ICON_DEPTH_INDENT: f64 = 18.0;
 
 // Header band geometry (px), matching the inspector's own bar-strip constants.
-const HEADER_H: f64 = 64.0;
-const TITLE_ROW_H: f64 = 34.0;
+const HEADER_H: f64 = 30.0;
 const PAD: f64 = 10.0;
 const ICON: f64 = 16.0;
 const ICON_GAP: f64 = 10.0;
-// Scope-title trigger's trailing chevron glyph (replaces the old tofu `\u{2304}`
-// text character): gap after the label, and the glyph's square size.
-const TITLE_CHEV_GAP: f64 = 4.0;
-const TITLE_CHEV_SIZE: f64 = 14.0;
 // Vertical room (px) reserved above the FileTree body for the two-line
 // `Elsewhere` note. Must match the `note_band` View's height in the DSL.
 const NOTE_H: f64 = 40.0;
@@ -410,12 +399,19 @@ pub struct ProjectTree {
     draw_reveal: DrawColor,
     #[live]
     reveal_color: Vec4,
-    // Header band ink. `draw_title` is the scope-title label; `draw_dim` is
-    // everything subdued (the `⌄`, plus the search/chip/note tint source), and
-    // is also the tint source for the hand-drawn header glyphs.
+    /// Vestigial but load-bearing. Nothing draws with it since the scope title
+    /// left the header for the tree's root row -- but deleting the field (and
+    /// its DSL block) silently blanks every FileTree row label below: the rows
+    /// keep their immediate-mode glyphs and lose their text. Bisected against
+    /// the `mini` fixture; kept until the underlying makepad/live-DSL cause is
+    /// understood.
+    #[allow(dead_code)]
     #[redraw]
     #[live]
     draw_title: DrawText,
+    // Header band ink. `draw_dim` is everything subdued (the search/chip/note
+    // tint source), and is also the tint source for the hand-drawn header
+    // glyphs.
     #[redraw]
     #[live]
     draw_dim: DrawText,
@@ -423,9 +419,9 @@ pub struct ProjectTree {
     #[redraw]
     #[live]
     draw_field_bg: DrawColor,
-    /// The current scope's display title, shown in the header (Task 10 pushes
-    /// this from `nav::packages`). Empty until then -- falls back to
-    /// `"Untitled"`.
+    /// The current scope's display title. No longer drawn as a header label
+    /// (the scope is the tree's root row now); it still names the scope in the
+    /// `Elsewhere` note. Empty falls back to `"Untitled"`.
     #[rust]
     scope_title: String,
     /// Live search text, edited in place (hand-rolled, no fork `TextInput`).
@@ -463,10 +459,6 @@ pub struct ProjectTree {
     dock: DockState,
     #[rust]
     header_rect: Rect,
-    /// The scope-title trigger's hit rect (label + `⌄`). A click emits
-    /// `ProjectTreeAction::ScopeRequest`.
-    #[rust]
-    title_rect: Rect,
     // Key of the row to highlight, mirroring the active doc tab. Set via
     // `set_selected_key` from the app's `sync_active_tab`.
     #[rust]
@@ -524,25 +516,31 @@ fn build_id_maps(tree: &ProjectTreeData) -> TreeIdMaps {
 
 /// The package-folder keys `set_view` expands for `tag`, in depth-first order.
 ///
-/// `Browse` opens only the top-level packages — the user drills down manually.
+/// `Browse` opens the scope row plus the packages directly under it — the user
+/// drills down from there manually. (The scope row is the single root of every
+/// view since the header stopped carrying the scope title, so stopping at
+/// depth 0 would show one collapsed row and nothing else.)
 /// The search states (`Results`/`Elsewhere`) open EVERY package: the nav pass
 /// already pruned the tree to the matches plus their ancestor packages, so a
 /// match nested two+ package levels deep stays hidden behind a collapsed
 /// sub-package unless those ancestor packages are expanded too.
 fn folders_to_open(tag: NavStateTag, tree: &ProjectTreeData) -> Vec<String> {
     let deep = matches!(tag, NavStateTag::Results | NavStateTag::Elsewhere);
-    fn collect(nodes: &[TreeNode], deep: bool, out: &mut Vec<String>) {
+    // `Browse` descends one level past the scope row; the search states have no
+    // depth limit.
+    let max_depth = if deep { usize::MAX } else { 1 };
+    fn collect(nodes: &[TreeNode], depth: usize, max_depth: usize, out: &mut Vec<String>) {
         for n in nodes {
             if n.is_directory {
                 out.push(n.key.clone());
-                if deep {
-                    collect(&n.children, deep, out);
+                if depth < max_depth {
+                    collect(&n.children, depth + 1, max_depth, out);
                 }
             }
         }
     }
     let mut out = Vec::new();
-    collect(&tree.roots, deep, &mut out);
+    collect(&tree.roots, 0, max_depth, &mut out);
     out
 }
 
@@ -823,63 +821,26 @@ impl Widget for ProjectTree {
             );
         }
 
-        // Header band: the scope-title trigger, drawn immediate-mode over the
-        // (now childless) `title_row`. Only reached while expanded -- the
-        // collapsed panel returned above without drawing anything.
+        // Header band: drawn immediate-mode over the (childless) `search_row`.
+        // Only reached while expanded -- the collapsed panel returned above
+        // without drawing anything.
         let rect = self.view.area().rect(cx);
         self.header_rect = Rect {
             pos: rect.pos,
             size: dvec2(rect.size.x, HEADER_H),
         };
-        let cy = rect.pos.y + TITLE_ROW_H * 0.5;
         // `draw_dim` carries the neutral tint for the glyphs; read it out
         // before borrowing `self.icons` (same tint-copy idiom as the
         // inspector's pin/caret glyphs).
         let dim = self.draw_dim.color;
 
-        // Scope-title trigger: label + a small down/up-chevron SDF glyph
-        // (mirrors the type-chip's trailing `ChevronsUpDown` below), left-
-        // aligned. The label used to append a literal `\u{2304}` character,
-        // which renders as tofu (missing-glyph box) in the chrome fonts --
-        // draw the bare title and a real glyph instead.
-        let title = if self.scope_title.is_empty() {
-            "Untitled"
-        } else {
-            self.scope_title.as_str()
-        };
-        let text_w = self
-            .draw_title
-            .layout(cx, 0.0, 0.0, None, false, Align::default(), title)
-            .size_in_lpxs
-            .width as f64;
-        // `text_heading` (13pt, SemiBold, line 1.2) replaced the old inline
-        // 16pt label; re-tuned from `cy - 8.0` so the smaller cut still seats
-        // on the title-row centerline.
-        let title_pos = dvec2(rect.pos.x + PAD, cy - 7.0);
-        self.draw_title.draw_abs(cx, title_pos, title);
-        let chev_rect = Rect {
-            pos: dvec2(
-                title_pos.x + text_w + TITLE_CHEV_GAP,
-                cy - TITLE_CHEV_SIZE * 0.5,
-            ),
-            size: dvec2(TITLE_CHEV_SIZE, TITLE_CHEV_SIZE),
-        };
-        self.icons.draw(cx, Icon::ChevronsUpDown, chev_rect, dim);
-        self.title_rect = Rect {
-            pos: rect.pos,
-            size: dvec2(
-                (PAD + text_w + TITLE_CHEV_GAP + TITLE_CHEV_SIZE).max(0.0),
-                TITLE_ROW_H,
-            ),
-        };
-
         // Search row: field + leading magnifier (left), rotating type chip
-        // (right). Sits in the header band below the title row. An expanded
-        // panel always draws the full body, so this runs unconditionally.
+        // (right). It is the whole header band now -- the scope title that used
+        // to sit above it is the tree's root row. An expanded panel always draws
+        // the full body, so this runs unconditionally.
         {
-            let row_h = HEADER_H - TITLE_ROW_H;
-            let field_h = row_h - 6.0;
-            let field_y = rect.pos.y + TITLE_ROW_H + 3.0;
+            let field_h = HEADER_H - 6.0;
+            let field_y = rect.pos.y + 3.0;
             let chip_w = 104.0;
 
             let chip_rect = Rect {
@@ -1023,14 +984,6 @@ impl Widget for ProjectTree {
                 self.pending_tap_count = fe.tap_count;
             }
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
-                if header_release_hits(&fe, hit_off, self.title_rect) {
-                    let anchor = Rect {
-                        pos: self.title_rect.pos + hit_off,
-                        size: self.title_rect.size,
-                    };
-                    cx.widget_action(uid, ProjectTreeAction::ScopeRequest { anchor });
-                    return;
-                }
                 if header_release_hits(&fe, hit_off, self.search_rect) {
                     self.editing_search = true;
                     cx.set_key_focus(self.view.area());
@@ -1303,17 +1256,6 @@ impl ProjectTree {
         }
     }
 
-    /// The title trigger's open-request. `App` relays it to `PopupRoot` to
-    /// show the scope-picker dropdown, mirroring `Inspector::open_picker_request`.
-    pub fn scope_request(&self, actions: &Actions) -> Option<Rect> {
-        let item = actions.find_widget_action(self.widget_uid())?;
-        if let ProjectTreeAction::ScopeRequest { anchor } = item.cast() {
-            Some(anchor)
-        } else {
-            None
-        }
-    }
-
     /// The type-filter chip's current filter. `App` pushes this whenever the
     /// filter changes (see `App::refresh_nav`): `label` from `nav::chip_label`
     /// for the chip text, `kind` for the matching leading icon (`None` = "All").
@@ -1459,21 +1401,29 @@ mod tests {
         is_open
     }
 
+    /// Mirrors a real view: a single scope row (`/`) with the packages beneath
+    /// it. `Browse` therefore opens `/` and `/sales`, leaving `/sales/archive`
+    /// for the user to drill into.
     fn nested_search_tree() -> ProjectTreeData {
         ProjectTreeData {
             roots: vec![node(
-                "/sales",
-                "Sales",
+                "/",
+                "Root",
                 TreeKind::Directory,
                 vec![node(
-                    "/sales/archive",
-                    "Archive",
+                    "/sales",
+                    "Sales",
                     TreeKind::Directory,
                     vec![node(
-                        "/sales/archive/order",
-                        "Order",
-                        TreeKind::Class,
-                        vec![],
+                        "/sales/archive",
+                        "Archive",
+                        TreeKind::Directory,
+                        vec![node(
+                            "/sales/archive/order",
+                            "Order",
+                            TreeKind::Class,
+                            vec![],
+                        )],
                     )],
                 )],
             )],
@@ -1532,7 +1482,7 @@ mod tests {
         ));
         assert_eq!(
             panel.open_directories,
-            HashSet::from(["/sales".into(), "/sales/archive".into()])
+            HashSet::from(["/".into(), "/sales".into(), "/sales/archive".into()])
         );
         assert_eq!(panel.selected_key.as_deref(), Some("/sales/archive/order"));
         assert_eq!(
@@ -1553,7 +1503,11 @@ mod tests {
                 address: "/sales/archive".into(),
             },
         ));
-        assert_eq!(panel.open_directories, HashSet::from(["/sales".into()]));
+        // Ancestors of the target, up to and including the scope row.
+        assert_eq!(
+            panel.open_directories,
+            HashSet::from(["/".into(), "/sales".into()])
+        );
     }
 
     #[test]
@@ -1878,46 +1832,28 @@ mod tests {
     #[test]
     fn set_view_initializes_known_and_logically_open_directories() {
         let (mut cx, mut panel) = project_tree_test_context();
-        let tree = ProjectTreeData {
-            roots: vec![node(
-                "/sales",
-                "Sales",
-                TreeKind::Directory,
-                vec![node(
-                    "/sales/archive",
-                    "Archive",
-                    TreeKind::Directory,
-                    vec![],
-                )],
-            )],
-        };
+        let tree = nested_search_tree();
 
         panel.set_view(&mut cx, NavView::Browse(tree));
 
         assert_eq!(
             panel.directory_addresses,
-            HashSet::from(["/sales".to_owned(), "/sales/archive".to_owned()])
+            HashSet::from([
+                "/".to_owned(),
+                "/sales".to_owned(),
+                "/sales/archive".to_owned()
+            ])
         );
-        assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
+        // The scope row plus the packages directly under it.
+        assert_eq!(
+            panel.open_directories,
+            HashSet::from(["/".to_owned(), "/sales".to_owned()])
+        );
     }
 
     #[test]
     fn repeated_browse_refresh_preserves_nested_user_fold_state() {
-        fn nested_tree() -> ProjectTreeData {
-            ProjectTreeData {
-                roots: vec![node(
-                    "/sales",
-                    "Sales",
-                    TreeKind::Directory,
-                    vec![node(
-                        "/sales/archive",
-                        "Archive",
-                        TreeKind::Directory,
-                        vec![],
-                    )],
-                )],
-            }
-        }
+        let nested_tree = nested_search_tree;
 
         let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
         panel.set_view(&mut cx, NavView::Browse(nested_tree()));
@@ -1936,7 +1872,7 @@ mod tests {
 
         assert_eq!(
             panel.open_directories,
-            HashSet::from(["/sales/archive".to_owned()])
+            HashSet::from(["/".to_owned(), "/sales/archive".to_owned()])
         );
         assert!(!file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
         assert!(file_tree_folder_is_open(
@@ -1953,7 +1889,10 @@ mod tests {
             panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
             assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
             assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
-            assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
+            assert_eq!(
+                panel.open_directories,
+                HashSet::from(["/".to_owned(), "/sales".to_owned()])
+            );
             assert!(!file_tree_folder_is_open(
                 &mut cx,
                 &file_tree,
@@ -1969,7 +1908,11 @@ mod tests {
 
             assert_eq!(
                 panel.open_directories,
-                HashSet::from(["/sales".to_owned(), "/sales/archive".to_owned()])
+                HashSet::from([
+                    "/".to_owned(),
+                    "/sales".to_owned(),
+                    "/sales/archive".to_owned()
+                ])
             );
             assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
             assert!(file_tree_folder_is_open(
@@ -1999,7 +1942,10 @@ mod tests {
             };
             panel.set_view(&mut cx, refreshed_view);
 
-            assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
+            assert_eq!(
+                panel.open_directories,
+                HashSet::from(["/".to_owned(), "/sales".to_owned()])
+            );
             assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
             assert!(!file_tree_folder_is_open(
                 &mut cx,
@@ -2050,25 +1996,16 @@ mod tests {
     #[test]
     fn explicit_fold_reset_reseeds_planned_defaults() {
         let (mut cx, mut panel) = project_tree_test_context();
-        let tree = || ProjectTreeData {
-            roots: vec![node(
-                "/sales",
-                "Sales",
-                TreeKind::Directory,
-                vec![node(
-                    "/sales/archive",
-                    "Archive",
-                    TreeKind::Directory,
-                    vec![],
-                )],
-            )],
-        };
+        let tree = nested_search_tree;
         panel.set_view(&mut cx, NavView::Browse(tree()));
         assert!(panel.toggle_directory(&mut cx, "/sales"));
 
         panel.set_view_with_fold_reset(&mut cx, NavView::Browse(tree()), true);
 
-        assert_eq!(panel.open_directories, HashSet::from(["/sales".to_owned()]));
+        assert_eq!(
+            panel.open_directories,
+            HashSet::from(["/".to_owned(), "/sales".to_owned()])
+        );
     }
 
     #[test]
@@ -2125,19 +2062,24 @@ mod tests {
         assert!(!is_classifier_kind(TreeKind::Diagram));
     }
 
-    // A root package holding a sub-package that in turn holds a class, i.e. a
-    // match ("deep") that lives two package levels below the roots.
+    // The scope row holding a sub-package that in turn holds a sub-sub-package
+    // with the class, i.e. a match ("deep") two package levels below the scope.
     fn nested_two_deep() -> ProjectTreeData {
         ProjectTreeData {
             roots: vec![node(
-                "outer",
-                "Outer",
+                "/",
+                "Root",
                 TreeKind::Directory,
                 vec![node(
-                    "inner",
-                    "Inner",
+                    "outer",
+                    "Outer",
                     TreeKind::Directory,
-                    vec![node("deep", "Deep", TreeKind::Class, vec![])],
+                    vec![node(
+                        "inner",
+                        "Inner",
+                        TreeKind::Directory,
+                        vec![node("deep", "Deep", TreeKind::Class, vec![])],
+                    )],
                 )],
             )],
         }
@@ -2146,20 +2088,21 @@ mod tests {
     #[test]
     fn search_states_expand_ancestor_packages_of_nested_matches() {
         let tree = nested_two_deep();
-        // Browse opens only the top-level package; the user drills in from there.
+        // Browse opens the scope row and the packages directly under it; the
+        // user drills in from there.
         assert_eq!(
             folders_to_open(NavStateTag::Browse, &tree),
-            vec!["outer".to_string()]
+            vec!["/".to_string(), "outer".to_string()]
         );
         // Results/Elsewhere must open EVERY ancestor package (outer AND inner) or
         // the nested "deep" match stays hidden behind a collapsed sub-package.
         assert_eq!(
             folders_to_open(NavStateTag::Results, &tree),
-            vec!["outer".to_string(), "inner".to_string()]
+            vec!["/".to_string(), "outer".to_string(), "inner".to_string()]
         );
         assert_eq!(
             folders_to_open(NavStateTag::Elsewhere, &tree),
-            vec!["outer".to_string(), "inner".to_string()]
+            vec!["/".to_string(), "outer".to_string(), "inner".to_string()]
         );
     }
 

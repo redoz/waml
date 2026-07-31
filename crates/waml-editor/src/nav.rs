@@ -159,12 +159,32 @@ fn find_node<'a>(nodes: &'a [TreeNode], key: &str) -> Option<&'a TreeNode> {
     None
 }
 
-/// The rows shown for `scope`: the scope node's children (its members at depth
-/// 0). The scope package itself is never a row. Unknown scope -> empty.
+/// The scope node itself, children stripped. It *is* the single root row of
+/// every view (the header no longer carries the scope title, so this row is
+/// the model's on-screen identity and the only thing to select when a whole
+/// bundle/directory is the subject). Unknown scope -> `None`.
+fn scope_node(full: &ProjectTree, scope: &str) -> Option<TreeNode> {
+    find_node(&full.roots, scope).map(|n| TreeNode {
+        children: Vec::new(),
+        ..n.clone()
+    })
+}
+
+/// The scope node's members at depth 0.
 fn scoped_roots(full: &ProjectTree, scope: &str) -> Vec<TreeNode> {
     find_node(&full.roots, scope)
         .map(|n| n.children.clone())
         .unwrap_or_default()
+}
+
+/// Hang `children` under `wrapper` as the single root of a view.
+fn under(wrapper: &TreeNode, children: Vec<TreeNode>) -> ProjectTree {
+    ProjectTree {
+        roots: vec![TreeNode {
+            children,
+            ..wrapper.clone()
+        }],
+    }
 }
 
 /// Keep rows whose kind == `kind`; retain ancestor packages of any kept row for
@@ -217,19 +237,25 @@ pub fn view(
     state: &NavState,
 ) -> NavView {
     let full = build_tree(okf, uml, "Untitled");
+    // Every non-`Empty` view is a single scope row with the matching members
+    // beneath it -- including the search states, so the row you can select
+    // never disappears mid-query.
+    let Some(scope) = scope_node(&full, &state.scope) else {
+        return NavView::Empty;
+    };
     let scoped = scoped_roots(&full, &state.scope);
     let filtered = match state.filter {
         Some(k) => filter_kind(&scoped, k),
         None => scoped,
     };
     if state.query.trim().is_empty() {
-        return NavView::Browse(ProjectTree { roots: filtered });
+        return NavView::Browse(under(&scope, filtered));
     }
     let in_scope = query_prune(&filtered, &state.query);
     if !in_scope.is_empty() {
-        return NavView::Results(ProjectTree { roots: in_scope });
+        return NavView::Results(under(&scope, in_scope));
     }
-    // Nothing in scope: search the whole bundle.
+    // Nothing in scope: search the whole bundle, under the bundle root row.
     let whole = scoped_roots(&full, "/");
     let whole_filtered = match state.filter {
         Some(k) => filter_kind(&whole, k),
@@ -239,7 +265,8 @@ pub fn view(
     if elsewhere.is_empty() {
         NavView::Empty
     } else {
-        NavView::Elsewhere(ProjectTree { roots: elsewhere })
+        let root = scope_node(&full, "/").unwrap_or(scope);
+        NavView::Elsewhere(under(&root, elsewhere))
     }
 }
 
@@ -348,13 +375,18 @@ mod tests {
     }
 
     #[test]
-    fn empty_scope_roots_at_whole_model_without_the_synthetic_root_row() {
+    fn empty_scope_puts_the_whole_model_under_the_bundle_root_row() {
         let (bundle, projection) = built();
         let v = view(&bundle, &projection, &NavState::default());
         let t = browse_roots(&v);
-        // Whole-model members are at depth 0 — the "Root" package itself is NOT a
-        // row (it is the dropdown's scope, not tree content).
-        let keys: Vec<&str> = t.roots.iter().map(|r| r.key.as_str()).collect();
+        // The scope package IS the single root row; its members hang beneath it.
+        let roots: Vec<&str> = t.roots.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(roots, vec!["/"]);
+        let keys: Vec<&str> = t.roots[0]
+            .children
+            .iter()
+            .map(|r| r.key.as_str())
+            .collect();
         assert_eq!(keys, vec!["/sub", "iface"]);
     }
 
@@ -367,8 +399,14 @@ mod tests {
         let (bundle, projection) = built();
         let v = view(&bundle, &projection, &state);
         let t = browse_roots(&v);
-        // "sub"'s members at depth 0; "sub" itself is not shown.
-        assert_eq!(flat(t), vec![("sub/cls".to_string(), TreeKind::Class)]);
+        // "sub" is the root row; its members hang beneath it.
+        assert_eq!(
+            flat(t),
+            vec![
+                ("/sub".to_string(), TreeKind::Directory),
+                ("sub/cls".to_string(), TreeKind::Class)
+            ]
+        );
     }
 
     #[test]
@@ -381,10 +419,12 @@ mod tests {
         let v = view(&bundle, &projection, &state);
         let t = browse_roots(&v);
         // Only the Class survives, but its ancestor package "sub" is retained for
-        // structure; the sibling Interface "iface" is pruned.
+        // structure; the sibling Interface "iface" is pruned. The scope row
+        // itself is never filtered away.
         assert_eq!(
             flat(t),
             vec![
+                ("/".to_string(), TreeKind::Directory),
                 ("/sub".to_string(), TreeKind::Directory),
                 ("sub/cls".to_string(), TreeKind::Class)
             ]
@@ -400,7 +440,13 @@ mod tests {
         let (bundle, projection) = built();
         let v = view(&bundle, &projection, &state);
         let t = browse_roots(&v);
-        assert_eq!(flat(t), vec![("/sub".to_string(), TreeKind::Directory)]);
+        assert_eq!(
+            flat(t),
+            vec![
+                ("/".to_string(), TreeKind::Directory),
+                ("/sub".to_string(), TreeKind::Directory)
+            ]
+        );
     }
 
     #[test]
@@ -416,9 +462,11 @@ mod tests {
             other => panic!("expected Results, got {other:?}"),
         };
         // "Customer" matches; its ancestor "sub" is kept; "Payments" is pruned.
+        // The scope row survives every search state.
         assert_eq!(
             flat(t),
             vec![
+                ("/".to_string(), TreeKind::Directory),
                 ("/sub".to_string(), TreeKind::Directory),
                 ("sub/cls".to_string(), TreeKind::Class)
             ]
