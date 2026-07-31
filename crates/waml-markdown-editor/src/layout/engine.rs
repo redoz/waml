@@ -160,23 +160,14 @@ impl LayoutEngine {
             }
         }
 
-        let width_key = viewport.width.to_bits();
         let invalidated = invalidated_block_range(&invalidation, document);
-        let mut summaries = Vec::with_capacity(document.blocks.len());
+        let hierarchy = BlockHierarchy::new(document);
+        let widths = WidthPlan::new(document, &hierarchy, viewport.width);
         let mut block_data = Vec::with_capacity(document.blocks.len());
-        let mut dirty_first = None;
-        let mut dirty_end = 0;
-        let mut y = document.content_insets.top;
 
         for (index, block) in document.blocks.iter().enumerate() {
-            y += block.spec.space_before + block.spec.insets.top;
-            let (nested_left, nested_right) = nested_horizontal_insets(document, block);
-            let available_width = (viewport.width
-                - document.content_insets.left
-                - document.content_insets.right
-                - nested_left
-                - nested_right)
-                .max(1.0);
+            let available_width = widths.content[index];
+            let width_key = available_width.to_bits();
             let flow_fingerprint = flow_fingerprint(block);
             let content_fingerprint = content_fingerprint(block, document, presentation);
             let cached = self.blocks.get(&block.id);
@@ -217,29 +208,42 @@ impl LayoutEngine {
                 };
                 Arc::new(block_layout_data(block, available_width, output, fallback))
             };
+            block_data.push(data);
+        }
+
+        let (placements, content_y) = position_block_tree(
+            document,
+            &hierarchy,
+            &widths,
+            &block_data,
+        );
+        let mut summaries = Vec::with_capacity(document.blocks.len());
+        let mut dirty_first = None;
+        let mut dirty_end = 0;
+        for (index, block) in document.blocks.iter().enumerate() {
             let summary = BlockSummary {
                 id: block.id,
                 source_range: block.source_range,
                 parent: block.parent,
-                flow_fingerprint,
-                y,
-                height: data.block.rect.size.y,
-                width_key,
-                content_fingerprint,
+                flow_fingerprint: flow_fingerprint(block),
+                y: placements[index].rect.pos.y,
+                height: placements[index].rect.size.y,
+                width_key: widths.content[index].to_bits(),
+                content_fingerprint: content_fingerprint(block, document, presentation),
             };
+            let explicitly_invalidated = invalidated.contains(&index);
             let changed = explicitly_invalidated
-                || cached.is_none_or(|old| old.summary != summary);
+                || self
+                    .blocks
+                    .get(&block.id)
+                    .is_none_or(|old| old.summary != summary);
             if changed {
                 dirty_first.get_or_insert(index);
                 dirty_end = index + 1;
             }
-            y += summary.height + block.spec.insets.bottom + block.spec.space_after;
             summaries.push(summary);
-            block_data.push(data);
         }
-
         let dirty_block_range = dirty_first.map_or(0..0, |first| first..dirty_end);
-        let content_y = y + document.content_insets.bottom;
         let visible_min = (viewport.scroll_y - viewport.overscan).max(0.0);
         let visible_max = viewport.scroll_y + viewport.height + viewport.overscan;
         let visible_indices: Vec<_> = summaries
@@ -256,13 +260,9 @@ impl LayoutEngine {
         let mut blocks = Vec::new();
         let mut visible_block_layouts = Vec::new();
         for index in visible_indices.iter().copied() {
-            let block = &document.blocks[index];
-            let (nested_left, _) = nested_horizontal_insets(document, block);
-            let content_x = document.content_insets.left + nested_left;
             append_positioned_block(
                 &block_data[index],
-                content_x,
-                summaries[index].y,
+                placements[index],
                 &mut visual_lines,
                 &mut clusters,
                 &mut blocks,
@@ -308,6 +308,278 @@ impl LayoutEngine {
     }
 }
 
+struct BlockHierarchy {
+    roots: Vec<usize>,
+    children: Vec<Vec<usize>>,
+}
+
+impl BlockHierarchy {
+    fn new(document: &LayoutDocument) -> Self {
+        let indexes: HashMap<_, _> = document
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (block.id, index))
+            .collect();
+        let mut roots = Vec::new();
+        let mut children = vec![Vec::new(); document.blocks.len()];
+        for (index, block) in document.blocks.iter().enumerate() {
+            if let Some(parent) = block.parent.and_then(|id| indexes.get(&id).copied()) {
+                children[parent].push(index);
+            } else {
+                roots.push(index);
+            }
+        }
+        Self { roots, children }
+    }
+}
+
+struct WidthPlan {
+    outer: Vec<f64>,
+    content: Vec<f64>,
+    child_x: Vec<f64>,
+}
+
+impl WidthPlan {
+    fn new(document: &LayoutDocument, hierarchy: &BlockHierarchy, viewport_width: f64) -> Self {
+        let mut plan = Self {
+            outer: vec![1.0; document.blocks.len()],
+            content: vec![1.0; document.blocks.len()],
+            child_x: vec![0.0; document.blocks.len()],
+        };
+        let root_width = (viewport_width
+            - document.content_insets.left
+            - document.content_insets.right)
+            .max(1.0);
+        for &root in &hierarchy.roots {
+            assign_block_widths(document, hierarchy, root, root_width, &mut plan);
+        }
+        plan
+    }
+}
+
+fn assign_block_widths(
+    document: &LayoutDocument,
+    hierarchy: &BlockHierarchy,
+    index: usize,
+    available_width: f64,
+    plan: &mut WidthPlan,
+) {
+    let block = &document.blocks[index];
+    let horizontal_insets = block.spec.insets.left + block.spec.insets.right;
+    match block.spec.flow {
+        super::BlockFlow::Table => {
+            let columns = solve_table_columns(document, hierarchy, index, available_width);
+            let content_width = columns.iter().sum::<f64>().max(1.0);
+            plan.content[index] = content_width;
+            plan.outer[index] = content_width + horizontal_insets;
+            for &child in &hierarchy.children[index] {
+                if matches!(document.blocks[child].spec.flow, super::BlockFlow::TableRow) {
+                    assign_table_row_widths(document, hierarchy, child, &columns, plan);
+                } else {
+                    assign_block_widths(document, hierarchy, child, content_width, plan);
+                }
+            }
+        }
+        _ => {
+            plan.outer[index] = available_width.max(1.0);
+            plan.content[index] = (available_width - horizontal_insets).max(1.0);
+            for &child in &hierarchy.children[index] {
+                assign_block_widths(document, hierarchy, child, plan.content[index], plan);
+            }
+        }
+    }
+}
+
+fn assign_table_row_widths(
+    document: &LayoutDocument,
+    hierarchy: &BlockHierarchy,
+    index: usize,
+    columns: &[f64],
+    plan: &mut WidthPlan,
+) {
+    let row_width = columns.iter().sum::<f64>().max(1.0);
+    plan.outer[index] = row_width;
+    plan.content[index] = row_width;
+    for &child in &hierarchy.children[index] {
+        let column = match document.blocks[child].spec.flow {
+            super::BlockFlow::TableCell { column } => column as usize,
+            _ => 0,
+        };
+        plan.child_x[child] = columns.iter().take(column).sum();
+        assign_block_widths(
+            document,
+            hierarchy,
+            child,
+            columns.get(column).copied().unwrap_or(row_width),
+            plan,
+        );
+    }
+}
+
+fn solve_table_columns(
+    document: &LayoutDocument,
+    hierarchy: &BlockHierarchy,
+    table: usize,
+    available_width: f64,
+) -> Vec<f64> {
+    let constraints = &document.blocks[table].spec.columns;
+    if constraints.is_empty() {
+        let count = hierarchy.children[table]
+            .iter()
+            .flat_map(|row| hierarchy.children[*row].iter())
+            .filter_map(|cell| match document.blocks[*cell].spec.flow {
+                super::BlockFlow::TableCell { column } => Some(column as usize + 1),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(1);
+        return vec![(available_width / count as f64).max(1.0); count];
+    }
+    let mut widths = constraints
+        .iter()
+        .map(|constraint| {
+            constraint
+                .max_width
+                .map_or(constraint.min_width, |max| constraint.min_width.min(max))
+                .max(1.0)
+        })
+        .collect::<Vec<_>>();
+    let mut remaining = (available_width - widths.iter().sum::<f64>()).max(0.0);
+    while remaining > 0.0 {
+        let growable = constraints
+            .iter()
+            .enumerate()
+            .filter(|(index, constraint)| {
+                constraint.max_width.is_none_or(|max| widths[*index] < max)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if growable.is_empty() {
+            break;
+        }
+        let share = remaining / growable.len() as f64;
+        let mut consumed = 0.0;
+        for index in growable {
+            let capacity = constraints[index]
+                .max_width
+                .map_or(share, |max| (max - widths[index]).max(0.0));
+            let growth = share.min(capacity);
+            widths[index] += growth;
+            consumed += growth;
+        }
+        if consumed <= f64::EPSILON {
+            break;
+        }
+        remaining -= consumed;
+    }
+    widths
+}
+
+#[derive(Clone, Copy)]
+struct BlockPlacement {
+    rect: Rect,
+    content_origin: DVec2,
+}
+
+fn position_block_tree(
+    document: &LayoutDocument,
+    hierarchy: &BlockHierarchy,
+    widths: &WidthPlan,
+    data: &[Arc<BlockLayoutData>],
+) -> (Vec<BlockPlacement>, f64) {
+    let empty = BlockPlacement {
+        rect: Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(0.0, 0.0),
+        },
+        content_origin: dvec2(0.0, 0.0),
+    };
+    let mut placements = vec![empty; document.blocks.len()];
+    let mut y = document.content_insets.top;
+    for &root in &hierarchy.roots {
+        let block = &document.blocks[root];
+        y += block.spec.space_before;
+        let height = position_block(
+            document,
+            hierarchy,
+            widths,
+            data,
+            &mut placements,
+            root,
+            document.content_insets.left,
+            y,
+        );
+        y += height + block.spec.space_after;
+    }
+    (placements, y + document.content_insets.bottom)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn position_block(
+    document: &LayoutDocument,
+    hierarchy: &BlockHierarchy,
+    widths: &WidthPlan,
+    data: &[Arc<BlockLayoutData>],
+    placements: &mut [BlockPlacement],
+    index: usize,
+    x: f64,
+    y: f64,
+) -> f64 {
+    let block = &document.blocks[index];
+    let content_x = x + block.spec.insets.left;
+    let content_y = y + block.spec.insets.top;
+    let own_height = data[index].block.rect.size.y;
+    let body_height = if matches!(block.spec.flow, super::BlockFlow::TableRow) {
+        let mut row_height = own_height;
+        for &child in &hierarchy.children[index] {
+            let child_block = &document.blocks[child];
+            let child_y = content_y + child_block.spec.space_before;
+            let child_height = position_block(
+                document,
+                hierarchy,
+                widths,
+                data,
+                placements,
+                child,
+                content_x + widths.child_x[child],
+                child_y,
+            );
+            row_height = row_height.max(
+                child_block.spec.space_before + child_height + child_block.spec.space_after,
+            );
+        }
+        row_height
+    } else {
+        let mut cursor = content_y + own_height;
+        for &child in &hierarchy.children[index] {
+            let child_block = &document.blocks[child];
+            cursor += child_block.spec.space_before;
+            let child_height = position_block(
+                document,
+                hierarchy,
+                widths,
+                data,
+                placements,
+                child,
+                content_x + widths.child_x[child],
+                cursor,
+            );
+            cursor += child_height + child_block.spec.space_after;
+        }
+        (cursor - content_y).max(own_height)
+    };
+    let height = block.spec.insets.top + body_height + block.spec.insets.bottom;
+    placements[index] = BlockPlacement {
+        rect: Rect {
+            pos: dvec2(x, y),
+            size: dvec2(widths.outer[index], height),
+        },
+        content_origin: dvec2(content_x, content_y),
+    };
+    height
+}
+
 struct BlockOutput {
     lines: Vec<VisualLine>,
     clusters: Vec<GlyphCluster>,
@@ -338,16 +610,14 @@ fn block_layout_data(
 
 fn append_positioned_block(
     data: &BlockLayoutData,
-    x: f64,
-    y: f64,
+    placement: BlockPlacement,
     lines: &mut Vec<VisualLine>,
     clusters: &mut Vec<GlyphCluster>,
     blocks: &mut Vec<BlockGeometry>,
 ) {
-    let rect = Rect {
-        pos: dvec2(x, y),
-        size: data.block.rect.size,
-    };
+    let rect = placement.rect;
+    let x = placement.content_origin.x;
+    let y = placement.content_origin.y;
     blocks.push(if data.block.is_plain_text_fallback() {
         BlockGeometry::fallback(data.block.id, data.block.source_range, rect)
     } else {
@@ -393,6 +663,59 @@ fn layout_block<S: TextShaper>(
         .iter()
         .filter(|run| run.id == block.id)
         .collect();
+    if let super::BlockFlow::Hanging {
+        marker_range,
+        content_indent,
+    } = block.spec.flow
+    {
+        let mut marker_output = BlockOutput {
+            lines: Vec::new(),
+            clusters: Vec::new(),
+            height: 0.0,
+        };
+        let mut content_output = BlockOutput {
+            lines: Vec::new(),
+            clusters: Vec::new(),
+            height: 0.0,
+        };
+        for run in runs {
+            let is_marker = run.range.start() >= marker_range.start()
+                && run.range.end() <= marker_range.end();
+            let (target, run_x, run_width) = if is_marker {
+                (&mut marker_output, x, content_indent.max(1.0))
+            } else {
+                (
+                    &mut content_output,
+                    x + content_indent,
+                    (max_width - content_indent).max(1.0),
+                )
+            };
+            let shaped = shaper.shape(presentation.text(), run, run_width)?;
+            append_run(
+                target,
+                run.id,
+                &run.metrics,
+                &shaped,
+                run_x,
+                y,
+                run_width,
+            );
+        }
+        return Ok(BlockOutput {
+            height: marker_output.height.max(content_output.height),
+            lines: marker_output
+                .lines
+                .into_iter()
+                .chain(content_output.lines)
+                .collect(),
+            clusters: marker_output
+                .clusters
+                .into_iter()
+                .chain(content_output.clusters)
+                .collect(),
+        });
+    }
+
     let mut output = BlockOutput {
         lines: Vec::new(),
         clusters: Vec::new(),
@@ -412,7 +735,12 @@ fn layout_block<S: TextShaper>(
         );
     }
     if output.lines.is_empty() {
-        output.height = estimated_height(block, document);
+        output.height = document
+            .embedded_blocks
+            .iter()
+            .filter(|embedded| embedded.id == block.id)
+            .map(|embedded| embedded.size.y)
+            .fold(0.0, f64::max);
     }
     Ok(output)
 }

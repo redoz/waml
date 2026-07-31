@@ -6,10 +6,11 @@ use std::{
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     layout::{
-        Affinity, BlockFlow, BlockGeometry, BlockLayoutSpec, CaretStop, EdgeInsets, FontKey,
-        FontWeight, GlyphCluster, LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine,
-        LayoutError, LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport,
-        ShapedCluster, ShapedGlyph, ShapedRun, TextMetrics, TextShaper, VisualLine,
+        Affinity, BlockFlow, BlockGeometry, BlockLayoutSpec, CaretStop, ColumnAlignment,
+        ColumnConstraint, EdgeInsets, FontKey, FontWeight, GlyphCluster, LayoutBlock,
+        LayoutDocument, LayoutElementId, LayoutEngine, LayoutError, LayoutInvalidation,
+        LayoutSnapshot, LayoutTextRun, LayoutViewport, ShapedCluster, ShapedGlyph, ShapedRun,
+        TextMetrics, TextShaper, VisualLine,
     },
     selection::{Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
@@ -657,6 +658,159 @@ fn selection_across_blocks_uses_layout_geometry_and_reaches_eof() {
     let eof = TextPosition::new(end, Affinity::After);
     let point = layout.source_to_point(eof).unwrap().rect.pos;
     assert_eq!(layout.point_to_source(point), eof);
+}
+
+#[test]
+fn quote_hanging_tree_aggregates_children_without_phantom_height() {
+    let (mut document, presentation, mut shaper) =
+        fixtures::fixture(&[16.0, 16.0, 16.0], &[1, 4, 4], None);
+    let mut blocks = document.blocks.to_vec();
+    let quote = blocks[0].id;
+    blocks[0].spec.flow = BlockFlow::Quote;
+    blocks[0].spec.insets = EdgeInsets {
+        top: 2.0,
+        right: 0.0,
+        bottom: 4.0,
+        left: 10.0,
+    };
+    blocks[0].spec.space_after = 0.0;
+    blocks[1].parent = Some(quote);
+    let original = document.text_runs[1].clone();
+    let marker = range(
+        original.range.start().to_usize(),
+        original.range.start().to_usize() + 1,
+    );
+    blocks[1].spec.flow = BlockFlow::Hanging {
+        marker_range: marker,
+        content_indent: 20.0,
+    };
+    blocks[1].spec.space_after = 3.0;
+    blocks[2].parent = Some(quote);
+    blocks[2].spec.space_before = 5.0;
+    blocks[2].spec.space_after = 0.0;
+    let mut runs = document.text_runs.to_vec();
+    runs.remove(0);
+    runs[0].range = marker;
+    runs.insert(
+        1,
+        LayoutTextRun {
+            id: original.id,
+            range: range(marker.end().to_usize(), original.range.end().to_usize()),
+            metrics: original.metrics,
+        },
+    );
+    document.blocks = blocks.into();
+    document.text_runs = runs.into();
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(200.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let geometry = |id| layout.visible_blocks().iter().find(|block| block.id == id).unwrap();
+    let quote_geometry = geometry(quote);
+    let first_child = geometry(document.blocks[1].id);
+    let second_child = geometry(document.blocks[2].id);
+
+    assert_eq!(quote_geometry.rect.pos, dvec2(0.0, 0.0));
+    assert_eq!(quote_geometry.rect.size.y, 46.0);
+    assert_eq!(first_child.rect.pos, dvec2(10.0, 2.0));
+    assert_eq!(second_child.rect.pos, dvec2(10.0, 26.0));
+    assert_eq!(layout.content_size().y, 46.0);
+    let first_lines = layout
+        .visual_lines()
+        .iter()
+        .filter(|line| {
+            line.source_range.start() >= original.range.start()
+                && line.source_range.end() <= original.range.end()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(first_lines.len(), 2);
+    assert_eq!(first_lines[0].rect.pos, dvec2(10.0, 2.0));
+    assert_eq!(first_lines[1].rect.pos, dvec2(30.0, 2.0));
+}
+
+#[test]
+fn table_rows_share_column_origins_and_aggregate_cell_heights() {
+    let (mut document, presentation, mut shaper) = fixtures::fixture(
+        &[16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0],
+        &[1, 1, 8, 4, 1, 2, 2],
+        None,
+    );
+    let mut blocks = document.blocks.to_vec();
+    let table = blocks[0].id;
+    let row_one = blocks[1].id;
+    let row_two = blocks[4].id;
+    blocks[0].spec.flow = BlockFlow::Table;
+    blocks[0].spec.insets.left = 5.0;
+    blocks[0].spec.space_after = 0.0;
+    blocks[0].spec.columns = Arc::from([
+        ColumnConstraint {
+            min_width: 40.0,
+            max_width: Some(40.0),
+            alignment: ColumnAlignment::Start,
+        },
+        ColumnConstraint {
+            min_width: 60.0,
+            max_width: Some(60.0),
+            alignment: ColumnAlignment::Start,
+        },
+    ]);
+    for row_index in [1, 4] {
+        blocks[row_index].parent = Some(table);
+        blocks[row_index].spec.flow = BlockFlow::TableRow;
+        blocks[row_index].spec.space_after = 0.0;
+    }
+    for (index, parent, column) in [
+        (2, row_one, 0),
+        (3, row_one, 1),
+        (5, row_two, 0),
+        (6, row_two, 1),
+    ] {
+        blocks[index].parent = Some(parent);
+        blocks[index].spec.flow = BlockFlow::TableCell { column };
+        blocks[index].spec.space_after = 0.0;
+    }
+    let structural = HashSet::from([table, row_one, row_two]);
+    document.blocks = blocks.into();
+    document.text_runs = document
+        .text_runs
+        .iter()
+        .filter(|run| !structural.contains(&run.id))
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(200.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let geometry = |index: usize| {
+        layout
+            .visible_blocks()
+            .iter()
+            .find(|block| block.id == document.blocks[index].id)
+            .unwrap()
+    };
+
+    assert_eq!(geometry(0).rect.size.y, 48.0);
+    assert_eq!(geometry(1).rect, Rect { pos: dvec2(5.0, 0.0), size: dvec2(100.0, 32.0) });
+    assert_eq!(geometry(2).rect, Rect { pos: dvec2(5.0, 0.0), size: dvec2(40.0, 32.0) });
+    assert_eq!(geometry(3).rect, Rect { pos: dvec2(45.0, 0.0), size: dvec2(60.0, 16.0) });
+    assert_eq!(geometry(4).rect, Rect { pos: dvec2(5.0, 32.0), size: dvec2(100.0, 16.0) });
+    assert_eq!(geometry(5).rect.pos, dvec2(5.0, 32.0));
+    assert_eq!(geometry(6).rect.pos, dvec2(45.0, 32.0));
+    assert_eq!(layout.content_size().y, 48.0);
+    assert_eq!(layout.visual_lines().len(), 5);
 }
 
 struct FixedShaper(ShapedRun);
