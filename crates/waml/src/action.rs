@@ -6,10 +6,11 @@ use waml_syntax::{
 };
 
 use crate::{
-    analysis::{DocumentCatalog, DocumentId, DocumentRevision},
+    analysis::{DocumentCatalog, DocumentId},
     edit::{EditBatch, EditContext, EditError},
     source::SourceBundle,
 };
+use waml_syntax::DocumentRevision;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TextEdit {
@@ -219,7 +220,7 @@ impl<'a> ActionContext<'a> {
                 requested: context.session_revision,
             });
         }
-        if !Arc::ptr_eq(catalog, context.okf_analysis.shell.catalog())
+        if !Arc::ptr_eq(catalog, context.okf_analysis.markdown.catalog())
             || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
         {
             return Err(ActionError::MismatchedCatalog);

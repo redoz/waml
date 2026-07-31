@@ -248,8 +248,7 @@ pub fn apply(source: &SourceBundle, batch: &Batch) -> Result<SourceBundle, EditE
         crate::analysis::DomainAnalysisContext {
             source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: 0,
         },
@@ -415,7 +414,7 @@ impl<'a> MixedLoweringCursor<'a> {
         let catalog = &self.original.okf_analysis.catalog;
         if catalog.session_revision() != self.original.session_revision
             || self.original.uml.session_revision() != self.original.session_revision
-            || !Arc::ptr_eq(catalog, self.original.okf_analysis.shell.catalog())
+            || !Arc::ptr_eq(catalog, self.original.okf_analysis.markdown.catalog())
             || !Arc::ptr_eq(catalog, self.original.uml.syntax.catalog())
             || catalog.documents().len() != self.original.source.len()
         {

@@ -184,8 +184,7 @@ fn context<'a>(
     DomainAnalysisContext {
         source,
         catalog: &okf.catalog,
-        shell: &okf.shell,
-        structures: &okf.structures,
+        markdown: &okf.markdown,
         okf: &okf.bundle,
         session_revision: okf.catalog.session_revision(),
     }

@@ -8,8 +8,7 @@ fn analyze(source: &SourceBundle) -> uml::Analysis {
         waml::analysis::DomainAnalysisContext {
             source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: 1,
         },
@@ -312,8 +311,7 @@ fn snapshots_and_diagnostics_expose_catalog_revision_provenance() {
             waml::analysis::DomainAnalysisContext {
                 source: &source,
                 catalog: &okf.catalog,
-                shell: &okf.shell,
-                structures: &okf.structures,
+                markdown: &okf.markdown,
                 okf: &okf.bundle,
                 session_revision: 42,
             },
@@ -325,8 +323,7 @@ fn snapshots_and_diagnostics_expose_catalog_revision_provenance() {
         waml::analysis::DomainAnalysisContext {
             source: &source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: 41,
         },
@@ -335,16 +332,16 @@ fn snapshots_and_diagnostics_expose_catalog_revision_provenance() {
     .unwrap();
     assert_eq!(analysis.session_revision(), 41);
     assert!(Arc::ptr_eq(analysis.syntax.catalog(), &okf.catalog));
-    assert!(Arc::ptr_eq(&analysis.structures, &okf.structures));
+    assert!(Arc::ptr_eq(analysis.markdown.catalog(), &okf.catalog));
     let id = okf
         .catalog
         .id_for_path(&waml::source::BundlePath::parse("order.md").unwrap())
         .unwrap();
-    let shell = okf.shell.document(id).unwrap();
+    let markdown = okf.markdown.document(id).unwrap();
     let uml = analysis.syntax.document(id).unwrap();
-    assert!(Arc::ptr_eq(shell.document(), uml.document()));
+    assert!(Arc::ptr_eq(okf.catalog.document(id).unwrap(), uml.document()));
     assert!(Arc::ptr_eq(
-        shell.document().text().shared(),
+        okf.catalog.document(id).unwrap().text().shared(),
         uml.document().text().shared()
     ));
     let diagnostic = &analysis.diagnostics[0];
@@ -376,7 +373,7 @@ fn nested_fenced_bullet_inside_real_attribute_list_stays_markdown() {
         .catalog()
         .id_for_path(&waml::source::BundlePath::parse("order.md").unwrap())
         .unwrap();
-    let structure = analysis.structures.get(&id).unwrap();
+    let structure = analysis.markdown.document(id).unwrap().structure();
     let indented = authored.find("- indented").unwrap();
     let indented_line = authored[..indented].rfind('\n').map_or(0, |at| at + 1);
     let opaque: Vec<_> = structure

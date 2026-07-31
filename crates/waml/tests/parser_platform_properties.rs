@@ -212,7 +212,7 @@ fn whole_document_allocation_counts_are_exact() {
         baseline_allocation
     );
     assert_every_source_slice_shares(
-        baseline.okf().shell.document(id).unwrap().syntax(),
+        baseline.okf().markdown.document(id).unwrap().tree(),
         baseline_allocation,
     );
     assert_every_source_slice_shares(
@@ -230,12 +230,12 @@ fn whole_document_allocation_counts_are_exact() {
         )
         .unwrap()
     });
-    let old_snapshot = baseline.okf().shell.document(id).unwrap();
-    let unchanged_snapshot = unchanged.okf().shell.document(id).unwrap();
+    let old_snapshot = baseline.okf().markdown.document(id).unwrap();
+    let unchanged_snapshot = unchanged.okf().markdown.document(id).unwrap();
     assert!(std::sync::Arc::ptr_eq(old_snapshot, unchanged_snapshot));
     assert!(std::sync::Arc::ptr_eq(
-        baseline.okf().structures.get(&id).unwrap(),
-        unchanged.okf().structures.get(&id).unwrap()
+        baseline.okf().markdown.document(id).unwrap().structure(),
+        unchanged.okf().markdown.document(id).unwrap().structure()
     ));
     assert!(std::sync::Arc::ptr_eq(
         baseline.uml().syntax.document(id).unwrap(),
@@ -246,8 +246,8 @@ fn whole_document_allocation_counts_are_exact() {
         baseline_pointer
     );
     assert_eq!(
-        full_large, 0,
-        "fixture must not make the full parser allocate a whole source"
+        full_large, 1,
+        "the canonical Markdown snapshot owns the one full-parse source buffer"
     );
     assert_eq!(
         unchanged_large, 0,
@@ -288,8 +288,8 @@ fn whole_document_allocation_counts_are_exact() {
         prepared
     });
     assert_eq!(
-        touched_large, 1,
-        "only the intended replacement source allocation is allowed"
+        touched_large, 2,
+        "the replacement source and canonical Markdown snapshot buffers are allowed"
     );
     let touched_document = touched.source().document(&path).unwrap();
     let touched_allocation = touched_document.text().as_ptr();
@@ -305,7 +305,7 @@ fn whole_document_allocation_counts_are_exact() {
         touched_allocation
     );
     assert_every_source_slice_shares(
-        touched.okf().shell.document(id).unwrap().syntax(),
+        touched.okf().markdown.document(id).unwrap().tree(),
         touched_allocation,
     );
     assert_every_source_slice_shares(
@@ -393,7 +393,7 @@ fn one_thousand_edits_retain_only_baseline_and_current_sources() {
     let baseline = prepare_candidate(baseline_source, None, 1).unwrap();
     let id = baseline.okf().catalog.id_for_path(&path).unwrap();
     let mut weak = vec![tree_source_weak(
-        baseline.okf().shell.document(id).unwrap().syntax(),
+        baseline.okf().markdown.document(id).unwrap().tree(),
     )];
     let mut current = prepare_candidate(
         SourceBundle::try_from_pairs([("document.md", "# B\nbody\n")]).unwrap(),
@@ -405,7 +405,7 @@ fn one_thousand_edits_retain_only_baseline_and_current_sources() {
     )
     .unwrap();
     weak.push(tree_source_weak(
-        current.okf().shell.document(id).unwrap().syntax(),
+        current.okf().markdown.document(id).unwrap().tree(),
     ));
     for edit in 0..999 {
         let title = if edit % 2 == 0 {
@@ -424,7 +424,7 @@ fn one_thousand_edits_retain_only_baseline_and_current_sources() {
         )
         .unwrap();
         weak.push(tree_source_weak(
-            next.okf().shell.document(id).unwrap().syntax(),
+            next.okf().markdown.document(id).unwrap().tree(),
         ));
         current = next;
     }
@@ -452,12 +452,12 @@ fn one_thousand_host_replacements_retain_two_touched_and_one_untouched_allocatio
     let left_id = baseline.okf().catalog.id_for_path(&left_path).unwrap();
     let right_id = baseline.okf().catalog.id_for_path(&right_path).unwrap();
     let untouched_version = baseline.okf().catalog.document(right_id).unwrap().clone();
-    let untouched_shell = baseline.okf().shell.document(right_id).unwrap().clone();
+    let untouched_markdown = baseline.okf().markdown.document(right_id).unwrap().clone();
     let untouched_uml = baseline.uml().syntax.document(right_id).unwrap().clone();
-    let untouched_structure = baseline.okf().structures.get(&right_id).unwrap().clone();
-    let untouched_source = tree_source_weak(untouched_shell.syntax());
+    let untouched_structure = untouched_markdown.structure().clone();
+    let untouched_source = tree_source_weak(untouched_markdown.tree());
     let mut touched_sources = vec![tree_source_weak(
-        baseline.okf().shell.document(left_id).unwrap().syntax(),
+        baseline.okf().markdown.document(left_id).unwrap().tree(),
     )];
     let first_source = waml::host::replace_document(
         baseline.source(),
@@ -477,7 +477,7 @@ fn one_thousand_host_replacements_retain_two_touched_and_one_untouched_allocatio
     )
     .unwrap();
     touched_sources.push(tree_source_weak(
-        current.okf().shell.document(left_id).unwrap().syntax(),
+        current.okf().markdown.document(left_id).unwrap().tree(),
     ));
     for edit in 1..1_000 {
         let title = if edit % 2 == 0 { "Left" } else { "left" };
@@ -499,15 +499,15 @@ fn one_thousand_host_replacements_retain_two_touched_and_one_untouched_allocatio
         )
         .unwrap();
         touched_sources.push(tree_source_weak(
-            next.okf().shell.document(left_id).unwrap().syntax(),
+            next.okf().markdown.document(left_id).unwrap().tree(),
         ));
         assert!(std::sync::Arc::ptr_eq(
             &untouched_version,
             next.okf().catalog.document(right_id).unwrap()
         ));
         assert!(std::sync::Arc::ptr_eq(
-            &untouched_shell,
-            next.okf().shell.document(right_id).unwrap()
+            &untouched_markdown,
+            next.okf().markdown.document(right_id).unwrap()
         ));
         assert!(std::sync::Arc::ptr_eq(
             &untouched_uml,
@@ -515,7 +515,7 @@ fn one_thousand_host_replacements_retain_two_touched_and_one_untouched_allocatio
         ));
         assert!(std::sync::Arc::ptr_eq(
             &untouched_structure,
-            next.okf().structures.get(&right_id).unwrap()
+            next.okf().markdown.document(right_id).unwrap().structure()
         ));
         current = next;
     }
@@ -850,9 +850,9 @@ fn edit_batch_lowering_has_valid_output_and_all_invalid_cases_are_atomic() {
         ),
     ];
     let catalog = prepared.okf().catalog.clone();
-    let shell = prepared.okf().shell.document(document).unwrap().clone();
+    let markdown = prepared.okf().markdown.document(document).unwrap().clone();
     let uml = prepared.uml().syntax.document(document).unwrap().clone();
-    let structure = prepared.okf().structures.get(&document).unwrap().clone();
+    let structure = markdown.structure().clone();
     for (name, basis, bad_edit, expected) in cases {
         let batch = SyntaxChangeBatch::new(CodeAction {
             title: name.into(),
@@ -869,8 +869,8 @@ fn edit_batch_lowering_has_valid_output_and_all_invalid_cases_are_atomic() {
         assert_eq!(error.reason, format!("syntax action error: {expected:?}"));
         assert!(std::sync::Arc::ptr_eq(&catalog, &prepared.okf().catalog));
         assert!(std::sync::Arc::ptr_eq(
-            &shell,
-            prepared.okf().shell.document(document).unwrap()
+            &markdown,
+            prepared.okf().markdown.document(document).unwrap()
         ));
         assert!(std::sync::Arc::ptr_eq(
             &uml,
@@ -878,7 +878,7 @@ fn edit_batch_lowering_has_valid_output_and_all_invalid_cases_are_atomic() {
         ));
         assert!(std::sync::Arc::ptr_eq(
             &structure,
-            prepared.okf().structures.get(&document).unwrap()
+            prepared.okf().markdown.document(document).unwrap().structure()
         ));
         assert_eq!(
             prepared
@@ -916,9 +916,9 @@ fn edit_batch_lowering_has_valid_output_and_all_invalid_cases_are_atomic() {
     .unwrap();
     let current_revision = changed.okf().catalog.document(document).unwrap().revision();
     let changed_catalog = changed.okf().catalog.clone();
-    let changed_shell = changed.okf().shell.document(document).unwrap().clone();
+    let changed_markdown = changed.okf().markdown.document(document).unwrap().clone();
     let changed_uml = changed.uml().syntax.document(document).unwrap().clone();
-    let changed_structure = changed.okf().structures.get(&document).unwrap().clone();
+    let changed_structure = changed_markdown.structure().clone();
     let changed_pointer = changed_source
         .document(&BundlePath::parse("a.md").unwrap())
         .unwrap()
@@ -963,8 +963,8 @@ fn edit_batch_lowering_has_valid_output_and_all_invalid_cases_are_atomic() {
         &changed.okf().catalog
     ));
     assert!(std::sync::Arc::ptr_eq(
-        &changed_shell,
-        changed.okf().shell.document(document).unwrap()
+        &changed_markdown,
+        changed.okf().markdown.document(document).unwrap()
     ));
     assert!(std::sync::Arc::ptr_eq(
         &changed_uml,
@@ -972,7 +972,7 @@ fn edit_batch_lowering_has_valid_output_and_all_invalid_cases_are_atomic() {
     ));
     assert!(std::sync::Arc::ptr_eq(
         &changed_structure,
-        changed.okf().structures.get(&document).unwrap()
+        changed.okf().markdown.document(document).unwrap().structure()
     ));
     assert_eq!(
         changed.okf().catalog.document(document).unwrap().revision(),

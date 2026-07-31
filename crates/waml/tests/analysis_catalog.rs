@@ -26,8 +26,8 @@ fn catalog_reuses_identity_for_unchanged_documents() {
         second.catalog.document(id).unwrap(),
     ));
     assert!(Arc::ptr_eq(
-        first.shell.document(id).unwrap(),
-        second.shell.document(id).unwrap(),
+        first.markdown.document(id).unwrap(),
+        second.markdown.document(id).unwrap(),
     ));
 }
 

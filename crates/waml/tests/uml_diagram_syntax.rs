@@ -8,8 +8,7 @@ fn analyze(source: &SourceBundle) -> uml::Analysis {
         waml::analysis::DomainAnalysisContext {
             source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: 1,
         },

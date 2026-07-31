@@ -5,10 +5,11 @@ use std::{
 };
 
 use waml_syntax::{
-    parse_okf_markdown, reparse_okf_markdown_with_structure, LineIndex, MarkdownDialect,
-    MarkdownStructureMap, OkfMarkdownLanguage, ParseError, ReparseOutcome, SourceText,
-    SyntaxLanguage, SyntaxTree, TextChange, TextRange, TextSize,
+    parse_markdown, reparse_markdown, LineIndex, MarkdownDialect,
+    MarkdownSyntaxSnapshot, ParseError, SourceText, SyntaxLanguage, SyntaxTree, TextChange,
+    TextRange, TextSize,
 };
+pub use waml_syntax::DocumentRevision;
 
 use crate::{
     okf,
@@ -17,9 +18,6 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DocumentId(u64);
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct DocumentRevision(u64);
 
 #[derive(Debug)]
 pub struct DocumentVersion {
@@ -124,16 +122,34 @@ impl<L: SyntaxLanguage> SyntaxSet<L> {
 
 pub struct OkfAnalysis {
     pub catalog: Arc<DocumentCatalog>,
-    pub shell: SyntaxSet<OkfMarkdownLanguage>,
-    pub structures: Arc<BTreeMap<DocumentId, Arc<MarkdownStructureMap>>>,
+    pub markdown: MarkdownSyntaxSet,
     pub bundle: okf::Bundle,
+}
+
+#[derive(Clone)]
+pub struct MarkdownSyntaxSet {
+    catalog: Arc<DocumentCatalog>,
+    documents: Arc<BTreeMap<DocumentId, Arc<MarkdownSyntaxSnapshot>>>,
+}
+
+impl MarkdownSyntaxSet {
+    pub fn document(&self, id: DocumentId) -> Option<&Arc<MarkdownSyntaxSnapshot>> {
+        self.documents.get(&id)
+    }
+
+    pub fn catalog(&self) -> &Arc<DocumentCatalog> {
+        &self.catalog
+    }
+
+    pub(crate) fn documents(&self) -> &BTreeMap<DocumentId, Arc<MarkdownSyntaxSnapshot>> {
+        &self.documents
+    }
 }
 
 pub struct DomainAnalysisContext<'a> {
     pub source: &'a SourceBundle,
     pub catalog: &'a Arc<DocumentCatalog>,
-    pub shell: &'a SyntaxSet<OkfMarkdownLanguage>,
-    pub structures: &'a Arc<BTreeMap<DocumentId, Arc<MarkdownStructureMap>>>,
+    pub markdown: &'a MarkdownSyntaxSet,
     pub okf: &'a okf::Bundle,
     pub session_revision: u64,
 }
@@ -328,8 +344,7 @@ fn prepare_candidate_inner(
         DomainAnalysisContext {
             source: &candidate_source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: candidate_revision,
         },
@@ -458,7 +473,9 @@ fn analyze_okf_inner(
             }
             Some(prior) => Arc::new(version(
                 prior.id(),
-                DocumentRevision(prior.revision().0 + 1),
+                prior.revision().checked_next().ok_or_else(|| AnalysisError::CatalogInvariant {
+                    reason: "document revision overflow".into(),
+                })?,
                 path.clone(),
                 source_document.text_arc().clone(),
             )?),
@@ -467,7 +484,7 @@ fn analyze_okf_inner(
                 next_id += 1;
                 Arc::new(version(
                     id,
-                    DocumentRevision(1),
+                    DocumentRevision::new(1),
                     path.clone(),
                     source_document.text_arc().clone(),
                 )?)
@@ -483,72 +500,38 @@ fn analyze_okf_inner(
         next_document_id: next_id,
     });
     hooks.before(AnalysisStage::Shell)?;
-    let mut shell_documents = BTreeMap::new();
-    let mut structures = BTreeMap::new();
+    let mut markdown_documents = BTreeMap::new();
     for document in candidate.documents.values() {
-        if let Some(previous_snapshot) =
-            previous.and_then(|analysis| analysis.shell.document(document.id()))
-        {
-            if Arc::ptr_eq(previous_snapshot.document(), document) {
-                shell_documents.insert(document.id(), previous_snapshot.clone());
-                if let Some(structure) =
-                    previous.and_then(|analysis| analysis.structures.get(&document.id()))
-                {
-                    structures.insert(document.id(), structure.clone());
-                    continue;
-                }
-            }
-        }
-        let (syntax, structure) = match previous_snapshot(previous, document.id()) {
-            Some(previous_snapshot) => {
-                let (outcome, structure) = reparse_okf_markdown_with_structure(
-                    previous_snapshot.syntax(),
-                    document.text().clone(),
-                    &single_text_change(previous_snapshot.document().text(), document.text()),
-                )
-                .map_err(|source| shell_error(document.path().clone(), source))?;
-                let syntax = match outcome {
-                    ReparseOutcome::Incremental { tree, .. }
-                    | ReparseOutcome::Full { tree, .. } => tree,
-                };
-                (syntax, structure)
-            }
-            None => {
-                let parsed =
-                    parse_okf_markdown(document.text().clone(), MarkdownDialect::CommonMarkCurrent)
-                        .map_err(|source| shell_error(document.path().clone(), source))?;
-                (parsed.tree, parsed.structure)
-            }
+        let snapshot = match previous.and_then(|analysis| analysis.markdown.document(document.id())) {
+            Some(previous_snapshot) if previous_snapshot.revision() == document.revision() => previous_snapshot.clone(),
+            Some(previous_snapshot) => reparse_markdown(
+                previous_snapshot,
+                document.revision(),
+                document.text().clone(),
+                &single_text_change(previous_snapshot.text(), document.text()),
+            )
+            .map_err(|source| shell_error(document.path().clone(), source))?
+            .snapshot,
+            None => parse_markdown(
+                document.revision(),
+                document.text().clone(),
+                MarkdownDialect::CommonMarkCurrent,
+            )
+            .map_err(|source| shell_error(document.path().clone(), source))?,
         };
-        structures.insert(document.id(), structure);
-        shell_documents.insert(
-            document.id(),
-            Arc::new(SyntaxSnapshot {
-                document: document.clone(),
-                syntax,
-            }),
-        );
+        markdown_documents.insert(document.id(), snapshot);
     }
     hooks.before(AnalysisStage::Okf)?;
-    let shell = SyntaxSet {
+    let markdown = MarkdownSyntaxSet {
         catalog: candidate.clone(),
-        documents: Arc::new(shell_documents),
+        documents: Arc::new(markdown_documents),
     };
-    let structures = Arc::new(structures);
-    let bundle = okf::shell::derive(&candidate, &shell, &structures)?;
+    let bundle = okf::shell::derive(&candidate, &markdown)?;
     Ok(OkfAnalysis {
         catalog: candidate.clone(),
-        shell,
-        structures,
+        markdown,
         bundle,
     })
-}
-
-fn previous_snapshot(
-    previous: Option<&OkfAnalysis>,
-    id: DocumentId,
-) -> Option<&Arc<SyntaxSnapshot<OkfMarkdownLanguage>>> {
-    previous.and_then(|analysis| analysis.shell.document(id))
 }
 
 pub(crate) fn single_text_change(old: &SourceText, new: &SourceText) -> Vec<TextChange> {
@@ -707,7 +690,7 @@ mod tests {
             let retried = analyze_okf(&candidate_source, Some(&committed), 2).unwrap();
             assert_eq!(
                 retried.catalog.document(DocumentId(0)).unwrap().revision(),
-                DocumentRevision(2)
+                DocumentRevision::new(2)
             );
             assert_eq!(
                 retried
@@ -824,34 +807,18 @@ mod tests {
             .id_for_path(source.documents()[0].path())
             .unwrap();
         let other_text = SourceText::from_shared(Arc::new("# other".to_owned())).unwrap();
-        let other = parse_okf_markdown(other_text, MarkdownDialect::CommonMarkCurrent).unwrap();
-        let mut documents = (*analysis.shell.documents).clone();
-        documents.insert(
-            id,
-            Arc::new(SyntaxSnapshot {
-                document: analysis.catalog.document(id).unwrap().clone(),
-                syntax: other.tree,
-            }),
-        );
-        analysis.shell.documents = Arc::new(documents);
+        let other = parse_markdown(
+            DocumentRevision::new(1),
+            other_text,
+            MarkdownDialect::CommonMarkCurrent,
+        )
+        .unwrap();
+        let mut documents = (*analysis.markdown.documents).clone();
+        documents.insert(id, other);
+        analysis.markdown.documents = Arc::new(documents);
 
         assert!(matches!(
-            okf::shell::derive(&analysis.catalog, &analysis.shell, &analysis.structures),
-            Err(AnalysisError::StructuralInvariant {
-                stage: AnalysisStage::Shell,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn shell_projection_rejects_missing_structure_map() {
-        let source = SourceBundle::try_from_pairs([("one.md", "# one")]).unwrap();
-        let mut analysis = analyze_okf(&source, None, 1).unwrap();
-        analysis.structures = Arc::new(BTreeMap::new());
-
-        assert!(matches!(
-            okf::shell::derive(&analysis.catalog, &analysis.shell, &analysis.structures),
+            okf::shell::derive(&analysis.catalog, &analysis.markdown),
             Err(AnalysisError::StructuralInvariant {
                 stage: AnalysisStage::Shell,
                 ..

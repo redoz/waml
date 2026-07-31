@@ -7,13 +7,11 @@ use std::{
 };
 
 use regex::Regex;
-use waml_syntax::{
-    write_green_to, GreenNode, MarkdownStructureMap, OkfMarkdownLanguage, TextRange,
-};
+use waml_syntax::{write_green_to, GreenNode, MarkdownStructureMap, OkfMarkdownLanguage, TextRange};
 
 use crate::{
     analysis::{
-        AnalysisError, AnalysisStage, DocumentCatalog, DocumentId, DocumentVersion, SyntaxSet,
+        AnalysisError, AnalysisStage, DocumentCatalog, DocumentId, DocumentVersion, MarkdownSyntaxSet,
     },
     frontmatter::{parse_closed_syntax, Frontmatter},
     source::SourceSlice,
@@ -52,44 +50,38 @@ struct AuthoredIndex {
 
 pub(crate) fn derive(
     catalog: &Arc<DocumentCatalog>,
-    shell: &SyntaxSet<OkfMarkdownLanguage>,
-    structures: &Arc<BTreeMap<DocumentId, Arc<MarkdownStructureMap>>>,
+    markdown: &MarkdownSyntaxSet,
 ) -> Result<Bundle, AnalysisError> {
-    let documents = validate(catalog, shell, structures)?;
+    let documents = validate(catalog, markdown)?;
     project(documents).map_err(AnalysisError::Okf)
 }
 
 fn validate<'a>(
     catalog: &'a Arc<DocumentCatalog>,
-    shell: &'a SyntaxSet<OkfMarkdownLanguage>,
-    structures: &'a Arc<BTreeMap<DocumentId, Arc<MarkdownStructureMap>>>,
+    markdown: &'a MarkdownSyntaxSet,
 ) -> Result<Vec<ShellDocument<'a>>, AnalysisError> {
-    if !Arc::ptr_eq(catalog, shell.catalog()) {
+    if !Arc::ptr_eq(catalog, markdown.catalog()) {
         return invariant("shell catalog is not the candidate catalog");
     }
-    if catalog.documents().len() != shell.documents().len()
-        || catalog.documents().len() != structures.len()
-    {
-        return invariant("catalog, shell, and structure-map widths differ");
+    if catalog.documents().len() != markdown.documents().len() {
+        return invariant("catalog and Markdown snapshot widths differ");
     }
 
     let mut validated = Vec::with_capacity(catalog.documents().len());
     for (id, document) in catalog.documents() {
-        let snapshot = shell
+        let snapshot = markdown
             .document(*id)
-            .ok_or_else(|| structural(format!("missing shell snapshot for {}", document.path())))?;
-        let structure = structures
-            .get(id)
-            .ok_or_else(|| structural(format!("missing structure map for {}", document.path())))?;
-        if !Arc::ptr_eq(snapshot.document(), document) {
+            .ok_or_else(|| structural(format!("missing Markdown snapshot for {}", document.path())))?;
+        let structure = snapshot.structure();
+        if snapshot.revision() != document.revision() {
             return invariant(format!(
-                "shell snapshot provenance differs for {}",
+                "Markdown snapshot revision differs for {}",
                 document.path()
             ));
         }
         let source = document.text().shared();
-        if !exact_tree_source(snapshot.syntax().root_green(), source.as_str())
-            || snapshot.syntax().root().range().end().to_usize() != source.len()
+        if !exact_tree_source(snapshot.tree().root_green(), source.as_str())
+            || snapshot.tree().root().range().end().to_usize() != source.len()
         {
             return invariant(format!(
                 "shell tree text differs from candidate source for {}",
@@ -97,7 +89,7 @@ fn validate<'a>(
             ));
         }
         validate_structure(document, structure)?;
-        let (frontmatter, body_start) = shell_fields(document, snapshot.syntax())?;
+        let (frontmatter, body_start) = shell_fields(document, snapshot.tree())?;
         let body_range = text_range(body_start, source.len(), document)?;
         let body = SourceSlice::from_shared_range(source.clone(), body_start..source.len())
             .map_err(|_| structural(format!("invalid body range for {}", document.path())))?;

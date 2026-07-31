@@ -8,8 +8,7 @@ fn analyze(pairs: impl IntoIterator<Item = (&'static str, &'static str)>) -> uml
         waml::analysis::DomainAnalysisContext {
             source: &source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: 9,
         },

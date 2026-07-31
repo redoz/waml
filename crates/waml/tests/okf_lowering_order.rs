@@ -11,8 +11,7 @@ fn lower(source: &SourceBundle, ops: Vec<okf::Op>) -> Result<SourceBundle, waml:
         DomainAnalysisContext {
             source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: 7,
         },

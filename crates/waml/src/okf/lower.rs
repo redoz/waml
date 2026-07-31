@@ -184,7 +184,7 @@ fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
             "analysis revision does not match the requested session revision",
         ));
     }
-    if !Arc::ptr_eq(catalog, context.okf_analysis.shell.catalog())
+    if !Arc::ptr_eq(catalog, context.okf_analysis.markdown.catalog())
         || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
         || catalog.documents().len() != context.source.len()
     {

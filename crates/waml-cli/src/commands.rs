@@ -270,9 +270,10 @@ pub fn plan_fmt(files: &[(String, String)]) -> Result<Vec<FmtResult>, String> {
                     || (claimed.is_some()
                         && prepared
                             .uml()
-                            .structures
-                            .get(&document)
-                            .is_some_and(|structure| {
+                            .markdown
+                            .document(document)
+                            .is_some_and(|snapshot| {
+                                let structure = snapshot.structure();
                                 let Some(h1) =
                                     structure.headings.iter().find(|heading| heading.level == 1)
                                 else {

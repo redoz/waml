@@ -114,7 +114,7 @@ impl Formatter {
         let edits = if has_recovery {
             Vec::new()
         } else {
-            let structure = context.uml.structures.get(&document).ok_or_else(|| {
+            let structure = context.okf.markdown.document(document).map(|snapshot| snapshot.structure()).ok_or_else(|| {
                 FormatError::StructuralInvariant {
                     reason: "claimed document has no Markdown structure map".into(),
                 }

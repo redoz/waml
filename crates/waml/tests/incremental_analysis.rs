@@ -558,8 +558,8 @@ fn byte_identical_fresh_document_rebases_every_source_slice() {
         2,
     );
     let current_document = current.okf().catalog.document(id).unwrap();
-    let previous_tree = baseline.okf().shell.document(id).unwrap().syntax();
-    let current_tree = current.okf().shell.document(id).unwrap().syntax();
+    let previous_tree = baseline.okf().markdown.document(id).unwrap().tree();
+    let current_tree = current.okf().markdown.document(id).unwrap().tree();
 
     assert!(!Arc::ptr_eq(
         baseline.okf().catalog.document(id).unwrap(),
@@ -603,16 +603,16 @@ fn retained_okf_analysis_reuses_unchanged_snapshots_and_matches_full_oracle() {
     for path in ["touched.md", "untouched.md"] {
         let id = document_id(&baseline, path);
         assert!(Arc::ptr_eq(
-            baseline.okf().shell.document(id).unwrap(),
-            identical.okf().shell.document(id).unwrap(),
+            baseline.okf().markdown.document(id).unwrap(),
+            identical.okf().markdown.document(id).unwrap(),
         ));
         assert!(Arc::ptr_eq(
-            baseline.okf().shell.document(id).unwrap().syntax(),
-            identical.okf().shell.document(id).unwrap().syntax(),
+            baseline.okf().markdown.document(id).unwrap().tree(),
+            identical.okf().markdown.document(id).unwrap().tree(),
         ));
         assert!(Arc::ptr_eq(
-            baseline.okf().structures.get(&id).unwrap(),
-            identical.okf().structures.get(&id).unwrap(),
+            baseline.okf().markdown.document(id).unwrap().structure(),
+            identical.okf().markdown.document(id).unwrap().structure(),
         ));
     }
 
@@ -637,21 +637,21 @@ fn retained_okf_analysis_reuses_unchanged_snapshots_and_matches_full_oracle() {
     let touched = document_id(&baseline, "touched.md");
     let untouched = document_id(&baseline, "untouched.md");
     assert!(Arc::ptr_eq(
-        baseline.okf().shell.document(untouched).unwrap(),
-        incremental.okf().shell.document(untouched).unwrap(),
+        baseline.okf().markdown.document(untouched).unwrap(),
+        incremental.okf().markdown.document(untouched).unwrap(),
     ));
     assert!(Arc::ptr_eq(
-        baseline.okf().shell.document(untouched).unwrap().syntax(),
+        baseline.okf().markdown.document(untouched).unwrap().tree(),
         incremental
             .okf()
-            .shell
+            .markdown
             .document(untouched)
             .unwrap()
-            .syntax(),
+            .tree(),
     ));
     assert!(Arc::ptr_eq(
-        baseline.okf().structures.get(&untouched).unwrap(),
-        incremental.okf().structures.get(&untouched).unwrap(),
+        baseline.okf().markdown.document(untouched).unwrap().structure(),
+        incremental.okf().markdown.document(untouched).unwrap().structure(),
     ));
     assert_ne!(
         incremental
@@ -668,36 +668,36 @@ fn retained_okf_analysis_reuses_unchanged_snapshots_and_matches_full_oracle() {
     ));
     assert!(!incremental
         .okf()
-        .shell
+        .markdown
         .document(touched)
         .unwrap()
-        .syntax()
+        .tree()
         .root()
         .same_green(
             &baseline
                 .okf()
-                .shell
+                .markdown
                 .document(touched)
                 .unwrap()
-                .syntax()
+                .tree()
                 .root()
         ));
 
     let old_children = baseline
         .okf()
-        .shell
+        .markdown
         .document(touched)
         .unwrap()
-        .syntax()
+        .tree()
         .root()
         .children()
         .collect::<Vec<_>>();
     let new_children = incremental
         .okf()
-        .shell
+        .markdown
         .document(touched)
         .unwrap()
-        .syntax()
+        .tree()
         .root()
         .children()
         .collect::<Vec<_>>();
@@ -744,21 +744,18 @@ fn retained_okf_analysis_reuses_unchanged_snapshots_and_matches_full_oracle() {
         let incremental_document = incremental.okf().catalog.document(incremental_id).unwrap();
         let incremental_tree = incremental
             .okf()
-            .shell
+            .markdown
             .document(incremental_id)
             .unwrap()
-            .syntax();
-        let full_tree = full.okf().shell.document(full_id).unwrap().syntax();
+            .tree();
+        let full_tree = full.okf().markdown.document(full_id).unwrap().tree();
         assert!(
             assert_current_source_provenance(
                 incremental_tree,
                 incremental_document.text().shared()
             ) > 0
         );
-        assert_eq!(
-            shell_fingerprint(incremental_tree),
-            shell_fingerprint(full_tree)
-        );
+        assert_eq!(incremental_tree.write_to_string(), full_tree.write_to_string());
         assert_eq!(
             diagnostic_fingerprint(incremental_tree),
             diagnostic_fingerprint(full_tree)
@@ -1077,4 +1074,49 @@ fn retained_uml_analysis_never_cross_wires_snapshot_provenance() {
             source_document.text().as_ptr()
         );
     }
+}
+
+#[test]
+fn markdown_snapshots_promote_updates_and_isolate_broken_islands() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "class.md",
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- first: String\n\n## Operations\n- run()\n",
+        ),
+        ("other.md", "---\ntype: uml.Class\n---\n# Other\n"),
+    ])
+    .unwrap();
+    let baseline = prepared(source.clone(), None, 1);
+    let class = document_id(&baseline, "class.md");
+    let other = document_id(&baseline, "other.md");
+    let edited = replace_document(
+        &source,
+        SourceDocument::new(
+            BundlePath::parse("class.md").unwrap(),
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- first String\n\n## Operations\n- run()\n".into(),
+        ),
+    )
+    .unwrap();
+    let current = prepared(
+        edited,
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
+        2,
+    );
+
+    assert!(!Arc::ptr_eq(
+        baseline.okf().markdown.document(class).unwrap(),
+        current.okf().markdown.document(class).unwrap(),
+    ));
+    assert!(Arc::ptr_eq(
+        baseline.okf().markdown.document(other).unwrap(),
+        current.okf().markdown.document(other).unwrap(),
+    ));
+    assert!(Arc::ptr_eq(
+        baseline.uml().syntax.document(other).unwrap().syntax(),
+        current.uml().syntax.document(other).unwrap().syntax(),
+    ));
+    assert!(current.uml().declared.concept("class").is_some());
 }

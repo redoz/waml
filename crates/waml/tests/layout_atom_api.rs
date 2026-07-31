@@ -41,8 +41,7 @@ fn public_layout_atom_views_preserve_leaf_kind_range_and_authored_order() {
         DomainAnalysisContext {
             source: &source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: 7,
         },

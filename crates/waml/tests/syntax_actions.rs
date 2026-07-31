@@ -23,8 +23,7 @@ fn build_analyses(source: &SourceBundle, previous: Option<&Analyses>, revision: 
         DomainAnalysisContext {
             source,
             catalog: &okf.catalog,
-            shell: &okf.shell,
-            structures: &okf.structures,
+            markdown: &okf.markdown,
             okf: &okf.bundle,
             session_revision: revision,
         },
@@ -430,8 +429,8 @@ fn versioned_locator_preserves_occurrence_identity_and_wrong_tree_error() {
     let source = source();
     let analyses = build_analyses(&source, None, 13);
     let document = id(&analyses, "a.md");
-    let snapshot = analyses.okf.shell.document(document).unwrap();
-    let node = snapshot.syntax().root();
+    let snapshot = analyses.okf.markdown.document(document).unwrap();
+    let node = snapshot.tree().root();
     let token = node
         .children()
         .find_map(|element| element.into_token())
@@ -458,7 +457,7 @@ fn versioned_locator_preserves_occurrence_identity_and_wrong_tree_error() {
         occurrence_locator.expected_kind()
     );
     let resolved = token_locator
-        .resolve_in(snapshot.syntax())
+        .resolve_in(snapshot.tree())
         .unwrap()
         .locator();
     let token_occurrence = token.locator();
@@ -467,8 +466,8 @@ fn versioned_locator_preserves_occurrence_identity_and_wrong_tree_error() {
     assert_eq!(resolved.expected_kind(), token_occurrence.expected_kind());
 
     let other_tree = waml_syntax::SyntaxTree::new(
-        snapshot.syntax().root_green().clone(),
-        snapshot.syntax().diagnostics().into(),
+        snapshot.tree().root_green().clone(),
+        snapshot.tree().diagnostics().into(),
         waml_syntax::MarkdownDialect::CommonMarkCurrent,
     );
     assert!(matches!(

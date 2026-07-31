@@ -4,9 +4,10 @@ use waml_syntax::{AstNode, TextRange, TextSize};
 
 use crate::{
     action::{ActionBasis, ActionError, CodeAction, TextEdit, VersionedDocumentChange},
-    analysis::{DocumentId, DocumentRevision},
+    analysis::DocumentId,
     uml::{ActionContext, DeclaredField, ExpectedSyntax},
 };
+use waml_syntax::DocumentRevision;
 
 pub fn repair_actions(
     context: ActionContext<'_>,

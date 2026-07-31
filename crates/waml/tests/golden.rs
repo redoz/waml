@@ -73,10 +73,10 @@ fn parser_platform_baseline_keeps_every_fixture_serializable() {
         assert_eq!(
             prepared
                 .okf()
-                .shell
+                .markdown
                 .document(id)
                 .unwrap()
-                .syntax()
+                .tree()
                 .write_to_string(),
             *expected,
             "{path}: lossless shell write"
@@ -421,10 +421,10 @@ fn parser_platform_corpus_full_and_retained_results_match() {
             assert_eq!(
                 prepared
                     .okf()
-                    .shell
+                    .markdown
                     .document(id)
                     .unwrap()
-                    .syntax()
+                    .tree()
                     .write_to_string(),
                 *expected,
                 "{path}: {label} shell writer"
@@ -800,10 +800,10 @@ fn every_doc_is_lossless_through_the_authoritative_shell() {
         assert_eq!(
             prepared
                 .okf()
-                .shell
+                .markdown
                 .document(id)
                 .unwrap()
-                .syntax()
+                .tree()
                 .write_to_string(),
             text
         );

@@ -1,4 +1,5 @@
-use crate::analysis::{DocumentId, DocumentRevision};
+use crate::analysis::DocumentId;
+use waml_syntax::DocumentRevision;
 use waml_syntax::TextRange;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

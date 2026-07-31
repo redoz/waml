@@ -357,7 +357,7 @@ fn validate_context(context: &EditContext<'_>) -> Result<(), EditError> {
     let catalog = &context.okf_analysis.catalog;
     if catalog.session_revision() != context.session_revision
         || context.uml.session_revision() != context.session_revision
-        || !Arc::ptr_eq(catalog, context.okf_analysis.shell.catalog())
+        || !Arc::ptr_eq(catalog, context.okf_analysis.markdown.catalog())
         || !Arc::ptr_eq(catalog, context.uml.syntax.catalog())
         || catalog.documents().len() != context.source.len()
     {

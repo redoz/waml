@@ -127,8 +127,7 @@ mod tests {
                 crate::analysis::DomainAnalysisContext {
                     source,
                     catalog: &okf_analysis.catalog,
-                    shell: &okf_analysis.shell,
-                    structures: &okf_analysis.structures,
+                    markdown: &okf_analysis.markdown,
                     okf: &okf_analysis.bundle,
                     session_revision: 0,
                 },

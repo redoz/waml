@@ -22,7 +22,7 @@ pub struct Analysis {
     pub declared: DeclaredBundle,
     pub projection: super::Projection,
     pub diagnostics: Arc<[Diagnostic]>,
-    pub structures: Arc<BTreeMap<crate::analysis::DocumentId, Arc<MarkdownStructureMap>>>,
+    pub markdown: crate::analysis::MarkdownSyntaxSet,
     session_revision: u64,
 }
 
@@ -184,14 +184,16 @@ pub fn analyze(
             .ok_or_else(|| AnalysisError::CatalogInvariant {
                 reason: "claimed concept has no document".into(),
             })?;
-        let shell_snapshot =
+        let markdown_snapshot =
             context
-                .shell
+                .markdown
                 .document(id)
                 .ok_or_else(|| AnalysisError::CatalogInvariant {
-                    reason: "claimed concept has no shell syntax snapshot".into(),
+                    reason: "claimed concept has no Markdown syntax snapshot".into(),
                 })?;
-        let document = shell_snapshot.document().clone();
+        let document = context.catalog.document(id).cloned().ok_or_else(|| AnalysisError::CatalogInvariant {
+            reason: "claimed concept has no catalog document".into(),
+        })?;
         let catalog_document =
             context
                 .catalog
@@ -212,13 +214,7 @@ pub fn analyze(
                 reason: "UML document does not share shell/catalog/source provenance".into(),
             });
         }
-        let structure =
-            context
-                .structures
-                .get(&id)
-                .ok_or_else(|| AnalysisError::CatalogInvariant {
-                    reason: "claimed concept has no Markdown structure map".into(),
-                })?;
+        let structure = markdown_snapshot.structure();
         let tree = match previous.and_then(|analysis| analysis.syntax.document(id)) {
             Some(previous_snapshot) if Arc::ptr_eq(previous_snapshot.document(), &document) => {
                 previous_snapshot.syntax().clone()
@@ -227,11 +223,11 @@ pub fn analyze(
                 let changes =
                     single_text_change(previous_snapshot.document().text(), document.text());
                 previous
-                    .and_then(|analysis| analysis.structures.get(&id))
-                    .and_then(|old_structure| {
+                    .and_then(|analysis| analysis.markdown.document(id))
+                    .and_then(|old_markdown| {
                         syntax::reparse_island(
                             previous_snapshot.syntax(),
-                            old_structure,
+                            old_markdown.structure(),
                             document.text().clone(),
                             structure,
                             &changes,
@@ -514,14 +510,14 @@ pub fn analyze(
         declared,
         projection,
         diagnostics: diagnostics.into(),
-        structures: context.structures.clone(),
+        markdown: context.markdown.clone(),
         session_revision: context.session_revision,
     })
 }
 
 fn validate_shared_context(context: &DomainAnalysisContext<'_>) -> Result<(), AnalysisError> {
     if context.session_revision != context.catalog.session_revision()
-        || !Arc::ptr_eq(context.catalog, context.shell.catalog())
+        || !Arc::ptr_eq(context.catalog, context.markdown.catalog())
     {
         return Err(AnalysisError::Specialization {
             name: "uml",
