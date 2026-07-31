@@ -12,7 +12,8 @@ use waml_markdown_editor::{
     session::MarkdownDocumentSession,
 };
 use waml_syntax::{
-    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange, TextSize,
+    parse_markdown, reparse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange,
+    TextSize,
 };
 
 fn t(n: usize) -> TextSize {
@@ -205,6 +206,138 @@ fn failed_block_uses_editable_plain_text_fallback() {
         ),
         TextPosition::new(source.start(), Affinity::Before)
     );
+}
+
+#[test]
+fn nested_left_insets_offset_lines_carets_and_selections() {
+    let (mut document, presentation, mut shaper) = fixtures::failing_second_block();
+    shaper.fail_fragment = None;
+    let mut blocks = document.blocks.to_vec();
+    let parent_id = blocks[0].id;
+    blocks[0].spec.insets.left = 5.0;
+    blocks[1].parent = Some(parent_id);
+    blocks[1].spec.insets.left = 7.0;
+    let child_range = document.text_runs[1].range;
+    document.content_insets.left = 10.0;
+    document.blocks = blocks.into();
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let child_line = layout.visual_lines().last().unwrap();
+    assert_eq!(child_line.rect.pos.x, 22.0);
+    let start = TextPosition::new(child_range.start(), Affinity::Before);
+    assert_eq!(layout.source_to_point(start).unwrap().rect.pos.x, 22.0);
+    let selection = Selection::new(start, TextPosition::new(child_range.end(), Affinity::After));
+    assert_eq!(
+        layout
+            .selection_rects(selection)
+            .unwrap()
+            .last()
+            .unwrap()
+            .pos
+            .x,
+        22.0
+    );
+}
+
+#[test]
+fn syntax_invalidation_rejects_update_snapshot_revision_mismatch() {
+    let (document, presentation, mut shaper) = fixtures::paragraph();
+    let update = reparse_markdown(
+        presentation.syntax(),
+        DocumentRevision::new(9),
+        presentation.text().clone(),
+        &[],
+    )
+    .unwrap();
+    let error = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::SyntaxUpdate(update),
+            &mut shaper,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        LayoutError::RevisionMismatch { document, layout }
+            if document == DocumentRevision::new(8) && layout == DocumentRevision::new(9)
+    ));
+}
+
+#[test]
+fn bidi_levels_reorder_clusters_and_keep_boundary_affinities_distinct() {
+    let (document, presentation, _) = fixtures::paragraph();
+    let run = &document.text_runs[0];
+    let start = run.range.start().to_usize();
+    let mut shaper = FixedShaper(ShapedRun {
+        clusters: Arc::from([
+            shaped_cluster(start, start + 1, 0),
+            shaped_cluster(start + 1, start + 2, 1),
+            shaped_cluster(start + 2, start + 3, 1),
+        ]),
+        ascender: 12.0,
+        descender: 4.0,
+        line_gap: 0.0,
+    });
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let boundary = t(start + 1);
+    assert_eq!(
+        layout
+            .source_to_point(TextPosition::new(boundary, Affinity::After))
+            .unwrap()
+            .rect
+            .pos
+            .x,
+        10.0
+    );
+    assert_eq!(
+        layout
+            .source_to_point(TextPosition::new(boundary, Affinity::Before))
+            .unwrap()
+            .rect
+            .pos
+            .x,
+        30.0
+    );
+}
+
+struct FixedShaper(ShapedRun);
+
+impl TextShaper for FixedShaper {
+    fn shape(
+        &mut self,
+        _source: &SourceText,
+        _run: &LayoutTextRun,
+        _max_width: f64,
+    ) -> Result<ShapedRun, LayoutError> {
+        Ok(self.0.clone())
+    }
+}
+
+fn shaped_cluster(start: usize, end: usize, bidi_level: u8) -> ShapedCluster {
+    ShapedCluster {
+        source_range: range(start, end),
+        advance: 10.0,
+        bidi_level,
+        caret_offsets: Arc::from([t(start), t(end)]),
+    }
 }
 
 #[derive(Default)]

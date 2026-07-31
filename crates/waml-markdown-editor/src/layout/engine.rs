@@ -108,6 +108,14 @@ impl LayoutEngine {
                 layout: document.revision,
             });
         }
+        if let LayoutInvalidation::SyntaxUpdate(update) = &invalidation {
+            if update.snapshot.revision() != presentation.revision() {
+                return Err(LayoutError::RevisionMismatch {
+                    document: presentation.revision(),
+                    layout: update.snapshot.revision(),
+                });
+            }
+        }
 
         let width_key = viewport.width.to_bits();
         let mut summaries = Vec::with_capacity(document.blocks.len());
@@ -150,16 +158,19 @@ impl LayoutEngine {
         let mut blocks = Vec::new();
         for index in visible_indices.iter().copied() {
             let block = &document.blocks[index];
+            let (nested_left, nested_right) = nested_horizontal_insets(document, block);
+            let content_x = document.content_insets.left + nested_left;
             let available_width = (viewport.width
                 - document.content_insets.left
                 - document.content_insets.right
-                - block.spec.insets.left
-                - block.spec.insets.right)
+                - nested_left
+                - nested_right)
                 .max(1.0);
             let output = layout_block(
                 block,
                 document,
                 presentation,
+                content_x,
                 summaries[index].y,
                 available_width,
                 shaper,
@@ -179,14 +190,19 @@ impl LayoutEngine {
                         block.id,
                         block.source_range,
                         Rect {
-                            pos: dvec2(document.content_insets.left, summaries[index].y),
+                            pos: dvec2(content_x, summaries[index].y),
                             size: dvec2(available_width, output.height),
                         },
                     ));
                 }
                 Err(_) => {
-                    let output =
-                        fallback_block(block, presentation, summaries[index].y, available_width);
+                    let output = fallback_block(
+                        block,
+                        presentation,
+                        content_x,
+                        summaries[index].y,
+                        available_width,
+                    );
                     let delta = output.height - summaries[index].height;
                     summaries[index].height = output.height;
                     if delta != 0.0 {
@@ -200,7 +216,7 @@ impl LayoutEngine {
                         block.id,
                         block.source_range,
                         Rect {
-                            pos: dvec2(document.content_insets.left, summaries[index].y),
+                            pos: dvec2(content_x, summaries[index].y),
                             size: dvec2(available_width, output.height),
                         },
                     ));
@@ -253,6 +269,7 @@ fn layout_block<S: TextShaper>(
     block: &LayoutBlock,
     document: &LayoutDocument,
     presentation: &MarkdownDocumentSnapshot,
+    x: f64,
     y: f64,
     max_width: f64,
     shaper: &mut S,
@@ -270,7 +287,7 @@ fn layout_block<S: TextShaper>(
     for run in runs {
         let shaped = shaper.shape(presentation.text(), run, max_width)?;
         let run_y = y + output.height;
-        append_run(&mut output, run.id, &shaped, run_y, max_width);
+        append_run(&mut output, run.id, &shaped, x, run_y, max_width);
     }
     if output.lines.is_empty() {
         output.height = estimated_height(block, document);
@@ -281,6 +298,7 @@ fn layout_block<S: TextShaper>(
 fn fallback_block(
     block: &LayoutBlock,
     presentation: &MarkdownDocumentSnapshot,
+    x: f64,
     y: f64,
     max_width: f64,
 ) -> BlockOutput {
@@ -307,7 +325,7 @@ fn fallback_block(
         clusters: Vec::new(),
         height: 0.0,
     };
-    append_run(&mut output, block.id, &run, y, max_width);
+    append_run(&mut output, block.id, &run, x, y, max_width);
     output
 }
 
@@ -315,6 +333,7 @@ fn append_run(
     output: &mut BlockOutput,
     layout_id: LayoutElementId,
     run: &ShapedRun,
+    start_x: f64,
     start_y: f64,
     max_width: f64,
 ) {
@@ -334,7 +353,7 @@ fn append_run(
             .binary_search_by_key(&shaped.source_range.start(), |range| range.start())
             .expect("a shaped cluster appears in source order");
         if x > 0.0 && x + shaped.advance > max_width {
-            flush_line(output, layout_id, &line_clusters, y, line_height);
+            flush_line(output, layout_id, &line_clusters, start_x, y, line_height);
             line_clusters.clear();
             x = 0.0;
             y += line_height;
@@ -343,7 +362,7 @@ fn append_run(
         x += shaped.advance;
     }
     if !line_clusters.is_empty() {
-        flush_line(output, layout_id, &line_clusters, y, line_height);
+        flush_line(output, layout_id, &line_clusters, start_x, y, line_height);
         y += line_height;
     }
     output.height = output.lines.iter().map(VisualLine::height).sum();
@@ -353,6 +372,7 @@ fn flush_line(
     output: &mut BlockOutput,
     layout_id: LayoutElementId,
     line_clusters: &[(usize, &ShapedCluster, f64)],
+    start_x: f64,
     y: f64,
     height: f64,
 ) {
@@ -370,26 +390,33 @@ fn flush_line(
         .max()
         .expect("a line has a last source boundary");
     let width = line_clusters
-        .last()
-        .map_or(0.0, |(_, cluster, x)| x + cluster.advance);
+        .iter()
+        .map(|(_, cluster, _)| cluster.advance)
+        .sum();
     output.lines.push(VisualLine::new(
         TextRange::new(source_start, source_end).expect("shaped clusters remain source ordered"),
         Rect {
-            pos: dvec2(0.0, y),
+            pos: dvec2(start_x, y),
             size: dvec2(width, height),
         },
     ));
-    for (ordinal, shaped, x) in line_clusters {
+    let mut visual_clusters = line_clusters.to_vec();
+    reorder_by_bidi_level(&mut visual_clusters);
+    let mut x = start_x;
+    for (ordinal, shaped, _) in visual_clusters {
         let stops = shaped
             .caret_offsets
             .iter()
             .enumerate()
             .map(|(index, offset)| {
-                let fraction = if shaped.caret_offsets.len() <= 1 {
+                let mut fraction = if shaped.caret_offsets.len() <= 1 {
                     0.0
                 } else {
                     index as f64 / (shaped.caret_offsets.len() - 1) as f64
                 };
+                if shaped.bidi_level % 2 == 1 {
+                    fraction = 1.0 - fraction;
+                }
                 CaretStop::new(
                     TextPosition::new(
                         *offset,
@@ -406,16 +433,68 @@ fn flush_line(
         output.clusters.push(GlyphCluster::new(
             GeometryElementId {
                 layout: layout_id,
-                cluster_ordinal: *ordinal as u32,
+                cluster_ordinal: ordinal as u32,
             },
             shaped.source_range,
             Rect {
-                pos: dvec2(*x, y),
+                pos: dvec2(x, y),
                 size: dvec2(shaped.advance, height),
             },
             stops.into(),
         ));
+        x += shaped.advance;
     }
+}
+
+fn reorder_by_bidi_level(clusters: &mut [(usize, &ShapedCluster, f64)]) {
+    let Some(max_level) = clusters
+        .iter()
+        .map(|(_, cluster, _)| cluster.bidi_level)
+        .max()
+    else {
+        return;
+    };
+    let Some(min_odd_level) = clusters
+        .iter()
+        .map(|(_, cluster, _)| cluster.bidi_level)
+        .filter(|level| level % 2 == 1)
+        .min()
+    else {
+        return;
+    };
+    for level in (min_odd_level..=max_level).rev() {
+        let mut start = 0;
+        while start < clusters.len() {
+            while start < clusters.len() && clusters[start].1.bidi_level < level {
+                start += 1;
+            }
+            let mut end = start;
+            while end < clusters.len() && clusters[end].1.bidi_level >= level {
+                end += 1;
+            }
+            clusters[start..end].reverse();
+            start = end;
+        }
+    }
+}
+
+fn nested_horizontal_insets(document: &LayoutDocument, block: &LayoutBlock) -> (f64, f64) {
+    let mut left = block.spec.insets.left;
+    let mut right = block.spec.insets.right;
+    let mut parent = block.parent;
+    while let Some(parent_id) = parent {
+        let Some(parent_block) = document
+            .blocks
+            .iter()
+            .find(|candidate| candidate.id == parent_id)
+        else {
+            break;
+        };
+        left += parent_block.spec.insets.left;
+        right += parent_block.spec.insets.right;
+        parent = parent_block.parent;
+    }
+    (left, right)
 }
 
 fn estimated_height(block: &LayoutBlock, document: &LayoutDocument) -> f64 {

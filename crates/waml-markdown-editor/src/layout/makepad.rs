@@ -70,15 +70,11 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
                     || row.width_in_lpxs - row.glyphs[index].origin_in_lpxs.x,
                     |glyph| glyph.origin_in_lpxs.x - row.glyphs[index].origin_in_lpxs.x,
                 );
-                let bidi_level =
-                    row.glyphs
-                        .get(next)
-                        .is_some_and(|glyph| glyph.cluster < cluster) as u8;
                 clusters.push(ShapedCluster {
                     source_range: TextRange::new(text_size(start), text_size(end))
                         .map_err(|_| LayoutError::ShapingFailed { run: run.id })?,
                     advance: advance as f64,
-                    bidi_level,
+                    bidi_level: 0,
                     caret_offsets: Arc::from([text_size(start), text_size(end)]),
                 });
                 index = next;
