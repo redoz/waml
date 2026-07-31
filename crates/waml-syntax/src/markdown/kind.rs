@@ -39,6 +39,14 @@ impl SyntaxIdentity {
         )
     }
 
+    pub(crate) fn metadata_annotation(
+        self,
+        kind: &'static str,
+        data: &'static str,
+    ) -> SyntaxAnnotation {
+        SyntaxAnnotation::new(self.0, kind, Some(Arc::from(data)))
+    }
+
     pub(crate) fn from_annotation_data(data: &str) -> Option<Self> {
         data.parse::<u64>().ok().and_then(NonZeroU64::new).map(Self)
     }

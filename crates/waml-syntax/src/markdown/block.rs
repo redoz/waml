@@ -37,6 +37,8 @@ struct BlockFrame {
     source_range: Range<usize>,
     children: Vec<BlockFrame>,
     cursor: usize,
+    metadata: Option<(&'static str, &'static str)>,
+    table_alignments: Vec<super::gfm::TableAlignment>,
 }
 
 pub(crate) fn parse(
@@ -62,6 +64,31 @@ pub(crate) fn parse(
         match event {
             Event::Start(tag) => {
                 if let Some(kind) = start_kind(&tag, source, &offsets) {
+                    let metadata = if kind == Kind::TableCell {
+                        let column = stack.last().map_or(0, |parent| {
+                            parent
+                                .children
+                                .iter()
+                                .filter(|child| child.kind == Kind::TableCell)
+                                .count()
+                        });
+                        stack
+                            .iter()
+                            .rev()
+                            .find(|frame| frame.kind == Kind::Table)
+                            .and_then(|table| table.table_alignments.get(column))
+                            .map(|alignment| (super::gfm::TABLE_ALIGNMENT, alignment.data()))
+                    } else {
+                        None
+                    };
+                    let table_alignments = match &tag {
+                        Tag::Table(alignments) => alignments
+                            .iter()
+                            .copied()
+                            .map(super::gfm::TableAlignment::from_pulldown)
+                            .collect(),
+                        _ => Vec::new(),
+                    };
                     if matches!(kind, Kind::ListItem | Kind::IndentedCodeBlock) {
                         let line_start = source[..offsets.start]
                             .rfind('\n')
@@ -79,6 +106,8 @@ pub(crate) fn parse(
                         source_range: offsets.clone(),
                         children: Vec::new(),
                         cursor: offsets.start,
+                        metadata,
+                        table_alignments,
                     });
                 }
             }
@@ -104,6 +133,8 @@ pub(crate) fn parse(
                     source_range: offsets.clone(),
                     children: Vec::new(),
                     cursor: offsets.start,
+                    metadata: None,
+                    table_alignments: Vec::new(),
                 };
                 if let Some(parent) = stack.last_mut() {
                     parent.children.push(frame);
@@ -191,6 +222,7 @@ fn build_frame(
     diagnostics: &mut Vec<TreeDiagnostic<Diagnostic>>,
     dialect: MarkdownDialect,
 ) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
+    let metadata = frame_metadata(source, &frame, dialect);
     frame
         .children
         .sort_by_key(|child| (child.source_range.start, child.source_range.end));
@@ -204,7 +236,7 @@ fn build_frame(
             diagnostics,
             dialect,
         )?;
-        return semantic_node(factory, frame.kind, children);
+        return semantic_node_with_metadata(factory, frame.kind, children, metadata);
     }
     let mut children = Vec::new();
     frame.cursor = frame.source_range.start;
@@ -254,15 +286,46 @@ fn build_frame(
                 body.push(child);
             } else {
                 if !body.is_empty() {
-                    grouped.push(GreenElement::Node(semantic_node(factory, Kind::TableBody, std::mem::take(&mut body))?));
+                    grouped.push(GreenElement::Node(semantic_node(
+                        factory,
+                        Kind::TableBody,
+                        std::mem::take(&mut body),
+                    )?));
                 }
                 grouped.push(child);
             }
         }
-        if !body.is_empty() { grouped.push(GreenElement::Node(semantic_node(factory, Kind::TableBody, body)?)); }
+        if !body.is_empty() {
+            grouped.push(GreenElement::Node(semantic_node(
+                factory,
+                Kind::TableBody,
+                body,
+            )?));
+        }
         children = grouped;
     }
-    semantic_node(factory, frame.kind, children)
+    semantic_node_with_metadata(factory, frame.kind, children, metadata)
+}
+
+fn frame_metadata(
+    source: &str,
+    frame: &BlockFrame,
+    dialect: MarkdownDialect,
+) -> Option<(&'static str, &'static str)> {
+    if let Some(metadata) = frame.metadata {
+        return Some(metadata);
+    }
+    if frame.kind == Kind::ListItem && dialect.task_lists() {
+        let marker_end = list_prefix_end(source, frame.source_range.start, frame.source_range.end);
+        let task_start = marker_end + usize::from(source.as_bytes().get(marker_end) == Some(&b' '));
+        return super::gfm::task_marker(source, task_start, frame.source_range.end)
+            .map(|(_, state)| (super::gfm::TASK_STATE, state.data()));
+    }
+    if frame.kind == Kind::HtmlBlock && dialect.tag_filter() {
+        let (_, state) = super::gfm::classify_html(&source[frame.source_range.clone()]);
+        return Some((super::gfm::HTML_TAG_FILTER, state.data()));
+    }
+    None
 }
 
 fn start_kind(tag: &Tag<'_>, source: &str, range: &Range<usize>) -> Option<Kind> {
@@ -325,11 +388,24 @@ fn leaf_tokens(
         Kind::FencedCodeBlock => fence_tokens(factory, text, source, range, diagnostics),
         Kind::HtmlBlock => {
             if dialect.tag_filter() {
-                if let Some((tag_start, tag_end, super::gfm::HtmlTagFilter::Disallowed)) = super::gfm::filtered_tag(&source[range.clone()]) {
-                    diagnostics.push(diagnostic(Diagnostic::FilteredHtmlTag, range.start + tag_start, range.start + tag_end, "disallowed GFM HTML tag")?);
+                if let (Some((tag_start, tag_end)), super::gfm::HtmlTagFilter::Disallowed) =
+                    super::gfm::classify_html(&source[range.clone()])
+                {
+                    diagnostics.push(diagnostic(
+                        Diagnostic::FilteredHtmlTag,
+                        range.start + tag_start,
+                        range.start + tag_end,
+                        "disallowed GFM HTML tag",
+                    )?);
                 }
             }
-            Ok(vec![token(factory, text, range.start, range.end, Kind::HtmlToken)?])
+            Ok(vec![token(
+                factory,
+                text,
+                range.start,
+                range.end,
+                Kind::HtmlToken,
+            )?])
         }
         Kind::Paragraph => Ok(vec![token(
             factory,
@@ -347,11 +423,32 @@ fn leaf_tokens(
                 marker_end,
                 Kind::ListMarkerToken,
             )?];
-            let task_start = marker_end + usize::from(source.as_bytes().get(marker_end) == Some(&b' '));
-            if let Some((task_end, _)) = dialect.task_lists().then(|| super::gfm::task_marker(source, task_start, range.end)).flatten() {
-                if marker_end < task_start { out.push(token(factory, text, marker_end, task_start, Kind::WhitespaceToken)?); }
-                out.push(token(factory, text, task_start, task_end, Kind::TaskListMarkerToken)?);
-                if task_end < range.end { out.push(token(factory, text, task_end, range.end, Kind::TextToken)?); }
+            let task_start =
+                marker_end + usize::from(source.as_bytes().get(marker_end) == Some(&b' '));
+            if let Some((task_end, _)) = dialect
+                .task_lists()
+                .then(|| super::gfm::task_marker(source, task_start, range.end))
+                .flatten()
+            {
+                if marker_end < task_start {
+                    out.push(token(
+                        factory,
+                        text,
+                        marker_end,
+                        task_start,
+                        Kind::WhitespaceToken,
+                    )?);
+                }
+                out.push(token(
+                    factory,
+                    text,
+                    task_start,
+                    task_end,
+                    Kind::TaskListMarkerToken,
+                )?);
+                if task_end < range.end {
+                    out.push(token(factory, text, task_end, range.end, Kind::TextToken)?);
+                }
             } else if marker_end < range.end {
                 out.push(token(
                     factory,
@@ -393,7 +490,10 @@ fn emit_frame_gap(
                 out.push(token(factory, text, at, at + 1, Kind::TablePipeToken)?);
                 at += 1;
             } else {
-                let next = source[at..end].find('|').map(|offset| at + offset).unwrap_or(end);
+                let next = source[at..end]
+                    .find('|')
+                    .map(|offset| at + offset)
+                    .unwrap_or(end);
                 out.push(token(factory, text, at, next, Kind::TextToken)?);
                 at = next;
             }
@@ -403,10 +503,23 @@ fn emit_frame_gap(
     if matches!(parent, Kind::TableHead | Kind::Table) {
         let mut at = start;
         while at < end {
-            let kind = if source.as_bytes()[at] == b':' { Kind::TableAlignmentColonToken } else if source.as_bytes()[at] == b'|' { Kind::TablePipeToken } else { Kind::TextToken };
+            let kind = if source.as_bytes()[at] == b':' {
+                Kind::TableAlignmentColonToken
+            } else if source.as_bytes()[at] == b'|' {
+                Kind::TablePipeToken
+            } else {
+                Kind::TextToken
+            };
             let mut next = at + 1;
-            while next < end && ((kind == Kind::TableAlignmentColonToken && source.as_bytes()[next] == b':') || (kind == Kind::TablePipeToken && source.as_bytes()[next] == b'|') || (kind == Kind::TextToken && !matches!(source.as_bytes()[next], b':' | b'|'))) { next += 1; }
-            out.push(token(factory, text, at, next, kind)?); at = next;
+            while next < end
+                && ((kind == Kind::TableAlignmentColonToken && source.as_bytes()[next] == b':')
+                    || (kind == Kind::TablePipeToken && source.as_bytes()[next] == b'|')
+                    || (kind == Kind::TextToken && !matches!(source.as_bytes()[next], b':' | b'|')))
+            {
+                next += 1;
+            }
+            out.push(token(factory, text, at, next, kind)?);
+            at = next;
         }
         return Ok(());
     }
@@ -425,11 +538,32 @@ fn emit_frame_gap(
             out.push(token(factory, text, start, marker_end, marker_kind)?);
         }
         if parent == Kind::ListItem {
-            let task_start = marker_end + usize::from(source.as_bytes().get(marker_end) == Some(&b' '));
-            if let Some((task_end, _)) = dialect.task_lists().then(|| super::gfm::task_marker(source, task_start, end)).flatten() {
-                if marker_end < task_start { out.push(token(factory, text, marker_end, task_start, Kind::WhitespaceToken)?); }
-                out.push(token(factory, text, task_start, task_end, Kind::TaskListMarkerToken)?);
-                if task_end < end { out.push(token(factory, text, task_end, end, Kind::TextToken)?); }
+            let task_start =
+                marker_end + usize::from(source.as_bytes().get(marker_end) == Some(&b' '));
+            if let Some((task_end, _)) = dialect
+                .task_lists()
+                .then(|| super::gfm::task_marker(source, task_start, end))
+                .flatten()
+            {
+                if marker_end < task_start {
+                    out.push(token(
+                        factory,
+                        text,
+                        marker_end,
+                        task_start,
+                        Kind::WhitespaceToken,
+                    )?);
+                }
+                out.push(token(
+                    factory,
+                    text,
+                    task_start,
+                    task_end,
+                    Kind::TaskListMarkerToken,
+                )?);
+                if task_end < end {
+                    out.push(token(factory, text, task_end, end, Kind::TextToken)?);
+                }
                 return Ok(());
             }
         }
@@ -921,12 +1055,22 @@ fn semantic_node(
     kind: Kind,
     children: Vec<GreenElement<OkfMarkdownLanguage>>,
 ) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
+    semantic_node_with_metadata(factory, kind, children, None)
+}
+
+fn semantic_node_with_metadata(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    kind: Kind,
+    children: Vec<GreenElement<OkfMarkdownLanguage>>,
+    metadata: Option<(&'static str, &'static str)>,
+) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
+    let identity = SyntaxIdentity::fresh()?;
+    let mut annotations = vec![identity.annotation()];
+    if let Some((kind, data)) = metadata {
+        annotations.push(identity.metadata_annotation(kind, data));
+    }
     factory
-        .node_with_annotations(
-            kind,
-            children,
-            Arc::from([SyntaxIdentity::fresh()?.annotation()]),
-        )
+        .node_with_annotations(kind, children, annotations.into())
         .map_err(|_| ParseError::WidthOverflow)
 }
 

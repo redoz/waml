@@ -196,7 +196,9 @@ fn collect_queries(
 ) -> Result<(), ParseError> {
     if matches!(
         node.kind(),
-        crate::OkfMarkdownSyntaxKind::Link | crate::OkfMarkdownSyntaxKind::Image
+        crate::OkfMarkdownSyntaxKind::Link
+            | crate::OkfMarkdownSyntaxKind::Image
+            | crate::OkfMarkdownSyntaxKind::Autolink
     ) {
         let annotations = node.syntax_annotations();
         let destination = required_annotation(

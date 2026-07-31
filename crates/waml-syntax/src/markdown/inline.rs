@@ -3,9 +3,9 @@ use std::{collections::HashMap, num::NonZeroU64, sync::Arc};
 use pulldown_cmark::{Event, Parser};
 
 use crate::{
-    GreenElement, GreenFactory, GreenNode, GreenText, OkfMarkdownLanguage,
-    OkfMarkdownSyntaxKind as Kind, ParseError, SourceText, SyntaxAnnotation, SyntaxIdentity,
-    TextRange, TextSize, MarkdownDialect, TreeDiagnostic, OkfSyntaxDiagnosticCode as Diagnostic,
+    GreenElement, GreenFactory, GreenNode, GreenText, MarkdownDialect, OkfMarkdownLanguage,
+    OkfMarkdownSyntaxKind as Kind, OkfSyntaxDiagnosticCode as Diagnostic, ParseError, SourceText,
+    SyntaxAnnotation, SyntaxIdentity, TextRange, TextSize, TreeDiagnostic,
 };
 
 use super::reference::{decode_destination, normalize_label, MarkdownReferenceMap};
@@ -51,7 +51,12 @@ pub(crate) fn apply(
         };
         let mut at = start;
         let root = rebuild(&mut context, root, &mut at)?;
-        (root, context.inline_roots, context.backlinks, context.diagnostics)
+        (
+            root,
+            context.inline_roots,
+            context.backlinks,
+            context.diagnostics,
+        )
     };
     let references = references.with_backlinks(backlinks);
     Ok(InlineParse {
@@ -92,6 +97,23 @@ fn rebuild(
     ) && has_inline_syntax(&context.text.shared()[start..end])
     {
         let owner = SyntaxIdentity::fresh()?;
+        let mut annotations = Vec::new();
+        if node.kind() == Kind::TableCell {
+            if let Some(data) = node
+                .annotations()
+                .iter()
+                .find(|annotation| annotation.kind() == super::gfm::TABLE_ALIGNMENT)
+                .and_then(SyntaxAnnotation::data)
+            {
+                let data = match data {
+                    "left" => "left",
+                    "center" => "center",
+                    "right" => "right",
+                    _ => "none",
+                };
+                annotations.push(owner.metadata_annotation(super::gfm::TABLE_ALIGNMENT, data));
+            }
+        }
         let mut children = Vec::new();
         for child in node.children() {
             match child {
@@ -110,7 +132,7 @@ fn rebuild(
                 }
             }
         }
-        let rebuilt = semantic_with_identity(node.kind(), children, owner, Vec::new())?;
+        let rebuilt = semantic_with_identity(node.kind(), children, owner, annotations)?;
         context.inline_roots.push(rebuilt.clone());
         return Ok(rebuilt);
     }
@@ -181,11 +203,42 @@ fn parse_inlines(
 ) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
     let source = context.text.shared();
     let emphasis = emphasis_pairs(source, start, end);
+    let strikethrough = if context.dialect.strikethrough() {
+        strikethrough_pairs(source, start, end)
+    } else {
+        Vec::new()
+    };
     let brackets = bracket_matches(context, start, end, allow_links);
     let mut out = Vec::new();
     let mut at = start;
     let mut plain = start;
     while at < end {
+        if let Some(pair) = strikethrough.iter().find(|pair| pair.open == at) {
+            flush(context.text, plain, at, &mut out)?;
+            let mut children = vec![tok(
+                context.text,
+                pair.open,
+                pair.open + 2,
+                Kind::StrikethroughDelimiterToken,
+            )?];
+            children.extend(parse_inlines(
+                context,
+                pair.open + 2,
+                pair.close,
+                owner,
+                allow_links,
+            )?);
+            children.push(tok(
+                context.text,
+                pair.close,
+                pair.close + 2,
+                Kind::StrikethroughDelimiterToken,
+            )?);
+            out.push(node(Kind::Strikethrough, children, Vec::new())?);
+            at = pair.close + 2;
+            plain = at;
+            continue;
+        }
         if let Some(pair) = emphasis.iter().find(|pair| pair.open == at) {
             flush(context.text, plain, at, &mut out)?;
             let mut children = vec![tok(
@@ -276,17 +329,6 @@ fn parse_inlines(
                 continue;
             }
         }
-        if context.dialect.strikethrough() && rest.starts_with("~~") {
-            if let Some(relative) = source[at + 2..end].find("~~") {
-                let close = at + 2 + relative;
-                flush(context.text, plain, at, &mut out)?;
-                let mut children = vec![tok(context.text, at, at + 2, Kind::StrikethroughDelimiterToken)?];
-                children.extend(parse_inlines(context, at + 2, close, owner, allow_links)?);
-                children.push(tok(context.text, close, close + 2, Kind::StrikethroughDelimiterToken)?);
-                out.push(node(Kind::Strikethrough, children, Vec::new())?);
-                at = close + 2; plain = at; continue;
-            }
-        }
         if rest.starts_with('\\') {
             let next_start = at + 1;
             if let Some(next) = source[next_start..end].chars().next() {
@@ -340,16 +382,54 @@ fn parse_inlines(
                 };
                 if let Some(kind) = kind {
                     flush(context.text, plain, at, &mut out)?;
-                    let mut annotations = Vec::new();
+                    let identity = SyntaxIdentity::fresh()?;
+                    let mut annotations = if kind == Kind::Autolink {
+                        link_annotations(
+                            if inside.contains('@') {
+                                format!("mailto:{inside}")
+                            } else {
+                                inside.to_owned()
+                            },
+                            at + 1,
+                            close - 1,
+                            owner,
+                        )
+                    } else {
+                        Vec::new()
+                    };
                     if kind == Kind::RawHtml && context.dialect.tag_filter() {
-                        if let Some((tag_start, tag_end, state)) = super::gfm::filtered_tag(&source[at..close]) {
-                            annotations.push(super::gfm::annotation(u64::MAX - 20, super::gfm::HTML_TAG_FILTER, match state { super::gfm::HtmlTagFilter::Allowed => "allowed", super::gfm::HtmlTagFilter::Disallowed => "disallowed" }));
-                            if state == super::gfm::HtmlTagFilter::Disallowed {
-                                context.diagnostics.push(TreeDiagnostic { code: Diagnostic::FilteredHtmlTag, range: TextRange::new(TextSize::try_from_usize(at + tag_start).map_err(|_| ParseError::SourceTooLarge { bytes: at + tag_start })?, TextSize::try_from_usize(at + tag_end).map_err(|_| ParseError::SourceTooLarge { bytes: at + tag_end })?).map_err(|_| ParseError::StructuralInvariant { reason: "invalid filtered HTML range".into() })?, severity: crate::SyntaxSeverity::Error, message: Arc::from("disallowed GFM HTML tag") });
+                        let (tag_range, state) = super::gfm::classify_html(&source[at..close]);
+                        annotations.push(
+                            identity.metadata_annotation(super::gfm::HTML_TAG_FILTER, state.data()),
+                        );
+                        if state == super::gfm::HtmlTagFilter::Disallowed {
+                            if let Some((tag_start, tag_end)) = tag_range {
+                                context.diagnostics.push(TreeDiagnostic {
+                                    code: Diagnostic::FilteredHtmlTag,
+                                    range: TextRange::new(
+                                        TextSize::try_from_usize(at + tag_start).map_err(|_| {
+                                            ParseError::SourceTooLarge {
+                                                bytes: at + tag_start,
+                                            }
+                                        })?,
+                                        TextSize::try_from_usize(at + tag_end).map_err(|_| {
+                                            ParseError::SourceTooLarge {
+                                                bytes: at + tag_end,
+                                            }
+                                        })?,
+                                    )
+                                    .map_err(|_| {
+                                        ParseError::StructuralInvariant {
+                                            reason: "invalid filtered HTML range".into(),
+                                        }
+                                    })?,
+                                    severity: crate::SyntaxSeverity::Error,
+                                    message: Arc::from("disallowed GFM HTML tag"),
+                                });
                             }
                         }
                     }
-                    out.push(node(
+                    out.push(GreenElement::Node(semantic_with_identity(
                         kind,
                         vec![
                             tok(context.text, at, at + 1, Kind::AutolinkOpenToken)?,
@@ -365,8 +445,9 @@ fn parse_inlines(
                             )?,
                             tok(context.text, close - 1, close, Kind::AutolinkCloseToken)?,
                         ],
+                        identity,
                         annotations,
-                    )?);
+                    )?));
                     at = close;
                     plain = at;
                     continue;
@@ -382,10 +463,18 @@ fn parse_inlines(
             continue;
         }
         if context.dialect.extended_autolinks() && allow_links {
-            if let Some(close) = extended_autolink_end(source, at, end) {
+            if let Some(candidate) = extended_autolink(source, start, at, end) {
                 flush(context.text, plain, at, &mut out)?;
-                out.push(node(Kind::Autolink, vec![tok(context.text, at, close, Kind::TextToken)?], Vec::new())?);
-                at = close; plain = at; continue;
+                let identity = SyntaxIdentity::fresh()?;
+                out.push(GreenElement::Node(semantic_with_identity(
+                    Kind::Autolink,
+                    vec![tok(context.text, at, candidate.end, Kind::TextToken)?],
+                    identity,
+                    link_annotations(candidate.destination, at, candidate.end, owner),
+                )?));
+                at = candidate.end;
+                plain = at;
+                continue;
             }
         }
         if rest.starts_with('\r') || rest.starts_with('\n') {
@@ -770,6 +859,36 @@ struct InlineDestination {
     close: usize,
 }
 
+fn link_annotations(
+    destination: String,
+    start: usize,
+    end: usize,
+    owner: SyntaxIdentity,
+) -> Vec<SyntaxAnnotation> {
+    vec![
+        annotation(
+            DESTINATION_ID,
+            DESTINATION_ANNOTATION,
+            Some(destination.into()),
+        ),
+        annotation(
+            DESTINATION_RANGE_ID,
+            DESTINATION_RANGE_ANNOTATION,
+            Some(format!("{start}:{end}").into()),
+        ),
+        annotation(
+            LINK_KIND_ID,
+            LINK_KIND_ANNOTATION,
+            Some(Arc::from("inline")),
+        ),
+        annotation(
+            OWNER_ID,
+            OWNER_ANNOTATION,
+            Some(Arc::from(owner.get().to_string())),
+        ),
+    ]
+}
+
 fn inline_destination(source: &str, open: usize, end: usize) -> Option<InlineDestination> {
     let mut at = skip_whitespace(source, open + 1, end);
     let destination = if source[at..end].starts_with('<') {
@@ -914,6 +1033,68 @@ fn emphasis_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
     pairs
 }
 
+fn strikethrough_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
+    let protected = code_spans(source, start, end);
+    let mut openers = Vec::new();
+    let mut pairs = Vec::new();
+    let mut at = start;
+    while at < end {
+        if let Some(range) = protected
+            .iter()
+            .find(|range| range.start <= at && at < range.end)
+        {
+            at = range.end;
+            continue;
+        }
+        if source.as_bytes()[at] != b'~' || escaped(source, start, at) {
+            at += source[at..end]
+                .chars()
+                .next()
+                .expect("non-empty")
+                .len_utf8();
+            continue;
+        }
+        let run = source[at..end]
+            .bytes()
+            .take_while(|byte| *byte == b'~')
+            .count();
+        if run != 2 {
+            at += run;
+            continue;
+        }
+        let previous = source[start..at].chars().next_back();
+        let next = source[at + 2..end].chars().next();
+        let previous_whitespace = previous.is_none_or(char::is_whitespace);
+        let next_whitespace = next.is_none_or(char::is_whitespace);
+        let previous_punctuation = previous.is_some_and(is_unicode_punctuation);
+        let next_punctuation = next.is_some_and(is_unicode_punctuation);
+        let can_open =
+            !next_whitespace && (!next_punctuation || previous_whitespace || previous_punctuation);
+        let can_close =
+            !previous_whitespace && (!previous_punctuation || next_whitespace || next_punctuation);
+        if can_close {
+            if let Some(open) = openers.pop() {
+                pairs.push(EmphasisPair {
+                    open,
+                    close: at,
+                    width: 2,
+                    kind: Kind::Strikethrough,
+                });
+                at += 2;
+                continue;
+            }
+        }
+        if can_open {
+            openers.push(at);
+        } else if !can_close {
+            openers.clear();
+        }
+        at += 2;
+    }
+    pairs.sort_by_key(|pair| pair.open);
+    pairs
+}
+
 fn flanking(
     source: &str,
     start: usize,
@@ -1034,15 +1215,202 @@ fn is_raw_html(value: &str) -> bool {
             .is_some_and(|first| first.is_ascii_alphabetic())
 }
 
-fn extended_autolink_end(source: &str, at: usize, end: usize) -> Option<usize> {
+struct ExtendedAutolink {
+    end: usize,
+    destination: String,
+}
+
+fn extended_autolink(
+    source: &str,
+    range_start: usize,
+    at: usize,
+    end: usize,
+) -> Option<ExtendedAutolink> {
     let rest = &source[at..end];
-    let candidate = rest.bytes().take_while(|byte| !byte.is_ascii_whitespace() && !matches!(byte, b'<' | b'>' | b'`' | b'[' | b']')).count();
-    if candidate == 0 { return None; }
-    let mut close = at + candidate;
-    while close > at && matches!(source.as_bytes()[close - 1], b'?' | b'!' | b'.' | b',' | b':' | b'*' | b'_' | b'~') { close -= 1; }
-    let value = &source[at..close];
-    let valid = value.starts_with("http://") || value.starts_with("https://") || value.starts_with("www.") || (value.contains('@') && value.split_once('@').is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.') && !domain.ends_with('.')));
-    valid.then_some(close)
+    let scheme_len = if rest
+        .get(..7)
+        .is_some_and(|value| value.eq_ignore_ascii_case("http://"))
+    {
+        Some(7)
+    } else if rest
+        .get(..8)
+        .is_some_and(|value| value.eq_ignore_ascii_case("https://"))
+    {
+        Some(8)
+    } else {
+        None
+    };
+    let url = scheme_len.is_some();
+    let www = rest.starts_with("www.");
+    let boundary = at == range_start
+        || source[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '(' | '*' | '_' | '~'));
+    if (url || www) && boundary {
+        let raw_len = rest
+            .bytes()
+            .take_while(|byte| {
+                !byte.is_ascii_whitespace() && !matches!(byte, b'<' | b'>' | b'`' | b'[' | b']')
+            })
+            .count();
+        let close = trim_extended_tail(source, at, at + raw_len);
+        let value = &source[at..close];
+        let authority = if let Some(scheme_len) = scheme_len {
+            &value[scheme_len..]
+        } else {
+            value
+        };
+        let domain_and_port = authority.split(['/', '?', '#']).next().unwrap_or_default();
+        let (domain, valid_port) =
+            domain_and_port
+                .rsplit_once(':')
+                .map_or((domain_and_port, true), |(domain, port)| {
+                    (
+                        domain,
+                        !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()),
+                    )
+                });
+        if valid_port && valid_domain(domain.strip_prefix("www.").unwrap_or(domain)) {
+            return Some(ExtendedAutolink {
+                end: close,
+                destination: if www {
+                    format!("http://{value}")
+                } else {
+                    value.to_owned()
+                },
+            });
+        }
+        return None;
+    }
+    let first = rest.as_bytes().first().copied()?;
+    if !first.is_ascii_alphanumeric()
+        || (at > range_start && email_local_byte(source.as_bytes()[at - 1]))
+    {
+        return None;
+    }
+    let local_len = rest
+        .bytes()
+        .take_while(|byte| email_local_byte(*byte))
+        .count();
+    if rest.as_bytes().get(local_len) != Some(&b'@') {
+        return None;
+    }
+    let local = &rest[..local_len];
+    let domain_start = local_len + 1;
+    let mut domain_len = rest[domain_start..]
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        .count();
+    while domain_len > 0 && rest.as_bytes()[domain_start + domain_len - 1] == b'.' {
+        domain_len -= 1;
+    }
+    let domain = &rest[domain_start..domain_start + domain_len];
+    if local.is_empty()
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+        || !valid_domain(domain)
+    {
+        return None;
+    }
+    let value = &rest[..domain_start + domain_len];
+    Some(ExtendedAutolink {
+        end: at + value.len(),
+        destination: format!("mailto:{value}"),
+    })
+}
+
+fn email_local_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'.' | b'!'
+                | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'/'
+                | b'='
+                | b'?'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'{'
+                | b'|'
+                | b'}'
+                | b'~'
+                | b'-'
+        )
+}
+
+fn trim_extended_tail(source: &str, start: usize, mut end: usize) -> usize {
+    if let Some(amp) = source[start..end].rfind('&').map(|offset| start + offset) {
+        let tail = &source[amp + 1..end];
+        if tail.ends_with(';')
+            && tail[..tail.len() - 1]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric())
+        {
+            end = amp;
+        }
+    }
+    while end > start
+        && matches!(
+            source.as_bytes()[end - 1],
+            b'?' | b'!' | b'.' | b',' | b':' | b'*' | b'_' | b'~'
+        )
+    {
+        end -= 1;
+    }
+    while end > start && source.as_bytes()[end - 1] == b')' {
+        let value = &source[start..end];
+        if value.bytes().filter(|byte| *byte == b')').count()
+            <= value.bytes().filter(|byte| *byte == b'(').count()
+        {
+            break;
+        }
+        end -= 1;
+    }
+    end
+}
+
+fn valid_domain(domain: &str) -> bool {
+    if domain.len() > 253
+        || domain
+            .bytes()
+            .any(|byte| !byte.is_ascii_alphanumeric() && byte != b'-' && byte != b'.')
+    {
+        return false;
+    }
+    let mut labels = domain.split('.');
+    let Some(first) = labels.next() else {
+        return false;
+    };
+    let rest: Vec<_> = labels.collect();
+    if first.is_empty() || rest.is_empty() {
+        return false;
+    }
+    let valid_label = |label: &str| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            && label
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+    };
+    valid_label(first)
+        && rest.iter().all(|label| valid_label(label))
+        && rest.last().is_some_and(|label| {
+            label.len() >= 2 && label.bytes().all(|byte| byte.is_ascii_alphabetic())
+        })
 }
 
 fn find_unescaped(source: &str, mut at: usize, end: usize, wanted: char) -> Option<usize> {
