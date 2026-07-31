@@ -303,6 +303,190 @@ fn snapshot_keeps_only_visible_blocks_plus_overscan() {
 }
 
 #[test]
+fn hierarchy_rejects_duplicate_missing_self_and_cyclic_parents() {
+    fn layout_error(mut blocks: Vec<LayoutBlock>) -> LayoutError {
+        let (mut document, presentation, mut shaper) = fixtures::one_hundred_blocks();
+        blocks.truncate(2);
+        let live_ids = blocks.iter().map(|block| block.id).collect::<HashSet<_>>();
+        document.blocks = blocks.into();
+        document.text_runs = document
+            .text_runs
+            .iter()
+            .filter(|run| live_ids.contains(&run.id))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::default_overscan(400.0, 100.0, 0.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap_err()
+    }
+
+    let (document, _, _) = fixtures::one_hundred_blocks();
+    let original = document.blocks[..2].to_vec();
+
+    let mut duplicate = original.clone();
+    duplicate[1].id = duplicate[0].id;
+    assert!(matches!(
+        layout_error(duplicate),
+        LayoutError::DuplicateBlockId { id } if id == original[0].id
+    ));
+
+    let mut missing = original.clone();
+    let missing_parent = LayoutElementId {
+        owner: missing[0].id.owner,
+        fragment_ordinal: u32::MAX,
+    };
+    missing[1].parent = Some(missing_parent);
+    assert!(matches!(
+        layout_error(missing),
+        LayoutError::MissingParent { block, parent }
+            if block == original[1].id && parent == missing_parent
+    ));
+
+    let mut self_parent = original.clone();
+    self_parent[0].parent = Some(self_parent[0].id);
+    assert!(matches!(
+        layout_error(self_parent),
+        LayoutError::HierarchyCycle { block } if block == original[0].id
+    ));
+
+    let mut cycle = original.clone();
+    cycle[0].parent = Some(cycle[1].id);
+    cycle[1].parent = Some(cycle[0].id);
+    assert!(matches!(
+        layout_error(cycle),
+        LayoutError::HierarchyCycle { .. }
+    ));
+}
+
+#[test]
+fn child_before_parent_keeps_the_same_subtree_fingerprint() {
+    fn nested_fixture(
+        child_first: bool,
+    ) -> (
+        LayoutDocument,
+        Arc<MarkdownDocumentSnapshot>,
+        FakeShaper,
+        LayoutElementId,
+    ) {
+        let (mut document, presentation, shaper) = fixtures::one_hundred_blocks();
+        let mut blocks = document.blocks[..3].to_vec();
+        let root = blocks[0].id;
+        blocks[1].parent = Some(root);
+        blocks[2].parent = Some(blocks[1].id);
+        let live_ids = blocks.iter().map(|block| block.id).collect::<HashSet<_>>();
+        if child_first {
+            blocks.reverse();
+        }
+        document.blocks = blocks.into();
+        document.text_runs = document
+            .text_runs
+            .iter()
+            .filter(|run| live_ids.contains(&run.id))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        (document, presentation, shaper, root)
+    }
+
+    fn fingerprint(child_first: bool) -> u64 {
+        let (document, presentation, mut shaper, root) = nested_fixture(child_first);
+        let mut engine = LayoutEngine::default();
+        engine
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::default_overscan(400.0, 200.0, 0.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap();
+        engine.subtree_fingerprint_for_test(root).unwrap()
+    }
+
+    assert_eq!(fingerprint(false), fingerprint(true));
+}
+
+#[test]
+fn index_hashing_visits_source_and_records_once() {
+    let (mut document, presentation, mut shaper) = fixtures::one_hundred_blocks();
+    document.blocks = document.blocks[..3].to_vec().into();
+    let live_ids = document
+        .blocks
+        .iter()
+        .map(|block| block.id)
+        .collect::<HashSet<_>>();
+    document.text_runs = document
+        .text_runs
+        .iter()
+        .filter(|run| live_ids.contains(&run.id))
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    let mut engine = LayoutEngine::default();
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::default_overscan(400.0, 200.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    let stats = engine.last_index_build_stats_for_test();
+    assert_eq!(stats.source_bytes, presentation.text().len().to_usize());
+    assert_eq!(stats.run_visits, document.text_runs.len());
+    assert_eq!(stats.embedded_visits, document.embedded_blocks.len());
+    assert_eq!(stats.block_visits, document.blocks.len());
+}
+
+#[test]
+fn index_rejects_overlapping_direct_text_runs() {
+    let (mut document, presentation, mut shaper) = fixtures::paragraph();
+    let run = document.text_runs[0].clone();
+    document.text_runs = Arc::from([run.clone(), run.clone()]);
+
+    let error = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::default_overscan(400.0, 200.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        LayoutError::OverlappingTextRuns { first, second }
+            if first == run.range && second == run.range
+    ));
+}
+
+#[test]
+fn deep_hierarchy_validation_and_indexing_are_iterative_and_linear() {
+    let (mut document, presentation, _) = fixtures::ten_thousand_blocks();
+    let mut blocks = document.blocks.to_vec();
+    for index in 1..blocks.len() {
+        blocks[index].parent = Some(blocks[index - 1].id);
+    }
+    document.blocks = blocks.into();
+
+    let stats = LayoutEngine::build_index_stats_for_test(&document, &presentation).unwrap();
+
+    assert_eq!(stats.hierarchy_node_visits, 10_000);
+    assert_eq!(stats.block_visits, 10_000);
+    assert_eq!(stats.run_visits, 10_000);
+}
+
+#[test]
 fn default_overscan_owns_exact_320_pixel_boundaries() {
     let (document, presentation, mut shaper) = fixtures::one_hundred_blocks();
     let layout = LayoutEngine::default()

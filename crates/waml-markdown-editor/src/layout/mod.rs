@@ -9,8 +9,8 @@ use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 
 pub use crate::selection::Affinity;
 pub use engine::{
-    BlockSummary, IntrinsicCluster, IntrinsicRun, LayoutEngine, LayoutInvalidation, LayoutViewport,
-    ShapedCluster, ShapedGlyph, ShapedRun, TextShaper,
+    BlockSummary, IndexBuildStats, IntrinsicCluster, IntrinsicRun, LayoutEngine,
+    LayoutInvalidation, LayoutViewport, ShapedCluster, ShapedGlyph, ShapedRun, TextShaper,
 };
 pub use geometry::{
     BlockGeometry, BlockLayoutData, CaretGeometry, CaretStop, GlyphCluster, LayoutSnapshot,
@@ -135,5 +135,19 @@ pub enum LayoutError {
     InvalidSelection,
     ShapingFailed {
         run: LayoutElementId,
+    },
+    DuplicateBlockId {
+        id: LayoutElementId,
+    },
+    MissingParent {
+        block: LayoutElementId,
+        parent: LayoutElementId,
+    },
+    HierarchyCycle {
+        block: LayoutElementId,
+    },
+    OverlappingTextRuns {
+        first: TextRange,
+        second: TextRange,
     },
 }

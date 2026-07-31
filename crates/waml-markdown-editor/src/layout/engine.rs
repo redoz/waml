@@ -224,6 +224,16 @@ struct DocumentLayoutIndex {
     content_fingerprints: Vec<u64>,
     subtree_fingerprints: Vec<u64>,
     estimated_heights: Vec<f64>,
+    build_stats: IndexBuildStats,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct IndexBuildStats {
+    pub source_bytes: usize,
+    pub run_visits: usize,
+    pub embedded_visits: usize,
+    pub block_visits: usize,
+    pub hierarchy_node_visits: usize,
 }
 
 impl DocumentLayoutIndex {
@@ -231,64 +241,129 @@ impl DocumentLayoutIndex {
         document: &LayoutDocument,
         presentation: &MarkdownDocumentSnapshot,
         hierarchy: &BlockHierarchy,
-    ) -> Self {
+    ) -> Result<Self, LayoutError> {
         let mut block_indices = HashMap::with_capacity(document.blocks.len());
         let mut run_indices = vec![Vec::new(); document.blocks.len()];
         let mut embedded_indices = vec![Vec::new(); document.blocks.len()];
         let mut estimated_heights = vec![0.0_f64; document.blocks.len()];
-        let mut hashers = (0..document.blocks.len())
+        let mut block_hashers = (0..document.blocks.len())
             .map(|_| DefaultHasher::new())
             .collect::<Vec<_>>();
+        let mut build_stats = IndexBuildStats::default();
+        build_stats.hierarchy_node_visits = hierarchy.node_visits;
         for (index, block) in document.blocks.iter().enumerate() {
             block_indices.insert(block.id, index);
-            block.source_range.hash(&mut hashers[index]);
-            presentation
-                .text()
-                .slice(block.source_range)
-                .unwrap_or("")
-                .as_bytes()
-                .hash(&mut hashers[index]);
+            block.source_range.hash(&mut block_hashers[index]);
+            build_stats.block_visits += 1;
         }
+
+        let mut ordered_runs = document
+            .text_runs
+            .iter()
+            .enumerate()
+            .map(|(index, run)| (run.range.start(), run.range.end(), index))
+            .collect::<Vec<_>>();
+        ordered_runs.sort_unstable_by_key(|(start, end, index)| (*start, *end, *index));
+        for pair in ordered_runs.windows(2) {
+            let (_, first_end, first_index) = pair[0];
+            let (second_start, _, second_index) = pair[1];
+            if first_end > second_start {
+                return Err(LayoutError::OverlappingTextRuns {
+                    first: document.text_runs[first_index].range,
+                    second: document.text_runs[second_index].range,
+                });
+            }
+        }
+        let mut run_content_hashers = (0..document.text_runs.len())
+            .map(|_| DefaultHasher::new())
+            .collect::<Vec<_>>();
+        let mut active_run = 0_usize;
+        for (offset, byte) in presentation.text().shared().as_bytes().iter().enumerate() {
+            while ordered_runs
+                .get(active_run)
+                .is_some_and(|(_, end, _)| offset >= end.to_usize())
+            {
+                active_run += 1;
+            }
+            if let Some((start, end, run_index)) = ordered_runs.get(active_run).copied() {
+                if start.to_usize() <= offset && offset < end.to_usize() {
+                    byte.hash(&mut run_content_hashers[run_index]);
+                }
+            }
+            build_stats.source_bytes += 1;
+        }
+        let run_content_fingerprints = run_content_hashers
+            .into_iter()
+            .map(|hasher| hasher.finish())
+            .collect::<Vec<_>>();
+
         for (run_index, run) in document.text_runs.iter().enumerate() {
+            build_stats.run_visits += 1;
             let Some(&block_index) = block_indices.get(&run.id) else {
                 continue;
             };
             run_indices[block_index].push(run_index);
             estimated_heights[block_index] =
                 estimated_heights[block_index].max(run.metrics.font_size as f64);
-            run.range.hash(&mut hashers[block_index]);
-            run.metrics.font.hash(&mut hashers[block_index]);
+            run.range.hash(&mut block_hashers[block_index]);
+            run_content_fingerprints[run_index].hash(&mut block_hashers[block_index]);
+            run.metrics.font.hash(&mut block_hashers[block_index]);
             run.metrics
                 .font_size
                 .to_bits()
-                .hash(&mut hashers[block_index]);
+                .hash(&mut block_hashers[block_index]);
             run.metrics
                 .line_spacing
                 .to_bits()
-                .hash(&mut hashers[block_index]);
-            run.metrics.weight.hash(&mut hashers[block_index]);
-            run.metrics.italic.hash(&mut hashers[block_index]);
+                .hash(&mut block_hashers[block_index]);
+            run.metrics.weight.hash(&mut block_hashers[block_index]);
+            run.metrics.italic.hash(&mut block_hashers[block_index]);
+        }
+        for indexes in &mut run_indices {
+            indexes.sort_unstable_by_key(|index| {
+                let run = &document.text_runs[*index];
+                (run.range.start(), run.range.end(), *index)
+            });
         }
         for (embedded_index, embedded) in document.embedded_blocks.iter().enumerate() {
+            build_stats.embedded_visits += 1;
             let Some(&block_index) = block_indices.get(&embedded.id) else {
                 continue;
             };
             embedded_indices[block_index].push(embedded_index);
             estimated_heights[block_index] = estimated_heights[block_index].max(embedded.size.y);
-            embedded.source_range.hash(&mut hashers[block_index]);
-            embedded.size.x.to_bits().hash(&mut hashers[block_index]);
-            embedded.size.y.to_bits().hash(&mut hashers[block_index]);
+            embedded.source_range.hash(&mut block_hashers[block_index]);
+            embedded
+                .size
+                .x
+                .to_bits()
+                .hash(&mut block_hashers[block_index]);
+            embedded
+                .size
+                .y
+                .to_bits()
+                .hash(&mut block_hashers[block_index]);
             embedded
                 .baseline
                 .map(f64::to_bits)
-                .hash(&mut hashers[block_index]);
+                .hash(&mut block_hashers[block_index]);
         }
-        let content_fingerprints = hashers
+        for indexes in &mut embedded_indices {
+            indexes.sort_unstable_by_key(|index| {
+                let embedded = &document.embedded_blocks[*index];
+                (
+                    embedded.source_range.start(),
+                    embedded.source_range.end(),
+                    *index,
+                )
+            });
+        }
+        let content_fingerprints = block_hashers
             .into_iter()
             .map(|hasher| hasher.finish())
             .collect::<Vec<_>>();
         let mut subtree_fingerprints = vec![0; document.blocks.len()];
-        for block_index in (0..document.blocks.len()).rev() {
+        for &block_index in &hierarchy.postorder {
             let mut hasher = DefaultHasher::new();
             content_fingerprints[block_index].hash(&mut hasher);
             flow_fingerprint(&document.blocks[block_index]).hash(&mut hasher);
@@ -297,14 +372,15 @@ impl DocumentLayoutIndex {
             }
             subtree_fingerprints[block_index] = hasher.finish();
         }
-        Self {
+        Ok(Self {
             block_indices,
             run_indices,
             embedded_indices,
             content_fingerprints,
             subtree_fingerprints,
             estimated_heights,
-        }
+            build_stats,
+        })
     }
 }
 
@@ -322,9 +398,20 @@ struct TableIntrinsicState<'a> {
 pub struct LayoutEngine {
     blocks: HashMap<LayoutElementId, CachedBlock>,
     table_intrinsics: HashMap<LayoutElementId, CachedTableIntrinsics>,
+    last_index_build_stats: IndexBuildStats,
+    last_subtree_fingerprints: HashMap<LayoutElementId, u64>,
 }
 
 impl LayoutEngine {
+    #[doc(hidden)]
+    pub fn build_index_stats_for_test(
+        document: &LayoutDocument,
+        presentation: &MarkdownDocumentSnapshot,
+    ) -> Result<IndexBuildStats, LayoutError> {
+        let hierarchy = BlockHierarchy::try_new(document)?;
+        Ok(DocumentLayoutIndex::new(document, presentation, &hierarchy)?.build_stats)
+    }
+
     #[doc(hidden)]
     pub fn cached_summary_count_for_test(&self) -> usize {
         self.blocks.len()
@@ -336,6 +423,16 @@ impl LayoutEngine {
             .values()
             .filter(|block| block.data.is_some())
             .count()
+    }
+
+    #[doc(hidden)]
+    pub fn last_index_build_stats_for_test(&self) -> IndexBuildStats {
+        self.last_index_build_stats
+    }
+
+    #[doc(hidden)]
+    pub fn subtree_fingerprint_for_test(&self, id: LayoutElementId) -> Option<u64> {
+        self.last_subtree_fingerprints.get(&id).copied()
     }
 
     pub fn layout<S: TextShaper>(
@@ -362,8 +459,15 @@ impl LayoutEngine {
         }
 
         let invalidated = invalidated_block_range(&invalidation, document);
-        let hierarchy = BlockHierarchy::new(document);
-        let layout_index = DocumentLayoutIndex::new(document, presentation, &hierarchy);
+        let hierarchy = BlockHierarchy::try_new(document)?;
+        let layout_index = DocumentLayoutIndex::new(document, presentation, &hierarchy)?;
+        self.last_index_build_stats = layout_index.build_stats;
+        self.last_subtree_fingerprints = document
+            .blocks
+            .iter()
+            .zip(layout_index.subtree_fingerprints.iter().copied())
+            .map(|(block, fingerprint)| (block.id, fingerprint))
+            .collect();
         let mut intrinsic_widths = vec![0.0; document.blocks.len()];
         let mut table_intrinsics_ready = vec![false; document.blocks.len()];
         let mut widths = WidthPlan::new(document, &hierarchy, viewport.width, &intrinsic_widths);
@@ -590,26 +694,87 @@ impl LayoutEngine {
 struct BlockHierarchy {
     roots: Vec<usize>,
     children: Vec<Vec<usize>>,
+    postorder: Vec<usize>,
+    node_visits: usize,
 }
 
 impl BlockHierarchy {
-    fn new(document: &LayoutDocument) -> Self {
-        let indexes: HashMap<_, _> = document
-            .blocks
-            .iter()
-            .enumerate()
-            .map(|(index, block)| (block.id, index))
-            .collect();
+    fn try_new(document: &LayoutDocument) -> Result<Self, LayoutError> {
+        let mut indexes = HashMap::with_capacity(document.blocks.len());
+        for (index, block) in document.blocks.iter().enumerate() {
+            if indexes.insert(block.id, index).is_some() {
+                return Err(LayoutError::DuplicateBlockId { id: block.id });
+            }
+        }
         let mut roots = Vec::new();
         let mut children = vec![Vec::new(); document.blocks.len()];
         for (index, block) in document.blocks.iter().enumerate() {
-            if let Some(parent) = block.parent.and_then(|id| indexes.get(&id).copied()) {
+            if let Some(parent_id) = block.parent {
+                let Some(&parent) = indexes.get(&parent_id) else {
+                    return Err(LayoutError::MissingParent {
+                        block: block.id,
+                        parent: parent_id,
+                    });
+                };
                 children[parent].push(index);
             } else {
                 roots.push(index);
             }
         }
-        Self { roots, children }
+        let stable_key = |index: &usize| {
+            let block = &document.blocks[*index];
+            (
+                block.source_range.start(),
+                block.source_range.end(),
+                block.id.owner.get(),
+                block.id.fragment_ordinal,
+            )
+        };
+        roots.sort_by_key(stable_key);
+        for child_indexes in &mut children {
+            child_indexes.sort_by_key(stable_key);
+        }
+
+        let mut traversal_order = (0..document.blocks.len()).collect::<Vec<_>>();
+        traversal_order.sort_by_key(stable_key);
+        let mut colors = vec![0_u8; document.blocks.len()];
+        let mut postorder = Vec::with_capacity(document.blocks.len());
+        let mut node_visits = 0_usize;
+        for start in traversal_order {
+            if colors[start] != 0 {
+                continue;
+            }
+            colors[start] = 1;
+            let mut stack = vec![(start, 0_usize)];
+            while let Some((node, next_child)) = stack.last_mut() {
+                if let Some(&child) = children[*node].get(*next_child) {
+                    *next_child += 1;
+                    match colors[child] {
+                        0 => {
+                            colors[child] = 1;
+                            stack.push((child, 0));
+                        }
+                        1 => {
+                            return Err(LayoutError::HierarchyCycle {
+                                block: document.blocks[child].id,
+                            });
+                        }
+                        _ => {}
+                    }
+                } else {
+                    colors[*node] = 2;
+                    postorder.push(*node);
+                    node_visits += 1;
+                    stack.pop();
+                }
+            }
+        }
+        Ok(Self {
+            roots,
+            children,
+            postorder,
+            node_visits,
+        })
     }
 }
 
