@@ -32,3 +32,9 @@
 - GREEN: `handle` rejects a revision mismatch before it processes input and returns `ControllerError::Layout(LayoutError::RevisionMismatch)`, consistent with the scroll APIs.
 - The stale-pointer regression confirms that the selection remains unchanged. The stale-IME regression confirms that no response with IME coordinates is published.
 - Review verification: `widget_parity` 6 passed, `layout_geometry` 12 passed, `unicode_ime` 8 passed, full crate 46 passed, and `git diff --check` passed.
+
+## Post-mutation IME geometry fix
+
+- RED: typing inside the document advanced the session revision but published an IME coordinate from the still-addressable offset in the stale entry layout.
+- GREEN: response IME geometry is now produced only when the post-handle session revision still equals the layout revision.
+- Review verification: `widget_parity` 7 passed, `layout_geometry` 12 passed, `unicode_ime` 8 passed, full crate 47 passed, and `git diff --check` passed.

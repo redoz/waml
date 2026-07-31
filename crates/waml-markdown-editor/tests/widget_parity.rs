@@ -105,6 +105,16 @@ fn stale_layout_cannot_publish_ime_coordinates() {
     ));
 }
 
+#[test]
+fn mutating_input_does_not_publish_ime_coordinates_from_entry_layout() {
+    let mut fixture = Fixture::new("abc");
+    fixture.click_at_offset(1, 1, SelectionModifier::Replace);
+    let response = fixture.type_text("x");
+    assert_eq!(response.proposals.len(), 1);
+    assert_eq!(fixture.text(), "axbc");
+    assert!(response.request_ime_at.is_none());
+}
+
 struct Fixture {
     session: MarkdownDocumentSession,
     controller: MarkdownEditorController,

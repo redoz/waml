@@ -228,7 +228,9 @@ impl MarkdownEditorController {
                 response.request_redraw = true;
             }
         }
-        response.request_ime_at = caret_geometry(layout, session.selections().primary().cursor)
+        response.request_ime_at = (session.local_revision() == layout.revision())
+            .then(|| caret_geometry(layout, session.selections().primary().cursor))
+            .flatten()
             .map(|(_, caret)| caret.rect.pos - dvec2(session.scroll().x, session.scroll().y));
         Ok(response)
     }
