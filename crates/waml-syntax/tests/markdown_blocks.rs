@@ -164,6 +164,65 @@ fn event_boundaries_keep_html_blocks_whole() {
 }
 
 #[test]
+fn quoted_list_item_stays_within_event_confirmed_containers() {
+    let source = "> - quoted\n";
+    let shell = parse(source);
+    assert_eq!(shell.tree.write_to_string(), source);
+    let nodes = descendant_nodes(&shell.tree.root());
+    assert_eq!(
+        nodes
+            .iter()
+            .map(|node| (
+                node.kind(),
+                node.range().start().to_usize(),
+                node.range().end().to_usize()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (OkfMarkdownSyntaxKind::BlockQuote, 0, 11),
+            (OkfMarkdownSyntaxKind::List, 2, 11),
+            (OkfMarkdownSyntaxKind::ListItem, 2, 11),
+        ]
+    );
+}
+
+#[test]
+fn nested_list_item_stays_within_its_event_confirmed_list() {
+    let source = "- outer\n  - inner\n";
+    let shell = parse(source);
+    assert_eq!(shell.tree.write_to_string(), source);
+    let nodes = descendant_nodes(&shell.tree.root());
+    assert_eq!(
+        nodes
+            .iter()
+            .map(|node| (
+                node.kind(),
+                node.range().start().to_usize(),
+                node.range().end().to_usize()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (OkfMarkdownSyntaxKind::List, 0, 18),
+            (OkfMarkdownSyntaxKind::ListItem, 0, 18),
+            (OkfMarkdownSyntaxKind::List, 10, 18),
+            (OkfMarkdownSyntaxKind::ListItem, 10, 18),
+        ]
+    );
+    let markers: Vec<_> = leaf_tokens(&shell.tree.root())
+        .into_iter()
+        .filter(|token| token.kind() == OkfMarkdownSyntaxKind::ListMarkerToken)
+        .map(|token| {
+            (
+                token.text().write_to_string(),
+                token.range().start().to_usize(),
+                token.range().end().to_usize(),
+            )
+        })
+        .collect();
+    assert_eq!(markers, [("-".into(), 0, 1), ("-".into(), 10, 11)]);
+}
+
+#[test]
 fn dialect_does_not_enable_unrequested_extensions() {
     let tree = parse("[^x]\n\n[^x]: note\n\nterm\n: definition\n\n$math$")
         .tree
@@ -221,4 +280,36 @@ fn direct_tokens(
             SyntaxElement::Node(_) => None,
         })
         .collect()
+}
+
+fn leaf_tokens(
+    node: &SyntaxNode<OkfMarkdownLanguage>,
+) -> Vec<waml_syntax::SyntaxToken<OkfMarkdownLanguage>> {
+    let mut tokens = Vec::new();
+    for child in node.children() {
+        match child {
+            SyntaxElement::Node(child) => tokens.extend(leaf_tokens(&child)),
+            SyntaxElement::Token(token) => tokens.push(token),
+        }
+    }
+    tokens
+}
+
+fn descendant_nodes(
+    node: &SyntaxNode<OkfMarkdownLanguage>,
+) -> Vec<SyntaxNode<OkfMarkdownLanguage>> {
+    fn visit(
+        node: &SyntaxNode<OkfMarkdownLanguage>,
+        out: &mut Vec<SyntaxNode<OkfMarkdownLanguage>>,
+    ) {
+        for child in node.children() {
+            if let SyntaxElement::Node(child) = child {
+                out.push(child.clone());
+                visit(&child, out);
+            }
+        }
+    }
+    let mut nodes = Vec::new();
+    visit(node, &mut nodes);
+    nodes
 }

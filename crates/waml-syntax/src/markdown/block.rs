@@ -62,11 +62,16 @@ pub(crate) fn parse(
             Event::Start(tag) => {
                 if let Some(kind) = start_kind(&tag, source, &offsets) {
                     if matches!(kind, Kind::ListItem | Kind::IndentedCodeBlock) {
-                        offsets.start = source[..offsets.start]
+                        let line_start = source[..offsets.start]
                             .rfind('\n')
                             .map(|newline| newline + 1)
                             .unwrap_or(event_start)
                             .max(event_start);
+                        let parent_start = stack
+                            .last()
+                            .map(|parent| parent.source_range.start)
+                            .unwrap_or(event_start);
+                        offsets.start = line_start.max(parent_start);
                     }
                     stack.push(BlockFrame {
                         kind,
