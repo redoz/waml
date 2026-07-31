@@ -3,7 +3,7 @@ N root/0 AtxHeading 0..8
 T root/0/0 HeadingMarkerToken 0..1 missing=false leading="" text="#" trailing=""
 T root/0/1 WhitespaceToken 1..2 missing=false leading="" text=" " trailing=""
 T root/0/2 TextToken 2..7 missing=false leading="" text="Title" trailing=""
-T root/0/3 HeadingMarkerToken 7..8 missing=false leading="" text="\n" trailing=""
+T root/0/3 NewlineToken 7..8 missing=false leading="" text="\n" trailing=""
 T root/1 NewlineToken 8..9 missing=false leading="" text="\n" trailing=""
 N root/2 Paragraph 9..20
 T root/2/0 TextToken 9..20 missing=false leading="" text="Paragraph.\n" trailing=""
@@ -16,5 +16,5 @@ N root/6 AtxHeading 26..37
 T root/6/0 HeadingMarkerToken 26..28 missing=false leading="" text="##" trailing=""
 T root/6/1 WhitespaceToken 28..29 missing=false leading="" text=" " trailing=""
 T root/6/2 TextToken 29..36 missing=false leading="" text="Section" trailing=""
-T root/6/3 HeadingMarkerToken 36..37 missing=false leading="" text="\n" trailing=""
+T root/6/3 NewlineToken 36..37 missing=false leading="" text="\n" trailing=""
 T root/7 EndOfFileToken 37..37 missing=true leading="" text="" trailing=""

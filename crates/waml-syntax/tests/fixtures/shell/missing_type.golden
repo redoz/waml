@@ -13,5 +13,5 @@ N root/1 AtxHeading 37..45
 T root/1/0 HeadingMarkerToken 37..38 missing=false leading="" text="#" trailing=""
 T root/1/1 WhitespaceToken 38..39 missing=false leading="" text=" " trailing=""
 T root/1/2 TextToken 39..44 missing=false leading="" text="Title" trailing=""
-T root/1/3 HeadingMarkerToken 44..45 missing=false leading="" text="\n" trailing=""
+T root/1/3 NewlineToken 44..45 missing=false leading="" text="\n" trailing=""
 T root/2 EndOfFileToken 45..45 missing=true leading="" text="" trailing=""
