@@ -1,11 +1,42 @@
 use waml_syntax::{
-    parse_markdown, reparse_markdown, write_green_to, DocumentRevision, GreenElement,
-    MarkdownDialect, MarkdownReparseOutcome, OkfMarkdownSyntaxKind, SourceText, TextChange,
-    TextRange, TextSize,
+    parse_markdown, reparse_markdown, write_green_to, DocumentRevision, GreenElement, GreenText,
+    MarkdownDialect, MarkdownReparseOutcome, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot,
+    OkfMarkdownSyntaxKind, SourceText, TextChange, TextRange, TextSize,
 };
+
+fn assert_source_backed_green_uses_snapshot_source(
+    element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
+    source: &std::sync::Arc<String>,
+) {
+    match element {
+        GreenElement::Node(node) => {
+            for child in node.children() {
+                assert_source_backed_green_uses_snapshot_source(child, source);
+            }
+        }
+        GreenElement::Token(token) => {
+            for text in std::iter::once(token.text()).chain(
+                token
+                    .leading_trivia()
+                    .iter()
+                    .chain(token.trailing_trivia())
+                    .map(|trivia| &trivia.text),
+            ) {
+                if let GreenText::SourceSlice {
+                    source: token_source,
+                    ..
+                } = text
+                {
+                    assert!(std::sync::Arc::ptr_eq(source, token_source.shared()));
+                }
+            }
+        }
+    }
+}
 
 #[test]
 fn snapshot_is_revisioned_immutable_and_query_ready() {
+    let _: fn(&MarkdownSyntaxSnapshot) -> &MarkdownSyntaxQueries = MarkdownSyntaxSnapshot::queries;
     let revision = DocumentRevision::INITIAL.checked_next().unwrap();
     let first = parse_markdown(
         revision,
@@ -15,6 +46,10 @@ fn snapshot_is_revisioned_immutable_and_query_ready() {
     .unwrap();
     assert_eq!(first.revision(), revision);
     assert_eq!(first.text().shared().as_str(), "# one\n");
+    assert_source_backed_green_uses_snapshot_source(
+        &GreenElement::Node(first.tree().root_green().clone()),
+        first.text().shared(),
+    );
     let mut recovered = String::new();
     write_green_to(first.tree().root_green(), &mut recovered).unwrap();
     assert_eq!(recovered, "# one\n");

@@ -1,9 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    reparse_okf_markdown_with_structure, DocumentRevision, FullReparseReason, MarkdownDialect,
-    MarkdownStructureMap, OkfMarkdownLanguage, OkfSyntaxDiagnosticCode, ParseError, ReparseOutcome,
-    SourceText, SyntaxElement, SyntaxIdentity, SyntaxTree, TextChange, TextRange, TreeDiagnostic,
+    reparse_okf_markdown_with_structure, DocumentRevision, FullReparseReason, GreenElement,
+    GreenText, MarkdownDialect, MarkdownStructureMap, OkfMarkdownLanguage, OkfSyntaxDiagnosticCode,
+    ParseError, ReparseOutcome, SourceText, SyntaxElement, SyntaxIdentity, SyntaxTree, TextChange,
+    TextRange, TreeDiagnostic,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,6 +243,31 @@ pub struct MarkdownSyntaxSnapshot {
 }
 
 impl MarkdownSyntaxSnapshot {
+    fn from_tree(
+        revision: DocumentRevision,
+        text: SourceText,
+        tree: Arc<SyntaxTree<OkfMarkdownLanguage>>,
+        structure: Arc<MarkdownStructureMap>,
+    ) -> Result<Arc<Self>, ParseError> {
+        if tree.write_to_string() != text.shared().as_str()
+            || !source_backed_green_uses(&GreenElement::Node(tree.root_green().clone()), &text)
+        {
+            return Err(ParseError::StructuralInvariant {
+                reason: "Markdown snapshot tree does not own the published source".into(),
+            });
+        }
+        let diagnostics = Arc::from(tree.diagnostics());
+        let queries = Arc::new(queries(&tree, structure.islands.clone())?);
+        Ok(Arc::new(Self {
+            revision,
+            text,
+            tree,
+            structure,
+            diagnostics,
+            queries,
+        }))
+    }
+
     pub fn revision(&self) -> DocumentRevision {
         self.revision
     }
@@ -257,7 +283,7 @@ impl MarkdownSyntaxSnapshot {
     pub fn diagnostics(&self) -> &Arc<[TreeDiagnostic<OkfSyntaxDiagnosticCode>]> {
         &self.diagnostics
     }
-    pub fn queries(&self) -> &Arc<MarkdownSyntaxQueries> {
+    pub fn queries(&self) -> &MarkdownSyntaxQueries {
         &self.queries
     }
 }
@@ -286,16 +312,7 @@ pub fn parse_markdown(
     dialect: MarkdownDialect,
 ) -> Result<Arc<MarkdownSyntaxSnapshot>, ParseError> {
     let parsed = crate::parse_okf_markdown(text.clone(), dialect)?;
-    let diagnostics = Arc::from(parsed.tree.diagnostics());
-    let queries = Arc::new(queries(&parsed.tree, parsed.structure.islands.clone())?);
-    Ok(Arc::new(MarkdownSyntaxSnapshot {
-        revision,
-        text,
-        tree: parsed.tree,
-        structure: parsed.structure,
-        diagnostics,
-        queries,
-    }))
+    MarkdownSyntaxSnapshot::from_tree(revision, text, parsed.tree, parsed.structure)
 }
 
 pub fn reparse_markdown(
@@ -336,20 +353,37 @@ pub fn reparse_markdown(
             (tree, MarkdownReparseOutcome::Full { reason }, Arc::from([]))
         }
     };
-    let diagnostics = Arc::from(tree.diagnostics());
-    let queries = Arc::new(queries(&tree, structure.islands.clone())?);
     Ok(MarkdownSyntaxUpdate {
-        snapshot: Arc::new(MarkdownSyntaxSnapshot {
-            revision,
-            text: new_text,
-            tree,
-            structure,
-            diagnostics,
-            queries,
-        }),
+        snapshot: MarkdownSyntaxSnapshot::from_tree(revision, new_text, tree, structure)?,
         affected_ranges,
         outcome,
     })
+}
+
+fn source_backed_green_uses(
+    element: &GreenElement<OkfMarkdownLanguage>,
+    source: &SourceText,
+) -> bool {
+    match element {
+        GreenElement::Node(node) => node
+            .children()
+            .iter()
+            .all(|child| source_backed_green_uses(child, source)),
+        GreenElement::Token(token) => std::iter::once(token.text())
+            .chain(
+                token
+                    .leading_trivia()
+                    .iter()
+                    .chain(token.trailing_trivia())
+                    .map(|trivia| &trivia.text),
+            )
+            .all(|text| match text {
+                GreenText::SourceSlice { source: found, .. } => {
+                    Arc::ptr_eq(source.shared(), found.shared())
+                }
+                GreenText::Static(_) | GreenText::Owned(_) => true,
+            }),
+    }
 }
 
 fn queries(
