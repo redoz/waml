@@ -12,8 +12,8 @@ use crate::multiplicity::Multiplicity;
 use crate::okf;
 use crate::source::{BundlePath, SourceBundle};
 use waml_syntax::{
-    parse_okf_markdown, AstNode, MarkdownDialect, OkfMarkdownSyntaxKind, ShellParse, SourceText,
-    SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree,
+    parse_markdown, AstNode, DocumentRevision, MarkdownDialect, OkfMarkdownSyntaxKind, ShellParse,
+    SourceText, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree,
 };
 
 pub(crate) struct UmlLoweringCursor<'a> {
@@ -177,11 +177,15 @@ impl UmlLoweringState {
             .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
         let text = SourceText::from_shared(document.text_arc().clone())
             .map_err(|error| EditError::at(op, error.to_string()))?;
-        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent)
+        let markdown = parse_markdown(
+            DocumentRevision::INITIAL,
+            text.clone(),
+            MarkdownDialect::CommonMarkCurrent,
+        )
             .map_err(|error| EditError::at(op, error.to_string()))?;
         self.touched_islands.insert(
             path.clone(),
-            super::syntax::parse_full(text, &shell.structure),
+            super::syntax::parse_full(text, markdown.structure()),
         );
         Ok(())
     }
@@ -428,8 +432,16 @@ fn line_ending(source: &str) -> &'static str {
 fn shell(source: &str, op: &str) -> Result<ShellParse, EditError> {
     let text = SourceText::from_shared(Arc::new(source.to_owned()))
         .map_err(|error| EditError::at(op, error.to_string()))?;
-    parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent)
-        .map_err(|error| EditError::at(op, error.to_string()))
+    parse_markdown(
+        DocumentRevision::INITIAL,
+        text,
+        MarkdownDialect::CommonMarkCurrent,
+    )
+    .map(|snapshot| ShellParse {
+        tree: snapshot.tree().clone(),
+        structure: snapshot.structure().clone(),
+    })
+    .map_err(|error| EditError::at(op, error.to_string()))
 }
 
 fn syntax_nodes(

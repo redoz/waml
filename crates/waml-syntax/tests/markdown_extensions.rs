@@ -1,16 +1,21 @@
 use std::sync::Arc;
 
 use waml_syntax::{
-    parse_okf_markdown, MarkdownDialect, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SourceText,
-    SyntaxElement, SyntaxNode, TextRange, TextSize, WamlSectionKind,
+    parse_markdown, DocumentRevision, MarkdownDialect, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
+    ShellParse, SourceText, SyntaxElement, SyntaxNode, TextRange, TextSize, WamlSectionKind,
 };
 
 fn parse(source: &str) -> waml_syntax::ShellParse {
-    parse_okf_markdown(
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
         SourceText::from_shared(Arc::new(source.into())).unwrap(),
         MarkdownDialect::WAML_DEFAULT,
     )
-    .unwrap()
+    .unwrap();
+    ShellParse {
+        tree: snapshot.tree().clone(),
+        structure: snapshot.structure().clone(),
+    }
 }
 
 fn sections(node: &SyntaxNode<OkfMarkdownLanguage>) -> Vec<SyntaxNode<OkfMarkdownLanguage>> {

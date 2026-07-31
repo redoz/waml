@@ -5,6 +5,9 @@ mod kind;
 mod projection;
 pub(crate) mod reference;
 pub(crate) mod reparse;
+pub(crate) mod parser;
+#[cfg(test)]
+mod parser_tests;
 mod snapshot;
 
 pub use gfm::{HtmlTagFilter, TableAlignment, TaskListState};

@@ -2,72 +2,67 @@ use std::sync::Arc;
 
 use super::{UmlLanguage, UmlSyntaxDiagnosticCode, UmlSyntaxKind};
 use waml_syntax::{
-    GreenElement, GreenFactory, GreenText, MarkdownStructureMap, SourceText, SyntaxSeverity,
-    SyntaxTree, TextRange, TextSize, TreeDiagnostic, TriviaKind,
+    GreenElement, GreenFactory, GreenText, MarkdownStructureMap, SourceText, SyntaxIdentity,
+    SyntaxSeverity, SyntaxTree, TextRange, TextSize, TreeDiagnostic, TriviaKind,
+    WamlSectionKind,
 };
 
 #[derive(Clone, Copy)]
 pub(super) struct Island {
     pub kind: UmlSyntaxKind,
     pub range: TextRange,
-    pub heading_end: Option<TextSize>,
+    pub owner: Option<SyntaxIdentity>,
+    pub content_range: TextRange,
 }
 
-pub(super) fn islands(source: &str, structure: &MarkdownStructureMap) -> Option<Vec<Island>> {
+pub(super) fn islands(source_len: TextSize, structure: &MarkdownStructureMap) -> Option<Vec<Island>> {
     let mut result = Vec::new();
-    let mut at = 0;
-    for (index, heading) in structure.headings.iter().enumerate() {
-        if heading.level != 2 {
-            continue;
-        }
-        let Some(kind) = section_kind(source, heading.text_range) else {
-            continue;
-        };
-        let start = heading.range.start().to_usize();
-        let end = structure
-            .headings
-            .iter()
-            .skip(index + 1)
-            .map(|next| next.range.start().to_usize())
-            .next()
-            .unwrap_or(source.len());
-        if start < at || end < start || end > source.len() {
+    let mut at = TextSize::try_from_usize(0).ok()?;
+    for island in structure.islands.iter() {
+        let start = island.heading_range.start();
+        let end = island.content_range.end();
+        if start < at || end < start || end > source_len {
             return None;
         }
         if at < start {
             result.push(Island {
                 kind: UmlSyntaxKind::MarkdownRegion,
-                range: TextRange::new(
-                    TextSize::try_from_usize(at).ok()?,
-                    TextSize::try_from_usize(start).ok()?,
-                )
-                .ok()?,
-                heading_end: None,
+                range: TextRange::new(at, start).ok()?,
+                owner: None,
+                content_range: TextRange::new(at, start).ok()?,
             });
         }
         result.push(Island {
-            kind,
-            range: TextRange::new(
-                TextSize::try_from_usize(start).ok()?,
-                TextSize::try_from_usize(end).ok()?,
-            )
-            .ok()?,
-            heading_end: Some(TextSize::try_from_usize(line_end(source, start, end)).ok()?),
+            kind: uml_section_kind(island.kind),
+            range: TextRange::new(start, end).ok()?,
+            owner: Some(island.owner),
+            content_range: island.content_range,
         });
         at = end;
     }
-    if at < source.len() {
+    if at < source_len {
         result.push(Island {
             kind: UmlSyntaxKind::MarkdownRegion,
-            range: TextRange::new(
-                TextSize::try_from_usize(at).ok()?,
-                TextSize::try_from_usize(source.len()).ok()?,
-            )
-            .ok()?,
-            heading_end: None,
+            range: TextRange::new(at, source_len).ok()?,
+            owner: None,
+            content_range: TextRange::new(at, source_len).ok()?,
         });
     }
     Some(result)
+}
+
+fn uml_section_kind(kind: WamlSectionKind) -> UmlSyntaxKind {
+    match kind {
+        WamlSectionKind::Attributes => UmlSyntaxKind::AttributesSection,
+        WamlSectionKind::Values => UmlSyntaxKind::ValuesSection,
+        WamlSectionKind::Slots => UmlSyntaxKind::SlotsSection,
+        WamlSectionKind::Relationships => UmlSyntaxKind::RelationshipsSection,
+        WamlSectionKind::Members => UmlSyntaxKind::MembersSection,
+        WamlSectionKind::Layout => UmlSyntaxKind::LayoutSection,
+        WamlSectionKind::Nodes => UmlSyntaxKind::FlowSection,
+        WamlSectionKind::Lifelines => UmlSyntaxKind::LifelinesSection,
+        WamlSectionKind::Messages => UmlSyntaxKind::MessagesSection,
+    }
 }
 
 pub(super) fn parse(
@@ -76,7 +71,7 @@ pub(super) fn parse(
 ) -> Arc<SyntaxTree<UmlLanguage>> {
     let factory = GreenFactory::<UmlLanguage>::new();
     let source = text.shared();
-    let descriptors = islands(source, structure).expect("markdown structure has ordered ranges");
+    let descriptors = islands(text.len(), structure).expect("markdown structure has ordered ranges");
     let mut children = Vec::with_capacity(descriptors.len() + 1);
     let mut diagnostics = Vec::new();
     for island in descriptors {
@@ -109,18 +104,16 @@ pub(super) fn parse_island_element(
     if island.kind == UmlSyntaxKind::MarkdownRegion {
         return raw(factory, text, start, end);
     }
-    let heading_end = island
-        .heading_end
-        .expect("section islands have headings")
-        .to_usize();
-    let mut section = vec![raw(factory, text, start, heading_end)];
+    let content_start = island.content_range.start().to_usize();
+    let content_end = island.content_range.end().to_usize();
+    let mut section = vec![raw(factory, text, start, content_start)];
     if island.kind == UmlSyntaxKind::FlowSection {
         section.push(GreenElement::Node(flow_block(
             factory,
             text,
             source,
-            heading_end,
-            end,
+            content_start,
+            content_end,
             structure,
             diagnostics,
         )));
@@ -131,8 +124,8 @@ pub(super) fn parse_island_element(
             factory,
             text,
             source,
-            heading_end,
-            end,
+            content_start,
+            content_end,
             structure,
             diagnostics,
         ));
@@ -143,54 +136,52 @@ pub(super) fn parse_island_element(
             factory,
             text,
             source,
-            heading_end,
-            end,
+            content_start,
+            content_end,
             structure,
             diagnostics,
         ));
         return GreenElement::Node(factory.node(island.kind, section).unwrap());
     }
-    for (line_start, line_end) in lines_between(source, heading_end, end) {
+    for (line_start, line_end) in lines_between(source, content_start, content_end) {
         let item_line = confirmed_list_item_line(structure, line_start)
             || tab_indented_item_line(structure, line_start);
         if opaque_line(structure, line_start, line_end) && !item_line {
             section.push(raw(factory, text, line_start, line_end));
-        } else {
-            if island.kind == UmlSyntaxKind::AttributesSection {
-                if let Some(attribute) =
-                    attribute(factory, text, source, line_start, line_end, diagnostics)
-                {
-                    section.push(GreenElement::Node(attribute));
-                } else {
-                    section.push(raw(factory, text, line_start, line_end));
-                }
-            } else if island.kind == UmlSyntaxKind::LifelinesSection {
-                let line = source[line_start..line_end].trim_end_matches(['\r', '\n']);
-                if line.trim().is_empty() {
-                    section.push(raw(factory, text, line_start, line_end));
-                } else {
-                    section.push(lifeline_line(
-                        factory,
-                        text,
-                        source,
-                        line_start,
-                        line_end,
-                        diagnostics,
-                    ));
-                }
-            } else if let Some(item) = simple_item(
-                factory,
-                text,
-                source,
-                line_start,
-                line_end,
-                island.kind,
-                diagnostics,
-            ) {
-                section.push(GreenElement::Node(item));
+        } else if island.kind == UmlSyntaxKind::AttributesSection {
+            if let Some(attribute) =
+                attribute(factory, text, source, line_start, line_end, diagnostics)
+            {
+                section.push(GreenElement::Node(attribute));
             } else {
                 section.push(raw(factory, text, line_start, line_end));
             }
+        } else if island.kind == UmlSyntaxKind::LifelinesSection {
+            let line = source[line_start..line_end].trim_end_matches(['\r', '\n']);
+            if line.trim().is_empty() {
+                section.push(raw(factory, text, line_start, line_end));
+            } else {
+                section.push(lifeline_line(
+                    factory,
+                    text,
+                    source,
+                    line_start,
+                    line_end,
+                    diagnostics,
+                ));
+            }
+        } else if let Some(item) = simple_item(
+            factory,
+            text,
+            source,
+            line_start,
+            line_end,
+            island.kind,
+            diagnostics,
+        ) {
+            section.push(GreenElement::Node(item));
+        } else {
+            section.push(raw(factory, text, line_start, line_end));
         }
     }
     GreenElement::Node(factory.node(island.kind, section).unwrap())
@@ -341,34 +332,6 @@ fn member_items(
         roots.extend(explicit_groups);
     }
     roots
-}
-
-fn section_kind(source: &str, range: TextRange) -> Option<UmlSyntaxKind> {
-    let name = source[range.start().to_usize()..range.end().to_usize()]
-        .trim()
-        .trim_end_matches('#')
-        .trim();
-    if name.eq_ignore_ascii_case("Attributes") {
-        Some(UmlSyntaxKind::AttributesSection)
-    } else if name.eq_ignore_ascii_case("Values") {
-        Some(UmlSyntaxKind::ValuesSection)
-    } else if name.eq_ignore_ascii_case("Slots") {
-        Some(UmlSyntaxKind::SlotsSection)
-    } else if name.eq_ignore_ascii_case("Relationships") {
-        Some(UmlSyntaxKind::RelationshipsSection)
-    } else if name.eq_ignore_ascii_case("Members") {
-        Some(UmlSyntaxKind::MembersSection)
-    } else if name.eq_ignore_ascii_case("Layout") {
-        Some(UmlSyntaxKind::LayoutSection)
-    } else if name.eq_ignore_ascii_case("Nodes") {
-        Some(UmlSyntaxKind::FlowSection)
-    } else if name.eq_ignore_ascii_case("Lifelines") {
-        Some(UmlSyntaxKind::LifelinesSection)
-    } else if name.eq_ignore_ascii_case("Messages") {
-        Some(UmlSyntaxKind::MessagesSection)
-    } else {
-        None
-    }
 }
 
 fn flow_block(
@@ -3642,29 +3605,31 @@ fn lines_between(s: &str, from: usize, to: usize) -> impl Iterator<Item = (usize
         Some((a, p))
     })
 }
-fn line_end(source: &str, start: usize, limit: usize) -> usize {
-    source[start..limit]
-        .find('\n')
-        .map(|offset| start + offset + 1)
-        .unwrap_or(limit)
-}
 fn opaque_line(structure: &MarkdownStructureMap, line_start: usize, line_end: usize) -> bool {
+    let line_start = TextSize::try_from_usize(line_start).ok();
+    let line_end = TextSize::try_from_usize(line_end).ok();
+    let (Some(line_start), Some(line_end)) = (line_start, line_end) else {
+        return true;
+    };
+    let index = structure
+        .opaque_ranges
+        .partition_point(|range| range.end() <= line_start);
     structure
         .opaque_ranges
-        .iter()
-        .any(|range| range.start().to_usize() < line_end && line_start < range.end().to_usize())
+        .get(index)
+        .is_some_and(|range| range.start() < line_end)
 }
 fn confirmed_list_item_line(structure: &MarkdownStructureMap, line_start: usize) -> bool {
     structure
         .list_item_lines
-        .iter()
-        .any(|range| range.start().to_usize() == line_start)
+        .binary_search_by_key(&line_start, |range| range.start().to_usize())
+        .is_ok()
 }
 fn tab_indented_item_line(structure: &MarkdownStructureMap, line_start: usize) -> bool {
     structure
         .tab_indented_item_lines
-        .iter()
-        .any(|range| range.start().to_usize() == line_start)
+        .binary_search_by_key(&line_start, |range| range.start().to_usize())
+        .is_ok()
 }
 fn skip_ws(s: &str, mut p: usize, end: usize) -> usize {
     while p < end && matches!(s.as_bytes()[p], b' ' | b'\t') {

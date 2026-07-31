@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use proptest::prelude::*;
-use waml_syntax::{
-    parse_okf_markdown, reparse_okf_markdown, write_green_to, GreenText, MarkdownDialect,
+use super::reparse_okf_markdown;
+use crate::{
+    markdown::parser::parse as parse_okf_markdown, write_green_to, GreenText, MarkdownDialect,
     OkfMarkdownLanguage, OkfMarkdownSyntaxKind, ReparseOutcome, SourceText, SyntaxElement,
     SyntaxTree, TextChange, TextRange, TextSize, TokenFlags, TriviaKind,
 };

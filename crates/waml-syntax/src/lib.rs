@@ -16,9 +16,8 @@ pub use green::{
     GreenToken, GreenTokenData, GreenTrivia, TokenFlags, TriviaKind,
 };
 pub use incremental::{
-    rebase_unchanged_green, reparse_okf_markdown, reparse_okf_markdown_with_structure,
-    transfer_mapped_annotations, ChangeMap, ChangeSegment, FullReparseReason, RebasedGreen,
-    ReparseOutcome, TextChange,
+    rebase_unchanged_green, transfer_mapped_annotations, ChangeMap, ChangeSegment,
+    FullReparseReason, RebasedGreen, ReparseOutcome, TextChange,
 };
 pub use markdown::{
     parse_markdown, reparse_markdown, ConfirmedHeading, FencedCodeInfo, HtmlTagFilter,
@@ -33,7 +32,7 @@ pub use red::{
     RewriteError, SyntaxElement, SyntaxLocator, SyntaxNode, SyntaxPath, SyntaxSeverity,
     SyntaxToken, SyntaxTree, TreeDiagnostic, TreeInstanceId,
 };
-pub use shell::{parse_okf_markdown, ParseError, ShellParse};
+pub use shell::{ParseError, ShellParse};
 pub use text::{
     DocumentRevision, LineColumn, LineIndex, MarkdownDialect, SourceText, TextError, TextRange,
     TextSize,

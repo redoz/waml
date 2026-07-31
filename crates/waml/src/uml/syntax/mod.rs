@@ -25,14 +25,11 @@ pub(in crate::uml) fn reparse_island(
 ) -> Option<Arc<SyntaxTree<UmlLanguage>>> {
     let old = recover_exact_source(previous.root_green())?;
     let map = ChangeMap::checked(&old, changes).ok()?;
-    if map.new_len() != text.len()
-        || changes.is_empty()
-        || !same_structure(&old, &text, previous_structure, structure, &map)
-    {
+    if map.new_len() != text.len() || changes.is_empty() {
         return None;
     }
-    let old_islands = parser::islands(old.shared(), previous_structure)?;
-    let new_islands = parser::islands(text.shared(), structure)?;
+    let old_islands = parser::islands(old.len(), previous_structure)?;
+    let new_islands = parser::islands(text.len(), structure)?;
     let changed = map.changed_old_range()?;
     let selected = select_owner(&old_islands, changed, map.old_len())?;
     let selected_old = old_islands[selected];
@@ -45,12 +42,19 @@ pub(in crate::uml) fn reparse_island(
         return None;
     }
     let selected_new_range = expanded_range(selected_old.range, &map)?;
+    let selected_new_content_range = expanded_range(selected_old.content_range, &map)?;
     let selected_new = new_islands.iter().position(|island| {
-        island.kind == selected_old.kind && island.range == selected_new_range
+        island.kind == selected_old.kind
+            && island.range == selected_new_range
+            && island.content_range == selected_new_content_range
     })?;
     if new_islands
         .iter()
-        .filter(|island| island.kind == selected_old.kind && island.range == selected_new_range)
+        .filter(|island| {
+            island.kind == selected_old.kind
+                && island.range == selected_new_range
+                && island.content_range == selected_new_content_range
+        })
         .count()
         != 1
     {
@@ -65,7 +69,12 @@ pub(in crate::uml) fn reparse_island(
         }
         let range = mapped_range(old_island.range, &map)?;
         let new_island = new_islands.get(index)?;
-        if new_island.kind != old_island.kind || new_island.range != range {
+        let content_range = mapped_range(old_island.content_range, &map)?;
+        if new_island.kind != old_island.kind
+            || new_island.owner != old_island.owner
+            || new_island.range != range
+            || new_island.content_range != content_range
+        {
             return None;
         }
     }
@@ -246,46 +255,6 @@ fn select_owner(
     }
     (owners.len() == 1).then(|| owners[0])
 }
-fn same_structure(
-    old_text: &SourceText,
-    new_text: &SourceText,
-    old: &MarkdownStructureMap,
-    new: &MarkdownStructureMap,
-    map: &ChangeMap,
-) -> bool {
-    let same = |old: &[TextRange], new: &[TextRange]| {
-        old.iter()
-            .map(|range| mapped_range(*range, map))
-            .collect::<Option<Vec<_>>>()
-            .as_deref()
-            == Some(new)
-    };
-    old.headings
-        .iter()
-        .zip(new.headings.iter())
-        .all(|(left, right)| {
-            left.level == right.level
-                && mapped_range(left.range, map) == Some(right.range)
-                && mapped_range(left.text_range, map) == Some(right.text_range)
-                && (left.level != 2
-                    || old_text.slice(left.range).ok() == new_text.slice(right.range).ok())
-        })
-        && old.headings.len() == new.headings.len()
-        && old
-            .nested_headings
-            .iter()
-            .zip(new.nested_headings.iter())
-            .all(|(left, right)| {
-                left.level == right.level
-                    && mapped_range(left.range, map) == Some(right.range)
-                    && mapped_range(left.text_range, map) == Some(right.text_range)
-            })
-        && old.nested_headings.len() == new.nested_headings.len()
-        && same(&old.protected_ranges, &new.protected_ranges)
-        && same(&old.opaque_ranges, &new.opaque_ranges)
-        && same(&old.list_item_lines, &new.list_item_lines)
-        && same(&old.tab_indented_item_lines, &new.tab_indented_item_lines)
-}
 fn has_annotations(node: &waml_syntax::GreenNode<UmlLanguage>) -> bool {
     !node.annotations().is_empty()
         || node.children().iter().any(|child| match child {
@@ -318,11 +287,54 @@ mod tests {
     use std::sync::Arc;
 
     use waml_syntax::{
-        parse_okf_markdown, GreenElement, GreenFactory, GreenText, MarkdownDialect, SourceText,
-        SyntaxAnnotation, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize,
+        parse_markdown, reparse_markdown, DocumentRevision, GreenElement, GreenFactory, GreenText,
+        MarkdownDialect, ParseError, ShellParse, SourceText, SyntaxAnnotation, SyntaxElement,
+        SyntaxNode, SyntaxToken, SyntaxTree, TextChange, TextRange, TextSize,
     };
 
     use super::{parse_full, recover_exact_source, reparse_island, UmlLanguage, UmlSyntaxKind};
+
+    fn parse_okf_markdown(
+        text: SourceText,
+        dialect: MarkdownDialect,
+    ) -> Result<ShellParse, ParseError> {
+        let snapshot = parse_markdown(DocumentRevision::INITIAL, text, dialect)?;
+        Ok(ShellParse {
+            tree: snapshot.tree().clone(),
+            structure: snapshot.structure().clone(),
+        })
+    }
+
+    fn markdown_reparse_pair(
+        old_text: &SourceText,
+        new_text: SourceText,
+    ) -> (ShellParse, ShellParse, Vec<TextChange>) {
+        let changes = crate::analysis::single_text_change(old_text, &new_text);
+        let old_snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            old_text.clone(),
+            MarkdownDialect::CommonMarkCurrent,
+        )
+        .unwrap();
+        let update = reparse_markdown(
+            &old_snapshot,
+            DocumentRevision::new(2),
+            new_text,
+            &changes,
+        )
+        .unwrap();
+        (
+            ShellParse {
+                tree: old_snapshot.tree().clone(),
+                structure: old_snapshot.structure().clone(),
+            },
+            ShellParse {
+                tree: update.snapshot.tree().clone(),
+                structure: update.snapshot.structure().clone(),
+            },
+            changes,
+        )
+    }
 
     fn annotations(annotations: &[SyntaxAnnotation]) -> Vec<(u64, &str, Option<&str>)> {
         annotations
@@ -508,13 +520,10 @@ mod tests {
             "## Attributes\n- new: String\n\n## Layout\n- left of\n".to_owned(),
         ))
         .unwrap();
-        let old_shell =
-            parse_okf_markdown(old_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
-        let new_shell =
-            parse_okf_markdown(new_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let (old_shell, new_shell, changes) =
+            markdown_reparse_pair(&old_text, new_text.clone());
         let previous = parse_full(old_text.clone(), &old_shell.structure);
         let full = parse_full(new_text.clone(), &new_shell.structure);
-        let changes = crate::analysis::single_text_change(&old_text, &new_text);
 
         let reparsed = reparse_island(
             &previous,
@@ -553,10 +562,8 @@ mod tests {
             "## Nodes\n### state Node\ntrigger: changed\n###".to_owned(),
         ))
         .unwrap();
-        let old_shell =
-            parse_okf_markdown(old_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
-        let new_shell =
-            parse_okf_markdown(new_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let (old_shell, new_shell, changes) =
+            markdown_reparse_pair(&old_text, new_text.clone());
         let previous = parse_full(old_text.clone(), &old_shell.structure);
         let full = parse_full(new_text.clone(), &new_shell.structure);
         assert_eq!(previous.write_to_string(), old_text.shared().as_str());
@@ -565,7 +572,7 @@ mod tests {
             &old_shell.structure,
             new_text.clone(),
             &new_shell.structure,
-            &crate::analysis::single_text_change(&old_text, &new_text),
+            &changes,
         )
         .expect("earlier edit in one final island is unambiguous");
 
@@ -585,10 +592,8 @@ mod tests {
             SourceText::from_shared(Arc::new("## Attributes\n- old: String\n".to_owned())).unwrap();
         let new_text =
             SourceText::from_shared(Arc::new("## attributes\n- old: String\n".to_owned())).unwrap();
-        let old_shell =
-            parse_okf_markdown(old_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
-        let new_shell =
-            parse_okf_markdown(new_text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let (old_shell, new_shell, changes) =
+            markdown_reparse_pair(&old_text, new_text.clone());
         let previous = parse_full(old_text.clone(), &old_shell.structure);
 
         assert!(reparse_island(
@@ -596,7 +601,7 @@ mod tests {
             &old_shell.structure,
             new_text.clone(),
             &new_shell.structure,
-            &crate::analysis::single_text_change(&old_text, &new_text),
+            &changes,
         )
         .is_none());
     }

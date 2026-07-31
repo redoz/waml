@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    reparse_okf_markdown_with_structure, ChangeMap, DocumentRevision, FullReparseReason,
+    ChangeMap, DocumentRevision, FullReparseReason,
     GreenElement, GreenText, MarkdownDialect, MarkdownStructureMap, OkfMarkdownLanguage,
     OkfSyntaxDiagnosticCode, ParseError, ReparseOutcome, SourceText, SyntaxElement, SyntaxIdentity,
     SyntaxTree, TextChange, TextRange, TreeDiagnostic,
@@ -311,7 +311,7 @@ pub fn parse_markdown(
     text: SourceText,
     dialect: MarkdownDialect,
 ) -> Result<Arc<MarkdownSyntaxSnapshot>, ParseError> {
-    let parsed = crate::parse_okf_markdown(text.clone(), dialect)?;
+    let parsed = super::parser::parse(text.clone(), dialect)?;
     MarkdownSyntaxSnapshot::from_tree(revision, text, parsed.tree, parsed.structure)
 }
 
@@ -327,8 +327,12 @@ pub fn reparse_markdown(
             requested: revision,
         });
     }
-    let (outcome, structure) =
-        reparse_okf_markdown_with_structure(previous.tree.as_ref(), new_text.clone(), changes)?;
+    let (outcome, _structure) =
+        crate::incremental::reparse_okf_markdown_with_structure(
+            previous.tree.as_ref(),
+            new_text.clone(),
+            changes,
+        )?;
     let (mut tree, shared_source_independent_green, reparsed_range) = match outcome {
         ReparseOutcome::Incremental {
             tree,
@@ -343,6 +347,21 @@ pub fn reparse_markdown(
             (tree, shared_source_independent_green, reparsed_range)
         }
         ReparseOutcome::Full { tree, reason } => {
+            let tree = if let Ok(map) = ChangeMap::checked(previous.text(), changes) {
+                let root = super::reparse::preserve_unchanged_island_identities(
+                    previous.tree(),
+                    &tree,
+                    &map,
+                )?;
+                Arc::new(SyntaxTree::new(
+                    root,
+                    Arc::from(tree.diagnostics()),
+                    tree.dialect(),
+                ))
+            } else {
+                tree
+            };
+            let structure = Arc::new(super::from_tree(&tree, new_text.shared())?);
             let affected_ranges: Arc<[TextRange]> =
                 Arc::from([super::reparse::full_range(&new_text)]);
             return Ok(MarkdownSyntaxUpdate {
@@ -365,7 +384,7 @@ pub fn reparse_markdown(
         changes,
         &map,
     ) {
-        let parsed = crate::parse_okf_markdown(new_text.clone(), previous.tree().dialect())?;
+        let parsed = super::parser::parse(new_text.clone(), previous.tree().dialect())?;
         let labels = super::reparse::changed_reference_labels(
             previous.text(),
             previous.tree().root_green(),
@@ -954,18 +973,17 @@ fn collect_spans(
                             SyntaxElement::Token(_) => None,
                         })
                     });
-                    let owner = owner.ok_or_else(|| {
-                        invariant("top-level Markdown token has no semantic owner")
-                    })?;
-                    out.push(MarkdownSyntaxSpan {
-                        owner,
-                        range: token.range(),
-                        source_role: source_role(token.kind()),
-                        semantic_role: token_semantic_role(
-                            token.kind(),
-                            MarkdownSemanticRole::Document,
-                        ),
-                    });
+                    if let Some(owner) = owner {
+                        out.push(MarkdownSyntaxSpan {
+                            owner,
+                            range: token.range(),
+                            source_role: source_role(token.kind()),
+                            semantic_role: token_semantic_role(
+                                token.kind(),
+                                MarkdownSemanticRole::Document,
+                            ),
+                        });
+                    }
                 }
                 SyntaxElement::Token(_) => {}
             }

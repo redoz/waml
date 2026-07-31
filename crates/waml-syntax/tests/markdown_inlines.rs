@@ -1,16 +1,21 @@
 use std::sync::Arc;
 
 use waml_syntax::{
-    parse_markdown, parse_okf_markdown, DocumentRevision, MarkdownDialect, MarkdownLinkKind,
-    OkfMarkdownLanguage, OkfMarkdownSyntaxKind as Kind, SourceText, SyntaxElement, SyntaxNode,
+    parse_markdown, DocumentRevision, MarkdownDialect, MarkdownLinkKind, OkfMarkdownLanguage,
+    OkfMarkdownSyntaxKind as Kind, ShellParse, SourceText, SyntaxElement, SyntaxNode,
 };
 
 fn parse(source: &str) -> waml_syntax::ShellParse {
-    parse_okf_markdown(
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
         SourceText::from_shared(Arc::new(source.into())).unwrap(),
         MarkdownDialect::CommonMarkCurrent,
     )
-    .unwrap()
+    .unwrap();
+    ShellParse {
+        tree: snapshot.tree().clone(),
+        structure: snapshot.structure().clone(),
+    }
 }
 
 fn kinds(node: &SyntaxNode<OkfMarkdownLanguage>, out: &mut Vec<Kind>) {

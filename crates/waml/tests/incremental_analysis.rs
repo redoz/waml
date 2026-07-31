@@ -1,14 +1,14 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::{BTreeMap, BTreeSet}, sync::Arc};
 
 use waml::uml::syntax::{UmlLanguage, UmlSyntaxKind};
 use waml::{
-    analysis::{prepare_candidate, PreparedCandidate, PreviousAnalyses},
+    analysis::{prepare_candidate, prepare_candidate_with_markdown_updates, PreparedCandidate, PreviousAnalyses},
     host::replace_document,
     source::{BundlePath, SourceBundle, SourceDocument},
     uml::{DeclaredBundle, DeclaredField, DeclaredLayoutStatement},
 };
 use waml_syntax::{
-    AstNode, GreenElement, GreenFactory, GreenText, MarkdownDialect, OkfMarkdownLanguage,
+    reparse_markdown, AstNode, DocumentRevision, GreenElement, GreenFactory, GreenText, MarkdownDialect, OkfMarkdownLanguage,
     OkfMarkdownSyntaxKind, SyntaxAnnotation, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree,
     TextRange, TextSize, TriviaKind,
 };
@@ -19,6 +19,49 @@ fn prepared(
     revision: u64,
 ) -> PreparedCandidate {
     prepare_candidate(source, previous, revision).unwrap()
+}
+
+#[test]
+fn changed_document_promotes_the_exact_supplied_markdown_update() {
+    let source = SourceBundle::try_from_pairs([("one.md", "# Alpha\n")]).unwrap();
+    let baseline = prepared(source.clone(), None, 1);
+    let id = document_id(&baseline, "one.md");
+    let edited = replace_document(
+        &source,
+        SourceDocument::new(BundlePath::parse("one.md").unwrap(), "# Alphi\n".into()),
+    )
+    .unwrap();
+    let new_text = waml_syntax::SourceText::from_shared(
+        edited
+            .document(&BundlePath::parse("one.md").unwrap())
+            .unwrap()
+            .text_shared()
+            .clone(),
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        baseline.okf().markdown.document(id).unwrap(),
+        DocumentRevision::new(2),
+        new_text,
+        &[waml_syntax::TextChange {
+            old_range: TextRange::new(TextSize::new(6), TextSize::new(7)).unwrap(),
+            replacement: Arc::from("i"),
+        }],
+    )
+    .unwrap();
+    let expected = update.snapshot.clone();
+    let current = prepare_candidate_with_markdown_updates(
+        edited,
+        Some(PreviousAnalyses { okf: baseline.okf(), uml: baseline.uml() }),
+        2,
+        BTreeMap::from([(id, update)]),
+    )
+    .unwrap();
+
+    assert!(Arc::ptr_eq(
+        &expected,
+        current.okf().markdown.document(id).unwrap(),
+    ));
 }
 
 fn document_id(candidate: &PreparedCandidate, path: &str) -> waml::analysis::DocumentId {

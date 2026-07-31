@@ -546,9 +546,11 @@ mod tests {
         let old = SourceText::new("[id]: /one\n\nuse [x][id]\n").unwrap();
         let new = SourceText::new("[id]: /two\n\nuse [x][id]\n").unwrap();
         let old_parse =
-            crate::parse_okf_markdown(old.clone(), crate::MarkdownDialect::WAML_DEFAULT).unwrap();
+            crate::markdown::parser::parse(old.clone(), crate::MarkdownDialect::WAML_DEFAULT)
+                .unwrap();
         let new_parse =
-            crate::parse_okf_markdown(new.clone(), crate::MarkdownDialect::WAML_DEFAULT).unwrap();
+            crate::markdown::parser::parse(new.clone(), crate::MarkdownDialect::WAML_DEFAULT)
+                .unwrap();
 
         assert_eq!(
             changed_reference_labels(

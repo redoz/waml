@@ -1,17 +1,20 @@
 use std::sync::Arc;
 
-use super::*;
 use crate::{
-    GreenElement, GreenFactory, GreenText, GreenTrivia, MarkdownDialect, SourceText,
-    SyntaxSeverity, SyntaxTree, TextRange, TextSize, TreeDiagnostic, TriviaKind,
+    shell::{
+        ParseError, ParsedShellWindow, ShellParse, ShellWindow, ShellWindowKind,
+    },
+    GreenElement, GreenFactory, GreenText, GreenTrivia, MarkdownDialect, OkfMarkdownLanguage,
+    OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SourceText, SyntaxSeverity, SyntaxTree,
+    TextRange, TextSize, TreeDiagnostic, TriviaKind,
 };
 
-pub(super) fn parse(text: SourceText, dialect: MarkdownDialect) -> Result<ShellParse, ParseError> {
+pub(crate) fn parse(text: SourceText, dialect: MarkdownDialect) -> Result<ShellParse, ParseError> {
     let structure = Arc::new(crate::markdown::map(&text, dialect)?);
     parse_with_structure(text, dialect, structure)
 }
 
-pub(super) fn parse_with_structure(
+pub(crate) fn parse_with_structure(
     text: SourceText,
     dialect: MarkdownDialect,
     structure: Arc<crate::MarkdownStructureMap>,
@@ -62,7 +65,7 @@ struct FrontmatterClass {
     recovered: bool,
 }
 
-pub(super) fn frontmatter_range(
+pub(crate) fn frontmatter_range(
     text: &SourceText,
     structure: &crate::MarkdownStructureMap,
 ) -> Result<Option<TextRange>, ParseError> {
@@ -193,7 +196,7 @@ fn frontmatter(
     ))
 }
 
-pub(super) fn parse_window(
+pub(crate) fn parse_window(
     text: &SourceText,
     structure: &crate::MarkdownStructureMap,
     window: ShellWindow,

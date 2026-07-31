@@ -5,8 +5,8 @@ use crate::edit::{EditContext, EditError};
 use crate::index_md::{render_index, render_members, IndexEntry};
 use crate::source::{BundlePath, SourceBundle};
 use waml_syntax::{
-    parse_okf_markdown, MarkdownDialect, OkfMarkdownSyntaxKind, ShellParse, SourceText,
-    SyntaxElement,
+    parse_markdown, DocumentRevision, MarkdownDialect, OkfMarkdownSyntaxKind, ShellParse,
+    SourceText, SyntaxElement,
 };
 
 pub(crate) struct OkfLoweringCursor<'a> {
@@ -87,8 +87,16 @@ impl OkfLoweringState {
                 .ok_or_else(|| EditError::at(op, format!("no document '{}'", path.as_str())))?;
             let text = SourceText::from_shared(document.text_arc().clone())
                 .map_err(|error| EditError::at(op, error.to_string()))?;
-            let parsed = parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent)
+            let snapshot = parse_markdown(
+                DocumentRevision::INITIAL,
+                text,
+                MarkdownDialect::CommonMarkCurrent,
+            )
                 .map_err(|error| EditError::at(op, error.to_string()))?;
+            let parsed = ShellParse {
+                tree: snapshot.tree().clone(),
+                structure: snapshot.structure().clone(),
+            };
             self.touched_shell.insert(path.clone(), parsed);
         }
         Ok(self

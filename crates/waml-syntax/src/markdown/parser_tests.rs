@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use waml_syntax::{
-    parse_okf_markdown, GreenElement, MarkdownDialect, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
+use super::parser::parse as parse_okf_markdown;
+use crate::{
+    GreenElement, MarkdownDialect, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
     OkfSyntaxDiagnosticCode, ShellParse, SourceText, SyntaxElement, SyntaxNode, TextSize,
 };
 
@@ -16,8 +17,8 @@ macro_rules! fixture {
     ($name:literal) => {
         Fixture {
             name: $name,
-            source: include_str!(concat!("fixtures/shell/", $name, ".md")),
-            golden: include_str!(concat!("fixtures/shell/", $name, ".golden")),
+            source: include_str!(concat!("../../tests/fixtures/shell/", $name, ".md")),
+            golden: include_str!(concat!("../../tests/fixtures/shell/", $name, ".golden")),
             escaped: false,
         }
     };
@@ -27,8 +28,8 @@ macro_rules! escaped_fixture {
     ($name:literal) => {
         Fixture {
             name: $name,
-            source: include_str!(concat!("fixtures/shell/", $name, ".escaped")),
-            golden: include_str!(concat!("fixtures/shell/", $name, ".golden")),
+            source: include_str!(concat!("../../tests/fixtures/shell/", $name, ".escaped")),
+            golden: include_str!(concat!("../../tests/fixtures/shell/", $name, ".golden")),
             escaped: true,
         }
     };
@@ -351,17 +352,17 @@ fn fixture_source(fixture: &Fixture) -> String {
     decoded
 }
 
-fn parse(source: &str) -> ShellParse {
+fn parse(source: &str) -> crate::ShellParse {
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
     parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap()
 }
 
 fn leaf_tokens(
-    node: &SyntaxNode<OkfMarkdownLanguage>,
-) -> Vec<waml_syntax::SyntaxToken<OkfMarkdownLanguage>> {
+    node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+) -> Vec<crate::SyntaxToken<crate::OkfMarkdownLanguage>> {
     fn visit(
-        node: &SyntaxNode<OkfMarkdownLanguage>,
-        out: &mut Vec<waml_syntax::SyntaxToken<OkfMarkdownLanguage>>,
+        node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+        out: &mut Vec<crate::SyntaxToken<crate::OkfMarkdownLanguage>>,
     ) {
         for child in node.children() {
             match child {
@@ -489,7 +490,7 @@ fn assert_red_ranges(node: &SyntaxNode<OkfMarkdownLanguage>, source_len: usize, 
     }
 }
 
-fn assert_node_widths(node: &waml_syntax::GreenNode<OkfMarkdownLanguage>, name: &str) {
+fn assert_node_widths(node: &crate::GreenNode<OkfMarkdownLanguage>, name: &str) {
     let sum: usize = node
         .children()
         .iter()

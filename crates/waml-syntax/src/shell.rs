@@ -1,6 +1,5 @@
-mod parser;
-pub use crate::markdown::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode};
-use crate::{MarkdownDialect, SourceText, SyntaxTree, TextRange, TextSize};
+pub use crate::markdown::{OkfMarkdownLanguage, OkfSyntaxDiagnosticCode};
+use crate::{SourceText, SyntaxTree, TextRange, TextSize};
 use std::{fmt, sync::Arc};
 #[derive(Debug)]
 pub enum ParseError {
@@ -48,29 +47,16 @@ pub(crate) struct ParsedShellWindow {
     pub elements: Arc<[crate::GreenElement<OkfMarkdownLanguage>]>,
     pub diagnostics: Arc<[crate::TreeDiagnostic<OkfSyntaxDiagnosticCode>]>,
 }
-pub fn parse_okf_markdown(
-    text: SourceText,
-    dialect: MarkdownDialect,
-) -> Result<ShellParse, ParseError> {
-    parser::parse(text, dialect)
-}
-pub(crate) fn parse_okf_markdown_with_structure(
-    text: SourceText,
-    dialect: MarkdownDialect,
-    structure: Arc<crate::MarkdownStructureMap>,
-) -> Result<ShellParse, ParseError> {
-    parser::parse_with_structure(text, dialect, structure)
-}
 pub(crate) fn frontmatter_range(
     text: &SourceText,
     structure: &crate::MarkdownStructureMap,
 ) -> Result<Option<TextRange>, ParseError> {
-    parser::frontmatter_range(text, structure)
+    crate::markdown::parser::frontmatter_range(text, structure)
 }
 pub(crate) fn parse_window(
     text: &SourceText,
     structure: &crate::MarkdownStructureMap,
     window: ShellWindow,
 ) -> Result<ParsedShellWindow, ParseError> {
-    parser::parse_window(text, structure, window)
+    crate::markdown::parser::parse_window(text, structure, window)
 }

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use std::num::NonZeroU64;
-use waml_syntax::{
-    annotate_occurrence, parse_okf_markdown, rebase_unchanged_green, reparse_okf_markdown,
-    reparse_okf_markdown_with_structure, transfer_mapped_annotations, ChangeMap, FullReparseReason,
-    GreenElement, GreenText, MarkdownDialect, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode,
-    ReparseOutcome, RewriteError, SourceText, SyntaxAnnotation, SyntaxElement, SyntaxTree,
-    TextChange, TextRange, TextSize,
+use super::{reparse_okf_markdown, reparse_okf_markdown_with_structure};
+use crate::{
+    annotate_occurrence, markdown::parser::parse as parse_okf_markdown, rebase_unchanged_green,
+    transfer_mapped_annotations, ChangeMap, FullReparseReason, GreenElement, GreenText,
+    MarkdownDialect, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, ReparseOutcome, RewriteError,
+    SourceText, SyntaxAnnotation, SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize,
 };
 
 #[test]
@@ -58,7 +58,7 @@ fn incremental_outcome(
     previous: &str,
     next: &str,
     changes: &[TextChange],
-) -> ReparseOutcome<waml_syntax::OkfMarkdownLanguage> {
+) -> ReparseOutcome<crate::OkfMarkdownLanguage> {
     let previous = parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent).unwrap();
     reparse_okf_markdown(&previous.tree, text(next), changes).unwrap()
 }
@@ -294,9 +294,9 @@ fn green_text_fingerprint(text: &GreenText) -> TextFingerprint {
     }
 }
 
-fn structural_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -> Vec<String> {
+fn structural_fingerprint(tree: &SyntaxTree<crate::OkfMarkdownLanguage>) -> Vec<String> {
     fn visit(
-        element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
+        element: &GreenElement<crate::OkfMarkdownLanguage>,
         at: TextSize,
         out: &mut Vec<String>,
     ) -> TextSize {
@@ -338,7 +338,7 @@ fn structural_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -
     out
 }
 
-fn diagnostic_fingerprint(tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>) -> Vec<String> {
+fn diagnostic_fingerprint(tree: &SyntaxTree<crate::OkfMarkdownLanguage>) -> Vec<String> {
     tree.diagnostics()
         .iter()
         .map(|diagnostic| {
@@ -607,7 +607,7 @@ fn exact_oracle(
     previous: &str,
     next: &str,
     changes: &[TextChange],
-) -> ReparseOutcome<waml_syntax::OkfMarkdownLanguage> {
+) -> ReparseOutcome<crate::OkfMarkdownLanguage> {
     let old = parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent).unwrap();
     let clean_source = text(next);
     let full =
@@ -875,13 +875,13 @@ fn boundary_fallback_matrix_is_named() {
 }
 
 fn first_node(
-    tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>,
+    tree: &SyntaxTree<crate::OkfMarkdownLanguage>,
     kind: OkfMarkdownSyntaxKind,
-) -> waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage> {
+) -> crate::SyntaxNode<crate::OkfMarkdownLanguage> {
     fn find(
-        node: waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
+        node: crate::SyntaxNode<crate::OkfMarkdownLanguage>,
         kind: OkfMarkdownSyntaxKind,
-    ) -> Option<waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>> {
+    ) -> Option<crate::SyntaxNode<crate::OkfMarkdownLanguage>> {
         if node.kind() == kind {
             return Some(node);
         }
@@ -892,13 +892,13 @@ fn first_node(
 }
 
 fn first_token(
-    tree: &SyntaxTree<waml_syntax::OkfMarkdownLanguage>,
+    tree: &SyntaxTree<crate::OkfMarkdownLanguage>,
     kind: OkfMarkdownSyntaxKind,
-) -> waml_syntax::SyntaxToken<waml_syntax::OkfMarkdownLanguage> {
+) -> crate::SyntaxToken<crate::OkfMarkdownLanguage> {
     fn find(
-        node: waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
+        node: crate::SyntaxNode<crate::OkfMarkdownLanguage>,
         kind: OkfMarkdownSyntaxKind,
-    ) -> Option<waml_syntax::SyntaxToken<waml_syntax::OkfMarkdownLanguage>> {
+    ) -> Option<crate::SyntaxToken<crate::OkfMarkdownLanguage>> {
         node.children().find_map(|child| match child {
             SyntaxElement::Token(token) if token.kind() == kind => Some(token),
             SyntaxElement::Node(node) => find(node, kind),
@@ -909,7 +909,7 @@ fn first_token(
 }
 
 fn all_source_slices_use(
-    element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
+    element: &GreenElement<crate::OkfMarkdownLanguage>,
     source: &SourceText,
 ) -> bool {
     match element {
@@ -1339,7 +1339,7 @@ fn change_map_candidate_source_mismatch_is_a_hard_error() {
     };
 
     match error {
-        waml_syntax::ParseError::StructuralInvariant { reason } => {
+        crate::ParseError::StructuralInvariant { reason } => {
             assert_eq!(
                 &*reason,
                 "incremental changes do not reconstruct candidate source"

@@ -3,8 +3,8 @@
 use std::{fmt::Debug, sync::Arc};
 
 use waml_syntax::{
-    parse_okf_markdown, GreenText, MarkdownDialect, MarkdownStructureMap, OkfMarkdownLanguage,
-    SourceText, SyntaxElement, SyntaxLanguage, SyntaxTree, TextRange, TextSize,
+    parse_markdown, DocumentRevision, GreenText, MarkdownDialect, MarkdownStructureMap,
+    OkfMarkdownLanguage, SourceText, SyntaxElement, SyntaxLanguage, SyntaxTree, TextRange, TextSize,
 };
 
 const MAX_INPUT_BYTES: usize = 256 * 1024;
@@ -96,11 +96,15 @@ fn assert_structure_ranges(value: &str, structure: &MarkdownStructureMap) {
 }
 
 pub fn assert_shell_invariants(value: &str) {
-    let parsed = parse_okf_markdown(source(value), MarkdownDialect::CommonMarkCurrent)
-        .expect("bounded UTF-8 shell parses");
-    assert_eq!(parsed.tree.write_to_string(), value);
-    assert_tree_ranges(&parsed.tree, value);
-    assert_structure_ranges(value, &parsed.structure);
+    let parsed = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(value),
+        MarkdownDialect::CommonMarkCurrent,
+    )
+    .expect("bounded UTF-8 shell parses");
+    assert_eq!(parsed.tree().write_to_string(), value);
+    assert_tree_ranges(parsed.tree(), value);
+    assert_structure_ranges(value, parsed.structure());
 }
 
 pub fn syntax_fingerprint(tree: &SyntaxTree<OkfMarkdownLanguage>) -> Vec<String> {

@@ -241,7 +241,7 @@ pub(crate) fn wrap_waml_sections(
             index += 1;
             continue;
         };
-        if super::projection::waml_kind(source, text_range).is_none() {
+        if level != 2 || super::projection::waml_kind(source, text_range).is_none() {
             out.push(children[index].clone());
             index += 1;
             continue;

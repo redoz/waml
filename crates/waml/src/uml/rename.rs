@@ -1,7 +1,9 @@
 use super::lower::{find_doc, UmlLoweringState};
 use crate::edit::EditError;
 use crate::source::{BundlePath, SourceBundle};
-use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText, SyntaxElement, SyntaxNode};
+use waml_syntax::{
+    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, SyntaxElement, SyntaxNode,
+};
 
 /// Resolve a rename destination from the exact source path. A bare `to`
 /// replaces only the basename in the source directory; a slash-containing
@@ -110,9 +112,13 @@ fn rename_typed_references(
 ) -> Result<String, EditError> {
     let text = SourceText::from_shared(std::sync::Arc::new(source.to_owned()))
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
-    let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent)
+    let markdown = parse_markdown(
+        DocumentRevision::INITIAL,
+        text.clone(),
+        MarkdownDialect::CommonMarkCurrent,
+    )
         .map_err(|error| EditError::at("node.rename", error.to_string()))?;
-    let tree = super::syntax::parse_full(text, &shell.structure);
+    let tree = super::syntax::parse_full(text, markdown.structure());
     let mut edits = Vec::new();
     collect_reference_edits(
         &tree.root(),

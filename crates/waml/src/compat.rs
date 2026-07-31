@@ -8,7 +8,8 @@ use crate::{okf, uml};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use waml_syntax::{
-    parse_okf_markdown, MarkdownDialect, OkfMarkdownSyntaxKind, SourceText, SyntaxElement,
+    parse_markdown, DocumentRevision, MarkdownDialect, OkfMarkdownSyntaxKind, SourceText,
+    SyntaxElement,
 };
 
 #[doc(hidden)]
@@ -437,9 +438,11 @@ fn snapshot(source: &SourceBundle) -> BTreeMap<BundlePath, Arc<String>> {
 
 fn claimed_id(path: &BundlePath, text: &Arc<String>) -> Option<String> {
     let source = SourceText::from_shared(text.clone()).ok()?;
-    let shell = parse_okf_markdown(source, MarkdownDialect::CommonMarkCurrent).ok()?;
-    let frontmatter = shell
-        .tree
+    let snapshot =
+        parse_markdown(DocumentRevision::INITIAL, source, MarkdownDialect::CommonMarkCurrent)
+            .ok()?;
+    let frontmatter = snapshot
+        .tree()
         .root()
         .children()
         .filter_map(SyntaxElement::into_node)

@@ -513,24 +513,25 @@ fn structural(reason: impl Into<Arc<str>>) -> AnalysisError {
 mod tests {
     use super::exact_tree_source;
     use std::sync::Arc;
-    use waml_syntax::{parse_okf_markdown, MarkdownDialect, SourceText};
+    use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
 
     #[test]
     fn streaming_tree_source_comparator_covers_exact_mismatch_short_and_trailing() {
         let source = "# Café\nbody\n";
-        let parsed = parse_okf_markdown(
+        let parsed = parse_markdown(
+            DocumentRevision::INITIAL,
             SourceText::from_shared(Arc::new(source.to_owned())).unwrap(),
             MarkdownDialect::CommonMarkCurrent,
         )
         .unwrap();
-        assert!(exact_tree_source(parsed.tree.root_green(), source));
+        assert!(exact_tree_source(parsed.tree().root_green(), source));
         assert!(!exact_tree_source(
-            parsed.tree.root_green(),
+            parsed.tree().root_green(),
             "# Cafe\nbody\n"
         ));
-        assert!(!exact_tree_source(parsed.tree.root_green(), "# Café\nbody"));
+        assert!(!exact_tree_source(parsed.tree().root_green(), "# Café\nbody"));
         assert!(!exact_tree_source(
-            parsed.tree.root_green(),
+            parsed.tree().root_green(),
             "# Café\nbody\ntrailing"
         ));
     }

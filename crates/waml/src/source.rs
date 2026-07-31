@@ -125,6 +125,10 @@ impl SourceDocument {
         self.text.as_str()
     }
 
+    pub fn text_shared(&self) -> &Arc<String> {
+        &self.text
+    }
+
     pub(crate) fn text_mut(&mut self) -> &mut String {
         Arc::make_mut(&mut self.text)
     }

@@ -6,8 +6,8 @@ use std::{
 
 use waml_syntax::{
     parse_markdown, reparse_markdown, LineIndex, MarkdownDialect,
-    MarkdownSyntaxSnapshot, ParseError, SourceText, SyntaxLanguage, SyntaxTree, TextChange,
-    TextRange, TextSize,
+    MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, ParseError, SourceText, SyntaxLanguage,
+    SyntaxTree, TextChange, TextRange, TextSize,
 };
 pub use waml_syntax::DocumentRevision;
 
@@ -327,16 +327,48 @@ pub fn prepare_candidate(
     )
 }
 
+pub fn prepare_candidate_with_markdown_updates(
+    candidate_source: SourceBundle,
+    previous: Option<PreviousAnalyses<'_>>,
+    candidate_revision: u64,
+    mut markdown_updates: BTreeMap<DocumentId, MarkdownSyntaxUpdate>,
+) -> Result<PreparedCandidate, AnalysisError> {
+    prepare_candidate_inner_with_markdown_updates(
+        candidate_source,
+        previous,
+        candidate_revision,
+        &mut markdown_updates,
+        &mut NoopPreparationHooks,
+    )
+}
+
 fn prepare_candidate_inner(
     candidate_source: SourceBundle,
     previous: Option<PreviousAnalyses<'_>>,
     candidate_revision: u64,
     hooks: &mut impl PreparationHooks,
 ) -> Result<PreparedCandidate, AnalysisError> {
+    prepare_candidate_inner_with_markdown_updates(
+        candidate_source,
+        previous,
+        candidate_revision,
+        &mut BTreeMap::new(),
+        hooks,
+    )
+}
+
+fn prepare_candidate_inner_with_markdown_updates(
+    candidate_source: SourceBundle,
+    previous: Option<PreviousAnalyses<'_>>,
+    candidate_revision: u64,
+    markdown_updates: &mut BTreeMap<DocumentId, MarkdownSyntaxUpdate>,
+    hooks: &mut impl PreparationHooks,
+) -> Result<PreparedCandidate, AnalysisError> {
     let okf = analyze_okf_inner(
         &candidate_source,
         previous.as_ref().map(|analyses| analyses.okf),
         candidate_revision,
+        markdown_updates,
         hooks,
     )?;
     hooks.before(AnalysisStage::Specialization("uml"))?;
@@ -448,6 +480,7 @@ pub fn analyze_okf(
         source,
         previous,
         session_revision,
+        &mut BTreeMap::new(),
         &mut NoopPreparationHooks,
     )
 }
@@ -456,6 +489,7 @@ fn analyze_okf_inner(
     source: &SourceBundle,
     previous: Option<&OkfAnalysis>,
     session_revision: u64,
+    markdown_updates: &mut BTreeMap<DocumentId, MarkdownSyntaxUpdate>,
     hooks: &mut impl PreparationHooks,
 ) -> Result<OkfAnalysis, AnalysisError> {
     let previous_catalog = previous.map(|analysis| &analysis.catalog);
@@ -502,7 +536,19 @@ fn analyze_okf_inner(
     hooks.before(AnalysisStage::Shell)?;
     let mut markdown_documents = BTreeMap::new();
     for document in candidate.documents.values() {
-        let snapshot = match previous.and_then(|analysis| analysis.markdown.document(document.id())) {
+        let snapshot = match markdown_updates.remove(&document.id()) {
+            Some(update)
+                if update.snapshot.revision() == document.revision()
+                    && Arc::ptr_eq(update.snapshot.text().shared(), document.text().shared()) =>
+            {
+                update.snapshot
+            }
+            Some(_) => {
+                return Err(AnalysisError::CatalogInvariant {
+                    reason: "supplied Markdown update does not match candidate document".into(),
+                })
+            }
+            None => match previous.and_then(|analysis| analysis.markdown.document(document.id())) {
             Some(previous_snapshot) if previous_snapshot.revision() == document.revision() => previous_snapshot.clone(),
             Some(previous_snapshot) => reparse_markdown(
                 previous_snapshot,
@@ -518,6 +564,7 @@ fn analyze_okf_inner(
                 MarkdownDialect::CommonMarkCurrent,
             )
             .map_err(|source| shell_error(document.path().clone(), source))?,
+            },
         };
         markdown_documents.insert(document.id(), snapshot);
     }
@@ -671,7 +718,13 @@ mod tests {
                 calls: Vec::new(),
             };
             assert!(matches!(
-                analyze_okf_inner(&candidate_source, Some(&committed), 2, &mut hooks),
+                analyze_okf_inner(
+                    &candidate_source,
+                    Some(&committed),
+                    2,
+                    &mut BTreeMap::new(),
+                    &mut hooks,
+                ),
                 Err(AnalysisError::StructuralInvariant { .. })
             ));
             let calls: Vec<_> = hooks

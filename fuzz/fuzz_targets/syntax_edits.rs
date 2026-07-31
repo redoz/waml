@@ -76,10 +76,10 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(
         changed
             .okf()
-            .shell
+            .markdown
             .document(document)
             .unwrap()
-            .syntax()
+            .tree()
             .write_to_string(),
         oracle
     );
