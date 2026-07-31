@@ -7,7 +7,8 @@ use crate::{document::MarkdownDocumentSnapshot, selection::TextPosition};
 
 use super::{
     Affinity, BlockGeometry, GeometryElementId, GlyphCluster, LayoutBlock, LayoutDocument,
-    LayoutElementId, LayoutError, LayoutSnapshot, LayoutTextRun, VisualLine,
+    LayoutElementId, LayoutError, LayoutSnapshot, LayoutSnapshotMetadata, LayoutTextRun,
+    VisualLine,
 };
 use crate::layout::geometry::CaretStop;
 
@@ -246,14 +247,16 @@ impl LayoutEngine {
             .map_or(0..0, |(first, last)| *first..last + 1);
 
         Ok(LayoutSnapshot::new(
-            document.revision,
-            viewport.width,
-            dvec2(viewport.width, content_y),
+            LayoutSnapshotMetadata {
+                revision: document.revision,
+                viewport_width: viewport.width,
+                content_size: dvec2(viewport.width, content_y),
+                visible_source_range,
+                visible_block_range,
+            },
             visual_lines.into(),
             blocks.into(),
             clusters.into(),
-            visible_source_range,
-            visible_block_range,
             summaries.into(),
         ))
     }
@@ -363,7 +366,6 @@ fn append_run(
     }
     if !line_clusters.is_empty() {
         flush_line(output, layout_id, &line_clusters, start_x, y, line_height);
-        y += line_height;
     }
     output.height = output.lines.iter().map(VisualLine::height).sum();
 }

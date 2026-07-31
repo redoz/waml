@@ -1,13 +1,9 @@
-use std::sync::Arc;
-
-use crate::{document::MarkdownDocumentSnapshot, edit::HistoryGroup, selection::SelectionSet};
+use crate::{edit::HistoryGroup, selection::SelectionSet};
 use waml_syntax::TextChange;
 
 #[derive(Clone, Debug)]
 pub(crate) struct HistoryEntry {
-    pub before: Arc<MarkdownDocumentSnapshot>,
     pub before_selection: SelectionSet,
-    pub after: Arc<MarkdownDocumentSnapshot>,
     pub after_selection: SelectionSet,
     pub forward_changes: Vec<TextChange>,
     pub inverse_changes: Vec<TextChange>,

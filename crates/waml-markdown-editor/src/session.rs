@@ -474,9 +474,7 @@ impl MarkdownDocumentSession {
         let inverse_changes = inverse_changes(before.text(), &edit.changes)?;
         let proposal = self.apply_edit_without_history(edit)?;
         self.history.push(HistoryEntry {
-            before,
             before_selection,
-            after: self.snapshot.clone(),
             after_selection: self.selections.clone(),
             forward_changes: proposal.edit.changes.clone(),
             inverse_changes,
@@ -956,8 +954,7 @@ fn pieces_to_changes(pieces: Vec<Piece>, original_len: usize) -> Vec<TextChange>
     let mut changes = Vec::new();
     let mut cursor = 0;
     let mut pending: Option<(usize, usize, String)> = None;
-    let mut flush = |pending: &mut Option<(usize, usize, String)>,
-                     changes: &mut Vec<TextChange>| {
+    let flush = |pending: &mut Option<(usize, usize, String)>, changes: &mut Vec<TextChange>| {
         if let Some((start, end, replacement)) = pending.take() {
             changes.push(TextChange {
                 old_range: range(start, end),

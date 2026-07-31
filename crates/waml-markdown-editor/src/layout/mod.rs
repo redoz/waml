@@ -13,7 +13,8 @@ pub use engine::{
     TextShaper,
 };
 pub use geometry::{
-    BlockGeometry, CaretGeometry, CaretStop, GlyphCluster, LayoutSnapshot, VisualLine,
+    BlockGeometry, CaretGeometry, CaretStop, GlyphCluster, LayoutSnapshot, LayoutSnapshotMetadata,
+    VisualLine,
 };
 pub use makepad::{FontResolver, MakepadTextShaper};
 

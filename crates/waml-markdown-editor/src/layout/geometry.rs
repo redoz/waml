@@ -144,27 +144,31 @@ pub struct LayoutSnapshot {
     block_summaries: Arc<[BlockSummary]>,
 }
 
+pub struct LayoutSnapshotMetadata {
+    pub revision: DocumentRevision,
+    pub viewport_width: f64,
+    pub content_size: DVec2,
+    pub visible_source_range: TextRange,
+    pub visible_block_range: Range<usize>,
+}
+
 impl LayoutSnapshot {
     pub fn new(
-        revision: DocumentRevision,
-        viewport_width: f64,
-        content_size: DVec2,
+        metadata: LayoutSnapshotMetadata,
         visual_lines: Arc<[VisualLine]>,
         blocks: Arc<[BlockGeometry]>,
         clusters: Arc<[GlyphCluster]>,
-        visible_source_range: TextRange,
-        visible_block_range: Range<usize>,
         block_summaries: Arc<[BlockSummary]>,
     ) -> Self {
         Self {
-            revision,
-            viewport_width,
-            content_size,
+            revision: metadata.revision,
+            viewport_width: metadata.viewport_width,
+            content_size: metadata.content_size,
             visual_lines,
             blocks,
             clusters,
-            visible_source_range,
-            visible_block_range,
+            visible_source_range: metadata.visible_source_range,
+            visible_block_range: metadata.visible_block_range,
             block_summaries,
         }
     }
@@ -345,14 +349,16 @@ impl LayoutSnapshot {
         let visible_source_range = visible_range(&visual_lines);
         let visible_block_range = 0..blocks.len();
         Self::new(
-            revision,
-            content_size.x,
-            content_size,
+            LayoutSnapshotMetadata {
+                revision,
+                viewport_width: content_size.x,
+                content_size,
+                visible_source_range,
+                visible_block_range,
+            },
             visual_lines.into(),
             blocks.into(),
             clusters.into(),
-            visible_source_range,
-            visible_block_range,
             Arc::from([]),
         )
     }

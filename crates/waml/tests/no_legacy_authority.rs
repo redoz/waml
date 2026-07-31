@@ -632,7 +632,7 @@ fn only_waml_non_dev_depends_on_waml_syntax() {
 
     assert_eq!(
         direct_users,
-        BTreeSet::from(["waml".to_owned()]),
+        BTreeSet::from(["waml".to_owned(), "waml-markdown-editor".to_owned()]),
         "workspace packages with a direct non-dev waml-syntax dependency changed"
     );
 }

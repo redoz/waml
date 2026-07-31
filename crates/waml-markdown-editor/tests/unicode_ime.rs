@@ -68,7 +68,7 @@ fn insertion_affinity_translates_equal_boundaries_differently() {
         waml_markdown_editor::selection::translate_position(
             old.snapshot(),
             before,
-            &[change.clone()],
+            std::slice::from_ref(&change),
         )
         .unwrap()
         .offset
@@ -98,7 +98,7 @@ fn insertion_affinity_translation_matches_session_indent_mapping() {
         let expected = waml_markdown_editor::selection::translate_position(
             old.snapshot(),
             position,
-            &[change.clone()],
+            std::slice::from_ref(&change),
         )
         .unwrap();
 
