@@ -7,6 +7,7 @@ use crate::{
         ProposedMarkdownEdit,
     },
     history::{History, HistoryEntry},
+    ime::{ImeComposition, ImeError},
     selection::{
         translate_position_with_map, Affinity, Selection, SelectionError, SelectionSet,
         TextPosition,
@@ -23,6 +24,7 @@ pub struct MarkdownDocumentSession {
     selections: SelectionSet,
     read_only: bool,
     history: History,
+    ime: Option<ImeComposition>,
 }
 
 impl MarkdownDocumentSession {
@@ -34,6 +36,7 @@ impl MarkdownDocumentSession {
             selections,
             read_only: false,
             history: History::default(),
+            ime: None,
         }
     }
 
@@ -55,6 +58,7 @@ impl MarkdownDocumentSession {
             selections,
             read_only: false,
             history: History::default(),
+            ime: None,
         })
     }
 
@@ -78,6 +82,95 @@ impl MarkdownDocumentSession {
     }
     pub fn break_history_group(&mut self) {
         self.history.break_group();
+    }
+
+    pub fn ime(&self) -> Option<&ImeComposition> {
+        self.ime.as_ref()
+    }
+
+    pub fn begin_ime(&mut self) -> Result<(), ImeError> {
+        if self.read_only {
+            return Err(ImeError::ReadOnly);
+        }
+        if self.ime.is_some() {
+            return Err(ImeError::AlreadyActive);
+        }
+        self.ime = Some(ImeComposition::new(
+            self.snapshot.clone(),
+            self.selections.clone(),
+        ));
+        Ok(())
+    }
+
+    pub fn update_ime(
+        &mut self,
+        preedit: &str,
+        utf16_selection: std::ops::Range<u32>,
+    ) -> Result<(), ImeError> {
+        let current = self.snapshot.revision();
+        let composition = self.ime.as_mut().ok_or(ImeError::NotActive)?;
+        if composition.base_revision() != current {
+            return Err(ImeError::StaleRevision {
+                base: composition.base_revision(),
+                current,
+            });
+        }
+        composition.update(preedit, utf16_selection)
+    }
+
+    pub fn commit_ime(
+        &mut self,
+        group: HistoryGroup,
+    ) -> Result<Option<ProposedMarkdownEdit>, ImeError> {
+        if self.read_only {
+            return Err(ImeError::ReadOnly);
+        }
+        let current = self.snapshot.revision();
+        let composition = self.ime.take().ok_or(ImeError::NotActive)?;
+        if composition.base_revision() != current {
+            let base = composition.base_revision();
+            self.ime = Some(composition);
+            return Err(ImeError::StaleRevision { base, current });
+        }
+        if composition.preedit().is_empty() {
+            self.restore_composition(composition);
+            return Ok(None);
+        }
+
+        let replacement: Arc<str> = Arc::from(composition.preedit());
+        let change = TextChange {
+            old_range: composition.replace_range(),
+            replacement: replacement.clone(),
+        };
+        let next = current.checked_next().expect("an IME revision can advance");
+        let after_text = apply_changes(self.snapshot.text(), std::slice::from_ref(&change))
+            .expect("a captured IME replacement range remains valid");
+        let caret = TextSize::try_from_usize(
+            composition.replace_range().start().to_usize() + replacement.len(),
+        )
+        .expect("an IME caret fits the source size");
+        let selection_after = SelectionSet::caret_in_text(next, &after_text, caret)
+            .expect("an IME replacement produces a valid caret");
+        let proposal = self
+            .apply_with_history(MarkdownEdit {
+                base_revision: current,
+                changes: vec![change],
+                selection_after,
+                history_group: group,
+            })
+            .expect("a validated IME edit applies to its captured revision");
+        Ok(Some(proposal))
+    }
+
+    pub fn cancel_ime(&mut self) {
+        if let Some(composition) = self.ime.take() {
+            self.restore_composition(composition);
+        }
+    }
+
+    fn restore_composition(&mut self, composition: ImeComposition) {
+        self.snapshot = composition.committed_snapshot().clone();
+        self.selections = composition.committed_selection().clone();
     }
 
     pub fn set_primary_offset(&mut self, offset: TextSize) -> Result<(), MarkdownEditError> {
@@ -199,6 +292,7 @@ impl MarkdownDocumentSession {
         command: EditCommand,
         group: HistoryGroup,
     ) -> Result<EditOutcome, MarkdownEditError> {
+        self.cancel_ime();
         let skipped_primary = self.closing_delimiter_target(&command);
         let clipboard = if matches!(command, EditCommand::Cut) {
             Some(
@@ -256,6 +350,7 @@ impl MarkdownDocumentSession {
     }
 
     pub fn undo(&mut self) -> Result<Option<ProposedMarkdownEdit>, MarkdownEditError> {
+        self.cancel_ime();
         let Some(group) = self.history.undo.pop() else {
             return Ok(None);
         };
@@ -276,6 +371,7 @@ impl MarkdownDocumentSession {
     }
 
     pub fn redo(&mut self) -> Result<Option<ProposedMarkdownEdit>, MarkdownEditError> {
+        self.cancel_ime();
         let Some(group) = self.history.redo.pop() else {
             return Ok(None);
         };
@@ -293,6 +389,7 @@ impl MarkdownDocumentSession {
         &mut self,
         edit: MarkdownEdit,
     ) -> Result<ProposedMarkdownEdit, MarkdownEditError> {
+        self.cancel_ime();
         self.apply_edit_without_history(edit)
     }
 

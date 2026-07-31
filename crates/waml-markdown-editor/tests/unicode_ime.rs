@@ -123,3 +123,41 @@ fn triple_click_selects_one_logical_crlf_source_line() {
         "second\r\n"
     );
 }
+
+#[test]
+fn ime_preedit_is_visible_state_but_not_a_published_revision() {
+    let mut session = session("ab");
+    session
+        .set_primary_offset(TextSize::try_from_usize(1).unwrap())
+        .unwrap();
+    session.begin_ime().unwrap();
+    session.update_ime("に", 0..1).unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "ab");
+    assert_eq!(session.local_revision(), DocumentRevision::INITIAL);
+    assert_eq!(session.ime().unwrap().preedit(), "に");
+
+    let proposal = session
+        .commit_ime(HistoryGroup::isolated())
+        .unwrap()
+        .unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "aにb");
+    assert_eq!(session.local_revision().get(), 1);
+    assert_eq!(proposal.edit.changes.len(), 1);
+    assert!(session.ime().is_none());
+}
+
+#[test]
+fn ime_cancel_restores_the_last_committed_snapshot_and_selection() {
+    let mut session = session("a😀b");
+    session
+        .set_primary_offset(TextSize::try_from_usize(1).unwrap())
+        .unwrap();
+    let committed = session.snapshot().clone();
+    let selection = session.selections().clone();
+    session.begin_ime().unwrap();
+    session.update_ime("漢字", 0..2).unwrap();
+    session.cancel_ime();
+    assert!(Arc::ptr_eq(session.snapshot(), &committed));
+    assert_eq!(session.selections(), &selection);
+    assert!(session.ime().is_none());
+}
