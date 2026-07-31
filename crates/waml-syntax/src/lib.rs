@@ -21,12 +21,13 @@ pub use incremental::{
     ReparseOutcome, TextChange,
 };
 pub use markdown::{
-    parse_markdown, reparse_markdown, ConfirmedHeading, FencedCodeInfo, MarkdownEntity,
-    MarkdownHeading, MarkdownImage, MarkdownLink, MarkdownLinkKind, MarkdownList, MarkdownListKind,
-    MarkdownRawHtml, MarkdownReparseOutcome, MarkdownSemanticRole, MarkdownSourceRole,
-    MarkdownStructureMap, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxSpan,
-    MarkdownSyntaxUpdate, MarkdownTableCell, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
-    OkfSyntaxDiagnosticCode, SyntaxIdentity, WamlLanguageIsland, WamlSectionKind,
+    parse_markdown, reparse_markdown, ConfirmedHeading, FencedCodeInfo, HtmlTagFilter,
+    MarkdownEntity, MarkdownHeading, MarkdownImage, MarkdownLink, MarkdownLinkKind, MarkdownList,
+    MarkdownListKind, MarkdownRawHtml, MarkdownReparseOutcome, MarkdownSemanticRole,
+    MarkdownSourceRole, MarkdownStructureMap, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot,
+    MarkdownSyntaxSpan, MarkdownSyntaxUpdate, MarkdownTableCell, OkfMarkdownLanguage,
+    OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity, TableAlignment, TaskListState,
+    WamlLanguageIsland, WamlSectionKind,
 };
 pub use red::{
     RewriteError, SyntaxElement, SyntaxLocator, SyntaxNode, SyntaxPath, SyntaxSeverity,

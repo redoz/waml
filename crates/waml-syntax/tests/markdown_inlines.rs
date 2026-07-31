@@ -294,10 +294,10 @@ fn image_opener_stays_active_after_a_nested_link() {
         &source[links[1].source_range.start().to_usize()..links[1].source_range.end().to_usize()],
         "[inner](/x)"
     );
-    assert_eq!(links[0].owner, links[1].owner);
+    assert_eq!(links[0].identity, links[1].identity);
     assert_eq!(
         snapshot.queries().reference_backlinks("img").as_ref(),
-        [links[0].owner]
+        [links[0].identity]
     );
 }
 

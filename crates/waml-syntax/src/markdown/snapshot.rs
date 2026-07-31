@@ -287,7 +287,7 @@ pub fn parse_markdown(
 ) -> Result<Arc<MarkdownSyntaxSnapshot>, ParseError> {
     let parsed = crate::parse_okf_markdown(text.clone(), dialect)?;
     let diagnostics = Arc::from(parsed.tree.diagnostics());
-    let queries = Arc::new(queries(&parsed.tree, parsed.structure.as_ref())?);
+    let queries = Arc::new(queries(&parsed.tree, parsed.structure.islands.clone())?);
     Ok(Arc::new(MarkdownSyntaxSnapshot {
         revision,
         text,
@@ -337,7 +337,7 @@ pub fn reparse_markdown(
         }
     };
     let diagnostics = Arc::from(tree.diagnostics());
-    let queries = Arc::new(queries(&tree, structure.as_ref())?);
+    let queries = Arc::new(queries(&tree, structure.islands.clone())?);
     Ok(MarkdownSyntaxUpdate {
         snapshot: Arc::new(MarkdownSyntaxSnapshot {
             revision,
@@ -354,47 +354,45 @@ pub fn reparse_markdown(
 
 fn queries(
     tree: &SyntaxTree<crate::OkfMarkdownLanguage>,
-    structure: &MarkdownStructureMap,
+    islands: Arc<[super::WamlLanguageIsland]>,
 ) -> Result<MarkdownSyntaxQueries, ParseError> {
-    let mut links = Vec::new();
-    let mut entities = Vec::new();
-    let mut backlinks = HashMap::<Arc<str>, Vec<super::SyntaxIdentity>>::new();
+    let mut collected = Collected::default();
     let mut spans = Vec::new();
-    collect_queries(&tree.root(), &mut links, &mut entities, &mut backlinks)?;
+    collect_queries(&tree.root(), &mut collected)?;
     collect_spans(
         &tree.root(),
         None,
         MarkdownSemanticRole::Document,
         &mut spans,
     )?;
-    links.sort_by_key(|link| (link.source_range.start(), link.source_range.end()));
+    collected
+        .links
+        .sort_by_key(|link| (link.source_range.start(), link.source_range.end()));
+    collected
+        .images
+        .sort_by_key(|image| (image.source_range.start(), image.source_range.end()));
     spans.sort_by_key(|span| (span.range.start(), span.range.end()));
-    let islands: Arc<[super::WamlLanguageIsland]> = structure.islands.clone();
-    let heading_by_owner = HashMap::new();
-    let list_by_owner = HashMap::new();
-    let cell_by_owner = HashMap::new();
-    let link_by_owner = links
-        .iter()
-        .enumerate()
-        .map(|(i, value)| (value.identity, i))
-        .collect();
-    let image_by_owner = HashMap::new();
-    let html_by_owner = HashMap::new();
-    let fenced_by_owner = HashMap::new();
+    let heading_by_owner = identity_map(&collected.headings, |value| value.owner);
+    let list_by_owner = identity_map(&collected.lists, |value| value.owner);
+    let cell_by_owner = identity_map(&collected.cells, |value| value.owner);
+    let link_by_owner = identity_map(&collected.links, |value| value.owner);
+    let image_by_owner = identity_map(&collected.images, |value| value.owner);
+    let html_by_owner = identity_map(&collected.html, |value| value.owner);
+    let fenced_by_owner = identity_map(&collected.fenced, |value| value.owner);
     let island_by_owner = islands
         .iter()
         .enumerate()
         .map(|(i, value)| (value.owner, i))
         .collect();
     Ok(MarkdownSyntaxQueries {
-        links: links.into(),
-        images: Arc::from([]),
+        links: collected.links.into(),
+        images: collected.images.into(),
         spans: spans.into(),
-        headings: Arc::from([]),
-        lists: Arc::from([]),
-        cells: Arc::from([]),
-        html: Arc::from([]),
-        fenced: Arc::from([]),
+        headings: collected.headings.into(),
+        lists: collected.lists.into(),
+        cells: collected.cells.into(),
+        html: collected.html.into(),
+        fenced: collected.fenced.into(),
         islands,
         diagnostics: Arc::from(tree.diagnostics()),
         heading_by_owner,
@@ -405,8 +403,9 @@ fn queries(
         html_by_owner,
         fenced_by_owner,
         island_by_owner,
-        entities: entities.into(),
-        backlinks: backlinks
+        entities: collected.entities.into(),
+        backlinks: collected
+            .backlinks
             .into_iter()
             .map(|(label, owners)| (label, owners.into()))
             .collect::<HashMap<_, _>>()
@@ -414,18 +413,125 @@ fn queries(
     })
 }
 
+#[derive(Default)]
+struct Collected {
+    links: Vec<MarkdownLink>,
+    images: Vec<MarkdownImage>,
+    headings: Vec<MarkdownHeading>,
+    lists: Vec<MarkdownList>,
+    cells: Vec<MarkdownTableCell>,
+    html: Vec<MarkdownRawHtml>,
+    fenced: Vec<FencedCodeInfo>,
+    entities: Vec<MarkdownEntity>,
+    backlinks: HashMap<Arc<str>, Vec<SyntaxIdentity>>,
+}
+
+fn identity_map<T>(
+    values: &[T],
+    owner: impl Fn(&T) -> SyntaxIdentity,
+) -> HashMap<SyntaxIdentity, usize> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| (owner(value), index))
+        .collect()
+}
+
 fn collect_queries(
     node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
-    links: &mut Vec<MarkdownLink>,
-    entities: &mut Vec<MarkdownEntity>,
-    out: &mut HashMap<Arc<str>, Vec<super::SyntaxIdentity>>,
+    out: &mut Collected,
 ) -> Result<(), ParseError> {
-    if matches!(
-        node.kind(),
-        crate::OkfMarkdownSyntaxKind::Link
-            | crate::OkfMarkdownSyntaxKind::Image
-            | crate::OkfMarkdownSyntaxKind::Autolink
-    ) {
+    use crate::OkfMarkdownSyntaxKind as Kind;
+    if node.kind() != Kind::Root && is_semantic(node.kind()) && identity(node).is_none() {
+        return Err(ParseError::StructuralInvariant {
+            reason: format!(
+                "semantic Markdown {:?} node has no unique valid identity",
+                node.kind()
+            )
+            .into(),
+        });
+    }
+    let owner = identity(node);
+    match node.kind() {
+        Kind::AtxHeading | Kind::SetextHeading => {
+            let owner = owner.unwrap();
+            out.headings.push(MarkdownHeading {
+                owner,
+                range: node.range(),
+                content_range: token_cover(node, |kind| kind == Kind::TextToken)
+                    .unwrap_or(node.range()),
+                level: heading_level(node)?,
+            });
+        }
+        Kind::List | Kind::ListItem => {
+            let owner = owner.unwrap();
+            let marker = first_token(node, Kind::ListMarkerToken)
+                .ok_or_else(|| invariant("Markdown list has no marker"))?;
+            let marker_text = marker.text().write_to_string();
+            let kind = marker_text
+                .trim_end_matches(['.', ')'])
+                .parse::<u64>()
+                .map(|start| MarkdownListKind::Ordered { start })
+                .unwrap_or(MarkdownListKind::Bullet);
+            out.lists.push(MarkdownList {
+                owner,
+                range: node.range(),
+                kind,
+                task: descendant_annotation(node, super::gfm::TASK_STATE)
+                    .as_deref()
+                    .and_then(parse_task_state),
+            });
+        }
+        Kind::TableCell => {
+            let owner = owner.unwrap();
+            let alignment = annotation_data(node, super::gfm::TABLE_ALIGNMENT)
+                .and_then(parse_alignment)
+                .ok_or_else(|| invariant("Markdown table cell has invalid alignment"))?;
+            out.cells.push(MarkdownTableCell {
+                owner,
+                range: node.range(),
+                alignment,
+            });
+        }
+        Kind::HtmlBlock | Kind::RawHtml => {
+            let owner = owner.unwrap();
+            let filter = annotation_data(node, super::gfm::HTML_TAG_FILTER)
+                .and_then(parse_html_filter)
+                .unwrap_or(super::HtmlTagFilter::Allowed);
+            out.html.push(MarkdownRawHtml {
+                owner,
+                range: node.range(),
+                filter,
+            });
+        }
+        Kind::FencedCodeBlock => {
+            let owner = owner.unwrap();
+            let fence = first_token(node, Kind::CodeFenceToken)
+                .ok_or_else(|| invariant("fenced code has no opening fence"))?;
+            let info_token = first_token(node, Kind::InfoStringToken);
+            let info = info_token
+                .as_ref()
+                .map(|token| token.text().write_to_string().trim().to_owned())
+                .unwrap_or_default();
+            let content_range = token_cover(node, |kind| kind == Kind::CodeTextToken)
+                .unwrap_or(TextRange::new(fence.range().end(), fence.range().end()).unwrap());
+            out.fenced.push(FencedCodeInfo {
+                owner,
+                source_range: node.range(),
+                fence_range: fence.range(),
+                info_range: info_token.as_ref().map(|token| token.range()),
+                content_range,
+                language: info
+                    .split_ascii_whitespace()
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .map(Arc::from),
+                info: Arc::from(info),
+            });
+        }
+        _ => {}
+    }
+    if matches!(node.kind(), Kind::Link | Kind::Image | Kind::Autolink) {
         let annotations = node.syntax_annotations();
         let destination = required_annotation(
             annotations,
@@ -438,7 +544,7 @@ fn collect_queries(
             "link destination range",
         )
         .and_then(parse_annotation_range)?;
-        let kind = match required_annotation(
+        let annotated_kind = match required_annotation(
             annotations,
             super::inline::link_kind_annotation(),
             "link kind",
@@ -453,10 +559,10 @@ fn collect_queries(
                 })
             }
         };
-        let identity = identity(node).ok_or_else(|| ParseError::StructuralInvariant {
+        let owner = identity(node).ok_or_else(|| ParseError::StructuralInvariant {
             reason: "semantic Markdown link has no identity".into(),
         })?;
-        let owner =
+        let identity =
             required_annotation(annotations, super::inline::owner_annotation(), "link owner")?
                 .parse::<u64>()
                 .ok()
@@ -470,12 +576,33 @@ fn collect_queries(
             super::inline::link_annotation(annotations, super::inline::reference_label_annotation())
                 .map(Arc::from)
         {
-            let owners = out.entry(label).or_default();
-            if !owners.contains(&owner) {
-                owners.push(owner);
+            let owners = out.backlinks.entry(label).or_default();
+            if !owners.contains(&identity) {
+                owners.push(identity);
             }
         }
-        links.push(MarkdownLink {
+        let kind = if node.kind() == Kind::Autolink {
+            if first_token(node, Kind::AutolinkOpenToken).is_some() {
+                MarkdownLinkKind::Autolink
+            } else {
+                MarkdownLinkKind::ExtendedAutolink
+            }
+        } else {
+            annotated_kind
+        };
+        let content_range = delimited_content(node).unwrap_or(node.range());
+        if node.kind() == Kind::Image {
+            out.images.push(MarkdownImage {
+                owner,
+                source_range: node.range(),
+                alt_range: content_range,
+                source: destination.clone(),
+                source_definition_range: Some(destination_range),
+                title: title.clone(),
+                kind,
+            });
+        }
+        out.links.push(MarkdownLink {
             destination,
             destination_range: Some(destination_range),
             title,
@@ -483,9 +610,9 @@ fn collect_queries(
             identity,
             owner,
             source_range: node.range(),
-            content_range: node.range(),
+            content_range,
         });
-    } else if node.kind() == crate::OkfMarkdownSyntaxKind::Entity {
+    } else if node.kind() == Kind::Entity {
         let value = required_annotation(
             node.syntax_annotations(),
             super::inline::entity_value_annotation(),
@@ -494,7 +621,7 @@ fn collect_queries(
         let identity = identity(node).ok_or_else(|| ParseError::StructuralInvariant {
             reason: "semantic Markdown entity has no identity".into(),
         })?;
-        entities.push(MarkdownEntity {
+        out.entities.push(MarkdownEntity {
             value,
             source_range: node.range(),
             identity,
@@ -502,7 +629,7 @@ fn collect_queries(
     }
     for child in node.children() {
         if let SyntaxElement::Node(child) = child {
-            collect_queries(&child, links, entities, out)?;
+            collect_queries(&child, out)?;
         }
     }
     Ok(())
@@ -512,6 +639,168 @@ fn identity(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Option<supe
     crate::syntax_identity(node)
 }
 
+fn invariant(reason: &'static str) -> ParseError {
+    ParseError::StructuralInvariant {
+        reason: reason.into(),
+    }
+}
+
+fn is_semantic(kind: crate::OkfMarkdownSyntaxKind) -> bool {
+    use crate::OkfMarkdownSyntaxKind as Kind;
+    matches!(
+        kind,
+        Kind::BlockQuote
+            | Kind::List
+            | Kind::ListItem
+            | Kind::Paragraph
+            | Kind::AtxHeading
+            | Kind::SetextHeading
+            | Kind::ThematicBreak
+            | Kind::IndentedCodeBlock
+            | Kind::FencedCodeBlock
+            | Kind::HtmlBlock
+            | Kind::LinkReferenceDefinition
+            | Kind::Table
+            | Kind::TableHead
+            | Kind::TableBody
+            | Kind::TableRow
+            | Kind::TableCell
+            | Kind::Text
+            | Kind::Escape
+            | Kind::Entity
+            | Kind::CodeSpan
+            | Kind::Emphasis
+            | Kind::StrongEmphasis
+            | Kind::Strikethrough
+            | Kind::Link
+            | Kind::Image
+            | Kind::Autolink
+            | Kind::RawHtml
+            | Kind::SoftLineBreak
+            | Kind::HardLineBreak
+            | Kind::WamlSection
+            | Kind::SkippedTokensSyntax
+    )
+}
+
+fn annotation_data<'a>(
+    node: &'a crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+    kind: &str,
+) -> Option<&'a str> {
+    node.syntax_annotations()
+        .iter()
+        .find(|annotation| annotation.kind() == kind)
+        .and_then(crate::SyntaxAnnotation::data)
+}
+
+fn descendant_annotation(
+    node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+    kind: &str,
+) -> Option<Arc<str>> {
+    if let Some(value) = annotation_data(node, kind) {
+        return Some(Arc::from(value));
+    }
+    for child in node.children() {
+        if let SyntaxElement::Node(child) = child {
+            if let Some(value) = descendant_annotation(&child, kind) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn parse_alignment(value: &str) -> Option<super::TableAlignment> {
+    match value {
+        "none" => Some(super::TableAlignment::None),
+        "left" => Some(super::TableAlignment::Left),
+        "center" => Some(super::TableAlignment::Center),
+        "right" => Some(super::TableAlignment::Right),
+        _ => None,
+    }
+}
+
+fn parse_task_state(value: &str) -> Option<super::TaskListState> {
+    match value {
+        "unchecked" => Some(super::TaskListState::Unchecked),
+        "checked" => Some(super::TaskListState::Checked),
+        _ => None,
+    }
+}
+
+fn parse_html_filter(value: &str) -> Option<super::HtmlTagFilter> {
+    match value {
+        "allowed" => Some(super::HtmlTagFilter::Allowed),
+        "disallowed" => Some(super::HtmlTagFilter::Disallowed),
+        _ => None,
+    }
+}
+
+fn first_token(
+    node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+    expected: crate::OkfMarkdownSyntaxKind,
+) -> Option<crate::SyntaxToken<crate::OkfMarkdownLanguage>> {
+    for child in node.children() {
+        match child {
+            SyntaxElement::Token(token) if token.kind() == expected => return Some(token),
+            SyntaxElement::Node(child) => {
+                if let Some(token) = first_token(&child, expected) {
+                    return Some(token);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn token_cover(
+    node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+    predicate: impl Copy + Fn(crate::OkfMarkdownSyntaxKind) -> bool,
+) -> Option<TextRange> {
+    let mut result: Option<TextRange> = None;
+    for child in node.children() {
+        match child {
+            SyntaxElement::Token(token) if predicate(token.kind()) => {
+                result = Some(result.map_or(token.range(), |range| range.cover(token.range())));
+            }
+            SyntaxElement::Node(child) => {
+                if let Some(range) = token_cover(&child, predicate) {
+                    result = Some(result.map_or(range, |present| present.cover(range)));
+                }
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+fn delimited_content(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Option<TextRange> {
+    use crate::OkfMarkdownSyntaxKind as Kind;
+    let open = first_token(node, Kind::LinkLabelOpenToken)?;
+    let close = first_token(node, Kind::LinkLabelCloseToken)?;
+    TextRange::new(open.range().end(), close.range().start()).ok()
+}
+
+fn heading_level(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Result<u8, ParseError> {
+    use crate::OkfMarkdownSyntaxKind as Kind;
+    let marker = if node.kind() == Kind::AtxHeading {
+        first_token(node, Kind::HeadingMarkerToken)
+    } else {
+        first_token(node, Kind::SetextUnderlineToken)
+    }
+    .ok_or_else(|| invariant("Markdown heading has no marker"))?;
+    let value = marker.text().write_to_string();
+    if node.kind() == Kind::AtxHeading {
+        u8::try_from(value.bytes().take_while(|byte| *byte == b'#').count())
+            .map_err(|_| invariant("Markdown heading level is too large"))
+    } else if value.trim_start().starts_with('=') {
+        Ok(1)
+    } else {
+        Ok(2)
+    }
+}
+
 fn collect_spans(
     node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
     inherited: Option<SyntaxIdentity>,
@@ -519,9 +808,35 @@ fn collect_spans(
     out: &mut Vec<MarkdownSyntaxSpan>,
 ) -> Result<(), ParseError> {
     if node.kind() == crate::OkfMarkdownSyntaxKind::Root {
-        for child in node.children() {
-            if let SyntaxElement::Node(child) = child {
-                collect_spans(&child, None, MarkdownSemanticRole::Document, out)?;
+        let children: Vec<_> = node.children().collect();
+        let mut previous_owner = None;
+        for (index, child) in children.iter().enumerate() {
+            match child {
+                SyntaxElement::Node(child) => {
+                    collect_spans(child, None, MarkdownSemanticRole::Document, out)?;
+                    previous_owner = first_semantic_identity(child);
+                }
+                SyntaxElement::Token(token) if token.range().start() < token.range().end() => {
+                    let owner = previous_owner.or_else(|| {
+                        children[index + 1..].iter().find_map(|child| match child {
+                            SyntaxElement::Node(child) => first_semantic_identity(child),
+                            SyntaxElement::Token(_) => None,
+                        })
+                    });
+                    let owner = owner.ok_or_else(|| {
+                        invariant("top-level Markdown token has no semantic owner")
+                    })?;
+                    out.push(MarkdownSyntaxSpan {
+                        owner,
+                        range: token.range(),
+                        source_role: source_role(token.kind()),
+                        semantic_role: token_semantic_role(
+                            token.kind(),
+                            MarkdownSemanticRole::Document,
+                        ),
+                    });
+                }
+                SyntaxElement::Token(_) => {}
             }
         }
         return Ok(());
@@ -544,13 +859,24 @@ fn collect_spans(
                     owner,
                     range: token.range(),
                     source_role: source_role(token.kind()),
-                    semantic_role: role,
+                    semantic_role: token_semantic_role(token.kind(), role),
                 })
             }
             SyntaxElement::Token(_) => {}
         }
     }
     Ok(())
+}
+
+fn first_semantic_identity(
+    node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+) -> Option<SyntaxIdentity> {
+    identity(node).or_else(|| {
+        node.children().find_map(|child| match child {
+            SyntaxElement::Node(child) => first_semantic_identity(&child),
+            SyntaxElement::Token(_) => None,
+        })
+    })
 }
 
 fn source_role(kind: crate::OkfMarkdownSyntaxKind) -> MarkdownSourceRole {
@@ -564,6 +890,20 @@ fn source_role(kind: crate::OkfMarkdownSyntaxKind) -> MarkdownSourceRole {
         | EntityToken
         | InfoStringToken => MarkdownSourceRole::Content,
         _ => MarkdownSourceRole::SyntaxMarker,
+    }
+}
+
+fn token_semantic_role(
+    kind: crate::OkfMarkdownSyntaxKind,
+    parent: MarkdownSemanticRole,
+) -> MarkdownSemanticRole {
+    use crate::OkfMarkdownSyntaxKind as Kind;
+    match kind {
+        Kind::TextToken => MarkdownSemanticRole::Text,
+        Kind::TaskListMarkerToken => MarkdownSemanticRole::TaskMarker,
+        Kind::WhitespaceToken | Kind::NewlineToken => MarkdownSemanticRole::Whitespace,
+        Kind::BadToken => MarkdownSemanticRole::Recovery,
+        _ => parent,
     }
 }
 
@@ -643,4 +983,25 @@ fn parse_annotation_range(value: Arc<str>) -> Result<TextRange, ParseError> {
     .map_err(|_| ParseError::StructuralInvariant {
         reason: "semantic Markdown link has reversed destination range".into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{GreenElement, GreenFactory, OkfMarkdownSyntaxKind as Kind};
+
+    #[test]
+    fn query_index_rejects_semantic_node_without_identity() {
+        let factory = GreenFactory::<OkfMarkdownLanguage>::new();
+        let semantic = factory.node(Kind::Text, []).unwrap();
+        let root = factory
+            .node(Kind::Root, [GreenElement::Node(semantic)])
+            .unwrap();
+        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
+
+        assert!(matches!(
+            queries(&tree, Arc::from([])),
+            Err(ParseError::StructuralInvariant { .. })
+        ));
+    }
 }

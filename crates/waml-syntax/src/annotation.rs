@@ -8,14 +8,17 @@ use std::{num::NonZeroU64, sync::Arc};
 pub fn syntax_identity(
     node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
 ) -> Option<crate::SyntaxIdentity> {
-    let mut identities = node
+    let mut annotations = node
         .syntax_annotations()
         .iter()
-        .filter(|annotation| annotation.kind() == "waml.markdown.identity")
-        .filter_map(|annotation| annotation.data())
-        .filter_map(crate::SyntaxIdentity::from_annotation_data);
-    let identity = identities.next()?;
-    identities.next().is_none().then_some(identity)
+        .filter(|annotation| annotation.kind() == "waml.markdown.identity");
+    let annotation = annotations.next()?;
+    if annotations.next().is_some() {
+        return None;
+    }
+    annotation
+        .data()
+        .and_then(crate::SyntaxIdentity::from_annotation_data)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -105,4 +108,36 @@ pub fn find_annotation<L: SyntaxLanguage>(
     }
     go(tree.root(), id, &mut out);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MarkdownDialect, OkfMarkdownSyntaxKind, SyntaxTree};
+
+    fn annotated_node(data: &[&str]) -> crate::SyntaxNode<crate::OkfMarkdownLanguage> {
+        let annotations = data
+            .iter()
+            .enumerate()
+            .map(|(index, data)| {
+                SyntaxAnnotation::new(
+                    NonZeroU64::new(index as u64 + 1).unwrap(),
+                    "waml.markdown.identity",
+                    Some(Arc::from(*data)),
+                )
+            })
+            .collect::<Vec<_>>();
+        let root = GreenFactory::new()
+            .node_with_annotations(OkfMarkdownSyntaxKind::Text, [], annotations.into())
+            .unwrap();
+        SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT).root()
+    }
+
+    #[test]
+    fn syntax_identity_requires_one_valid_kind_occurrence() {
+        assert_eq!(syntax_identity(&annotated_node(&["7"])).unwrap().get(), 7);
+        assert!(syntax_identity(&annotated_node(&["0"])).is_none());
+        assert!(syntax_identity(&annotated_node(&["bad", "7"])).is_none());
+        assert!(syntax_identity(&annotated_node(&["7", "7"])).is_none());
+    }
 }
