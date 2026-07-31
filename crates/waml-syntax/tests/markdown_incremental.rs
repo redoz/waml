@@ -1,7 +1,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use waml_syntax::{
-    parse_markdown, reparse_markdown, DocumentRevision, FullReparseReason, GreenElement,
+    parse_markdown, reparse_markdown, DocumentRevision, FullReparseReason, GreenElement, GreenText,
     MarkdownDialect, MarkdownLinkKind, MarkdownReparseOutcome, SourceText, SyntaxElement,
     SyntaxIdentity, SyntaxNode, TextChange, TextRange, TextSize,
 };
@@ -66,6 +66,36 @@ fn has_shared_source_independent_green(
         &mut new,
     );
     !old.is_disjoint(&new)
+}
+
+fn assert_source_backed_green_uses(
+    element: &GreenElement<waml_syntax::OkfMarkdownLanguage>,
+    source: &Arc<String>,
+) {
+    match element {
+        GreenElement::Node(node) => {
+            for child in node.children() {
+                assert_source_backed_green_uses(child, source);
+            }
+        }
+        GreenElement::Token(token) => {
+            for text in std::iter::once(token.text()).chain(
+                token
+                    .leading_trivia()
+                    .iter()
+                    .chain(token.trailing_trivia())
+                    .map(|trivia| &trivia.text),
+            ) {
+                if let GreenText::SourceSlice {
+                    source: token_source,
+                    ..
+                } = text
+                {
+                    assert!(Arc::ptr_eq(source, token_source.shared()));
+                }
+            }
+        }
+    }
 }
 
 fn node_for_identity(
@@ -140,13 +170,35 @@ fn semantic_fingerprint(
         .islands
         .iter()
         .map(|island| {
+            let owner = node_for_identity(snapshot.tree().root(), island.owner)
+                .map(|node| (node.kind(), node.range()));
             format!(
-                "{:?}:{:?}:{:?}",
-                island.kind, island.heading_range, island.content_range
+                "{:?}:{:?}:{:?}:{owner:?}",
+                island.kind, island.heading_range, island.content_range,
             )
         })
         .collect();
     (links, diagnostics, structure, islands)
+}
+
+fn assert_snapshot_matches_full_oracle(snapshot: &waml_syntax::MarkdownSyntaxSnapshot, new: &str) {
+    let full = parse_markdown(
+        DocumentRevision::new(snapshot.revision().get() + 1),
+        text(new),
+        MarkdownDialect::CommonMarkCurrent,
+    )
+    .unwrap();
+    assert_eq!(snapshot.text().shared().as_str(), new);
+    assert_eq!(snapshot.tree().write_to_string(), new);
+    assert_eq!(
+        structural_fingerprint(snapshot),
+        structural_fingerprint(&full)
+    );
+    assert_eq!(semantic_fingerprint(snapshot), semantic_fingerprint(&full));
+    assert_eq!(
+        reference_destinations(snapshot),
+        reference_destinations(&full)
+    );
 }
 
 fn assert_matches_full_oracle(old: &str, new: &str, changes: &[TextChange]) {
@@ -157,23 +209,7 @@ fn assert_matches_full_oracle(old: &str, new: &str, changes: &[TextChange]) {
     )
     .unwrap();
     let update = reparse_markdown(&previous, DocumentRevision::new(1), text(new), changes).unwrap();
-    let full = parse_markdown(
-        DocumentRevision::new(1),
-        text(new),
-        MarkdownDialect::CommonMarkCurrent,
-    )
-    .unwrap();
-
-    assert_eq!(update.snapshot.text().shared().as_str(), new);
-    assert_eq!(update.snapshot.tree().write_to_string(), new);
-    assert_eq!(
-        structural_fingerprint(&update.snapshot),
-        structural_fingerprint(&full)
-    );
-    assert_eq!(
-        semantic_fingerprint(&update.snapshot),
-        semantic_fingerprint(&full)
-    );
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
     for window in update.affected_ranges.windows(2) {
         assert!(window[0].end() < window[1].start());
     }
@@ -229,6 +265,7 @@ fn definition_change_updates_non_contiguous_reference_dependents() {
         reference_destinations(&update.snapshot),
         reference_destinations(&oracle)
     );
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
     assert!(
         matches!(
             &update.outcome,
@@ -371,6 +408,7 @@ fn renamed_definition_invalidates_old_backlinks() {
     .unwrap();
 
     assert!(reference_destinations(&update.snapshot).is_empty());
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
     assert!(update
         .affected_ranges
         .iter()
@@ -585,6 +623,7 @@ fn overlapping_changes_use_the_named_full_fallback() {
         }
     );
     assert_eq!(update.affected_ranges.as_ref(), &[range(0, 5)]);
+    assert_snapshot_matches_full_oracle(&update.snapshot, "aXYf\n");
 }
 
 #[test]
@@ -607,24 +646,65 @@ fn new_text_change_mismatch_is_a_hard_error() {
     .err()
     .expect("mismatched changes must fail");
 
-    assert!(matches!(
-        error,
-        waml_syntax::ParseError::StructuralInvariant { .. }
-    ));
+    match error {
+        waml_syntax::ParseError::StructuralInvariant { reason } => assert_eq!(
+            reason.as_ref(),
+            "incremental changes do not reconstruct candidate source"
+        ),
+        other => panic!("unexpected mismatch error: {other:?}"),
+    }
+    assert_eq!(previous.text().shared().as_str(), "old\n");
+    assert_snapshot_matches_full_oracle(
+        &parse_markdown(
+            DocumentRevision::new(2),
+            text("new\n"),
+            MarkdownDialect::CommonMarkCurrent,
+        )
+        .unwrap(),
+        "new\n",
+    );
 }
 
 #[test]
 fn published_query_and_structure_owners_resolve_in_the_published_tree() {
-    let source = "[id]: /dest\n\nuse [x][id]\n\n# Model\n## Attributes\nname: String\n";
-    let snapshot = parse_markdown(
+    let old = "[id]: /old\n\nuse [x][id]\n\n# Model\n## Attributes\nname: String\n";
+    let new = "[id]: /dest\n\nuse [x][id]\n\n# Model\n## Attributes\nname: String\n";
+    let previous = parse_markdown(
         DocumentRevision::INITIAL,
-        text(source),
+        text(old),
         MarkdownDialect::CommonMarkCurrent,
     )
     .unwrap();
+    let new_text = text(new);
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        new_text.clone(),
+        &[TextChange {
+            old_range: range(old.find("/old").unwrap(), old.find("/old").unwrap() + 4),
+            replacement: Arc::from("/dest"),
+        }],
+    )
+    .unwrap();
+    let snapshot = update.snapshot;
+
+    assert!(Arc::ptr_eq(snapshot.text().shared(), new_text.shared()));
+    assert_source_backed_green_uses(
+        &GreenElement::Node(snapshot.tree().root_green().clone()),
+        new_text.shared(),
+    );
     for link in snapshot.queries().links() {
         assert!(node_for_identity(snapshot.tree().root(), link.owner).is_some());
         assert!(node_for_identity(snapshot.tree().root(), link.identity).is_some());
+    }
+    for image in snapshot.queries().images() {
+        assert!(node_for_identity(snapshot.tree().root(), image.owner).is_some());
+    }
+    for entity in snapshot.queries().entities() {
+        assert!(node_for_identity(snapshot.tree().root(), entity.identity).is_some());
+    }
+    for span in snapshot.queries().spans(range(0, new.len())) {
+        assert!(node_for_identity(snapshot.tree().root(), span.owner).is_some());
     }
     for island in snapshot.structure().islands.iter() {
         assert!(node_for_identity(snapshot.tree().root(), island.owner).is_some());

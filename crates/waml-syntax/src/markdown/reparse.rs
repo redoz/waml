@@ -393,7 +393,31 @@ fn splice_node(
             | OkfMarkdownSyntaxKind::Image
             | OkfMarkdownSyntaxKind::Autolink
     ) {
-        return Ok(oracle.clone());
+        let mut annotations = oracle
+            .annotations()
+            .iter()
+            .filter(|annotation| {
+                annotation.kind() != "waml.markdown.identity"
+                    && annotation.kind() != super::inline::owner_annotation()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        annotations.extend(
+            base.annotations()
+                .iter()
+                .filter(|annotation| {
+                    annotation.kind() == "waml.markdown.identity"
+                        || annotation.kind() == super::inline::owner_annotation()
+                })
+                .cloned(),
+        );
+        return GreenFactory::new()
+            .node_with_annotations(
+                oracle.kind(),
+                oracle.children().iter().cloned(),
+                annotations.into(),
+            )
+            .map_err(|_| ParseError::WidthOverflow);
     }
     let mut at = start;
     let mut changed = false;
