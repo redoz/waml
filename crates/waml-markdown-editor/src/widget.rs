@@ -95,6 +95,7 @@ pub enum DrawLayer {
 pub struct DrawRecorder {
     layers: Vec<DrawLayer>,
     snapshot_ptrs: Vec<*const LayoutSnapshot>,
+    primitive_counts: Vec<usize>,
 }
 
 impl DrawRecorder {
@@ -106,9 +107,20 @@ impl DrawRecorder {
         &self.snapshot_ptrs
     }
 
+    pub fn primitive_counts(&self) -> &[usize] {
+        &self.primitive_counts
+    }
+
     fn record(&mut self, layer: DrawLayer, layout: &Arc<LayoutSnapshot>) {
         self.layers.push(layer);
         self.snapshot_ptrs.push(Arc::as_ptr(layout));
+        self.primitive_counts.push(0);
+    }
+
+    fn set_last_primitive_count(&mut self, count: usize) {
+        if let Some(last) = self.primitive_counts.last_mut() {
+            *last = count;
+        }
     }
 }
 
@@ -151,6 +163,16 @@ pub struct MarkdownEditor {
     has_focus: bool,
     #[live]
     draw_text: DrawText,
+    #[live]
+    draw_background: DrawColor,
+    #[live]
+    draw_selection: DrawColor,
+    #[live]
+    draw_decoration: DrawColor,
+    #[live]
+    draw_embedded: DrawColor,
+    #[live]
+    draw_caret: DrawColor,
     #[rust]
     fonts: WidgetFonts,
     #[rust]
@@ -221,22 +243,13 @@ impl MarkdownEditor {
             Hit::FingerDown(event) if event.is_primary_hit() => {
                 cx.set_key_focus(self.view.area());
                 let point = event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y);
-                if event.modifiers.is_primary() {
-                    let layout = match self.layout.as_ref() {
-                        Some(layout) => layout.clone(),
-                        None => self.install_layout(cx, session)?,
-                    };
-                    return Ok(vec![self.make_action(
-                        MarkdownEditorAction::NavigationRequested {
-                            position: layout.point_to_source(point),
-                        },
-                    )]);
-                }
                 self.pointer_drag_active = true;
                 Some(EditorInput::PointerDown(PointerGesture {
                     point,
                     clicks: event.tap_count as u8,
-                    modifier: if event.modifiers.shift {
+                    modifier: if event.modifiers.is_primary() {
+                        SelectionModifier::Add
+                    } else if event.modifiers.shift {
                         SelectionModifier::Extend
                     } else {
                         SelectionModifier::Replace
@@ -246,8 +259,20 @@ impl MarkdownEditor {
             Hit::FingerMove(event) if self.pointer_drag_active => Some(EditorInput::PointerMove {
                 point: event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y),
             }),
-            Hit::FingerUp(_) if self.pointer_drag_active => {
+            Hit::FingerUp(event) if self.pointer_drag_active => {
                 self.pointer_drag_active = false;
+                if event.was_tap() {
+                    let point =
+                        event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y);
+                    if let Some((id, _)) = self.embedded_at(point) {
+                        return Ok(vec![self.make_action(
+                            MarkdownEditorAction::EmbeddedBlockEvent {
+                                id,
+                                event: EmbeddedBlockEvent::Activated,
+                            },
+                        )]);
+                    }
+                }
                 Some(EditorInput::PointerUp)
             }
             Hit::KeyFocusLost(_) => {
@@ -289,33 +314,108 @@ impl MarkdownEditor {
             DrawLayer::CaretAndIme,
         ] {
             self.last_draw.record(layer, &layout);
-            if layer == DrawLayer::Text {
-                let visible = layout.visible_source_range();
-                for run in document.text_runs.iter() {
-                    if run.range.end() <= visible.start() || visible.end() <= run.range.start() {
-                        continue;
+            let primitive_count = match layer {
+                DrawLayer::BlockBackground => {
+                    let mut count = 0;
+                    for block in &layout.blocks()[layout.visible_block_range()] {
+                        self.draw_background.color = vec4(0.97, 0.97, 0.97, 1.0);
+                        self.draw_background.draw_abs(cx, block.rect);
+                        count += 1;
                     }
-                    if let (Ok(text), Some(caret)) = (
-                        session.snapshot().text().slice(run.range),
-                        layout.source_to_point(TextPosition::new(
-                            run.range.start(),
-                            crate::selection::Affinity::Before,
-                        )),
-                    ) {
-                        self.fonts.configure_draw_text(
-                            run.metrics.font,
-                            run.metrics,
-                            &mut self.draw_text,
-                        );
-                        self.draw_text.draw_abs(cx, caret.rect.pos, text);
-                    }
+                    count
                 }
-            }
+                DrawLayer::Selection => {
+                    let mut count = 0;
+                    for selection in session.selections().as_slice() {
+                        for rect in layout.selection_rects(*selection).unwrap_or_default() {
+                            self.draw_selection.color = vec4(0.35, 0.55, 0.95, 0.28);
+                            self.draw_selection.draw_abs(cx, rect);
+                            count += 1;
+                        }
+                    }
+                    count
+                }
+                DrawLayer::Text => {
+                    let visible = layout.visible_source_range();
+                    let mut count = 0;
+                    for run in document.text_runs.iter() {
+                        if run.range.end() <= visible.start() || visible.end() <= run.range.start()
+                        {
+                            continue;
+                        }
+                        if let (Ok(text), Some(caret)) = (
+                            session.snapshot().text().slice(run.range),
+                            layout.source_to_point(TextPosition::new(
+                                run.range.start(),
+                                crate::selection::Affinity::Before,
+                            )),
+                        ) {
+                            self.fonts.configure_draw_text(
+                                run.metrics.font,
+                                run.metrics,
+                                &mut self.draw_text,
+                            );
+                            self.draw_text.draw_abs(cx, caret.rect.pos, text);
+                            count += 1;
+                        }
+                    }
+                    count
+                }
+                DrawLayer::Decoration => {
+                    // The neutral layout contract currently has no decoration geometry.
+                    let _ = &mut self.draw_decoration;
+                    0
+                }
+                DrawLayer::EmbeddedBlock => {
+                    let mut count = 0;
+                    for block in &layout.blocks()[layout.visible_block_range()] {
+                        if document
+                            .embedded_blocks
+                            .iter()
+                            .any(|item| item.id == block.id)
+                        {
+                            self.draw_embedded.color = vec4(0.88, 0.89, 0.91, 1.0);
+                            self.draw_embedded.draw_abs(cx, block.rect);
+                            count += 1;
+                        }
+                    }
+                    count
+                }
+                DrawLayer::CaretAndIme => {
+                    let mut count = 0;
+                    for selection in session.selections().as_slice() {
+                        if selection.anchor == selection.cursor {
+                            if let Some(caret) = layout.source_to_point(selection.cursor) {
+                                self.draw_caret.color = vec4(0.1, 0.1, 0.1, 1.0);
+                                self.draw_caret.draw_abs(cx, caret.rect);
+                                count += 1;
+                            }
+                        }
+                    }
+                    count
+                }
+            };
+            self.last_draw.set_last_primitive_count(primitive_count);
         }
         if cx.has_key_focus(self.view.area()) && !self.read_only {
             self.show_ime(cx, session);
         }
         Ok(self.view.draw_walk(cx, scope, walk))
+    }
+
+    fn embedded_at(&self, point: DVec2) -> Option<(LayoutElementId, Rect)> {
+        let layout = self.layout.as_ref()?;
+        let document = self.presentation.as_ref()?;
+        layout.blocks()[layout.visible_block_range()]
+            .iter()
+            .find(|block| {
+                block.rect.contains(point)
+                    && document
+                        .embedded_blocks
+                        .iter()
+                        .any(|item| item.id == block.id)
+            })
+            .map(|block| (block.id, block.rect))
     }
 
     fn install_layout(

@@ -243,6 +243,23 @@ fn mounted_read_only_widget_rejects_mutating_input() {
     assert_eq!(session.snapshot().text().shared().as_str(), "ab");
 }
 
+#[test]
+fn mounted_widget_primary_modifier_adds_a_selection() {
+    let (mut cx, widget, mut session) = mounted_editor("ab");
+    widget
+        .handle_input_with_session(
+            &mut cx,
+            &mut session,
+            EditorInput::PointerDown(PointerGesture {
+                point: dvec2(10.0, 0.0),
+                clicks: 1,
+                modifier: SelectionModifier::Add,
+            }),
+        )
+        .unwrap();
+    assert_eq!(session.selections().as_slice().len(), 2);
+}
+
 struct Fixture {
     session: MarkdownDocumentSession,
     controller: MarkdownEditorController,
