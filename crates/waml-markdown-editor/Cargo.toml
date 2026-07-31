@@ -1,0 +1,12 @@
+[package]
+name = "waml-markdown-editor"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "WAML-owned variable-metric Markdown editing foundation."
+
+[dependencies]
+waml-syntax = { path = "../waml-syntax" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "c38f529984eda61e258ca69fb50c6712d85c74c1" }
+unicode-segmentation = { workspace = true }

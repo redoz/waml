@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/waml", "crates/waml-cli", "crates/waml-ops-dto", "crates/waml-editor", "crates/waml-syntax"]
+members = ["crates/waml", "crates/waml-cli", "crates/waml-ops-dto", "crates/waml-editor", "crates/waml-syntax", "crates/waml-markdown-editor"]
 exclude = ["fuzz"]
 
 [workspace.package]
@@ -20,3 +20,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros"] }
 tower-lsp = "0.20"
 url = "2.5"
 proptest = "=1.8.0"
+unicode-segmentation = "1.12"

@@ -2333,6 +2333,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "waml-markdown-editor"
+version = "0.0.0"
+dependencies = [
+ "makepad-widgets",
+ "unicode-segmentation 1.13.3",
+ "waml-syntax",
+]
+
+[[package]]
 name = "waml-ops-dto"
 version = "0.0.0"
 dependencies = [
