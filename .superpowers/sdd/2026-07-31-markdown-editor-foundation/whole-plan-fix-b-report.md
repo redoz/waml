@@ -5,6 +5,34 @@
 The B2 and B3 layout gates are green. The whole plan is **NOT SAFE** until
 widget integration is complete and the whole plan has a new high review.
 
+## B4 approved design
+
+B4 will use one indexed layout view of blocks, text runs, and embedded content.
+It will replace separate run stacking with one source-ordered inline composer
+for paragraph and hanging content. Contiguous runs with identical full metrics
+will use one shaping call. Different styles will shape separately and compose
+on the same lines. Hanging intervals will be clamped to each original run, and
+each composed line will use shared vertical metrics.
+
+Logical cluster identity will be assigned from source range, original run
+order, and cluster order before bidi reordering or wrapping. Width and visual
+direction changes will not renumber the same logical clusters.
+
+The block cache will keep document-wide cheap summaries and exact measured
+heights, but it will keep full glyph payloads only in the current 320-pixel
+measurement window. Far scrolling will evict old full payloads. Compact block
+geometry will use an optional document index instead of a public sentinel, and
+layout snapshot payloads will have compile-time `Send + Sync` assertions.
+
+Table intrinsics will be exact for the full table. One indexed O(total table
+content) numeric pass will use a cheap intrinsic-measurement seam that does not
+retain glyphs or count as full viewport shaping. Its result will be cached by
+the full table-subtree content fingerprint. It will preserve unbreakable spans
+across adjacent styled runs, include nested and embedded cell content, and be
+reused on later layouts. Full inline shaping and glyph payloads will remain
+bounded to the viewport measurement window. Center and End alignment will be
+applied independently to every wrapped line.
+
 This report supersedes the former root `whole-plan-fix-b-report.md`. The old
 report described byte-based wrapping estimates, metrics-only renderer data,
 and contiguous document ranges for compact geometry. Those claims are not
