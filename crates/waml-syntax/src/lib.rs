@@ -9,7 +9,7 @@ mod red;
 mod shell;
 mod text;
 
-pub use annotation::{annotate_occurrence, find_annotation, SyntaxAnnotation};
+pub use annotation::{annotate_occurrence, find_annotation, syntax_identity, SyntaxAnnotation};
 pub use ast::{AstNode, AstSlots, SyntaxRewriter, SyntaxVisitor};
 pub use green::{
     write_green_to, GreenElement, GreenError, GreenFactory, GreenNode, GreenNodeData, GreenText,
@@ -21,9 +21,11 @@ pub use incremental::{
     ReparseOutcome, TextChange,
 };
 pub use markdown::{
-    parse_markdown, reparse_markdown, ConfirmedHeading, MarkdownEntity, MarkdownLink,
-    MarkdownLinkKind, MarkdownReparseOutcome, MarkdownStructureMap, MarkdownSyntaxQueries,
-    MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
+    parse_markdown, reparse_markdown, ConfirmedHeading, FencedCodeInfo, MarkdownEntity,
+    MarkdownHeading, MarkdownImage, MarkdownLink, MarkdownLinkKind, MarkdownList, MarkdownListKind,
+    MarkdownRawHtml, MarkdownReparseOutcome, MarkdownSemanticRole, MarkdownSourceRole,
+    MarkdownStructureMap, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxSpan,
+    MarkdownSyntaxUpdate, MarkdownTableCell, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
     OkfSyntaxDiagnosticCode, SyntaxIdentity, WamlLanguageIsland, WamlSectionKind,
 };
 pub use red::{

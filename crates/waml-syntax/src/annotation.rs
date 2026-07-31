@@ -4,6 +4,20 @@ use crate::{
 };
 use std::{num::NonZeroU64, sync::Arc};
 
+/// Gets the sole stable Markdown identity attached to a semantic node.
+pub fn syntax_identity(
+    node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+) -> Option<crate::SyntaxIdentity> {
+    let mut identities = node
+        .syntax_annotations()
+        .iter()
+        .filter(|annotation| annotation.kind() == "waml.markdown.identity")
+        .filter_map(|annotation| annotation.data())
+        .filter_map(crate::SyntaxIdentity::from_annotation_data);
+    let identity = identities.next()?;
+    identities.next().is_none().then_some(identity)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SyntaxAnnotation {
     id: NonZeroU64,

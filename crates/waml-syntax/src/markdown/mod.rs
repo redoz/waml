@@ -13,8 +13,10 @@ pub use kind::{
 pub(crate) use projection::{from_tree, waml_kind};
 pub use projection::{ConfirmedHeading, MarkdownStructureMap, WamlLanguageIsland, WamlSectionKind};
 pub use snapshot::{
-    parse_markdown, reparse_markdown, MarkdownEntity, MarkdownLink, MarkdownLinkKind,
-    MarkdownReparseOutcome, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
+    parse_markdown, reparse_markdown, FencedCodeInfo, MarkdownEntity, MarkdownHeading,
+    MarkdownImage, MarkdownLink, MarkdownLinkKind, MarkdownList, MarkdownListKind, MarkdownRawHtml,
+    MarkdownReparseOutcome, MarkdownSemanticRole, MarkdownSourceRole, MarkdownSyntaxQueries,
+    MarkdownSyntaxSnapshot, MarkdownSyntaxSpan, MarkdownSyntaxUpdate, MarkdownTableCell,
 };
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};

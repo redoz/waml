@@ -3,16 +3,121 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     reparse_okf_markdown_with_structure, DocumentRevision, FullReparseReason, MarkdownDialect,
     MarkdownStructureMap, OkfMarkdownLanguage, OkfSyntaxDiagnosticCode, ParseError, ReparseOutcome,
-    SourceText, SyntaxElement, SyntaxTree, TextChange, TextRange, TreeDiagnostic,
+    SourceText, SyntaxElement, SyntaxIdentity, SyntaxTree, TextChange, TextRange, TreeDiagnostic,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MarkdownLinkKind {
     Inline,
     Reference,
+    Autolink,
+    ExtendedAutolink,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkdownSourceRole {
+    Content,
+    SyntaxMarker,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkdownSemanticRole {
+    Document,
+    Frontmatter,
+    BlockQuote,
+    List,
+    ListItem,
+    Paragraph,
+    Heading,
+    ThematicBreak,
+    IndentedCode,
+    FencedCode,
+    HtmlBlock,
+    LinkDefinition,
+    Table,
+    TableHead,
+    TableBody,
+    TableRow,
+    TableCell,
+    Text,
+    Escape,
+    Entity,
+    CodeSpan,
+    Emphasis,
+    Strong,
+    Strikethrough,
+    Link,
+    Image,
+    Autolink,
+    RawHtml,
+    SoftBreak,
+    HardBreak,
+    TaskMarker,
+    Whitespace,
+    Recovery,
+    WamlSection,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarkdownSyntaxSpan {
+    pub owner: SyntaxIdentity,
+    pub range: TextRange,
+    pub source_role: MarkdownSourceRole,
+    pub semantic_role: MarkdownSemanticRole,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarkdownHeading {
+    pub owner: SyntaxIdentity,
+    pub range: TextRange,
+    pub content_range: TextRange,
+    pub level: u8,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkdownListKind {
+    Bullet,
+    Ordered { start: u64 },
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarkdownList {
+    pub owner: SyntaxIdentity,
+    pub range: TextRange,
+    pub kind: MarkdownListKind,
+    pub task: Option<super::TaskListState>,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarkdownTableCell {
+    pub owner: SyntaxIdentity,
+    pub range: TextRange,
+    pub alignment: super::TableAlignment,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarkdownRawHtml {
+    pub owner: SyntaxIdentity,
+    pub range: TextRange,
+    pub filter: super::HtmlTagFilter,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarkdownImage {
+    pub owner: SyntaxIdentity,
+    pub source_range: TextRange,
+    pub alt_range: TextRange,
+    pub source: Arc<str>,
+    pub source_definition_range: Option<TextRange>,
+    pub title: Option<Arc<str>>,
+    pub kind: MarkdownLinkKind,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FencedCodeInfo {
+    pub owner: SyntaxIdentity,
+    pub source_range: TextRange,
+    pub fence_range: TextRange,
+    pub info_range: Option<TextRange>,
+    pub content_range: TextRange,
+    pub info: Arc<str>,
+    pub language: Option<Arc<str>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MarkdownLink {
     pub destination: Arc<str>,
     pub destination_range: Option<TextRange>,
@@ -21,6 +126,7 @@ pub struct MarkdownLink {
     pub identity: super::SyntaxIdentity,
     pub owner: super::SyntaxIdentity,
     pub source_range: TextRange,
+    pub content_range: TextRange,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +139,23 @@ pub struct MarkdownEntity {
 #[derive(Default)]
 pub struct MarkdownSyntaxQueries {
     links: Arc<[MarkdownLink]>,
+    images: Arc<[MarkdownImage]>,
+    spans: Arc<[MarkdownSyntaxSpan]>,
+    headings: Arc<[MarkdownHeading]>,
+    lists: Arc<[MarkdownList]>,
+    cells: Arc<[MarkdownTableCell]>,
+    html: Arc<[MarkdownRawHtml]>,
+    fenced: Arc<[FencedCodeInfo]>,
+    islands: Arc<[super::WamlLanguageIsland]>,
+    diagnostics: Arc<[TreeDiagnostic<OkfSyntaxDiagnosticCode>]>,
+    heading_by_owner: HashMap<SyntaxIdentity, usize>,
+    list_by_owner: HashMap<SyntaxIdentity, usize>,
+    cell_by_owner: HashMap<SyntaxIdentity, usize>,
+    link_by_owner: HashMap<SyntaxIdentity, usize>,
+    image_by_owner: HashMap<SyntaxIdentity, usize>,
+    html_by_owner: HashMap<SyntaxIdentity, usize>,
+    fenced_by_owner: HashMap<SyntaxIdentity, usize>,
+    island_by_owner: HashMap<SyntaxIdentity, usize>,
     entities: Arc<[MarkdownEntity]>,
     backlinks: Arc<HashMap<Arc<str>, Arc<[super::SyntaxIdentity]>>>,
 }
@@ -42,6 +165,65 @@ impl MarkdownSyntaxQueries {
     }
     pub fn entities(&self) -> impl Iterator<Item = &MarkdownEntity> {
         self.entities.iter()
+    }
+    pub fn spans(&self, range: TextRange) -> impl Iterator<Item = &MarkdownSyntaxSpan> + '_ {
+        self.spans.iter().filter(move |span| {
+            span.range.start() < range.end() && range.start() < span.range.end()
+        })
+    }
+    pub fn images(&self) -> impl Iterator<Item = &MarkdownImage> + '_ {
+        self.images.iter()
+    }
+    pub fn heading(&self, owner: SyntaxIdentity) -> Option<&MarkdownHeading> {
+        self.heading_by_owner
+            .get(&owner)
+            .and_then(|&i| self.headings.get(i))
+    }
+    pub fn list(&self, owner: SyntaxIdentity) -> Option<&MarkdownList> {
+        self.list_by_owner
+            .get(&owner)
+            .and_then(|&i| self.lists.get(i))
+    }
+    pub fn table_cell(&self, owner: SyntaxIdentity) -> Option<&MarkdownTableCell> {
+        self.cell_by_owner
+            .get(&owner)
+            .and_then(|&i| self.cells.get(i))
+    }
+    pub fn link(&self, owner: SyntaxIdentity) -> Option<&MarkdownLink> {
+        self.link_by_owner
+            .get(&owner)
+            .and_then(|&i| self.links.get(i))
+    }
+    pub fn image(&self, owner: SyntaxIdentity) -> Option<&MarkdownImage> {
+        self.image_by_owner
+            .get(&owner)
+            .and_then(|&i| self.images.get(i))
+    }
+    pub fn raw_html(&self, owner: SyntaxIdentity) -> Option<&MarkdownRawHtml> {
+        self.html_by_owner
+            .get(&owner)
+            .and_then(|&i| self.html.get(i))
+    }
+    pub fn fenced_code(&self, owner: SyntaxIdentity) -> Option<&FencedCodeInfo> {
+        self.fenced_by_owner
+            .get(&owner)
+            .and_then(|&i| self.fenced.get(i))
+    }
+    pub fn island(&self, owner: SyntaxIdentity) -> Option<&super::WamlLanguageIsland> {
+        self.island_by_owner
+            .get(&owner)
+            .and_then(|&i| self.islands.get(i))
+    }
+    pub fn diagnostics(
+        &self,
+        range: TextRange,
+    ) -> impl Iterator<Item = &TreeDiagnostic<OkfSyntaxDiagnosticCode>> + '_ {
+        self.diagnostics.iter().filter(move |diagnostic| {
+            diagnostic.range.start() <= range.end() && range.start() <= diagnostic.range.end()
+        })
+    }
+    pub fn has_recovery(&self, range: TextRange) -> bool {
+        self.diagnostics(range).next().is_some()
     }
     pub fn reference_backlinks(&self, label: &str) -> Arc<[super::SyntaxIdentity]> {
         super::reference::normalize_label(label)
@@ -105,7 +287,7 @@ pub fn parse_markdown(
 ) -> Result<Arc<MarkdownSyntaxSnapshot>, ParseError> {
     let parsed = crate::parse_okf_markdown(text.clone(), dialect)?;
     let diagnostics = Arc::from(parsed.tree.diagnostics());
-    let queries = Arc::new(queries(&parsed.tree)?);
+    let queries = Arc::new(queries(&parsed.tree, parsed.structure.as_ref())?);
     Ok(Arc::new(MarkdownSyntaxSnapshot {
         revision,
         text,
@@ -155,7 +337,7 @@ pub fn reparse_markdown(
         }
     };
     let diagnostics = Arc::from(tree.diagnostics());
-    let queries = Arc::new(queries(&tree)?);
+    let queries = Arc::new(queries(&tree, structure.as_ref())?);
     Ok(MarkdownSyntaxUpdate {
         snapshot: Arc::new(MarkdownSyntaxSnapshot {
             revision,
@@ -172,13 +354,57 @@ pub fn reparse_markdown(
 
 fn queries(
     tree: &SyntaxTree<crate::OkfMarkdownLanguage>,
+    structure: &MarkdownStructureMap,
 ) -> Result<MarkdownSyntaxQueries, ParseError> {
     let mut links = Vec::new();
     let mut entities = Vec::new();
     let mut backlinks = HashMap::<Arc<str>, Vec<super::SyntaxIdentity>>::new();
+    let mut spans = Vec::new();
     collect_queries(&tree.root(), &mut links, &mut entities, &mut backlinks)?;
+    collect_spans(
+        &tree.root(),
+        None,
+        MarkdownSemanticRole::Document,
+        &mut spans,
+    )?;
+    links.sort_by_key(|link| (link.source_range.start(), link.source_range.end()));
+    spans.sort_by_key(|span| (span.range.start(), span.range.end()));
+    let islands: Arc<[super::WamlLanguageIsland]> = structure.islands.clone();
+    let heading_by_owner = HashMap::new();
+    let list_by_owner = HashMap::new();
+    let cell_by_owner = HashMap::new();
+    let link_by_owner = links
+        .iter()
+        .enumerate()
+        .map(|(i, value)| (value.identity, i))
+        .collect();
+    let image_by_owner = HashMap::new();
+    let html_by_owner = HashMap::new();
+    let fenced_by_owner = HashMap::new();
+    let island_by_owner = islands
+        .iter()
+        .enumerate()
+        .map(|(i, value)| (value.owner, i))
+        .collect();
     Ok(MarkdownSyntaxQueries {
         links: links.into(),
+        images: Arc::from([]),
+        spans: spans.into(),
+        headings: Arc::from([]),
+        lists: Arc::from([]),
+        cells: Arc::from([]),
+        html: Arc::from([]),
+        fenced: Arc::from([]),
+        islands,
+        diagnostics: Arc::from(tree.diagnostics()),
+        heading_by_owner,
+        list_by_owner,
+        cell_by_owner,
+        link_by_owner,
+        image_by_owner,
+        html_by_owner,
+        fenced_by_owner,
+        island_by_owner,
         entities: entities.into(),
         backlinks: backlinks
             .into_iter()
@@ -257,6 +483,7 @@ fn collect_queries(
             identity,
             owner,
             source_range: node.range(),
+            content_range: node.range(),
         });
     } else if node.kind() == crate::OkfMarkdownSyntaxKind::Entity {
         let value = required_annotation(
@@ -282,11 +509,101 @@ fn collect_queries(
 }
 
 fn identity(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Option<super::SyntaxIdentity> {
-    node.syntax_annotations()
-        .iter()
-        .find(|annotation| annotation.kind() == "waml.markdown.identity")
-        .and_then(|annotation| annotation.data())
-        .and_then(super::SyntaxIdentity::from_annotation_data)
+    crate::syntax_identity(node)
+}
+
+fn collect_spans(
+    node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+    inherited: Option<SyntaxIdentity>,
+    role: MarkdownSemanticRole,
+    out: &mut Vec<MarkdownSyntaxSpan>,
+) -> Result<(), ParseError> {
+    if node.kind() == crate::OkfMarkdownSyntaxKind::Root {
+        for child in node.children() {
+            if let SyntaxElement::Node(child) = child {
+                collect_spans(&child, None, MarkdownSemanticRole::Document, out)?;
+            }
+        }
+        return Ok(());
+    }
+    let own = identity(node);
+    let Some(owner) = own.or(inherited) else {
+        for child in node.children() {
+            if let SyntaxElement::Node(child) = child {
+                collect_spans(&child, None, MarkdownSemanticRole::Document, out)?;
+            }
+        }
+        return Ok(());
+    };
+    let role = semantic_role(node.kind());
+    for child in node.children() {
+        match child {
+            SyntaxElement::Node(child) => collect_spans(&child, Some(owner), role, out)?,
+            SyntaxElement::Token(token) if token.range().start() < token.range().end() => {
+                out.push(MarkdownSyntaxSpan {
+                    owner,
+                    range: token.range(),
+                    source_role: source_role(token.kind()),
+                    semantic_role: role,
+                })
+            }
+            SyntaxElement::Token(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn source_role(kind: crate::OkfMarkdownSyntaxKind) -> MarkdownSourceRole {
+    use crate::OkfMarkdownSyntaxKind::*;
+    match kind {
+        TextToken
+        | CodeTextToken
+        | FrontmatterValueToken
+        | FrontmatterKeyToken
+        | HtmlToken
+        | EntityToken
+        | InfoStringToken => MarkdownSourceRole::Content,
+        _ => MarkdownSourceRole::SyntaxMarker,
+    }
+}
+
+fn semantic_role(kind: crate::OkfMarkdownSyntaxKind) -> MarkdownSemanticRole {
+    use crate::OkfMarkdownSyntaxKind as K;
+    match kind {
+        K::Root => MarkdownSemanticRole::Document,
+        K::Frontmatter | K::FrontmatterEntry => MarkdownSemanticRole::Frontmatter,
+        K::BlockQuote => MarkdownSemanticRole::BlockQuote,
+        K::List => MarkdownSemanticRole::List,
+        K::ListItem => MarkdownSemanticRole::ListItem,
+        K::Paragraph => MarkdownSemanticRole::Paragraph,
+        K::AtxHeading | K::SetextHeading => MarkdownSemanticRole::Heading,
+        K::ThematicBreak => MarkdownSemanticRole::ThematicBreak,
+        K::IndentedCodeBlock => MarkdownSemanticRole::IndentedCode,
+        K::FencedCodeBlock => MarkdownSemanticRole::FencedCode,
+        K::HtmlBlock => MarkdownSemanticRole::HtmlBlock,
+        K::LinkReferenceDefinition => MarkdownSemanticRole::LinkDefinition,
+        K::Table => MarkdownSemanticRole::Table,
+        K::TableHead => MarkdownSemanticRole::TableHead,
+        K::TableBody => MarkdownSemanticRole::TableBody,
+        K::TableRow => MarkdownSemanticRole::TableRow,
+        K::TableCell => MarkdownSemanticRole::TableCell,
+        K::Text => MarkdownSemanticRole::Text,
+        K::Escape => MarkdownSemanticRole::Escape,
+        K::Entity => MarkdownSemanticRole::Entity,
+        K::CodeSpan => MarkdownSemanticRole::CodeSpan,
+        K::Emphasis => MarkdownSemanticRole::Emphasis,
+        K::StrongEmphasis => MarkdownSemanticRole::Strong,
+        K::Strikethrough => MarkdownSemanticRole::Strikethrough,
+        K::Link => MarkdownSemanticRole::Link,
+        K::Image => MarkdownSemanticRole::Image,
+        K::Autolink => MarkdownSemanticRole::Autolink,
+        K::RawHtml => MarkdownSemanticRole::RawHtml,
+        K::SoftLineBreak => MarkdownSemanticRole::SoftBreak,
+        K::HardLineBreak => MarkdownSemanticRole::HardBreak,
+        K::SkippedTokensSyntax => MarkdownSemanticRole::Recovery,
+        K::WamlSection => MarkdownSemanticRole::WamlSection,
+        _ => MarkdownSemanticRole::Whitespace,
+    }
 }
 
 fn required_annotation(
