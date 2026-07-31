@@ -5,8 +5,8 @@ use unicode_bidi::BidiInfo;
 use waml_syntax::{SourceText, TextRange, TextSize};
 
 use super::{
-    FontKey, LayoutError, LayoutTextRun, ShapedCluster, ShapedGlyph, ShapedRun, TextMetrics,
-    TextShaper,
+    FontKey, IntrinsicCluster, IntrinsicRun, LayoutError, LayoutTextRun, ShapedCluster,
+    ShapedGlyph, ShapedRun, TextMetrics, TextShaper,
 };
 
 pub trait FontResolver {
@@ -130,6 +130,71 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
             ascender,
             descender,
             line_gap,
+        })
+    }
+
+    fn measure_intrinsic(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+    ) -> Result<IntrinsicRun, LayoutError> {
+        self.fonts
+            .configure_draw_text(run.metrics.font, run.metrics, self.draw_text);
+        let text = source
+            .slice(run.range)
+            .map_err(|_| LayoutError::ShapingFailed { run: run.id })?;
+        let paint_scale = self.draw_text.font_scale as f64;
+        let layout_scale = self.draw_text.font_scale.max(0.0001);
+        let laid_out = self.draw_text.layout(
+            self.cx,
+            0.0,
+            0.0,
+            Some(1_000_000.0 / layout_scale),
+            true,
+            Align::default(),
+            text,
+        );
+        let mut clusters = Vec::new();
+        for row in &laid_out.rows {
+            let mut logical_clusters = row
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.cluster)
+                .collect::<Vec<_>>();
+            logical_clusters.push(row.text.len());
+            logical_clusters.sort_unstable();
+            logical_clusters.dedup();
+            let mut index = 0;
+            while index < row.glyphs.len() {
+                let cluster = row.glyphs[index].cluster;
+                let mut next = index + 1;
+                while next < row.glyphs.len() && row.glyphs[next].cluster == cluster {
+                    next += 1;
+                }
+                let next_cluster = logical_clusters
+                    .iter()
+                    .copied()
+                    .find(|candidate| *candidate > cluster)
+                    .unwrap_or(row.text.len());
+                let row_start = row.text.start_in_parent();
+                let start = run.range.start().to_usize() + row_start + cluster;
+                let end = run.range.start().to_usize() + row_start + next_cluster;
+                let advance = row.glyphs.get(next).map_or_else(
+                    || row.width_in_lpxs - row.glyphs[index].origin_in_lpxs.x,
+                    |glyph| glyph.origin_in_lpxs.x - row.glyphs[index].origin_in_lpxs.x,
+                ) as f64
+                    * paint_scale;
+                clusters.push(IntrinsicCluster {
+                    source_range: TextRange::new(text_size(start), text_size(end))
+                        .map_err(|_| LayoutError::ShapingFailed { run: run.id })?,
+                    advance,
+                });
+                index = next;
+            }
+        }
+        clusters.sort_by_key(|cluster| cluster.source_range.start());
+        Ok(IntrinsicRun {
+            clusters: clusters.into(),
         })
     }
 }
