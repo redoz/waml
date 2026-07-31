@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use makepad_widgets::{Align, Cx, DrawText};
+use unicode_bidi::BidiInfo;
 use waml_syntax::{SourceText, TextRange, TextSize};
 
 use super::{
@@ -29,6 +30,7 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
         let text = source
             .slice(run.range)
             .map_err(|_| LayoutError::ShapingFailed { run: run.id })?;
+        let bidi = BidiInfo::new(text, None);
         let laid_out = self.draw_text.layout(
             self.cx,
             0.0,
@@ -74,7 +76,7 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
                     source_range: TextRange::new(text_size(start), text_size(end))
                         .map_err(|_| LayoutError::ShapingFailed { run: run.id })?,
                     advance: advance as f64,
-                    bidi_level: 0,
+                    bidi_level: bidi_level_at(&bidi, row_start + cluster),
                     caret_offsets: Arc::from([text_size(start), text_size(end)]),
                 });
                 index = next;
@@ -91,4 +93,24 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
 
 fn text_size(value: usize) -> TextSize {
     TextSize::try_from_usize(value).expect("Makepad cluster offsets fit the source")
+}
+
+fn bidi_level_at(bidi: &BidiInfo<'_>, byte_offset: usize) -> u8 {
+    bidi.levels
+        .get(byte_offset)
+        .map_or(0, unicode_bidi::Level::number)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bidi_level_at;
+    use unicode_bidi::BidiInfo;
+
+    #[test]
+    fn adapter_uses_unicode_embedding_levels_for_rtl_text() {
+        let text = "a א";
+        let bidi = BidiInfo::new(text, None);
+        assert_eq!(bidi_level_at(&bidi, 0), 0);
+        assert_eq!(bidi_level_at(&bidi, 2), 1);
+    }
 }

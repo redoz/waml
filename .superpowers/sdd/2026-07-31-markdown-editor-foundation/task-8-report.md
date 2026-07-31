@@ -29,3 +29,10 @@
 - GREEN: syntax invalidation rejects an update snapshot whose revision does not own the current layout presentation.
 - GREEN: shaped bidi levels control visual cluster order and direction-aware caret placement. The Makepad adapter no longer infers bidi levels from glyph order.
 - Review verification: `layout_geometry` 12 passed, `unicode_ime` 8 passed, full crate 38 passed, and `git diff --check` passed.
+
+## Makepad RTL adapter follow-up
+
+- RED: the adapter-level RTL regression did not compile because the Makepad shaper had no authoritative bidi-level seam.
+- GREEN: the adapter now uses the pinned `unicode-bidi` implementation to assign the Unicode embedding level at each cluster byte offset.
+- The adapter does not infer direction from glyph order. The layout engine contract is unchanged.
+- Follow-up verification: adapter RTL regression 1 passed, `layout_geometry` 12 passed, `unicode_ime` 8 passed, full crate 39 passed, and `git diff --check` passed.

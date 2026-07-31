@@ -2337,6 +2337,7 @@ name = "waml-markdown-editor"
 version = "0.0.0"
 dependencies = [
  "makepad-widgets",
+ "unicode-bidi",
  "unicode-segmentation 1.13.3",
  "waml-syntax",
 ]
