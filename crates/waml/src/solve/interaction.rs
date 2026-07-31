@@ -112,18 +112,11 @@ fn message_size_key(id: &str) -> String {
 pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMap {
     let mut sizes = SizeMap::new();
     for node in &doc.nodes {
-        if let SeqNode::Lifeline {
-            id, title, ref_, ..
-        } = node
-        {
-            let label = match ref_ {
-                Some(r) => format!("{title}:{r}"),
-                None => title.clone(),
-            };
+        if let SeqNode::Lifeline { id, title, .. } = node {
             // A head label is drawn in the `text_heading` SemiBold cut, whose
             // advances are wider than Regular's.
-            let w = sizing::text_width(&label, cfg.font_size, Font::SansSemiBold)
-                + cfg.head_pad_x * 2.0;
+            let w =
+                sizing::text_width(title, cfg.font_size, Font::SansSemiBold) + cfg.head_pad_x * 2.0;
             let h = cfg.line_height + cfg.head_pad_y * 2.0;
             sizes.insert(lifeline_size_key(id), Size { w, h });
         }

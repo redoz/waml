@@ -66,6 +66,31 @@ fn sequence_fixture_smoke_loads_lifelines_messages_and_fragments() {
     assert!(fragment_kinds.contains(&FragmentKind::Opt));
 }
 
+#[test]
+fn resolved_lifeline_head_is_measured_from_title_only() {
+    fn doc(ref_: Option<&str>) -> SequenceDoc {
+        SequenceDoc {
+            key: "sequence".into(),
+            title: "Sequence".into(),
+            describes: None,
+            nodes: vec![SeqNode::Lifeline {
+                id: "author".into(),
+                title: "Author".into(),
+                alias: None,
+                ref_: ref_.map(str::to_string),
+            }],
+            edges: Vec::new(),
+            items: Vec::new(),
+        }
+    }
+
+    let cfg = InteractionConfig::default();
+    let resolved = measure_interaction(&doc(Some("architecture/concepts/workflows/author")), &cfg);
+    let unresolved = measure_interaction(&doc(None), &cfg);
+
+    assert_eq!(resolved["lifeline:author"], unresolved["lifeline:author"]);
+}
+
 fn solve() -> (SolvedInteraction, Vec<waml::diagnostic::Diagnostic>) {
     let doc = load();
     let cfg = InteractionConfig::default();

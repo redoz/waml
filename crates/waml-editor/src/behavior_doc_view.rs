@@ -245,10 +245,7 @@ fn build_interaction_scene(
                 .get(l.id.as_str())
                 .copied()
                 .unwrap_or((l.id.as_str(), None));
-            let label = match ref_ {
-                Some(r) => format!("{title}:{r}"),
-                None => title.to_string(),
-            };
+            let label = title.to_string();
             let bucket = ref_
                 .and_then(|r| model.node(r))
                 .map(|n| crate::accent::tree_kind_bucket(crate::tree::kind_of(&n.ty)))
@@ -662,6 +659,19 @@ mod tests {
             edges: Vec::new(),
             items: Vec::new(),
         }
+    }
+
+    #[test]
+    fn resolved_lifeline_scene_label_uses_title_only() {
+        let doc =
+            interaction_doc_with_lifeline("Author", Some("architecture/concepts/workflows/author"));
+
+        let (scene, _) = build_interaction_scene(&waml::model::Model::default(), &doc);
+
+        let BehaviorScene::Interaction { lifelines, .. } = scene else {
+            panic!("expected interaction scene");
+        };
+        assert_eq!(lifelines[0].label, "Author");
     }
 
     /// An analysis with a classifier (`order`), a customer classifier, an
