@@ -5,6 +5,7 @@ use crate::{SyntaxIdentity, TextRange};
 #[derive(Clone, Debug)]
 pub struct MarkdownReferenceDefinition {
     pub label: Arc<str>,
+    #[allow(dead_code)]
     pub owner: SyntaxIdentity,
     pub source_range: TextRange,
     pub destination: Arc<str>,

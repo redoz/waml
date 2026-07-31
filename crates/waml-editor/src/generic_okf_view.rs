@@ -220,7 +220,7 @@ mod tests {
         let mut view = GenericOkfView::new("shop/order".into());
         view.sync(&mut cx, &body, data(&source, &okf, &uml));
         assert!(ui
-            .widget(&cx, ids!(markdown_surface.md))
+            .widget(&cx, ids!(markdown_surface.plain_source))
             .text()
             .contains("[Next](./next.md#details)"));
         let actions: ActionsBuf = vec![markdown_link_action(markdown_uid, "./next.md#details")];

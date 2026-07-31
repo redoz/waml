@@ -878,7 +878,12 @@ fn edit_batch_lowering_has_valid_output_and_all_invalid_cases_are_atomic() {
         ));
         assert!(std::sync::Arc::ptr_eq(
             &structure,
-            prepared.okf().markdown.document(document).unwrap().structure()
+            prepared
+                .okf()
+                .markdown
+                .document(document)
+                .unwrap()
+                .structure()
         ));
         assert_eq!(
             prepared
@@ -972,7 +977,12 @@ fn edit_batch_lowering_has_valid_output_and_all_invalid_cases_are_atomic() {
     ));
     assert!(std::sync::Arc::ptr_eq(
         &changed_structure,
-        changed.okf().markdown.document(document).unwrap().structure()
+        changed
+            .okf()
+            .markdown
+            .document(document)
+            .unwrap()
+            .structure()
     ));
     assert_eq!(
         changed.okf().catalog.document(document).unwrap().revision(),

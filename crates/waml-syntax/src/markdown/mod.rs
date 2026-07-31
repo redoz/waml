@@ -1,13 +1,15 @@
+use std::sync::Arc;
+
 pub(crate) mod block;
 pub(crate) mod gfm;
 pub(crate) mod inline;
 mod kind;
-mod projection;
-pub(crate) mod reference;
-pub(crate) mod reparse;
 pub(crate) mod parser;
 #[cfg(test)]
 mod parser_tests;
+mod projection;
+pub(crate) mod reference;
+pub(crate) mod reparse;
 mod snapshot;
 
 pub use gfm::{HtmlTagFilter, TableAlignment, TaskListState};
@@ -33,10 +35,23 @@ use crate::shell::ParseError;
 /// Container depth is deliberately tracked independently of pulldown's event
 /// ranges: a heading inside a quote/list/code/HTML container must never become
 /// a shell boundary.
-pub(crate) fn map(
+/// Internal data used only to synchronize shell parsing before the syntax tree
+/// exists. The public `MarkdownStructureMap` is derived from that finished tree
+/// in `projection`.
+pub(crate) struct ShellStructure {
+    pub headings: Arc<[ConfirmedHeading]>,
+    pub nested_headings: Arc<[ConfirmedHeading]>,
+    pub protected_ranges: Arc<[TextRange]>,
+    pub list_item_lines: Arc<[TextRange]>,
+    pub tab_indented_item_lines: Arc<[TextRange]>,
+    pub opaque_ranges: Arc<[TextRange]>,
+    pub dialect: MarkdownDialect,
+}
+
+pub(crate) fn shell_map(
     text: &SourceText,
     dialect: MarkdownDialect,
-) -> Result<MarkdownStructureMap, ParseError> {
+) -> Result<ShellStructure, ParseError> {
     let source = text.shared();
     let len = source.len();
     let _ = size(len)?;
@@ -137,7 +152,7 @@ pub(crate) fn map(
     list_item_lines.dedup();
     tab_indented_item_lines.sort_by_key(|range| (range.start(), range.end()));
     tab_indented_item_lines.dedup();
-    Ok(MarkdownStructureMap {
+    Ok(ShellStructure {
         headings: headings.into(),
         nested_headings: nested_headings.into(),
         protected_ranges: normalized.into(),
@@ -145,7 +160,6 @@ pub(crate) fn map(
         tab_indented_item_lines: tab_indented_item_lines.into(),
         opaque_ranges: opaque.into(),
         dialect,
-        islands: [].into(),
     })
 }
 

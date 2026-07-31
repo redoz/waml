@@ -3,8 +3,7 @@ use std::sync::Arc;
 use super::{UmlLanguage, UmlSyntaxDiagnosticCode, UmlSyntaxKind};
 use waml_syntax::{
     GreenElement, GreenFactory, GreenText, MarkdownStructureMap, SourceText, SyntaxIdentity,
-    SyntaxSeverity, SyntaxTree, TextRange, TextSize, TreeDiagnostic, TriviaKind,
-    WamlSectionKind,
+    SyntaxSeverity, SyntaxTree, TextRange, TextSize, TreeDiagnostic, TriviaKind, WamlSectionKind,
 };
 
 #[derive(Clone, Copy)]
@@ -15,7 +14,10 @@ pub(super) struct Island {
     pub content_range: TextRange,
 }
 
-pub(super) fn islands(source_len: TextSize, structure: &MarkdownStructureMap) -> Option<Vec<Island>> {
+pub(super) fn islands(
+    source_len: TextSize,
+    structure: &MarkdownStructureMap,
+) -> Option<Vec<Island>> {
     let mut result = Vec::new();
     let mut at = TextSize::try_from_usize(0).ok()?;
     for island in structure.islands.iter() {
@@ -71,7 +73,8 @@ pub(super) fn parse(
 ) -> Arc<SyntaxTree<UmlLanguage>> {
     let factory = GreenFactory::<UmlLanguage>::new();
     let source = text.shared();
-    let descriptors = islands(text.len(), structure).expect("markdown structure has ordered ranges");
+    let descriptors =
+        islands(text.len(), structure).expect("markdown structure has ordered ranges");
     let mut children = Vec::with_capacity(descriptors.len() + 1);
     let mut diagnostics = Vec::new();
     for island in descriptors {

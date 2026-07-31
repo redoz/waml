@@ -316,13 +316,8 @@ mod tests {
             MarkdownDialect::CommonMarkCurrent,
         )
         .unwrap();
-        let update = reparse_markdown(
-            &old_snapshot,
-            DocumentRevision::new(2),
-            new_text,
-            &changes,
-        )
-        .unwrap();
+        let update =
+            reparse_markdown(&old_snapshot, DocumentRevision::new(2), new_text, &changes).unwrap();
         (
             ShellParse {
                 tree: old_snapshot.tree().clone(),
@@ -520,8 +515,7 @@ mod tests {
             "## Attributes\n- new: String\n\n## Layout\n- left of\n".to_owned(),
         ))
         .unwrap();
-        let (old_shell, new_shell, changes) =
-            markdown_reparse_pair(&old_text, new_text.clone());
+        let (old_shell, new_shell, changes) = markdown_reparse_pair(&old_text, new_text.clone());
         let previous = parse_full(old_text.clone(), &old_shell.structure);
         let full = parse_full(new_text.clone(), &new_shell.structure);
 
@@ -562,8 +556,7 @@ mod tests {
             "## Nodes\n### state Node\ntrigger: changed\n###".to_owned(),
         ))
         .unwrap();
-        let (old_shell, new_shell, changes) =
-            markdown_reparse_pair(&old_text, new_text.clone());
+        let (old_shell, new_shell, changes) = markdown_reparse_pair(&old_text, new_text.clone());
         let previous = parse_full(old_text.clone(), &old_shell.structure);
         let full = parse_full(new_text.clone(), &new_shell.structure);
         assert_eq!(previous.write_to_string(), old_text.shared().as_str());
@@ -592,8 +585,7 @@ mod tests {
             SourceText::from_shared(Arc::new("## Attributes\n- old: String\n".to_owned())).unwrap();
         let new_text =
             SourceText::from_shared(Arc::new("## attributes\n- old: String\n".to_owned())).unwrap();
-        let (old_shell, new_shell, changes) =
-            markdown_reparse_pair(&old_text, new_text.clone());
+        let (old_shell, new_shell, changes) = markdown_reparse_pair(&old_text, new_text.clone());
         let previous = parse_full(old_text.clone(), &old_shell.structure);
 
         assert!(reparse_island(

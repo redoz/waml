@@ -1,16 +1,22 @@
-use std::{collections::{BTreeMap, BTreeSet}, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use waml::uml::syntax::{UmlLanguage, UmlSyntaxKind};
 use waml::{
-    analysis::{prepare_candidate, prepare_candidate_with_markdown_updates, PreparedCandidate, PreviousAnalyses},
+    analysis::{
+        prepare_candidate, prepare_candidate_with_markdown_updates, PreparedCandidate,
+        PreviousAnalyses,
+    },
     host::replace_document,
     source::{BundlePath, SourceBundle, SourceDocument},
     uml::{DeclaredBundle, DeclaredField, DeclaredLayoutStatement},
 };
 use waml_syntax::{
-    reparse_markdown, AstNode, DocumentRevision, GreenElement, GreenFactory, GreenText, MarkdownDialect, OkfMarkdownLanguage,
-    OkfMarkdownSyntaxKind, SyntaxAnnotation, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree,
-    TextRange, TextSize, TriviaKind,
+    reparse_markdown, AstNode, DocumentRevision, GreenElement, GreenFactory, GreenText,
+    MarkdownDialect, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxAnnotation, SyntaxElement,
+    SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize, TriviaKind,
 };
 
 fn prepared(
@@ -52,7 +58,10 @@ fn changed_document_promotes_the_exact_supplied_markdown_update() {
     let expected = update.snapshot.clone();
     let current = prepare_candidate_with_markdown_updates(
         edited,
-        Some(PreviousAnalyses { okf: baseline.okf(), uml: baseline.uml() }),
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
         2,
         BTreeMap::from([(id, update)]),
     )
@@ -693,8 +702,18 @@ fn retained_okf_analysis_reuses_unchanged_snapshots_and_matches_full_oracle() {
             .tree(),
     ));
     assert!(Arc::ptr_eq(
-        baseline.okf().markdown.document(untouched).unwrap().structure(),
-        incremental.okf().markdown.document(untouched).unwrap().structure(),
+        baseline
+            .okf()
+            .markdown
+            .document(untouched)
+            .unwrap()
+            .structure(),
+        incremental
+            .okf()
+            .markdown
+            .document(untouched)
+            .unwrap()
+            .structure(),
     ));
     assert_ne!(
         incremental
@@ -798,7 +817,10 @@ fn retained_okf_analysis_reuses_unchanged_snapshots_and_matches_full_oracle() {
                 incremental_document.text().shared()
             ) > 0
         );
-        assert_eq!(incremental_tree.write_to_string(), full_tree.write_to_string());
+        assert_eq!(
+            incremental_tree.write_to_string(),
+            full_tree.write_to_string()
+        );
         assert_eq!(
             diagnostic_fingerprint(incremental_tree),
             diagnostic_fingerprint(full_tree)

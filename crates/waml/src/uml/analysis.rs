@@ -13,9 +13,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
-use waml_syntax::{
-    AstNode, MarkdownStructureMap, SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize,
-};
+use waml_syntax::{AstNode, SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize};
 pub struct Analysis {
     pub claims: ClaimSet,
     pub syntax: SyntaxSet<UmlLanguage>,
@@ -191,8 +189,10 @@ pub fn analyze(
                 .ok_or_else(|| AnalysisError::CatalogInvariant {
                     reason: "claimed concept has no Markdown syntax snapshot".into(),
                 })?;
-        let document = context.catalog.document(id).cloned().ok_or_else(|| AnalysisError::CatalogInvariant {
-            reason: "claimed concept has no catalog document".into(),
+        let document = context.catalog.document(id).cloned().ok_or_else(|| {
+            AnalysisError::CatalogInvariant {
+                reason: "claimed concept has no catalog document".into(),
+            }
         })?;
         let catalog_document =
             context

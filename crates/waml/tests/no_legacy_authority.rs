@@ -79,6 +79,95 @@ fn workspace_root() -> PathBuf {
         .to_owned()
 }
 
+fn authority_violations(files: &[(PathBuf, String)]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (path, source) in files {
+        let path = path.to_string_lossy().replace('\\', "/");
+        let is_waml_authority_consumer = path.starts_with("crates/waml/src/")
+            || path.starts_with("crates/waml-editor/src/")
+            || path.starts_with("crates/waml-cli/src/lsp/");
+        if is_waml_authority_consumer && source.contains("pulldown_cmark::Parser") {
+            violations.push(format!("{path}: creates pulldown_cmark::Parser"));
+        }
+        if source.contains("MarkdownStructureMap {")
+            && path != "crates/waml-syntax/src/markdown/projection.rs"
+        {
+            violations.push(format!(
+                "{path}: constructs MarkdownStructureMap outside projection"
+            ));
+        }
+        if path.starts_with("crates/waml-editor/src/")
+            && source.contains(".as_markdown()")
+            && source.contains(".set_text(cx,")
+        {
+            violations.push(format!(
+                "{path}: feeds source through Makepad Markdown parsing"
+            ));
+        }
+        if path.starts_with("crates/waml-syntax/src/markdown/")
+            && source.contains("regex::Regex::new")
+        {
+            violations.push(format!("{path}: classifies Markdown with regex"));
+        }
+    }
+    violations
+}
+
+fn authority_sources(root: &Path) -> Vec<(PathBuf, String)> {
+    fn collect(dir: &Path, root: &Path, files: &mut Vec<(PathBuf, String)>) {
+        for entry in fs::read_dir(dir).expect("read authority guard directory") {
+            let path = entry.expect("read authority guard entry").path();
+            if path.is_dir() {
+                collect(&path, root, files);
+                continue;
+            }
+            let is_rust_source = path.extension().and_then(|value| value.to_str()) == Some("rs")
+                && path
+                    .components()
+                    .any(|component| component.as_os_str() == "src");
+            let is_manifest =
+                path.file_name().and_then(|value| value.to_str()) == Some("Cargo.toml");
+            if is_rust_source || is_manifest {
+                files.push((
+                    path.strip_prefix(root)
+                        .expect("authority source below workspace root")
+                        .to_owned(),
+                    fs::read_to_string(&path).expect("read authority guard source"),
+                ));
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect(&root.join("crates"), root, &mut files);
+    files
+}
+
+#[test]
+fn authority_guard_rejects_an_in_memory_second_parser_seed() {
+    let violations = authority_violations(&[(
+        PathBuf::from("crates/waml/src/in_memory_seed.rs"),
+        "// pulldown_cmark::Parser::new".into(),
+    )]);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("pulldown_cmark::Parser")),
+        "the authority guard accepted an in-memory second parser seed: {violations:#?}"
+    );
+}
+
+#[test]
+fn production_sources_have_one_markdown_authority() {
+    let violations = authority_violations(&authority_sources(&workspace_root()));
+    assert!(
+        violations.is_empty(),
+        "Markdown authority guard found forbidden production authority:\n{}",
+        violations.join("\n")
+    );
+}
+
 #[test]
 fn retired_legacy_files_and_public_surface_are_absent() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

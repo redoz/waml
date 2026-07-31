@@ -456,10 +456,7 @@ fn versioned_locator_preserves_occurrence_identity_and_wrong_tree_error() {
         node_locator.locator().expected_kind(),
         occurrence_locator.expected_kind()
     );
-    let resolved = token_locator
-        .resolve_in(snapshot.tree())
-        .unwrap()
-        .locator();
+    let resolved = token_locator.resolve_in(snapshot.tree()).unwrap().locator();
     let token_occurrence = token.locator();
     assert_eq!(resolved.tree_id(), token_occurrence.tree_id());
     assert_eq!(resolved.path(), token_occurrence.path());

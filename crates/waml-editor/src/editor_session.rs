@@ -710,11 +710,12 @@ mod tests {
         assert!(Arc::ptr_eq(
             session
                 .okf_analysis()
-                .shell
+                .markdown
                 .document(document_id)
                 .unwrap()
-                .document(),
-            catalog_document
+                .text()
+                .shared(),
+            catalog_document.text().shared()
         ));
         assert!(Arc::ptr_eq(
             session
@@ -842,7 +843,7 @@ mod tests {
             let before_source = session.source().clone();
             let before_persisted = session.persisted_bundle().clone();
             let before_catalog = session.okf_analysis().catalog.clone();
-            let before_shell_catalog = session.okf_analysis().shell.catalog().clone();
+            let before_shell_catalog = session.okf_analysis().catalog.clone();
             let before_uml_catalog = session.uml_analysis().syntax.catalog().clone();
             let before_projection = session.uml_projection().clone();
             let before_revision = session.revision();
@@ -860,10 +861,10 @@ mod tests {
                 .clone();
             let before_shell_tree = session
                 .okf_analysis()
-                .shell
+                .markdown
                 .document(document_id)
                 .unwrap()
-                .syntax()
+                .tree()
                 .clone();
             let before_uml_tree = session
                 .uml_analysis()
@@ -900,7 +901,7 @@ mod tests {
                 &before_catalog
             ));
             assert!(Arc::ptr_eq(
-                session.okf_analysis().shell.catalog(),
+                &session.okf_analysis().catalog,
                 &before_shell_catalog
             ));
             assert!(Arc::ptr_eq(
@@ -918,10 +919,10 @@ mod tests {
             assert!(Arc::ptr_eq(
                 session
                     .okf_analysis()
-                    .shell
+                    .markdown
                     .document(document_id)
                     .unwrap()
-                    .syntax(),
+                    .tree(),
                 &before_shell_tree
             ));
             assert!(Arc::ptr_eq(

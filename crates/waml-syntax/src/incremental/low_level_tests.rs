@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use super::{reparse_okf_markdown, reparse_okf_markdown_with_structure};
 use crate::{
-    ChangeMap, FullReparseReason, GreenElement, GreenText, MarkdownDialect, OkfMarkdownSyntaxKind,
-    OkfSyntaxDiagnosticCode, ReparseOutcome, RewriteError, SourceText, SyntaxAnnotation,
-    SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize, annotate_occurrence,
-    markdown::parser::parse as parse_okf_markdown, rebase_unchanged_green,
-    transfer_mapped_annotations,
+    annotate_occurrence, markdown::parser::parse as parse_okf_markdown, rebase_unchanged_green,
+    transfer_mapped_annotations, ChangeMap, FullReparseReason, GreenElement, GreenText,
+    MarkdownDialect, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, ReparseOutcome, RewriteError,
+    SourceText, SyntaxAnnotation, SyntaxElement, SyntaxTree, TextChange, TextRange, TextSize,
 };
 use std::num::NonZeroU64;
 
@@ -133,15 +132,13 @@ fn source_backed_eof_trivia_moves_through_tail_window() {
         panic!("tail insertion must be incremental")
     };
     assert_eq!(reparsed_range, range(0, 8));
-    assert!(
-        !first_token(
-            &parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent)
-                .unwrap()
-                .tree,
-            OkfMarkdownSyntaxKind::EndOfFileToken
-        )
-        .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken))
-    );
+    assert!(!first_token(
+        &parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent)
+            .unwrap()
+            .tree,
+        OkfMarkdownSyntaxKind::EndOfFileToken
+    )
+    .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken)));
 }
 
 #[test]
@@ -215,10 +212,8 @@ fn unchanged_bytes_on_fresh_source_rebase_source_backed_greens() {
         &new_source
     ));
     assert!(!previous.root().same_green(&tree.root()));
-    assert!(
-        !first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
-            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph))
-    );
+    assert!(!first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
+        .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)));
     assert!(
         first_token(&previous, OkfMarkdownSyntaxKind::EndOfFileToken)
             .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken))
@@ -541,14 +536,10 @@ fn annotation_transfer_reuses_unchanged_source_independent_greens() {
     let final_eof = first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken);
     assert!(previous_eof.same_green(&final_eof));
     assert_eq!(shared_source_independent_green, 1);
-    assert!(
-        !first_token(&previous, OkfMarkdownSyntaxKind::TextToken)
-            .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::TextToken))
-    );
-    assert!(
-        !first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
-            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph))
-    );
+    assert!(!first_token(&previous, OkfMarkdownSyntaxKind::TextToken)
+        .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::TextToken)));
+    assert!(!first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
+        .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)));
     assert_eq!(
         first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)
             .syntax_annotations()

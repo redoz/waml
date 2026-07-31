@@ -114,11 +114,14 @@ impl Formatter {
         let edits = if has_recovery {
             Vec::new()
         } else {
-            let structure = context.okf.markdown.document(document).map(|snapshot| snapshot.structure()).ok_or_else(|| {
-                FormatError::StructuralInvariant {
+            let structure = context
+                .okf
+                .markdown
+                .document(document)
+                .map(|snapshot| snapshot.structure())
+                .ok_or_else(|| FormatError::StructuralInvariant {
                     reason: "claimed document has no Markdown structure map".into(),
-                }
-            })?;
+                })?;
             let canonical = canonical_document(&exact, structure);
             protected_diff(&exact, &canonical, structure)?
         };

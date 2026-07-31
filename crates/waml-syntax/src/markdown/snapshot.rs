@@ -650,26 +650,28 @@ fn collect_queries(
             crate::write_green_to(node.green(), &mut source)
                 .map_err(|_| invariant("failed to reconstruct raw HTML source"))?;
             let source_start = node.range().start().to_usize();
-            let filtered_ranges = tag_filter
-                .then(|| super::gfm::disallowed_html_tag_ranges(&source))
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(start, end)| {
-                    TextRange::new(
-                        crate::TextSize::try_from_usize(source_start + start).map_err(|_| {
-                            ParseError::SourceTooLarge {
-                                bytes: source_start + start,
-                            }
-                        })?,
-                        crate::TextSize::try_from_usize(source_start + end).map_err(|_| {
-                            ParseError::SourceTooLarge {
-                                bytes: source_start + end,
-                            }
-                        })?,
-                    )
-                    .map_err(|_| invariant("filtered HTML tag has a reversed range"))
-                })
-                .collect::<Result<Arc<[_]>, _>>()?;
+            let filtered_ranges = if tag_filter {
+                super::gfm::disallowed_html_tag_ranges(&source)
+            } else {
+                Vec::new()
+            }
+            .into_iter()
+            .map(|(start, end)| {
+                TextRange::new(
+                    crate::TextSize::try_from_usize(source_start + start).map_err(|_| {
+                        ParseError::SourceTooLarge {
+                            bytes: source_start + start,
+                        }
+                    })?,
+                    crate::TextSize::try_from_usize(source_start + end).map_err(|_| {
+                        ParseError::SourceTooLarge {
+                            bytes: source_start + end,
+                        }
+                    })?,
+                )
+                .map_err(|_| invariant("filtered HTML tag has a reversed range"))
+            })
+            .collect::<Result<Arc<[_]>, _>>()?;
             out.html.push(MarkdownRawHtml {
                 owner,
                 range: node.range(),

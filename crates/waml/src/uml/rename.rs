@@ -117,7 +117,7 @@ fn rename_typed_references(
         text.clone(),
         MarkdownDialect::CommonMarkCurrent,
     )
-        .map_err(|error| EditError::at("node.rename", error.to_string()))?;
+    .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     let tree = super::syntax::parse_full(text, markdown.structure());
     let mut edits = Vec::new();
     collect_reference_edits(

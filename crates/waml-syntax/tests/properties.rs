@@ -320,6 +320,62 @@ fn width_changes_before_reference_definition_update_destination_ranges() {
     }
 }
 
+#[test]
+fn minimized_edit_sequence_recovers_invalid_block_ranges() {
+    let mut candidate = BASE.to_owned();
+    let mut snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(&candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let mut revision = DocumentRevision::INITIAL;
+    let mut recovered_with_full_fallback = false;
+    for (first, second, replacement_kind) in [
+        (181_u8, 33_u8, 89_u8),
+        (20, 94, 235),
+        (138, 211, 105),
+        (153, 210, 52),
+        (54, 31, 192),
+    ] {
+        let points = boundaries(&candidate);
+        let left = usize::from(first) % points.len();
+        let right = usize::from(second) % points.len();
+        let (start, end) = if left <= right {
+            (points[left], points[right])
+        } else {
+            (points[right], points[left])
+        };
+        let replacement: Arc<str> = match replacement_kind % 4 {
+            0 => Arc::from(""),
+            1 => Arc::from("x"),
+            2 => Arc::from("é"),
+            _ => Arc::from("[n][id]"),
+        };
+        candidate.replace_range(start..end, &replacement);
+        revision = revision.checked_next().unwrap();
+        let update = reparse_markdown(
+            &snapshot,
+            revision,
+            source(&candidate),
+            &[TextChange {
+                old_range: range(start, end),
+                replacement,
+            }],
+        )
+        .unwrap();
+        assert_full_oracle(&update.snapshot, &candidate);
+        recovered_with_full_fallback |= matches!(
+            update.outcome,
+            MarkdownReparseOutcome::Full {
+                reason: FullReparseReason::UnsafeSynchronization
+            }
+        );
+        snapshot = update.snapshot;
+    }
+    assert!(recovered_with_full_fallback);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
     #[test]

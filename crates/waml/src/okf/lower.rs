@@ -92,7 +92,7 @@ impl OkfLoweringState {
                 text,
                 MarkdownDialect::CommonMarkCurrent,
             )
-                .map_err(|error| EditError::at(op, error.to_string()))?;
+            .map_err(|error| EditError::at(op, error.to_string()))?;
             let parsed = ShellParse {
                 tree: snapshot.tree().clone(),
                 structure: snapshot.structure().clone(),

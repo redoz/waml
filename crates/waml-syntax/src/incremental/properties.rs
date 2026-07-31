@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use proptest::prelude::*;
 use super::reparse_okf_markdown;
 use crate::{
     markdown::parser::parse as parse_okf_markdown, write_green_to, GreenText, MarkdownDialect,
     OkfMarkdownLanguage, OkfMarkdownSyntaxKind, ReparseOutcome, SourceText, SyntaxElement,
     SyntaxTree, TextChange, TextRange, TextSize, TokenFlags, TriviaKind,
 };
+use proptest::prelude::*;
 
 fn heading_hierarchy_source() -> impl Strategy<Value = String> {
     any::<String>()

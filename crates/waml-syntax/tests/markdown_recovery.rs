@@ -1,6 +1,6 @@
 use waml_syntax::{
-    DocumentRevision, MarkdownDialect, MarkdownSemanticRole, OkfMarkdownSyntaxKind, SourceText,
-    SyntaxElement, SyntaxNode, SyntaxToken, TextRange, parse_markdown,
+    parse_markdown, DocumentRevision, MarkdownDialect, MarkdownSemanticRole, OkfMarkdownSyntaxKind,
+    SourceText, SyntaxElement, SyntaxNode, SyntaxToken, TextRange,
 };
 
 fn leaf_tokens(

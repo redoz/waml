@@ -7,12 +7,12 @@ use std::{
 };
 
 use regex::Regex;
-use waml_syntax::{write_green_to, GreenNode, MarkdownStructureMap, OkfMarkdownLanguage, TextRange};
+use waml_syntax::{
+    write_green_to, GreenNode, MarkdownStructureMap, OkfMarkdownLanguage, TextRange,
+};
 
 use crate::{
-    analysis::{
-        AnalysisError, AnalysisStage, DocumentCatalog, DocumentId, DocumentVersion, MarkdownSyntaxSet,
-    },
+    analysis::{AnalysisError, AnalysisStage, DocumentCatalog, DocumentVersion, MarkdownSyntaxSet},
     frontmatter::{parse_closed_syntax, Frontmatter},
     source::SourceSlice,
 };
@@ -69,9 +69,9 @@ fn validate<'a>(
 
     let mut validated = Vec::with_capacity(catalog.documents().len());
     for (id, document) in catalog.documents() {
-        let snapshot = markdown
-            .document(*id)
-            .ok_or_else(|| structural(format!("missing Markdown snapshot for {}", document.path())))?;
+        let snapshot = markdown.document(*id).ok_or_else(|| {
+            structural(format!("missing Markdown snapshot for {}", document.path()))
+        })?;
         let structure = snapshot.structure();
         if snapshot.revision() != document.revision() {
             return invariant(format!(
@@ -529,7 +529,10 @@ mod tests {
             parsed.tree().root_green(),
             "# Cafe\nbody\n"
         ));
-        assert!(!exact_tree_source(parsed.tree().root_green(), "# Café\nbody"));
+        assert!(!exact_tree_source(
+            parsed.tree().root_green(),
+            "# Café\nbody"
+        ));
         assert!(!exact_tree_source(
             parsed.tree().root_green(),
             "# Café\nbody\ntrailing"

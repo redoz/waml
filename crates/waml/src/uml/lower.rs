@@ -182,7 +182,7 @@ impl UmlLoweringState {
             text.clone(),
             MarkdownDialect::CommonMarkCurrent,
         )
-            .map_err(|error| EditError::at(op, error.to_string()))?;
+        .map_err(|error| EditError::at(op, error.to_string()))?;
         self.touched_islands.insert(
             path.clone(),
             super::syntax::parse_full(text, markdown.structure()),

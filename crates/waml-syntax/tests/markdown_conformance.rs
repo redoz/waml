@@ -373,7 +373,6 @@ fn metadata(
     range: TextRange,
     queries: &MarkdownSyntaxQueries,
 ) -> ConformanceMetadata {
-    let owner = owner;
     match role {
         MarkdownSemanticRole::Heading => queries
             .heading(owner.expect("heading owner"))
@@ -411,7 +410,7 @@ fn metadata(
             .expect("image metadata"),
         MarkdownSemanticRole::FencedCode => queries
             .fenced_code(owner.expect("fenced-code owner"))
-            .map(|code| fenced_metadata(code))
+            .map(fenced_metadata)
             .expect("fenced-code metadata"),
         MarkdownSemanticRole::Entity => queries
             .entities()
@@ -1132,8 +1131,8 @@ fn indented_code(
                     trimmed.bytes().take_while(u8::is_ascii_digit).count()
                         + usize::from(
                             trimmed
-                                .bytes()
-                                .nth(trimmed.bytes().take_while(u8::is_ascii_digit).count())
+                                .as_bytes()
+                                .get(trimmed.bytes().take_while(u8::is_ascii_digit).count())
                                 .is_some_and(|byte| matches!(byte, b'.' | b')')),
                         )
                 };

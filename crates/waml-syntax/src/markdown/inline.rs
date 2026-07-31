@@ -1051,15 +1051,12 @@ fn emphasis_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
             can_close,
         };
         if can_close {
-            loop {
-                let Some(index) = delimiters.iter().rposition(|opener| {
-                    opener.marker == byte
-                        && opener.can_open
-                        && opener.remaining > 0
-                        && !rule_of_three(*opener, closer)
-                }) else {
-                    break;
-                };
+            while let Some(index) = delimiters.iter().rposition(|opener| {
+                opener.marker == byte
+                    && opener.can_open
+                    && opener.remaining > 0
+                    && !rule_of_three(*opener, closer)
+            }) {
                 delimiters.truncate(index + 1);
                 let opener = &mut delimiters[index];
                 let width = usize::from(opener.remaining >= 2 && closer.remaining >= 2) + 1;
@@ -1123,8 +1120,8 @@ fn strikethrough_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPa
         }
         let previous = source[start..at].chars().next_back();
         let next = source[at + 2..end].chars().next();
-        let previous_whitespace = previous.is_none_or(char::is_whitespace);
-        let next_whitespace = next.is_none_or(char::is_whitespace);
+        let previous_whitespace = previous.map_or(true, char::is_whitespace);
+        let next_whitespace = next.map_or(true, char::is_whitespace);
         let previous_punctuation = previous.is_some_and(is_unicode_punctuation);
         let next_punctuation = next.is_some_and(is_unicode_punctuation);
         let can_open =
@@ -1164,8 +1161,8 @@ fn flanking(
 ) -> (bool, bool) {
     let previous = source[start..at].chars().next_back();
     let next = source[at + length..end].chars().next();
-    let previous_whitespace = previous.is_none_or(char::is_whitespace);
-    let next_whitespace = next.is_none_or(char::is_whitespace);
+    let previous_whitespace = previous.map_or(true, char::is_whitespace);
+    let next_whitespace = next.map_or(true, char::is_whitespace);
     let previous_punctuation = previous.is_some_and(is_unicode_punctuation);
     let next_punctuation = next.is_some_and(is_unicode_punctuation);
     let left =

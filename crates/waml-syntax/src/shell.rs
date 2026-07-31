@@ -49,13 +49,13 @@ pub(crate) struct ParsedShellWindow {
 }
 pub(crate) fn frontmatter_range(
     text: &SourceText,
-    structure: &crate::MarkdownStructureMap,
+    structure: &crate::markdown::ShellStructure,
 ) -> Result<Option<TextRange>, ParseError> {
     crate::markdown::parser::frontmatter_range(text, structure)
 }
 pub(crate) fn parse_window(
     text: &SourceText,
-    structure: &crate::MarkdownStructureMap,
+    structure: &crate::markdown::ShellStructure,
     window: ShellWindow,
 ) -> Result<ParsedShellWindow, ParseError> {
     crate::markdown::parser::parse_window(text, structure, window)

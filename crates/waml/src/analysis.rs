@@ -4,12 +4,12 @@ use std::{
     sync::Arc,
 };
 
-use waml_syntax::{
-    parse_markdown, reparse_markdown, LineIndex, MarkdownDialect,
-    MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, ParseError, SourceText, SyntaxLanguage,
-    SyntaxTree, TextChange, TextRange, TextSize,
-};
 pub use waml_syntax::DocumentRevision;
+use waml_syntax::{
+    parse_markdown, reparse_markdown, LineIndex, MarkdownDialect, MarkdownSyntaxSnapshot,
+    MarkdownSyntaxUpdate, ParseError, SourceText, SyntaxLanguage, SyntaxTree, TextChange,
+    TextRange, TextSize,
+};
 
 use crate::{
     okf,
@@ -507,9 +507,12 @@ fn analyze_okf_inner(
             }
             Some(prior) => Arc::new(version(
                 prior.id(),
-                prior.revision().checked_next().ok_or_else(|| AnalysisError::CatalogInvariant {
-                    reason: "document revision overflow".into(),
-                })?,
+                prior
+                    .revision()
+                    .checked_next()
+                    .ok_or_else(|| AnalysisError::CatalogInvariant {
+                        reason: "document revision overflow".into(),
+                    })?,
                 path.clone(),
                 source_document.text_arc().clone(),
             )?),
@@ -549,21 +552,25 @@ fn analyze_okf_inner(
                 })
             }
             None => match previous.and_then(|analysis| analysis.markdown.document(document.id())) {
-            Some(previous_snapshot) if previous_snapshot.revision() == document.revision() => previous_snapshot.clone(),
-            Some(previous_snapshot) => reparse_markdown(
-                previous_snapshot,
-                document.revision(),
-                document.text().clone(),
-                &single_text_change(previous_snapshot.text(), document.text()),
-            )
-            .map_err(|source| shell_error(document.path().clone(), source))?
-            .snapshot,
-            None => parse_markdown(
-                document.revision(),
-                document.text().clone(),
-                MarkdownDialect::CommonMarkCurrent,
-            )
-            .map_err(|source| shell_error(document.path().clone(), source))?,
+                Some(previous_snapshot) if previous_snapshot.revision() == document.revision() => {
+                    previous_snapshot.clone()
+                }
+                Some(previous_snapshot) => {
+                    reparse_markdown(
+                        previous_snapshot,
+                        document.revision(),
+                        document.text().clone(),
+                        &single_text_change(previous_snapshot.text(), document.text()),
+                    )
+                    .map_err(|source| shell_error(document.path().clone(), source))?
+                    .snapshot
+                }
+                None => parse_markdown(
+                    document.revision(),
+                    document.text().clone(),
+                    MarkdownDialect::CommonMarkCurrent,
+                )
+                .map_err(|source| shell_error(document.path().clone(), source))?,
             },
         };
         markdown_documents.insert(document.id(), snapshot);

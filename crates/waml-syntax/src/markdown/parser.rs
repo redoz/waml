@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
+    shell::{ParseError, ParsedShellWindow, ShellParse, ShellWindow, ShellWindowKind},
     GreenElement, GreenFactory, GreenText, GreenTrivia, MarkdownDialect, OkfMarkdownLanguage,
     OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SourceText, SyntaxSeverity, SyntaxTree,
     TextRange, TextSize, TreeDiagnostic, TriviaKind,
-    shell::{ParseError, ParsedShellWindow, ShellParse, ShellWindow, ShellWindowKind},
 };
 
 pub(crate) fn parse(text: SourceText, dialect: MarkdownDialect) -> Result<ShellParse, ParseError> {
@@ -518,11 +518,9 @@ fn trivia(
     if start == end {
         return Ok(Vec::new());
     }
-    Ok(vec![
-        factory
-            .trivia(TriviaKind::Whitespace, slice(text, start, end)?)
-            .map_err(|_| ParseError::WidthOverflow)?,
-    ])
+    Ok(vec![factory
+        .trivia(TriviaKind::Whitespace, slice(text, start, end)?)
+        .map_err(|_| ParseError::WidthOverflow)?])
 }
 
 fn slice(text: &SourceText, start: usize, end: usize) -> Result<GreenText, ParseError> {

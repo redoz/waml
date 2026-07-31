@@ -4,12 +4,12 @@ use std::{
 };
 
 use crate::{
-    ChangeMap, GreenElement, GreenFactory, GreenNode, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
-    ParseError, SourceText, SyntaxElement, SyntaxNode, SyntaxTree, TextChange, TextRange, TextSize,
-    rebase_unchanged_green,
+    rebase_unchanged_green, ChangeMap, GreenElement, GreenFactory, GreenNode, OkfMarkdownLanguage,
+    OkfMarkdownSyntaxKind, ParseError, SourceText, SyntaxElement, SyntaxNode, SyntaxTree,
+    TextChange, TextRange, TextSize,
 };
 
-use super::reference::{MarkdownReferenceDefinition, MarkdownReferenceMap, normalize_label};
+use super::reference::{normalize_label, MarkdownReferenceDefinition, MarkdownReferenceMap};
 
 /// Returns true when a change touches any reference-definition line.
 ///

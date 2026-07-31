@@ -438,9 +438,12 @@ fn snapshot(source: &SourceBundle) -> BTreeMap<BundlePath, Arc<String>> {
 
 fn claimed_id(path: &BundlePath, text: &Arc<String>) -> Option<String> {
     let source = SourceText::from_shared(text.clone()).ok()?;
-    let snapshot =
-        parse_markdown(DocumentRevision::INITIAL, source, MarkdownDialect::CommonMarkCurrent)
-            .ok()?;
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source,
+        MarkdownDialect::CommonMarkCurrent,
+    )
+    .ok()?;
     let frontmatter = snapshot
         .tree()
         .root()

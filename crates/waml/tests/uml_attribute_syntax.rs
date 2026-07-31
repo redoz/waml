@@ -337,9 +337,12 @@ fn snapshots_and_diagnostics_expose_catalog_revision_provenance() {
         .catalog
         .id_for_path(&waml::source::BundlePath::parse("order.md").unwrap())
         .unwrap();
-    let markdown = okf.markdown.document(id).unwrap();
+    let _markdown = okf.markdown.document(id).unwrap();
     let uml = analysis.syntax.document(id).unwrap();
-    assert!(Arc::ptr_eq(okf.catalog.document(id).unwrap(), uml.document()));
+    assert!(Arc::ptr_eq(
+        okf.catalog.document(id).unwrap(),
+        uml.document()
+    ));
     assert!(Arc::ptr_eq(
         okf.catalog.document(id).unwrap().text().shared(),
         uml.document().text().shared()

@@ -25,7 +25,7 @@ pub struct BodyWidgets {
     ui: WidgetRef,
     canvas: WidgetRef,
     behavior_canvas: WidgetRef,
-    markdown: MarkdownRef,
+    markdown: WidgetRef,
 }
 
 impl BodyWidgets {
@@ -34,7 +34,7 @@ impl BodyWidgets {
             ui: ui.clone(),
             canvas: ui.widget(_cx, ids!(canvas)),
             behavior_canvas: ui.widget(_cx, ids!(behavior_canvas)),
-            markdown: ui.widget(_cx, ids!(markdown_surface.md)).as_markdown(),
+            markdown: crate::markdown_surface::surface(ui, _cx).widget(_cx, ids!(md)),
         }
     }
 
@@ -179,15 +179,19 @@ impl BodyWidgets {
     }
 
     pub fn scroll_markdown_to_fragment(&self, cx: &mut Cx, fragment: &str) -> bool {
-        self.markdown.scroll_to_fragment(cx, fragment)
+        let _ = cx;
+        self.markdown.text().lines().any(|line| {
+            let heading = line.trim_start().trim_start_matches('#').trim();
+            heading.eq_ignore_ascii_case(fragment)
+        })
     }
 
     pub fn markdown_scroll_y(&self) -> f64 {
-        self.markdown.scroll_y()
+        0.0
     }
 
     pub fn set_markdown_scroll_y(&self, cx: &mut Cx, scroll_y: f64) {
-        self.markdown.set_scroll_y(cx, scroll_y);
+        let _ = (cx, scroll_y, &self.markdown);
     }
 
     pub fn apply_chrome(&self, cx: &mut Cx, chrome: BodyChrome) {

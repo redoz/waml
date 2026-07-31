@@ -387,6 +387,7 @@ fn build_frame(
     reference_spans: &[Range<usize>],
     definitions: &mut Vec<TextRange>,
 ) -> Result<GreenNode<OkfMarkdownLanguage>, BlockBuildError> {
+    validate_event_range(source, 0, source.len(), &frame.source_range)?;
     let metadata = frame_metadata(source, &frame, dialect);
     frame
         .children
@@ -553,9 +554,12 @@ fn leaf_tokens(
     range: Range<usize>,
     diagnostics: &mut Vec<TreeDiagnostic<Diagnostic>>,
     dialect: MarkdownDialect,
-) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
-    match kind {
-        Kind::AtxHeading => heading_tokens(factory, text, source, range),
+) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, BlockBuildError> {
+    if kind == Kind::AtxHeading {
+        return heading_tokens(factory, text, source, range);
+    }
+    Ok(match kind {
+        Kind::AtxHeading => unreachable!(),
         Kind::SetextHeading => setext_tokens(factory, text, source, range),
         Kind::ThematicBreak => {
             line_marker_tokens(factory, text, source, range, Kind::ThematicBreakToken)
@@ -643,7 +647,7 @@ fn leaf_tokens(
             range.end,
             Kind::TextToken,
         )?]),
-    }
+    }?)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -800,7 +804,7 @@ fn emit_uncovered(
     out: &mut Vec<GreenElement<OkfMarkdownLanguage>>,
     definitions: &mut Vec<TextRange>,
     reference_spans: &[Range<usize>],
-) -> Result<(), ParseError> {
+) -> Result<(), BlockBuildError> {
     while start < end {
         if start == 0 && source.starts_with('\u{feff}') {
             out.push(token(
@@ -817,6 +821,9 @@ fn emit_uncovered(
             .iter()
             .find(|definition| definition.start >= start && definition.start < end)
         {
+            if definition.end < definition.start || definition.end > end {
+                return Err(BlockBuildError::MalformedEventRange);
+            }
             if start < definition.start {
                 out.push(token(
                     factory,
@@ -835,7 +842,7 @@ fn emit_uncovered(
                 start = definition.start;
                 continue;
             }
-            let definition_end = definition.end.min(end);
+            let definition_end = definition.end;
             definitions.push(range(start, definition_end)?);
             out.push(GreenElement::Node(semantic_node(
                 factory,
@@ -846,6 +853,7 @@ fn emit_uncovered(
             continue;
         }
         let line_end = next_line(source, start, end);
+        validate_event_range(source, start, end, &(start..line_end))?;
         if is_link_definition(&source[start..line_end]) {
             definitions.push(range(start, line_end)?);
             out.push(GreenElement::Node(semantic_node(
@@ -879,7 +887,7 @@ fn heading_tokens(
     text: &SourceText,
     source: &str,
     range: Range<usize>,
-) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
+) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, BlockBuildError> {
     let content_end = trim_newline(source, range.start, range.end);
     let open_end = range.start
         + source[range.clone()]
@@ -887,6 +895,9 @@ fn heading_tokens(
             .take_while(|b| *b == b'#')
             .count();
     let text_start = open_end + usize::from(source.as_bytes().get(open_end) == Some(&b' '));
+    if text_start > content_end {
+        return Err(BlockBuildError::MalformedEventRange);
+    }
     let trimmed = source[text_start..content_end].trim_end_matches(' ');
     let candidate_end = text_start + trimmed.len();
     let closing_start = if source[text_start..candidate_end]
@@ -1503,12 +1514,10 @@ mod tests {
             MarkdownDialect::CommonMarkCurrent,
         );
         assert_eq!(tree.write_to_string(), source);
-        assert!(
-            parsed
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == Diagnostic::MalformedBlock)
-        );
+        assert!(parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == Diagnostic::MalformedBlock));
         assert!(parsed.inline_roots.is_empty());
         assert!(parsed.references.definitions.is_empty());
     }

@@ -6,9 +6,9 @@ use std::{
 
 use crate::{
     GreenElement, GreenError, GreenFactory, GreenNode, GreenText, GreenTrivia,
-    MarkdownStructureMap, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, ParseError, SourceText,
-    SyntaxAnnotation, SyntaxElement, SyntaxLanguage, SyntaxNode, SyntaxTree, TextError, TextRange,
-    TextSize, TreeDiagnostic,
+    MarkdownStructureMap, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode,
+    ParseError, SourceText, SyntaxAnnotation, SyntaxElement, SyntaxLanguage, SyntaxNode,
+    SyntaxTree, TextError, TextRange, TextSize, TreeDiagnostic,
 };
 
 /// One replacement expressed in checked, half-open byte offsets of the old text.
@@ -853,6 +853,13 @@ pub(crate) fn reparse_okf_markdown_with_structure(
         }
         Err(error) => return Err(error),
     };
+    if parsed_window
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock)
+    {
+        return full(FullReparseReason::UnsafeSynchronization);
+    }
     let mut children = Vec::new();
     for (index, child) in previous.root_green().children().iter().enumerate() {
         if index == window.first {
@@ -908,6 +915,20 @@ pub(crate) fn reparse_okf_markdown_with_structure(
             dialect,
             new_structure.clone(),
         )?;
+        if oracle
+            .tree
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock)
+        {
+            return Ok((
+                ReparseOutcome::Full {
+                    tree: oracle.tree,
+                    reason: FullReparseReason::UnsafeSynchronization,
+                },
+                oracle.structure,
+            ));
+        }
         if public_structure.islands.len() != oracle.structure.islands.len() {
             return Ok((
                 ReparseOutcome::Full {
