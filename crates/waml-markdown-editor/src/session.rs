@@ -8,6 +8,7 @@ use crate::{
     },
     history::{History, HistoryEntry},
     ime::{ImeComposition, ImeError},
+    layout::{LayoutError, LayoutSnapshot},
     selection::{
         translate_position_with_map, Affinity, Selection, SelectionError, SelectionSet,
         TextPosition,
@@ -25,6 +26,7 @@ pub struct MarkdownDocumentSession {
     read_only: bool,
     history: History,
     ime: Option<ImeComposition>,
+    preferred_x: Option<f64>,
 }
 
 impl MarkdownDocumentSession {
@@ -37,6 +39,7 @@ impl MarkdownDocumentSession {
             read_only: false,
             history: History::default(),
             ime: None,
+            preferred_x: None,
         }
     }
 
@@ -59,6 +62,7 @@ impl MarkdownDocumentSession {
             read_only: false,
             history: History::default(),
             ime: None,
+            preferred_x: None,
         })
     }
 
@@ -177,6 +181,7 @@ impl MarkdownDocumentSession {
     }
 
     pub fn set_primary_offset(&mut self, offset: TextSize) -> Result<(), MarkdownEditError> {
+        self.preferred_x = None;
         self.replace_primary_selection(Selection::caret(TextPosition::new(
             offset,
             Affinity::Before,
@@ -184,6 +189,7 @@ impl MarkdownDocumentSession {
     }
 
     pub fn move_left(&mut self, extend: bool) -> Result<(), MarkdownEditError> {
+        self.preferred_x = None;
         let selection = self.selections.primary();
         let offset = if !extend && !selection.is_empty() {
             selection.range().start().to_usize()
@@ -197,6 +203,7 @@ impl MarkdownDocumentSession {
     }
 
     pub fn move_right(&mut self, extend: bool) -> Result<(), MarkdownEditError> {
+        self.preferred_x = None;
         let selection = self.selections.primary();
         let offset = if !extend && !selection.is_empty() {
             selection.range().end().to_usize()
@@ -210,6 +217,7 @@ impl MarkdownDocumentSession {
     }
 
     pub fn select_word_at(&mut self, offset: TextSize) -> Result<Selection, MarkdownEditError> {
+        self.preferred_x = None;
         let text = self.snapshot.text().shared().as_str();
         let offset = offset.to_usize();
         let (start, end) = word_range_at(text, offset).unwrap_or_else(|| {
@@ -227,6 +235,7 @@ impl MarkdownDocumentSession {
     }
 
     pub fn select_line_at(&mut self, offset: TextSize) -> Result<Selection, MarkdownEditError> {
+        self.preferred_x = None;
         let text = self.snapshot.text().shared().as_str();
         let line = self
             .snapshot
@@ -255,6 +264,7 @@ impl MarkdownDocumentSession {
     }
 
     pub fn select_all(&mut self) -> Result<(), MarkdownEditError> {
+        self.preferred_x = None;
         let end = TextSize::try_from_usize(self.snapshot.text().shared().as_str().len()).unwrap();
         self.selections = SelectionSet::from_selections(
             self.snapshot.as_ref(),
@@ -265,6 +275,34 @@ impl MarkdownDocumentSession {
             0,
         )
         .map_err(map_selection_error)?;
+        Ok(())
+    }
+
+    pub fn move_vertical(
+        &mut self,
+        layout: &LayoutSnapshot,
+        lines: i32,
+        extend: bool,
+    ) -> Result<(), LayoutError> {
+        let document = self.snapshot.revision();
+        if layout.revision() != document {
+            return Err(LayoutError::RevisionMismatch {
+                document,
+                layout: layout.revision(),
+            });
+        }
+        let primary = self.selections.primary();
+        let (position, preferred_x) = layout
+            .move_vertical(primary.cursor, self.preferred_x, lines)
+            .ok_or(LayoutError::GeometryUnavailable)?;
+        let selection = if extend {
+            Selection::new(primary.anchor, position)
+        } else {
+            Selection::caret(position)
+        };
+        self.replace_primary_selection(selection)
+            .map_err(|_| LayoutError::InvalidSelection)?;
+        self.preferred_x = Some(preferred_x);
         Ok(())
     }
 
@@ -693,6 +731,7 @@ impl MarkdownDocumentSession {
         ));
         self.snapshot = snapshot.clone();
         self.selections = edit.selection_after.clone();
+        self.preferred_x = None;
         Ok(ProposedMarkdownEdit {
             edit,
             snapshot,
