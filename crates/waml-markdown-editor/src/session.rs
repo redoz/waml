@@ -2,15 +2,23 @@ use std::sync::Arc;
 
 use crate::{
     document::MarkdownDocumentSnapshot,
-    edit::{MarkdownEdit, MarkdownEditError, ProposedMarkdownEdit},
-    selection::{SelectionError, SelectionSet},
+    edit::{
+        EditCommand, EditOutcome, HistoryGroup, MarkdownEdit, MarkdownEditError,
+        ProposedMarkdownEdit,
+    },
+    history::{History, HistoryEntry},
+    selection::{Affinity, Selection, SelectionError, SelectionSet, TextPosition},
 };
-use waml_syntax::{reparse_markdown, ChangeMap, DocumentRevision, SourceText, TextError, TextSize};
+use waml_syntax::{
+    reparse_markdown, ChangeMap, DocumentRevision, SourceText, TextChange, TextError, TextRange,
+    TextSize,
+};
 
 pub struct MarkdownDocumentSession {
     snapshot: Arc<MarkdownDocumentSnapshot>,
     selections: SelectionSet,
     read_only: bool,
+    history: History,
 }
 
 impl MarkdownDocumentSession {
@@ -21,23 +29,154 @@ impl MarkdownDocumentSession {
             snapshot,
             selections,
             read_only: false,
+            history: History::default(),
         }
+    }
+
+    pub fn with_selections(
+        snapshot: Arc<MarkdownDocumentSnapshot>,
+        selections: SelectionSet,
+    ) -> Result<Self, MarkdownEditError> {
+        if selections.revision() != snapshot.revision() {
+            return Err(MarkdownEditError::SelectionRevision {
+                selection: selections.revision(),
+                expected: snapshot.revision(),
+            });
+        }
+        selections
+            .validate_for_text(snapshot.text())
+            .map_err(map_selection_error)?;
+        Ok(Self {
+            snapshot,
+            selections,
+            read_only: false,
+            history: History::default(),
+        })
     }
 
     pub fn snapshot(&self) -> &Arc<MarkdownDocumentSnapshot> {
         &self.snapshot
     }
-
     pub fn selections(&self) -> &SelectionSet {
         &self.selections
     }
-
     pub fn local_revision(&self) -> DocumentRevision {
         self.snapshot.revision()
     }
-
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+    pub fn can_undo(&self) -> bool {
+        !self.history.undo.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.history.redo.is_empty()
+    }
+    pub fn break_history_group(&mut self) {
+        self.history.undo.push(Vec::new());
+    }
+
+    pub fn select_all(&mut self) -> Result<(), MarkdownEditError> {
+        let end = TextSize::try_from_usize(self.snapshot.text().shared().as_str().len()).unwrap();
+        self.selections = SelectionSet::from_selections(
+            self.snapshot.as_ref(),
+            vec![Selection::new(
+                TextPosition::new(TextSize::new(0), Affinity::Before),
+                TextPosition::new(end, Affinity::After),
+            )],
+            0,
+        )
+        .map_err(map_selection_error)?;
+        Ok(())
+    }
+
+    pub fn execute(
+        &mut self,
+        command: EditCommand,
+        group: HistoryGroup,
+    ) -> Result<EditOutcome, MarkdownEditError> {
+        if let Some(selection) = self.closing_delimiter_target(&command) {
+            self.selections = SelectionSet::single(self.snapshot.as_ref(), selection)
+                .map_err(map_selection_error)?;
+            return Ok(EditOutcome {
+                proposal: None,
+                clipboard: None,
+            });
+        }
+        let clipboard = if matches!(command, EditCommand::Cut) {
+            Some(
+                self.selections
+                    .as_slice()
+                    .iter()
+                    .map(|s| self.snapshot.text().slice(s.range()).map(|x| x.to_owned()))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join(""),
+            )
+        } else {
+            None
+        };
+        let (changes, positions) = self.lower(command)?;
+        if changes.is_empty() {
+            return Ok(EditOutcome {
+                proposal: None,
+                clipboard,
+            });
+        }
+        let next =
+            self.snapshot
+                .revision()
+                .checked_next()
+                .ok_or(MarkdownEditError::RevisionOverflow {
+                    current: self.snapshot.revision(),
+                })?;
+        let after_text = apply_changes(self.snapshot.text(), &changes)?;
+        let selection_after = SelectionSet::from_source(
+            next,
+            &after_text,
+            positions,
+            self.selections
+                .primary_index()
+                .min(self.selections.as_slice().len() - 1),
+        )
+        .map_err(map_selection_error)?;
+        let edit = MarkdownEdit {
+            base_revision: self.snapshot.revision(),
+            changes,
+            selection_after,
+            history_group: group,
+        };
+        let proposal = self.apply_with_history(edit)?;
+        Ok(EditOutcome {
+            proposal: Some(proposal),
+            clipboard,
+        })
+    }
+
+    pub fn undo(&mut self) -> Result<Option<ProposedMarkdownEdit>, MarkdownEditError> {
+        let Some(group) = self.history.undo.pop() else {
+            return Ok(None);
+        };
+        if group.is_empty() {
+            return self.undo();
+        }
+        let before = group.first().unwrap().before.clone();
+        let selection = group.first().unwrap().before_selection.clone();
+        let changes = diff_change(self.snapshot.text(), before.text())?;
+        let proposal = self.apply_restoring(changes, selection)?;
+        self.history.redo.push(group);
+        Ok(Some(proposal))
+    }
+
+    pub fn redo(&mut self) -> Result<Option<ProposedMarkdownEdit>, MarkdownEditError> {
+        let Some(group) = self.history.redo.pop() else {
+            return Ok(None);
+        };
+        let after = group.last().unwrap().after.clone();
+        let selection = group.last().unwrap().after_selection.clone();
+        let changes = diff_change(self.snapshot.text(), after.text())?;
+        let proposal = self.apply_restoring(changes, selection)?;
+        self.history.undo.push(group);
+        Ok(Some(proposal))
     }
 
     pub fn apply_edit(
@@ -45,6 +184,253 @@ impl MarkdownDocumentSession {
         edit: MarkdownEdit,
     ) -> Result<ProposedMarkdownEdit, MarkdownEditError> {
         self.apply_edit_without_history(edit)
+    }
+
+    fn apply_with_history(
+        &mut self,
+        edit: MarkdownEdit,
+    ) -> Result<ProposedMarkdownEdit, MarkdownEditError> {
+        let before = self.snapshot.clone();
+        let before_selection = self.selections.clone();
+        let inverse_changes = inverse_changes(before.text(), &edit.changes)?;
+        let proposal = self.apply_edit_without_history(edit)?;
+        self.history.push(HistoryEntry {
+            before,
+            before_selection,
+            after: self.snapshot.clone(),
+            after_selection: self.selections.clone(),
+            forward_changes: proposal.edit.changes.clone(),
+            inverse_changes,
+            group: proposal.edit.history_group,
+        });
+        Ok(proposal)
+    }
+
+    fn apply_restoring(
+        &mut self,
+        changes: Vec<TextChange>,
+        old_selection: SelectionSet,
+    ) -> Result<ProposedMarkdownEdit, MarkdownEditError> {
+        let next =
+            self.snapshot
+                .revision()
+                .checked_next()
+                .ok_or(MarkdownEditError::RevisionOverflow {
+                    current: self.snapshot.revision(),
+                })?;
+        let text = apply_changes(self.snapshot.text(), &changes)?;
+        let positions = old_selection
+            .as_slice()
+            .iter()
+            .map(|s| Selection::new(s.anchor, s.cursor))
+            .collect();
+        let selection_after =
+            SelectionSet::from_source(next, &text, positions, old_selection.primary_index())
+                .map_err(map_selection_error)?;
+        self.apply_edit_without_history(MarkdownEdit {
+            base_revision: self.snapshot.revision(),
+            changes,
+            selection_after,
+            history_group: HistoryGroup::isolated(),
+        })
+    }
+
+    fn lower(
+        &self,
+        command: EditCommand,
+    ) -> Result<(Vec<TextChange>, Vec<Selection>), MarkdownEditError> {
+        let source = self.snapshot.text().shared().as_str();
+        let selections = self.selections.as_slice();
+        let mut changes = Vec::new();
+        let mut carets = Vec::new();
+        let is_indent = matches!(
+            &command,
+            EditCommand::Indent { .. } | EditCommand::Outdent { .. }
+        );
+        let delimiter = match &command {
+            EditCommand::Insert(text) => delimiter_pair(text),
+            _ => None,
+        };
+        match command {
+            EditCommand::Insert(text) => {
+                let pair = delimiter_pair(text.as_ref());
+                for selection in selections {
+                    let range = selection.range();
+                    let replacement = if let Some((open, close)) = pair {
+                        if !selection.is_empty() {
+                            Arc::from(format!(
+                                "{open}{}{}",
+                                &source[range.start().to_usize()..range.end().to_usize()],
+                                close
+                            ))
+                        } else if can_insert_pair(source, range.start().to_usize()) {
+                            Arc::from(format!("{open}{close}"))
+                        } else {
+                            text.clone()
+                        }
+                    } else {
+                        text.clone()
+                    };
+                    changes.push(TextChange {
+                        old_range: range,
+                        replacement,
+                    });
+                    let offset = TextSize::try_from_usize(
+                        range.start().to_usize() + changes.last().unwrap().replacement.len(),
+                    )
+                    .unwrap();
+                    carets.push(Selection::caret(TextPosition::new(offset, Affinity::After)));
+                }
+            }
+            EditCommand::ReplaceSelections(text) | EditCommand::Paste(text) => {
+                let replacement = text;
+                for selection in selections {
+                    let range = selection.range();
+                    changes.push(TextChange {
+                        old_range: range,
+                        replacement: replacement.clone(),
+                    });
+                    let offset =
+                        TextSize::try_from_usize(range.start().to_usize() + replacement.len())
+                            .unwrap();
+                    carets.push(Selection::caret(TextPosition::new(offset, Affinity::After)));
+                }
+            }
+            EditCommand::Cut => {
+                for selection in selections {
+                    let range = selection.range();
+                    changes.push(TextChange {
+                        old_range: range,
+                        replacement: Arc::from(""),
+                    });
+                    carets.push(Selection::caret(TextPosition::new(
+                        range.start(),
+                        Affinity::Before,
+                    )));
+                }
+            }
+            EditCommand::DeleteBackward | EditCommand::DeleteForward => {
+                for selection in selections {
+                    let range = if selection.is_empty() {
+                        char_range(
+                            source,
+                            selection.cursor.offset.to_usize(),
+                            matches!(command, EditCommand::DeleteBackward),
+                        )
+                    } else {
+                        Some(selection.range())
+                    };
+                    if let Some(range) = range {
+                        changes.push(TextChange {
+                            old_range: range,
+                            replacement: Arc::from(""),
+                        });
+                        carets.push(Selection::caret(TextPosition::new(
+                            range.start(),
+                            Affinity::Before,
+                        )));
+                    }
+                }
+            }
+            EditCommand::Indent { spaces } | EditCommand::Outdent { spaces } => {
+                let mut starts = Vec::new();
+                for selection in selections {
+                    let r = selection.range();
+                    let mut start = source[..r.start().to_usize()]
+                        .rfind('\n')
+                        .map_or(0, |i| i + 1);
+                    let end = r.end().to_usize();
+                    loop {
+                        if !starts.contains(&start) {
+                            starts.push(start);
+                        }
+                        match source[start..].find('\n') {
+                            Some(i) if start + i + 1 < end => start += i + 1,
+                            _ => break,
+                        }
+                    }
+                }
+                starts.sort_unstable();
+                for start in starts {
+                    if matches!(command, EditCommand::Indent { .. }) {
+                        changes.push(TextChange {
+                            old_range: empty_range(start),
+                            replacement: Arc::from(" ".repeat(spaces)),
+                        });
+                    } else {
+                        let remove = source[start..]
+                            .bytes()
+                            .take(spaces)
+                            .take_while(|b| *b == b' ')
+                            .count();
+                        if remove != 0 {
+                            changes.push(TextChange {
+                                old_range: range(start, start + remove),
+                                replacement: Arc::from(""),
+                            });
+                        }
+                    }
+                }
+                let map = ChangeMap::checked(self.snapshot.text(), &changes)
+                    .map_err(MarkdownEditError::InvalidChanges)?;
+                carets = selections
+                    .iter()
+                    .map(|s| map_selection(*s, &map))
+                    .collect::<Option<Vec<_>>>()
+                    .unwrap_or_else(|| selections.to_vec());
+            }
+        }
+        changes.sort_unstable_by_key(|c| c.old_range.start());
+        if !is_indent {
+            let mut delta: isize = 0;
+            carets = changes
+                .iter()
+                .map(|change| {
+                    let start = (change.old_range.start().to_usize() as isize + delta) as usize;
+                    let (offset, affinity) = if delimiter.is_some()
+                        && change.old_range.start() == change.old_range.end()
+                        && change.replacement.len() == 2
+                    {
+                        (
+                            TextSize::try_from_usize(start + 1).unwrap(),
+                            Affinity::After,
+                        )
+                    } else if change.replacement.is_empty() {
+                        (TextSize::try_from_usize(start).unwrap(), Affinity::Before)
+                    } else {
+                        (
+                            TextSize::try_from_usize(start + change.replacement.len()).unwrap(),
+                            Affinity::After,
+                        )
+                    };
+                    delta += change.replacement.len() as isize
+                        - (change.old_range.end().to_usize() - change.old_range.start().to_usize())
+                            as isize;
+                    Selection::caret(TextPosition::new(offset, affinity))
+                })
+                .collect();
+        }
+        Ok((changes, carets))
+    }
+
+    fn closing_delimiter_target(&self, command: &EditCommand) -> Option<Selection> {
+        let EditCommand::Insert(text) = command else {
+            return None;
+        };
+        let typed = text.chars().next().filter(|_| text.len() == 1)?;
+        if !is_closing_delimiter(typed) || !self.selections.primary().is_empty() {
+            return None;
+        }
+        let offset = self.selections.primary().cursor.offset.to_usize();
+        let current = self.snapshot.text().shared().as_str()[offset..]
+            .chars()
+            .next()?;
+        (current == typed).then(|| {
+            Selection::caret(TextPosition::new(
+                TextSize::try_from_usize(offset + typed.len_utf8()).unwrap(),
+                Affinity::After,
+            ))
+        })
     }
 
     fn apply_edit_without_history(
@@ -58,7 +444,6 @@ impl MarkdownDocumentSession {
                 current,
             });
         }
-
         let next_revision = current
             .checked_next()
             .ok_or(MarkdownEditError::RevisionOverflow { current })?;
@@ -68,25 +453,15 @@ impl MarkdownDocumentSession {
                 expected: next_revision,
             });
         }
-
         let old_text = self.snapshot.text();
         for change in &edit.changes {
             old_text.slice(change.old_range).map_err(map_text_error)?;
         }
         ChangeMap::checked(old_text, &edit.changes).map_err(MarkdownEditError::InvalidChanges)?;
-
-        let mut new_string = old_text.shared().as_str().to_owned();
-        for change in edit.changes.iter().rev() {
-            new_string.replace_range(
-                change.old_range.start().to_usize()..change.old_range.end().to_usize(),
-                &change.replacement,
-            );
-        }
-        let new_text = SourceText::new(new_string)?;
+        let new_text = apply_changes(old_text, &edit.changes)?;
         edit.selection_after
             .validate_for_text(&new_text)
             .map_err(map_selection_error)?;
-
         let syntax_update = reparse_markdown(
             self.snapshot.syntax().as_ref(),
             next_revision,
@@ -96,7 +471,6 @@ impl MarkdownDocumentSession {
         let snapshot = Arc::new(MarkdownDocumentSnapshot::new(
             syntax_update.snapshot.clone(),
         ));
-
         self.snapshot = snapshot.clone();
         self.selections = edit.selection_after.clone();
         Ok(ProposedMarkdownEdit {
@@ -107,13 +481,134 @@ impl MarkdownDocumentSession {
     }
 }
 
+fn range(start: usize, end: usize) -> TextRange {
+    TextRange::new(
+        TextSize::try_from_usize(start).unwrap(),
+        TextSize::try_from_usize(end).unwrap(),
+    )
+    .unwrap()
+}
+fn empty_range(offset: usize) -> TextRange {
+    range(offset, offset)
+}
+fn char_range(text: &str, offset: usize, back: bool) -> Option<TextRange> {
+    if back {
+        text[..offset]
+            .char_indices()
+            .last()
+            .map(|(i, _)| range(i, offset))
+    } else {
+        text[offset..]
+            .chars()
+            .next()
+            .map(|c| range(offset, offset + c.len_utf8()))
+    }
+}
+fn apply_changes(
+    old: &SourceText,
+    changes: &[TextChange],
+) -> Result<SourceText, MarkdownEditError> {
+    let mut value = old.shared().as_str().to_owned();
+    for c in changes.iter().rev() {
+        value.replace_range(
+            c.old_range.start().to_usize()..c.old_range.end().to_usize(),
+            &c.replacement,
+        );
+    }
+    Ok(SourceText::new(value)?)
+}
+fn inverse_changes(
+    old: &SourceText,
+    changes: &[TextChange],
+) -> Result<Vec<TextChange>, MarkdownEditError> {
+    let map = ChangeMap::checked(old, changes).map_err(MarkdownEditError::InvalidChanges)?;
+    changes
+        .iter()
+        .map(|c| {
+            let start = map.translate_start_boundary(c.old_range.start()).unwrap();
+            let end = TextSize::try_from_usize(start.to_usize() + c.replacement.len()).unwrap();
+            Ok(TextChange {
+                old_range: TextRange::new(start, end).unwrap(),
+                replacement: Arc::from(old.slice(c.old_range)?.to_owned()),
+            })
+        })
+        .collect::<Result<_, TextError>>()
+        .map_err(map_text_error)
+}
+fn diff_change(
+    current: &SourceText,
+    target: &SourceText,
+) -> Result<Vec<TextChange>, MarkdownEditError> {
+    let a = current.shared().as_str();
+    let b = target.shared().as_str();
+    if a == b {
+        return Ok(Vec::new());
+    }
+    let mut prefix = 0;
+    while prefix < a.len() && prefix < b.len() && a.as_bytes()[prefix] == b.as_bytes()[prefix] {
+        prefix += 1;
+    }
+    while prefix > 0 && (!a.is_char_boundary(prefix) || !b.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+    let mut suffix = 0;
+    while suffix < a.len() - prefix
+        && suffix < b.len() - prefix
+        && a.as_bytes()[a.len() - 1 - suffix] == b.as_bytes()[b.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    while suffix > 0
+        && (!a.is_char_boundary(a.len() - suffix) || !b.is_char_boundary(b.len() - suffix))
+    {
+        suffix -= 1;
+    }
+    Ok(vec![TextChange {
+        old_range: range(prefix, a.len() - suffix),
+        replacement: Arc::from(&b[prefix..b.len() - suffix]),
+    }])
+}
+fn map_selection(selection: Selection, map: &ChangeMap) -> Option<Selection> {
+    let point = |p: TextPosition| {
+        let offset = match p.affinity {
+            Affinity::Before => map.translate_start_boundary(p.offset),
+            Affinity::After => map.translate_end_boundary(p.offset),
+        }?;
+        Some(TextPosition::new(offset, p.affinity))
+    };
+    Some(Selection::new(
+        point(selection.anchor)?,
+        point(selection.cursor)?,
+    ))
+}
+fn delimiter_pair(text: &str) -> Option<(char, char)> {
+    if text.len() != 1 {
+        return None;
+    }
+    match text.chars().next()? {
+        '(' => Some(('(', ')')),
+        '[' => Some(('[', ']')),
+        '{' => Some(('{', '}')),
+        '"' => Some(('"', '"')),
+        '`' => Some(('`', '`')),
+        _ => None,
+    }
+}
+fn is_closing_delimiter(ch: char) -> bool {
+    matches!(ch, ')' | ']' | '}' | '"' | '`')
+}
+fn can_insert_pair(source: &str, offset: usize) -> bool {
+    source[offset..]
+        .chars()
+        .next()
+        .map_or(true, |ch| ch.is_whitespace() || is_closing_delimiter(ch))
+}
 fn map_text_error(error: TextError) -> MarkdownEditError {
     match error {
         TextError::NonUtf8Boundary { offset } => MarkdownEditError::InvalidBoundary { offset },
         error => MarkdownEditError::Text(error),
     }
 }
-
 fn map_selection_error(error: SelectionError) -> MarkdownEditError {
     match error {
         SelectionError::InvalidBoundary { offset } => MarkdownEditError::InvalidBoundary { offset },

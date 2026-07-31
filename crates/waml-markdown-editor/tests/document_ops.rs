@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
-    edit::{HistoryGroup, MarkdownEdit, MarkdownEditError},
+    edit::{EditCommand, HistoryGroup, MarkdownEdit, MarkdownEditError},
     selection::{Affinity, Selection, SelectionError, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
 };
@@ -169,4 +169,84 @@ fn invalid_utf8_change_is_typed_and_does_not_advance() {
         .unwrap_err();
     assert!(matches!(error, MarkdownEditError::InvalidBoundary { .. }));
     assert_eq!(session.local_revision().get(), 8);
+}
+
+#[test]
+fn multi_selection_insert_is_lowered_from_end_to_start() {
+    let before = snapshot("ab cd", 20);
+    let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+    let selections = SelectionSet::from_selections(
+        &before,
+        vec![Selection::caret(p(1)), Selection::new(p(3), p(5))],
+        1,
+    )
+    .unwrap();
+    let mut session = MarkdownDocumentSession::with_selections(before, selections).unwrap();
+    let outcome = session
+        .execute(EditCommand::Insert(Arc::from("X")), HistoryGroup::named(9))
+        .unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "aXb X");
+    assert_eq!(outcome.proposal.unwrap().edit.changes.len(), 2);
+}
+
+#[test]
+fn overlapping_selections_are_normalized_before_one_delete() {
+    let before = snapshot("abcdef", 30);
+    let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+    let selections = SelectionSet::from_selections(
+        &before,
+        vec![Selection::new(p(1), p(4)), Selection::new(p(3), p(5))],
+        0,
+    )
+    .unwrap();
+    let mut session = MarkdownDocumentSession::with_selections(before, selections).unwrap();
+    let outcome = session
+        .execute(EditCommand::DeleteBackward, HistoryGroup::named(2))
+        .unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "af");
+    assert_eq!(outcome.proposal.unwrap().edit.changes.len(), 1);
+}
+
+#[test]
+fn grouped_undo_and_redo_restore_source_and_selection_together() {
+    let before = snapshot("", 40);
+    let mut session = MarkdownDocumentSession::new(before);
+    for ch in ["a", "b", "c"] {
+        session
+            .execute(EditCommand::Insert(Arc::from(ch)), HistoryGroup::named(1))
+            .unwrap();
+    }
+    assert!(session.can_undo());
+    let undo = session.undo().unwrap().unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "");
+    assert_eq!(session.selections().primary().cursor.offset.to_usize(), 0);
+    assert_eq!(undo.edit.changes.len(), 1);
+    session.redo().unwrap().unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "abc");
+}
+
+#[test]
+fn paste_cut_and_indent_keep_raw_markdown_in_transactions() {
+    let before = snapshot("- a\n- b\n", 50);
+    let mut session = MarkdownDocumentSession::new(before);
+    session.select_all().unwrap();
+    let cut = session
+        .execute(EditCommand::Cut, HistoryGroup::isolated())
+        .unwrap();
+    assert_eq!(cut.clipboard.as_deref(), Some("- a\n- b\n"));
+    assert_eq!(session.snapshot().text().shared().as_str(), "");
+    session
+        .execute(
+            EditCommand::Paste(Arc::from("- a\n- b\n")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    session.select_all().unwrap();
+    session
+        .execute(EditCommand::Indent { spaces: 2 }, HistoryGroup::isolated())
+        .unwrap();
+    assert_eq!(
+        session.snapshot().text().shared().as_str(),
+        "  - a\n  - b\n"
+    );
 }

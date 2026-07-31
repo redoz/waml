@@ -31,6 +31,24 @@ pub struct MarkdownEdit {
     pub history_group: HistoryGroup,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EditCommand {
+    Insert(Arc<str>),
+    DeleteBackward,
+    DeleteForward,
+    ReplaceSelections(Arc<str>),
+    Paste(Arc<str>),
+    Cut,
+    Indent { spaces: usize },
+    Outdent { spaces: usize },
+}
+
+#[derive(Clone, Debug)]
+pub struct EditOutcome {
+    pub proposal: Option<ProposedMarkdownEdit>,
+    pub clipboard: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct ProposedMarkdownEdit {
     pub edit: MarkdownEdit,
