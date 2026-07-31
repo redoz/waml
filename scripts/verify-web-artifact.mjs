@@ -44,6 +44,14 @@ const REFERENCE_PATTERNS = [
   /\bfrom\s+['"](\.[^'"]+)['"]/g,
   /\bnative[Ff]etch\s*\(\s*['"](\.[^'"]+)['"]/g,
   /\bfetch\s*\(\s*['"](\.[^'"]+)['"]/g,
+  // Assets passed as bare arguments rather than through a recognisable call --
+  // the generated index.html hands the module path to a constructor, as in
+  // `new WasmWebGL('./waml-editor.wasm')`.
+  //
+  // Anchored on a leading `./` on purpose: the runtime shell contains
+  // `url.indexOf('.wasm')`, and a looser pattern would read that bare extension
+  // as a reference to a file named `.wasm` and fail the build for nothing.
+  /['"](\.\/[^'"]+\.(?:wasm|json|ico|svg|ttf|otf|png|jpg|css|js|mjs|bin))['"]/g,
 ];
 
 // Anything that is not a path into the artifact itself.
@@ -86,19 +94,26 @@ for (const file of scannable) {
       const cleaned = reference.split(/[?#]/)[0];
       if (cleaned === "") continue;
 
-      const target = cleaned.startsWith("/")
-        ? join(artifactDir, cleaned.slice(1))
-        : resolve(dirname(file), cleaned);
+      // Two different bases are in play and the reference alone does not say
+      // which applies. An ES `import` resolves against the importing module's
+      // directory, but a path handed to `new Worker(...)` or
+      // `audioWorklet.addModule(...)` resolves against the *document* base --
+      // and makepad_platform/web.js does exactly that with
+      // './makepad_platform/web_worker.js'. Accept either resolution: the goal
+      // is catching a file that is absent outright, not adjudicating base URLs.
+      const candidates = cleaned.startsWith("/")
+        ? [join(artifactDir, cleaned.slice(1))]
+        : [resolve(dirname(file), cleaned), resolve(artifactDir, cleaned)];
 
       // Never let a reference escape the artifact -- that is a broken deploy too.
-      const inside = relative(artifactDir, target);
-      if (inside.startsWith("..")) {
+      const inside = candidates.filter((path) => !relative(artifactDir, path).startsWith(".."));
+      if (inside.length === 0) {
         missing.push(`${relative(artifactDir, file)} -> ${reference} (outside the artifact)`);
         continue;
       }
 
       referenceCount += 1;
-      if (!existsSync(target) || !statSync(target).isFile()) {
+      if (!inside.some((path) => existsSync(path) && statSync(path).isFile())) {
         missing.push(`${relative(artifactDir, file)} -> ${reference}`);
       }
     }

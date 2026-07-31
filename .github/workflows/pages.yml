@@ -42,8 +42,8 @@ jobs:
 
       # The build tool and the framework are pinned SEPARATELY and currently sit
       # on different revs: the framework is whatever crates/waml-editor/Cargo.toml
-      # names (c38f5299 at the time of writing), while this is 25d78a4d plus one
-      # commit, bac58c97, on the fork branch `waml-wasm-dep-dirs`.
+      # names (c38f5299 at the time of writing), while this is 25d78a4d plus two
+      # commits, 7162231f, on the fork branch `waml-wasm-dep-dirs`.
       #
       # That commit is what makes this deploy produce a working site at all.
       # Before it, cargo-makepad could not resolve the source directory of a
@@ -62,7 +62,7 @@ jobs:
         run: >
           cargo install cargo-makepad
           --git https://github.com/redoz/makepad.git
-          --rev bac58c973ea886f3ee03a3a9c2d009c25a3b1dca
+          --rev 7162231f51d81d2a00a2a68c77ac7f7da6a85382
           --locked
 
       # binaryen supplies the `wasm-opt` binary that the build step below invokes
