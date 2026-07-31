@@ -135,7 +135,7 @@ fn unchanged_input_reuses_root_green() {
 fn unchanged_bytes_on_fresh_source_rebase_source_backed_greens() {
     let old_source = text("---\nbad\n---\nbody\n");
     let parsed = parse_okf_markdown(old_source, MarkdownDialect::CommonMarkCurrent).unwrap();
-    let raw = first_node(&parsed.tree, OkfMarkdownSyntaxKind::MarkdownRegion);
+    let raw = first_node(&parsed.tree, OkfMarkdownSyntaxKind::Paragraph);
     let annotated = annotate_occurrence(
         &parsed.tree,
         &raw.locator(),
@@ -167,10 +167,8 @@ fn unchanged_bytes_on_fresh_source_rebase_source_backed_greens() {
         &new_source
     ));
     assert!(!previous.root().same_green(&tree.root()));
-    assert!(
-        !first_node(&previous, OkfMarkdownSyntaxKind::MarkdownRegion)
-            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::MarkdownRegion))
-    );
+    assert!(!first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
+        .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)));
     assert!(
         first_token(&previous, OkfMarkdownSyntaxKind::EndOfFileToken)
             .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken))
@@ -219,7 +217,17 @@ fn oracle(previous: &str, next: &str, changes: &[TextChange]) {
 fn annotations(annotations: &[SyntaxAnnotation]) -> Vec<(u64, &str, Option<&str>)> {
     annotations
         .iter()
-        .map(|annotation| (annotation.id().get(), annotation.kind(), annotation.data()))
+        .map(|annotation| {
+            (
+                annotation.id().get(),
+                annotation.kind(),
+                if annotation.kind() == "waml.markdown.identity" {
+                    None
+                } else {
+                    annotation.data()
+                },
+            )
+        })
         .collect()
 }
 
@@ -448,10 +456,10 @@ fn unclosed_frontmatter_heading_edit_at_boundary_falls_back() {
 }
 
 #[test]
-fn annotation_transfer_reports_source_independent_greens_from_final_tree() {
+fn annotation_transfer_reuses_unchanged_source_independent_greens() {
     let old = text("# One\nbody\n");
     let parsed = parse_okf_markdown(old.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
-    let annotated_region = first_node(&parsed.tree, OkfMarkdownSyntaxKind::MarkdownRegion);
+    let annotated_region = first_node(&parsed.tree, OkfMarkdownSyntaxKind::Paragraph);
     let annotated = annotate_occurrence(
         &parsed.tree,
         &annotated_region.locator(),
@@ -481,16 +489,14 @@ fn annotation_transfer_reports_source_independent_greens_from_final_tree() {
     };
     let previous_eof = first_token(&previous, OkfMarkdownSyntaxKind::EndOfFileToken);
     let final_eof = first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken);
-    assert!(!previous_eof.same_green(&final_eof));
-    assert_eq!(shared_source_independent_green, 0);
-    assert!(!first_token(&previous, OkfMarkdownSyntaxKind::HeadingText)
-        .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::HeadingText)));
-    assert!(
-        !first_node(&previous, OkfMarkdownSyntaxKind::MarkdownRegion)
-            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::MarkdownRegion))
-    );
+    assert!(previous_eof.same_green(&final_eof));
+    assert_eq!(shared_source_independent_green, 1);
+    assert!(!first_token(&previous, OkfMarkdownSyntaxKind::TextToken)
+        .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::TextToken)));
+    assert!(!first_node(&previous, OkfMarkdownSyntaxKind::Paragraph)
+        .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)));
     assert_eq!(
-        first_node(&tree, OkfMarkdownSyntaxKind::MarkdownRegion)
+        first_node(&tree, OkfMarkdownSyntaxKind::Paragraph)
             .syntax_annotations()
             .iter()
             .filter(|annotation| annotation.id().get() == 11)
@@ -545,8 +551,10 @@ fn same_length_heading_text_edit_is_incremental_and_reuses_eof() {
         first_token(&previous.tree, OkfMarkdownSyntaxKind::EndOfFileToken)
             .same_green(&first_token(&tree, OkfMarkdownSyntaxKind::EndOfFileToken))
     );
-    assert!(!first_node(&previous.tree, OkfMarkdownSyntaxKind::Heading)
-        .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::Heading)));
+    assert!(
+        !first_node(&previous.tree, OkfMarkdownSyntaxKind::AtxHeading)
+            .same_green(&first_node(&tree, OkfMarkdownSyntaxKind::AtxHeading))
+    );
     assert!(!previous.tree.root().same_green(&tree.root()));
 }
 
@@ -653,7 +661,7 @@ fn deleting_invalidated_container_range_falls_back_without_panicking() {
 }
 
 #[test]
-fn property_sequence_falls_back_when_selected_window_cannot_be_consumed() {
+fn property_sequence_is_incremental_when_selected_window_is_consumed() {
     let initial = "- type: uml.Class\n  name: Example\n=";
     let replacement =
         "\u{1d456}0\u{ab09}  \u{ae}a  \u{1cf00}\u{a1}a \u{1f860}\u{ad0}0 \u{fb40}\u{c0e}A 0";
@@ -680,19 +688,14 @@ fn property_sequence_falls_back_when_selected_window_cannot_be_consumed() {
         }],
     )
     .unwrap();
-    let tree = match outcome {
-        ReparseOutcome::Full {
-            tree,
-            reason: FullReparseReason::UnsafeSynchronization,
-        } => tree,
-        ReparseOutcome::Full { reason, .. } => {
-            panic!("expected unsafe-synchronization fallback, got {reason:?}")
-        }
-        ReparseOutcome::Incremental { .. } => {
-            panic!("selected window must conservatively fall back")
-        }
+    let ReparseOutcome::Incremental { tree, .. } = outcome else {
+        panic!("Task 3 block parsing must consume the selected window")
     };
     assert_eq!(tree.write_to_string(), full.tree.write_to_string());
+    assert_eq!(
+        structural_fingerprint(&tree),
+        structural_fingerprint(&full.tree)
+    );
     assert_eq!(
         diagnostic_fingerprint(&tree),
         diagnostic_fingerprint(&full.tree)
@@ -904,8 +907,10 @@ fn green_rebase_rebuilds_source_backed_and_reuses_static_greens() {
         ),
         GreenElement::Token(_) => panic!("root is a node"),
     };
-    assert!(!first_node(&previous.tree, OkfMarkdownSyntaxKind::Heading)
-        .same_green(&first_node(&candidate, OkfMarkdownSyntaxKind::Heading)));
+    assert!(
+        !first_node(&previous.tree, OkfMarkdownSyntaxKind::AtxHeading)
+            .same_green(&first_node(&candidate, OkfMarkdownSyntaxKind::AtxHeading))
+    );
     assert!(!previous.tree.root().same_green(&candidate.root()));
     assert!(
         first_token(&previous.tree, OkfMarkdownSyntaxKind::EndOfFileToken).same_green(
@@ -919,8 +924,8 @@ fn green_rebase_rebuilds_source_backed_and_reuses_static_greens() {
 fn mapped_annotations_preserve_node_and_token_occurrences() {
     let old = text("# One\nbody\n");
     let parsed = parse_okf_markdown(old.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
-    let heading = first_node(&parsed.tree, OkfMarkdownSyntaxKind::Heading);
-    let heading_text = first_token(&parsed.tree, OkfMarkdownSyntaxKind::HeadingText);
+    let heading = first_node(&parsed.tree, OkfMarkdownSyntaxKind::AtxHeading);
+    let heading_text = first_token(&parsed.tree, OkfMarkdownSyntaxKind::TextToken);
     let node_locator = heading.locator();
     let token_locator = heading_text.locator();
     let node_annotation = SyntaxAnnotation::new(NonZeroU64::new(1).unwrap(), "node", None);
@@ -932,7 +937,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         Arc::from(parsed.tree.diagnostics()),
         MarkdownDialect::CommonMarkCurrent,
     );
-    let annotated_token = first_token(&annotated_tree, OkfMarkdownSyntaxKind::HeadingText);
+    let annotated_token = first_token(&annotated_tree, OkfMarkdownSyntaxKind::TextToken);
     let annotated = annotate_occurrence(
         &annotated_tree,
         &annotated_token.locator(),
@@ -955,7 +960,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
     .unwrap();
     let candidate = parse_okf_markdown(new, MarkdownDialect::CommonMarkCurrent).unwrap();
     let candidate_diagnostics: Arc<[_]> = Arc::from(candidate.tree.diagnostics());
-    let candidate_heading = first_node(&candidate.tree, OkfMarkdownSyntaxKind::Heading);
+    let candidate_heading = first_node(&candidate.tree, OkfMarkdownSyntaxKind::AtxHeading);
     let candidate = SyntaxTree::new(
         annotate_occurrence(
             &candidate.tree,
@@ -966,7 +971,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         candidate_diagnostics.clone(),
         MarkdownDialect::CommonMarkCurrent,
     );
-    let candidate_heading = first_node(&candidate, OkfMarkdownSyntaxKind::Heading);
+    let candidate_heading = first_node(&candidate, OkfMarkdownSyntaxKind::AtxHeading);
     let candidate = SyntaxTree::new(
         annotate_occurrence(
             &candidate,
@@ -977,7 +982,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         candidate_diagnostics.clone(),
         MarkdownDialect::CommonMarkCurrent,
     );
-    let candidate_token = first_token(&candidate, OkfMarkdownSyntaxKind::HeadingText);
+    let candidate_token = first_token(&candidate, OkfMarkdownSyntaxKind::TextToken);
     let candidate = SyntaxTree::new(
         annotate_occurrence(
             &candidate,
@@ -988,7 +993,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         candidate_diagnostics.clone(),
         MarkdownDialect::CommonMarkCurrent,
     );
-    let candidate_token = first_token(&candidate, OkfMarkdownSyntaxKind::HeadingText);
+    let candidate_token = first_token(&candidate, OkfMarkdownSyntaxKind::TextToken);
     let candidate = SyntaxTree::new(
         annotate_occurrence(
             &candidate,
@@ -1004,8 +1009,8 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         candidate_diagnostics,
         MarkdownDialect::CommonMarkCurrent,
     );
-    let mapped_heading = first_node(&transferred, OkfMarkdownSyntaxKind::Heading);
-    let mapped_token = first_token(&transferred, OkfMarkdownSyntaxKind::HeadingText);
+    let mapped_heading = first_node(&transferred, OkfMarkdownSyntaxKind::AtxHeading);
+    let mapped_token = first_token(&transferred, OkfMarkdownSyntaxKind::TextToken);
     assert_eq!(
         mapped_heading
             .syntax_annotations()

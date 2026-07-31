@@ -218,6 +218,7 @@ pub(super) fn parse_window(
             let mut candidates = structure
                 .headings
                 .iter()
+                .chain(structure.nested_headings.iter())
                 .filter(|heading| heading.range == window.range);
             let Some(_) = candidates.next() else {
                 return Err(window_not_consumed());
@@ -225,10 +226,23 @@ pub(super) fn parse_window(
             if candidates.next().is_some() {
                 return Err(window_not_consumed());
             }
-            let line = line_at(source, start, end);
-            vec![GreenElement::Node(heading_node(
-                &factory, text, source, line,
-            )?)]
+            let blocks = crate::markdown::block::parse(text, structure.dialect, start, end)?;
+            diagnostics.extend(blocks.diagnostics.iter().cloned());
+            let elements = blocks.root.children().to_vec();
+            if elements.len() != 1
+                || !matches!(
+                    &elements[0],
+                    GreenElement::Node(node)
+                        if matches!(
+                            node.kind(),
+                            OkfMarkdownSyntaxKind::AtxHeading
+                                | OkfMarkdownSyntaxKind::SetextHeading
+                        )
+                )
+            {
+                return Err(window_not_consumed());
+            }
+            elements
         }
         ShellWindowKind::MarkdownRegion => {
             let blocks = crate::markdown::block::parse(text, structure.dialect, start, end)?;
@@ -242,7 +256,14 @@ pub(super) fn parse_window(
             let eof_trivia_start = trailing_eof_whitespace_start(source, start);
             let mut elements = Vec::new();
             if start < eof_trivia_start {
-                elements.push(raw(&factory, text, start, eof_trivia_start)?);
+                let blocks = crate::markdown::block::parse(
+                    text,
+                    structure.dialect,
+                    start,
+                    eof_trivia_start,
+                )?;
+                diagnostics.extend(blocks.diagnostics.iter().cloned());
+                elements.extend(blocks.root.children().iter().cloned());
             }
             let eof_leading = trivia(&factory, text, eof_trivia_start, source.len())?;
             elements.push(GreenElement::Token(
@@ -415,53 +436,6 @@ fn frontmatter_entry(
     ))
 }
 
-fn heading_node(
-    factory: &GreenFactory<OkfMarkdownLanguage>,
-    text: &SourceText,
-    source: &str,
-    line: Line,
-) -> Result<crate::GreenNode<OkfMarkdownLanguage>, ParseError> {
-    let marker_start = skip_horizontal(source, line.start, line.significant_end);
-    let mut marker_end = marker_start;
-    while marker_end < line.significant_end && source.as_bytes()[marker_end] == b'#' {
-        marker_end += 1;
-    }
-    let heading_start = skip_horizontal(source, marker_end, line.significant_end);
-    let mut children = vec![GreenElement::Token(token_with_leading(
-        factory,
-        text,
-        line.start,
-        marker_start,
-        marker_end,
-        OkfMarkdownSyntaxKind::HeadingMarkerToken,
-    )?)];
-    if heading_start == line.significant_end {
-        children.push(GreenElement::Token(
-            factory
-                .missing_token_with_leading(
-                    OkfMarkdownSyntaxKind::HeadingText,
-                    trivia(factory, text, marker_end, heading_start)?,
-                )
-                .map_err(|_| ParseError::WidthOverflow)?,
-        ));
-    } else {
-        children.push(GreenElement::Token(token_with_leading(
-            factory,
-            text,
-            marker_end,
-            heading_start,
-            line.significant_end,
-            OkfMarkdownSyntaxKind::HeadingText,
-        )?));
-    }
-    if line.newline_start < line.end {
-        children.push(GreenElement::Token(newline_token(factory, text, line)?));
-    }
-    factory
-        .node(OkfMarkdownSyntaxKind::Heading, children)
-        .map_err(|_| ParseError::WidthOverflow)
-}
-
 fn line_tokens(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
@@ -545,29 +519,6 @@ fn slice(text: &SourceText, start: usize, end: usize) -> Result<GreenText, Parse
         source: text.clone(),
         range,
     })
-}
-
-fn raw(
-    factory: &GreenFactory<OkfMarkdownLanguage>,
-    text: &SourceText,
-    start: usize,
-    end: usize,
-) -> Result<GreenElement<OkfMarkdownLanguage>, ParseError> {
-    Ok(GreenElement::Node(
-        factory
-            .node(
-                OkfMarkdownSyntaxKind::MarkdownRegion,
-                [GreenElement::Token(token_with_leading(
-                    factory,
-                    text,
-                    start,
-                    start,
-                    end,
-                    OkfMarkdownSyntaxKind::RawTextToken,
-                )?)],
-            )
-            .map_err(|_| ParseError::WidthOverflow)?,
-    ))
 }
 
 #[derive(Clone, Copy)]

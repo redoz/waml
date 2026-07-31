@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    GreenElement, GreenError, GreenFactory, GreenNode, GreenText, GreenTrivia, MarkdownDialect,
+    GreenElement, GreenError, GreenFactory, GreenNode, GreenText, GreenTrivia,
     MarkdownStructureMap, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, ParseError, SourceText,
     SyntaxAnnotation, SyntaxElement, SyntaxLanguage, SyntaxNode, SyntaxTree, TextError, TextRange,
     TextSize, TreeDiagnostic,
@@ -288,6 +288,7 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
             }),
         );
         let mut offset = start;
+        let mut children_changed = false;
         let children = node
             .children()
             .iter()
@@ -296,9 +297,10 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
                 let result = match child {
                     GreenElement::Node(child) => {
                         path.push(index as u32);
-                        let child = rebuild(child, path, copied, occurrences, offset);
+                        let rebuilt = rebuild(child, path, copied, occurrences, offset);
                         path.pop();
-                        GreenElement::Node(child)
+                        children_changed |= !Arc::ptr_eq(child, &rebuilt);
+                        GreenElement::Node(rebuilt)
                     }
                     GreenElement::Token(token) => {
                         let range =
@@ -307,18 +309,22 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
                         let base = (token.kind(), range, true);
                         let ordinal = *occurrences.entry(base).or_insert(0);
                         *occurrences.get_mut(&base).unwrap() += 1;
-                        GreenElement::Token(GreenFactory::new().token_with_syntax_annotations(
-                            token,
-                            merge(
-                                token.syntax_annotations(),
-                                copied.get(&OccurrenceKey {
-                                    kind: token.kind(),
-                                    range,
-                                    token: true,
-                                    ordinal,
-                                }),
-                            ),
-                        ))
+                        let annotations = merge(
+                            token.syntax_annotations(),
+                            copied.get(&OccurrenceKey {
+                                kind: token.kind(),
+                                range,
+                                token: true,
+                                ordinal,
+                            }),
+                        );
+                        let rebuilt = if annotations.as_ref() == token.syntax_annotations() {
+                            token.clone()
+                        } else {
+                            GreenFactory::new().token_with_syntax_annotations(token, annotations)
+                        };
+                        children_changed |= !Arc::ptr_eq(token, &rebuilt);
+                        GreenElement::Token(rebuilt)
                     }
                 };
                 offset = offset
@@ -330,9 +336,13 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
                 result
             })
             .collect::<Vec<_>>();
-        GreenFactory::new()
-            .node_with_annotations(node.kind(), children, node_annotations)
-            .unwrap()
+        if !children_changed && node_annotations.as_ref() == node.annotations() {
+            node.clone()
+        } else {
+            GreenFactory::new()
+                .node_with_annotations(node.kind(), children, node_annotations)
+                .unwrap()
+        }
     }
     rebuild(
         candidate.root_green(),
@@ -948,23 +958,28 @@ fn shell_windows(
     old: &SourceText,
 ) -> Result<Vec<Window>, ParseError> {
     let children = previous.root_green().children();
+    let eof = children
+        .len()
+        .checked_sub(1)
+        .ok_or(ParseError::WidthOverflow)?;
+    let width = |child: &GreenElement<OkfMarkdownLanguage>| match child {
+        GreenElement::Node(node) => node.width(),
+        GreenElement::Token(token) => token.width(),
+    };
     let mut start = TextSize::try_from_usize(0).unwrap();
     let mut result = Vec::new();
-    for (index, child) in children.iter().enumerate() {
-        let width = match child {
-            GreenElement::Node(node) => node.width(),
-            GreenElement::Token(token) => token.width(),
-        };
-        let end = start
-            .checked_add(width)
-            .map_err(|_| ParseError::WidthOverflow)?;
-        let range = TextRange::new(start, end).map_err(|_| ParseError::WidthOverflow)?;
-        let kind = match child {
+    let mut index = 0;
+    while index < eof {
+        let kind = match &children[index] {
             GreenElement::Node(node) => match node.kind() {
                 OkfMarkdownSyntaxKind::Frontmatter => {
                     Some(crate::shell::ShellWindowKind::Frontmatter)
                 }
-                OkfMarkdownSyntaxKind::Heading => Some(crate::shell::ShellWindowKind::Heading),
+                OkfMarkdownSyntaxKind::Heading
+                | OkfMarkdownSyntaxKind::AtxHeading
+                | OkfMarkdownSyntaxKind::SetextHeading => {
+                    Some(crate::shell::ShellWindowKind::Heading)
+                }
                 OkfMarkdownSyntaxKind::MarkdownRegion => {
                     Some(crate::shell::ShellWindowKind::MarkdownRegion)
                 }
@@ -972,38 +987,52 @@ fn shell_windows(
             },
             _ => None,
         };
-        if let Some(kind) = kind {
-            result.push(Window {
-                kind,
-                range,
-                first: index,
-                last: index,
-            });
-        }
+        let (kind, last) = if let Some(kind) = kind {
+            (kind, index)
+        } else {
+            let mut last = index;
+            while last + 1 < eof {
+                let boundary = matches!(
+                    &children[last + 1],
+                    GreenElement::Node(node)
+                        if matches!(
+                            node.kind(),
+                            OkfMarkdownSyntaxKind::Frontmatter
+                                | OkfMarkdownSyntaxKind::Heading
+                                | OkfMarkdownSyntaxKind::AtxHeading
+                                | OkfMarkdownSyntaxKind::SetextHeading
+                        )
+                );
+                if boundary {
+                    break;
+                }
+                last += 1;
+            }
+            (crate::shell::ShellWindowKind::MarkdownRegion, last)
+        };
+        let end = children[index..=last].iter().try_fold(start, |at, child| {
+            at.checked_add(width(child))
+                .map_err(|_| ParseError::WidthOverflow)
+        })?;
+        result.push(Window {
+            kind,
+            range: TextRange::new(start, end).map_err(|_| ParseError::WidthOverflow)?,
+            first: index,
+            last,
+        });
         start = end;
+        index = last + 1;
     }
-    let eof = children
-        .len()
-        .checked_sub(1)
-        .ok_or(ParseError::WidthOverflow)?;
-    let tail_first = if eof > 0
-        && matches!(&children[eof - 1], GreenElement::Node(node) if node.kind() == OkfMarkdownSyntaxKind::MarkdownRegion)
+    let (tail_first, tail_start) = if let Some(last) = result
+        .last()
+        .filter(|window| window.kind == crate::shell::ShellWindowKind::MarkdownRegion)
+        .copied()
     {
-        eof - 1
+        result.pop();
+        (last.first, last.range.start())
     } else {
-        eof
+        (eof, old.len())
     };
-    let tail_start = children[..tail_first].iter().try_fold(
-        TextSize::try_from_usize(0).unwrap(),
-        |at, child| {
-            at.checked_add(match child {
-                GreenElement::Node(node) => node.width(),
-                GreenElement::Token(token) => token.width(),
-            })
-            .map_err(|_| ParseError::WidthOverflow)
-        },
-    )?;
-    result.retain(|window| window.first != tail_first);
     result.push(Window {
         kind: crate::shell::ShellWindowKind::Tail,
         range: TextRange::new(tail_start, old.len()).map_err(|_| ParseError::WidthOverflow)?,
@@ -1313,7 +1342,7 @@ mod tests {
         let parser_source =
             SourceText::from_shared(Arc::new("# Ordinary\nbody\n".to_owned())).unwrap();
         let parser_tree =
-            crate::parse_okf_markdown(parser_source.clone(), MarkdownDialect::WAML_DEFAULT)
+            crate::parse_okf_markdown(parser_source.clone(), crate::MarkdownDialect::WAML_DEFAULT)
                 .unwrap()
                 .tree;
         assert!(Arc::ptr_eq(
