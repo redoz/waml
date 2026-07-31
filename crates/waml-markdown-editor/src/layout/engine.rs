@@ -1,4 +1,10 @@
-use std::{collections::HashMap, fmt, rc::Rc, sync::Arc};
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    fmt,
+    hash::{Hash, Hasher},
+    rc::Rc,
+    sync::Arc,
+};
 
 use makepad_widgets::{
     dvec2,
@@ -10,9 +16,9 @@ use waml_syntax::{MarkdownSyntaxUpdate, SourceText, TextRange, TextSize};
 use crate::{document::MarkdownDocumentSnapshot, selection::TextPosition};
 
 use super::{
-    Affinity, BlockGeometry, GeometryElementId, GlyphCluster, LayoutBlock, LayoutDocument,
-    LayoutElementId, LayoutError, LayoutSnapshot, LayoutSnapshotMetadata, LayoutTextRun,
-    TextMetrics, VisualLine,
+    Affinity, BlockGeometry, BlockLayoutData, GeometryElementId, GlyphCluster, LayoutBlock,
+    LayoutDocument, LayoutElementId, LayoutError, LayoutSnapshot, LayoutSnapshotMetadata,
+    LayoutTextRun, TextMetrics, VisualLine,
 };
 use crate::layout::geometry::CaretStop;
 
@@ -70,6 +76,8 @@ pub struct LayoutViewport {
 }
 
 impl LayoutViewport {
+    pub const DEFAULT_OVERSCAN: f64 = 320.0;
+
     pub fn new(width: f64, height: f64, scroll_y: f64, overscan: f64) -> Self {
         Self {
             width,
@@ -77,6 +85,10 @@ impl LayoutViewport {
             scroll_y,
             overscan,
         }
+    }
+
+    pub fn default_overscan(width: f64, height: f64, scroll_y: f64) -> Self {
+        Self::new(width, height, scroll_y, Self::DEFAULT_OVERSCAN)
     }
 }
 
@@ -101,7 +113,7 @@ impl fmt::Debug for LayoutInvalidation {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlockSummary {
     pub id: LayoutElementId,
     pub source_range: TextRange,
@@ -113,9 +125,15 @@ pub struct BlockSummary {
     pub content_fingerprint: u64,
 }
 
+#[derive(Clone)]
+struct CachedBlock {
+    summary: BlockSummary,
+    data: Arc<BlockLayoutData>,
+}
+
 #[derive(Default)]
 pub struct LayoutEngine {
-    summaries: HashMap<LayoutElementId, BlockSummary>,
+    blocks: HashMap<LayoutElementId, CachedBlock>,
 }
 
 impl LayoutEngine {
@@ -143,72 +161,87 @@ impl LayoutEngine {
         }
 
         let width_key = viewport.width.to_bits();
+        let invalidated = invalidated_block_range(&invalidation, document);
         let mut summaries = Vec::with_capacity(document.blocks.len());
+        let mut block_data = Vec::with_capacity(document.blocks.len());
+        let mut dirty_first = None;
+        let mut dirty_end = 0;
         let mut y = document.content_insets.top;
+
         for (index, block) in document.blocks.iter().enumerate() {
             y += block.spec.space_before + block.spec.insets.top;
-            let cached = self.summaries.get(&block.id);
-            let invalidated = block_is_invalidated(&invalidation, block, index);
-            let height = if !invalidated && cached.is_some_and(|old| old.width_key == width_key) {
-                cached.map_or(20.0, |old| old.height)
-            } else {
-                estimated_height(block, document)
-            };
-            summaries.push(BlockSummary {
-                id: block.id,
-                source_range: block.source_range,
-                parent: block.parent,
-                flow_fingerprint: flow_fingerprint(block),
-                y,
-                height,
-                width_key,
-                content_fingerprint: content_fingerprint(block),
-            });
-            y += height + block.spec.insets.bottom + block.spec.space_after;
-        }
-
-        let visible_min = (viewport.scroll_y - viewport.overscan).max(0.0);
-        let visible_max = viewport.scroll_y + viewport.height + viewport.overscan;
-        // A document-local summary index is enough for ordinary off-screen
-        // blocks, but an earlier long run can wrap and move the viewport into
-        // a block that its one-line estimate placed above it. Measure only
-        // those potentially wrapping predecessors before selecting the
-        // visible window, then derive every visible range from the corrected
-        // summaries.
-        for (index, block) in document.blocks.iter().enumerate() {
-            if summaries[index].y >= visible_min || !block_may_wrap(block, document, viewport.width) {
-                continue;
-            }
             let (nested_left, nested_right) = nested_horizontal_insets(document, block);
-            let content_x = document.content_insets.left + nested_left;
             let available_width = (viewport.width
                 - document.content_insets.left
                 - document.content_insets.right
                 - nested_left
                 - nested_right)
                 .max(1.0);
-            let output = layout_block(
-                block,
-                document,
-                presentation,
-                content_x,
-                summaries[index].y,
-                available_width,
-                shaper,
-            )
-            .unwrap_or_else(|_| {
-                fallback_block(
+            let flow_fingerprint = flow_fingerprint(block);
+            let content_fingerprint = content_fingerprint(block, document, presentation);
+            let cached = self.blocks.get(&block.id);
+            let explicitly_invalidated = invalidated.contains(&index);
+            let can_reuse = !explicitly_invalidated
+                && cached.is_some_and(|old| {
+                    old.summary.id == block.id
+                        && old.summary.source_range == block.source_range
+                        && old.summary.parent == block.parent
+                        && old.summary.flow_fingerprint == flow_fingerprint
+                        && old.summary.width_key == width_key
+                        && old.summary.content_fingerprint == content_fingerprint
+                });
+            let data = if can_reuse {
+                cached.expect("a reusable block has cached data").data.clone()
+            } else {
+                let (output, fallback) = match layout_block(
                     block,
                     document,
                     presentation,
-                    content_x,
-                    summaries[index].y,
+                    0.0,
+                    0.0,
                     available_width,
-                )
-            });
-            summaries[index].height = output.height;
+                    shaper,
+                ) {
+                    Ok(output) => (output, false),
+                    Err(_) => (
+                        fallback_block(
+                            block,
+                            document,
+                            presentation,
+                            0.0,
+                            0.0,
+                            available_width,
+                        ),
+                        true,
+                    ),
+                };
+                Arc::new(block_layout_data(block, available_width, output, fallback))
+            };
+            let summary = BlockSummary {
+                id: block.id,
+                source_range: block.source_range,
+                parent: block.parent,
+                flow_fingerprint,
+                y,
+                height: data.block.rect.size.y,
+                width_key,
+                content_fingerprint,
+            };
+            let changed = explicitly_invalidated
+                || cached.is_none_or(|old| old.summary != summary);
+            if changed {
+                dirty_first.get_or_insert(index);
+                dirty_end = index + 1;
+            }
+            y += summary.height + block.spec.insets.bottom + block.spec.space_after;
+            summaries.push(summary);
+            block_data.push(data);
         }
-        reflow_summary_positions(document, &mut summaries);
+
+        let dirty_block_range = dirty_first.map_or(0..0, |first| first..dirty_end);
+        let content_y = y + document.content_insets.bottom;
+        let visible_min = (viewport.scroll_y - viewport.overscan).max(0.0);
+        let visible_max = viewport.scroll_y + viewport.height + viewport.overscan;
         let visible_indices: Vec<_> = summaries
             .iter()
             .enumerate()
@@ -221,79 +254,29 @@ impl LayoutEngine {
         let mut visual_lines = Vec::new();
         let mut clusters = Vec::new();
         let mut blocks = Vec::new();
+        let mut visible_block_layouts = Vec::new();
         for index in visible_indices.iter().copied() {
             let block = &document.blocks[index];
-            let (nested_left, nested_right) = nested_horizontal_insets(document, block);
+            let (nested_left, _) = nested_horizontal_insets(document, block);
             let content_x = document.content_insets.left + nested_left;
-            let available_width = (viewport.width
-                - document.content_insets.left
-                - document.content_insets.right
-                - nested_left
-                - nested_right)
-                .max(1.0);
-            let output = layout_block(
-                block,
-                document,
-                presentation,
+            append_positioned_block(
+                &block_data[index],
                 content_x,
                 summaries[index].y,
-                available_width,
-                shaper,
+                &mut visual_lines,
+                &mut clusters,
+                &mut blocks,
             );
-            match output {
-                Ok(output) => {
-                    let delta = output.height - summaries[index].height;
-                    summaries[index].height = output.height;
-                    if delta != 0.0 {
-                        for downstream in summaries.iter_mut().skip(index + 1) {
-                            downstream.y += delta;
-                        }
-                    }
-                    visual_lines.extend(output.lines);
-                    clusters.extend(output.clusters);
-                    blocks.push(BlockGeometry::new(
-                        block.id,
-                        block.source_range,
-                        Rect {
-                            pos: dvec2(content_x, summaries[index].y),
-                            size: dvec2(available_width, output.height),
-                        },
-                    ));
-                }
-                Err(_) => {
-                    let output = fallback_block(
-                        block,
-                        document,
-                        presentation,
-                        content_x,
-                        summaries[index].y,
-                        available_width,
-                    );
-                    let delta = output.height - summaries[index].height;
-                    summaries[index].height = output.height;
-                    if delta != 0.0 {
-                        for downstream in summaries.iter_mut().skip(index + 1) {
-                            downstream.y += delta;
-                        }
-                    }
-                    visual_lines.extend(output.lines);
-                    clusters.extend(output.clusters);
-                    blocks.push(BlockGeometry::fallback(
-                        block.id,
-                        block.source_range,
-                        Rect {
-                            pos: dvec2(content_x, summaries[index].y),
-                            size: dvec2(available_width, output.height),
-                        },
-                    ));
-                }
-            }
+            visible_block_layouts.push(block_data[index].clone());
         }
 
-        let content_y = reflow_summary_positions(document, &mut summaries);
-        for summary in &summaries {
-            self.summaries.insert(summary.id, summary.clone());
-        }
+        self.blocks = document
+            .blocks
+            .iter()
+            .zip(summaries.iter().cloned())
+            .zip(block_data.iter().cloned())
+            .map(|((block, summary), data)| (block.id, CachedBlock { summary, data }))
+            .collect();
 
         let visible_source_range = visual_lines
             .first()
@@ -314,11 +297,13 @@ impl LayoutEngine {
                 content_size: dvec2(viewport.width, content_y),
                 visible_source_range,
                 visible_block_range,
+                dirty_block_range,
             },
             visual_lines.into(),
             blocks.into(),
             clusters.into(),
             summaries.into(),
+            visible_block_layouts.into(),
         ))
     }
 }
@@ -327,6 +312,71 @@ struct BlockOutput {
     lines: Vec<VisualLine>,
     clusters: Vec<GlyphCluster>,
     height: f64,
+}
+
+fn block_layout_data(
+    block: &LayoutBlock,
+    width: f64,
+    output: BlockOutput,
+    fallback: bool,
+) -> BlockLayoutData {
+    let rect = Rect {
+        pos: dvec2(0.0, 0.0),
+        size: dvec2(width, output.height),
+    };
+    let geometry = if fallback {
+        BlockGeometry::fallback(block.id, block.source_range, rect)
+    } else {
+        BlockGeometry::new(block.id, block.source_range, rect)
+    };
+    BlockLayoutData {
+        block: geometry,
+        visual_lines: output.lines.into(),
+        glyph_clusters: output.clusters.into(),
+    }
+}
+
+fn append_positioned_block(
+    data: &BlockLayoutData,
+    x: f64,
+    y: f64,
+    lines: &mut Vec<VisualLine>,
+    clusters: &mut Vec<GlyphCluster>,
+    blocks: &mut Vec<BlockGeometry>,
+) {
+    let rect = Rect {
+        pos: dvec2(x, y),
+        size: data.block.rect.size,
+    };
+    blocks.push(if data.block.is_plain_text_fallback() {
+        BlockGeometry::fallback(data.block.id, data.block.source_range, rect)
+    } else {
+        BlockGeometry::new(data.block.id, data.block.source_range, rect)
+    });
+    lines.extend(data.visual_lines.iter().map(|line| {
+        let mut line = *line;
+        line.rect.pos.x += x;
+        line.rect.pos.y += y;
+        line
+    }));
+    clusters.extend(data.glyph_clusters.iter().cloned().map(|mut cluster| {
+        cluster.rect.pos.x += x;
+        cluster.rect.pos.y += y;
+        let mut stops = cluster.caret_stops.to_vec();
+        for stop in &mut stops {
+            stop.point.x += x;
+            stop.point.y += y;
+        }
+        cluster.caret_stops = stops.into();
+        let mut glyphs = cluster.glyphs.to_vec();
+        for glyph in &mut glyphs {
+            glyph.origin.x += x;
+            glyph.origin.y += y;
+            glyph.baseline += y;
+        }
+        cluster.glyphs = glyphs.into();
+        cluster
+    }));
 }
 
 fn layout_block<S: TextShaper>(
@@ -647,46 +697,34 @@ fn document_metrics(block: &LayoutBlock, document: &LayoutDocument) -> TextMetri
         })
 }
 
-fn block_may_wrap(block: &LayoutBlock, document: &LayoutDocument, viewport_width: f64) -> bool {
-    let (left, right) = nested_horizontal_insets(document, block);
-    let available_width = (viewport_width
-        - document.content_insets.left
-        - document.content_insets.right
-        - left
-        - right)
-        .max(1.0);
-    document
-        .text_runs
-        .iter()
-        .filter(|run| run.id == block.id)
-        .any(|run| {
-            let byte_len = run.range.end().to_usize() - run.range.start().to_usize();
-            byte_len as f64 * (run.metrics.font_size as f64 * 0.5) > available_width
-        })
-}
-
-fn reflow_summary_positions(document: &LayoutDocument, summaries: &mut [BlockSummary]) -> f64 {
-    let mut content_y = document.content_insets.top;
-    for (block, summary) in document.blocks.iter().zip(summaries.iter_mut()) {
-        content_y += block.spec.space_before + block.spec.insets.top;
-        summary.y = content_y;
-        content_y += summary.height + block.spec.insets.bottom + block.spec.space_after;
-    }
-    content_y + document.content_insets.bottom
-}
-
-fn block_is_invalidated(
+fn invalidated_block_range(
     invalidation: &LayoutInvalidation,
-    block: &LayoutBlock,
-    _index: usize,
-) -> bool {
+    document: &LayoutDocument,
+) -> std::ops::Range<usize> {
     match invalidation {
-        LayoutInvalidation::Document | LayoutInvalidation::ViewportWidth => true,
-        LayoutInvalidation::BlockMeasurement(id) => *id == block.id,
-        LayoutInvalidation::SyntaxUpdate(update) => update
-            .affected_ranges
+        LayoutInvalidation::Document | LayoutInvalidation::ViewportWidth => 0..document.blocks.len(),
+        LayoutInvalidation::BlockMeasurement(id) => document
+            .blocks
             .iter()
-            .any(|range| ranges_intersect(*range, block.source_range)),
+            .position(|block| block.id == *id)
+            .map_or(0..0, |index| index..index + 1),
+        LayoutInvalidation::SyntaxUpdate(update) => {
+            let mut affected = document
+                .blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(index, block)| {
+                    update
+                        .affected_ranges
+                        .iter()
+                        .any(|range| ranges_intersect(*range, block.source_range))
+                        .then_some(index)
+                });
+            affected.next().map_or(0..0, |first| {
+                let last = affected.last().unwrap_or(first);
+                first..last + 1
+            })
+        }
     }
 }
 
@@ -695,15 +733,82 @@ fn ranges_intersect(left: TextRange, right: TextRange) -> bool {
 }
 
 fn flow_fingerprint(block: &LayoutBlock) -> u64 {
-    block.spec.space_before.to_bits()
-        ^ block.spec.space_after.to_bits().rotate_left(7)
-        ^ block.spec.insets.left.to_bits().rotate_left(13)
-        ^ block.spec.insets.right.to_bits().rotate_left(19)
+    let mut hasher = DefaultHasher::new();
+    match &block.spec.flow {
+        super::BlockFlow::Paragraph => 0_u8.hash(&mut hasher),
+        super::BlockFlow::Hanging {
+            marker_range,
+            content_indent,
+        } => {
+            1_u8.hash(&mut hasher);
+            marker_range.hash(&mut hasher);
+            content_indent.to_bits().hash(&mut hasher);
+        }
+        super::BlockFlow::Quote => 2_u8.hash(&mut hasher),
+        super::BlockFlow::Code => 3_u8.hash(&mut hasher),
+        super::BlockFlow::Table => 4_u8.hash(&mut hasher),
+        super::BlockFlow::TableRow => 5_u8.hash(&mut hasher),
+        super::BlockFlow::TableCell { column } => {
+            6_u8.hash(&mut hasher);
+            column.hash(&mut hasher);
+        }
+        super::BlockFlow::Embedded => 7_u8.hash(&mut hasher),
+    }
+    for value in [
+        block.spec.insets.top,
+        block.spec.insets.right,
+        block.spec.insets.bottom,
+        block.spec.insets.left,
+        block.spec.space_before,
+        block.spec.space_after,
+    ] {
+        value.to_bits().hash(&mut hasher);
+    }
+    for column in block.spec.columns.iter() {
+        column.min_width.to_bits().hash(&mut hasher);
+        column.max_width.map(f64::to_bits).hash(&mut hasher);
+        match column.alignment {
+            super::ColumnAlignment::Start => 0_u8,
+            super::ColumnAlignment::Center => 1_u8,
+            super::ColumnAlignment::End => 2_u8,
+        }
+        .hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
-fn content_fingerprint(block: &LayoutBlock) -> u64 {
-    ((block.source_range.start().to_usize() as u64) << 32)
-        ^ block.source_range.end().to_usize() as u64
+fn content_fingerprint(
+    block: &LayoutBlock,
+    document: &LayoutDocument,
+    presentation: &MarkdownDocumentSnapshot,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    block.source_range.hash(&mut hasher);
+    presentation
+        .text()
+        .slice(block.source_range)
+        .unwrap_or("")
+        .as_bytes()
+        .hash(&mut hasher);
+    for run in document.text_runs.iter().filter(|run| run.id == block.id) {
+        run.range.hash(&mut hasher);
+        run.metrics.font.hash(&mut hasher);
+        run.metrics.font_size.to_bits().hash(&mut hasher);
+        run.metrics.line_spacing.to_bits().hash(&mut hasher);
+        run.metrics.weight.hash(&mut hasher);
+        run.metrics.italic.hash(&mut hasher);
+    }
+    for embedded in document
+        .embedded_blocks
+        .iter()
+        .filter(|embedded| embedded.id == block.id)
+    {
+        embedded.source_range.hash(&mut hasher);
+        embedded.size.x.to_bits().hash(&mut hasher);
+        embedded.size.y.to_bits().hash(&mut hasher);
+        embedded.baseline.map(f64::to_bits).hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn empty_range() -> TextRange {

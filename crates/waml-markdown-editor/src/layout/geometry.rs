@@ -133,6 +133,28 @@ pub struct BlockGeometry {
     plain_text_fallback: bool,
 }
 
+/// Immutable block-local geometry cached and reused across layout passes.
+#[derive(Clone, Debug)]
+pub struct BlockLayoutData {
+    pub(crate) block: BlockGeometry,
+    pub(crate) visual_lines: Arc<[VisualLine]>,
+    pub(crate) glyph_clusters: Arc<[GlyphCluster]>,
+}
+
+impl BlockLayoutData {
+    pub fn block(&self) -> BlockGeometry {
+        self.block
+    }
+
+    pub fn visual_lines(&self) -> &[VisualLine] {
+        &self.visual_lines
+    }
+
+    pub fn glyph_clusters(&self) -> &[GlyphCluster] {
+        &self.glyph_clusters
+    }
+}
+
 impl BlockGeometry {
     pub fn new(id: LayoutElementId, source_range: TextRange, rect: Rect) -> Self {
         Self {
@@ -172,6 +194,8 @@ pub struct LayoutSnapshot {
     visible_source_range: TextRange,
     visible_block_range: Range<usize>,
     block_summaries: Arc<[BlockSummary]>,
+    block_layouts: Arc<[Arc<BlockLayoutData>]>,
+    dirty_block_range: Range<usize>,
 }
 
 pub struct LayoutSnapshotMetadata {
@@ -180,6 +204,7 @@ pub struct LayoutSnapshotMetadata {
     pub content_size: DVec2,
     pub visible_source_range: TextRange,
     pub visible_block_range: Range<usize>,
+    pub dirty_block_range: Range<usize>,
 }
 
 impl LayoutSnapshot {
@@ -189,6 +214,7 @@ impl LayoutSnapshot {
         blocks: Arc<[BlockGeometry]>,
         clusters: Arc<[GlyphCluster]>,
         block_summaries: Arc<[BlockSummary]>,
+        block_layouts: Arc<[Arc<BlockLayoutData>]>,
     ) -> Self {
         Self {
             revision: metadata.revision,
@@ -200,6 +226,8 @@ impl LayoutSnapshot {
             visible_source_range: metadata.visible_source_range,
             visible_block_range: metadata.visible_block_range,
             block_summaries,
+            block_layouts,
+            dirty_block_range: metadata.dirty_block_range,
         }
     }
 
@@ -257,6 +285,14 @@ impl LayoutSnapshot {
 
     pub fn block_summaries(&self) -> &[BlockSummary] {
         &self.block_summaries
+    }
+
+    pub fn visible_block_layouts(&self) -> &[Arc<BlockLayoutData>] {
+        &self.block_layouts
+    }
+
+    pub fn dirty_block_document_range(&self) -> Range<usize> {
+        self.dirty_block_range.clone()
     }
 
     pub fn source_to_point(&self, position: TextPosition) -> Option<CaretGeometry> {
@@ -409,10 +445,12 @@ impl LayoutSnapshot {
                 content_size,
                 visible_source_range,
                 visible_block_range,
+                dirty_block_range: 0..0,
             },
             visual_lines.into(),
             blocks.into(),
             clusters.into(),
+            Arc::from([]),
             Arc::from([]),
         )
     }

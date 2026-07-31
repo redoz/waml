@@ -1,5 +1,8 @@
 use makepad_widgets::{dvec2, Rect};
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     layout::{
@@ -239,7 +242,7 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
 }
 
 #[test]
-fn viewport_shapes_only_visible_blocks_plus_overscan() {
+fn snapshot_keeps_only_visible_blocks_plus_overscan() {
     let (document, presentation, mut shaper) = fixtures::one_hundred_blocks();
     let layout = LayoutEngine::default()
         .layout(
@@ -250,9 +253,26 @@ fn viewport_shapes_only_visible_blocks_plus_overscan() {
             &mut shaper,
         )
         .unwrap();
-    assert!(shaper.shaped_block_count() < 20);
+    assert!(layout.visible_blocks().len() < 40);
     assert_eq!(layout.block_summaries().len(), 100);
     assert!(layout.content_size().y >= 2_000.0);
+}
+
+#[test]
+fn default_overscan_owns_exact_320_pixel_boundaries() {
+    let (document, presentation, mut shaper) = fixtures::one_hundred_blocks();
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::default_overscan(400.0, 100.0, 1_000.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    assert_eq!(layout.visible_block_document_range(), 28..60);
+    assert_eq!(layout.visible_block_local_range(), 0..32);
 }
 
 #[test]
@@ -434,7 +454,7 @@ fn content_extent_and_offscreen_virtualization_remain_document_wide() {
     assert!(layout.visible_block_range().start > 0);
     assert!(layout.visible_block_range().end < 100);
     assert!(layout.visible_source_range().start() > t(0));
-    assert!(shaper.shaped_block_count() < 20);
+    assert!(layout.visible_blocks().len() < 20);
 }
 
 #[test]
@@ -520,7 +540,96 @@ fn embedded_measurement_invalidation_reshapes_only_the_stable_block_id() {
         )
         .unwrap();
     assert!(shaper.shaped.contains(&target));
-    assert_eq!(shaper.shaped.len(), document.text_runs.len());
+    assert_eq!(shaper.shaped, HashSet::from([target]));
+}
+
+#[test]
+fn block_measurement_reuses_exact_unchanged_block_layout_data() {
+    let (document, presentation, mut shaper) =
+        fixtures::fixture(&[16.0, 16.0, 16.0], &[8, 8, 8], None);
+    let mut engine = LayoutEngine::default();
+    let first = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let first_data = first.visible_block_layouts().to_vec();
+    shaper.shaped.clear();
+    let target = document.blocks[1].id;
+
+    let second = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::BlockMeasurement(target),
+            &mut shaper,
+        )
+        .unwrap();
+
+    assert_eq!(shaper.shaped, HashSet::from([target]));
+    assert_eq!(second.dirty_block_document_range(), 1..2);
+    assert!(Arc::ptr_eq(&first_data[0], &second.visible_block_layouts()[0]));
+    assert!(!Arc::ptr_eq(&first_data[1], &second.visible_block_layouts()[1]));
+    assert!(Arc::ptr_eq(&first_data[2], &second.visible_block_layouts()[2]));
+}
+
+#[test]
+fn measurement_growth_and_shrink_converge_before_visible_selection() {
+    let (document, presentation, mut shaper) = fixtures::fixture(
+        &[16.0, 16.0, 16.0, 16.0, 16.0, 16.0],
+        &[6, 6, 6, 6, 6, 6],
+        None,
+    );
+    let mut engine = LayoutEngine::default();
+    let viewport = LayoutViewport::new(80.0, 40.0, 80.0, 0.0);
+    let initial = engine
+        .layout(
+            &document,
+            &presentation,
+            viewport,
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(initial.visible_block_document_range().start, 4);
+    let target = document.blocks[0].id;
+
+    shaper.shaped.clear();
+    shaper.advance_override.insert(0, 40.0);
+    let grown = engine
+        .layout(
+            &document,
+            &presentation,
+            viewport,
+            LayoutInvalidation::BlockMeasurement(target),
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(shaper.shaped, HashSet::from([target]));
+    assert_eq!(grown.block_summaries()[0].height, 48.0);
+    assert_eq!(grown.visible_block_document_range().start, 2);
+    assert_eq!(grown.dirty_block_document_range(), 0..6);
+
+    shaper.shaped.clear();
+    shaper.advance_override.insert(0, 8.0);
+    let shrunk = engine
+        .layout(
+            &document,
+            &presentation,
+            viewport,
+            LayoutInvalidation::BlockMeasurement(target),
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(shaper.shaped, HashSet::from([target]));
+    assert_eq!(shrunk.block_summaries()[0].height, 16.0);
+    assert_eq!(shrunk.visible_block_document_range().start, 4);
+    assert_eq!(shrunk.dirty_block_document_range(), 0..6);
 }
 
 #[test]
@@ -577,12 +686,7 @@ fn shaped_cluster(start: usize, end: usize, bidi_level: u8) -> ShapedCluster {
 struct FakeShaper {
     shaped: HashSet<LayoutElementId>,
     fail_fragment: Option<u32>,
-}
-
-impl FakeShaper {
-    fn shaped_block_count(&self) -> usize {
-        self.shaped.len()
-    }
+    advance_override: HashMap<u32, f64>,
 }
 
 impl TextShaper for FakeShaper {
@@ -603,7 +707,11 @@ impl TextShaper for FakeShaper {
             let end = start + character.len_utf8();
             clusters.push(ShapedCluster {
                 source_range: range(start, end),
-                advance: run.metrics.font.0 as f64,
+                advance: self
+                    .advance_override
+                    .get(&run.id.fragment_ordinal)
+                    .copied()
+                    .unwrap_or(run.metrics.font.0 as f64),
                 bidi_level: 0,
                 caret_offsets: Arc::from([t(start), t(end)]),
                 glyphs: Arc::from([]),
@@ -702,6 +810,7 @@ mod fixtures {
             FakeShaper {
                 shaped: HashSet::new(),
                 fail_fragment,
+                advance_override: HashMap::new(),
             },
         )
     }
