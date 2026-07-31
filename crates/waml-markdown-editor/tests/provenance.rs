@@ -39,6 +39,8 @@ fn crate_does_not_depend_on_upstream_editor_or_markdown_widgets() {
     .collect::<String>();
     assert!(!manifest.contains("makepad-code-editor"));
     assert!(!source.contains("makepad_code_editor"));
+    assert!(!source.contains("CodeEditor"));
+    assert!(!source.contains("widgets::Markdown"));
     assert!(!source.contains("MarkdownAction"));
     assert!(!source.contains("as_markdown()"));
 }

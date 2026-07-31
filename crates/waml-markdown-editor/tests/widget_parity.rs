@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use makepad_widgets::{dvec2, Rect};
+use makepad_widgets::{dvec2, Cx, Rect, ScriptNew, WidgetRef};
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     input::{
@@ -10,6 +10,10 @@ use waml_markdown_editor::{
     layout::{Affinity, CaretStop, GlyphCluster, LayoutError, LayoutSnapshot, VisualLine},
     selection::TextPosition,
     session::MarkdownDocumentSession,
+    widget::{
+        draw_visible_layers_for_test, DrawLayer, DrawRecorder, MarkdownEditor, MarkdownEditorRef,
+        MarkdownEditorWidgetRefExt,
+    },
 };
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange, TextSize,
@@ -113,6 +117,56 @@ fn mutating_input_does_not_publish_ime_coordinates_from_entry_layout() {
     assert_eq!(response.proposals.len(), 1);
     assert_eq!(fixture.text(), "axbc");
     assert!(response.request_ime_at.is_none());
+}
+
+#[test]
+fn mounted_widget_emits_the_exact_proposal_from_text_input() {
+    let (mut cx, widget, mut session) = mounted_editor("ab");
+    widget.set_key_focus(&mut cx);
+    let actions =
+        widget.test_handle_input(&mut cx, &mut session, EditorInput::Text(Arc::from("x")));
+    let proposal = MarkdownEditorRef::proposed_edit(&actions).unwrap();
+    assert_eq!(proposal.edit.base_revision, DocumentRevision::INITIAL);
+    assert_eq!(proposal.edit.changes.len(), 1);
+    assert_eq!(proposal.snapshot.text().shared().as_str(), "xab");
+}
+
+#[test]
+fn every_layer_uses_one_layout_snapshot_in_required_order() {
+    let mut recorder = DrawRecorder::default();
+    let layout = Arc::new(LayoutSnapshot::wrapped_fixture_for_test());
+    draw_visible_layers_for_test(&layout, &mut recorder);
+    assert_eq!(
+        recorder.layers(),
+        &[
+            DrawLayer::BlockBackground,
+            DrawLayer::Selection,
+            DrawLayer::Text,
+            DrawLayer::Decoration,
+            DrawLayer::EmbeddedBlock,
+            DrawLayer::CaretAndIme,
+        ]
+    );
+    assert!(recorder
+        .snapshot_ptrs()
+        .iter()
+        .all(|ptr| *ptr == Arc::as_ptr(&layout)));
+}
+
+#[test]
+fn ime_window_uses_current_interpolated_caret_geometry() {
+    let (mut cx, widget, mut session) = mounted_editor("ab");
+    let target = Arc::new(LayoutSnapshot::wrapped_fixture_for_test());
+    widget.test_set_layout(target.clone());
+    widget.test_show_ime(&mut cx, &mut session);
+    assert_eq!(
+        widget.test_last_ime_point(),
+        target
+            .source_to_point(session.selections().primary().cursor)
+            .unwrap()
+            .rect
+            .pos
+    );
 }
 
 struct Fixture {
@@ -281,6 +335,21 @@ fn session_at_revision(text: &str, revision: DocumentRevision) -> MarkdownDocume
     let source = SourceText::new(text.to_owned()).unwrap();
     let syntax = parse_markdown(revision, source, MarkdownDialect::WAML_DEFAULT).unwrap();
     MarkdownDocumentSession::new(Arc::new(MarkdownDocumentSnapshot::new(syntax)))
+}
+
+fn mounted_editor(text: &str) -> (Cx, MarkdownEditorRef, MarkdownDocumentSession) {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    waml_markdown_editor::live_design(&mut cx);
+    let widget = WidgetRef::new_with_inner(Box::new(
+        cx.with_vm(MarkdownEditor::script_new_with_default),
+    ));
+    let editor = widget.as_markdown_editor();
+    editor.test_set_layout(Arc::new(linear_layout(text)));
+    (
+        cx,
+        editor,
+        session_at_revision(text, DocumentRevision::INITIAL),
+    )
 }
 
 fn variable_layout() -> LayoutSnapshot {

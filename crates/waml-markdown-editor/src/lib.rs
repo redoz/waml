@@ -9,4 +9,7 @@ pub mod session;
 pub mod unicode;
 pub mod widget;
 
-pub fn live_design(_cx: &mut makepad_widgets::Cx) {}
+pub fn live_design(cx: &mut makepad_widgets::Cx) {
+    cx.with_vm(makepad_widgets::script_mod);
+    widget::live_design(cx);
+}
