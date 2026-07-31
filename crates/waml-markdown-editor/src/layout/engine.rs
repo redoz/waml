@@ -8,7 +8,7 @@ use crate::{document::MarkdownDocumentSnapshot, selection::TextPosition};
 use super::{
     Affinity, BlockGeometry, GeometryElementId, GlyphCluster, LayoutBlock, LayoutDocument,
     LayoutElementId, LayoutError, LayoutSnapshot, LayoutSnapshotMetadata, LayoutTextRun,
-    VisualLine,
+    TextMetrics, VisualLine,
 };
 use crate::layout::geometry::CaretStop;
 
@@ -145,6 +145,46 @@ impl LayoutEngine {
 
         let visible_min = (viewport.scroll_y - viewport.overscan).max(0.0);
         let visible_max = viewport.scroll_y + viewport.height + viewport.overscan;
+        // A document-local summary index is enough for ordinary off-screen
+        // blocks, but an earlier long run can wrap and move the viewport into
+        // a block that its one-line estimate placed above it. Measure only
+        // those potentially wrapping predecessors before selecting the
+        // visible window, then derive every visible range from the corrected
+        // summaries.
+        for (index, block) in document.blocks.iter().enumerate() {
+            if summaries[index].y >= visible_min || !block_may_wrap(block, document, viewport.width) {
+                continue;
+            }
+            let (nested_left, nested_right) = nested_horizontal_insets(document, block);
+            let content_x = document.content_insets.left + nested_left;
+            let available_width = (viewport.width
+                - document.content_insets.left
+                - document.content_insets.right
+                - nested_left
+                - nested_right)
+                .max(1.0);
+            let output = layout_block(
+                block,
+                document,
+                presentation,
+                content_x,
+                summaries[index].y,
+                available_width,
+                shaper,
+            )
+            .unwrap_or_else(|_| {
+                fallback_block(
+                    block,
+                    document,
+                    presentation,
+                    content_x,
+                    summaries[index].y,
+                    available_width,
+                )
+            });
+            summaries[index].height = output.height;
+        }
+        reflow_summary_positions(document, &mut summaries);
         let visible_indices: Vec<_> = summaries
             .iter()
             .enumerate()
@@ -199,6 +239,7 @@ impl LayoutEngine {
                 Err(_) => {
                     let output = fallback_block(
                         block,
+                        document,
                         presentation,
                         content_x,
                         summaries[index].y,
@@ -225,14 +266,10 @@ impl LayoutEngine {
             }
         }
 
-        let mut content_y = document.content_insets.top;
-        for (block, summary) in document.blocks.iter().zip(&mut summaries) {
-            content_y += block.spec.space_before + block.spec.insets.top;
-            summary.y = content_y;
-            content_y += summary.height + block.spec.insets.bottom + block.spec.space_after;
-            self.summaries.insert(block.id, summary.clone());
+        let content_y = reflow_summary_positions(document, &mut summaries);
+        for summary in &summaries {
+            self.summaries.insert(summary.id, summary.clone());
         }
-        content_y += document.content_insets.bottom;
 
         let visible_source_range = visual_lines
             .first()
@@ -290,7 +327,15 @@ fn layout_block<S: TextShaper>(
     for run in runs {
         let shaped = shaper.shape(presentation.text(), run, max_width)?;
         let run_y = y + output.height;
-        append_run(&mut output, run.id, &shaped, x, run_y, max_width);
+        append_run(
+            &mut output,
+            run.id,
+            &run.metrics,
+            &shaped,
+            x,
+            run_y,
+            max_width,
+        );
     }
     if output.lines.is_empty() {
         output.height = estimated_height(block, document);
@@ -300,6 +345,7 @@ fn layout_block<S: TextShaper>(
 
 fn fallback_block(
     block: &LayoutBlock,
+    document: &LayoutDocument,
     presentation: &MarkdownDocumentSnapshot,
     x: f64,
     y: f64,
@@ -328,13 +374,15 @@ fn fallback_block(
         clusters: Vec::new(),
         height: 0.0,
     };
-    append_run(&mut output, block.id, &run, x, y, max_width);
+    let metrics = document_metrics(block, document);
+    append_run(&mut output, block.id, &metrics, &run, x, y, max_width);
     output
 }
 
 fn append_run(
     output: &mut BlockOutput,
     layout_id: LayoutElementId,
+    metrics: &TextMetrics,
     run: &ShapedRun,
     start_x: f64,
     start_y: f64,
@@ -356,7 +404,15 @@ fn append_run(
             .binary_search_by_key(&shaped.source_range.start(), |range| range.start())
             .expect("a shaped cluster appears in source order");
         if x > 0.0 && x + shaped.advance > max_width {
-            flush_line(output, layout_id, &line_clusters, start_x, y, line_height);
+            flush_line(
+                output,
+                layout_id,
+                metrics,
+                &line_clusters,
+                start_x,
+                y,
+                line_height,
+            );
             line_clusters.clear();
             x = 0.0;
             y += line_height;
@@ -365,7 +421,15 @@ fn append_run(
         x += shaped.advance;
     }
     if !line_clusters.is_empty() {
-        flush_line(output, layout_id, &line_clusters, start_x, y, line_height);
+        flush_line(
+            output,
+            layout_id,
+            metrics,
+            &line_clusters,
+            start_x,
+            y,
+            line_height,
+        );
     }
     output.height = output.lines.iter().map(VisualLine::height).sum();
 }
@@ -373,6 +437,7 @@ fn append_run(
 fn flush_line(
     output: &mut BlockOutput,
     layout_id: LayoutElementId,
+    metrics: &TextMetrics,
     line_clusters: &[(usize, &ShapedCluster, f64)],
     start_x: f64,
     y: f64,
@@ -432,7 +497,7 @@ fn flush_line(
                 )
             })
             .collect::<Vec<_>>();
-        output.clusters.push(GlyphCluster::new(
+        output.clusters.push(GlyphCluster::with_metrics(
             GeometryElementId {
                 layout: layout_id,
                 cluster_ordinal: ordinal as u32,
@@ -443,6 +508,7 @@ fn flush_line(
                 size: dvec2(shaped.advance, height),
             },
             stops.into(),
+            *metrics,
         ));
         x += shaped.advance;
     }
@@ -512,6 +578,49 @@ fn estimated_height(block: &LayoutBlock, document: &LayoutDocument) -> f64 {
         .filter(|embedded| embedded.id == block.id)
         .map(|embedded| embedded.size.y)
         .fold(text_height, f64::max)
+}
+
+fn document_metrics(block: &LayoutBlock, document: &LayoutDocument) -> TextMetrics {
+    document
+        .text_runs
+        .iter()
+        .find(|run| run.id == block.id)
+        .map(|run| run.metrics)
+        .unwrap_or(TextMetrics {
+            font: super::FontKey(0),
+            font_size: 16.0,
+            line_spacing: 1.0,
+            weight: super::FontWeight(400),
+            italic: false,
+        })
+}
+
+fn block_may_wrap(block: &LayoutBlock, document: &LayoutDocument, viewport_width: f64) -> bool {
+    let (left, right) = nested_horizontal_insets(document, block);
+    let available_width = (viewport_width
+        - document.content_insets.left
+        - document.content_insets.right
+        - left
+        - right)
+        .max(1.0);
+    document
+        .text_runs
+        .iter()
+        .filter(|run| run.id == block.id)
+        .any(|run| {
+            let byte_len = run.range.end().to_usize() - run.range.start().to_usize();
+            byte_len as f64 * (run.metrics.font_size as f64 * 0.5) > available_width
+        })
+}
+
+fn reflow_summary_positions(document: &LayoutDocument, summaries: &mut [BlockSummary]) -> f64 {
+    let mut content_y = document.content_insets.top;
+    for (block, summary) in document.blocks.iter().zip(summaries.iter_mut()) {
+        content_y += block.spec.space_before + block.spec.insets.top;
+        summary.y = content_y;
+        content_y += summary.height + block.spec.insets.bottom + block.spec.space_after;
+    }
+    content_y + document.content_insets.bottom
 }
 
 fn block_is_invalidated(

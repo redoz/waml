@@ -8,7 +8,7 @@ use waml_syntax::{
 
 use crate::selection::{Affinity, Selection, TextPosition};
 
-use super::{BlockSummary, GeometryElementId, LayoutElementId};
+use super::{BlockSummary, FontKey, FontWeight, GeometryElementId, LayoutElementId, TextMetrics};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CaretStop {
@@ -34,6 +34,9 @@ pub struct GlyphCluster {
     pub source_range: TextRange,
     pub rect: Rect,
     pub caret_stops: Arc<[CaretStop]>,
+    /// The exact metric record that produced this placement. Renderers must
+    /// paint with it rather than reconstructing a parallel text style.
+    pub metrics: TextMetrics,
 }
 
 impl GlyphCluster {
@@ -43,11 +46,22 @@ impl GlyphCluster {
         rect: Rect,
         caret_stops: Arc<[CaretStop]>,
     ) -> Self {
+        Self::with_metrics(id, source_range, rect, caret_stops, default_text_metrics())
+    }
+
+    pub fn with_metrics(
+        id: GeometryElementId,
+        source_range: TextRange,
+        rect: Rect,
+        caret_stops: Arc<[CaretStop]>,
+        metrics: TextMetrics,
+    ) -> Self {
         Self {
             id,
             source_range,
             rect,
             caret_stops,
+            metrics,
         }
     }
 
@@ -199,6 +213,12 @@ impl LayoutSnapshot {
 
     pub fn visual_lines(&self) -> &[VisualLine] {
         &self.visual_lines
+    }
+
+    /// Renderer-ready glyph placements. These are the same clusters used by
+    /// source/caret/selection geometry.
+    pub fn glyph_clusters(&self) -> &[GlyphCluster] {
+        &self.clusters
     }
 
     pub fn block_summaries(&self) -> &[BlockSummary] {
@@ -437,6 +457,16 @@ impl LayoutSnapshot {
             ],
             Vec::new(),
         )
+    }
+}
+
+fn default_text_metrics() -> TextMetrics {
+    TextMetrics {
+        font: FontKey(0),
+        font_size: 0.0,
+        line_spacing: 0.0,
+        weight: FontWeight(0),
+        italic: false,
     }
 }
 

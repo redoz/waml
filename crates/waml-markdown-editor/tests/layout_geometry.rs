@@ -140,6 +140,25 @@ fn mixed_metrics_wrap_without_a_cell_width() {
 }
 
 #[test]
+fn glyph_clusters_carry_the_metrics_used_for_measurement_and_hit_testing() {
+    let (document, presentation, mut shaper) = fixtures::mixed_heading_and_body(80.0);
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(80.0, 60.0, 0.0, 24.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    let first = layout.glyph_clusters().first().unwrap();
+    assert_eq!(first.metrics, document.text_runs[0].metrics);
+    assert_eq!(first.metrics.font, FontKey(12));
+    assert_eq!(first.metrics.weight, FontWeight(400));
+}
+
+#[test]
 fn viewport_shapes_only_visible_blocks_plus_overscan() {
     let (document, presentation, mut shaper) = fixtures::one_hundred_blocks();
     let layout = LayoutEngine::default()
@@ -339,6 +358,34 @@ fn content_extent_and_offscreen_virtualization_remain_document_wide() {
 }
 
 #[test]
+fn scrolled_visible_window_is_recomputed_after_an_earlier_block_wraps() {
+    let (document, presentation, mut shaper) = fixtures::fixture(
+        &[16.0, 16.0, 16.0, 16.0, 16.0, 16.0],
+        &[60, 1, 1, 1, 1, 1],
+        None,
+    );
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(80.0, 40.0, 80.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    // The first block grows from its one-line estimate to six wrapped rows, so
+    // the scrolled viewport is inside that block, not the initially estimated
+    // fifth block.
+    assert_eq!(layout.visible_block_range().start, 0);
+    assert_eq!(
+        layout.visible_source_range().start(),
+        document.text_runs[0].range.start()
+    );
+}
+
+#[test]
 fn embedded_measurement_invalidation_reshapes_only_the_stable_block_id() {
     let (document, presentation, mut shaper) = fixtures::failing_second_block();
     shaper.fail_fragment = None;
@@ -481,7 +528,7 @@ mod fixtures {
         fixture(&[16.0, 16.0], &[8, 8], Some(1))
     }
 
-    fn fixture(
+    pub(super) fn fixture(
         sizes: &[f32],
         content_characters: &[usize],
         fail_fragment: Option<u32>,
