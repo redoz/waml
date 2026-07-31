@@ -195,10 +195,7 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
                 advance: 12.0,
                 bidi_level: 0,
                 caret_offsets: Arc::from([t(start + 3), t(start + 6)]),
-                glyphs: Arc::from([
-                    glyph(601, 0.0, 12.0, 14.0),
-                    glyph(602, 4.0, 0.0, 14.0),
-                ]),
+                glyphs: Arc::from([glyph(601, 0.0, 12.0, 14.0), glyph(602, 4.0, 0.0, 14.0)]),
             },
             ShapedCluster {
                 source_range: range(start + 6, start + 14),
@@ -228,11 +225,26 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
         .unwrap();
 
     let clusters = layout.glyph_clusters();
-    assert_eq!(clusters[0].glyphs.len(), 1, "ligature glyphs must not be expanded");
+    assert_eq!(
+        clusters[0].glyphs.len(),
+        1,
+        "ligature glyphs must not be expanded"
+    );
     assert_eq!(clusters[0].glyphs[0].glyph_id, 501);
-    assert_eq!(clusters[1].glyphs.len(), 2, "combining glyphs must not be dropped");
+    assert_eq!(
+        clusters[1].glyphs.len(),
+        2,
+        "combining glyphs must not be dropped"
+    );
     assert_eq!(clusters[1].glyphs[1].origin, dvec2(21.0, 15.5));
-    assert_eq!(clusters[2].glyphs.iter().map(|glyph| glyph.glyph_id).collect::<Vec<_>>(), vec![701, 702, 703]);
+    assert_eq!(
+        clusters[2]
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.glyph_id)
+            .collect::<Vec<_>>(),
+        vec![701, 702, 703]
+    );
     assert_eq!(clusters[0].glyphs[0].font_key, FontKey(77));
     assert_eq!(clusters[0].glyphs[0].font_size, 19.0);
     assert_eq!(clusters[0].glyphs[0].ascender, 14.0);
@@ -574,9 +586,18 @@ fn block_measurement_reuses_exact_unchanged_block_layout_data() {
 
     assert_eq!(shaper.shaped, HashSet::from([target]));
     assert_eq!(second.dirty_block_document_range(), 1..2);
-    assert!(Arc::ptr_eq(&first_data[0], &second.visible_block_layouts()[0]));
-    assert!(!Arc::ptr_eq(&first_data[1], &second.visible_block_layouts()[1]));
-    assert!(Arc::ptr_eq(&first_data[2], &second.visible_block_layouts()[2]));
+    assert!(Arc::ptr_eq(
+        &first_data[0],
+        &second.visible_block_layouts()[0]
+    ));
+    assert!(!Arc::ptr_eq(
+        &first_data[1],
+        &second.visible_block_layouts()[1]
+    ));
+    assert!(Arc::ptr_eq(
+        &first_data[2],
+        &second.visible_block_layouts()[2]
+    ));
 }
 
 #[test]
@@ -711,7 +732,13 @@ fn quote_hanging_tree_aggregates_children_without_phantom_height() {
             &mut shaper,
         )
         .unwrap();
-    let geometry = |id| layout.visible_blocks().iter().find(|block| block.id == id).unwrap();
+    let geometry = |id| {
+        layout
+            .visible_blocks()
+            .iter()
+            .find(|block| block.id == id)
+            .unwrap()
+    };
     let quote_geometry = geometry(quote);
     let first_child = geometry(document.blocks[1].id);
     let second_child = geometry(document.blocks[2].id);
@@ -803,10 +830,34 @@ fn table_rows_share_column_origins_and_aggregate_cell_heights() {
     };
 
     assert_eq!(geometry(0).rect.size.y, 48.0);
-    assert_eq!(geometry(1).rect, Rect { pos: dvec2(5.0, 0.0), size: dvec2(100.0, 32.0) });
-    assert_eq!(geometry(2).rect, Rect { pos: dvec2(5.0, 0.0), size: dvec2(40.0, 32.0) });
-    assert_eq!(geometry(3).rect, Rect { pos: dvec2(45.0, 0.0), size: dvec2(60.0, 16.0) });
-    assert_eq!(geometry(4).rect, Rect { pos: dvec2(5.0, 32.0), size: dvec2(100.0, 16.0) });
+    assert_eq!(
+        geometry(1).rect,
+        Rect {
+            pos: dvec2(5.0, 0.0),
+            size: dvec2(100.0, 32.0)
+        }
+    );
+    assert_eq!(
+        geometry(2).rect,
+        Rect {
+            pos: dvec2(5.0, 0.0),
+            size: dvec2(40.0, 32.0)
+        }
+    );
+    assert_eq!(
+        geometry(3).rect,
+        Rect {
+            pos: dvec2(45.0, 0.0),
+            size: dvec2(60.0, 16.0)
+        }
+    );
+    assert_eq!(
+        geometry(4).rect,
+        Rect {
+            pos: dvec2(5.0, 32.0),
+            size: dvec2(100.0, 16.0)
+        }
+    );
     assert_eq!(geometry(5).rect.pos, dvec2(5.0, 32.0));
     assert_eq!(geometry(6).rect.pos, dvec2(45.0, 32.0));
     assert_eq!(layout.content_size().y, 48.0);

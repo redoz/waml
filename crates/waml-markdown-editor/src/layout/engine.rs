@@ -2,13 +2,12 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     fmt,
     hash::{Hash, Hasher},
-    rc::Rc,
     sync::Arc,
 };
 
 use makepad_widgets::{
     dvec2,
-    text::{color::Color, font::Font},
+    text::{color::Color, font::FontId},
     DVec2, Rect,
 };
 use waml_syntax::{MarkdownSyntaxUpdate, SourceText, TextRange, TextSize};
@@ -56,7 +55,7 @@ pub struct ShapedGlyph {
     /// `GlyphCluster` it is the exact document-space glyph origin.
     pub origin: DVec2,
     pub advance: f64,
-    pub font: Option<Rc<Font>>,
+    pub font: Option<FontId>,
     pub font_key: super::FontKey,
     pub font_size: f32,
     pub ascender: f64,
@@ -182,7 +181,10 @@ impl LayoutEngine {
                         && old.summary.content_fingerprint == content_fingerprint
                 });
             let data = if can_reuse {
-                cached.expect("a reusable block has cached data").data.clone()
+                cached
+                    .expect("a reusable block has cached data")
+                    .data
+                    .clone()
             } else {
                 let (output, fallback) = match layout_block(
                     block,
@@ -195,14 +197,7 @@ impl LayoutEngine {
                 ) {
                     Ok(output) => (output, false),
                     Err(_) => (
-                        fallback_block(
-                            block,
-                            document,
-                            presentation,
-                            0.0,
-                            0.0,
-                            available_width,
-                        ),
+                        fallback_block(block, document, presentation, 0.0, 0.0, available_width),
                         true,
                     ),
                 };
@@ -211,12 +206,8 @@ impl LayoutEngine {
             block_data.push(data);
         }
 
-        let (placements, content_y) = position_block_tree(
-            document,
-            &hierarchy,
-            &widths,
-            &block_data,
-        );
+        let (placements, content_y) =
+            position_block_tree(document, &hierarchy, &widths, &block_data);
         let mut summaries = Vec::with_capacity(document.blocks.len());
         let mut dirty_first = None;
         let mut dirty_end = 0;
@@ -236,7 +227,7 @@ impl LayoutEngine {
                 || self
                     .blocks
                     .get(&block.id)
-                    .is_none_or(|old| old.summary != summary);
+                    .map_or(true, |old| old.summary != summary);
             if changed {
                 dirty_first.get_or_insert(index);
                 dirty_end = index + 1;
@@ -347,10 +338,9 @@ impl WidthPlan {
             content: vec![1.0; document.blocks.len()],
             child_x: vec![0.0; document.blocks.len()],
         };
-        let root_width = (viewport_width
-            - document.content_insets.left
-            - document.content_insets.right)
-            .max(1.0);
+        let root_width =
+            (viewport_width - document.content_insets.left - document.content_insets.right)
+                .max(1.0);
         for &root in &hierarchy.roots {
             assign_block_widths(document, hierarchy, root, root_width, &mut plan);
         }
@@ -451,7 +441,9 @@ fn solve_table_columns(
             .iter()
             .enumerate()
             .filter(|(index, constraint)| {
-                constraint.max_width.is_none_or(|max| widths[*index] < max)
+                constraint
+                    .max_width
+                    .map_or(true, |max| widths[*index] < max)
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
@@ -545,9 +537,8 @@ fn position_block(
                 content_x + widths.child_x[child],
                 child_y,
             );
-            row_height = row_height.max(
-                child_block.spec.space_before + child_height + child_block.spec.space_after,
-            );
+            row_height = row_height
+                .max(child_block.spec.space_before + child_height + child_block.spec.space_after);
         }
         row_height
     } else {
@@ -679,8 +670,8 @@ fn layout_block<S: TextShaper>(
             height: 0.0,
         };
         for run in runs {
-            let is_marker = run.range.start() >= marker_range.start()
-                && run.range.end() <= marker_range.end();
+            let is_marker =
+                run.range.start() >= marker_range.start() && run.range.end() <= marker_range.end();
             let (target, run_x, run_width) = if is_marker {
                 (&mut marker_output, x, content_indent.max(1.0))
             } else {
@@ -691,15 +682,7 @@ fn layout_block<S: TextShaper>(
                 )
             };
             let shaped = shaper.shape(presentation.text(), run, run_width)?;
-            append_run(
-                target,
-                run.id,
-                &run.metrics,
-                &shaped,
-                run_x,
-                y,
-                run_width,
-            );
+            append_run(target, run.id, &run.metrics, &shaped, run_x, y, run_width);
         }
         return Ok(BlockOutput {
             height: marker_output.height.max(content_output.height),
@@ -918,10 +901,7 @@ fn flush_line(
             .iter()
             .cloned()
             .map(|mut glyph| {
-                glyph.origin = dvec2(
-                    x + glyph.origin.x,
-                    y + glyph.baseline + glyph.origin.y,
-                );
+                glyph.origin = dvec2(x + glyph.origin.x, y + glyph.baseline + glyph.origin.y);
                 glyph.baseline += y;
                 glyph
             })
@@ -976,40 +956,6 @@ fn reorder_by_bidi_level(clusters: &mut [(usize, &ShapedCluster, f64)]) {
     }
 }
 
-fn nested_horizontal_insets(document: &LayoutDocument, block: &LayoutBlock) -> (f64, f64) {
-    let mut left = block.spec.insets.left;
-    let mut right = block.spec.insets.right;
-    let mut parent = block.parent;
-    while let Some(parent_id) = parent {
-        let Some(parent_block) = document
-            .blocks
-            .iter()
-            .find(|candidate| candidate.id == parent_id)
-        else {
-            break;
-        };
-        left += parent_block.spec.insets.left;
-        right += parent_block.spec.insets.right;
-        parent = parent_block.parent;
-    }
-    (left, right)
-}
-
-fn estimated_height(block: &LayoutBlock, document: &LayoutDocument) -> f64 {
-    let text_height = document
-        .text_runs
-        .iter()
-        .filter(|run| run.id == block.id)
-        .map(|run| run.metrics.font_size as f64)
-        .fold(20.0, f64::max);
-    document
-        .embedded_blocks
-        .iter()
-        .filter(|embedded| embedded.id == block.id)
-        .map(|embedded| embedded.size.y)
-        .fold(text_height, f64::max)
-}
-
 fn document_metrics(block: &LayoutBlock, document: &LayoutDocument) -> TextMetrics {
     document
         .text_runs
@@ -1030,7 +976,9 @@ fn invalidated_block_range(
     document: &LayoutDocument,
 ) -> std::ops::Range<usize> {
     match invalidation {
-        LayoutInvalidation::Document | LayoutInvalidation::ViewportWidth => 0..document.blocks.len(),
+        LayoutInvalidation::Document | LayoutInvalidation::ViewportWidth => {
+            0..document.blocks.len()
+        }
         LayoutInvalidation::BlockMeasurement(id) => document
             .blocks
             .iter()
@@ -1049,7 +997,7 @@ fn invalidated_block_range(
                         .then_some(index)
                 });
             affected.next().map_or(0..0, |first| {
-                let last = affected.last().unwrap_or(first);
+                let last = affected.next_back().unwrap_or(first);
                 first..last + 1
             })
         }

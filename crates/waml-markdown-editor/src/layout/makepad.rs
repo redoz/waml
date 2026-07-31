@@ -83,7 +83,7 @@ impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
                             (glyph.origin_in_lpxs.y - row.origin_in_lpxs.y) as f64,
                         ),
                         advance: glyph.advance_in_lpxs() as f64,
-                        font: Some(glyph.font.clone()),
+                        font: Some(glyph.font.id()),
                         font_key: run.metrics.font,
                         font_size: glyph.font_size_in_lpxs,
                         ascender: glyph.ascender_in_lpxs() as f64,
@@ -276,15 +276,8 @@ mod tests {
                 makepad_widgets::script_mod(vm);
                 let mut draw_text = Label::script_new_with_default(vm).draw_text;
                 vm.with_cx_mut(|cx| {
-                    let raw = draw_text.layout(
-                        cx,
-                        0.0,
-                        0.0,
-                        Some(400.0),
-                        true,
-                        Align::default(),
-                        &text,
-                    );
+                    let raw =
+                        draw_text.layout(cx, 0.0, 0.0, Some(400.0), true, Align::default(), &text);
                     let mut fonts = NoopFonts;
                     let mut shaper = MakepadTextShaper {
                         cx,
@@ -304,9 +297,7 @@ mod tests {
                             let cluster = row.glyphs[index].cluster;
                             let cluster_origin = row.glyphs[index].origin_in_lpxs.x;
                             let mut next = index + 1;
-                            while next < row.glyphs.len()
-                                && row.glyphs[next].cluster == cluster
-                            {
+                            while next < row.glyphs.len() && row.glyphs[next].cluster == cluster {
                                 next += 1;
                             }
                             for (ordinal, glyph) in row.glyphs[index..next].iter().enumerate() {
@@ -331,7 +322,7 @@ mod tests {
                         shaped_glyphs.into_iter().zip(expected)
                     {
                         assert!(glyph.font.is_some(), "sample {sample:?}");
-                        assert_eq!(glyph.font.as_ref(), Some(&raw.font));
+                        assert_eq!(glyph.font, Some(raw.font.id()));
                         assert_eq!(glyph.font_key, FontKey(91));
                         assert_eq!(glyph.glyph_id, raw.id);
                         assert_eq!(glyph.origin, origin);
