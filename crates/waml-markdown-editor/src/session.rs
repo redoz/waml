@@ -8,6 +8,7 @@ use crate::{
     },
     history::{History, HistoryEntry},
     selection::{Affinity, Selection, SelectionError, SelectionSet, TextPosition},
+    unicode::{logical_lines, next_grapheme_boundary, previous_grapheme_boundary, word_range_at},
 };
 use waml_syntax::{
     reparse_markdown, ChangeMap, DocumentRevision, LineIndex, SourceText, TextChange, TextError,
@@ -76,6 +77,84 @@ impl MarkdownDocumentSession {
         self.history.break_group();
     }
 
+    pub fn set_primary_offset(&mut self, offset: TextSize) -> Result<(), MarkdownEditError> {
+        self.replace_primary_selection(Selection::caret(TextPosition::new(
+            offset,
+            Affinity::Before,
+        )))
+    }
+
+    pub fn move_left(&mut self, extend: bool) -> Result<(), MarkdownEditError> {
+        let selection = self.selections.primary();
+        let offset = if !extend && !selection.is_empty() {
+            selection.range().start().to_usize()
+        } else {
+            previous_grapheme_boundary(
+                self.snapshot.text().shared().as_str(),
+                selection.cursor.offset.to_usize(),
+            )
+        };
+        self.move_primary_to(offset, extend)
+    }
+
+    pub fn move_right(&mut self, extend: bool) -> Result<(), MarkdownEditError> {
+        let selection = self.selections.primary();
+        let offset = if !extend && !selection.is_empty() {
+            selection.range().end().to_usize()
+        } else {
+            next_grapheme_boundary(
+                self.snapshot.text().shared().as_str(),
+                selection.cursor.offset.to_usize(),
+            )
+        };
+        self.move_primary_to(offset, extend)
+    }
+
+    pub fn select_word_at(&mut self, offset: TextSize) -> Result<Selection, MarkdownEditError> {
+        let text = self.snapshot.text().shared().as_str();
+        let offset = offset.to_usize();
+        let (start, end) = word_range_at(text, offset).unwrap_or_else(|| {
+            (
+                previous_grapheme_boundary(text, offset),
+                next_grapheme_boundary(text, offset),
+            )
+        });
+        let selection = Selection::new(
+            TextPosition::new(TextSize::try_from_usize(start).unwrap(), Affinity::Before),
+            TextPosition::new(TextSize::try_from_usize(end).unwrap(), Affinity::After),
+        );
+        self.replace_primary_selection(selection)?;
+        Ok(selection)
+    }
+
+    pub fn select_line_at(&mut self, offset: TextSize) -> Result<Selection, MarkdownEditError> {
+        let text = self.snapshot.text().shared().as_str();
+        let line = self
+            .snapshot
+            .line_index()
+            .line_col(self.snapshot.text(), offset)?
+            .line;
+        let (start, content_end) = logical_lines(text)
+            .get(line as usize)
+            .copied()
+            .ok_or(MarkdownEditError::InvalidBoundary { offset })?;
+        let end = if content_end < text.len() {
+            if text[content_end..].starts_with("\r\n") {
+                content_end + 2
+            } else {
+                content_end + 1
+            }
+        } else {
+            content_end
+        };
+        let selection = Selection::new(
+            TextPosition::new(TextSize::try_from_usize(start).unwrap(), Affinity::Before),
+            TextPosition::new(TextSize::try_from_usize(end).unwrap(), Affinity::After),
+        );
+        self.replace_primary_selection(selection)?;
+        Ok(selection)
+    }
+
     pub fn select_all(&mut self) -> Result<(), MarkdownEditError> {
         let end = TextSize::try_from_usize(self.snapshot.text().shared().as_str().len()).unwrap();
         self.selections = SelectionSet::from_selections(
@@ -87,6 +166,28 @@ impl MarkdownDocumentSession {
             0,
         )
         .map_err(map_selection_error)?;
+        Ok(())
+    }
+
+    fn move_primary_to(&mut self, offset: usize, extend: bool) -> Result<(), MarkdownEditError> {
+        let position =
+            TextPosition::new(TextSize::try_from_usize(offset).unwrap(), Affinity::Before);
+        let primary = self.selections.primary();
+        let selection = if extend {
+            Selection::new(primary.anchor, position)
+        } else {
+            Selection::caret(position)
+        };
+        self.replace_primary_selection(selection)
+    }
+
+    fn replace_primary_selection(&mut self, selection: Selection) -> Result<(), MarkdownEditError> {
+        let primary = self.selections.primary_index();
+        let mut selections = self.selections.as_slice().to_vec();
+        selections[primary] = selection;
+        self.selections =
+            SelectionSet::from_selections(self.snapshot.as_ref(), selections, primary)
+                .map_err(map_selection_error)?;
         Ok(())
     }
 
@@ -756,6 +857,7 @@ fn map_selection_error(error: SelectionError) -> MarkdownEditError {
     match error {
         SelectionError::InvalidBoundary { offset } => MarkdownEditError::InvalidBoundary { offset },
         SelectionError::Text(error) => MarkdownEditError::Text(error),
+        SelectionError::Changes(reason) => MarkdownEditError::InvalidChanges(reason),
         SelectionError::EmptySet | SelectionError::PrimaryOutOfBounds { .. } => {
             unreachable!("a constructed selection set remains structurally valid")
         }

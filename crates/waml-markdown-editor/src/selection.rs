@@ -1,5 +1,8 @@
 use crate::document::MarkdownDocumentSnapshot;
-use waml_syntax::{DocumentRevision, SourceText, TextError, TextRange, TextSize};
+use waml_syntax::{
+    ChangeMap, DocumentRevision, FullReparseReason, SourceText, TextChange, TextError, TextRange,
+    TextSize,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Affinity {
@@ -60,6 +63,42 @@ pub enum SelectionError {
     PrimaryOutOfBounds { primary: usize, len: usize },
     InvalidBoundary { offset: TextSize },
     Text(TextError),
+    Changes(FullReparseReason),
+}
+
+pub fn translate_position(
+    snapshot: &MarkdownDocumentSnapshot,
+    position: TextPosition,
+    changes: &[TextChange],
+) -> Result<TextPosition, SelectionError> {
+    let map = ChangeMap::checked(snapshot.text(), changes).map_err(SelectionError::Changes)?;
+    let offset = match position.affinity {
+        Affinity::Before => map.translate_end_boundary(position.offset),
+        Affinity::After => map.translate_start_boundary(position.offset),
+    }
+    .ok_or(SelectionError::InvalidBoundary {
+        offset: position.offset,
+    })?;
+    Ok(TextPosition::new(offset, position.affinity))
+}
+
+pub fn translate_selection_set(
+    old: &MarkdownDocumentSnapshot,
+    new: &MarkdownDocumentSnapshot,
+    selections: &SelectionSet,
+    changes: &[TextChange],
+) -> Result<SelectionSet, SelectionError> {
+    let translated = selections
+        .as_slice()
+        .iter()
+        .map(|selection| {
+            Ok(Selection::new(
+                translate_position(old, selection.anchor, changes)?,
+                translate_position(old, selection.cursor, changes)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, SelectionError>>()?;
+    SelectionSet::from_selections(new, translated, selections.primary_index())
 }
 
 impl SelectionSet {
