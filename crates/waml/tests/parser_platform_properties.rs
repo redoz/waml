@@ -670,6 +670,36 @@ proptest! {
 }
 
 #[test]
+fn malformed_reserved_document_bodies_are_unclaimed_and_lossless() {
+    let body = "0\n\r\t\u{0800}";
+    let source = SourceBundle::try_from_pairs([("index.md", body), ("log.md", body)]).unwrap();
+    let prepared = prepare_candidate(source, None, 1).unwrap();
+
+    assert!(prepared.okf().bundle.concept("index").is_none());
+    assert!(prepared.okf().bundle.concept("log").is_none());
+    assert!(prepared.uml().claims.iter().next().is_none());
+
+    for path in ["index.md", "log.md"] {
+        let id = prepared
+            .okf()
+            .catalog
+            .id_for_path(&BundlePath::parse(path).unwrap())
+            .unwrap();
+        assert_eq!(
+            prepared
+                .okf()
+                .markdown
+                .document(id)
+                .unwrap()
+                .text()
+                .shared()
+                .as_str(),
+            body
+        );
+    }
+}
+
+#[test]
 fn literal_claimed_paths_with_matching_titles_remain_distinct_documents() {
     let source = SourceBundle::try_from_pairs([
         ("left.md", "---\ntype: uml.Class\n---\n# Same\n"),
