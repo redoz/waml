@@ -164,9 +164,9 @@ fn green_writer_preserves_eof_leading_whitespace_and_dialect_marker() {
     let mut output = String::new();
     write_green_to(&root, &mut output).unwrap();
     assert_eq!(output, "  ");
-    assert_eq!(
-        MarkdownDialect::CommonMarkCurrent,
-        MarkdownDialect::CommonMarkCurrent
+    assert_ne!(
+        MarkdownDialect::COMMONMARK_0_31_2,
+        MarkdownDialect::WAML_DEFAULT
     );
 }
 

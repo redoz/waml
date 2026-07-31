@@ -1,14 +1,16 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use waml_syntax::{
     rebase_unchanged_green, transfer_mapped_annotations, ChangeMap, GreenElement, GreenFactory,
-    MarkdownStructureMap, SourceText, SyntaxTree, TextChange, TextRange, TextSize, TreeDiagnostic,
+    MarkdownStructureMap, SourceText, SyntaxIdentity, SyntaxTree, TextChange, TextRange, TextSize,
+    TreeDiagnostic,
 };
 
 mod ast;
 mod kind;
 mod parser;
 
+#[allow(dead_code)]
 pub(in crate::uml) fn parse_full(
     text: SourceText,
     structure: &MarkdownStructureMap,
@@ -16,6 +18,93 @@ pub(in crate::uml) fn parse_full(
     parser::parse(text, structure)
 }
 
+pub(in crate::uml) fn parse_authoritative_island(
+    text: SourceText,
+    structure: &MarkdownStructureMap,
+    owner: SyntaxIdentity,
+    content_range: TextRange,
+) -> Option<Arc<SyntaxTree<UmlLanguage>>> {
+    let (source_range, local_structure) = structure.local_for_island(owner, content_range)?;
+    let start = source_range.start().to_usize();
+    let end = source_range.end().to_usize();
+    let local_text = SourceText::new(text.shared()[start..end].to_owned()).ok()?;
+    Some(parser::parse(local_text, &local_structure))
+}
+
+pub(in crate::uml) fn compose_full_from_islands(
+    text: SourceText,
+    structure: &MarkdownStructureMap,
+    islands: &HashMap<(SyntaxIdentity, TextRange), Arc<SyntaxTree<UmlLanguage>>>,
+) -> Option<Arc<SyntaxTree<UmlLanguage>>> {
+    let factory = GreenFactory::<UmlLanguage>::new();
+    let mut children = Vec::new();
+    let mut diagnostics = Vec::new();
+    for descriptor in parser::islands(text.len(), structure)? {
+        let Some(owner) = descriptor.owner else {
+            children.push(parser::parse_island_element(
+                &factory,
+                &text,
+                text.shared(),
+                structure,
+                descriptor,
+                &mut diagnostics,
+            ));
+            continue;
+        };
+        let tree = islands.get(&(owner, descriptor.content_range))?;
+        let element = tree.root_green().children().first()?;
+        let local_source = recover_exact_source(tree.root_green())?;
+        let start = descriptor.range.start().to_usize();
+        let end = descriptor.range.end().to_usize();
+        if local_source.shared().as_str() != &text.shared()[start..end] {
+            return None;
+        }
+        let zero = TextSize::try_from_usize(0).ok()?;
+        let local_end = local_source.len();
+        let changes = [
+            TextChange {
+                old_range: TextRange::new(zero, zero).ok()?,
+                replacement: Arc::from(&text.shared()[..start]),
+            },
+            TextChange {
+                old_range: TextRange::new(local_end, local_end).ok()?,
+                replacement: Arc::from(&text.shared()[end..]),
+            },
+        ];
+        let map = ChangeMap::checked(&local_source, &changes).ok()?;
+        let rebased = rebase_unchanged_green(element, &text, &map).ok()??;
+        children.push(rebased.element);
+        let offset = descriptor.range.start().to_usize();
+        diagnostics.extend(tree.diagnostics().iter().map(|diagnostic| {
+            TreeDiagnostic {
+                code: diagnostic.code,
+                severity: diagnostic.severity,
+                message: diagnostic.message.clone(),
+                range: document_range(diagnostic.range, offset)
+                    .expect("island diagnostics fit the source document"),
+            }
+        }));
+    }
+    children.push(GreenElement::Token(
+        factory.missing_token(UmlSyntaxKind::EndOfFileToken),
+    ));
+    let root = factory.node(UmlSyntaxKind::Root, children).ok()?;
+    Some(Arc::new(SyntaxTree::new(
+        root,
+        diagnostics.into(),
+        structure.dialect,
+    )))
+}
+
+fn document_range(range: TextRange, offset: usize) -> Option<TextRange> {
+    TextRange::new(
+        TextSize::try_from_usize(range.start().to_usize().checked_add(offset)?).ok()?,
+        TextSize::try_from_usize(range.end().to_usize().checked_add(offset)?).ok()?,
+    )
+    .ok()
+}
+
+#[allow(dead_code)]
 pub(in crate::uml) fn reparse_island(
     previous: &SyntaxTree<UmlLanguage>,
     previous_structure: &MarkdownStructureMap,
@@ -136,6 +225,7 @@ pub(in crate::uml) fn reparse_island(
     )))
 }
 
+#[allow(dead_code)]
 fn recover_exact_source(root: &waml_syntax::GreenNode<UmlLanguage>) -> Option<SourceText> {
     fn walk(
         root: &waml_syntax::GreenNode<UmlLanguage>,
@@ -208,6 +298,7 @@ fn recover_exact_source(root: &waml_syntax::GreenNode<UmlLanguage>) -> Option<So
     (offset == source.len() && root.width() == source.len()).then_some(source)
 }
 
+#[allow(dead_code)]
 fn mapped_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
     TextRange::new(
         map.translate_start_boundary(range.start())?,
@@ -215,6 +306,7 @@ fn mapped_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
     )
     .ok()
 }
+#[allow(dead_code)]
 fn expanded_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
     let mut mapped = mapped_range(range, map)?;
     for segment in map
@@ -232,6 +324,7 @@ fn expanded_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
     }
     Some(mapped)
 }
+#[allow(dead_code)]
 fn select_owner(
     islands: &[parser::Island],
     changed: TextRange,
@@ -255,6 +348,7 @@ fn select_owner(
     }
     (owners.len() == 1).then(|| owners[0])
 }
+#[allow(dead_code)]
 fn has_annotations(node: &waml_syntax::GreenNode<UmlLanguage>) -> bool {
     !node.annotations().is_empty()
         || node.children().iter().any(|child| match child {
@@ -313,7 +407,7 @@ mod tests {
         let old_snapshot = parse_markdown(
             DocumentRevision::INITIAL,
             old_text.clone(),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         )
         .unwrap();
         let update =
@@ -449,7 +543,7 @@ mod tests {
     fn malformed_lifeline_preserves_space_before_recovery() {
         let authored = "## Lifelines\nm ha";
         let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
-        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
         let tree = parse_full(text, &shell.structure);
 
         assert_eq!(tree.write_to_string(), authored);
@@ -459,7 +553,7 @@ mod tests {
     fn malformed_message_preserves_space_before_recovery() {
         let authored = "## Messages\nas `s";
         let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
-        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
         let tree = parse_full(text, &shell.structure);
 
         assert_eq!(tree.write_to_string(), authored);
@@ -469,7 +563,7 @@ mod tests {
     fn malformed_message_preserves_trailing_space() {
         let authored = "## Messages\nD, D ";
         let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
-        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
         let tree = parse_full(text, &shell.structure);
 
         assert_eq!(tree.write_to_string(), authored);
@@ -479,7 +573,7 @@ mod tests {
     fn malformed_message_preserves_space_before_signature_recovery() {
         let authored = "## Messages\n- A calls B: `s";
         let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
-        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
         let tree = parse_full(text, &shell.structure);
 
         assert_eq!(tree.write_to_string(), authored);
@@ -489,7 +583,7 @@ mod tests {
     fn whitespace_only_value_line_is_lossless() {
         let authored = "## Values\n ";
         let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
-        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
         let tree = parse_full(text, &shell.structure);
 
         assert_eq!(tree.write_to_string(), authored);
@@ -499,7 +593,7 @@ mod tests {
     fn malformed_relationship_preserves_space_before_link_recovery() {
         let authored = "## Relationships\n- status: Draft\n";
         let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
-        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let shell = parse_okf_markdown(text.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
         let tree = parse_full(text, &shell.structure);
 
         assert_eq!(tree.write_to_string(), authored);
@@ -679,7 +773,7 @@ mod tests {
         ))
         .unwrap();
         let shell =
-            parse_okf_markdown(parser_source.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+            parse_okf_markdown(parser_source.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
         let ordinary = parse_full(parser_source.clone(), &shell.structure);
         assert!(Arc::ptr_eq(
             recover_exact_source(ordinary.root_green())

@@ -59,7 +59,7 @@ fn incremental_outcome(
     next: &str,
     changes: &[TextChange],
 ) -> ReparseOutcome<crate::OkfMarkdownLanguage> {
-    let previous = parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let previous = parse_okf_markdown(text(previous), MarkdownDialect::WAML_DEFAULT).unwrap();
     reparse_okf_markdown(&previous.tree, text(next), changes).unwrap()
 }
 
@@ -133,7 +133,7 @@ fn source_backed_eof_trivia_moves_through_tail_window() {
     };
     assert_eq!(reparsed_range, range(0, 8));
     assert!(!first_token(
-        &parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent)
+        &parse_okf_markdown(text(previous), MarkdownDialect::WAML_DEFAULT)
             .unwrap()
             .tree,
         OkfMarkdownSyntaxKind::EndOfFileToken
@@ -162,7 +162,7 @@ fn frontmatter_creation_at_zero_is_named() {
 #[test]
 fn unchanged_input_reuses_root_green() {
     let source = text("body\n");
-    let previous = parse_okf_markdown(source.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let previous = parse_okf_markdown(source.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
     let ReparseOutcome::Incremental {
         tree,
         shared_source_independent_green,
@@ -179,7 +179,7 @@ fn unchanged_input_reuses_root_green() {
 #[test]
 fn unchanged_bytes_on_fresh_source_rebase_source_backed_greens() {
     let old_source = text("---\nbad\n---\nbody\n");
-    let parsed = parse_okf_markdown(old_source, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let parsed = parse_okf_markdown(old_source, MarkdownDialect::WAML_DEFAULT).unwrap();
     let raw = first_node(&parsed.tree, OkfMarkdownSyntaxKind::Paragraph);
     let annotated = annotate_occurrence(
         &parsed.tree,
@@ -190,7 +190,7 @@ fn unchanged_bytes_on_fresh_source_rebase_source_backed_greens() {
     let previous = SyntaxTree::new(
         annotated,
         Arc::from(parsed.tree.diagnostics()),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     assert!(!previous.diagnostics().is_empty());
     let new_source = text("---\nbad\n---\nbody\n");
@@ -245,8 +245,8 @@ fn size(value: usize) -> TextSize {
 }
 
 fn oracle(previous: &str, next: &str, changes: &[TextChange]) {
-    let previous = parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent).unwrap();
-    let full = parse_okf_markdown(text(next), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let previous = parse_okf_markdown(text(previous), MarkdownDialect::WAML_DEFAULT).unwrap();
+    let full = parse_okf_markdown(text(next), MarkdownDialect::WAML_DEFAULT).unwrap();
     let outcome = reparse_okf_markdown(&previous.tree, text(next), changes).unwrap();
     let incremental = match outcome {
         ReparseOutcome::Incremental { tree, .. } | ReparseOutcome::Full { tree, .. } => tree,
@@ -374,8 +374,7 @@ fn green_text_fingerprint_detects_allocation_kind_and_slice_partition() {
 
 #[test]
 fn invalid_utf8_boundary_is_a_named_full_outcome_with_structure() {
-    let previous =
-        parse_okf_markdown(text("# Café\n"), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let previous = parse_okf_markdown(text("# Café\n"), MarkdownDialect::WAML_DEFAULT).unwrap();
     let (outcome, structure) = reparse_okf_markdown_with_structure(
         &previous.tree,
         text("# Cafx\n"),
@@ -418,10 +417,9 @@ fn safe_frontmatter_boundary_insertions_are_incremental() {
 #[test]
 fn repeated_unclosed_frontmatter_edits_do_not_accumulate_eof_diagnostics() {
     let mut previous_source = "---\ntype: x\n".to_owned();
-    let mut previous =
-        parse_okf_markdown(text(&previous_source), MarkdownDialect::CommonMarkCurrent)
-            .unwrap()
-            .tree;
+    let mut previous = parse_okf_markdown(text(&previous_source), MarkdownDialect::WAML_DEFAULT)
+        .unwrap()
+        .tree;
     for replacement in ["y", "z"] {
         let next = format!("---\ntype: {replacement}\n");
         let change = TextChange {
@@ -441,7 +439,7 @@ fn repeated_unclosed_frontmatter_edits_do_not_accumulate_eof_diagnostics() {
                 panic!("boundary diagnostic must conservatively fall back")
             }
         };
-        let full = parse_okf_markdown(text(&next), MarkdownDialect::CommonMarkCurrent).unwrap();
+        let full = parse_okf_markdown(text(&next), MarkdownDialect::WAML_DEFAULT).unwrap();
         assert_eq!(
             diagnostic_fingerprint(&tree),
             diagnostic_fingerprint(&full.tree)
@@ -465,7 +463,7 @@ fn repeated_unclosed_frontmatter_edits_do_not_accumulate_eof_diagnostics() {
 fn unclosed_frontmatter_heading_edit_at_boundary_falls_back() {
     let previous = parse_okf_markdown(
         text("---\ntype: x\n# Before\n"),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let ReparseOutcome::Full { tree, reason } = reparse_okf_markdown(
@@ -482,7 +480,7 @@ fn unclosed_frontmatter_heading_edit_at_boundary_falls_back() {
     assert_eq!(reason, FullReparseReason::UnsafeSynchronization);
     let full = parse_okf_markdown(
         text("---\ntype: x\n# After!\n"),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     assert_eq!(
@@ -503,7 +501,7 @@ fn unclosed_frontmatter_heading_edit_at_boundary_falls_back() {
 #[test]
 fn annotation_transfer_reuses_unchanged_source_independent_greens() {
     let old = text("# One\nbody\n");
-    let parsed = parse_okf_markdown(old.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let parsed = parse_okf_markdown(old.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
     let annotated_region = first_node(&parsed.tree, OkfMarkdownSyntaxKind::Paragraph);
     let annotated = annotate_occurrence(
         &parsed.tree,
@@ -514,7 +512,7 @@ fn annotation_transfer_reuses_unchanged_source_independent_greens() {
     let previous = SyntaxTree::new(
         annotated,
         Arc::from(parsed.tree.diagnostics()),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     let ReparseOutcome::Incremental {
         tree,
@@ -553,13 +551,13 @@ fn annotation_transfer_reuses_unchanged_source_independent_greens() {
 #[test]
 fn same_length_heading_text_edit_is_incremental_and_reuses_eof() {
     let old_source = text("# Before\nraw text\n");
-    let previous = parse_okf_markdown(old_source, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let previous = parse_okf_markdown(old_source, MarkdownDialect::WAML_DEFAULT).unwrap();
     let next_source = text("# After!\nraw text\n");
     let change = TextChange {
         old_range: range(2, 8),
         replacement: Arc::from("After!"),
     };
-    let full = parse_okf_markdown(next_source.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let full = parse_okf_markdown(next_source.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
     let (outcome, structure) =
         reparse_okf_markdown_with_structure(&previous.tree, next_source.clone(), &[change])
             .unwrap();
@@ -608,10 +606,9 @@ fn exact_oracle(
     next: &str,
     changes: &[TextChange],
 ) -> ReparseOutcome<crate::OkfMarkdownLanguage> {
-    let old = parse_okf_markdown(text(previous), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let old = parse_okf_markdown(text(previous), MarkdownDialect::WAML_DEFAULT).unwrap();
     let clean_source = text(next);
-    let full =
-        parse_okf_markdown(clean_source.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let full = parse_okf_markdown(clean_source.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
     let outcome = reparse_okf_markdown(&old.tree, clean_source.clone(), changes).unwrap();
     let tree = match &outcome {
         ReparseOutcome::Incremental { tree, .. } | ReparseOutcome::Full { tree, .. } => tree,
@@ -723,7 +720,7 @@ fn property_sequence_is_incremental_when_selected_window_is_consumed() {
     ) {
         ReparseOutcome::Incremental { tree, .. } | ReparseOutcome::Full { tree, .. } => tree,
     };
-    let full = parse_okf_markdown(text(second), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let full = parse_okf_markdown(text(second), MarkdownDialect::WAML_DEFAULT).unwrap();
     let outcome = reparse_okf_markdown(
         &first_tree,
         text(second),
@@ -962,7 +959,7 @@ fn all_source_slices_use(
 #[test]
 fn green_rebase_rebuilds_source_backed_and_reuses_static_greens() {
     let old = text("# One\nbody\n");
-    let previous = parse_okf_markdown(old.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let previous = parse_okf_markdown(old.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
     let new = text("# One\nbody\n");
     let map = ChangeMap::checked(&old, &[]).unwrap();
 
@@ -978,7 +975,7 @@ fn green_rebase_rebuilds_source_backed_and_reuses_static_greens() {
         GreenElement::Node(root) => SyntaxTree::new(
             root,
             Arc::from(previous.tree.diagnostics()),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         ),
         GreenElement::Token(_) => panic!("root is a node"),
     };
@@ -998,7 +995,7 @@ fn green_rebase_rebuilds_source_backed_and_reuses_static_greens() {
 #[test]
 fn mapped_annotations_preserve_node_and_token_occurrences() {
     let old = text("# One\nbody\n");
-    let parsed = parse_okf_markdown(old.clone(), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let parsed = parse_okf_markdown(old.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
     let heading = first_node(&parsed.tree, OkfMarkdownSyntaxKind::AtxHeading);
     let heading_text = first_token(&parsed.tree, OkfMarkdownSyntaxKind::TextToken);
     let node_locator = heading.locator();
@@ -1010,7 +1007,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
     let annotated_tree = SyntaxTree::new(
         annotated,
         Arc::from(parsed.tree.diagnostics()),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     let annotated_token = first_token(&annotated_tree, OkfMarkdownSyntaxKind::TextToken);
     let annotated = annotate_occurrence(
@@ -1022,7 +1019,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
     let previous = SyntaxTree::new(
         annotated,
         Arc::from(parsed.tree.diagnostics()),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     let new = text("# One\nbody!\n");
     let map = ChangeMap::checked(
@@ -1033,7 +1030,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         }],
     )
     .unwrap();
-    let candidate = parse_okf_markdown(new, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let candidate = parse_okf_markdown(new, MarkdownDialect::WAML_DEFAULT).unwrap();
     let candidate_diagnostics: Arc<[_]> = Arc::from(candidate.tree.diagnostics());
     let candidate_heading = first_node(&candidate.tree, OkfMarkdownSyntaxKind::AtxHeading);
     let candidate = SyntaxTree::new(
@@ -1044,7 +1041,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         )
         .unwrap(),
         candidate_diagnostics.clone(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     let candidate_heading = first_node(&candidate, OkfMarkdownSyntaxKind::AtxHeading);
     let candidate = SyntaxTree::new(
@@ -1055,7 +1052,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         )
         .unwrap(),
         candidate_diagnostics.clone(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     let candidate_token = first_token(&candidate, OkfMarkdownSyntaxKind::TextToken);
     let candidate = SyntaxTree::new(
@@ -1066,7 +1063,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         )
         .unwrap(),
         candidate_diagnostics.clone(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     let candidate_token = first_token(&candidate, OkfMarkdownSyntaxKind::TextToken);
     let candidate = SyntaxTree::new(
@@ -1077,12 +1074,12 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         )
         .unwrap(),
         candidate_diagnostics.clone(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     let transferred = SyntaxTree::new(
         transfer_mapped_annotations(&previous, &candidate, &map),
         candidate_diagnostics,
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     let mapped_heading = first_node(&transferred, OkfMarkdownSyntaxKind::AtxHeading);
     let mapped_token = first_token(&transferred, OkfMarkdownSyntaxKind::TextToken);
@@ -1272,7 +1269,7 @@ fn change_map_rejects_unsorted_overlapping_and_non_utf8_changes() {
     );
     assert!(matches!(
         reparse_okf_markdown(
-            &parse_okf_markdown(source, MarkdownDialect::CommonMarkCurrent)
+            &parse_okf_markdown(source, MarkdownDialect::WAML_DEFAULT)
                 .unwrap()
                 .tree,
             text("# Café\n"),
@@ -1355,7 +1352,7 @@ fn change_map_accumulates_deletion_and_insertion_deltas() {
 
 #[test]
 fn change_map_candidate_source_mismatch_is_a_hard_error() {
-    let previous = parse_okf_markdown(text("# One\n"), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let previous = parse_okf_markdown(text("# One\n"), MarkdownDialect::WAML_DEFAULT).unwrap();
     let error = match reparse_okf_markdown(
         &previous.tree,
         text("# Two\n"),

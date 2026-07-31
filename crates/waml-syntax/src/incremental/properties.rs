@@ -253,15 +253,14 @@ fn diagnostic_fingerprint(tree: &SyntaxTree<OkfMarkdownLanguage>) -> Vec<String>
 }
 
 fn assert_shell_case(source_text: String) {
-    let parsed =
-        parse_okf_markdown(source(&source_text), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let parsed = parse_okf_markdown(source(&source_text), MarkdownDialect::WAML_DEFAULT).unwrap();
     assert_red_tree(&parsed.tree, &source_text);
 }
 
 #[test]
 fn heading_hierarchy_example_is_guaranteed() {
     let hierarchy = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\nleaf 🦀\n";
-    let parsed = parse_okf_markdown(source(hierarchy), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let parsed = parse_okf_markdown(source(hierarchy), MarkdownDialect::WAML_DEFAULT).unwrap();
     assert_eq!(
         parsed
             .structure
@@ -286,7 +285,7 @@ fn heading_hierarchy_example_is_guaranteed() {
 #[test]
 fn list_hidden_heading_is_protected_but_not_opaque() {
     let value = "- outer\n  ### hidden\n  leaf\n";
-    let parsed = parse_okf_markdown(source(value), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let parsed = parse_okf_markdown(source(value), MarkdownDialect::WAML_DEFAULT).unwrap();
     assert!(parsed.structure.headings.is_empty());
     assert!(parsed.structure.nested_headings.is_empty());
     assert_eq!(parsed.structure.list_item_lines.as_ref(), &[range(0, 8)]);
@@ -301,7 +300,7 @@ fn list_hidden_heading_is_protected_but_not_opaque() {
 #[test]
 fn list_fenced_code_has_exact_inner_opaque_range() {
     let value = "- outer\n  before\n\n  ```text\n  code 🦀\n  ```\n\n  after\n";
-    let parsed = parse_okf_markdown(source(value), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let parsed = parse_okf_markdown(source(value), MarkdownDialect::WAML_DEFAULT).unwrap();
     let list = range(0, value.len());
     let opaque = range(20, 45);
     assert_eq!(parsed.structure.list_item_lines.as_ref(), &[range(0, 8)]);
@@ -315,7 +314,7 @@ fn list_fenced_code_has_exact_inner_opaque_range() {
 #[test]
 fn list_html_has_exact_inner_opaque_range() {
     let value = "- outer\n  before\n\n  <div>\n  html\n  </div>\n\n  after\n";
-    let parsed = parse_okf_markdown(source(value), MarkdownDialect::CommonMarkCurrent).unwrap();
+    let parsed = parse_okf_markdown(source(value), MarkdownDialect::WAML_DEFAULT).unwrap();
     let list = range(0, value.len());
     let opaque = range(20, 42);
     assert_eq!(parsed.structure.list_item_lines.as_ref(), &[range(0, 8)]);
@@ -335,7 +334,7 @@ fn boundaries(value: &str) -> Vec<usize> {
 }
 
 fn assert_incremental_sequence(mut current: String, edits: Vec<(usize, usize, String)>) {
-    let mut previous = parse_okf_markdown(source(&current), MarkdownDialect::CommonMarkCurrent)
+    let mut previous = parse_okf_markdown(source(&current), MarkdownDialect::WAML_DEFAULT)
         .unwrap()
         .tree;
     for (raw_start, raw_end, replacement) in edits {
@@ -357,7 +356,7 @@ fn assert_incremental_sequence(mut current: String, edits: Vec<(usize, usize, St
         let tree = match outcome {
             ReparseOutcome::Incremental { tree, .. } | ReparseOutcome::Full { tree, .. } => tree,
         };
-        let full = parse_okf_markdown(source(&candidate), MarkdownDialect::CommonMarkCurrent)
+        let full = parse_okf_markdown(source(&candidate), MarkdownDialect::WAML_DEFAULT)
             .unwrap()
             .tree;
         assert_eq!(tree.write_to_string(), full.write_to_string());

@@ -660,6 +660,59 @@ mod tests {
     }
 
     #[test]
+    fn concept_links_and_citations_follow_authoritative_markdown_queries() {
+        let concept = project(
+            "links.md",
+            "---\ntype: Note\n---\n# Links\n\n[real **nested**](./real.md)\n\n![image](./image.md)\n\n\\[escaped](./escaped.md)\n\n[reference][ref]\n\n```md\n[fenced](./fenced.md)\n```\n\n# Citations\n\n[citation](https://example.test/citation)\n\n![citation image](./citation.png)\n\n[ref]: ./reference.md\n",
+        );
+
+        assert_eq!(
+            concept
+                .links
+                .iter()
+                .map(|link| (link.text.as_str(), link.href.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("real **nested**", "./real.md"),
+                ("reference", "./reference.md"),
+            ]
+        );
+        assert_eq!(
+            concept
+                .citations
+                .iter()
+                .map(|citation| (citation.text.as_str(), citation.href.as_str()))
+                .collect::<Vec<_>>(),
+            [("citation", "https://example.test/citation")]
+        );
+    }
+
+    #[test]
+    fn authored_index_order_uses_only_real_list_links() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root\n\nIntro.\n\n* [Real](./real.md)\n* ![Image](./image.md)\n* \\[Escaped](./escaped.md)\n* [Reference][ref]\n\n```md\n* [Fenced](./fenced.md)\n```\n\n[ref]: ./reference.md\n",
+            ),
+            ("real.md", "# Real\n"),
+            ("reference.md", "# Reference\n"),
+            ("image.md", "# Image\n"),
+            ("escaped.md", "# Escaped\n"),
+            ("fenced.md", "# Fenced\n"),
+        ])
+        .unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+        let index = bundle.index("/").unwrap();
+
+        assert_eq!(index.title.as_deref(), Some("Root"));
+        assert_eq!(index.description.as_deref(), Some("Intro."));
+        assert_eq!(
+            index.members,
+            ["real", "reference", "escaped", "fenced", "image"]
+        );
+    }
+
+    #[test]
     fn title_falls_back_to_first_h1_when_frontmatter_title_absent() {
         // No `title:` frontmatter → concept.title resolves to the H1 text.
         let c = project(

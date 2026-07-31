@@ -18,6 +18,24 @@ fn range_of(source: &str, needle: &str) -> TextRange {
     .unwrap()
 }
 
+#[test]
+fn tight_list_items_publish_typed_link_queries() {
+    let source = "- [inline](./inline.md)\n- [reference][target]\n\n[target]: ./target.md\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+
+    let links = snapshot.queries().links().collect::<Vec<_>>();
+    assert_eq!(links.len(), 2);
+    assert_eq!(links[0].content_range, range_of(source, "inline"));
+    assert_eq!(links[0].destination.as_ref(), "./inline.md");
+    assert_eq!(links[1].content_range, range_of(source, "reference"));
+    assert_eq!(links[1].destination.as_ref(), "./target.md");
+}
+
 fn token_ranges(node: &SyntaxNode<OkfMarkdownLanguage>, out: &mut Vec<TextRange>) {
     for child in node.children() {
         match child {

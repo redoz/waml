@@ -91,6 +91,60 @@ fn rebuild(
         context.inline_roots.push(rebuilt.clone());
         return Ok(rebuilt);
     }
+    if node.kind() == Kind::ListItem
+        && node.children().iter().any(
+            |child| matches!(child, GreenElement::Token(token) if token.kind() == Kind::TextToken),
+        )
+    {
+        let owner = identity(node).ok_or_else(|| ParseError::StructuralInvariant {
+            reason: "semantic Markdown list item has no unique valid identity".into(),
+        })?;
+        let mut children = Vec::new();
+        for child in node.children() {
+            match child {
+                GreenElement::Token(token) if token.kind() == Kind::TextToken => {
+                    let token_start = *at;
+                    let token_end = token_start + token.width().to_usize();
+                    if !has_inline_syntax(&context.text.shared()[token_start..token_end]) {
+                        *at = token_end;
+                        children.push(GreenElement::Token(token.clone()));
+                        continue;
+                    }
+                    let inline_start = token_start
+                        + context.text.shared()[token_start..token_end]
+                            .bytes()
+                            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+                            .count();
+                    if token_start < inline_start {
+                        children.push(tok(
+                            context.text,
+                            token_start,
+                            inline_start,
+                            Kind::WhitespaceToken,
+                        )?);
+                    }
+                    children.extend(parse_inlines(
+                        context,
+                        inline_start,
+                        token_end,
+                        owner,
+                        true,
+                    )?);
+                    *at = token_end;
+                }
+                GreenElement::Token(token) => {
+                    *at += token.width().to_usize();
+                    children.push(GreenElement::Token(token.clone()));
+                }
+                GreenElement::Node(child) => {
+                    children.push(GreenElement::Node(rebuild(context, child, at)?));
+                }
+            }
+        }
+        return GreenFactory::new()
+            .node_with_annotations(node.kind(), children, node.annotations().into())
+            .map_err(|_| ParseError::WidthOverflow);
+    }
     if matches!(
         node.kind(),
         Kind::AtxHeading | Kind::SetextHeading | Kind::TableCell
@@ -151,6 +205,20 @@ fn rebuild(
     GreenFactory::new()
         .node_with_annotations(node.kind(), children, node.annotations().into())
         .map_err(|_| ParseError::WidthOverflow)
+}
+
+fn identity(node: &GreenNode<OkfMarkdownLanguage>) -> Option<SyntaxIdentity> {
+    let mut annotations = node
+        .annotations()
+        .iter()
+        .filter(|annotation| annotation.kind() == "waml.markdown.identity");
+    let annotation = annotations.next()?;
+    if annotations.next().is_some() {
+        return None;
+    }
+    annotation
+        .data()
+        .and_then(SyntaxIdentity::from_annotation_data)
 }
 
 fn has_inline_syntax(source: &str) -> bool {

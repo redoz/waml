@@ -9,7 +9,7 @@ fn parse(source: &str) -> waml_syntax::ShellParse {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::from_shared(Arc::new(source.into())).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     ShellParse {
@@ -64,7 +64,7 @@ fn inline_phase_resolves_full_collapsed_and_shortcut_references() {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::new(source).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let destinations: Vec<_> = snapshot
@@ -81,7 +81,7 @@ fn snapshot_queries_use_the_first_normalized_reference_definition() {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::from_shared(Arc::new(source.into())).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let links: Vec<_> = snapshot.queries().links().collect();
@@ -108,7 +108,7 @@ fn reference_definition_normalization_keeps_the_first_definition() {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::new(source).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let links: Vec<_> = snapshot.queries().links().collect();
@@ -147,7 +147,7 @@ fn code_spans_require_equal_bounded_runs_and_hide_inline_syntax() {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::new(source).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     assert_eq!(snapshot.tree().write_to_string(), source);
@@ -166,7 +166,7 @@ fn entities_and_escapes_are_validated_without_losing_spelling() {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::new(source).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     assert_eq!(snapshot.tree().write_to_string(), source);
@@ -229,7 +229,7 @@ fn nested_link_deactivates_the_outer_link_opener() {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::new(source).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     assert_eq!(snapshot.tree().write_to_string(), source);
@@ -262,7 +262,7 @@ fn image_opener_stays_active_after_a_nested_link() {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::new(source).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     assert_eq!(snapshot.tree().write_to_string(), source);

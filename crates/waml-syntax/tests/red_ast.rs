@@ -59,7 +59,7 @@ fn tree() -> SyntaxTree<Lang> {
             [GreenElement::Node(pair), GreenElement::Node(sibling)],
         )
         .unwrap();
-    SyntaxTree::new(root, Arc::from([]), MarkdownDialect::CommonMarkCurrent)
+    SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT)
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn root_range_covers_full_width_and_empty_tree() {
         .unwrap()
     );
     let empty = GreenFactory::<Lang>::new().node(Kind::Root, []).unwrap();
-    let empty = SyntaxTree::new(empty, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+    let empty = SyntaxTree::new(empty, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
     assert_eq!(
         empty.root().range().len(),
         TextSize::try_from_usize(0).unwrap()
@@ -153,7 +153,7 @@ fn token_annotations_target_only_the_resolved_shared_occurrence() {
         SyntaxAnnotation::new(NonZeroU64::new(11).unwrap(), "token", None),
     )
     .unwrap();
-    let updated = SyntaxTree::new(green, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+    let updated = SyntaxTree::new(green, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
     let left = updated
         .root()
         .child_at(0)
@@ -243,7 +243,7 @@ fn ast_slots_use_declared_indices_for_all_slot_categories() {
             )
             .unwrap();
         let root = f.node(Kind::Root, [GreenElement::Node(pair)]).unwrap();
-        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
         DeclaredPair(tree.root().child_at(0).unwrap().into_node().unwrap())
     }
     let zero = declared_pair(0);
@@ -318,7 +318,7 @@ fn locators_are_tree_bound_for_resolution_and_annotations() {
     let other = SyntaxTree::new(
         tree.root_green().clone(),
         Arc::from([]),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     );
     assert!(matches!(
         other.resolve(&locator),
@@ -395,8 +395,7 @@ fn visitor_rewriter_slots_and_annotations_use_declared_occurrences() {
         Some(Arc::from("data")),
     );
     let annotated = annotate_occurrence(&tree, &pair.syntax().locator(), annotation).unwrap();
-    let annotated_tree =
-        SyntaxTree::new(annotated, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+    let annotated_tree = SyntaxTree::new(annotated, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
     assert_eq!(
         find_annotation(&annotated_tree, NonZeroU64::new(8).unwrap()).len(),
         1
@@ -413,7 +412,7 @@ fn one_token_rewrite_rebuilds_ancestors_and_retains_sibling_annotation_and_green
         SyntaxAnnotation::new(NonZeroU64::new(12).unwrap(), "retained", None),
     )
     .unwrap();
-    let tree = SyntaxTree::new(annotated, Arc::from([]), MarkdownDialect::CommonMarkCurrent);
+    let tree = SyntaxTree::new(annotated, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
     let old_root = tree.root();
     let old_changed = old_root.child_at(0).unwrap().into_node().unwrap();
     let old_sibling = old_root.child_at(1).unwrap().into_node().unwrap();

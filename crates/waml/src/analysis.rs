@@ -568,7 +568,7 @@ fn analyze_okf_inner(
                 None => parse_markdown(
                     document.revision(),
                     document.text().clone(),
-                    MarkdownDialect::CommonMarkCurrent,
+                    MarkdownDialect::WAML_DEFAULT,
                 )
                 .map_err(|source| shell_error(document.path().clone(), source))?,
             },
@@ -870,7 +870,7 @@ mod tests {
         let other = parse_markdown(
             DocumentRevision::new(1),
             other_text,
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         )
         .unwrap();
         let mut documents = (*analysis.markdown.documents).clone();

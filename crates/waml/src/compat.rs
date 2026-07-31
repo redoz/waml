@@ -441,7 +441,7 @@ fn claimed_id(path: &BundlePath, text: &Arc<String>) -> Option<String> {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         source,
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .ok()?;
     let frontmatter = snapshot

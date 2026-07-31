@@ -238,6 +238,78 @@ fn uses_regex_markdown_classifier(tokens: &[String]) -> bool {
     })
 }
 
+fn uses_okf_raw_markdown_classifier(tokens: &[String]) -> bool {
+    contains_tokens(tokens, &["Regex", ":", ":", "new", "("])
+        || contains_tokens(tokens, &["regex", ":", ":", "Regex"])
+        || contains_tokens(tokens, &[".", "lines", "("])
+        || contains_tokens(tokens, &[".", "captures", "("])
+        || contains_tokens(tokens, &[".", "captures_iter", "("])
+        || contains_tokens(tokens, &[".", "strip_prefix", "("])
+}
+
+fn makepad_markdown_widget_ids(files: &[(PathBuf, String)]) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for (path, source) in files {
+        let path = path.to_string_lossy().replace('\\', "/");
+        if !path.starts_with("crates/waml-editor/src/") {
+            continue;
+        }
+        let tokens = rust_tokens(source);
+        for window in tokens.windows(5) {
+            if window[1..] == [":", "=", "Markdown", "{"] {
+                ids.insert(window[0].clone());
+            }
+        }
+    }
+    ids
+}
+
+fn feeds_makepad_markdown(tokens: &[String], markdown_widget_ids: &BTreeSet<String>) -> bool {
+    let mut aliases = BTreeSet::new();
+    loop {
+        let before = aliases.len();
+        for statement in tokens.split(|token| token == ";") {
+            let Some(let_index) = statement.iter().position(|token| token == "let") else {
+                continue;
+            };
+            let Some(alias) = statement.get(let_index + 1) else {
+                continue;
+            };
+            let Some(equal) = statement.iter().position(|token| token == "=") else {
+                continue;
+            };
+            let expression = &statement[equal + 1..];
+            let typed_markdown = contains_tokens(expression, &["as_markdown", "(", ")"])
+                || contains_tokens(expression, &["Markdown", ":", ":"])
+                || aliases.iter().any(|known| expression.contains(known));
+            let selected_markdown_widget = expression.windows(5).any(|window| {
+                window[0] == "ids"
+                    && window[1] == "!"
+                    && window[2] == "("
+                    && window[4] == ")"
+                    && markdown_widget_ids.contains(&window[3])
+            });
+            if typed_markdown || selected_markdown_widget {
+                aliases.insert(alias.clone());
+            }
+        }
+        if aliases.len() == before {
+            break;
+        }
+    }
+
+    contains_tokens(tokens, &["as_markdown", "(", ")", ".", "set_text", "("])
+        || contains_tokens(tokens, &["Markdown", ":", ":", "set_text", "("])
+        || aliases.iter().any(|alias| {
+            tokens.windows(4).any(|window| {
+                window[0] == *alias
+                    && window[1] == "."
+                    && window[2] == "set_text"
+                    && window[3] == "("
+            })
+        })
+}
+
 fn manifest_dependency_violations(path: &str, source: &str) -> Vec<String> {
     const FORBIDDEN: &[&str] = &[
         "cmark",
@@ -299,6 +371,7 @@ fn manifest_dependency_violations(path: &str, source: &str) -> Vec<String> {
 
 fn authority_violations(files: &[(PathBuf, String)]) -> Vec<String> {
     let mut violations = Vec::new();
+    let markdown_widget_ids = makepad_markdown_widget_ids(files);
     for (path, source) in files {
         let path = path.to_string_lossy().replace('\\', "/");
         if path.ends_with("Cargo.toml") {
@@ -322,8 +395,7 @@ fn authority_violations(files: &[(PathBuf, String)]) -> Vec<String> {
             ));
         }
         if path.starts_with("crates/waml-editor/src/")
-            && (contains_tokens(&tokens, &["as_markdown", "(", ")", ".", "set_text", "("])
-                || contains_tokens(&tokens, &["Markdown", ":", ":", "set_text", "("]))
+            && feeds_makepad_markdown(&tokens, &markdown_widget_ids)
         {
             violations.push(format!(
                 "{path}: feeds source through Makepad Markdown parsing"
@@ -331,6 +403,16 @@ fn authority_violations(files: &[(PathBuf, String)]) -> Vec<String> {
         }
         if uses_regex_markdown_classifier(&tokens) {
             violations.push(format!("{path}: classifies Markdown with regex"));
+        }
+        if path == "crates/waml/src/okf/shell.rs" && uses_okf_raw_markdown_classifier(&tokens) {
+            violations.push(format!(
+                "{path}: classifies raw Markdown instead of using snapshot queries"
+            ));
+        }
+        if tokens.iter().any(|token| token == "CommonMarkCurrent") {
+            violations.push(format!(
+                "{path}: uses the vague CommonMarkCurrent dialect alias"
+            ));
         }
     }
     violations
@@ -390,14 +472,34 @@ fn authority_guard_rejects_every_in_memory_forbidden_seed() {
             "widget . as_markdown ( ) . set_text (cx, source);",
         ),
         (
+            "aliased Makepad Markdown source parser",
+            "crates/waml-editor/src/seed.rs",
+            "md := Markdown {}; let compatibility = surface.widget(cx, ids!(md)); compatibility.set_text(cx, markdown);",
+        ),
+        (
             "regex Markdown classifier",
             "crates/waml-cli/src/seed.rs",
             r##"let _ = regex :: Regex :: new(r"(?m)^#{1,6}\\s+");"##,
         ),
         (
+            "OKF regex link scanner",
+            "crates/waml/src/okf/shell.rs",
+            r##"let links = Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap();"##,
+        ),
+        (
+            "OKF raw line classifier",
+            "crates/waml/src/okf/shell.rs",
+            "for line in shell.body.lines() { let heading = line.trim().strip_prefix(\"# \"); }",
+        ),
+        (
             "off-projection structure map",
             "crates/waml-syntax/src/markdown/seed.rs",
             "let _ = MarkdownStructureMap :: new(Default::default());",
+        ),
+        (
+            "vague Markdown dialect alias",
+            "crates/waml/src/seed.rs",
+            "let dialect = MarkdownDialect::CommonMarkCurrent;",
         ),
         (
             "forbidden production manifest dependency",

@@ -90,7 +90,7 @@ impl OkfLoweringState {
             let snapshot = parse_markdown(
                 DocumentRevision::INITIAL,
                 text,
-                MarkdownDialect::CommonMarkCurrent,
+                MarkdownDialect::WAML_DEFAULT,
             )
             .map_err(|error| EditError::at(op, error.to_string()))?;
             let parsed = ShellParse {

@@ -55,7 +55,7 @@ const FIXTURES: &[Fixture] = &[
 fn preserves_bom_crlf_unicode_frontmatter_and_top_level_headings() {
     let source = "\u{feff}---\r\ntype: arbitrary.\u{1d11e}\r\n---\r\n# Title  \r\n## Section\r\n";
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
-    let shell = parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
 
     assert_shell_invariants("bom_crlf_unicode", source, &shell);
     assert_eq!(shell.structure.headings.len(), 2);
@@ -71,7 +71,7 @@ fn preserves_bom_crlf_unicode_frontmatter_and_top_level_headings() {
 fn malformed_and_unclosed_frontmatter_recovers_without_losing_bytes() {
     let source = "---\r\ntype: arbitrary\r\nname: \u{1d11e}\r\n# Recovered\r\n## Child\r\n";
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
-    let shell = parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
 
     assert_eq!(shell.tree.write_to_string(), source);
     assert_eq!(shell.tree.root().range().len().to_usize(), source.len());
@@ -97,7 +97,7 @@ fn malformed_and_unclosed_frontmatter_recovers_without_losing_bytes() {
 fn thematic_rule_without_plausible_frontmatter_stays_markdown() {
     let source = "---\nnot a key value\n\n# Real title\n";
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
-    let shell = parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
     assert_eq!(shell.tree.write_to_string(), source);
     assert!(shell.tree.diagnostics().is_empty());
 }
@@ -106,7 +106,7 @@ fn thematic_rule_without_plausible_frontmatter_stays_markdown() {
 fn keeps_headings_in_protected_containers_raw() {
     let source = "> # quote\n\n- ## list\n\n```md\n# fence\n```\n\n<!-- # comment -->\n\n# top\n";
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
-    let shell = parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap();
+    let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
 
     assert_eq!(shell.tree.write_to_string(), source);
     assert_eq!(shell.structure.headings.len(), 1);
@@ -354,7 +354,7 @@ fn fixture_source(fixture: &Fixture) -> String {
 
 fn parse(source: &str) -> crate::ShellParse {
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
-    parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap()
+    parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap()
 }
 
 fn leaf_tokens(

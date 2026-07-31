@@ -3591,12 +3591,17 @@ mod tests {
                 .map(|tab| (tab.concept_id.as_str(), tab.preview)),
             Some(("sales/order", true))
         );
+        assert_eq!(
+            app.ui.widget(&cx, ids!(markdown_surface.md)).text(),
+            "",
+            "the mounted Markdown compatibility widget stays inert"
+        );
         assert!(
             app.ui
-                .widget(&cx, ids!(markdown_surface.md))
+                .widget(&cx, ids!(markdown_surface.plain_source))
                 .text()
                 .contains("# Order"),
-            "the mounted Markdown ingress belongs to the active order document"
+            "the plain source surface belongs to the active order document"
         );
         (cx, app)
     }
@@ -4104,12 +4109,13 @@ mod tests {
                 app.documents.tabs()[0].preview,
                 "all ordinary navigation ingresses must use preview disposition"
             );
+            assert_eq!(app.ui.widget(&cx, ids!(markdown_surface.md)).text(), "");
             assert!(
                 app.ui
-                    .widget(&cx, ids!(markdown_surface.md))
+                    .widget(&cx, ids!(markdown_surface.plain_source))
                     .text()
                     .contains("# Customer"),
-                "each ingress must update the mounted Preview body"
+                "each ingress must update the mounted plain source body"
             );
             assert_eq!(app.view_history.len(), 2);
             assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
@@ -4269,9 +4275,13 @@ mod tests {
                 markdown.borrow::<Markdown>().is_some(),
                 "Markdown ingress must originate from the mounted renderer"
             );
+            assert_eq!(markdown.text(), "");
             assert!(
-                markdown.text().contains("# Order"),
-                "the mounted renderer must belong to the active document"
+                app.ui
+                    .widget(&cx, ids!(markdown_surface.plain_source))
+                    .text()
+                    .contains("# Order"),
+                "the plain source surface must belong to the active document"
             );
             let markdown_uid = markdown.widget_uid();
             assert!(
@@ -4324,12 +4334,13 @@ mod tests {
             OpenDisposition::Preview,
             &mut browser,
         ));
+        assert_eq!(app.ui.widget(&cx, ids!(markdown_surface.md)).text(), "");
         assert!(
             app.ui
-                .widget(&cx, ids!(markdown_surface.md))
+                .widget(&cx, ids!(markdown_surface.plain_source))
                 .text()
                 .contains("## History"),
-            "the active document must reach the mounted renderer before draw"
+            "the active document must reach the plain source surface before draw"
         );
         assert_eq!(
             app.pending_fragment,
@@ -4361,7 +4372,10 @@ mod tests {
         let statusbar = statusbar
             .borrow::<crate::statusbar::Statusbar>()
             .expect("test statusbar is mounted");
-        assert_eq!(crate::statusbar::navigation_message(&statusbar), None);
+        assert_eq!(
+            crate::statusbar::navigation_message(&statusbar),
+            Some("Section not found: history")
+        );
     }
 
     #[test]
@@ -4540,7 +4554,7 @@ mod tests {
 
         for view_kind in [ViewKind::Source, ViewKind::Generic] {
             for (fragment, expected_status) in [
-                ("details", None),
+                ("details", Some("Section not found: details")),
                 ("missing", Some("Section not found: missing")),
             ] {
                 let (mut cx, mut app) = navigation_app();
@@ -4564,9 +4578,13 @@ mod tests {
                         revision: app.session.revision(),
                     };
                     view.sync(&mut cx, &body, data);
+                    assert_eq!(markdown.text(), "");
                     assert!(
-                        markdown.text().contains("# Order"),
-                        "each view must populate the mounted shared renderer"
+                        app.ui
+                            .widget(&cx, ids!(markdown_surface.plain_source))
+                            .text()
+                            .contains("# Order"),
+                        "each view must populate the mounted plain source surface"
                     );
                     let href = format!("./next.md#{fragment}");
                     let actions: ActionsBuf = vec![widget_action(

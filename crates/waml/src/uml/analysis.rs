@@ -4,19 +4,23 @@ use super::{
 };
 use crate::{
     analysis::{
-        single_text_change, AnalysisError, ClaimSet, DomainAnalysisContext, SyntaxSet,
+        single_text_change, AnalysisError, ClaimSet, DocumentId, DomainAnalysisContext, SyntaxSet,
         SyntaxSnapshot,
     },
     diagnostic::Diagnostic,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
-use waml_syntax::{AstNode, SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize};
+use waml_syntax::{
+    AstNode, ChangeMap, SyntaxElement, SyntaxIdentity, SyntaxNode, SyntaxToken, SyntaxTree,
+    TextRange, TextSize, WamlSectionKind,
+};
 pub struct Analysis {
     pub claims: ClaimSet,
     pub syntax: SyntaxSet<UmlLanguage>,
+    pub island_syntax: UmlIslandSyntaxSet,
     pub declared: DeclaredBundle,
     pub projection: super::Projection,
     pub diagnostics: Arc<[Diagnostic]>,
@@ -24,39 +28,100 @@ pub struct Analysis {
     session_revision: u64,
 }
 
+pub struct UmlIslandSyntaxSnapshot {
+    owner: SyntaxIdentity,
+    kind: WamlSectionKind,
+    source_range: TextRange,
+    content_range: TextRange,
+    syntax: Arc<SyntaxTree<UmlLanguage>>,
+}
+
+type UmlIslandSyntaxKey = (SyntaxIdentity, TextRange);
+type UmlIslandDocument = HashMap<UmlIslandSyntaxKey, Arc<UmlIslandSyntaxSnapshot>>;
+type UmlIslandDocuments = BTreeMap<DocumentId, Arc<UmlIslandDocument>>;
+
+impl UmlIslandSyntaxSnapshot {
+    pub fn owner(&self) -> SyntaxIdentity {
+        self.owner
+    }
+
+    pub fn kind(&self) -> WamlSectionKind {
+        self.kind
+    }
+
+    pub fn content_range(&self) -> TextRange {
+        self.content_range
+    }
+
+    pub fn source_range(&self) -> TextRange {
+        self.source_range
+    }
+
+    pub fn syntax(&self) -> &Arc<SyntaxTree<UmlLanguage>> {
+        &self.syntax
+    }
+}
+
+pub struct UmlIslandSyntaxSet {
+    documents: Arc<UmlIslandDocuments>,
+}
+
+impl UmlIslandSyntaxSet {
+    pub fn document(&self, id: DocumentId) -> Option<&Arc<UmlIslandDocument>> {
+        self.documents.get(&id)
+    }
+
+    pub fn by_owner(
+        &self,
+        id: DocumentId,
+        owner: SyntaxIdentity,
+    ) -> Option<&Arc<UmlIslandSyntaxSnapshot>> {
+        self.document(id)?
+            .values()
+            .find(|snapshot| snapshot.owner == owner)
+    }
+}
+
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub mod test_support {
     use super::*;
 
-    pub fn syntax_with_replaced_tree(
+    pub fn island_syntax_with_replaced_tree(
         analysis: &Analysis,
         document: crate::analysis::DocumentId,
+        owner: SyntaxIdentity,
         syntax: Arc<waml_syntax::SyntaxTree<UmlLanguage>>,
-    ) -> Result<SyntaxSet<UmlLanguage>, AnalysisError> {
-        let snapshot =
-            analysis
-                .syntax
-                .document(document)
-                .ok_or_else(|| AnalysisError::Specialization {
-                    name: "uml",
-                    reason: "test UML syntax replacement document is missing".into(),
-                })?;
-        if syntax.write_to_string() != snapshot.document().text().shared().as_str() {
+    ) -> Result<UmlIslandSyntaxSet, AnalysisError> {
+        let snapshot = analysis
+            .island_syntax
+            .by_owner(document, owner)
+            .ok_or_else(|| AnalysisError::Specialization {
+                name: "uml",
+                reason: "test UML island syntax replacement is missing".into(),
+            })?;
+        if syntax.write_to_string() != snapshot.syntax.write_to_string() {
             return Err(AnalysisError::Specialization {
                 name: "uml",
-                reason: "test UML syntax replacement does not match document text".into(),
+                reason: "test UML island syntax replacement does not match island text".into(),
             });
         }
-        let mut documents = analysis.syntax.documents().clone();
-        documents.insert(
-            document,
-            Arc::new(SyntaxSnapshot::new(snapshot.document().clone(), syntax)),
+        let mut documents = analysis.island_syntax.documents.as_ref().clone();
+        let mut islands = documents.get(&document).unwrap().as_ref().clone();
+        islands.insert(
+            (snapshot.owner, snapshot.content_range),
+            Arc::new(UmlIslandSyntaxSnapshot {
+                owner: snapshot.owner,
+                kind: snapshot.kind,
+                source_range: snapshot.source_range,
+                content_range: snapshot.content_range,
+                syntax,
+            }),
         );
-        Ok(SyntaxSet::from_snapshots(
-            analysis.syntax.catalog().clone(),
-            documents,
-        ))
+        documents.insert(document, Arc::new(islands));
+        Ok(UmlIslandSyntaxSet {
+            documents: Arc::new(documents),
+        })
     }
 }
 impl Analysis {
@@ -169,6 +234,7 @@ pub fn analyze(
         .collect();
     let claims = ClaimSet::from_concept_ids(claimed.iter().map(|c| c.id.clone()));
     let mut snapshots = BTreeMap::new();
+    let mut island_snapshots = BTreeMap::new();
     let mut declared = DeclaredBundle::default();
     let mut diagnostics = Vec::new();
     for concept in claimed {
@@ -215,28 +281,75 @@ pub fn analyze(
             });
         }
         let structure = markdown_snapshot.structure();
-        let tree = match previous.and_then(|analysis| analysis.syntax.document(id)) {
-            Some(previous_snapshot) if Arc::ptr_eq(previous_snapshot.document(), &document) => {
-                previous_snapshot.syntax().clone()
-            }
-            Some(previous_snapshot) => {
-                let changes =
-                    single_text_change(previous_snapshot.document().text(), document.text());
-                previous
-                    .and_then(|analysis| analysis.markdown.document(id))
-                    .and_then(|old_markdown| {
-                        syntax::reparse_island(
-                            previous_snapshot.syntax(),
-                            old_markdown.structure(),
-                            document.text().clone(),
-                            structure,
-                            &changes,
-                        )
+        let previous_document = previous.and_then(|analysis| analysis.syntax.document(id));
+        let previous_islands = previous.and_then(|analysis| analysis.island_syntax.document(id));
+        let changes = previous_document
+            .map(|snapshot| single_text_change(snapshot.document().text(), document.text()))
+            .unwrap_or_default();
+        let change_map = previous_document
+            .and_then(|snapshot| ChangeMap::checked(snapshot.document().text(), &changes).ok());
+        let mut islands = HashMap::new();
+        let mut island_trees = HashMap::new();
+        for island in structure.islands.iter() {
+            let source_range =
+                TextRange::new(island.heading_range.start(), island.content_range.end()).map_err(
+                    |_| AnalysisError::CatalogInvariant {
+                        reason: "UML Markdown island has a reversed source range".into(),
+                    },
+                )?;
+            let reusable = previous_islands
+                .and_then(|snapshots| {
+                    snapshots
+                        .values()
+                        .find(|snapshot| snapshot.owner == island.owner)
+                })
+                .filter(|snapshot| snapshot.kind == island.kind)
+                .filter(|snapshot| {
+                    if previous_document
+                        .is_some_and(|previous| Arc::ptr_eq(previous.document(), &document))
+                    {
+                        return snapshot.source_range == source_range
+                            && snapshot.content_range == island.content_range;
+                    }
+                    change_map.as_ref().is_some_and(|map| {
+                        map.translate_unchanged(snapshot.source_range) == Some(source_range)
+                            && map.translate_unchanged(snapshot.content_range)
+                                == Some(island.content_range)
                     })
-                    .unwrap_or_else(|| syntax::parse_full(document.text().clone(), structure))
-            }
-            None => syntax::parse_full(document.text().clone(), structure),
-        };
+                });
+            let island_tree = reusable
+                .map(|snapshot| snapshot.syntax.clone())
+                .unwrap_or_else(|| {
+                    syntax::parse_authoritative_island(
+                        document.text().clone(),
+                        structure,
+                        island.owner,
+                        island.content_range,
+                    )
+                    .expect("validated Markdown structure identifies its UML island")
+                });
+            let key = (island.owner, island.content_range);
+            island_trees.insert(key, island_tree.clone());
+            islands.insert(
+                key,
+                Arc::new(UmlIslandSyntaxSnapshot {
+                    owner: island.owner,
+                    kind: island.kind,
+                    source_range,
+                    content_range: island.content_range,
+                    syntax: island_tree,
+                }),
+            );
+        }
+        let tree =
+            syntax::compose_full_from_islands(document.text().clone(), structure, &island_trees)
+                .ok_or_else(|| AnalysisError::Specialization {
+                    name: "uml",
+                    reason:
+                        "UML compatibility tree could not be composed from authoritative islands"
+                            .into(),
+                })?;
+        island_snapshots.insert(id, Arc::new(islands));
         let attributes = attributes(tree.root());
         let values = items(tree.root(), syntax::UmlSyntaxKind::Value);
         let slots = items(tree.root(), syntax::UmlSyntaxKind::Slot);
@@ -507,6 +620,9 @@ pub fn analyze(
     Ok(Analysis {
         claims,
         syntax: SyntaxSet::from_snapshots(context.catalog.clone(), snapshots),
+        island_syntax: UmlIslandSyntaxSet {
+            documents: Arc::new(island_snapshots),
+        },
         declared,
         projection,
         diagnostics: diagnostics.into(),

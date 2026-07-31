@@ -72,7 +72,7 @@ fn analyze_future(context: DomainAnalysisContext<'_>) -> FutureAnalysis {
         let tree = Arc::new(SyntaxTree::new(
             root,
             Arc::from([]),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         ));
         syntax.insert(id, (document, tree));
         declared.push(FutureDeclared {

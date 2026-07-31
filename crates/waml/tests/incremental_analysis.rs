@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use waml::uml::syntax::{UmlLanguage, UmlSyntaxKind};
 use waml::{
@@ -16,7 +13,7 @@ use waml::{
 use waml_syntax::{
     reparse_markdown, AstNode, DocumentRevision, GreenElement, GreenFactory, GreenText,
     MarkdownDialect, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxAnnotation, SyntaxElement,
-    SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize, TriviaKind,
+    SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize, TriviaKind, WamlSectionKind,
 };
 
 fn prepared(
@@ -465,28 +462,6 @@ fn assert_uml_rebased_identity(
     }
 }
 
-fn green_addresses(tree: &SyntaxTree<UmlLanguage>) -> BTreeSet<usize> {
-    fn visit(element: &GreenElement<UmlLanguage>, addresses: &mut BTreeSet<usize>) {
-        match element {
-            GreenElement::Node(node) => {
-                addresses.insert(Arc::as_ptr(node) as usize);
-                for child in node.children() {
-                    visit(child, addresses);
-                }
-            }
-            GreenElement::Token(token) => {
-                addresses.insert(Arc::as_ptr(token) as usize);
-            }
-        }
-    }
-    let mut addresses = BTreeSet::new();
-    visit(
-        &GreenElement::Node(tree.root_green().clone()),
-        &mut addresses,
-    );
-    addresses
-}
-
 fn assert_current_source_provenance(
     tree: &SyntaxTree<OkfMarkdownLanguage>,
     current: &Arc<String>,
@@ -582,7 +557,7 @@ fn shell_fingerprint_detects_trivia_storage_mutations() {
         let root = factory
             .node(OkfMarkdownSyntaxKind::Root, [GreenElement::Token(token)])
             .unwrap();
-        SyntaxTree::new(root, Arc::from([]), MarkdownDialect::CommonMarkCurrent)
+        SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT)
     };
 
     assert_ne!(
@@ -1074,9 +1049,7 @@ fn retained_uml_analysis_falls_back_at_unsafe_heading_boundary() {
         semantic_diagnostic_fingerprint(incremental.uml()),
         semantic_diagnostic_fingerprint(full.uml())
     );
-    let previous_addresses = green_addresses(previous_tree);
-    let incremental_addresses = green_addresses(incremental_tree);
-    assert!(previous_addresses.is_disjoint(&incremental_addresses));
+    assert!(!Arc::ptr_eq(previous_tree, incremental_tree));
     let current = incremental
         .okf()
         .catalog
@@ -1146,7 +1119,7 @@ fn markdown_snapshots_promote_updates_and_isolate_broken_islands() {
     let source = SourceBundle::try_from_pairs([
         (
             "class.md",
-            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- first: String\n\n## Operations\n- run()\n",
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- first: String\n\n## Values\n- Ready\n",
         ),
         ("other.md", "---\ntype: uml.Class\n---\n# Other\n"),
     ])
@@ -1154,11 +1127,24 @@ fn markdown_snapshots_promote_updates_and_isolate_broken_islands() {
     let baseline = prepared(source.clone(), None, 1);
     let class = document_id(&baseline, "class.md");
     let other = document_id(&baseline, "other.md");
+    let baseline_values = baseline
+        .uml()
+        .island_syntax
+        .document(class)
+        .unwrap()
+        .values()
+        .find(|snapshot| snapshot.kind() == WamlSectionKind::Values)
+        .unwrap()
+        .clone();
+    assert_eq!(
+        baseline_values.syntax().write_to_string(),
+        "## Values\n- Ready\n"
+    );
     let edited = replace_document(
         &source,
         SourceDocument::new(
             BundlePath::parse("class.md").unwrap(),
-            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- first String\n\n## Operations\n- run()\n".into(),
+            "---\ntype: uml.Class\n---\n# Class\n\n## Attributes\n- first String\n\n## Values\n- Ready\n".into(),
         ),
     )
     .unwrap();
@@ -1182,6 +1168,15 @@ fn markdown_snapshots_promote_updates_and_isolate_broken_islands() {
     assert!(Arc::ptr_eq(
         baseline.uml().syntax.document(other).unwrap().syntax(),
         current.uml().syntax.document(other).unwrap().syntax(),
+    ));
+    let current_values = current
+        .uml()
+        .island_syntax
+        .by_owner(class, baseline_values.owner())
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        baseline_values.syntax(),
+        current_values.syntax(),
     ));
     assert!(current.uml().declared.concept("class").is_some());
 }

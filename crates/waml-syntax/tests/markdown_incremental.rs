@@ -185,7 +185,7 @@ fn assert_snapshot_matches_full_oracle(snapshot: &waml_syntax::MarkdownSyntaxSna
     let full = parse_markdown(
         DocumentRevision::new(snapshot.revision().get() + 1),
         text(new),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     assert_eq!(snapshot.text().shared().as_str(), new);
@@ -205,7 +205,7 @@ fn assert_matches_full_oracle(old: &str, new: &str, changes: &[TextChange]) {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let update = reparse_markdown(&previous, DocumentRevision::new(1), text(new), changes).unwrap();
@@ -231,7 +231,7 @@ fn definition_change_updates_non_contiguous_reference_dependents() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
 
@@ -248,7 +248,7 @@ fn definition_change_updates_non_contiguous_reference_dependents() {
     let oracle = parse_markdown(
         DocumentRevision::new(1),
         text(new),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
 
@@ -289,7 +289,7 @@ fn local_edit_publishes_the_caller_source_and_a_single_normalized_range() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let next_source = text(new);
@@ -327,7 +327,7 @@ fn multiline_change_detects_definition_on_an_interior_line() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let update = reparse_markdown(
@@ -353,7 +353,7 @@ fn changed_definition_fans_out_only_its_label_and_reuses_unaffected_greens() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let update = reparse_markdown(
@@ -392,7 +392,7 @@ fn renamed_definition_invalidates_old_backlinks() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let old_use = previous.queries().links().next().unwrap().source_range;
@@ -423,7 +423,7 @@ fn definition_change_does_not_mask_named_bridge_fallback() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let update = reparse_markdown(
@@ -461,7 +461,7 @@ fn definition_edit_preserves_an_unchanged_island_identity() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     assert_eq!(previous.structure().islands.len(), 1);
@@ -580,7 +580,7 @@ fn boundary_edits_report_named_fallbacks() {
         let previous = parse_markdown(
             DocumentRevision::INITIAL,
             text(old),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         )
         .unwrap();
         let update =
@@ -596,7 +596,7 @@ fn overlapping_changes_use_the_named_full_fallback() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(source),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let update = reparse_markdown(
@@ -631,7 +631,7 @@ fn new_text_change_mismatch_is_a_hard_error() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text("old\n"),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let error = reparse_markdown(
@@ -658,7 +658,7 @@ fn new_text_change_mismatch_is_a_hard_error() {
         &parse_markdown(
             DocumentRevision::new(2),
             text("new\n"),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         )
         .unwrap(),
         "new\n",
@@ -672,7 +672,7 @@ fn published_query_and_structure_owners_resolve_in_the_published_tree() {
     let previous = parse_markdown(
         DocumentRevision::INITIAL,
         text(old),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     let new_text = text(new);

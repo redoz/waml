@@ -50,9 +50,6 @@ impl MarkdownDialect {
             | Self::WAML_SECTIONS,
     };
 
-    #[allow(non_upper_case_globals)]
-    pub const CommonMarkCurrent: Self = Self::WAML_DEFAULT;
-
     pub(crate) const fn contains(self, flag: u8) -> bool {
         self.bits & flag != 0
     }

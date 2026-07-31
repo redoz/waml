@@ -533,22 +533,32 @@ mod tests {
             .unwrap();
         let old_tree = session.uml.syntax.document(document_id).unwrap().syntax();
         assert_clean_layout_alignment(old_tree);
-        let old_attribute = first_attribute(old_tree.root());
+        let attribute_island = session
+            .uml
+            .island_syntax
+            .document(document_id)
+            .unwrap()
+            .values()
+            .find(|snapshot| snapshot.kind() == waml_syntax::WamlSectionKind::Attributes)
+            .unwrap();
+        let old_attribute = first_attribute(attribute_island.syntax().root());
         let old_locator = old_attribute.locator();
         let annotation = SyntaxAnnotation::new(NonZeroU64::new(22).unwrap(), "selection", None);
         let annotation_id = annotation.id();
         let annotated_tree = Arc::new(SyntaxTree::new(
-            annotate_occurrence(old_tree, &old_locator, annotation).unwrap(),
-            Arc::from(old_tree.diagnostics()),
-            MarkdownDialect::CommonMarkCurrent,
+            annotate_occurrence(attribute_island.syntax(), &old_locator, annotation).unwrap(),
+            Arc::from(attribute_island.syntax().diagnostics()),
+            MarkdownDialect::WAML_DEFAULT,
         ));
-        let replacement_syntax = waml::uml::analysis::test_support::syntax_with_replaced_tree(
-            &session.uml,
-            document_id,
-            annotated_tree.clone(),
-        )
-        .unwrap();
-        session.uml.syntax = replacement_syntax;
+        let replacement_syntax =
+            waml::uml::analysis::test_support::island_syntax_with_replaced_tree(
+                &session.uml,
+                document_id,
+                attribute_island.owner(),
+                annotated_tree.clone(),
+            )
+            .unwrap();
+        session.uml.island_syntax = replacement_syntax;
         let baseline_current = session.source().clone();
         let baseline_persisted = session.persisted_bundle().clone();
 

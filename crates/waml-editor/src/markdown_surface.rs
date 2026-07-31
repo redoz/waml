@@ -31,7 +31,6 @@ pub fn set_markdown(ui: &WidgetRef, cx: &mut Cx, markdown: &str) {
     let surface = surface(ui, cx);
     let compatibility = surface.widget(cx, ids!(md));
     compatibility.set_visible(cx, false);
-    compatibility.set_text(cx, markdown);
     plain_text_child(ui, cx).set_visible(cx, true);
     plain_text_child(ui, cx)
         .as_text_input()
@@ -58,7 +57,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_surface_preserves_markdown_and_updates_plain_text() {
+    fn source_surface_keeps_markdown_inert_and_updates_plain_text() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let markdown =
             WidgetRef::new_with_inner(Box::new(cx.with_vm(Markdown::script_new_with_default)));
@@ -75,8 +74,16 @@ mod tests {
         let source = super::surface(&ui, &mut cx);
 
         assert!(source.widget(&cx, ids!(md)).borrow::<Markdown>().is_some());
-        assert_eq!(source.widget(&cx, ids!(md)).text(), "first source");
+        assert_eq!(source.widget(&cx, ids!(md)).text(), "");
+        assert_eq!(
+            source
+                .widget(&cx, ids!(plain_source))
+                .as_text_input()
+                .text(),
+            "first source"
+        );
         super::set_markdown(&ui, &mut cx, "second source");
+        assert_eq!(source.widget(&cx, ids!(md)).text(), "");
         assert_eq!(
             source
                 .widget(&cx, ids!(plain_source))

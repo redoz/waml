@@ -45,6 +45,73 @@ pub struct MarkdownStructureMap {
     pub islands: Arc<[WamlLanguageIsland]>,
 }
 
+impl MarkdownStructureMap {
+    pub fn local_for_island(
+        &self,
+        owner: SyntaxIdentity,
+        content_range: TextRange,
+    ) -> Option<(TextRange, Self)> {
+        let island = self
+            .islands
+            .iter()
+            .find(|island| island.owner == owner && island.content_range == content_range)?;
+        let source_range =
+            TextRange::new(island.heading_range.start(), island.content_range.end()).ok()?;
+        let ranges = |source: &[TextRange]| {
+            source
+                .iter()
+                .filter_map(|range| local_range(*range, source_range))
+                .collect::<Arc<[_]>>()
+        };
+        let heading_range = local_range(island.heading_range, source_range)?;
+        let content_range = local_range(island.content_range, source_range)?;
+        let local = Self {
+            headings: self
+                .headings
+                .iter()
+                .filter_map(|heading| local_heading(heading, source_range))
+                .collect(),
+            nested_headings: self
+                .nested_headings
+                .iter()
+                .filter_map(|heading| local_heading(heading, source_range))
+                .collect(),
+            protected_ranges: ranges(&self.protected_ranges),
+            list_item_lines: ranges(&self.list_item_lines),
+            tab_indented_item_lines: ranges(&self.tab_indented_item_lines),
+            opaque_ranges: ranges(&self.opaque_ranges),
+            dialect: self.dialect,
+            islands: Arc::from([WamlLanguageIsland {
+                owner: island.owner,
+                kind: island.kind,
+                heading_range,
+                content_range,
+            }]),
+        };
+        Some((source_range, local))
+    }
+}
+
+fn local_range(range: TextRange, source_range: TextRange) -> Option<TextRange> {
+    if range.start() < source_range.start() || range.end() > source_range.end() {
+        return None;
+    }
+    let offset = source_range.start().to_usize();
+    TextRange::new(
+        TextSize::try_from_usize(range.start().to_usize().checked_sub(offset)?).ok()?,
+        TextSize::try_from_usize(range.end().to_usize().checked_sub(offset)?).ok()?,
+    )
+    .ok()
+}
+
+fn local_heading(heading: &ConfirmedHeading, source_range: TextRange) -> Option<ConfirmedHeading> {
+    Some(ConfirmedHeading {
+        level: heading.level,
+        range: local_range(heading.range, source_range)?,
+        text_range: local_range(heading.text_range, source_range)?,
+    })
+}
+
 pub(crate) fn from_tree(
     tree: &SyntaxTree<OkfMarkdownLanguage>,
     source: &str,

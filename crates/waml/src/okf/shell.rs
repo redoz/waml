@@ -3,12 +3,12 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
-use regex::Regex;
 use waml_syntax::{
-    write_green_to, GreenNode, MarkdownStructureMap, OkfMarkdownLanguage, TextRange,
+    write_green_to, GreenNode, MarkdownLinkKind, MarkdownStructureMap, MarkdownSyntaxSnapshot,
+    OkfMarkdownLanguage, TextRange,
 };
 
 use crate::{
@@ -31,13 +31,9 @@ const KNOWN_KEYS: &[&str] = &[
     "timestamp",
 ];
 
-static LINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap());
-static INDEX_BULLET_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*[*-]\s*\[[^\]]*\]\(([^)]+)\)(?:\s*-\s*(.*))?$").unwrap());
-
 struct ShellDocument<'a> {
     document: &'a Arc<DocumentVersion>,
-    structure: &'a Arc<MarkdownStructureMap>,
+    snapshot: &'a Arc<MarkdownSyntaxSnapshot>,
     frontmatter: Frontmatter,
     body: SourceSlice,
     body_range: TextRange,
@@ -95,7 +91,7 @@ fn validate<'a>(
             .map_err(|_| structural(format!("invalid body range for {}", document.path())))?;
         validated.push(ShellDocument {
             document,
-            structure,
+            snapshot,
             frontmatter,
             body,
             body_range,
@@ -325,7 +321,11 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
             .cloned()
             .collect(),
     };
-    let (prose, citations_section) = split_citations(shell);
+    let citation_start = citation_start(shell).unwrap_or(shell.body_range.end());
+    let prose_range = TextRange::new(shell.body_range.start(), citation_start)
+        .expect("citation heading follows the document body start");
+    let citation_range = TextRange::new(citation_start, shell.body_range.end())
+        .expect("citation heading is inside the document body");
     Concept {
         id: shell
             .document
@@ -340,64 +340,92 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
         tags,
         timestamp,
         body: shell.body.clone(),
-        links: extract_links(prose),
-        citations: extract_citations(citations_section),
+        links: extract_links(shell, prose_range),
+        citations: extract_citations(shell, citation_range),
         extra,
     }
 }
 
 fn first_h1(shell: &ShellDocument<'_>) -> Option<String> {
     shell
-        .structure
-        .headings
-        .iter()
+        .snapshot
+        .queries()
+        .headings()
         .find(|heading| heading.level == 1 && heading.range.start() >= shell.body_range.start())
-        .and_then(|heading| shell.document.text().slice(heading.text_range).ok())
-        .map(|title| title.trim().trim_end_matches('#').trim())
+        .and_then(|heading| shell.document.text().slice(heading.content_range).ok())
+        .map(str::trim)
         .filter(|title| !title.is_empty())
         .map(str::to_owned)
 }
 
-fn split_citations<'a>(shell: &'a ShellDocument<'_>) -> (&'a str, &'a str) {
-    let body = shell.body.as_str();
-    let boundary = shell.structure.headings.iter().find(|heading| {
-        heading.level == 1
+fn citation_start(shell: &ShellDocument<'_>) -> Option<waml_syntax::TextSize> {
+    shell.snapshot.queries().headings().find_map(|heading| {
+        (heading.level == 1
             && heading.range.start() >= shell.body_range.start()
             && shell
                 .document
                 .text()
-                .slice(heading.text_range)
-                .is_ok_and(|text| {
-                    text.trim()
-                        .trim_end_matches('#')
-                        .trim()
-                        .eq_ignore_ascii_case("citations")
-                })
-    });
-    if let Some(heading) = boundary {
-        let offset = heading.range.start().to_usize() - shell.body_range.start().to_usize();
-        (&body[..offset], &body[offset..])
-    } else {
-        (body, "")
-    }
+                .slice(heading.content_range)
+                .is_ok_and(|text| text.trim().eq_ignore_ascii_case("citations")))
+        .then_some(heading.range.start())
+    })
 }
 
-fn extract_links(text: &str) -> Vec<Link> {
-    LINK_RE
-        .captures_iter(text)
-        .map(|capture| Link {
-            text: capture[1].to_string(),
-            href: capture[2].to_string(),
+fn link_is_inside(link: &waml_syntax::MarkdownLink, range: TextRange) -> bool {
+    range.start() <= link.source_range.start() && link.source_range.end() <= range.end()
+}
+
+fn is_image_link(shell: &ShellDocument<'_>, link: &waml_syntax::MarkdownLink) -> bool {
+    shell
+        .snapshot
+        .queries()
+        .images()
+        .any(|image| image.owner == link.owner)
+}
+
+fn exact_link_text(shell: &ShellDocument<'_>, link: &waml_syntax::MarkdownLink) -> String {
+    shell
+        .document
+        .text()
+        .slice(link.content_range)
+        .expect("Markdown query link content is inside the document")
+        .to_owned()
+}
+
+fn extract_links(shell: &ShellDocument<'_>, range: TextRange) -> Vec<Link> {
+    shell
+        .snapshot
+        .queries()
+        .links()
+        .filter(|link| {
+            matches!(
+                link.kind,
+                MarkdownLinkKind::Inline | MarkdownLinkKind::Reference
+            ) && link_is_inside(link, range)
+                && !is_image_link(shell, link)
+        })
+        .map(|link| Link {
+            text: exact_link_text(shell, link),
+            href: link.destination.to_string(),
         })
         .collect()
 }
 
-fn extract_citations(text: &str) -> Vec<Citation> {
-    LINK_RE
-        .captures_iter(text)
-        .map(|capture| Citation {
-            text: capture[1].to_string(),
-            href: capture[2].to_string(),
+fn extract_citations(shell: &ShellDocument<'_>, range: TextRange) -> Vec<Citation> {
+    shell
+        .snapshot
+        .queries()
+        .links()
+        .filter(|link| {
+            matches!(
+                link.kind,
+                MarkdownLinkKind::Inline | MarkdownLinkKind::Reference
+            ) && link_is_inside(link, range)
+                && !is_image_link(shell, link)
+        })
+        .map(|link| Citation {
+            text: exact_link_text(shell, link),
+            href: link.destination.to_string(),
         })
         .collect()
 }
@@ -409,14 +437,66 @@ fn parse_authored_index(shell: &ShellDocument<'_>, directory: DirectoryAddress) 
         .map(str::trim)
         .filter(|title| !title.is_empty())
         .map(str::to_owned);
-    let mut title = String::new();
-    let mut intro_lines = Vec::new();
+    let heading =
+        shell.snapshot.queries().headings().find(|heading| {
+            heading.level == 1 && heading.range.start() >= shell.body_range.start()
+        });
+    let title = heading
+        .and_then(|heading| shell.document.text().slice(heading.content_range).ok())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or_default()
+        .to_owned();
+    let list_items = shell
+        .snapshot
+        .queries()
+        .lists()
+        .filter(|list| {
+            list.is_item
+                && shell.body_range.start() <= list.range.start()
+                && list.range.end() <= shell.body_range.end()
+        })
+        .map(|list| (list.owner, list.range))
+        .collect::<Vec<_>>();
+    let intro_start = heading
+        .map(|heading| heading.range.end())
+        .unwrap_or(shell.body_range.start());
+    let intro_end = list_items
+        .iter()
+        .map(|(_, range)| range.start())
+        .min()
+        .unwrap_or(shell.body_range.end());
+    let description = TextRange::new(intro_start, intro_end)
+        .ok()
+        .and_then(|range| shell.document.text().slice(range).ok())
+        .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|text| !text.is_empty());
     let mut authored_order = Vec::new();
-    let mut seen_bullet = false;
-    for line in shell.body.lines() {
-        if let Some(captures) = INDEX_BULLET_RE.captures(line) {
-            seen_bullet = true;
-            let url = captures.get(1).expect("captured index URL").as_str();
+    for (owner, item_range) in &list_items {
+        let is_bullet = shell
+            .snapshot
+            .queries()
+            .list(*owner)
+            .is_some_and(|list| matches!(list.kind, waml_syntax::MarkdownListKind::Bullet));
+        if !is_bullet {
+            continue;
+        }
+        let link = shell.snapshot.queries().links().find(|link| {
+            matches!(
+                link.kind,
+                MarkdownLinkKind::Inline | MarkdownLinkKind::Reference
+            ) && link_is_inside(link, *item_range)
+                && !is_image_link(shell, link)
+                && list_items
+                    .iter()
+                    .filter(|(_, candidate)| link_is_inside(link, *candidate))
+                    .min_by_key(|(_, candidate)| {
+                        candidate.end().to_usize() - candidate.start().to_usize()
+                    })
+                    .is_some_and(|(candidate_owner, _)| candidate_owner == owner)
+        });
+        if let Some(link) = link {
+            let url = link.destination.as_ref();
             let member = if let Some(subdirectory) = url.strip_suffix('/') {
                 let name = subdirectory.trim_start_matches("./").trim_end_matches('/');
                 directory
@@ -429,22 +509,13 @@ fn parse_authored_index(shell: &ShellDocument<'_>, directory: DirectoryAddress) 
             if !member.is_empty() {
                 authored_order.push(member);
             }
-        } else if !seen_bullet {
-            let trimmed = line.trim();
-            if let Some(heading) = trimmed.strip_prefix("# ") {
-                if title.is_empty() {
-                    title = heading.trim().to_owned();
-                }
-            } else if !trimmed.is_empty() {
-                intro_lines.push(trimmed);
-            }
         }
     }
     AuthoredIndex {
         index: Index {
             directory,
             title: title_from_frontmatter.or((!title.is_empty()).then_some(title)),
-            description: (!intro_lines.is_empty()).then(|| intro_lines.join(" ")),
+            description,
             members: Vec::new(),
             body: Some(shell.body.clone()),
             authored: true,
@@ -521,7 +592,7 @@ mod tests {
         let parsed = parse_markdown(
             DocumentRevision::INITIAL,
             SourceText::from_shared(Arc::new(source.to_owned())).unwrap(),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         )
         .unwrap();
         assert!(exact_tree_source(parsed.tree().root_green(), source));

@@ -82,6 +82,7 @@ pub struct MarkdownList {
     pub owner: SyntaxIdentity,
     pub range: TextRange,
     pub kind: MarkdownListKind,
+    pub is_item: bool,
     pub task: Option<super::TaskListState>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,6 +164,12 @@ pub struct MarkdownSyntaxQueries {
 impl MarkdownSyntaxQueries {
     pub fn links(&self) -> impl Iterator<Item = &MarkdownLink> {
         self.links.iter()
+    }
+    pub fn headings(&self) -> impl Iterator<Item = &MarkdownHeading> {
+        self.headings.iter()
+    }
+    pub fn lists(&self) -> impl Iterator<Item = &MarkdownList> {
+        self.lists.iter()
     }
     pub fn entities(&self) -> impl Iterator<Item = &MarkdownEntity> {
         self.entities.iter()
@@ -625,6 +632,7 @@ fn collect_queries(
                 owner,
                 range: node.range(),
                 kind,
+                is_item: node.kind() == Kind::ListItem,
                 task: descendant_annotation(node, super::gfm::TASK_STATE)
                     .as_deref()
                     .and_then(parse_task_state),
@@ -992,13 +1000,10 @@ fn delimited_content(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Op
         SyntaxElement::Token(token) if token.kind() == Kind::LinkLabelOpenToken => Some(token),
         _ => None,
     })?;
-    let close = node
-        .children()
-        .filter_map(|child| match child {
-            SyntaxElement::Token(token) if token.kind() == Kind::LinkLabelCloseToken => Some(token),
-            _ => None,
-        })
-        .last()?;
+    let close = node.children().find_map(|child| match child {
+        SyntaxElement::Token(token) if token.kind() == Kind::LinkLabelCloseToken => Some(token),
+        _ => None,
+    })?;
     TextRange::new(open.range().end(), close.range().start()).ok()
 }
 

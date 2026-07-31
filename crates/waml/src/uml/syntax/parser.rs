@@ -1397,7 +1397,7 @@ fn sequence_operand(
             children.push(slot(
                 f,
                 UmlSyntaxKind::OperandGuard,
-                GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
+                missing_token(f, text, keyword_end, guard, UmlSyntaxKind::GuardToken),
             ));
             p = guard;
             valid = false;
@@ -2605,6 +2605,7 @@ fn inline_instance(
         p = skip_ws(source, as_end, content_end);
     } else {
         c.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::AsToken)));
+        keyword_leading = q;
         diags.push(diag(
             UmlSyntaxDiagnosticCode::UnexpectedToken,
             p,
@@ -2655,6 +2656,7 @@ fn inline_instance(
             name_end,
             UmlSyntaxKind::IdentifierToken,
         )];
+        keyword_leading = name_end;
         p = skip_ws(source, name_end, content_end);
         if source[p..content_end].starts_with("set to") {
             slot.push(token(

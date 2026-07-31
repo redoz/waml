@@ -465,7 +465,7 @@ fn versioned_locator_preserves_occurrence_identity_and_wrong_tree_error() {
     let other_tree = waml_syntax::SyntaxTree::new(
         snapshot.tree().root_green().clone(),
         snapshot.tree().diagnostics().into(),
-        waml_syntax::MarkdownDialect::CommonMarkCurrent,
+        waml_syntax::MarkdownDialect::WAML_DEFAULT,
     );
     assert!(matches!(
         node_locator.resolve_in(&other_tree),

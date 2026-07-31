@@ -115,7 +115,7 @@ fn rename_typed_references(
     let markdown = parse_markdown(
         DocumentRevision::INITIAL,
         text.clone(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .map_err(|error| EditError::at("node.rename", error.to_string()))?;
     let tree = super::syntax::parse_full(text, markdown.structure());

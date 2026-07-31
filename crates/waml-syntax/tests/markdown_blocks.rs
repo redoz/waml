@@ -9,7 +9,7 @@ fn parse(source: &str) -> waml_syntax::ShellParse {
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         SourceText::from_shared(Arc::new(source.into())).unwrap(),
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .unwrap();
     ShellParse {

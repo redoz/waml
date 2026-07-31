@@ -1501,17 +1501,17 @@ mod tests {
     fn malformed_pulldown_event_range_recovers_as_raw_text() {
         let source = "0\n\r\t\u{0800}";
         let text = SourceText::new(source).unwrap();
-        match parse_strict(&text, MarkdownDialect::CommonMarkCurrent, 0, source.len()) {
+        match parse_strict(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()) {
             Err(BlockBuildError::MalformedEventRange) => {}
             Err(error) => panic!("unexpected strict error: {error:?}"),
             Ok(_) => panic!("strict parser unexpectedly accepted malformed event ranges"),
         }
-        let parsed = parse(&text, MarkdownDialect::CommonMarkCurrent, 0, source.len()).unwrap();
+        let parsed = parse(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()).unwrap();
 
         let tree = crate::SyntaxTree::new(
             parsed.root,
             parsed.diagnostics.clone(),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         );
         assert_eq!(tree.write_to_string(), source);
         assert!(parsed
@@ -1526,7 +1526,7 @@ mod tests {
     fn inline_phase_returns_owner_identities_and_reference_backlinks() {
         let source = "[x][id]\n\n# *heading*\n\n[id]: /one\n";
         let text = SourceText::new(source).unwrap();
-        let parsed = parse(&text, MarkdownDialect::CommonMarkCurrent, 0, source.len()).unwrap();
+        let parsed = parse(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()).unwrap();
 
         assert_eq!(parsed.inline_roots.len(), 2);
         let owners: Vec<_> = parsed

@@ -180,7 +180,7 @@ impl UmlLoweringState {
         let markdown = parse_markdown(
             DocumentRevision::INITIAL,
             text.clone(),
-            MarkdownDialect::CommonMarkCurrent,
+            MarkdownDialect::WAML_DEFAULT,
         )
         .map_err(|error| EditError::at(op, error.to_string()))?;
         self.touched_islands.insert(
@@ -435,7 +435,7 @@ fn shell(source: &str, op: &str) -> Result<ShellParse, EditError> {
     parse_markdown(
         DocumentRevision::INITIAL,
         text,
-        MarkdownDialect::CommonMarkCurrent,
+        MarkdownDialect::WAML_DEFAULT,
     )
     .map(|snapshot| ShellParse {
         tree: snapshot.tree().clone(),
