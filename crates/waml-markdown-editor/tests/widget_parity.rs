@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use makepad_widgets::{dvec2, Cx, Rect, ScriptNew, WidgetRef};
+use makepad_widgets::{dvec2, Cx, Event, Rect, ScriptNew, TextInputEvent, WidgetRef};
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     input::{
@@ -123,12 +123,38 @@ fn mutating_input_does_not_publish_ime_coordinates_from_entry_layout() {
 fn mounted_widget_emits_the_exact_proposal_from_text_input() {
     let (mut cx, widget, mut session) = mounted_editor("ab");
     widget.set_key_focus(&mut cx);
-    let actions =
-        widget.test_handle_input(&mut cx, &mut session, EditorInput::Text(Arc::from("x")));
+    let actions = widget
+        .handle_input_with_session(&mut cx, &mut session, EditorInput::Text(Arc::from("x")))
+        .unwrap();
     let proposal = MarkdownEditorRef::proposed_edit(&actions).unwrap();
     assert_eq!(proposal.edit.base_revision, DocumentRevision::INITIAL);
     assert_eq!(proposal.edit.changes.len(), 1);
     assert_eq!(proposal.snapshot.text().shared().as_str(), "xab");
+}
+
+#[test]
+fn mounted_widget_adapts_a_makepad_text_event() {
+    let (mut cx, widget, mut session) = mounted_editor("ab");
+    widget.set_key_focus(&mut cx);
+    let actions = widget
+        .handle_event_with_session(
+            &mut cx,
+            &Event::TextInput(TextInputEvent {
+                input: "x".to_owned(),
+                ..Default::default()
+            }),
+            &mut session,
+        )
+        .unwrap();
+    assert_eq!(
+        MarkdownEditorRef::proposed_edit(&actions)
+            .unwrap()
+            .snapshot
+            .text()
+            .shared()
+            .as_str(),
+        "xab"
+    );
 }
 
 #[test]
@@ -167,6 +193,54 @@ fn ime_window_uses_current_interpolated_caret_geometry() {
             .rect
             .pos
     );
+}
+
+#[test]
+fn mounted_widget_keeps_two_host_sessions_isolated() {
+    let (mut cx, widget, mut first) = mounted_editor("ab");
+    let mut second = session_at_revision("cd", DocumentRevision::INITIAL);
+    widget
+        .handle_input_with_session(&mut cx, &mut first, EditorInput::Text(Arc::from("x")))
+        .unwrap();
+    assert_eq!(first.snapshot().text().shared().as_str(), "xab");
+    assert_eq!(second.snapshot().text().shared().as_str(), "cd");
+    widget.test_set_layout(Arc::new(linear_layout("cd")));
+    widget
+        .handle_input_with_session(&mut cx, &mut second, EditorInput::Text(Arc::from("y")))
+        .unwrap();
+    assert_eq!(first.snapshot().text().shared().as_str(), "xab");
+    assert_eq!(second.snapshot().text().shared().as_str(), "ycd");
+}
+
+#[test]
+fn mounted_widget_reports_stale_layout_as_a_typed_error() {
+    let (mut cx, widget, mut session) = mounted_editor("ab");
+    session
+        .execute(
+            waml_markdown_editor::edit::EditCommand::Insert(Arc::from("x")),
+            waml_markdown_editor::edit::HistoryGroup::isolated(),
+        )
+        .unwrap();
+    let error = widget
+        .handle_input_with_session(&mut cx, &mut session, EditorInput::Text(Arc::from("y")))
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        waml_markdown_editor::widget::MarkdownEditorError::ControllerLayout(
+            waml_markdown_editor::layout::LayoutError::RevisionMismatch { .. }
+        )
+    ));
+}
+
+#[test]
+fn mounted_read_only_widget_rejects_mutating_input() {
+    let (mut cx, widget, mut session) = mounted_editor("ab");
+    widget.set_read_only(&mut cx, true);
+    let actions = widget
+        .handle_input_with_session(&mut cx, &mut session, EditorInput::Text(Arc::from("x")))
+        .unwrap();
+    assert!(actions.is_empty());
+    assert_eq!(session.snapshot().text().shared().as_str(), "ab");
 }
 
 struct Fixture {

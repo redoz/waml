@@ -4,8 +4,14 @@ use makepad_widgets::*;
 
 use crate::{
     edit::ProposedMarkdownEdit,
-    input::{EditorInput, MarkdownEditorController},
-    layout::{LayoutDocument, LayoutElementId, LayoutEngine, LayoutSnapshot},
+    input::{
+        ControllerError, EditorInput, EditorKey, MarkdownEditorController, PointerGesture,
+        SelectionModifier,
+    },
+    layout::{
+        FontKey, FontResolver, LayoutDocument, LayoutElementId, LayoutEngine, LayoutError,
+        LayoutInvalidation, LayoutSnapshot, LayoutViewport, MakepadTextShaper, TextMetrics,
+    },
     selection::TextPosition,
     session::MarkdownDocumentSession,
 };
@@ -26,10 +32,6 @@ pub fn live_design(cx: &mut Cx) {
     cx.with_vm(script_mod);
 }
 
-pub struct MarkdownEditorScope<'a> {
-    pub session: &'a mut MarkdownDocumentSession,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EmbeddedBlockEvent {
     Activated,
@@ -48,8 +50,35 @@ pub enum MarkdownEditorAction {
         id: LayoutElementId,
         event: EmbeddedBlockEvent,
     },
+    Error(MarkdownEditorError),
     #[default]
     None,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkdownEditorError {
+    Layout(LayoutError),
+    ControllerLayout(LayoutError),
+    ControllerEdit,
+    MissingLayoutDocument,
+}
+
+impl From<ControllerError> for MarkdownEditorError {
+    fn from(error: ControllerError) -> Self {
+        match error {
+            ControllerError::Layout(error) => Self::ControllerLayout(error),
+            ControllerError::Edit(_) => Self::ControllerEdit,
+        }
+    }
+}
+
+#[derive(Default)]
+struct WidgetFonts;
+
+impl FontResolver for WidgetFonts {
+    fn configure_draw_text(&mut self, _key: FontKey, metrics: TextMetrics, draw: &mut DrawText) {
+        draw.text_style.font_size = metrics.font_size;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,51 +136,247 @@ pub struct MarkdownEditor {
     #[rust]
     layout: Option<Arc<LayoutSnapshot>>,
     #[rust]
-    layout_document: Option<LayoutDocument>,
+    presentation: Option<Arc<LayoutDocument>>,
     #[rust]
-    pointer_active: bool,
+    pointer_drag_active: bool,
     #[rust]
     read_only: bool,
     #[rust]
     reduced_motion: bool,
     #[rust]
     last_ime_point: DVec2,
+    #[rust]
+    scroll_y: f64,
+    #[rust]
+    has_focus: bool,
+    #[live]
+    draw_text: DrawText,
+    #[rust]
+    fonts: WidgetFonts,
+    #[rust]
+    last_draw: DrawRecorder,
 }
 
 impl Widget for MarkdownEditor {
     fn handle_event(&mut self, _cx: &mut Cx, _event: &Event, _scope: &mut Scope) {}
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        let _ = (&mut self.layout_engine, self.pointer_active);
+        let _ = (&mut self.layout_engine, self.pointer_drag_active);
         if let Some(layout) = &self.layout {
-            let mut recorder = DrawRecorder::default();
-            draw_visible_layers_for_test(layout, &mut recorder);
+            self.last_draw = DrawRecorder::default();
+            draw_visible_layers_for_test(layout, &mut self.last_draw);
         }
         self.view.draw_walk(cx, scope, walk)
     }
 }
 
 impl MarkdownEditor {
-    fn actions_for_input(
+    pub fn handle_event_with_session(
         &mut self,
+        cx: &mut Cx,
+        event: &Event,
+        session: &mut MarkdownDocumentSession,
+    ) -> Result<Vec<Action>, MarkdownEditorError> {
+        if self.has_focus {
+            if let Event::TextInput(event) = event {
+                let input = if event.was_paste {
+                    EditorInput::Paste(Arc::from(event.input.as_str()))
+                } else {
+                    EditorInput::Text(Arc::from(event.input.as_str()))
+                };
+                return self.handle_input_with_session(cx, session, input);
+            }
+        }
+        let input = match event.hits(cx, self.view.area()) {
+            Hit::TextInput(event) if !self.read_only => Some(if event.was_paste {
+                EditorInput::Paste(Arc::from(event.input.as_str()))
+            } else {
+                EditorInput::Text(Arc::from(event.input.as_str()))
+            }),
+            Hit::TextCopy(event) => {
+                let layout = match self.layout.as_ref() {
+                    Some(layout) => layout.clone(),
+                    None => self.install_layout(cx, session)?,
+                };
+                let response = self
+                    .controller
+                    .handle(session, &layout, EditorInput::Copy)
+                    .map_err(MarkdownEditorError::from)?;
+                *event.response.borrow_mut() = response.clipboard;
+                return Ok(Vec::new());
+            }
+            Hit::TextCut(event) => {
+                let layout = match self.layout.as_ref() {
+                    Some(layout) => layout.clone(),
+                    None => self.install_layout(cx, session)?,
+                };
+                let copied = self
+                    .controller
+                    .handle(session, &layout, EditorInput::Copy)
+                    .map_err(MarkdownEditorError::from)?;
+                *event.response.borrow_mut() = copied.clipboard;
+                return self.handle_input_with_session(cx, session, EditorInput::Cut);
+            }
+            Hit::KeyDown(event) => key_input(event),
+            Hit::FingerDown(event) if event.is_primary_hit() => {
+                cx.set_key_focus(self.view.area());
+                let point = event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y);
+                if event.modifiers.is_primary() {
+                    let layout = match self.layout.as_ref() {
+                        Some(layout) => layout.clone(),
+                        None => self.install_layout(cx, session)?,
+                    };
+                    return Ok(vec![self.make_action(
+                        MarkdownEditorAction::NavigationRequested {
+                            position: layout.point_to_source(point),
+                        },
+                    )]);
+                }
+                self.pointer_drag_active = true;
+                Some(EditorInput::PointerDown(PointerGesture {
+                    point,
+                    clicks: event.tap_count as u8,
+                    modifier: if event.modifiers.shift {
+                        SelectionModifier::Extend
+                    } else {
+                        SelectionModifier::Replace
+                    },
+                }))
+            }
+            Hit::FingerMove(event) if self.pointer_drag_active => Some(EditorInput::PointerMove {
+                point: event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y),
+            }),
+            Hit::FingerUp(_) if self.pointer_drag_active => {
+                self.pointer_drag_active = false;
+                Some(EditorInput::PointerUp)
+            }
+            Hit::KeyFocusLost(_) => {
+                self.has_focus = false;
+                cx.hide_text_ime();
+                None
+            }
+            _ => None,
+        };
+        if let Event::Scroll(event) = event {
+            if self.view.area().rect(cx).contains(event.abs) && !event.handled_y.get() {
+                self.scroll_y = (self.scroll_y + event.scroll.y).max(0.0);
+                self.layout = None;
+                self.view.redraw(cx);
+                event.handled_y.set(true);
+            }
+        }
+        input.map_or(Ok(Vec::new()), |input| {
+            self.handle_input_with_session(cx, session, input)
+        })
+    }
+
+    pub fn draw_walk_with_session(
+        &mut self,
+        cx: &mut Cx2d,
+        session: &mut MarkdownDocumentSession,
+        scope: &mut Scope,
+        walk: Walk,
+    ) -> Result<DrawStep, MarkdownEditorError> {
+        let layout = self.install_layout(cx, session)?;
+        self.last_draw = DrawRecorder::default();
+        let document = self.presentation.as_ref().unwrap().clone();
+        for layer in [
+            DrawLayer::BlockBackground,
+            DrawLayer::Selection,
+            DrawLayer::Text,
+            DrawLayer::Decoration,
+            DrawLayer::EmbeddedBlock,
+            DrawLayer::CaretAndIme,
+        ] {
+            self.last_draw.record(layer, &layout);
+            if layer == DrawLayer::Text {
+                let visible = layout.visible_source_range();
+                for run in document.text_runs.iter() {
+                    if run.range.end() <= visible.start() || visible.end() <= run.range.start() {
+                        continue;
+                    }
+                    if let (Ok(text), Some(caret)) = (
+                        session.snapshot().text().slice(run.range),
+                        layout.source_to_point(TextPosition::new(
+                            run.range.start(),
+                            crate::selection::Affinity::Before,
+                        )),
+                    ) {
+                        self.fonts.configure_draw_text(
+                            run.metrics.font,
+                            run.metrics,
+                            &mut self.draw_text,
+                        );
+                        self.draw_text.draw_abs(cx, caret.rect.pos, text);
+                    }
+                }
+            }
+        }
+        if cx.has_key_focus(self.view.area()) && !self.read_only {
+            self.show_ime(cx, session);
+        }
+        Ok(self.view.draw_walk(cx, scope, walk))
+    }
+
+    fn install_layout(
+        &mut self,
+        cx: &mut Cx,
+        session: &MarkdownDocumentSession,
+    ) -> Result<Arc<LayoutSnapshot>, MarkdownEditorError> {
+        let document = self
+            .presentation
+            .as_ref()
+            .ok_or(MarkdownEditorError::MissingLayoutDocument)?;
+        let viewport_rect = self.view.area().rect(cx);
+        let mut shaper = MakepadTextShaper {
+            cx,
+            draw_text: &mut self.draw_text,
+            fonts: &mut self.fonts,
+        };
+        let layout = self
+            .layout_engine
+            .layout(
+                document,
+                session.snapshot(),
+                LayoutViewport::new(
+                    viewport_rect.size.x.max(1.0),
+                    viewport_rect.size.y.max(1.0),
+                    self.scroll_y,
+                    0.0,
+                ),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .map_err(MarkdownEditorError::Layout)?;
+        let layout = Arc::new(layout);
+        self.layout = Some(layout.clone());
+        Ok(layout)
+    }
+
+    pub fn handle_input_with_session(
+        &mut self,
+        cx: &mut Cx,
         session: &mut MarkdownDocumentSession,
         input: EditorInput,
-    ) -> Vec<Action> {
+    ) -> Result<Vec<Action>, MarkdownEditorError> {
         if self.read_only
             && matches!(
                 input,
                 EditorInput::Text(_) | EditorInput::Paste(_) | EditorInput::Cut
             )
         {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let Some(layout) = self.layout.as_ref() else {
-            return Vec::new();
+        let layout = match self.layout.as_ref() {
+            Some(layout) => layout.clone(),
+            None => self.install_layout(cx, session)?,
         };
-        let Ok(response) = self.controller.handle(session, layout, input) else {
-            return Vec::new();
-        };
-        response
+        let old_selection = session.selections().clone();
+        let response = self
+            .controller
+            .handle(session, &layout, input)
+            .map_err(MarkdownEditorError::from)?;
+        let mut actions: Vec<Action> = response
             .proposals
             .into_iter()
             .map(|proposal| {
@@ -162,7 +387,27 @@ impl MarkdownEditor {
                     group: None,
                 }) as Action
             })
-            .collect()
+            .collect();
+        if session.selections() != &old_selection {
+            actions.push(self.make_action(MarkdownEditorAction::SelectionChanged));
+        }
+        if response.request_redraw {
+            self.view.redraw(cx);
+        }
+        if let Some(point) = response.request_ime_at {
+            self.last_ime_point = point;
+            cx.show_text_ime(self.view.area(), point);
+        }
+        Ok(actions)
+    }
+
+    fn make_action(&self, action: MarkdownEditorAction) -> Action {
+        Box::new(WidgetAction {
+            data: None,
+            action: Box::new(action),
+            widget_uid: self.widget_uid(),
+            group: None,
+        })
     }
 
     fn show_ime(&mut self, cx: &mut Cx, session: &MarkdownDocumentSession) {
@@ -178,9 +423,40 @@ impl MarkdownEditor {
     }
 }
 
+fn key_input(event: KeyEvent) -> Option<EditorInput> {
+    let extend = event.modifiers.shift;
+    let key = match event.key_code {
+        KeyCode::ReturnKey | KeyCode::NumpadEnter => EditorKey::Enter,
+        KeyCode::Tab if extend => EditorKey::BackTab,
+        KeyCode::Tab => EditorKey::Tab,
+        KeyCode::Delete => EditorKey::Delete,
+        KeyCode::Backspace => EditorKey::Backspace,
+        KeyCode::ArrowLeft => EditorKey::Left { extend },
+        KeyCode::ArrowRight => EditorKey::Right { extend },
+        KeyCode::ArrowUp => EditorKey::Up { extend },
+        KeyCode::ArrowDown => EditorKey::Down { extend },
+        KeyCode::KeyA if event.modifiers.is_primary() => EditorKey::SelectAll,
+        KeyCode::KeyZ if event.modifiers.is_primary() && extend => EditorKey::Redo,
+        KeyCode::KeyZ if event.modifiers.is_primary() => EditorKey::Undo,
+        _ => return None,
+    };
+    Some(EditorInput::Key(key))
+}
+
 impl MarkdownEditorRef {
+    pub fn handle_event_with_session(
+        &self,
+        cx: &mut Cx,
+        event: &Event,
+        session: &mut MarkdownDocumentSession,
+    ) -> Result<Vec<Action>, MarkdownEditorError> {
+        self.borrow_mut()
+            .ok_or(MarkdownEditorError::MissingLayoutDocument)?
+            .handle_event_with_session(cx, event, session)
+    }
     pub fn set_key_focus(&self, cx: &mut Cx) {
-        if let Some(inner) = self.borrow() {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.has_focus = true;
             cx.set_key_focus(inner.view.area());
         }
     }
@@ -206,9 +482,10 @@ impl MarkdownEditorRef {
         }
     }
 
-    pub fn set_layout_document(&self, cx: &mut Cx, document: LayoutDocument) {
+    pub fn set_layout_document(&self, cx: &mut Cx, document: Arc<LayoutDocument>) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.layout_document = Some(document);
+            inner.presentation = Some(document);
+            inner.layout = None;
             inner.view.redraw(cx);
         }
     }
@@ -252,16 +529,15 @@ impl MarkdownEditorRef {
         })
     }
 
-    #[doc(hidden)]
-    pub fn test_handle_input(
+    pub fn handle_input_with_session(
         &self,
-        _cx: &mut Cx,
+        cx: &mut Cx,
         session: &mut MarkdownDocumentSession,
         input: EditorInput,
-    ) -> Vec<Action> {
-        self.borrow_mut().map_or_else(Vec::new, |mut inner| {
-            inner.actions_for_input(session, input)
-        })
+    ) -> Result<Vec<Action>, MarkdownEditorError> {
+        self.borrow_mut()
+            .ok_or(MarkdownEditorError::MissingLayoutDocument)?
+            .handle_input_with_session(cx, session, input)
     }
 
     #[doc(hidden)]
