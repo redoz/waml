@@ -29,10 +29,10 @@
 
 use makepad_widgets::*;
 
-/// Floor applied to `zoom` before it scales the depth shadow, so the shadow
-/// doesn't vanish at fit-zoom -- the same idea as the stroke's `max(1.25, inset)`
-/// in the shader below. Both [`surface_bleed`]'s caller and the shader apply
-/// it, or the padded quad and the drawn shadow disagree and the shadow clips.
+/// Floor applied to scaled-mode material zoom so the shadow does not vanish at
+/// fit-zoom. Screen-space CAD mode deliberately bypasses it. Both
+/// [`surface_bleed`]'s caller and the shader use the same effective zoom, or
+/// the padded quad and the drawn shadow disagree.
 ///
 /// `allow(dead_code)` here and on the two items below: `node_editor_harness`
 /// pulls this module in by `#[path]` for its `script_mod` alone and never calls
@@ -83,6 +83,13 @@ pub fn surface_lift(base: f64, selected_value: f64, selected: f64) -> f64 {
     base + (selected_value - base) * selected.clamp(0.0, 1.0)
 }
 
+/// Mirror the shader's material-zoom mix for padding calculations.
+#[allow(dead_code)]
+pub fn surface_material_zoom(zoom: f64, screen_space: f64) -> f64 {
+    let floored = zoom.max(SURFACE_SHADOW_ZOOM_FLOOR);
+    floored + (zoom - floored) * screen_space.clamp(0.0, 1.0)
+}
+
 /// Whether a surface rectangle can safely carry padded material geometry.
 #[allow(dead_code)]
 pub fn surface_rect_has_area(width: f64, height: f64) -> bool {
@@ -94,8 +101,7 @@ pub fn surface_rect_has_area(width: f64, height: f64) -> bool {
 ///
 /// `depth_blur + depth_y` covers the downward-offset shadow's far edge;
 /// `bloom_px` is the un-offset halo radius; `+ 2.0` is antialias slack. `zoom`
-/// is the already-floored effective zoom (see [`SURFACE_SHADOW_ZOOM_FLOOR`])
-/// and must match what the shader scales by.
+/// is the effective material zoom and must match what the shader scales by.
 #[allow(dead_code)]
 pub fn surface_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64 {
     ((depth_blur + depth_y).max(bloom_px) * zoom).max(0.0) + 2.0
@@ -133,6 +139,10 @@ impl SurfaceExt for DrawColor {
             0.0
         };
         let selected = read(self, cx, live_id!(selected));
+        let material_zoom = surface_material_zoom(
+            read(self, cx, live_id!(zoom)),
+            read(self, cx, live_id!(screen_space)),
+        );
         let bleed = surface_bleed(
             surface_lift(
                 read(self, cx, live_id!(depth_y)),
@@ -145,7 +155,7 @@ impl SurfaceExt for DrawColor {
                 selected,
             ),
             surface_lift(bloom_px, SURFACE_SEL_BLOOM_PX, selected),
-            read(self, cx, live_id!(zoom)).max(SURFACE_SHADOW_ZOOM_FLOOR),
+            material_zoom,
         );
         let dpi = cx.current_dpi_factor();
         let bleed = surface_snap_up(bleed, dpi);
@@ -191,6 +201,10 @@ script_mod! {
         border_lo: uniform(atlas.frame_lo)
         zoom: uniform(1.0)
         stroke_scale: uniform(1.0)
+        // 1.0 = fixed screen-space linework (canvas CAD mode). Suppress the
+        // scaled mode's low-zoom stroke-alpha lift and shadow zoom floor.
+        // Default 0.0 preserves every non-canvas consumer.
+        screen_space: uniform(0.0)
         selected: uniform(0.0)
         grey: uniform(0.0)
         // Padding the CALLER added on every side so the shadow has room to fall
@@ -226,9 +240,10 @@ script_mod! {
             let alum = a.x * 0.299 + a.y * 0.587 + a.z * 0.114
             let accent = mix(a, vec3(alum, alum, alum), self.grey)
 
-            // Outside layers use raw zoom, never stroke_scale. Linework stays
-            // screen-space while material remains attached to the surface.
-            let z = max(0.35, self.zoom)
+            // Outside layers use raw zoom, never stroke_scale. Scaled mode
+            // retains the shadow floor; CAD drops it to avoid over-inking
+            // cards whose geometry continues shrinking below that floor.
+            let z = mix(max(0.35, self.zoom), self.zoom, self.screen_space)
             let dy = mix(self.depth_y, 8.0, self.selected)
             let dblur = mix(self.depth_blur, 22.0, self.selected)
             let da = mix(self.depth_a, 0.14, self.selected)
@@ -269,7 +284,8 @@ script_mod! {
             sdf.fill_keep(mix(ghost, self.color, frost))
             let t = clamp((ux * dir.x + uy * dir.y) / span, 0.0, 1.0)
             let col = mix(self.border_hi, self.border_lo, t)
-            let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
+            // The low-zoom alpha lift compensates only scaled-mode hairlines.
+            let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85) * (1.0 - self.screen_space)
             let scol = mix(col.rgb, accent, self.grey)
             sdf.stroke(vec4(scol, mix(col.a, 1.0, k)), sw)
             return sdf.result
@@ -372,6 +388,14 @@ mod tests {
     }
 
     #[test]
+    fn screen_space_material_drops_the_low_zoom_floor() {
+        approx(surface_material_zoom(0.1, 0.0), 0.35);
+        approx(surface_material_zoom(0.1, 1.0), 0.1);
+        approx(surface_material_zoom(2.0, 0.0), 2.0);
+        approx(surface_material_zoom(2.0, 1.0), 2.0);
+    }
+
+    #[test]
     fn shader_constants_match_the_padding_contract() {
         let src = include_str!("frame.rs");
         let frame = src
@@ -389,6 +413,13 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
+        assert!(frame.contains("screen_space: uniform(0.0)"));
+        assert!(code.contains(
+            "let z = mix(max(0.35, self.zoom), self.zoom, self.screen_space)"
+        ));
+        assert!(code.contains(
+            "let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85) * (1.0 - self.screen_space)"
+        ));
         assert!(code.contains(&format!("let glow = {SURFACE_GLOW:.1}")));
         assert!(code.contains(&format!(
             "let bpx = mix({SURFACE_BLOOM_PX:.1} * glow, {SURFACE_SEL_BLOOM_PX:.1}, self.selected)"

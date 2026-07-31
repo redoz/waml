@@ -47,6 +47,11 @@ pub(super) fn draw_nodes(
         live_id!(stroke_scale),
         &[snapshot.linework.frame_stroke_scale],
     );
+    draws.node.set_uniform(
+        cx,
+        live_id!(screen_space),
+        &[snapshot.linework.frame_screen_space],
+    );
 
     let focus_keys: HashSet<String> = relations_for_visibility(
         &snapshot.scene.relations,

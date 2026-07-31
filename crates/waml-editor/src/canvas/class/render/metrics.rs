@@ -11,6 +11,9 @@ pub(in super::super) const DEFAULT_LINEWORK_MODE: LineworkMode = LineworkMode::C
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in super::super) struct LineworkMetrics {
     pub(super) frame_stroke_scale: f32,
+    /// 1.0 when the frame must drop its remaining zoom-driven compensations.
+    /// CAD draws the same linework at every zoom; those belong to scaled mode.
+    pub(super) frame_screen_space: f32,
     pub(super) group_stroke_width: f32,
     pub(super) group_dash_period: f32,
     pub(super) divider_thickness: f64,
@@ -25,6 +28,7 @@ impl LineworkMetrics {
         match mode {
             LineworkMode::Cad => Self {
                 frame_stroke_scale: (1.0 / zoom) as f32,
+                frame_screen_space: 1.0,
                 group_stroke_width: 1.0,
                 group_dash_period: 6.0,
                 divider_thickness: 1.0,
@@ -34,6 +38,7 @@ impl LineworkMetrics {
             },
             LineworkMode::Scaled => Self {
                 frame_stroke_scale: 1.0,
+                frame_screen_space: 0.0,
                 group_stroke_width: 1.0,
                 group_dash_period: (6.0 * zoom).clamp(3.0, 18.0) as f32,
                 divider_thickness: zoom.max(1.0),
@@ -61,6 +66,7 @@ mod tests {
             let metrics = LineworkMetrics::for_zoom(LineworkMode::Cad, zoom);
 
             assert!(((metrics.frame_stroke_scale as f64 * zoom) - 1.0).abs() <= 1e-6);
+            assert_eq!(metrics.frame_screen_space, 1.0);
             assert_eq!(metrics.group_stroke_width, 1.0);
             assert_eq!(metrics.group_dash_period, 6.0);
             assert_eq!(metrics.divider_thickness, 1.0);
@@ -123,10 +129,17 @@ mod tests {
 
     #[test]
     fn modes_match_at_baseline_zoom() {
+        let cad = LineworkMetrics::for_zoom(LineworkMode::Cad, 1.0);
+        let scaled = LineworkMetrics::for_zoom(LineworkMode::Scaled, 1.0);
         assert_eq!(
-            LineworkMetrics::for_zoom(LineworkMode::Cad, 1.0),
-            LineworkMetrics::for_zoom(LineworkMode::Scaled, 1.0)
+            LineworkMetrics {
+                frame_screen_space: scaled.frame_screen_space,
+                ..cad
+            },
+            scaled
         );
+        assert_eq!(cad.frame_screen_space, 1.0);
+        assert_eq!(scaled.frame_screen_space, 0.0);
     }
 
     #[test]
