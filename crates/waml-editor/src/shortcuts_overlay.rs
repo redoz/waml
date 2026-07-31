@@ -143,10 +143,7 @@ impl ShortcutsOverlay {
                 .draw_abs(cx, dvec2(origin.x + KEY_COL_W, y), desc);
             y += ROW_H;
         }
-        let macos = matches!(
-            cx.os_type(),
-            makepad_widgets::makepad_platform::OsType::Macos
-        );
+        let macos = matches!(cx.os_type(), makepad_platform::OsType::Macos);
         for (key, desc) in history_bindings(macos) {
             self.draw_key.draw_abs(cx, dvec2(origin.x, y), key);
             self.draw_desc

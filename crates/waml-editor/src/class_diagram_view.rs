@@ -742,16 +742,14 @@ impl DocView for ClassDiagramView {
                 let strip_md = |s: &str| s.strip_suffix(".md").unwrap_or(s).to_string();
                 let label = format!("Place {}", p.subject_title);
                 out.edit = Some(crate::document::EditIntent {
-                    edit: waml::edit::PendingEdit::new(waml::uml::Batch(vec![
-                        waml::uml::Op::PlacementSet {
-                            diagram: strip_md(&self.key),
-                            subject_title: p.subject_title,
-                            subject_slug: strip_md(&p.subject_key),
-                            reference_title: p.reference_title,
-                            reference_slug: strip_md(&p.reference_key),
-                            directions: p.directions,
-                        },
-                    ])),
+                    edit: waml::edit::PendingEdit::new(waml::uml::Batch(vec![Op::PlacementSet {
+                        diagram: strip_md(&self.key),
+                        subject_title: p.subject_title,
+                        subject_slug: strip_md(&p.subject_key),
+                        reference_title: p.reference_title,
+                        reference_slug: strip_md(&p.reference_key),
+                        directions: p.directions,
+                    }])),
                     label,
                     merge_key: None,
                     after_location: None,
@@ -800,6 +798,42 @@ impl DocView for ClassDiagramView {
         }
     }
 
+    fn chrome(&self) -> BodyChrome {
+        if self.mode.properties_visible() {
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+                canvas_overlays: false,
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: None,
+                },
+            }
+        } else {
+            BodyChrome {
+                tool_dock: true,
+                view_bar: true,
+                canvas_overlays: true,
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: Some(Icon::SlidersHorizontal),
+                },
+            }
+        }
+    }
+
+    fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        self.show_mode(cx, body);
+    }
+
+    fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        self.return_to_canvas(cx, body);
+    }
+
+    fn on_escape(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        self.return_to_canvas(cx, body);
+    }
+
     fn capture_anchor(&self, body: &BodyWidgets) -> ViewAnchor {
         let Some(canvas) = body
             .canvas_ref()
@@ -843,42 +877,6 @@ impl DocView for ClassDiagramView {
         );
         true
     }
-
-    fn chrome(&self) -> BodyChrome {
-        if self.mode.properties_visible() {
-            BodyChrome {
-                tool_dock: false,
-                view_bar: false,
-                canvas_overlays: false,
-                document_header: DocumentHeaderChrome {
-                    breadcrumb: true,
-                    right_dock: None,
-                },
-            }
-        } else {
-            BodyChrome {
-                tool_dock: true,
-                view_bar: true,
-                canvas_overlays: true,
-                document_header: DocumentHeaderChrome {
-                    breadcrumb: true,
-                    right_dock: Some(Icon::SlidersHorizontal),
-                },
-            }
-        }
-    }
-
-    fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
-        self.show_mode(cx, body);
-    }
-
-    fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
-        self.return_to_canvas(cx, body);
-    }
-
-    fn on_escape(&mut self, cx: &mut Cx, body: &BodyWidgets) {
-        self.return_to_canvas(cx, body);
-    }
 }
 
 #[cfg(test)]
@@ -913,6 +911,12 @@ mod tests {
             self.uid
         }
 
+        fn children(&self, visit: &mut dyn FnMut(LiveId, WidgetRef)) {
+            for (id, child) in &self.children {
+                visit(*id, child.clone());
+            }
+        }
+
         fn walk(&mut self, _cx: &mut Cx) -> Walk {
             Walk::default()
         }
@@ -922,12 +926,6 @@ mod tests {
         }
 
         fn redraw(&mut self, _cx: &mut Cx) {}
-
-        fn children(&self, visit: &mut dyn FnMut(LiveId, WidgetRef)) {
-            for (id, child) in &self.children {
-                visit(*id, child.clone());
-            }
-        }
     }
 
     impl Widget for TestBody {}
@@ -1123,7 +1121,7 @@ mod tests {
 
         assert_eq!(
             view.chrome(),
-            crate::doc_view::BodyChrome {
+            BodyChrome {
                 tool_dock: true,
                 view_bar: true,
                 canvas_overlays: true,

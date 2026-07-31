@@ -816,9 +816,9 @@ pub fn reparse_okf_markdown_with_structure(
         .diagnostics()
         .iter()
         .filter_map(|diagnostic| {
-            ((diagnostic.range.end() <= window.range.start()
+            (diagnostic.range.end() <= window.range.start()
                 || diagnostic.range.start() >= window.range.end())
-            .then(|| map.translate_unchanged(diagnostic.range))?)
+            .then(|| map.translate_unchanged(diagnostic.range))?
             .map(|range| TreeDiagnostic {
                 code: diagnostic.code,
                 severity: diagnostic.severity,

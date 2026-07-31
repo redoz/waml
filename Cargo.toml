@@ -10,8 +10,8 @@ license = "MPL-2.0"
 
 [workspace.dependencies]
 regex = "1"
-pulldown-cmark = { version = "0.12", default-features = false }
-miniz_oxide = "0.8"
+pulldown-cmark = { version = "0.13.4", default-features = false }
+miniz_oxide = "0.9.1"
 ttf-parser = "0.25"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

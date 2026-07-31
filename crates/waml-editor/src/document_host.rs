@@ -293,7 +293,7 @@ impl DocumentHost {
         ui: &WidgetRef,
         session: &EditorSession,
         change: SessionChange,
-        prepared: Vec<Option<crate::document::OpenDocument>>,
+        prepared: Vec<Option<OpenDocument>>,
     ) {
         let reconciliation = if change.okf_changed || change.uml_changed {
             self.reconcile_documents(prepared)
@@ -322,7 +322,7 @@ impl DocumentHost {
 
     fn reconcile_documents(
         &mut self,
-        prepared_documents: Vec<Option<crate::document::OpenDocument>>,
+        prepared_documents: Vec<Option<OpenDocument>>,
     ) -> ActiveReconciliation {
         let mut reconciliation = ActiveReconciliation::Retained;
         for (index, prepared) in prepared_documents.into_iter().enumerate() {

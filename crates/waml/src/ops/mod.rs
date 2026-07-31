@@ -253,7 +253,7 @@ mod tests {
     use crate::uml::lower::slug_of;
 
     fn projection(bundle: &Bundle) -> crate::uml::Projection {
-        let source = crate::source::SourceBundle::try_from_pairs(bundle.iter().cloned()).unwrap();
+        let source = SourceBundle::try_from_pairs(bundle.iter().cloned()).unwrap();
         crate::analysis::prepare_candidate(source, None, 0)
             .unwrap()
             .uml()
@@ -383,7 +383,7 @@ mod tests {
                 name: "id".into(),
                 ty_token: Some("String".into()),
                 multiplicity: FieldEdit::Set(Multiplicity::parse("0..1").unwrap()),
-                visibility: Some(crate::model::Visibility::Private),
+                visibility: Some(Visibility::Private),
                 rename: None,
             }],
         )
@@ -396,7 +396,7 @@ mod tests {
             .flat_map(|node| &node.attributes)
             .find(|a| a.name == "id")
             .expect("id attribute present");
-        assert_eq!(id.visibility, Some(crate::model::Visibility::Private));
+        assert_eq!(id.visibility, Some(Visibility::Private));
     }
 
     #[test]

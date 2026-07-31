@@ -403,7 +403,7 @@ mod tests {
     }
 
     fn unique_token_content_range<L: waml_syntax::SyntaxLanguage>(
-        tree: &waml_syntax::SyntaxTree<L>,
+        tree: &SyntaxTree<L>,
         spelling: &str,
     ) -> waml_syntax::TextRange {
         fn visit<L: waml_syntax::SyntaxLanguage>(
@@ -667,7 +667,7 @@ mod tests {
         }
     }
 
-    fn request(edit: waml::edit::PendingEdit, label: &str) -> EditRequest {
+    fn request(edit: PendingEdit, label: &str) -> EditRequest {
         EditRequest {
             before_location: location(1.0),
             intent: EditIntent {
@@ -692,7 +692,7 @@ mod tests {
             session.uml_analysis().syntax.catalog().session_revision(),
             1
         );
-        assert!(std::sync::Arc::ptr_eq(
+        assert!(Arc::ptr_eq(
             &session.okf_analysis().catalog,
             session.uml_analysis().syntax.catalog(),
         ));
@@ -700,7 +700,7 @@ mod tests {
         assert_eq!(session.uml_analysis().projection, *session.uml_projection());
         assert_eq!(session.source(), &bundle);
         assert_eq!(session.persisted_bundle(), &bundle);
-        let path = waml::source::BundlePath::parse("dia.md").unwrap();
+        let path = BundlePath::parse("dia.md").unwrap();
         let document_id = session.okf_analysis().catalog.id_for_path(&path).unwrap();
         let catalog_document = session
             .okf_analysis()
@@ -828,10 +828,10 @@ mod tests {
     #[test]
     fn every_preparation_failure_preserves_the_complete_committed_snapshot() {
         for stage in [
-            waml::analysis::AnalysisStage::Shell,
-            waml::analysis::AnalysisStage::Okf,
-            waml::analysis::AnalysisStage::Specialization("uml"),
-            waml::analysis::AnalysisStage::Claims,
+            AnalysisStage::Shell,
+            AnalysisStage::Okf,
+            AnalysisStage::Specialization("uml"),
+            AnalysisStage::Claims,
         ] {
             let bundle = source(vec![(
                 "a.md".into(),
@@ -850,7 +850,7 @@ mod tests {
             let document_id = session
                 .okf_analysis()
                 .catalog
-                .id_for_path(&waml::source::BundlePath::parse("a.md").unwrap())
+                .id_for_path(&BundlePath::parse("a.md").unwrap())
                 .unwrap();
             let before_document = session
                 .okf_analysis()
@@ -952,7 +952,7 @@ mod tests {
                 session
                     .okf_analysis()
                     .catalog
-                    .id_for_path(&waml::source::BundlePath::parse("a.md").unwrap()),
+                    .id_for_path(&BundlePath::parse("a.md").unwrap()),
                 Some(document_id)
             );
         }
@@ -1076,7 +1076,7 @@ mod tests {
         )]);
         let mut session = EditorSession::default();
         session.replace(bundle).unwrap();
-        let path = waml::source::BundlePath::parse("class.md").unwrap();
+        let path = BundlePath::parse("class.md").unwrap();
         let action = CodeAction {
             title: "Validated no-op".into(),
             basis: ActionBasis::Bundle {
@@ -1127,7 +1127,7 @@ mod tests {
                 "---\r\ntype: uml.Class\r\n---\r\n# Café 😀\r\n\r\n## Attributes\r\n- quantité: Number [oops 42]\r\n".into(),
             )]))
             .unwrap();
-        let path = waml::source::BundlePath::parse("class.md").unwrap();
+        let path = BundlePath::parse("class.md").unwrap();
         let document = session.okf_analysis().catalog.id_for_path(&path).unwrap();
         let action = waml::uml::repair_actions(
             waml::uml::ActionContext::new(
@@ -1530,7 +1530,7 @@ mod tests {
 
         session
             .apply_edit(request(
-                waml::edit::PendingEdit::new(waml::uml::Batch(vec![place_set()])),
+                PendingEdit::new(waml::uml::Batch(vec![place_set()])),
                 "Place Order",
             ))
             .unwrap();
@@ -1562,7 +1562,7 @@ mod tests {
         let typed = |title: &str, label: &str, span: std::ops::Range<usize>| EditRequest {
             before_location: location(1.0),
             intent: EditIntent {
-                edit: waml::edit::PendingEdit::new(waml::uml::Batch(vec![Op::DiagramSet {
+                edit: PendingEdit::new(waml::uml::Batch(vec![Op::DiagramSet {
                     key: "dia".into(),
                     title: Some(title.into()),
                     description: None,
@@ -1605,7 +1605,7 @@ mod tests {
         let revision = session.revision();
 
         let result = session.apply_edit(request(
-            waml::edit::PendingEdit::new(waml::uml::Batch(vec![Op::AttributeRemove {
+            PendingEdit::new(waml::uml::Batch(vec![Op::AttributeRemove {
                 node: "missing".into(),
                 name: "missing".into(),
             }])),
@@ -1626,7 +1626,7 @@ mod tests {
         session.replace(bundle).unwrap();
         session
             .apply_edit(request(
-                waml::edit::PendingEdit::new(waml::uml::Batch(vec![Op::DiagramSet {
+                PendingEdit::new(waml::uml::Batch(vec![Op::DiagramSet {
                     key: "dia".into(),
                     title: Some("Changed".into()),
                     description: None,
@@ -1647,8 +1647,7 @@ mod tests {
         assert_eq!(session.revision(), failed_undo_revision);
 
         session.source = applied_source.clone();
-        let prepared =
-            waml::analysis::prepare_candidate(applied_source, None, session.revision()).unwrap();
+        let prepared = prepare_candidate(applied_source, None, session.revision()).unwrap();
         let (source, okf_analysis, uml, _) = prepared.into_parts();
         session.source = source;
         session.okf_analysis = okf_analysis;
@@ -1680,7 +1679,7 @@ mod tests {
         let clean_state = session.history_state();
         session
             .apply_edit(request(
-                waml::edit::PendingEdit::new(waml::uml::Batch(vec![place_set()])),
+                PendingEdit::new(waml::uml::Batch(vec![place_set()])),
                 "Place Order",
             ))
             .unwrap();
@@ -1705,7 +1704,7 @@ mod tests {
         session.replace(bundle).unwrap();
         session
             .apply_edit(request(
-                waml::edit::PendingEdit::new(waml::uml::Batch(vec![place_set()])),
+                PendingEdit::new(waml::uml::Batch(vec![place_set()])),
                 "Place Order",
             ))
             .unwrap();

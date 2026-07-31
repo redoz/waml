@@ -86,6 +86,28 @@ const PAD: f64 = 28.0;
 const COL_W: f64 = 380.0;
 
 impl Widget for IconGrid {
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        match event {
+            Event::KeyDown(ke) if ke.key_code == KeyCode::Space => {
+                self.dark = !self.dark;
+                self.draw_bg.color = if self.dark {
+                    vec4(0.055, 0.078, 0.11, 1.0)
+                } else {
+                    vec4(1.0, 1.0, 1.0, 1.0)
+                };
+                self.draw_bg.redraw(cx);
+            }
+            Event::Scroll(e) => {
+                let prev = self.scroll_y;
+                self.scroll_y = (self.scroll_y + e.scroll.y).clamp(0.0, self.max_scroll);
+                if self.scroll_y != prev {
+                    self.draw_bg.redraw(cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
@@ -141,28 +163,6 @@ impl Widget for IconGrid {
                 .draw_abs(cx, dvec2(col_x, (row_top + ZOOM + 6.0).round()), name);
         }
         DrawStep::done()
-    }
-
-    fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
-        match event {
-            Event::KeyDown(ke) if ke.key_code == KeyCode::Space => {
-                self.dark = !self.dark;
-                self.draw_bg.color = if self.dark {
-                    vec4(0.055, 0.078, 0.11, 1.0)
-                } else {
-                    vec4(1.0, 1.0, 1.0, 1.0)
-                };
-                self.draw_bg.redraw(cx);
-            }
-            Event::Scroll(e) => {
-                let prev = self.scroll_y;
-                self.scroll_y = (self.scroll_y + e.scroll.y).clamp(0.0, self.max_scroll);
-                if self.scroll_y != prev {
-                    self.draw_bg.redraw(cx);
-                }
-            }
-            _ => {}
-        }
     }
 }
 

@@ -52,8 +52,8 @@ pub(crate) fn boot_test_vm() -> ScriptVm<'static> {
          handle type via crate::script::script_mod) for boot_test_vm to reuse",
     );
     let cx: &'static mut Cx = Box::leak(Box::new(cx));
-    let std: &'static mut makepad_widgets::script::std::ScriptStd =
-        Box::leak(Box::new(makepad_widgets::script::std::ScriptStd::new()));
+    let std: &'static mut script::std::ScriptStd =
+        Box::leak(Box::new(script::std::ScriptStd::new()));
     let mut vm = ScriptVm { host: cx, std, bx };
     // Full widget prelude — supplies `mod.prelude.widgets_internal` and
     // `mod.text` that `fonts::script_mod`'s `use` clauses require. Same

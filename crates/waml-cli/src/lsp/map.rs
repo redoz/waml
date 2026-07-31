@@ -59,7 +59,7 @@ pub fn to_lsp_diagnostic(d: &Diagnostic, document: &DocumentVersion) -> lsp::Dia
         })
     });
     let range = range.unwrap_or_else(|| {
-        let line = (d.line.saturating_sub(1)) as u32;
+        let line = d.line.saturating_sub(1) as u32;
         let line_text = document
             .text()
             .shared()

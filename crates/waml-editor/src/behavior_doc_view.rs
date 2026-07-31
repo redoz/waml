@@ -230,7 +230,7 @@ fn build_interaction_scene(
         .nodes
         .iter()
         .filter_map(|n| match n {
-            waml::model::SeqNode::Lifeline {
+            SeqNode::Lifeline {
                 id, title, ref_, ..
             } => Some((id.as_str(), (title.as_str(), ref_.as_deref()))),
             _ => None,
@@ -958,15 +958,21 @@ mod tests {
         children: Vec<(LiveId, WidgetRef)>,
     }
 
-    impl makepad_widgets::ScriptApply for TestBody {}
+    impl ScriptApply for TestBody {}
 
     impl WidgetNode for TestBody {
         fn widget_uid(&self) -> WidgetUid {
             self.uid
         }
 
-        fn walk(&mut self, _cx: &mut Cx) -> makepad_widgets::Walk {
-            makepad_widgets::Walk::default()
+        fn children(&self, visit: &mut dyn FnMut(LiveId, WidgetRef)) {
+            for (id, child) in &self.children {
+                visit(*id, child.clone());
+            }
+        }
+
+        fn walk(&mut self, _cx: &mut Cx) -> Walk {
+            Walk::default()
         }
 
         fn area(&self) -> Area {
@@ -974,17 +980,11 @@ mod tests {
         }
 
         fn redraw(&mut self, _cx: &mut Cx) {}
-
-        fn children(&self, visit: &mut dyn FnMut(LiveId, WidgetRef)) {
-            for (id, child) in &self.children {
-                visit(*id, child.clone());
-            }
-        }
     }
 
     impl makepad_widgets::Widget for TestBody {}
 
-    fn test_body(vm: &mut makepad_widgets::ScriptVm) -> WidgetRef {
+    fn test_body(vm: &mut ScriptVm) -> WidgetRef {
         use makepad_widgets::ScriptNew;
         WidgetRef::new_with_inner(Box::new(TestBody {
             uid: WidgetUid::new(),

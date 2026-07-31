@@ -271,7 +271,7 @@ pub(crate) fn apply_step(
         super::Op::ClassifierNew {
             slug, directory, ..
         } => {
-            let directory = crate::okf::ops::legacy_path(directory);
+            let directory = okf::ops::legacy_path(directory);
             let inserted_path = BundlePath::parse(if directory.is_empty() {
                 format!("{slug}.md")
             } else {
@@ -1215,7 +1215,7 @@ pub(crate) fn op_rel_set(
             ));
         }
         let from_syntax = syntax
-            .from_end()
+            .source_end()
             .ok_or_else(|| EditError::at("rel.set", "relationship has no source end"))?;
         let to_syntax = syntax
             .to_end()

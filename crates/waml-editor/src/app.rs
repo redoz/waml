@@ -934,11 +934,11 @@ impl App {
                 self.nav_state.filter = None;
                 let (_, inspector) = self.dock_states(cx);
                 let inspector = if self.narrow {
-                    crate::dock::narrow_entry_states(crate::dock::DockState::Pinned, inspector).1
+                    crate::dock::narrow_entry_states(DockState::Pinned, inspector).1
                 } else {
                     inspector
                 };
-                self.apply_dock_states(cx, crate::dock::DockState::Pinned, inspector);
+                self.apply_dock_states(cx, DockState::Pinned, inspector);
                 self.refresh_nav(cx, true);
                 self.set_navigation_message(cx, None);
                 true
@@ -1352,35 +1352,30 @@ impl App {
         }
     }
 
-    fn dock_states(&mut self, cx: &mut Cx) -> (crate::dock::DockState, crate::dock::DockState) {
+    fn dock_states(&mut self, cx: &mut Cx) -> (DockState, DockState) {
         let tree = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow::<crate::tree_panel::ProjectTree>()
             .map(|panel| panel.dock_state())
-            .unwrap_or(crate::dock::DockState::Flag);
+            .unwrap_or(DockState::Flag);
         let inspector = self
             .ui
             .widget(cx, ids!(inspector))
             .borrow::<crate::inspector_panel::Inspector>()
             .map(|panel| panel.dock_state())
-            .unwrap_or(crate::dock::DockState::Flag);
+            .unwrap_or(DockState::Flag);
         (tree, inspector)
     }
 
-    fn apply_dock_states(
-        &mut self,
-        cx: &mut Cx,
-        tree: crate::dock::DockState,
-        inspector: crate::dock::DockState,
-    ) {
+    fn apply_dock_states(&mut self, cx: &mut Cx, tree: DockState, inspector: DockState) {
         if let Some(mut panel) = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
             if panel.dock_state() != tree {
-                if tree == crate::dock::DockState::Pinned {
+                if tree == DockState::Pinned {
                     panel.open_dock(cx);
                 } else {
                     panel.close_dock(cx);
@@ -1393,7 +1388,7 @@ impl App {
             .borrow_mut::<crate::inspector_panel::Inspector>()
         {
             if panel.dock_state() != inspector {
-                if inspector == crate::dock::DockState::Pinned {
+                if inspector == DockState::Pinned {
                     panel.open_dock(cx);
                 } else {
                     panel.close_dock(cx);
@@ -1516,13 +1511,13 @@ impl App {
         self.ui
             .widget(cx, ids!(tree_btn))
             .as_icon_button()
-            .set_active(cx, tree_state == crate::dock::DockState::Pinned);
+            .set_active(cx, tree_state == DockState::Pinned);
         let header_height = self
             .ui
             .widget(cx, ids!(document_header))
             .borrow_mut::<crate::document_header::DocumentHeader>()
             .map(|mut header| {
-                header.set_right_dock_active(cx, inspector_state == crate::dock::DockState::Pinned);
+                header.set_right_dock_active(cx, inspector_state == DockState::Pinned);
                 header.visible_height()
             })
             .unwrap_or(0.0);
@@ -2057,7 +2052,7 @@ impl App {
             {
                 tabs.set_narrow(cx, self.narrow);
             }
-            self.dock_layout = crate::dock::ResponsiveDockLayout::default();
+            self.dock_layout = ResponsiveDockLayout::default();
             self.tree_gap_w = -1.0;
             self.rule_overshoot = -1.0;
             self.sync_dock_slots(cx);
@@ -2081,7 +2076,7 @@ impl App {
         {
             tabs.set_narrow(cx, self.narrow);
         }
-        self.dock_layout = crate::dock::ResponsiveDockLayout::default();
+        self.dock_layout = ResponsiveDockLayout::default();
         self.tree_gap_w = -1.0;
         self.rule_overshoot = -1.0;
         self.sync_dock_slots(cx);
@@ -2648,10 +2643,7 @@ impl AppMain for App {
         // editor has focus. Returning here keeps focused widgets from also
         // applying a competing local undo/redo when a stack is empty.
         if let Event::KeyDown(ke) = event {
-            let macos = matches!(
-                cx.os_type(),
-                makepad_widgets::makepad_platform::OsType::Macos
-            );
+            let macos = matches!(cx.os_type(), OsType::Macos);
             if let Some(command) =
                 crate::shortcuts::history_command_for(ke.key_code, ke.modifiers, macos)
             {
@@ -4462,12 +4454,7 @@ mod tests {
                 DocViewIdentity::ClassDiagram
             }
 
-            fn sync(
-                &mut self,
-                cx: &mut Cx,
-                body: &BodyWidgets,
-                _data: crate::doc_view::ViewData<'_>,
-            ) {
+            fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {
                 body.show_canvas(cx);
             }
 
@@ -4476,7 +4463,7 @@ mod tests {
                 _cx: &mut Cx,
                 _body: &BodyWidgets,
                 _actions: &Actions,
-                _data: crate::doc_view::ViewData<'_>,
+                _data: ViewData<'_>,
             ) -> crate::doc_view::ViewOutcome {
                 crate::doc_view::ViewOutcome::default()
             }
@@ -4497,7 +4484,7 @@ mod tests {
             &app.ui,
             &app.session,
             DocumentCommand::Open {
-                document: crate::document::OpenDocument {
+                document: OpenDocument {
                     tab_id,
                     concept_id: "diagram".into(),
                     kind: crate::view_history::DocumentKind::Primary,
@@ -4505,7 +4492,7 @@ mod tests {
                     presentation: DocumentPresentation {
                         icon: Icon::Workflow,
                         accent: None,
-                        category: crate::document::NavCategory::Diagram,
+                        category: NavCategory::Diagram,
                     },
                     view: Box::new(NonMarkdownView),
                 },

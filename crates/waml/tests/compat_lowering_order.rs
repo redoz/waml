@@ -13,7 +13,7 @@ fn directory(value: &str) -> DirectoryAddress {
 }
 
 fn lower(source: &SourceBundle, steps: Vec<Step>) -> Result<SourceBundle, waml::edit::EditError> {
-    let okf = waml::analysis::analyze_okf(source, None, 19).unwrap();
+    let okf = waml::analysis::analyze_okf(source, None, 19)?;
     let uml = uml::analyze(
         waml::analysis::DomainAnalysisContext {
             source,
@@ -24,8 +24,7 @@ fn lower(source: &SourceBundle, steps: Vec<Step>) -> Result<SourceBundle, waml::
             session_revision: 19,
         },
         None,
-    )
-    .unwrap();
+    )?;
     Batch::new(steps).lower(EditContext {
         source,
         okf_analysis: &okf,

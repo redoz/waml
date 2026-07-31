@@ -791,7 +791,7 @@ mod tests {
             .iter_mut()
             .find(|d| d.key == "orders-diagram")
             .expect("mini has the orders-diagram");
-        diagram.groups.push(waml::model::DiagramGroup {
+        diagram.groups.push(DiagramGroup {
             name: "Sales".to_string(),
             members: vec![order, customer],
             children: Vec::new(),

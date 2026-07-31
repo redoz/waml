@@ -6,7 +6,7 @@ use waml::{
 };
 
 fn lower(source: &SourceBundle, ops: Vec<okf::Op>) -> Result<SourceBundle, waml::edit::EditError> {
-    let okf = analyze_okf(source, None, 7).unwrap();
+    let okf = analyze_okf(source, None, 7)?;
     let uml = waml::uml::analyze(
         DomainAnalysisContext {
             source,
@@ -17,8 +17,7 @@ fn lower(source: &SourceBundle, ops: Vec<okf::Op>) -> Result<SourceBundle, waml:
             session_revision: 7,
         },
         None,
-    )
-    .unwrap();
+    )?;
     okf::Batch(ops).lower(EditContext {
         source,
         okf_analysis: &okf,

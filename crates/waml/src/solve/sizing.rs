@@ -194,7 +194,7 @@ mod tests {
         assert!((five - 5.0 * one).abs() < 1e-6);
         // Sans is proportional: "i" and "W" differ, so the same string measures
         // differently under Sans than under Mono.
-        assert!(text_width("iWiWi", 12.0, Font::Sans) != five);
+        assert_ne!(text_width("iWiWi", 12.0, Font::Sans), five);
     }
 
     #[test]

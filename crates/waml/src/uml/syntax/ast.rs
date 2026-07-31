@@ -983,7 +983,7 @@ impl RelationshipSyntax {
             .find(|e| e.kind() == UmlSyntaxKind::ColonToken)
             .and_then(SyntaxElement::into_token)
     }
-    pub fn from_end(&self) -> Option<RelationshipEndSyntax> {
+    pub fn source_end(&self) -> Option<RelationshipEndSyntax> {
         self.0
             .children()
             .filter(|e| e.kind() == UmlSyntaxKind::RelationshipEnd)

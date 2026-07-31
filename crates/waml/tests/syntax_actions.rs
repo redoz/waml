@@ -403,12 +403,12 @@ fn lowering_rejects_mismatched_source_catalog_and_analysis_revision() {
 
 #[test]
 fn action_and_analysis_errors_convert_to_sealed_edit_errors() {
-    let analyses_error = waml::analysis::analyze_okf(&source(), None, u64::MAX)
-        .err()
-        .unwrap_or(waml::analysis::AnalysisError::StructuralInvariant {
+    let analyses_error = analyze_okf(&source(), None, u64::MAX).err().unwrap_or(
+        waml::analysis::AnalysisError::StructuralInvariant {
             stage: waml::analysis::AnalysisStage::Shell,
             reason: "sentinel".into(),
-        });
+        },
+    );
     let edit_error = waml::edit::EditError::from(analyses_error);
     assert_eq!(edit_error.index, 0);
     assert_eq!(edit_error.op, "analysis.prepare");

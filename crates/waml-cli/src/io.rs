@@ -619,14 +619,14 @@ mod tests {
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-            std::fs::create_dir_all(&path).unwrap();
+            fs::create_dir_all(&path).unwrap();
             Self(path)
         }
     }
 
     impl Drop for TempDir {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = fs::remove_dir_all(&self.0);
         }
     }
 
@@ -648,7 +648,7 @@ mod tests {
                     "injected rename failure at call {call}"
                 )))
             } else {
-                std::fs::rename(from, to)
+                fs::rename(from, to)
             }
         }
     }
@@ -681,8 +681,7 @@ mod tests {
             let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
             if call == 3 {
                 assert!(
-                    std::fs::metadata(&self.readonly_target)
-                        .unwrap()
+                    fs::metadata(&self.readonly_target)?
                         .permissions()
                         .readonly(),
                     "installed rollback target must be genuinely read-only"
@@ -698,7 +697,7 @@ mod tests {
                     "read-only rollback target was not displaced",
                 ));
             }
-            std::fs::rename(from, to)
+            fs::rename(from, to)
         }
     }
 
@@ -719,7 +718,7 @@ mod tests {
                     "injected rename failure at call {call}"
                 )))
             } else {
-                std::fs::rename(from, to)
+                fs::rename(from, to)
             }
         }
     }
@@ -820,9 +819,9 @@ mod tests {
     fn read_ndjson_skips_blanks_and_numbers_lines() {
         // write a temp file
         let dir = std::env::temp_dir().join(format!("waml_ndjson_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).unwrap();
         let f = dir.join("ops.ndjson");
-        std::fs::write(&f, "{\"op\":\"a\"}\n\n{\"op\":\"b\"}\n").unwrap();
+        fs::write(&f, "{\"op\":\"a\"}\n\n{\"op\":\"b\"}\n").unwrap();
         let lines = read_ndjson(f.to_str().unwrap()).unwrap();
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].0, 1);
@@ -832,7 +831,7 @@ mod tests {
     #[test]
     fn late_write_failure_restores_updates_and_removes_new_artifacts() {
         let temp = TempDir::new();
-        std::fs::write(temp.0.join("a.md"), "before").unwrap();
+        fs::write(temp.0.join("a.md"), "before").unwrap();
         let old = vec![("a.md".to_owned(), "before".to_owned())];
         let new = vec![
             ("a.md".to_owned(), "after".to_owned()),
@@ -847,10 +846,7 @@ mod tests {
             error.to_string(),
             "failed to write z/new.md: injected rename failure at call 4"
         );
-        assert_eq!(
-            std::fs::read_to_string(temp.0.join("a.md")).unwrap(),
-            "before"
-        );
+        assert_eq!(fs::read_to_string(temp.0.join("a.md")).unwrap(), "before");
         assert!(!temp.0.join("b").exists());
         assert!(!temp.0.join("z").exists());
         assert_eq!(directory_entries(&temp.0), ["a.md"]);
@@ -859,9 +855,9 @@ mod tests {
     #[test]
     fn late_delete_failure_restores_prior_write_and_delete() {
         let temp = TempDir::new();
-        std::fs::write(temp.0.join("a.md"), "before").unwrap();
-        std::fs::write(temp.0.join("m-delete.md"), "keep me").unwrap();
-        std::fs::write(temp.0.join("z-delete.md"), "keep me too").unwrap();
+        fs::write(temp.0.join("a.md"), "before").unwrap();
+        fs::write(temp.0.join("m-delete.md"), "keep me").unwrap();
+        fs::write(temp.0.join("z-delete.md"), "keep me too").unwrap();
         let old = vec![
             ("a.md".to_owned(), "before".to_owned()),
             ("m-delete.md".to_owned(), "keep me".to_owned()),
@@ -876,16 +872,13 @@ mod tests {
             error.to_string(),
             "failed to delete z-delete.md: injected rename failure at call 4"
         );
+        assert_eq!(fs::read_to_string(temp.0.join("a.md")).unwrap(), "before");
         assert_eq!(
-            std::fs::read_to_string(temp.0.join("a.md")).unwrap(),
-            "before"
-        );
-        assert_eq!(
-            std::fs::read_to_string(temp.0.join("m-delete.md")).unwrap(),
+            fs::read_to_string(temp.0.join("m-delete.md")).unwrap(),
             "keep me"
         );
         assert_eq!(
-            std::fs::read_to_string(temp.0.join("z-delete.md")).unwrap(),
+            fs::read_to_string(temp.0.join("z-delete.md")).unwrap(),
             "keep me too"
         );
         assert_eq!(
@@ -900,8 +893,8 @@ mod tests {
         let temp = TempDir::new();
         let readonly = temp.0.join("a-readonly.md");
         let unrelated = temp.0.join("unrelated.md");
-        std::fs::write(&readonly, "original readonly bytes").unwrap();
-        std::fs::write(&unrelated, "unrelated bytes").unwrap();
+        fs::write(&readonly, "original readonly bytes").unwrap();
+        fs::write(&unrelated, "unrelated bytes").unwrap();
         set_readonly(&readonly, true);
         let original_attributes = windows_file_attributes(&readonly);
         let old = vec![
@@ -929,18 +922,12 @@ mod tests {
             "rollback must displace the installed read-only target through the checked boundary"
         );
         assert_eq!(
-            std::fs::read_to_string(&readonly).unwrap(),
+            fs::read_to_string(&readonly).unwrap(),
             "original readonly bytes"
         );
         assert_eq!(windows_file_attributes(&readonly), original_attributes);
-        assert!(std::fs::metadata(&readonly)
-            .unwrap()
-            .permissions()
-            .readonly());
-        assert_eq!(
-            std::fs::read_to_string(&unrelated).unwrap(),
-            "unrelated bytes"
-        );
+        assert!(fs::metadata(&readonly).unwrap().permissions().readonly());
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "unrelated bytes");
         assert!(!temp.0.join("z-later.md").exists());
         assert_eq!(
             directory_entries(&temp.0),
@@ -955,9 +942,9 @@ mod tests {
         let readonly = temp.0.join("a-readonly.md");
         let deleted = temp.0.join("z-delete.md");
         let unrelated = temp.0.join("unrelated.md");
-        std::fs::write(&readonly, "original readonly bytes").unwrap();
-        std::fs::write(&deleted, "delete original").unwrap();
-        std::fs::write(&unrelated, "unrelated bytes").unwrap();
+        fs::write(&readonly, "original readonly bytes").unwrap();
+        fs::write(&deleted, "delete original").unwrap();
+        fs::write(&unrelated, "unrelated bytes").unwrap();
         set_readonly(&readonly, true);
         let readonly_attributes = windows_file_attributes(&readonly);
         let deleted_attributes = windows_file_attributes(&deleted);
@@ -986,23 +973,14 @@ mod tests {
             "rollback must displace the installed read-only target through the checked boundary"
         );
         assert_eq!(
-            std::fs::read_to_string(&readonly).unwrap(),
+            fs::read_to_string(&readonly).unwrap(),
             "original readonly bytes"
         );
         assert_eq!(windows_file_attributes(&readonly), readonly_attributes);
-        assert!(std::fs::metadata(&readonly)
-            .unwrap()
-            .permissions()
-            .readonly());
-        assert_eq!(
-            std::fs::read_to_string(&deleted).unwrap(),
-            "delete original"
-        );
+        assert!(fs::metadata(&readonly).unwrap().permissions().readonly());
+        assert_eq!(fs::read_to_string(&deleted).unwrap(), "delete original");
         assert_eq!(windows_file_attributes(&deleted), deleted_attributes);
-        assert_eq!(
-            std::fs::read_to_string(&unrelated).unwrap(),
-            "unrelated bytes"
-        );
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "unrelated bytes");
         assert_eq!(
             directory_entries(&temp.0),
             ["a-readonly.md", "unrelated.md", "z-delete.md"]
@@ -1014,8 +992,8 @@ mod tests {
         let temp = TempDir::new();
         let updated = temp.0.join("a.md");
         let unrelated = temp.0.join("unrelated.md");
-        std::fs::write(&updated, "original bytes").unwrap();
-        std::fs::write(&unrelated, "unrelated bytes").unwrap();
+        fs::write(&updated, "original bytes").unwrap();
+        fs::write(&unrelated, "unrelated bytes").unwrap();
         let old = vec![
             ("a.md".to_owned(), "original bytes".to_owned()),
             ("unrelated.md".to_owned(), "unrelated bytes".to_owned()),
@@ -1041,12 +1019,9 @@ mod tests {
             "failed to write z-later.md: injected rename failure at call 3; rollback failed:"
         ));
         assert!(error.to_string().contains("recovery journal retained at "));
-        assert_eq!(std::fs::read_to_string(&updated).unwrap(), "replacement");
-        assert_eq!(
-            std::fs::read_to_string(&unrelated).unwrap(),
-            "unrelated bytes"
-        );
-        let journal = std::fs::read_dir(&temp.0)
+        assert_eq!(fs::read_to_string(&updated).unwrap(), "replacement");
+        assert_eq!(fs::read_to_string(&unrelated).unwrap(), "unrelated bytes");
+        let journal = fs::read_dir(&temp.0)
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .find(|path| {
@@ -1054,7 +1029,7 @@ mod tests {
                     .is_some_and(|name| name.to_string_lossy().starts_with(".waml-cli-"))
             })
             .expect("failed rollback must retain its recovery journal");
-        let backup = std::fs::read_dir(&journal)
+        let backup = fs::read_dir(&journal)
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .find(|path| {
@@ -1062,15 +1037,15 @@ mod tests {
                     .is_some_and(|name| name.to_string_lossy().starts_with("backup-"))
             })
             .expect("recovery journal must retain the original backup");
-        assert_eq!(std::fs::read_to_string(backup).unwrap(), "original bytes");
+        assert_eq!(fs::read_to_string(backup).unwrap(), "original bytes");
     }
 
     #[test]
     fn successful_transaction_adds_updates_and_deletes_as_one_set() {
         let temp = TempDir::new();
-        std::fs::write(temp.0.join("update.md"), "before").unwrap();
-        std::fs::write(temp.0.join("delete.md"), "remove").unwrap();
-        let permissions = std::fs::metadata(temp.0.join("update.md"))
+        fs::write(temp.0.join("update.md"), "before").unwrap();
+        fs::write(temp.0.join("delete.md"), "remove").unwrap();
+        let permissions = fs::metadata(temp.0.join("update.md"))
             .unwrap()
             .permissions();
         let old = vec![
@@ -1093,15 +1068,15 @@ mod tests {
             ]
         );
         assert_eq!(
-            std::fs::read_to_string(temp.0.join("nested/add.md")).unwrap(),
+            fs::read_to_string(temp.0.join("nested/add.md")).unwrap(),
             "added"
         );
         assert_eq!(
-            std::fs::read_to_string(temp.0.join("update.md")).unwrap(),
+            fs::read_to_string(temp.0.join("update.md")).unwrap(),
             "after"
         );
         assert_eq!(
-            std::fs::metadata(temp.0.join("update.md"))
+            fs::metadata(temp.0.join("update.md"))
                 .unwrap()
                 .permissions()
                 .readonly(),
@@ -1112,7 +1087,7 @@ mod tests {
     }
 
     fn directory_entries(path: &Path) -> Vec<String> {
-        let mut entries = std::fs::read_dir(path)
+        let mut entries = fs::read_dir(path)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect::<Vec<_>>();
@@ -1123,13 +1098,13 @@ mod tests {
     #[cfg(windows)]
     fn windows_file_attributes(path: &Path) -> u32 {
         use std::os::windows::fs::MetadataExt;
-        std::fs::metadata(path).unwrap().file_attributes()
+        fs::metadata(path).unwrap().file_attributes()
     }
 
     #[cfg(windows)]
     fn set_readonly(path: &Path, readonly: bool) {
-        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        let mut permissions = fs::metadata(path).unwrap().permissions();
         permissions.set_readonly(readonly);
-        std::fs::set_permissions(path, permissions).unwrap();
+        fs::set_permissions(path, permissions).unwrap();
     }
 }

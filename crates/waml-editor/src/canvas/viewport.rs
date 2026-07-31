@@ -74,9 +74,9 @@ const MIN_PINCH_SPREAD: f64 = 8.0;
 pub(crate) enum InitialFit {
     None,
     ScenePending,
-    Scene(waml::solve::Rect),
+    Scene(Rect),
     FocusPending,
-    Focus(waml::solve::Rect),
+    Focus(Rect),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -222,7 +222,7 @@ impl ViewportController {
 
     pub(crate) fn retain_for_scene_update(
         &mut self,
-        replacement_bounds: Option<waml::solve::Rect>,
+        replacement_bounds: Option<Rect>,
     ) -> ViewportEffects {
         self.initial_fit = match (self.initial_fit, replacement_bounds) {
             (InitialFit::None, _) => InitialFit::None,
@@ -327,7 +327,7 @@ impl ViewportController {
         self.glide_to(target)
     }
 
-    pub(crate) fn fit_to_bounds(&mut self, bounds: Option<waml::solve::Rect>) -> ViewportEffects {
+    pub(crate) fn fit_to_bounds(&mut self, bounds: Option<Rect>) -> ViewportEffects {
         let Some(bounds) = bounds else {
             return ViewportEffects::unchanged();
         };
@@ -433,7 +433,7 @@ fn lerp_camera(from: Camera, to: Camera, view: DVec2, e: f64) -> Camera {
     }
 }
 
-fn fit_scene_camera(bbox: waml::solve::Rect, viewport_w: f64, viewport_h: f64) -> Camera {
+fn fit_scene_camera(bbox: Rect, viewport_w: f64, viewport_h: f64) -> Camera {
     Camera::fit(bbox, viewport_w, viewport_h, FIT_PAD)
 }
 

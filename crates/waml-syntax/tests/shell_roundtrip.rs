@@ -351,17 +351,17 @@ fn fixture_source(fixture: &Fixture) -> String {
     decoded
 }
 
-fn parse(source: &str) -> waml_syntax::ShellParse {
+fn parse(source: &str) -> ShellParse {
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
     parse_okf_markdown(text, MarkdownDialect::CommonMarkCurrent).unwrap()
 }
 
 fn leaf_tokens(
-    node: &waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
-) -> Vec<waml_syntax::SyntaxToken<waml_syntax::OkfMarkdownLanguage>> {
+    node: &SyntaxNode<OkfMarkdownLanguage>,
+) -> Vec<waml_syntax::SyntaxToken<OkfMarkdownLanguage>> {
     fn visit(
-        node: &waml_syntax::SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
-        out: &mut Vec<waml_syntax::SyntaxToken<waml_syntax::OkfMarkdownLanguage>>,
+        node: &SyntaxNode<OkfMarkdownLanguage>,
+        out: &mut Vec<waml_syntax::SyntaxToken<OkfMarkdownLanguage>>,
     ) {
         for child in node.children() {
             match child {

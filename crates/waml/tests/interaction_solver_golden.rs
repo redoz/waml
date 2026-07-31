@@ -177,8 +177,8 @@ fn self_message_occupies_two_rows() {
             },
         ],
         items: vec![
-            waml::model::SeqChild::Message { edge: "m0".into() },
-            waml::model::SeqChild::Message { edge: "m1".into() },
+            SeqChild::Message { edge: "m0".into() },
+            SeqChild::Message { edge: "m1".into() },
         ],
     };
     let cfg = InteractionConfig::default();
@@ -217,7 +217,7 @@ fn reply_without_open_call_diagnoses_but_draws() {
             to: "a".into(),
             signature: None,
         }],
-        items: vec![waml::model::SeqChild::Message { edge: "m0".into() }],
+        items: vec![SeqChild::Message { edge: "m0".into() }],
     };
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(&doc, &cfg);
@@ -248,7 +248,7 @@ fn unknown_handle_message_is_dropped_with_diagnostic() {
             to: "nowhere".into(),
             signature: None,
         }],
-        items: vec![waml::model::SeqChild::Message { edge: "m0".into() }],
+        items: vec![SeqChild::Message { edge: "m0".into() }],
     };
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(&doc, &cfg);
@@ -342,7 +342,7 @@ fn fragment_with_zero_operands_diagnoses() {
             },
         ],
         edges: vec![],
-        items: vec![waml::model::SeqChild::Fragment { node: "f0".into() }],
+        items: vec![SeqChild::Fragment { node: "f0".into() }],
     };
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(&doc, &cfg);
@@ -377,7 +377,7 @@ fn empty_operand_stream_diagnoses() {
             },
         ],
         edges: vec![],
-        items: vec![waml::model::SeqChild::Fragment { node: "f0".into() }],
+        items: vec![SeqChild::Fragment { node: "f0".into() }],
     };
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(&doc, &cfg);

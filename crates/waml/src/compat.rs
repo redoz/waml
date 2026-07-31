@@ -244,7 +244,7 @@ pub(crate) fn step_from_legacy(op: crate::ops::Op) -> Result<Step, EditError> {
 
 pub fn apply(source: &SourceBundle, batch: &Batch) -> Result<SourceBundle, EditError> {
     let okf = crate::analysis::analyze_okf(source, None, 0).map_err(EditError::from)?;
-    let uml = crate::uml::analyze(
+    let uml = uml::analyze(
         crate::analysis::DomainAnalysisContext {
             source,
             catalog: &okf.catalog,
@@ -449,7 +449,7 @@ fn claimed_id(path: &BundlePath, text: &Arc<String>) -> Option<String> {
     let crate::frontmatter::FmValue::Str(ty) = parsed.get("type")? else {
         return None;
     };
-    crate::uml::recognizes_type(&crate::model::ElementType::parse(ty))
+    uml::recognizes_type(&crate::model::ElementType::parse(ty))
         .then(|| path.concept_id().map(str::to_owned))
         .flatten()
 }

@@ -17,8 +17,8 @@ fn analyze(source: &SourceBundle) -> uml::Analysis {
     )
     .unwrap()
 }
-fn contains<T: AstNode<waml::uml::syntax::UmlLanguage>>(
-    node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+fn contains<T: AstNode<uml::syntax::UmlLanguage>>(
+    node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>,
 ) -> bool {
     T::cast(node.clone()).is_some()
         || node
@@ -28,14 +28,14 @@ fn contains<T: AstNode<waml::uml::syntax::UmlLanguage>>(
 }
 
 fn descendants(
-    node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+    node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>,
     kind: UmlSyntaxKind,
-) -> Vec<waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>> {
+) -> Vec<waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>> {
     let mut found = Vec::new();
     fn visit(
-        node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+        node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>,
         kind: UmlSyntaxKind,
-        found: &mut Vec<waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>>,
+        found: &mut Vec<waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>>,
     ) {
         if node.kind() == kind {
             found.push(node.clone());
@@ -52,12 +52,12 @@ fn descendants(
 }
 
 fn descendant_tokens(
-    node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
-) -> Vec<waml_syntax::SyntaxToken<waml::uml::syntax::UmlLanguage>> {
+    node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>,
+) -> Vec<waml_syntax::SyntaxToken<uml::syntax::UmlLanguage>> {
     let mut found = Vec::new();
     fn visit(
-        node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
-        found: &mut Vec<waml_syntax::SyntaxToken<waml::uml::syntax::UmlLanguage>>,
+        node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>,
+        found: &mut Vec<waml_syntax::SyntaxToken<uml::syntax::UmlLanguage>>,
     ) {
         for child in node.children() {
             if let Some(token) = child.clone().into_token() {
@@ -118,7 +118,7 @@ fn diagram_members_and_layout_are_lossless_and_project_valid_placement() {
         .filter_map(waml_syntax::SyntaxElement::into_node)
         .find_map(|node| {
             fn find(
-                node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+                node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>,
             ) -> Option<uml::LayoutPlacementSyntax> {
                 if let Some(placement) = uml::LayoutPlacementSyntax::cast(node.clone()) {
                     return Some(placement);

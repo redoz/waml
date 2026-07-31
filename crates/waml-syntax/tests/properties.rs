@@ -27,7 +27,7 @@ fn protected_container_nesting_source() -> impl Strategy<Value = String> {
 fn shell_source() -> impl Strategy<Value = String> {
     prop_oneof![
         any::<String>(),
-        ("(?s).{0,96}").prop_map(|body| format!("---\ntype: uml.Class\n---\n{body}")),
+        "(?s).{0,96}".prop_map(|body| format!("---\ntype: uml.Class\n---\n{body}")),
         heading_hierarchy_source(),
         quote_list_nesting_source(),
         protected_container_nesting_source(),

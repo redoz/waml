@@ -740,6 +740,109 @@ fn draw_nodes(
 }
 
 impl Widget for ProjectTree {
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        if let Some(frame) = self.reveal_next_frame.is_event(event) {
+            self.update_reveal_pulse(cx, frame.time);
+        }
+        let uid = self.widget_uid();
+        let file_tree = self.view.file_tree(cx, ids!(file_tree));
+        self.view.handle_event(cx, event, scope);
+
+        // Header hit-test: the panel is left-aligned (`hit_off ≈ 0`), but keep
+        // the translate-by-offset pattern per `makepad-aligned-parent-hit-rect-
+        // offset` -- rects captured in `draw_walk` are pre-alignment, events
+        // arrive post-alignment.
+        let panel_rect = self.view.area().rect(cx);
+        let hit_off = panel_rect.pos - self.header_rect.pos;
+
+        // No peek-hover / auto-collapse handling here: the tree is binary
+        // (`Pinned` <-> `Flag`) and only the caption bar's tree toggle moves it,
+        // so there is no self-collapsing state to time out.
+        match tree_panel_hit(event, cx, self.view.area()) {
+            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                self.pending_tap_count = fe.tap_count;
+            }
+            Hit::FingerUp(fe) if fe.is_primary_hit() => {
+                if header_release_hits(&fe, hit_off, self.search_rect) {
+                    self.editing_search = true;
+                    cx.set_key_focus(self.view.area());
+                    self.view.redraw(cx);
+                    return;
+                }
+                if header_release_hits(&fe, hit_off, self.chip_rect) {
+                    let anchor = Rect {
+                        pos: self.chip_rect.pos + hit_off,
+                        size: self.chip_rect.size,
+                    };
+                    cx.widget_action(uid, ProjectTreeAction::FilterRequest { anchor });
+                    return;
+                }
+            }
+            Hit::KeyFocusLost(_) => {
+                if self.editing_search {
+                    self.editing_search = false;
+                    self.view.redraw(cx);
+                }
+            }
+            Hit::KeyDown(ke) if self.editing_search => match ke.key_code {
+                KeyCode::Backspace => {
+                    self.query_text.pop();
+                    self.emit_query(cx, uid);
+                }
+                KeyCode::Escape => {
+                    self.editing_search = false;
+                    self.view.redraw(cx);
+                }
+                _ => {}
+            },
+            Hit::TextInput(ti) if self.editing_search => {
+                for ch in ti.input.chars() {
+                    if !ch.is_control() {
+                        self.query_text.push(ch);
+                    }
+                }
+                self.emit_query(cx, uid);
+            }
+            _ => {}
+        }
+
+        if let Event::Actions(actions) = event {
+            // The panel owns no `IconButton` children any more -- collapse and
+            // expand both arrive from the caption bar's tree toggle -- so the
+            // only actions read here are the `FileTree`'s row clicks.
+            if let Some(id) = file_tree
+                .file_clicked(actions)
+                .or_else(|| file_tree.folder_clicked(actions))
+            {
+                let tap_count = std::mem::take(&mut self.pending_tap_count);
+                if let Some(key) = self.id_to_key.get(&id) {
+                    if let Some(intent) = row_navigation(
+                        key,
+                        self.id_to_concept.get(&id).map(String::as_str),
+                        self.directory_addresses.contains(key),
+                        self.openable_ids.contains(&id),
+                        tap_count,
+                    ) {
+                        cx.widget_action(uid, ProjectTreeAction::Navigate(intent));
+                    }
+                }
+            }
+            if let Some((id, abs)) = file_tree.file_right_clicked(actions) {
+                if let Some(key) = self.id_to_key.get(&id) {
+                    if self.openable_ids.contains(&id) {
+                        cx.widget_action(
+                            uid,
+                            ProjectTreeAction::ContextMenu {
+                                key: key.clone(),
+                                anchor: abs,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         // Flag rest state: the panel is gone, not shrunk -- there is no flag
         // spine any more, the caption bar's tree toggle is the only affordance.
@@ -959,109 +1062,6 @@ impl Widget for ProjectTree {
         }
 
         DrawStep::done()
-    }
-
-    fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
-        if let Some(frame) = self.reveal_next_frame.is_event(event) {
-            self.update_reveal_pulse(cx, frame.time);
-        }
-        let uid = self.widget_uid();
-        let file_tree = self.view.file_tree(cx, ids!(file_tree));
-        self.view.handle_event(cx, event, scope);
-
-        // Header hit-test: the panel is left-aligned (`hit_off ≈ 0`), but keep
-        // the translate-by-offset pattern per `makepad-aligned-parent-hit-rect-
-        // offset` -- rects captured in `draw_walk` are pre-alignment, events
-        // arrive post-alignment.
-        let panel_rect = self.view.area().rect(cx);
-        let hit_off = panel_rect.pos - self.header_rect.pos;
-
-        // No peek-hover / auto-collapse handling here: the tree is binary
-        // (`Pinned` <-> `Flag`) and only the caption bar's tree toggle moves it,
-        // so there is no self-collapsing state to time out.
-        match tree_panel_hit(event, cx, self.view.area()) {
-            Hit::FingerDown(fe) if fe.is_primary_hit() => {
-                self.pending_tap_count = fe.tap_count;
-            }
-            Hit::FingerUp(fe) if fe.is_primary_hit() => {
-                if header_release_hits(&fe, hit_off, self.search_rect) {
-                    self.editing_search = true;
-                    cx.set_key_focus(self.view.area());
-                    self.view.redraw(cx);
-                    return;
-                }
-                if header_release_hits(&fe, hit_off, self.chip_rect) {
-                    let anchor = Rect {
-                        pos: self.chip_rect.pos + hit_off,
-                        size: self.chip_rect.size,
-                    };
-                    cx.widget_action(uid, ProjectTreeAction::FilterRequest { anchor });
-                    return;
-                }
-            }
-            Hit::KeyFocusLost(_) => {
-                if self.editing_search {
-                    self.editing_search = false;
-                    self.view.redraw(cx);
-                }
-            }
-            Hit::KeyDown(ke) if self.editing_search => match ke.key_code {
-                KeyCode::Backspace => {
-                    self.query_text.pop();
-                    self.emit_query(cx, uid);
-                }
-                KeyCode::Escape => {
-                    self.editing_search = false;
-                    self.view.redraw(cx);
-                }
-                _ => {}
-            },
-            Hit::TextInput(ti) if self.editing_search => {
-                for ch in ti.input.chars() {
-                    if !ch.is_control() {
-                        self.query_text.push(ch);
-                    }
-                }
-                self.emit_query(cx, uid);
-            }
-            _ => {}
-        }
-
-        if let Event::Actions(actions) = event {
-            // The panel owns no `IconButton` children any more -- collapse and
-            // expand both arrive from the caption bar's tree toggle -- so the
-            // only actions read here are the `FileTree`'s row clicks.
-            if let Some(id) = file_tree
-                .file_clicked(actions)
-                .or_else(|| file_tree.folder_clicked(actions))
-            {
-                let tap_count = std::mem::take(&mut self.pending_tap_count);
-                if let Some(key) = self.id_to_key.get(&id) {
-                    if let Some(intent) = row_navigation(
-                        key,
-                        self.id_to_concept.get(&id).map(String::as_str),
-                        self.directory_addresses.contains(key),
-                        self.openable_ids.contains(&id),
-                        tap_count,
-                    ) {
-                        cx.widget_action(uid, ProjectTreeAction::Navigate(intent));
-                    }
-                }
-            }
-            if let Some((id, abs)) = file_tree.file_right_clicked(actions) {
-                if let Some(key) = self.id_to_key.get(&id) {
-                    if self.openable_ids.contains(&id) {
-                        cx.widget_action(
-                            uid,
-                            ProjectTreeAction::ContextMenu {
-                                key: key.clone(),
-                                anchor: abs,
-                            },
-                        );
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1673,12 +1673,9 @@ mod tests {
         }
     }
 
-    fn resolved_document(
-        concept_id: &str,
-        disposition: crate::navigation::OpenDisposition,
-    ) -> crate::navigation::NavigationIntent {
-        crate::navigation::NavigationIntent::Resolved {
-            target: crate::navigation::NavigationTarget::Document {
+    fn resolved_document(concept_id: &str, disposition: OpenDisposition) -> NavigationIntent {
+        NavigationIntent::Resolved {
+            target: NavigationTarget::Document {
                 concept_id: concept_id.into(),
                 fragment: None,
             },

@@ -224,7 +224,7 @@ fn leaf_size(text: &str, style: &TextStyle) -> (f64, f64) {
     let size_lpx = style.size_pt * PT_TO_LPX;
     let font = core_font(style.font);
     let n = text.chars().count();
-    let spacing = style.letter_spacing * (n.saturating_sub(1)) as f64;
+    let spacing = style.letter_spacing * n.saturating_sub(1) as f64;
     let w = sizing::text_width(text, size_lpx, font) + spacing;
     let h = sizing::line_height(size_lpx, font);
     (w, h)
@@ -347,12 +347,12 @@ pub fn measure(shape: &Shape) -> Placed {
         |_known, _avail, _node_id, ctx, _style| match ctx {
             Some(leaf) => {
                 let (w, h) = leaf_size(&leaf.text, &leaf.style);
-                taffy::Size {
+                Size {
                     width: w as f32,
                     height: h as f32,
                 }
             }
-            None => taffy::Size {
+            None => Size {
                 width: 0.0,
                 height: 0.0,
             },

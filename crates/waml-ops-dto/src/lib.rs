@@ -1072,7 +1072,7 @@ mod tests {
             node: "order".into(),
             name: "total".into(),
             ty_token: "Money".into(),
-            multiplicity: Some(waml::multiplicity::Multiplicity::parse("0..1").unwrap()),
+            multiplicity: Some(Multiplicity::parse("0..1").unwrap()),
             visibility: None,
         };
         let step = Step::try_from(op).unwrap();
@@ -1256,7 +1256,7 @@ mod tests {
                 name: "total".into(),
                 ty_token: "Money".into(),
                 multiplicity: Some(Multiplicity::parse("0..1").unwrap()),
-                visibility: Some(waml::model::Visibility::Private),
+                visibility: Some(Visibility::Private),
             },
             Op::AttrSet {
                 node: "order".into(),

@@ -865,7 +865,7 @@ fn nested_packages_round_trip_through_reindex() {
 
 #[test]
 fn orders_domain_has_no_diagnostics() {
-    let bundle = waml::source::split_bundle(FIXTURE);
+    let bundle = split_bundle(FIXTURE);
     let diags = waml::validate::validate(&bundle);
     assert!(diags.is_empty(), "expected clean fixture, got: {diags:?}");
 }

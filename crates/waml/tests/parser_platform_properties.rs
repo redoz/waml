@@ -1,6 +1,7 @@
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,
+    mem::align_of,
     sync::Mutex,
 };
 
@@ -29,7 +30,7 @@ thread_local! {
 
 fn record_byte_buffer_allocation(size: usize, align: usize) {
     let count = COUNT_THIS_THREAD.try_with(Cell::get).unwrap_or(false)
-        && align == std::mem::align_of::<u8>()
+        && align == align_of::<u8>()
         && DOCUMENT_BYTES
             .try_with(Cell::get)
             .is_ok_and(|threshold| size >= threshold);
@@ -50,16 +51,16 @@ unsafe impl GlobalAlloc for CountingAllocator {
         pointer
     }
 
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(pointer, layout) };
+    }
+
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         let pointer = unsafe { System.alloc_zeroed(layout) };
         if !pointer.is_null() {
             record_byte_buffer_allocation(layout.size(), layout.align());
         }
         pointer
-    }
-
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(pointer, layout) };
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
@@ -85,8 +86,8 @@ impl AllocationMeasurement {
             was_active
         });
         Self {
-            document_bytes: DOCUMENT_BYTES.with(|threshold| threshold.replace(document_bytes)),
-            events: DOCUMENT_SIZED_BYTE_BUFFER_EVENTS.with(|events| events.replace(0)),
+            document_bytes: DOCUMENT_BYTES.replace(document_bytes),
+            events: DOCUMENT_SIZED_BYTE_BUFFER_EVENTS.replace(0),
             was_active,
         }
     }
@@ -98,9 +99,9 @@ impl AllocationMeasurement {
 
 impl Drop for AllocationMeasurement {
     fn drop(&mut self) {
-        DOCUMENT_BYTES.with(|threshold| threshold.set(self.document_bytes));
-        DOCUMENT_SIZED_BYTE_BUFFER_EVENTS.with(|events| events.set(self.events));
-        COUNT_THIS_THREAD.with(|active| active.set(self.was_active));
+        DOCUMENT_BYTES.set(self.document_bytes);
+        DOCUMENT_SIZED_BYTE_BUFFER_EVENTS.set(self.events);
+        COUNT_THIS_THREAD.set(self.was_active);
     }
 }
 

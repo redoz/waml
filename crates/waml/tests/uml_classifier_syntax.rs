@@ -1,8 +1,8 @@
 use waml::{analysis::analyze_okf, source::SourceBundle, uml};
 use waml_syntax::AstNode;
 
-fn contains<T: AstNode<waml::uml::syntax::UmlLanguage>>(
-    node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
+fn contains<T: AstNode<uml::syntax::UmlLanguage>>(
+    node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>,
 ) -> bool {
     T::cast(node.clone()).is_some()
         || node
@@ -71,19 +71,19 @@ fn classifier_items_do_not_hide_authored_grammar_in_raw_markdown_tokens() {
         .id_for_path(&waml::source::BundlePath::parse("class.md").unwrap())
         .unwrap();
     let root = analysis.syntax.document(id).unwrap().syntax().root();
-    fn typed_nodes_have_no_raw(node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>) {
+    fn typed_nodes_have_no_raw(node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>) {
         let typed = matches!(
             node.kind(),
-            waml::uml::syntax::UmlSyntaxKind::Value
-                | waml::uml::syntax::UmlSyntaxKind::Slot
-                | waml::uml::syntax::UmlSyntaxKind::Relationship
-                | waml::uml::syntax::UmlSyntaxKind::Member
-                | waml::uml::syntax::UmlSyntaxKind::InlineInstance
+            uml::syntax::UmlSyntaxKind::Value
+                | uml::syntax::UmlSyntaxKind::Slot
+                | uml::syntax::UmlSyntaxKind::Relationship
+                | uml::syntax::UmlSyntaxKind::Member
+                | uml::syntax::UmlSyntaxKind::InlineInstance
         );
         if typed {
             assert!(!node
                 .children()
-                .any(|e| e.kind() == waml::uml::syntax::UmlSyntaxKind::RawMarkdownToken));
+                .any(|e| e.kind() == uml::syntax::UmlSyntaxKind::RawMarkdownToken));
         }
         for child in node
             .children()
@@ -108,7 +108,7 @@ fn classifier_accessors_read_only_direct_fixed_slots() {
         .id_for_path(&waml::source::BundlePath::parse("class.md").unwrap())
         .unwrap();
     let root = analysis.syntax.document(id).unwrap().syntax().root();
-    fn visit(node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>) {
+    fn visit(node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>) {
         use waml::uml::{MemberSyntax, RelationshipSyntax, SlotSyntax, ValueSyntax};
         if let Some(value) = ValueSyntax::cast(node.clone()) {
             assert_eq!(
@@ -234,10 +234,10 @@ fn slot_value_variants_and_missing_colon_are_distinguished() {
     let root = analysis.syntax.document(id).unwrap().syntax().root();
     let mut variants = Vec::new();
     fn visit(
-        node: waml_syntax::SyntaxNode<waml::uml::syntax::UmlLanguage>,
-        out: &mut Vec<waml::uml::SlotSyntax>,
+        node: waml_syntax::SyntaxNode<uml::syntax::UmlLanguage>,
+        out: &mut Vec<uml::SlotSyntax>,
     ) {
-        if let Some(slot) = waml::uml::SlotSyntax::cast(node.clone()) {
+        if let Some(slot) = uml::SlotSyntax::cast(node.clone()) {
             out.push(slot);
         }
         for child in node
@@ -249,9 +249,9 @@ fn slot_value_variants_and_missing_colon_are_distinguished() {
     }
     visit(root, &mut variants);
     assert_eq!(variants.len(), 4);
-    assert_eq!(variants[0].value_kind(), waml::uml::SlotValueKind::Bare);
-    assert_eq!(variants[1].value_kind(), waml::uml::SlotValueKind::Quoted);
-    assert_eq!(variants[2].value_kind(), waml::uml::SlotValueKind::Link);
+    assert_eq!(variants[0].value_kind(), uml::SlotValueKind::Bare);
+    assert_eq!(variants[1].value_kind(), uml::SlotValueKind::Quoted);
+    assert_eq!(variants[2].value_kind(), uml::SlotValueKind::Link);
     assert!(variants[3].colon_token().unwrap().flags().is_missing());
 }
 
@@ -279,7 +279,7 @@ fn relationship_has_fixed_name_and_end_slots_with_bounded_recovery() {
     assert_eq!(
         first
             .syntax
-            .from_end()
+            .source_end()
             .unwrap()
             .multiplicity_token()
             .text()

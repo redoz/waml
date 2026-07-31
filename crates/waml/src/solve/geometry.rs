@@ -916,13 +916,7 @@ mod tests {
         assert!(b.y + b.h <= a.y + 1e-6, "a not below b: {a:?} {b:?}");
     }
 
-    fn group(
-        id: u32,
-        children: Vec<BoxId>,
-        axis: Option<crate::layout::Axis>,
-        shape: Shape,
-        title: &str,
-    ) -> Box {
+    fn group(id: u32, children: Vec<BoxId>, axis: Option<Axis>, shape: Shape, title: &str) -> Box {
         Box {
             id: BoxId::Group(id),
             kind: BoxKind::Group,

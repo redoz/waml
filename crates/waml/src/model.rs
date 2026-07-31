@@ -223,7 +223,7 @@ pub struct RelEnd {
 pub fn parse_ends(raw: &str) -> Option<(RelEnd, RelEnd)> {
     fn parse_end(raw: &str) -> Option<RelEnd> {
         let mut parts = raw.split_whitespace();
-        let multiplicity = crate::multiplicity::Multiplicity::parse(parts.next()?)?;
+        let multiplicity = Multiplicity::parse(parts.next()?)?;
         let role = parts.next().map(str::to_owned);
         if parts.next().is_some()
             || role.as_deref().is_some_and(|role| {
@@ -244,7 +244,7 @@ pub fn parse_ends(raw: &str) -> Option<(RelEnd, RelEnd)> {
     let mut parts = raw.split(" to ");
     let from = parse_end(parts.next()?)?;
     let to = parse_end(parts.next()?)?;
-    (parts.next().is_none()).then_some((from, to))
+    parts.next().is_none().then_some((from, to))
 }
 
 pub fn render_ends(from: &RelEnd, to: &RelEnd) -> String {
@@ -252,7 +252,7 @@ pub fn render_ends(from: &RelEnd, to: &RelEnd) -> String {
         let multiplicity = end
             .multiplicity
             .as_ref()
-            .map(crate::multiplicity::Multiplicity::as_str)
+            .map(Multiplicity::as_str)
             .unwrap_or("1");
         end.role.as_ref().map_or_else(
             || multiplicity.to_owned(),

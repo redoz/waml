@@ -335,10 +335,7 @@ mod tests {
     enum TextFingerprint {
         Static(String),
         Owned(String),
-        SourceSlice {
-            range: waml_syntax::TextRange,
-            spelling: String,
-        },
+        SourceSlice { range: TextRange, spelling: String },
     }
 
     fn text_fingerprint(text: &GreenText) -> TextFingerprint {

@@ -221,11 +221,11 @@ impl App {
             {
                 self.transition_to_location(
                     cx,
-                    crate::view_history::ViewLocation {
+                    ViewLocation {
                         document,
-                        anchor: crate::view_history::ViewAnchor::None,
+                        anchor: ViewAnchor::None,
                     },
-                    super::TransitionCause::UserNavigation,
+                    TransitionCause::UserNavigation,
                 );
             }
         }
@@ -492,14 +492,15 @@ impl App {
                 continue;
             };
             if let Some(crate::icon_button::IconButtonAction::TaggedClicked(tag)) =
-                item.action.downcast_ref::<crate::icon_button::IconButtonAction>()
+                item.action
+                    .downcast_ref::<crate::icon_button::IconButtonAction>()
             {
                 if *tag == live_id!(history_back) {
-                    direction = Some((crate::view_history::HistoryDirection::Back, "No previous view"));
+                    direction = Some((HistoryDirection::Back, "No previous view"));
                     break;
                 }
                 if *tag == live_id!(history_forward) {
-                    direction = Some((crate::view_history::HistoryDirection::Forward, "No next view"));
+                    direction = Some((HistoryDirection::Forward, "No next view"));
                     break;
                 }
             }
@@ -531,11 +532,11 @@ impl App {
                 if accepted {
                     let (_, inspector) = self.dock_states(cx);
                     let inspector = if self.narrow {
-                        crate::dock::DockState::Flag
+                        DockState::Flag
                     } else {
                         inspector
                     };
-                    self.apply_dock_states(cx, crate::dock::DockState::Pinned, inspector);
+                    self.apply_dock_states(cx, DockState::Pinned, inspector);
                 }
                 ActionFlow::Consumed
             }
@@ -798,11 +799,11 @@ impl App {
                 {
                     self.transition_to_location(
                         cx,
-                        crate::view_history::ViewLocation {
+                        ViewLocation {
                             document,
-                            anchor: crate::view_history::ViewAnchor::None,
+                            anchor: ViewAnchor::None,
                         },
-                        super::TransitionCause::UserNavigation,
+                        TransitionCause::UserNavigation,
                     );
                 }
             }
@@ -884,7 +885,7 @@ impl App {
             self.sync_conflict_badge(cx);
         }
         if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
-            self.transition_to_location(cx, current, super::TransitionCause::PassiveReconciliation);
+            self.transition_to_location(cx, current, TransitionCause::PassiveReconciliation);
         }
         self.mark_dirty(cx);
         self.sync_history_controls(cx);
@@ -899,8 +900,7 @@ impl App {
         let label = effect.label;
         let location = effect.location;
         self.complete_session_change(cx, effect.change);
-        if self.transition_to_location(cx, location.clone(), super::TransitionCause::UndoRedoReveal)
-        {
+        if self.transition_to_location(cx, location.clone(), TransitionCause::UndoRedoReveal) {
             self.set_navigation_message(cx, None);
             self.set_history_success(cx, Some(&format!("{verb}: {label}")));
             true

@@ -854,7 +854,7 @@ mod tests {
         use waml::model::{RelEnd, RelationshipKind};
 
         let mut scene = scene();
-        scene.edges.push(crate::scene::SceneEdge {
+        scene.edges.push(SceneEdge {
             source: scene.nodes[0].rect,
             target: scene.nodes[1].rect,
             kind: RelationshipKind::Associates,

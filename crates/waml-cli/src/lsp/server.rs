@@ -120,6 +120,10 @@ impl LanguageServer for Backend {
         self.publish_all().await;
     }
 
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
+
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let Ok(physical) = params.text_document.uri.to_file_path() else {
             return;
@@ -188,10 +192,6 @@ impl LanguageServer for Backend {
             self.publish_all().await;
         }
     }
-
-    async fn shutdown(&self) -> Result<()> {
-        Ok(())
-    }
 }
 
 pub fn serve_stdio() {
@@ -224,7 +224,7 @@ mod tests {
             .unwrap();
         let generation = opened.open_generation(&physical).unwrap();
         let current = Arc::new(RwLock::new(Arc::new(opened)));
-        let gate = Arc::new(tokio::sync::Mutex::new(()));
+        let gate = Arc::new(Mutex::new(()));
         let old_started = Arc::new(Notify::new());
         let release_old = Arc::new(Notify::new());
         let sent = Arc::new(StdMutex::new(Vec::new()));

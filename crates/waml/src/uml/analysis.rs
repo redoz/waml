@@ -103,11 +103,11 @@ impl Analysis {
             };
             let source = snapshot.document().text().shared();
             let referenced = [
-                super::syntax::UmlSyntaxKind::Attribute,
-                super::syntax::UmlSyntaxKind::Relationship,
-                super::syntax::UmlSyntaxKind::Member,
-                super::syntax::UmlSyntaxKind::InlineInstance,
-                super::syntax::UmlSyntaxKind::LayoutStatement,
+                syntax::UmlSyntaxKind::Attribute,
+                syntax::UmlSyntaxKind::Relationship,
+                syntax::UmlSyntaxKind::Member,
+                syntax::UmlSyntaxKind::InlineInstance,
+                syntax::UmlSyntaxKind::LayoutStatement,
             ]
             .into_iter()
             .flat_map(|kind| syntax_nodes(snapshot.syntax(), kind))
@@ -115,7 +115,7 @@ impl Analysis {
                 let range = syntax.range();
                 let authored = &source[range.start().to_usize()..range.end().to_usize()];
                 authored.contains(&href)
-                    || (syntax.kind() == super::syntax::UmlSyntaxKind::LayoutStatement
+                    || (syntax.kind() == syntax::UmlSyntaxKind::LayoutStatement
                         && authored
                             .split(|character: char| {
                                 character.is_whitespace()
@@ -140,11 +140,11 @@ fn document_slug(path: &str) -> &str {
 
 fn syntax_nodes(
     tree: &waml_syntax::SyntaxTree<UmlLanguage>,
-    kind: super::syntax::UmlSyntaxKind,
+    kind: syntax::UmlSyntaxKind,
 ) -> Vec<SyntaxNode<UmlLanguage>> {
     fn collect(
         node: &SyntaxNode<UmlLanguage>,
-        kind: super::syntax::UmlSyntaxKind,
+        kind: syntax::UmlSyntaxKind,
         output: &mut Vec<SyntaxNode<UmlLanguage>>,
     ) {
         for child in node.children().filter_map(SyntaxElement::into_node) {
@@ -242,22 +242,22 @@ pub fn analyze(
             None => syntax::parse_full(document.text().clone(), structure),
         };
         let attributes = attributes(tree.root());
-        let values = items(tree.root(), super::syntax::UmlSyntaxKind::Value);
-        let slots = items(tree.root(), super::syntax::UmlSyntaxKind::Slot);
-        let relationships = items(tree.root(), super::syntax::UmlSyntaxKind::Relationship);
-        let members = items(tree.root(), super::syntax::UmlSyntaxKind::Member);
+        let values = items(tree.root(), syntax::UmlSyntaxKind::Value);
+        let slots = items(tree.root(), syntax::UmlSyntaxKind::Slot);
+        let relationships = items(tree.root(), syntax::UmlSyntaxKind::Relationship);
+        let members = items(tree.root(), syntax::UmlSyntaxKind::Member);
         let member_groups = direct_section_items(
             tree.root(),
-            super::syntax::UmlSyntaxKind::MembersSection,
-            super::syntax::UmlSyntaxKind::MemberGroup,
+            syntax::UmlSyntaxKind::MembersSection,
+            syntax::UmlSyntaxKind::MemberGroup,
         );
-        let inline_instances = items(tree.root(), super::syntax::UmlSyntaxKind::InlineInstance);
-        let layout = items(tree.root(), super::syntax::UmlSyntaxKind::LayoutStatement);
-        let flow_nodes = items(tree.root(), super::syntax::UmlSyntaxKind::FlowNode);
-        let lifelines = items(tree.root(), super::syntax::UmlSyntaxKind::Lifeline);
-        let messages = items(tree.root(), super::syntax::UmlSyntaxKind::Message);
-        let sequence_operands = items(tree.root(), super::syntax::UmlSyntaxKind::SequenceOperand);
-        let sequence_fragments = items(tree.root(), super::syntax::UmlSyntaxKind::SequenceFragment);
+        let inline_instances = items(tree.root(), syntax::UmlSyntaxKind::InlineInstance);
+        let layout = items(tree.root(), syntax::UmlSyntaxKind::LayoutStatement);
+        let flow_nodes = items(tree.root(), syntax::UmlSyntaxKind::FlowNode);
+        let lifelines = items(tree.root(), syntax::UmlSyntaxKind::Lifeline);
+        let messages = items(tree.root(), syntax::UmlSyntaxKind::Message);
+        let sequence_operands = items(tree.root(), syntax::UmlSyntaxKind::SequenceOperand);
+        let sequence_fragments = items(tree.root(), syntax::UmlSyntaxKind::SequenceFragment);
         let mut fields = Vec::new();
         for syntax in attributes {
             let name = syntax.name_token().text().write_to_string();
@@ -322,7 +322,7 @@ pub fn analyze(
             let mult_field = match multiplicity {
                 Some(node) => {
                     let missing_close = node.children().any(|element| {
-                        element.kind() == super::syntax::UmlSyntaxKind::CloseBracketToken
+                        element.kind() == syntax::UmlSyntaxKind::CloseBracketToken
                             && element
                                 .into_token()
                                 .is_some_and(|token| token.flags().is_missing())
@@ -351,7 +351,7 @@ pub fn analyze(
                 }
                 None => crate::uml::DeclaredField::Absent,
             };
-            fields.push(crate::uml::DeclaredAttribute {
+            fields.push(DeclaredAttribute {
                 syntax,
                 visibility,
                 name: name_field,
@@ -378,7 +378,7 @@ pub fn analyze(
                 .line_col(document.text(), range.end())
                 .expect("layout diagnostic end is a document offset");
             diagnostics.push(
-                crate::diagnostic::Diagnostic::new(
+                Diagnostic::new(
                     crate::diagnostic::DiagCode::MalformedLayout,
                     "malformed layout statement",
                     document.path().as_str(),
@@ -466,20 +466,20 @@ pub fn analyze(
                 .line_col(document.text(), end)
                 .expect("parser diagnostic end is a document offset");
             diagnostics.push(
-                crate::diagnostic::Diagnostic::new(
+                Diagnostic::new(
                     match diagnostic.code {
-                        super::syntax::UmlSyntaxDiagnosticCode::MalformedFlow
-                        | super::syntax::UmlSyntaxDiagnosticCode::MalformedIndentation => {
+                        syntax::UmlSyntaxDiagnosticCode::MalformedFlow
+                        | syntax::UmlSyntaxDiagnosticCode::MalformedIndentation => {
                             crate::diagnostic::DiagCode::MalformedFlowBullet
                         }
-                        super::syntax::UmlSyntaxDiagnosticCode::MalformedLifeline => {
+                        syntax::UmlSyntaxDiagnosticCode::MalformedLifeline => {
                             crate::diagnostic::DiagCode::MalformedLifeline
                         }
-                        super::syntax::UmlSyntaxDiagnosticCode::MalformedMessage
-                        | super::syntax::UmlSyntaxDiagnosticCode::UnsupportedSequenceForm => {
+                        syntax::UmlSyntaxDiagnosticCode::MalformedMessage
+                        | syntax::UmlSyntaxDiagnosticCode::UnsupportedSequenceForm => {
                             crate::diagnostic::DiagCode::MalformedMessage
                         }
-                        super::syntax::UmlSyntaxDiagnosticCode::UnresolvedTarget => {
+                        syntax::UmlSyntaxDiagnosticCode::UnresolvedTarget => {
                             crate::diagnostic::DiagCode::UnresolvedTarget
                         }
                         _ => crate::diagnostic::DiagCode::MalformedAttribute,
@@ -903,7 +903,7 @@ fn validate_declared_semantics(
             first_placement_syntax.get_or_insert_with(|| {
                 syntax
                     .children()
-                    .find(|element| element.kind() == super::syntax::UmlSyntaxKind::LayoutPlacement)
+                    .find(|element| element.kind() == syntax::UmlSyntaxKind::LayoutPlacement)
                     .and_then(SyntaxElement::into_node)
                     .unwrap_or_else(|| syntax.clone())
             });
@@ -1135,7 +1135,7 @@ fn declared_projection(
                     crate::uml::DeclaredField::Valid { value, .. },
                 ) => {
                     let (value, ref_) = match s.syntax.value_kind() {
-                        super::syntax::SlotValueKind::Quoted => (
+                        syntax::SlotValueKind::Quoted => (
                             value
                                 .strip_prefix('"')
                                 .and_then(|value| value.strip_suffix('"'))
@@ -1143,7 +1143,7 @@ fn declared_projection(
                                 .to_owned(),
                             None,
                         ),
-                        super::syntax::SlotValueKind::Link => {
+                        syntax::SlotValueKind::Link => {
                             let range = s.syntax.syntax().range();
                             let authored = context
                                 .source
@@ -1164,9 +1164,10 @@ fn declared_projection(
                                 link.and_then(|link| resolve_slug(&path, &link.slug, &claimed)),
                             )
                         }
-                        super::syntax::SlotValueKind::Bare => (value.clone(), None),
-                        super::syntax::SlotValueKind::Missing
-                        | super::syntax::SlotValueKind::Invalid => (value.clone(), None),
+                        syntax::SlotValueKind::Bare => (value.clone(), None),
+                        syntax::SlotValueKind::Missing | syntax::SlotValueKind::Invalid => {
+                            (value.clone(), None)
+                        }
                     };
                     Some(crate::model::Slot {
                         name: name.clone(),
@@ -1587,11 +1588,11 @@ fn behavior_diagnostic(
         .id_for_path(&crate::source::BundlePath::parse(path.to_string()).expect("catalog path"))
         .expect("catalog document");
     let document = context.catalog.document(id).expect("catalog document");
-    let range = items(syntax.clone(), super::syntax::UmlSyntaxKind::Link)
+    let range = items(syntax.clone(), syntax::UmlSyntaxKind::Link)
         .into_iter()
         .find_map(|link| {
             link.children()
-                .find(|element| element.kind() == super::syntax::UmlSyntaxKind::LinkTargetToken)
+                .find(|element| element.kind() == syntax::UmlSyntaxKind::LinkTargetToken)
                 .map(|element| match element {
                     SyntaxElement::Node(node) => node.range(),
                     SyntaxElement::Token(token) => token.range(),
@@ -1600,7 +1601,7 @@ fn behavior_diagnostic(
         .or_else(|| {
             syntax
                 .children()
-                .find(|element| element.kind() == super::syntax::UmlSyntaxKind::TargetToken)
+                .find(|element| element.kind() == syntax::UmlSyntaxKind::TargetToken)
                 .map(|element| match element {
                     SyntaxElement::Node(node) => node.range(),
                     SyntaxElement::Token(token) => token.range(),
@@ -2085,7 +2086,7 @@ fn lower_member_group(
 
 fn items(
     node: SyntaxNode<UmlLanguage>,
-    kind: super::syntax::UmlSyntaxKind,
+    kind: syntax::UmlSyntaxKind,
 ) -> Vec<SyntaxNode<UmlLanguage>> {
     let mut found = Vec::new();
     for child in node.children() {
@@ -2101,8 +2102,8 @@ fn items(
 }
 fn direct_section_items(
     node: SyntaxNode<UmlLanguage>,
-    section: super::syntax::UmlSyntaxKind,
-    kind: super::syntax::UmlSyntaxKind,
+    section: syntax::UmlSyntaxKind,
+    kind: syntax::UmlSyntaxKind,
 ) -> Vec<SyntaxNode<UmlLanguage>> {
     for child in node.children().filter_map(SyntaxElement::into_node) {
         if child.kind() == section {
@@ -2134,12 +2135,12 @@ fn invalid<T>(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredField<UmlLan
 fn has_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
     node.children().any(|e| match e {
         SyntaxElement::Token(token) => {
-            token.kind() == super::syntax::UmlSyntaxKind::BadToken
+            token.kind() == syntax::UmlSyntaxKind::BadToken
                 && token.flags().is_bad()
                 && !token.flags().is_missing()
         }
         SyntaxElement::Node(child) => {
-            (child.kind() == super::syntax::UmlSyntaxKind::SkippedTokensSyntax
+            (child.kind() == syntax::UmlSyntaxKind::SkippedTokensSyntax
                 && child.range().start() != child.range().end())
                 || has_recovery(&child)
         }
@@ -2148,14 +2149,14 @@ fn has_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
 fn first_recovery_node(node: &SyntaxNode<UmlLanguage>) -> Option<SyntaxNode<UmlLanguage>> {
     node.children().find_map(|element| {
         let child = element.into_node()?;
-        if child.kind() == super::syntax::UmlSyntaxKind::SkippedTokensSyntax {
+        if child.kind() == syntax::UmlSyntaxKind::SkippedTokensSyntax {
             Some(child)
         } else {
             first_recovery_node(&child)
         }
     })
 }
-fn has_missing_kind(node: &SyntaxNode<UmlLanguage>, kind: super::syntax::UmlSyntaxKind) -> bool {
+fn has_missing_kind(node: &SyntaxNode<UmlLanguage>, kind: syntax::UmlSyntaxKind) -> bool {
     node.children().any(|e| {
         e.kind() == kind
             && e.into_token()
@@ -2165,7 +2166,7 @@ fn has_missing_kind(node: &SyntaxNode<UmlLanguage>, kind: super::syntax::UmlSynt
 
 fn direct_child(
     node: &SyntaxNode<UmlLanguage>,
-    kind: super::syntax::UmlSyntaxKind,
+    kind: syntax::UmlSyntaxKind,
 ) -> Option<SyntaxNode<UmlLanguage>> {
     node.children()
         .find(|element| element.kind() == kind)
@@ -2174,8 +2175,8 @@ fn direct_child(
 
 fn token_in(
     node: &SyntaxNode<UmlLanguage>,
-    kind: super::syntax::UmlSyntaxKind,
-) -> Option<waml_syntax::SyntaxToken<UmlLanguage>> {
+    kind: syntax::UmlSyntaxKind,
+) -> Option<SyntaxToken<UmlLanguage>> {
     node.children().find_map(|element| {
         if element.kind() == kind {
             element.into_token()
@@ -2185,10 +2186,7 @@ fn token_in(
     })
 }
 
-fn field_from_token(
-    node: &SyntaxNode<UmlLanguage>,
-    kind: super::syntax::UmlSyntaxKind,
-) -> Option<String> {
+fn field_from_token(node: &SyntaxNode<UmlLanguage>, kind: syntax::UmlSyntaxKind) -> Option<String> {
     token_in(node, kind)
         .filter(|token| !token.flags().is_missing())
         .map(|token| token.text().write_to_string())
@@ -2204,7 +2202,7 @@ fn strip_expression(value: String) -> String {
 
 fn declared_expression_slot(
     slot: SyntaxNode<UmlLanguage>,
-    token_kind: super::syntax::UmlSyntaxKind,
+    token_kind: syntax::UmlSyntaxKind,
 ) -> crate::uml::DeclaredField<UmlLanguage, String> {
     field_from_token(&slot, token_kind)
         .map(strip_expression)
@@ -2223,7 +2221,7 @@ fn declared_expression_slot(
 
 fn declared_optional_expression_slot(
     slot: SyntaxNode<UmlLanguage>,
-    token_kind: super::syntax::UmlSyntaxKind,
+    token_kind: syntax::UmlSyntaxKind,
 ) -> crate::uml::DeclaredField<UmlLanguage, String> {
     if let Some(value) = field_from_token(&slot, token_kind) {
         return valid(slot, strip_expression(value));
@@ -2251,9 +2249,9 @@ fn declared_text_slot(
     let Some(slot) = slot else {
         return crate::uml::DeclaredField::Absent;
     };
-    field_from_token(&slot, super::syntax::UmlSyntaxKind::ExpressionToken)
+    field_from_token(&slot, syntax::UmlSyntaxKind::ExpressionToken)
         .map(strip_expression)
-        .or_else(|| field_from_token(&slot, super::syntax::UmlSyntaxKind::IdentifierToken))
+        .or_else(|| field_from_token(&slot, syntax::UmlSyntaxKind::IdentifierToken))
         .map(|value| valid(slot.clone(), value))
         .unwrap_or_else(|| {
             if has_recovery(&slot) {
@@ -2269,8 +2267,8 @@ fn declared_text_slot(
 
 fn declared_required_token(
     node: &SyntaxNode<UmlLanguage>,
-    slot_kind: super::syntax::UmlSyntaxKind,
-    token_kind: super::syntax::UmlSyntaxKind,
+    slot_kind: syntax::UmlSyntaxKind,
+    token_kind: syntax::UmlSyntaxKind,
     expected: crate::uml::ExpectedSyntax,
 ) -> crate::uml::DeclaredField<UmlLanguage, String> {
     let slot = direct_child(node, slot_kind).expect("production has fixed occurrence");
@@ -2293,8 +2291,8 @@ fn link_parts(node: &SyntaxNode<UmlLanguage>) -> Option<(String, String)> {
     if has_recovery(node) {
         return None;
     }
-    let title = field_from_token(node, super::syntax::UmlSyntaxKind::LinkTextToken)?;
-    let href = field_from_token(node, super::syntax::UmlSyntaxKind::LinkTargetToken)?;
+    let title = field_from_token(node, syntax::UmlSyntaxKind::LinkTextToken)?;
+    let href = field_from_token(node, syntax::UmlSyntaxKind::LinkTargetToken)?;
     let slug = href
         .strip_prefix("./")
         .unwrap_or(&href)
@@ -2307,7 +2305,7 @@ fn link_parts(node: &SyntaxNode<UmlLanguage>) -> Option<(String, String)> {
 fn behavior_depth(node: &SyntaxNode<UmlLanguage>) -> usize {
     node.child_at(0)
         .and_then(SyntaxElement::into_token)
-        .filter(|token| token.kind() == super::syntax::UmlSyntaxKind::BulletToken)
+        .filter(|token| token.kind() == syntax::UmlSyntaxKind::BulletToken)
         .map(|token| {
             token
                 .leading_trivia()
@@ -2327,15 +2325,15 @@ fn has_direct_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
     node.children()
         .filter_map(SyntaxElement::into_node)
         .any(|child| {
-            child.kind() == super::syntax::UmlSyntaxKind::BehaviorRecovery && has_recovery(&child)
+            child.kind() == syntax::UmlSyntaxKind::BehaviorRecovery && has_recovery(&child)
         })
 }
 
 fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlowNode {
-    let syntax = super::syntax::FlowNodeSyntax(node.clone());
-    let kind_slot = direct_child(&node, super::syntax::UmlSyntaxKind::FlowNodeKindSlot);
+    let syntax = syntax::FlowNodeSyntax(node.clone());
+    let kind_slot = direct_child(&node, syntax::UmlSyntaxKind::FlowNodeKindSlot);
     let kind = match kind_slot {
-        Some(slot) => match field_from_token(&slot, super::syntax::UmlSyntaxKind::NodeKindToken) {
+        Some(slot) => match field_from_token(&slot, syntax::UmlSyntaxKind::NodeKindToken) {
             Some(token) => crate::model::FlowNodeKind::from_keyword(&token)
                 .map(|value| valid(slot.clone(), value))
                 .unwrap_or_else(|| invalid(slot)),
@@ -2343,17 +2341,17 @@ fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlow
         },
         None => valid(node.clone(), crate::model::FlowNodeKind::Plain),
     };
-    let identity_slot = direct_child(&node, super::syntax::UmlSyntaxKind::FlowIdentity)
+    let identity_slot = direct_child(&node, syntax::UmlSyntaxKind::FlowIdentity)
         .expect("flow node has fixed identity occurrence");
     let identity = if has_direct_recovery(&node) {
         invalid_recovery(node.clone())
-    } else if let Some(link) = direct_child(&identity_slot, super::syntax::UmlSyntaxKind::Link) {
+    } else if let Some(link) = direct_child(&identity_slot, syntax::UmlSyntaxKind::Link) {
         match link_parts(&link) {
             Some((title, _)) => valid(identity_slot.clone(), title),
             None => invalid(identity_slot.clone()),
         }
     } else {
-        field_from_token(&identity_slot, super::syntax::UmlSyntaxKind::IdentityToken)
+        field_from_token(&identity_slot, syntax::UmlSyntaxKind::IdentityToken)
             .filter(|value| !value.is_empty())
             .map(|value| valid(identity_slot.clone(), value))
             .unwrap_or_else(|| match field_value(&kind) {
@@ -2370,7 +2368,7 @@ fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlow
             })
     };
     let object_ref = if matches!(field_value(&kind), Some(crate::model::FlowNodeKind::Object)) {
-        direct_child(&identity_slot, super::syntax::UmlSyntaxKind::Link)
+        direct_child(&identity_slot, syntax::UmlSyntaxKind::Link)
             .and_then(|link| link_parts(&link).map(|(_, slug)| (link, slug)))
             .map(|(link, slug)| valid(link, slug))
             .unwrap_or_else(|| {
@@ -2394,17 +2392,17 @@ fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlow
     for block in node
         .children()
         .filter_map(SyntaxElement::into_node)
-        .filter(|child| child.kind() == super::syntax::UmlSyntaxKind::FlowInternal)
+        .filter(|child| child.kind() == syntax::UmlSyntaxKind::FlowInternal)
     {
-        let keyword = field_from_token(&block, super::syntax::UmlSyntaxKind::InternalKeywordToken);
-        let value_slot = direct_child(&block, super::syntax::UmlSyntaxKind::FlowInternalValue);
+        let keyword = field_from_token(&block, syntax::UmlSyntaxKind::InternalKeywordToken);
+        let value_slot = direct_child(&block, syntax::UmlSyntaxKind::FlowInternalValue);
         match keyword.as_deref() {
             Some("entry") => entry = declared_text_slot(value_slot),
             Some("do") => do_ = declared_text_slot(value_slot),
             Some("exit") => exit = declared_text_slot(value_slot),
             Some("partition") => partition = declared_text_slot(value_slot),
             Some("refines") => {
-                refines = direct_child(&block, super::syntax::UmlSyntaxKind::Link)
+                refines = direct_child(&block, syntax::UmlSyntaxKind::Link)
                     .and_then(|link| link_parts(&link).map(|(_, slug)| valid(link, slug)))
                     .unwrap_or_else(|| invalid(block.clone()))
             }
@@ -2414,15 +2412,15 @@ fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlow
     let transitions = node
         .children()
         .filter_map(SyntaxElement::into_node)
-        .filter(|child| child.kind() == super::syntax::UmlSyntaxKind::FlowTransition)
+        .filter(|child| child.kind() == syntax::UmlSyntaxKind::FlowTransition)
         .map(declared_flow_transition)
         .collect::<Vec<_>>();
     let notes = node
         .children()
         .filter_map(SyntaxElement::into_node)
-        .filter(|child| child.kind() == super::syntax::UmlSyntaxKind::Value)
+        .filter(|child| child.kind() == syntax::UmlSyntaxKind::Value)
         .filter_map(|value| {
-            direct_child(&value, super::syntax::UmlSyntaxKind::FlowNoteValue)
+            direct_child(&value, syntax::UmlSyntaxKind::FlowNoteValue)
                 .map(|slot| declared_text_slot(Some(slot)))
         })
         .collect::<Vec<_>>();
@@ -2442,21 +2440,21 @@ fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlow
 }
 
 fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlowTransition {
-    let syntax = super::syntax::FlowTransitionSyntax(node.clone());
+    let syntax = syntax::FlowTransitionSyntax(node.clone());
     let text_field = |kind, token_kind| {
         direct_child(&node, kind)
             .map(|slot| declared_optional_expression_slot(slot, token_kind))
             .unwrap_or(crate::uml::DeclaredField::Absent)
     };
-    let target_slot = direct_child(&node, super::syntax::UmlSyntaxKind::FlowTarget)
+    let target_slot = direct_child(&node, syntax::UmlSyntaxKind::FlowTarget)
         .expect("transition has fixed target occurrence");
     let target = if has_recovery(&node) {
         invalid_recovery(node.clone())
-    } else if has_missing_kind(&node, super::syntax::UmlSyntaxKind::ToToken)
-        || has_missing_kind(&node, super::syntax::UmlSyntaxKind::FlowKeywordToken)
+    } else if has_missing_kind(&node, syntax::UmlSyntaxKind::ToToken)
+        || has_missing_kind(&node, syntax::UmlSyntaxKind::FlowKeywordToken)
     {
         invalid(target_slot.clone())
-    } else if let Some(link) = direct_child(&target_slot, super::syntax::UmlSyntaxKind::Link) {
+    } else if let Some(link) = direct_child(&target_slot, syntax::UmlSyntaxKind::Link) {
         link_parts(&link)
             .map(|(title, slug)| {
                 valid(
@@ -2466,7 +2464,7 @@ fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
             })
             .unwrap_or_else(|| invalid(target_slot.clone()))
     } else {
-        field_from_token(&target_slot, super::syntax::UmlSyntaxKind::TargetToken)
+        field_from_token(&target_slot, syntax::UmlSyntaxKind::TargetToken)
             .filter(|value| !value.is_empty())
             .map(|value| {
                 valid(
@@ -2479,9 +2477,9 @@ fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
                 expected: crate::uml::ExpectedSyntax::FlowTarget,
             })
     };
-    let carries = direct_child(&node, super::syntax::UmlSyntaxKind::FlowCarries)
+    let carries = direct_child(&node, syntax::UmlSyntaxKind::FlowCarries)
         .and_then(|slot| {
-            let link = direct_child(&slot, super::syntax::UmlSyntaxKind::Link)?;
+            let link = direct_child(&slot, syntax::UmlSyntaxKind::Link)?;
             if link.range().start() == link.range().end() {
                 None
             } else {
@@ -2497,30 +2495,30 @@ fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
     crate::uml::DeclaredFlowTransition {
         syntax,
         trigger: text_field(
-            super::syntax::UmlSyntaxKind::FlowTrigger,
-            super::syntax::UmlSyntaxKind::TriggerToken,
+            syntax::UmlSyntaxKind::FlowTrigger,
+            syntax::UmlSyntaxKind::TriggerToken,
         ),
         guard: if is_else {
             crate::uml::DeclaredField::Absent
         } else {
             text_field(
-                super::syntax::UmlSyntaxKind::FlowGuard,
-                super::syntax::UmlSyntaxKind::GuardToken,
+                syntax::UmlSyntaxKind::FlowGuard,
+                syntax::UmlSyntaxKind::GuardToken,
             )
         },
         is_else,
         target,
         carries,
         effect: text_field(
-            super::syntax::UmlSyntaxKind::FlowEffect,
-            super::syntax::UmlSyntaxKind::EffectToken,
+            syntax::UmlSyntaxKind::FlowEffect,
+            syntax::UmlSyntaxKind::EffectToken,
         ),
     }
 }
 
 fn declared_lifeline(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredLifeline {
-    let syntax = super::syntax::LifelineSyntax(node.clone());
-    let link = direct_child(&node, super::syntax::UmlSyntaxKind::Link)
+    let syntax = syntax::LifelineSyntax(node.clone());
+    let link = direct_child(&node, syntax::UmlSyntaxKind::Link)
         .expect("lifeline has fixed link occurrence");
     let parts = link_parts(&link);
     let missing_link = link.range().start() == link.range().end();
@@ -2549,14 +2547,14 @@ fn declared_lifeline(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredLifel
             .map(|(title, _)| valid(link.clone(), title))
             .unwrap_or_else(|| invalid(link))
     };
-    let alias = direct_child(&node, super::syntax::UmlSyntaxKind::LifelineAlias)
+    let alias = direct_child(&node, syntax::UmlSyntaxKind::LifelineAlias)
         .map(|slot| {
-            field_from_token(&slot, super::syntax::UmlSyntaxKind::AliasToken)
+            field_from_token(&slot, syntax::UmlSyntaxKind::AliasToken)
                 .filter(|value| !value.is_empty())
                 .map(|value| valid(slot.clone(), value))
                 .unwrap_or_else(|| {
                     let as_present = node
-                        .child_at(super::syntax::LifelineSyntax::AS_SLOT)
+                        .child_at(syntax::LifelineSyntax::AS_SLOT)
                         .and_then(SyntaxElement::into_token)
                         .is_some_and(|token| !token.flags().is_missing());
                     if as_present {
@@ -2579,25 +2577,25 @@ fn declared_lifeline(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredLifel
 }
 
 fn declared_message(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMessage {
-    let syntax = super::syntax::MessageSyntax(node.clone());
+    let syntax = syntax::MessageSyntax(node.clone());
     let from = declared_required_token(
         &node,
-        super::syntax::UmlSyntaxKind::MessageSource,
-        super::syntax::UmlSyntaxKind::SourceToken,
+        syntax::UmlSyntaxKind::MessageSource,
+        syntax::UmlSyntaxKind::SourceToken,
         crate::uml::ExpectedSyntax::MessageTarget,
     );
     let to = declared_required_token(
         &node,
-        super::syntax::UmlSyntaxKind::MessageTarget,
-        super::syntax::UmlSyntaxKind::TargetToken,
+        syntax::UmlSyntaxKind::MessageTarget,
+        syntax::UmlSyntaxKind::TargetToken,
         crate::uml::ExpectedSyntax::MessageTarget,
     );
-    let verb_slot = direct_child(&node, super::syntax::UmlSyntaxKind::MessageVerb)
+    let verb_slot = direct_child(&node, syntax::UmlSyntaxKind::MessageVerb)
         .expect("message has fixed verb occurrence");
     let verb = if has_recovery(&node) {
         invalid_recovery(node.clone())
     } else {
-        field_from_token(&verb_slot, super::syntax::UmlSyntaxKind::VerbToken)
+        field_from_token(&verb_slot, syntax::UmlSyntaxKind::VerbToken)
             .and_then(|value| crate::model::MessageVerb::parse(&value))
             .map(|value| valid(verb_slot.clone(), value))
             .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
@@ -2605,31 +2603,27 @@ fn declared_message(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMessag
                 expected: crate::uml::ExpectedSyntax::MessageTarget,
             })
     };
-    let signature_slot = direct_child(&node, super::syntax::UmlSyntaxKind::MessageSignature)
+    let signature_slot = direct_child(&node, syntax::UmlSyntaxKind::MessageSignature)
         .expect("message has fixed signature occurrence");
-    let signature = if field_from_token(
-        &signature_slot,
-        super::syntax::UmlSyntaxKind::SignatureToken,
-    )
-    .is_some()
-    {
-        declared_expression_slot(signature_slot, super::syntax::UmlSyntaxKind::SignatureToken)
-    } else if node
-        .child_at(super::syntax::MessageSyntax::COLON_SLOT)
-        .and_then(SyntaxElement::into_token)
-        .is_some_and(|token| !token.flags().is_missing())
-    {
-        if has_recovery(&node) {
-            invalid_recovery(node.clone())
-        } else {
-            crate::uml::DeclaredField::Incomplete {
-                syntax: signature_slot,
-                expected: crate::uml::ExpectedSyntax::MessageTarget,
+    let signature =
+        if field_from_token(&signature_slot, syntax::UmlSyntaxKind::SignatureToken).is_some() {
+            declared_expression_slot(signature_slot, syntax::UmlSyntaxKind::SignatureToken)
+        } else if node
+            .child_at(syntax::MessageSyntax::COLON_SLOT)
+            .and_then(SyntaxElement::into_token)
+            .is_some_and(|token| !token.flags().is_missing())
+        {
+            if has_recovery(&node) {
+                invalid_recovery(node.clone())
+            } else {
+                crate::uml::DeclaredField::Incomplete {
+                    syntax: signature_slot,
+                    expected: crate::uml::ExpectedSyntax::MessageTarget,
+                }
             }
-        }
-    } else {
-        crate::uml::DeclaredField::Absent
-    };
+        } else {
+            crate::uml::DeclaredField::Absent
+        };
     crate::uml::DeclaredMessage {
         syntax,
         from,
@@ -2641,15 +2635,15 @@ fn declared_message(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMessag
 }
 
 fn declared_sequence_operand(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSequenceOperand {
-    let syntax = super::syntax::SequenceOperandSyntax(node.clone());
+    let syntax = syntax::SequenceOperandSyntax(node.clone());
     let depth = behavior_depth(&node);
-    if node.kind() == super::syntax::UmlSyntaxKind::SequenceFragment {
-        let slot = direct_child(&node, super::syntax::UmlSyntaxKind::FragmentKind)
+    if node.kind() == syntax::UmlSyntaxKind::SequenceFragment {
+        let slot = direct_child(&node, syntax::UmlSyntaxKind::FragmentKind)
             .expect("fragment has fixed kind occurrence");
         let fragment = if has_recovery(&node) {
             invalid_recovery(node.clone())
         } else {
-            field_from_token(&slot, super::syntax::UmlSyntaxKind::FragmentKindToken)
+            field_from_token(&slot, syntax::UmlSyntaxKind::FragmentKindToken)
                 .and_then(|value| crate::model::FragmentKind::parse(&value))
                 .map(|value| valid(slot.clone(), value))
                 .unwrap_or_else(|| invalid(slot))
@@ -2662,16 +2656,14 @@ fn declared_sequence_operand(node: SyntaxNode<UmlLanguage>) -> crate::uml::Decla
             depth,
         }
     } else {
-        let keyword = field_from_token(&node, super::syntax::UmlSyntaxKind::OperandKeywordToken);
+        let keyword = field_from_token(&node, syntax::UmlSyntaxKind::OperandKeywordToken);
         let guard = if has_recovery(&node) {
             invalid_recovery(node.clone())
         } else if keyword.as_deref() == Some("else") {
             crate::uml::DeclaredField::Absent
         } else {
-            direct_child(&node, super::syntax::UmlSyntaxKind::OperandGuard)
-                .map(|slot| {
-                    declared_expression_slot(slot, super::syntax::UmlSyntaxKind::GuardToken)
-                })
+            direct_child(&node, syntax::UmlSyntaxKind::OperandGuard)
+                .map(|slot| declared_expression_slot(slot, syntax::UmlSyntaxKind::GuardToken))
                 .unwrap_or(crate::uml::DeclaredField::Absent)
         };
         crate::uml::DeclaredSequenceOperand {
@@ -2685,7 +2677,7 @@ fn declared_sequence_operand(node: SyntaxNode<UmlLanguage>) -> crate::uml::Decla
 }
 
 fn declared_value(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredValue {
-    let syntax = super::syntax::ValueSyntax(node.clone());
+    let syntax = syntax::ValueSyntax(node.clone());
     crate::uml::DeclaredValue {
         value: syntax
             .value_token()
@@ -2699,8 +2691,8 @@ fn declared_value(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredValue {
     }
 }
 fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
-    let syntax = super::syntax::SlotSyntax(node.clone());
-    let field = |token: Option<waml_syntax::SyntaxToken<UmlLanguage>>, expected| {
+    let syntax = syntax::SlotSyntax(node.clone());
+    let field = |token: Option<SyntaxToken<UmlLanguage>>, expected| {
         token
             .filter(|t| !t.flags().is_missing() && !t.text().write_to_string().is_empty())
             .map(|t| valid(node.clone(), t.text().write_to_string()))
@@ -2734,11 +2726,11 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
     let value_parts = node
         .children()
         .filter(|e| {
-            if e.kind() == super::syntax::UmlSyntaxKind::ColonToken {
+            if e.kind() == syntax::UmlSyntaxKind::ColonToken {
                 after_colon = true;
                 return false;
             }
-            after_colon && !matches!(e.kind(), super::syntax::UmlSyntaxKind::NewlineToken)
+            after_colon && !matches!(e.kind(), syntax::UmlSyntaxKind::NewlineToken)
         })
         .count();
     if value_parts != 1 {
@@ -2751,9 +2743,9 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
     let mut value = field(syntax.value_token(), crate::uml::ExpectedSyntax::LinkTarget);
     if let Some(token) = syntax.value_token() {
         let raw = token.text().write_to_string();
-        if (syntax.value_kind() == super::syntax::SlotValueKind::Quoted
+        if (syntax.value_kind() == syntax::SlotValueKind::Quoted
             && (raw.len() < 2 || !raw.ends_with('"')))
-            || (syntax.value_kind() == super::syntax::SlotValueKind::Link
+            || (syntax.value_kind() == syntax::SlotValueKind::Link
                 && !token.flags().is_missing()
                 && raw.is_empty())
         {
@@ -2767,7 +2759,7 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
     }
 }
 fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredRelationship {
-    let syntax = super::syntax::RelationshipSyntax(node.clone());
+    let syntax = syntax::RelationshipSyntax(node.clone());
     let mut kind = syntax
         .kind_token()
         .and_then(|t| crate::model::RelationshipKind::parse(&t.text().write_to_string()))
@@ -2802,7 +2794,7 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
     } else if let Some(link) = syntax.name_link() {
         let target = link
             .children()
-            .find(|e| e.kind() == super::syntax::UmlSyntaxKind::LinkTargetToken)
+            .find(|e| e.kind() == syntax::UmlSyntaxKind::LinkTargetToken)
             .and_then(|e| e.into_token());
         match target {
             Some(token)
@@ -2826,7 +2818,7 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
     } else {
         crate::uml::DeclaredField::Absent
     };
-    let end = |end: Option<super::syntax::RelationshipEndSyntax>| {
+    let end = |end: Option<syntax::RelationshipEndSyntax>| {
         let Some(end) = end else {
             return crate::uml::DeclaredField::Absent;
         };
@@ -2843,7 +2835,7 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
             },
         )
     };
-    let mut from_end = end(syntax.from_end());
+    let mut from_end = end(syntax.source_end());
     let mut to_end = end(syntax.to_end());
     match (&kind, syntax.colon_token().is_some()) {
         (
@@ -2885,7 +2877,7 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
 fn declared_layout(
     node: SyntaxNode<UmlLanguage>,
 ) -> crate::uml::DeclaredField<UmlLanguage, crate::uml::DeclaredLayoutStatement> {
-    let syntax = super::syntax::LayoutStatementSyntax(node.clone());
+    let syntax = syntax::LayoutStatementSyntax(node.clone());
     if has_recovery(&node) {
         let recovery = first_recovery_node(&node).expect("recovery predicate found a node");
         return crate::uml::DeclaredField::Incomplete {
@@ -2950,7 +2942,7 @@ fn declared_layout(
     }
 }
 fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember {
-    let syntax = super::syntax::MemberSyntax(node.clone());
+    let syntax = syntax::MemberSyntax(node.clone());
     let target = if has_recovery(&node) {
         invalid(node.clone())
     } else {
@@ -2970,7 +2962,7 @@ fn declared_member(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMember 
     crate::uml::DeclaredMember { syntax, target }
 }
 fn declared_member_group(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMemberGroup {
-    let syntax = super::syntax::MemberGroupSyntax(node.clone());
+    let syntax = syntax::MemberGroupSyntax(node.clone());
     let name = match syntax.heading_token() {
         Some(token)
             if !token.flags().is_missing() && !token.text().write_to_string().is_empty() =>
@@ -2983,7 +2975,7 @@ fn declared_member_group(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredM
         },
         None if node
             .children()
-            .all(|element| element.kind() != super::syntax::UmlSyntaxKind::HeadingMarkerToken) =>
+            .all(|element| element.kind() != syntax::UmlSyntaxKind::HeadingMarkerToken) =>
         {
             crate::uml::DeclaredField::Absent
         }
@@ -2998,28 +2990,28 @@ fn declared_member_group(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredM
         members: node
             .children()
             .filter_map(SyntaxElement::into_node)
-            .filter(|n| n.kind() == super::syntax::UmlSyntaxKind::Member)
+            .filter(|n| n.kind() == syntax::UmlSyntaxKind::Member)
             .map(declared_member)
             .collect::<Vec<_>>()
             .into(),
         inline_instances: node
             .children()
             .filter_map(SyntaxElement::into_node)
-            .filter(|n| n.kind() == super::syntax::UmlSyntaxKind::InlineInstance)
+            .filter(|n| n.kind() == syntax::UmlSyntaxKind::InlineInstance)
             .map(declared_inline_instance)
             .collect::<Vec<_>>()
             .into(),
         children: node
             .children()
             .filter_map(SyntaxElement::into_node)
-            .filter(|n| n.kind() == super::syntax::UmlSyntaxKind::MemberGroup)
+            .filter(|n| n.kind() == syntax::UmlSyntaxKind::MemberGroup)
             .map(declared_member_group)
             .collect::<Vec<_>>()
             .into(),
     }
 }
 fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredInlineInstance {
-    let syntax = super::syntax::InlineInstanceSyntax(node.clone());
+    let syntax = syntax::InlineInstanceSyntax(node.clone());
     let classifier = if syntax.link().as_ref().is_some_and(has_recovery) {
         invalid(node.clone())
     } else {
@@ -3043,7 +3035,7 @@ fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
             let name = slot
                 .0
                 .children()
-                .find(|e| e.kind() == super::syntax::UmlSyntaxKind::IdentifierToken)
+                .find(|e| e.kind() == syntax::UmlSyntaxKind::IdentifierToken)
                 .and_then(|e| e.into_token())
                 .filter(|token| {
                     !token.flags().is_missing() && !token.text().write_to_string().is_empty()
@@ -3059,9 +3051,9 @@ fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
                 .filter(|e| {
                     matches!(
                         e.kind(),
-                        super::syntax::UmlSyntaxKind::IdentifierToken
-                            | super::syntax::UmlSyntaxKind::TypeToken
-                            | super::syntax::UmlSyntaxKind::Link
+                        syntax::UmlSyntaxKind::IdentifierToken
+                            | syntax::UmlSyntaxKind::TypeToken
+                            | syntax::UmlSyntaxKind::Link
                     )
                 })
                 .last();
@@ -3087,7 +3079,7 @@ fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
                 }
                 Some(SyntaxElement::Node(link)) => match link
                     .children()
-                    .find(|x| x.kind() == super::syntax::UmlSyntaxKind::LinkTargetToken)
+                    .find(|x| x.kind() == syntax::UmlSyntaxKind::LinkTargetToken)
                     .and_then(|x| x.into_token())
                 {
                     Some(token) if token.flags().is_missing() => {
@@ -3112,7 +3104,7 @@ fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
             };
             if has_recovery(&slot_node) {
                 value = invalid(slot_node.clone());
-            } else if has_missing_kind(&slot_node, super::syntax::UmlSyntaxKind::SetToToken)
+            } else if has_missing_kind(&slot_node, syntax::UmlSyntaxKind::SetToToken)
                 && !matches!(value, crate::uml::DeclaredField::Invalid { .. })
             {
                 value = crate::uml::DeclaredField::Incomplete {
@@ -3121,7 +3113,7 @@ fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
                 };
             }
             crate::uml::DeclaredSlot {
-                syntax: super::syntax::SlotSyntax(slot_node),
+                syntax: syntax::SlotSyntax(slot_node),
                 name,
                 value,
             }
@@ -3130,7 +3122,7 @@ fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
         .into();
     let name = if has_recovery(&node) {
         invalid(node.clone())
-    } else if has_missing_kind(&node, super::syntax::UmlSyntaxKind::AsToken) {
+    } else if has_missing_kind(&node, syntax::UmlSyntaxKind::AsToken) {
         crate::uml::DeclaredField::Incomplete {
             syntax: node.clone(),
             expected: crate::uml::ExpectedSyntax::LinkTarget,
@@ -3153,11 +3145,11 @@ fn declared_inline_instance(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
     }
 }
 
-fn attributes(node: SyntaxNode<UmlLanguage>) -> Vec<super::syntax::AttributeSyntax> {
+fn attributes(node: SyntaxNode<UmlLanguage>) -> Vec<syntax::AttributeSyntax> {
     let mut found = Vec::new();
     for child in node.children() {
         if let SyntaxElement::Node(child) = child {
-            if let Some(attribute) = super::syntax::AttributeSyntax::cast(child.clone()) {
+            if let Some(attribute) = syntax::AttributeSyntax::cast(child.clone()) {
                 found.push(attribute);
             } else {
                 found.extend(attributes(child));

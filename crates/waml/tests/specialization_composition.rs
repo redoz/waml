@@ -276,7 +276,7 @@ fn ambiguous_static_candidate_is_rejected_before_owner_install_and_counter_commi
     let error = owner.try_install(collision, 5).unwrap_err();
     assert!(matches!(
         error,
-        waml::analysis::AnalysisError::AmbiguousClaim {
+        AnalysisError::AmbiguousClaim {
             concept_id,
             first,
             second,

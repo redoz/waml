@@ -914,7 +914,7 @@ mod tests {
         let mut display = test_display();
         display.show_type = false;
         display.show_attribute_visibility = false;
-        display.cardinality = waml::model::CardinalityVisibility::Off;
+        display.cardinality = CardinalityVisibility::Off;
         display.max_attributes = Some(1);
         let (scene, _) = build_scene(
             &model,
@@ -1638,7 +1638,7 @@ mod tests {
         // use_stress_default: layout.is_empty()).
         let mut diagram = model.diagrams[0].clone();
         diagram.layout = Vec::new();
-        assert!(super::use_stress_default(&diagram), "expected stress path");
+        assert!(use_stress_default(&diagram), "expected stress path");
 
         let (scene, _) = build_scene(
             &model,

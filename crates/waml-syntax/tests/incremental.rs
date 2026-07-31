@@ -818,8 +818,9 @@ fn boundary_fallback_matrix_is_named() {
             ReparseOutcome::Full { reason, .. } => format!("{reason:?}"),
             ReparseOutcome::Incremental { .. } => "Incremental".into(),
         };
-        assert!(
-            actual == format!("{reason:?}"),
+        assert_eq!(
+            actual,
+            format!("{reason:?}"),
             "expected {reason:?}, got {actual}"
         );
     }

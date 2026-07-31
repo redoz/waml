@@ -292,12 +292,12 @@ mod tests {
         }
     }
 
-    fn nodes(keys: &[&str]) -> Vec<crate::scene::SceneNode> {
+    fn nodes(keys: &[&str]) -> Vec<SceneNode> {
         use waml::model::{ElementType, UmlMetaclass};
 
         keys.iter()
             .enumerate()
-            .map(|(index, key)| crate::scene::SceneNode {
+            .map(|(index, key)| SceneNode {
                 key: (*key).to_string(),
                 title: (*key).to_string(),
                 element_type: ElementType::Uml(UmlMetaclass::Class),
