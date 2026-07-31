@@ -1011,6 +1011,136 @@ fn table_rows_share_column_origins_and_aggregate_cell_heights() {
     assert_eq!(layout.visual_lines().len(), 5);
 }
 
+#[test]
+fn table_uses_measured_min_content_proportions_and_column_alignment() {
+    let (mut document, presentation, mut shaper) =
+        fixtures::fixture(&[16.0; 5], &[1, 1, 1, 2, 4], None);
+    let mut blocks = document.blocks.to_vec();
+    let table = blocks[0].id;
+    let row = blocks[1].id;
+    blocks[0].spec.flow = BlockFlow::Table;
+    blocks[0].spec.space_after = 0.0;
+    blocks[0].spec.columns = Arc::from([
+        ColumnConstraint {
+            min_width: 40.0,
+            max_width: Some(40.0),
+            alignment: ColumnAlignment::Start,
+        },
+        ColumnConstraint {
+            min_width: 0.0,
+            max_width: None,
+            alignment: ColumnAlignment::Center,
+        },
+        ColumnConstraint {
+            min_width: 0.0,
+            max_width: None,
+            alignment: ColumnAlignment::End,
+        },
+    ]);
+    blocks[1].parent = Some(table);
+    blocks[1].spec.flow = BlockFlow::TableRow;
+    blocks[1].spec.space_after = 0.0;
+    for (index, column) in [(2, 0), (3, 1), (4, 2)] {
+        blocks[index].parent = Some(row);
+        blocks[index].spec.flow = BlockFlow::TableCell { column };
+        blocks[index].spec.space_after = 0.0;
+    }
+    let structural = HashSet::from([table, row]);
+    document.blocks = blocks.into();
+    document.text_runs = document
+        .text_runs
+        .iter()
+        .filter(|run| !structural.contains(&run.id))
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(120.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let geometry = |id| {
+        layout
+            .visible_blocks()
+            .iter()
+            .find(|block| block.id == id)
+            .unwrap()
+    };
+    let second = geometry(document.blocks[3].id).rect;
+    let third = geometry(document.blocks[4].id).rect;
+    assert!((second.size.x - 80.0 / 3.0).abs() < 0.001, "{second:?}");
+    assert!((third.size.x - 160.0 / 3.0).abs() < 0.001, "{third:?}");
+    let second_line = layout
+        .visual_lines()
+        .iter()
+        .find(|line| line.source_range == document.text_runs[1].range)
+        .unwrap();
+    let third_line = layout
+        .visual_lines()
+        .iter()
+        .find(|line| line.source_range == document.text_runs[2].range)
+        .unwrap();
+    assert!((second_line.rect.pos.x - (40.0 + (80.0 / 3.0 - 16.0) / 2.0)).abs() < 0.001);
+    assert!((third_line.rect.pos.x - (120.0 - 32.0)).abs() < 0.001);
+}
+
+#[test]
+fn hanging_splits_spanning_marker_run_and_aligns_mixed_metrics_baseline() {
+    let (mut document, presentation, _) = fixtures::paragraph();
+    let original = document.text_runs[0].clone();
+    let start = original.range.start().to_usize();
+    let middle = start + 4;
+    let mut blocks = document.blocks.to_vec();
+    blocks[0].spec.flow = BlockFlow::Hanging {
+        marker_range: range(start, start + 1),
+        content_indent: 20.0,
+    };
+    document.blocks = blocks.into();
+    document.text_runs = Arc::from([
+        LayoutTextRun {
+            id: original.id,
+            range: range(start, middle),
+            metrics: TextMetrics {
+                font_size: 30.0,
+                ..original.metrics
+            },
+        },
+        LayoutTextRun {
+            id: original.id,
+            range: range(middle, original.range.end().to_usize()),
+            metrics: original.metrics,
+        },
+    ]);
+    let mut shaper = MetricGlyphShaper;
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let marker = layout
+        .glyph_clusters()
+        .iter()
+        .find(|cluster| cluster.source_range == range(start, start + 1))
+        .unwrap();
+    let small_content = layout
+        .glyph_clusters()
+        .iter()
+        .find(|cluster| cluster.source_range == range(middle, original.range.end().to_usize()))
+        .unwrap();
+    assert_eq!(marker.rect.pos.x, 0.0);
+    assert!(small_content.rect.pos.x >= 20.0);
+    assert!((marker.glyphs[0].baseline - small_content.glyphs[0].baseline).abs() < 0.001);
+}
+
 struct FixedShaper(ShapedRun);
 
 impl TextShaper for FixedShaper {
@@ -1021,6 +1151,48 @@ impl TextShaper for FixedShaper {
         _max_width: f64,
     ) -> Result<ShapedRun, LayoutError> {
         Ok(self.0.clone())
+    }
+}
+
+struct MetricGlyphShaper;
+
+impl TextShaper for MetricGlyphShaper {
+    fn shape(
+        &mut self,
+        _source: &SourceText,
+        run: &LayoutTextRun,
+        _max_width: f64,
+    ) -> Result<ShapedRun, LayoutError> {
+        let ascender = run.metrics.font_size as f64 * 0.8;
+        let descender = -(run.metrics.font_size as f64 * 0.2);
+        Ok(ShapedRun {
+            clusters: Arc::from([ShapedCluster {
+                source_range: run.range,
+                advance: 10.0,
+                bidi_level: 0,
+                row_ordinal: 0,
+                row_top: 0.0,
+                caret_offsets: Arc::from([run.range.start(), run.range.end()]),
+                glyphs: Arc::from([ShapedGlyph {
+                    glyph_id: 1,
+                    origin: dvec2(0.0, 0.0),
+                    advance: 10.0,
+                    paint_scale: 1.0,
+                    font: None,
+                    font_key: run.metrics.font,
+                    font_size: run.metrics.font_size,
+                    ascender,
+                    descender,
+                    line_gap: 0.0,
+                    baseline: ascender,
+                    offset: 0.0,
+                    color: None,
+                }]),
+            }]),
+            ascender,
+            descender,
+            line_gap: 0.0,
+        })
     }
 }
 

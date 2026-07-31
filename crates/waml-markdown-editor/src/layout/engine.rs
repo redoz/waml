@@ -28,6 +28,28 @@ pub trait TextShaper {
         run: &LayoutTextRun,
         max_width: f64,
     ) -> Result<ShapedRun, LayoutError>;
+
+    fn min_content_width(
+        &mut self,
+        source: &SourceText,
+        run: &LayoutTextRun,
+    ) -> Result<f64, LayoutError> {
+        let shaped = self.shape(source, run, 1_000_000.0)?;
+        let mut width = 0.0_f64;
+        let mut word_width = 0.0_f64;
+        for cluster in shaped.clusters.iter() {
+            let whitespace = source
+                .slice(cluster.source_range)
+                .map_or(true, |text| text.chars().all(char::is_whitespace));
+            if whitespace {
+                word_width = 0.0;
+            } else {
+                word_width += cluster.advance;
+                width = width.max(word_width);
+            }
+        }
+        Ok(width)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -172,7 +194,9 @@ impl LayoutEngine {
 
         let invalidated = invalidated_block_range(&invalidation, document);
         let hierarchy = BlockHierarchy::new(document);
-        let widths = WidthPlan::new(document, &hierarchy, viewport.width);
+        let mut intrinsic_widths = vec![0.0; document.blocks.len()];
+        let mut table_intrinsics_ready = vec![false; document.blocks.len()];
+        let mut widths = WidthPlan::new(document, &hierarchy, viewport.width, &intrinsic_widths);
         let mut block_data = Vec::with_capacity(document.blocks.len());
         let mut measured = Vec::with_capacity(document.blocks.len());
 
@@ -226,7 +250,44 @@ impl LayoutEngine {
         let (placements, content_y) = loop {
             let (placements, content_y) =
                 position_block_tree(document, &hierarchy, &widths, &block_data);
-            let pending = visible_indices(&placements, measurement_min, measurement_max)
+            let measurement_indices =
+                visible_indices(&placements, measurement_min, measurement_max);
+            let pending_tables = measurement_indices
+                .iter()
+                .copied()
+                .filter(|index| {
+                    matches!(document.blocks[*index].spec.flow, super::BlockFlow::Table)
+                        && !table_intrinsics_ready[*index]
+                })
+                .collect::<Vec<_>>();
+            if !pending_tables.is_empty() {
+                for table in pending_tables {
+                    measure_table_min_content(
+                        document,
+                        &hierarchy,
+                        table,
+                        presentation.text(),
+                        shaper,
+                        &mut intrinsic_widths,
+                    )?;
+                    table_intrinsics_ready[table] = true;
+                }
+                let next_widths =
+                    WidthPlan::new(document, &hierarchy, viewport.width, &intrinsic_widths);
+                for index in 0..document.blocks.len() {
+                    if widths.content[index].to_bits() != next_widths.content[index].to_bits() {
+                        block_data[index] = Arc::new(estimated_block_layout_data(
+                            &document.blocks[index],
+                            document,
+                            next_widths.content[index],
+                        ));
+                        measured[index] = false;
+                    }
+                }
+                widths = next_widths;
+                continue;
+            }
+            let pending = measurement_indices
                 .iter()
                 .copied()
                 .filter(|index| !measured[*index])
@@ -367,20 +428,34 @@ struct WidthPlan {
     outer: Vec<f64>,
     content: Vec<f64>,
     child_x: Vec<f64>,
+    alignment: Vec<super::ColumnAlignment>,
 }
 
 impl WidthPlan {
-    fn new(document: &LayoutDocument, hierarchy: &BlockHierarchy, viewport_width: f64) -> Self {
+    fn new(
+        document: &LayoutDocument,
+        hierarchy: &BlockHierarchy,
+        viewport_width: f64,
+        intrinsic_widths: &[f64],
+    ) -> Self {
         let mut plan = Self {
             outer: vec![1.0; document.blocks.len()],
             content: vec![1.0; document.blocks.len()],
             child_x: vec![0.0; document.blocks.len()],
+            alignment: vec![super::ColumnAlignment::Start; document.blocks.len()],
         };
         let root_width =
             (viewport_width - document.content_insets.left - document.content_insets.right)
                 .max(1.0);
         for &root in &hierarchy.roots {
-            assign_block_widths(document, hierarchy, root, root_width, &mut plan);
+            assign_block_widths(
+                document,
+                hierarchy,
+                root,
+                root_width,
+                intrinsic_widths,
+                &mut plan,
+            );
         }
         plan
     }
@@ -391,21 +466,43 @@ fn assign_block_widths(
     hierarchy: &BlockHierarchy,
     index: usize,
     available_width: f64,
+    intrinsic_widths: &[f64],
     plan: &mut WidthPlan,
 ) {
     let block = &document.blocks[index];
     let horizontal_insets = block.spec.insets.left + block.spec.insets.right;
     match block.spec.flow {
         super::BlockFlow::Table => {
-            let columns = solve_table_columns(document, hierarchy, index, available_width);
+            let columns = solve_table_columns(
+                document,
+                hierarchy,
+                index,
+                available_width,
+                intrinsic_widths,
+            );
             let content_width = columns.iter().sum::<f64>().max(1.0);
             plan.content[index] = content_width;
             plan.outer[index] = content_width + horizontal_insets;
             for &child in &hierarchy.children[index] {
                 if matches!(document.blocks[child].spec.flow, super::BlockFlow::TableRow) {
-                    assign_table_row_widths(document, hierarchy, child, &columns, plan);
+                    assign_table_row_widths(
+                        document,
+                        hierarchy,
+                        child,
+                        &columns,
+                        &document.blocks[index].spec.columns,
+                        intrinsic_widths,
+                        plan,
+                    );
                 } else {
-                    assign_block_widths(document, hierarchy, child, content_width, plan);
+                    assign_block_widths(
+                        document,
+                        hierarchy,
+                        child,
+                        content_width,
+                        intrinsic_widths,
+                        plan,
+                    );
                 }
             }
         }
@@ -413,7 +510,14 @@ fn assign_block_widths(
             plan.outer[index] = available_width.max(1.0);
             plan.content[index] = (available_width - horizontal_insets).max(1.0);
             for &child in &hierarchy.children[index] {
-                assign_block_widths(document, hierarchy, child, plan.content[index], plan);
+                assign_block_widths(
+                    document,
+                    hierarchy,
+                    child,
+                    plan.content[index],
+                    intrinsic_widths,
+                    plan,
+                );
             }
         }
     }
@@ -424,6 +528,8 @@ fn assign_table_row_widths(
     hierarchy: &BlockHierarchy,
     index: usize,
     columns: &[f64],
+    constraints: &[super::ColumnConstraint],
+    intrinsic_widths: &[f64],
     plan: &mut WidthPlan,
 ) {
     let row_width = columns.iter().sum::<f64>().max(1.0);
@@ -435,11 +541,17 @@ fn assign_table_row_widths(
             _ => 0,
         };
         plan.child_x[child] = columns.iter().take(column).sum();
+        plan.alignment[child] = constraints
+            .get(column)
+            .map_or(super::ColumnAlignment::Start, |constraint| {
+                constraint.alignment
+            });
         assign_block_widths(
             document,
             hierarchy,
             child,
             columns.get(column).copied().unwrap_or(row_width),
+            intrinsic_widths,
             plan,
         );
     }
@@ -450,6 +562,7 @@ fn solve_table_columns(
     hierarchy: &BlockHierarchy,
     table: usize,
     available_width: f64,
+    intrinsic_widths: &[f64],
 ) -> Vec<f64> {
     let constraints = &document.blocks[table].spec.columns;
     if constraints.is_empty() {
@@ -464,12 +577,25 @@ fn solve_table_columns(
             .unwrap_or(1);
         return vec![(available_width / count as f64).max(1.0); count];
     }
+    let mut intrinsic_columns = vec![0.0_f64; constraints.len()];
+    for &row in &hierarchy.children[table] {
+        for &cell in &hierarchy.children[row] {
+            if let super::BlockFlow::TableCell { column } = document.blocks[cell].spec.flow {
+                if let Some(width) = intrinsic_columns.get_mut(column as usize) {
+                    *width = (*width).max(intrinsic_widths[cell]);
+                }
+            }
+        }
+    }
     let mut widths = constraints
         .iter()
-        .map(|constraint| {
+        .zip(&intrinsic_columns)
+        .map(|(constraint, intrinsic)| {
             constraint
                 .max_width
-                .map_or(constraint.min_width, |max| constraint.min_width.min(max))
+                .map_or(constraint.min_width.max(*intrinsic), |max| {
+                    constraint.min_width.max(*intrinsic).min(max)
+                })
                 .max(1.0)
         })
         .collect::<Vec<_>>();
@@ -488,9 +614,13 @@ fn solve_table_columns(
         if growable.is_empty() {
             break;
         }
-        let share = remaining / growable.len() as f64;
+        let total_weight = growable
+            .iter()
+            .map(|index| intrinsic_columns[*index].max(1.0))
+            .sum::<f64>();
         let mut consumed = 0.0;
         for index in growable {
+            let share = remaining * intrinsic_columns[index].max(1.0) / total_weight;
             let capacity = constraints[index]
                 .max_width
                 .map_or(share, |max| (max - widths[index]).max(0.0));
@@ -599,12 +729,23 @@ fn position_block(
         (cursor - content_y).max(own_height)
     };
     let height = block.spec.insets.top + body_height + block.spec.insets.bottom;
+    let laid_width = data[index]
+        .visual_lines
+        .iter()
+        .map(|line| line.rect.pos.x + line.rect.size.x)
+        .fold(0.0, f64::max);
+    let free_width = (widths.content[index] - laid_width).max(0.0);
+    let alignment_offset = match widths.alignment[index] {
+        super::ColumnAlignment::Start => 0.0,
+        super::ColumnAlignment::Center => free_width * 0.5,
+        super::ColumnAlignment::End => free_width,
+    };
     placements[index] = BlockPlacement {
         rect: Rect {
             pos: dvec2(x, y),
             size: dvec2(widths.outer[index], height),
         },
-        content_origin: dvec2(content_x, content_y),
+        content_origin: dvec2(content_x + alignment_offset, content_y),
     };
     height
 }
@@ -628,6 +769,30 @@ fn visible_indices(
             (rect.pos.y + rect.size.y >= visible_min && rect.pos.y <= visible_max).then_some(index)
         })
         .collect()
+}
+
+fn measure_table_min_content<S: TextShaper>(
+    document: &LayoutDocument,
+    hierarchy: &BlockHierarchy,
+    table: usize,
+    source: &SourceText,
+    shaper: &mut S,
+    intrinsic_widths: &mut [f64],
+) -> Result<(), LayoutError> {
+    for &row in &hierarchy.children[table] {
+        for &cell in &hierarchy.children[row] {
+            let mut width = 0.0_f64;
+            for run in document
+                .text_runs
+                .iter()
+                .filter(|run| run.id == document.blocks[cell].id)
+            {
+                width = width.max(shaper.min_content_width(source, run)?);
+            }
+            intrinsic_widths[cell] = width;
+        }
+    }
+    Ok(())
 }
 
 fn estimated_block_layout_data(
@@ -777,20 +942,75 @@ fn layout_block<S: TextShaper>(
             clusters: Vec::new(),
             height: 0.0,
         };
+        let mut pieces = Vec::new();
         for run in runs {
-            let is_marker =
-                run.range.start() >= marker_range.start() && run.range.end() <= marker_range.end();
-            let (target, run_x, run_width) = if is_marker {
-                (&mut marker_output, x, content_indent.max(1.0))
+            let marker_start = run.range.start().max(marker_range.start());
+            let marker_end = run.range.end().min(marker_range.end());
+            if run.range.start() < marker_start {
+                pieces.push((
+                    false,
+                    LayoutTextRun {
+                        id: run.id,
+                        range: TextRange::new(run.range.start(), marker_start)
+                            .expect("a hanging prefix stays ordered"),
+                        metrics: run.metrics,
+                    },
+                ));
+            }
+            if marker_start < marker_end {
+                pieces.push((
+                    true,
+                    LayoutTextRun {
+                        id: run.id,
+                        range: TextRange::new(marker_start, marker_end)
+                            .expect("a hanging marker stays ordered"),
+                        metrics: run.metrics,
+                    },
+                ));
+            }
+            let content_start = marker_end.max(run.range.start());
+            if content_start < run.range.end() {
+                pieces.push((
+                    false,
+                    LayoutTextRun {
+                        id: run.id,
+                        range: TextRange::new(content_start, run.range.end())
+                            .expect("hanging content stays ordered"),
+                        metrics: run.metrics,
+                    },
+                ));
+            }
+        }
+        let mut shaped_pieces = Vec::with_capacity(pieces.len());
+        for (is_marker, run) in pieces {
+            let run_width = if is_marker {
+                content_indent.max(1.0)
             } else {
-                (
-                    &mut content_output,
-                    x + content_indent,
-                    (max_width - content_indent).max(1.0),
-                )
+                (max_width - content_indent).max(1.0)
             };
-            let shaped = shaper.shape(presentation.text(), run, run_width)?;
-            append_run(target, run.id, &run.metrics, &shaped, run_x, y, run_width);
+            let shaped = shaper.shape(presentation.text(), &run, run_width)?;
+            shaped_pieces.push((is_marker, run, shaped, run_width));
+        }
+        let shared_ascender = shaped_pieces
+            .iter()
+            .map(|(_, _, shaped, _)| shaped.ascender)
+            .fold(0.0, f64::max);
+        for (is_marker, run, shaped, run_width) in shaped_pieces {
+            let (target, run_x) = if is_marker {
+                (&mut marker_output, x)
+            } else {
+                (&mut content_output, x + content_indent)
+            };
+            let run_y = y + shared_ascender - shaped.ascender;
+            append_run(
+                target,
+                run.id,
+                &run.metrics,
+                &shaped,
+                run_x,
+                run_y,
+                run_width,
+            );
         }
         return Ok(BlockOutput {
             height: marker_output.height.max(content_output.height),
@@ -948,7 +1168,11 @@ fn append_run(
             line_height,
         );
     }
-    output.height = output.lines.iter().map(VisualLine::height).sum();
+    output.height = output
+        .lines
+        .iter()
+        .map(|line| line.rect.pos.y + line.height())
+        .fold(0.0, f64::max);
 }
 
 fn flush_line(
