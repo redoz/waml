@@ -8,7 +8,10 @@ use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
 use super::{ARROW_HEAD, BehaviorPalette, Emphasis};
 use crate::accent;
 use crate::canvas::linework::BehaviorLineworkMetrics;
-use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
+use crate::canvas::primitives::{
+    edge_point_to_screen, fill_rect, snap_rect, snap_stroke_width, stroke_quad,
+    world_rect_to_screen,
+};
 use crate::canvas::viewport::ViewportSnapshot;
 use crate::node_style::AccentBucket;
 use makepad_widgets::*;
@@ -175,18 +178,7 @@ fn draw_solid_segment(
 ) {
     let sa = edge_point_to_screen(camera, rect_pos, a);
     let sb = edge_point_to_screen(camera, rect_pos, b);
-    let quad = if (sa.x - sb.x).abs() >= (sa.y - sb.y).abs() {
-        Rect {
-            pos: dvec2(sa.x.min(sb.x), (sa.y + sb.y) * 0.5 - thickness * 0.5),
-            size: dvec2((sa.x - sb.x).abs().max(1.0), thickness),
-        }
-    } else {
-        Rect {
-            pos: dvec2((sa.x + sb.x) * 0.5 - thickness * 0.5, sa.y.min(sb.y)),
-            size: dvec2(thickness, (sa.y - sb.y).abs().max(1.0)),
-        }
-    };
-    fill.draw_abs(cx, quad);
+    fill.draw_abs(cx, stroke_quad(cx, sa, sb, thickness));
 }
 
 fn draw_stem(
@@ -406,8 +398,11 @@ fn draw_fragment(
     emphasis: Emphasis,
     draws: &mut InteractionDrawResources<'_>,
 ) {
-    let screen = world_rect_to_screen(viewport, fragment.rect);
-    let border = draws.linework.thickness(emphasis.thickness(FRAME_THICKNESS)) as f32;
+    // The frame is stroked by an SDF pen, so both its rect and its width have to
+    // be snapped here -- `stroke_quad` only covers the quad-drawn linework.
+    let screen = snap_rect(cx, world_rect_to_screen(viewport, fragment.rect));
+    let border =
+        snap_stroke_width(cx, draws.linework.thickness(emphasis.thickness(FRAME_THICKNESS))) as f32;
     let divider = draws.linework.thickness(DIVIDER_THICKNESS);
     draws.frame_border.color = emphasis.stroke(draws.palette.line, draws.palette);
     draws

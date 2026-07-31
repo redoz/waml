@@ -6,7 +6,9 @@ use super::super::hit::BehaviorTarget;
 use super::super::scene::{FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
 use super::{ARROW_HEAD, BehaviorPalette, Emphasis};
 use crate::canvas::linework::BehaviorLineworkMetrics;
-use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
+use crate::canvas::primitives::{
+    edge_point_to_screen, fill_rect, stroke_quad, world_rect_to_screen,
+};
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
 use waml::model::FlowNodeKind;
@@ -170,18 +172,7 @@ fn draw_route(
     let thickness = draws.linework.thickness(emphasis.thickness(ROUTE_THICKNESS));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     for pair in screen.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
-        let quad = if (a.x - b.x).abs() >= (a.y - b.y).abs() {
-            Rect {
-                pos: dvec2(a.x.min(b.x), a.y - thickness * 0.5),
-                size: dvec2((a.x - b.x).abs().max(1.0), thickness),
-            }
-        } else {
-            Rect {
-                pos: dvec2(a.x - thickness * 0.5, a.y.min(b.y)),
-                size: dvec2(thickness, (a.y - b.y).abs().max(1.0)),
-            }
-        };
+        let quad = stroke_quad(cx, pair[0], pair[1], thickness);
         draws.fill.draw_abs(cx, quad);
     }
 
