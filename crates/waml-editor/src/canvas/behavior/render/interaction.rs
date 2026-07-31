@@ -5,8 +5,9 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
-use super::{BehaviorPalette, Emphasis};
+use super::{ARROW_HEAD, BehaviorPalette, Emphasis};
 use crate::accent;
+use crate::canvas::linework::BehaviorLineworkMetrics;
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
 use crate::node_style::AccentBucket;
@@ -30,7 +31,16 @@ pub(in crate::canvas::behavior) struct InteractionDrawResources<'a> {
     pub(super) text: &'a mut DrawText,
     pub(super) text_heading: &'a mut DrawText,
     pub(super) palette: BehaviorPalette,
+    pub(super) linework: BehaviorLineworkMetrics,
 }
+
+/// Authored linework, in lpx at zoom 1: lifeline stem, message stroke, fragment
+/// frame border and operand divider, plus the destroyed-lifeline X.
+const STEM_THICKNESS: f64 = 1.4;
+const MESSAGE_THICKNESS: f64 = 2.0;
+const FRAME_THICKNESS: f64 = 1.2;
+const DIVIDER_THICKNESS: f64 = 1.4;
+const X_MARK_SIZE: f64 = 10.0;
 
 fn accent_with_alpha(accent: Vec4, alpha: f32) -> Vec4 {
     vec4(accent.x, accent.y, accent.z, alpha)
@@ -188,14 +198,14 @@ fn draw_stem(
 ) {
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    let thickness = emphasis.thickness(1.4) * camera.zoom.max(0.3);
+    let thickness = draws.linework.thickness(emphasis.thickness(STEM_THICKNESS));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let top = (lifeline.stem_x, lifeline.stem_top);
     let bottom = (lifeline.stem_x, lifeline.stem_bottom);
     draw_dashed_segment(cx, &camera, rect_pos, draws.fill, top, bottom, thickness);
 
     if lifeline.destroyed {
-        let size = 10.0 * camera.zoom.max(0.3);
+        let size = draws.linework.glyph(X_MARK_SIZE);
         let center = edge_point_to_screen(&camera, rect_pos, bottom);
         let screen = Rect {
             pos: dvec2(center.x - size * 0.5, center.y - size * 0.5),
@@ -277,7 +287,7 @@ fn draw_message(
 ) {
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    let thickness = emphasis.thickness(2.0) * camera.zoom.max(0.3);
+    let thickness = draws.linework.thickness(emphasis.thickness(MESSAGE_THICKNESS));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let dashed = matches!(message.verb, MessageVerb::Replies | MessageVerb::Creates);
 
@@ -336,7 +346,7 @@ fn draw_arrowhead(
     }
     let unit = dvec2(dir.x / len, dir.y / len);
     let perp = dvec2(-unit.y, unit.x);
-    let head = 9.0 * camera.zoom.max(0.3);
+    let head = draws.linework.glyph(ARROW_HEAD);
     let back = dvec2(tip.x - unit.x * head, tip.y - unit.y * head);
     let left = dvec2(back.x + perp.x * head * 0.5, back.y + perp.y * head * 0.5);
     let right = dvec2(back.x - perp.x * head * 0.5, back.y - perp.y * head * 0.5);
@@ -397,10 +407,12 @@ fn draw_fragment(
     draws: &mut InteractionDrawResources<'_>,
 ) {
     let screen = world_rect_to_screen(viewport, fragment.rect);
+    let border = draws.linework.thickness(emphasis.thickness(FRAME_THICKNESS)) as f32;
+    let divider = draws.linework.thickness(DIVIDER_THICKNESS);
     draws.frame_border.color = emphasis.stroke(draws.palette.line, draws.palette);
     draws
         .frame_border
-        .set_uniform(cx, live_id!(stroke_w), &[emphasis.thickness(1.2) as f32]);
+        .set_uniform(cx, live_id!(stroke_w), &[border]);
     draws.frame_border.draw_abs(cx, screen);
 
     let zoom = viewport.camera.zoom;
@@ -431,7 +443,7 @@ fn draw_fragment(
                 draws.fill,
                 left,
                 right,
-                (1.4 * zoom).max(1.0),
+                divider,
             );
         }
         let guard_screen = world_rect_to_screen(viewport, operand.guard_rect);

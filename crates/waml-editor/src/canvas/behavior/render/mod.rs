@@ -7,6 +7,7 @@ mod interaction;
 
 use super::hit::BehaviorTarget;
 use super::scene::BehaviorScene;
+use crate::canvas::linework::{BehaviorLineworkMetrics, DEFAULT_LINEWORK_MODE};
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
 
@@ -20,6 +21,10 @@ pub(super) use interaction::InteractionDrawResources;
 /// must stay in points: converting here as well applied `96/72` twice and drew
 /// every glyph a third wider than the box the solver sized around it.
 const BASE_TEXT_PT: f32 = 13.0;
+
+/// Arrow-head extent, in lpx at zoom 1 -- one value for flow routes and
+/// interaction messages alike.
+pub(super) const ARROW_HEAD: f64 = 9.0;
 
 /// Point a text pen at `zoom`: pick the nearest raster rung for the zoomed
 /// target size and carry the remainder in `font_scale`, exactly as every class
@@ -122,6 +127,9 @@ pub(super) fn draw(
 ) {
     let rect = viewport.view_rect;
     draws.bg.draw_abs(cx, rect);
+    // One policy for every stroke in this pass: CAD holds linework in screen
+    // space at any zoom, `Scaled` grows it with the camera.
+    let linework = BehaviorLineworkMetrics::for_zoom(DEFAULT_LINEWORK_MODE, viewport.camera.zoom);
     if !matches!(scene, BehaviorScene::Empty { .. }) {
         // The empty-state message is chrome, not scene content: it stays at its
         // DSL size. Everything else is world-space and scales with the camera.
@@ -145,6 +153,7 @@ pub(super) fn draw(
                 text_heading: &mut *draws.text_heading,
                 text_body: &mut *draws.text,
                 palette: draws.palette,
+                linework,
             };
             flow::draw(
                 cx,
@@ -176,6 +185,7 @@ pub(super) fn draw(
                 text: &mut *draws.text,
                 text_heading: &mut *draws.text_heading,
                 palette: draws.palette,
+                linework,
             };
             interaction::draw(
                 cx,

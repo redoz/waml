@@ -1,12 +1,9 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in super::super) enum LineworkMode {
-    Cad,
-    // Retained as the legacy branch for future comparison or setting.
-    #[allow(dead_code)]
-    Scaled,
-}
+//! Class-canvas linework. The mode itself is shared with the behavior canvas
+//! (`crate::canvas::linework`), so one setting governs both surfaces.
 
-pub(in super::super) const DEFAULT_LINEWORK_MODE: LineworkMode = LineworkMode::Cad;
+use crate::canvas::linework::LineworkMode;
+
+pub(in super::super) use crate::canvas::linework::DEFAULT_LINEWORK_MODE;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in super::super) struct LineworkMetrics {

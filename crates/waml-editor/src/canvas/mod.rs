@@ -3,6 +3,7 @@ use makepad_widgets::*;
 mod behavior;
 mod class;
 mod geometry;
+mod linework;
 pub(crate) mod primitives;
 mod viewport;
 

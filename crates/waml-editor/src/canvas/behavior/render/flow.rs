@@ -4,7 +4,8 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
-use super::{BehaviorPalette, Emphasis};
+use super::{ARROW_HEAD, BehaviorPalette, Emphasis};
+use crate::canvas::linework::BehaviorLineworkMetrics;
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
@@ -36,6 +37,7 @@ pub(in crate::canvas::behavior) struct FlowDrawResources<'a> {
     pub(super) text_heading: &'a mut DrawText,
     pub(super) text_body: &'a mut DrawText,
     pub(super) palette: BehaviorPalette,
+    pub(super) linework: BehaviorLineworkMetrics,
 }
 
 fn node_emphasis(
@@ -165,7 +167,7 @@ fn draw_route(
         .iter()
         .map(|p| edge_point_to_screen(&camera, rect_pos, *p))
         .collect();
-    let thickness = (emphasis.thickness(ROUTE_THICKNESS) * camera.zoom).max(1.4);
+    let thickness = draws.linework.thickness(emphasis.thickness(ROUTE_THICKNESS));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     for pair in screen.windows(2) {
         let (a, b) = (pair[0], pair[1]);
@@ -192,7 +194,7 @@ fn draw_route(
     }
     let unit = dvec2(dir.x / len, dir.y / len);
     let perp = dvec2(-unit.y, unit.x);
-    let head = 9.0 * camera.zoom.max(0.3);
+    let head = draws.linework.glyph(ARROW_HEAD);
     let back = dvec2(tip.x - unit.x * head, tip.y - unit.y * head);
     let left = dvec2(back.x + perp.x * head * 0.5, back.y + perp.y * head * 0.5);
     let right = dvec2(back.x - perp.x * head * 0.5, back.y - perp.y * head * 0.5);
