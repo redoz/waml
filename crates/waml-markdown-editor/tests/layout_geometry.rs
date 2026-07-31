@@ -669,6 +669,49 @@ fn scrolled_visible_window_is_recomputed_after_an_earlier_block_wraps() {
 }
 
 #[test]
+fn repeated_far_scrolls_keep_all_summaries_but_bound_full_layout_payloads() {
+    let (document, presentation, mut shaper) = fixtures::ten_thousand_blocks();
+    let mut engine = LayoutEngine::default();
+    let scroll_positions = [0.0, 60_000.0, 120_000.0, 200_000.0, 0.0];
+    let mut initial_heights = None;
+
+    for (turn, scroll_y) in scroll_positions.into_iter().enumerate() {
+        shaper.shaped.clear();
+        let layout = engine
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(400.0, 80.0, scroll_y, 0.0),
+                if turn == 0 {
+                    LayoutInvalidation::Document
+                } else {
+                    LayoutInvalidation::Viewport
+                },
+                &mut shaper,
+            )
+            .unwrap();
+
+        assert_eq!(layout.block_summaries().len(), 10_000);
+        assert_eq!(engine.cached_summary_count_for_test(), 10_000);
+        assert!(engine.retained_layout_payload_count_for_test() <= 40);
+        assert!(shaper.shaped.len() <= 40);
+
+        let heights = layout
+            .block_summaries()
+            .iter()
+            .map(|summary| summary.height)
+            .collect::<Vec<_>>();
+        if let Some(initial_heights) = &initial_heights {
+            if turn == scroll_positions.len() - 1 {
+                assert_eq!(&heights, initial_heights);
+            }
+        } else {
+            initial_heights = Some(heights);
+        }
+    }
+}
+
+#[test]
 fn embedded_measurement_invalidation_reshapes_only_the_stable_block_id() {
     let (document, presentation, mut shaper) = fixtures::failing_second_block();
     shaper.fail_fragment = None;

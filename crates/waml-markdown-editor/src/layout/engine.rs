@@ -169,8 +169,97 @@ pub struct BlockSummary {
 #[derive(Clone)]
 struct CachedBlock {
     summary: BlockSummary,
-    data: Arc<BlockLayoutData>,
+    data: Option<Arc<BlockLayoutData>>,
+    measurement: BlockMeasurement,
     measured: bool,
+}
+
+#[derive(Clone, Copy)]
+struct BlockMeasurement {
+    height: f64,
+    laid_width: f64,
+}
+
+impl BlockMeasurement {
+    fn from_data(data: &BlockLayoutData) -> Self {
+        Self {
+            height: data.block.rect.size.y,
+            laid_width: data
+                .visual_lines
+                .iter()
+                .map(|line| line.rect.pos.x + line.rect.size.x)
+                .fold(0.0, f64::max),
+        }
+    }
+}
+
+struct DocumentLayoutIndex {
+    run_indices: Vec<Vec<usize>>,
+    embedded_indices: Vec<Vec<usize>>,
+    content_fingerprints: Vec<u64>,
+    estimated_heights: Vec<f64>,
+}
+
+impl DocumentLayoutIndex {
+    fn new(document: &LayoutDocument, presentation: &MarkdownDocumentSnapshot) -> Self {
+        let mut block_indices = HashMap::with_capacity(document.blocks.len());
+        let mut run_indices = vec![Vec::new(); document.blocks.len()];
+        let mut embedded_indices = vec![Vec::new(); document.blocks.len()];
+        let mut estimated_heights = vec![0.0_f64; document.blocks.len()];
+        let mut hashers = (0..document.blocks.len())
+            .map(|_| DefaultHasher::new())
+            .collect::<Vec<_>>();
+        for (index, block) in document.blocks.iter().enumerate() {
+            block_indices.insert(block.id, index);
+            block.source_range.hash(&mut hashers[index]);
+            presentation
+                .text()
+                .slice(block.source_range)
+                .unwrap_or("")
+                .as_bytes()
+                .hash(&mut hashers[index]);
+        }
+        for (run_index, run) in document.text_runs.iter().enumerate() {
+            let Some(&block_index) = block_indices.get(&run.id) else {
+                continue;
+            };
+            run_indices[block_index].push(run_index);
+            estimated_heights[block_index] =
+                estimated_heights[block_index].max(run.metrics.font_size as f64);
+            run.range.hash(&mut hashers[block_index]);
+            run.metrics.font.hash(&mut hashers[block_index]);
+            run.metrics
+                .font_size
+                .to_bits()
+                .hash(&mut hashers[block_index]);
+            run.metrics
+                .line_spacing
+                .to_bits()
+                .hash(&mut hashers[block_index]);
+            run.metrics.weight.hash(&mut hashers[block_index]);
+            run.metrics.italic.hash(&mut hashers[block_index]);
+        }
+        for (embedded_index, embedded) in document.embedded_blocks.iter().enumerate() {
+            let Some(&block_index) = block_indices.get(&embedded.id) else {
+                continue;
+            };
+            embedded_indices[block_index].push(embedded_index);
+            estimated_heights[block_index] = estimated_heights[block_index].max(embedded.size.y);
+            embedded.source_range.hash(&mut hashers[block_index]);
+            embedded.size.x.to_bits().hash(&mut hashers[block_index]);
+            embedded.size.y.to_bits().hash(&mut hashers[block_index]);
+            embedded
+                .baseline
+                .map(f64::to_bits)
+                .hash(&mut hashers[block_index]);
+        }
+        Self {
+            run_indices,
+            embedded_indices,
+            content_fingerprints: hashers.into_iter().map(|hasher| hasher.finish()).collect(),
+            estimated_heights,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -179,6 +268,19 @@ pub struct LayoutEngine {
 }
 
 impl LayoutEngine {
+    #[doc(hidden)]
+    pub fn cached_summary_count_for_test(&self) -> usize {
+        self.blocks.len()
+    }
+
+    #[doc(hidden)]
+    pub fn retained_layout_payload_count_for_test(&self) -> usize {
+        self.blocks
+            .values()
+            .filter(|block| block.data.is_some())
+            .count()
+    }
+
     pub fn layout<S: TextShaper>(
         &mut self,
         document: &LayoutDocument,
@@ -204,17 +306,19 @@ impl LayoutEngine {
 
         let invalidated = invalidated_block_range(&invalidation, document);
         let hierarchy = BlockHierarchy::new(document);
+        let layout_index = DocumentLayoutIndex::new(document, presentation);
         let mut intrinsic_widths = vec![0.0; document.blocks.len()];
         let mut table_intrinsics_ready = vec![false; document.blocks.len()];
         let mut widths = WidthPlan::new(document, &hierarchy, viewport.width, &intrinsic_widths);
         let mut block_data = Vec::with_capacity(document.blocks.len());
+        let mut measurements = Vec::with_capacity(document.blocks.len());
         let mut measured = Vec::with_capacity(document.blocks.len());
 
         for (index, block) in document.blocks.iter().enumerate() {
             let available_width = widths.content[index];
             let width_key = available_width.to_bits();
             let flow_fingerprint = flow_fingerprint(block);
-            let content_fingerprint = content_fingerprint(block, document, presentation);
+            let content_fingerprint = layout_index.content_fingerprints[index];
             let cached = self.blocks.get(&block.id);
             let explicitly_invalidated = invalidated.contains(&index);
             let can_reuse = !explicitly_invalidated
@@ -230,25 +334,29 @@ impl LayoutEngine {
                 invalidation,
                 LayoutInvalidation::BlockMeasurement(id) if id == block.id
             );
-            let (data, is_measured) = if can_reuse {
+            let (data, measurement, is_measured) = if can_reuse {
                 let cached = cached.expect("a reusable block has cached data");
-                (cached.data.clone(), cached.measured)
+                (cached.data.clone(), cached.measurement, cached.measured)
             } else if force_measure {
-                (
-                    measure_block(block, document, presentation, available_width, shaper),
-                    true,
-                )
+                let data = measure_block(
+                    index,
+                    document,
+                    &layout_index,
+                    presentation,
+                    available_width,
+                    shaper,
+                );
+                let measurement = BlockMeasurement::from_data(&data);
+                (Some(data), measurement, true)
             } else {
                 (
-                    Arc::new(estimated_block_layout_data(
-                        block,
-                        document,
-                        available_width,
-                    )),
+                    None,
+                    estimated_block_measurement(&layout_index, index),
                     false,
                 )
             };
             block_data.push(data);
+            measurements.push(measurement);
             measured.push(is_measured);
         }
 
@@ -259,7 +367,7 @@ impl LayoutEngine {
         let measurement_max = viewport.scroll_y + viewport.height + measurement_overscan;
         let (placements, content_y) = loop {
             let (placements, content_y) =
-                position_block_tree(document, &hierarchy, &widths, &block_data);
+                position_block_tree(document, &hierarchy, &widths, &measurements);
             let measurement_indices =
                 visible_indices(&placements, measurement_min, measurement_max);
             let pending_tables = measurement_indices
@@ -274,6 +382,7 @@ impl LayoutEngine {
                 for table in pending_tables {
                     measure_table_min_content(
                         document,
+                        &layout_index,
                         &hierarchy,
                         table,
                         presentation.text(),
@@ -286,11 +395,8 @@ impl LayoutEngine {
                     WidthPlan::new(document, &hierarchy, viewport.width, &intrinsic_widths);
                 for index in 0..document.blocks.len() {
                     if widths.content[index].to_bits() != next_widths.content[index].to_bits() {
-                        block_data[index] = Arc::new(estimated_block_layout_data(
-                            &document.blocks[index],
-                            document,
-                            next_widths.content[index],
-                        ));
+                        block_data[index] = None;
+                        measurements[index] = estimated_block_measurement(&layout_index, index);
                         measured[index] = false;
                     }
                 }
@@ -300,22 +406,26 @@ impl LayoutEngine {
             let pending = measurement_indices
                 .iter()
                 .copied()
-                .filter(|index| !measured[*index])
+                .filter(|index| !measured[*index] || block_data[*index].is_none())
                 .collect::<Vec<_>>();
             if pending.is_empty() {
                 break (placements, content_y);
             }
             for index in pending {
-                block_data[index] = measure_block(
-                    &document.blocks[index],
+                let data = measure_block(
+                    index,
                     document,
+                    &layout_index,
                     presentation,
                     widths.content[index],
                     shaper,
                 );
+                measurements[index] = BlockMeasurement::from_data(&data);
+                block_data[index] = Some(data);
                 measured[index] = true;
             }
         };
+        let measurement_indices = visible_indices(&placements, measurement_min, measurement_max);
         let visible_indices = visible_indices(&placements, visible_min, visible_max);
         let mut summaries = Vec::with_capacity(document.blocks.len());
         let mut dirty_first = None;
@@ -329,7 +439,7 @@ impl LayoutEngine {
                 y: placements[index].rect.pos.y,
                 height: placements[index].rect.size.y,
                 width_key: widths.content[index].to_bits(),
-                content_fingerprint: content_fingerprint(block, document, presentation),
+                content_fingerprint: layout_index.content_fingerprints[index],
             };
             let explicitly_invalidated = invalidated.contains(&index);
             let changed = explicitly_invalidated
@@ -348,31 +458,40 @@ impl LayoutEngine {
         let mut clusters = Vec::new();
         let mut blocks = Vec::new();
         let mut visible_block_layouts = Vec::new();
+        let mut retain_payload = vec![false; document.blocks.len()];
+        for index in measurement_indices {
+            retain_payload[index] = true;
+        }
         for index in visible_indices.iter().copied() {
+            let data = block_data[index]
+                .as_ref()
+                .expect("each visible block is rehydrated in the measurement window");
             append_positioned_block(
                 index,
-                &block_data[index],
+                data,
                 placements[index],
                 &mut visual_lines,
                 &mut clusters,
                 &mut blocks,
             );
-            visible_block_layouts.push(block_data[index].clone());
+            visible_block_layouts.push(data.clone());
         }
 
         self.blocks = document
             .blocks
             .iter()
             .zip(summaries.iter().cloned())
-            .zip(block_data.iter().cloned())
-            .zip(measured)
-            .map(|(((block, summary), data), measured)| {
+            .enumerate()
+            .map(|(index, (block, summary))| {
                 (
                     block.id,
                     CachedBlock {
                         summary,
-                        data,
-                        measured,
+                        data: retain_payload[index]
+                            .then(|| block_data[index].clone())
+                            .flatten(),
+                        measurement: measurements[index],
+                        measured: measured[index],
                     },
                 )
             })
@@ -656,7 +775,7 @@ fn position_block_tree(
     document: &LayoutDocument,
     hierarchy: &BlockHierarchy,
     widths: &WidthPlan,
-    data: &[Arc<BlockLayoutData>],
+    measurements: &[BlockMeasurement],
 ) -> (Vec<BlockPlacement>, f64) {
     let empty = BlockPlacement {
         rect: Rect {
@@ -674,7 +793,7 @@ fn position_block_tree(
             document,
             hierarchy,
             widths,
-            data,
+            measurements,
             &mut placements,
             root,
             document.content_insets.left,
@@ -690,7 +809,7 @@ fn position_block(
     document: &LayoutDocument,
     hierarchy: &BlockHierarchy,
     widths: &WidthPlan,
-    data: &[Arc<BlockLayoutData>],
+    measurements: &[BlockMeasurement],
     placements: &mut [BlockPlacement],
     index: usize,
     x: f64,
@@ -699,7 +818,7 @@ fn position_block(
     let block = &document.blocks[index];
     let content_x = x + block.spec.insets.left;
     let content_y = y + block.spec.insets.top;
-    let own_height = data[index].block.rect.size.y;
+    let own_height = measurements[index].height;
     let body_height = if matches!(block.spec.flow, super::BlockFlow::TableRow) {
         let mut row_height = own_height;
         for &child in &hierarchy.children[index] {
@@ -709,7 +828,7 @@ fn position_block(
                 document,
                 hierarchy,
                 widths,
-                data,
+                measurements,
                 placements,
                 child,
                 content_x + widths.child_x[child],
@@ -728,7 +847,7 @@ fn position_block(
                 document,
                 hierarchy,
                 widths,
-                data,
+                measurements,
                 placements,
                 child,
                 content_x + widths.child_x[child],
@@ -739,11 +858,7 @@ fn position_block(
         (cursor - content_y).max(own_height)
     };
     let height = block.spec.insets.top + body_height + block.spec.insets.bottom;
-    let laid_width = data[index]
-        .visual_lines
-        .iter()
-        .map(|line| line.rect.pos.x + line.rect.size.x)
-        .fold(0.0, f64::max);
+    let laid_width = measurements[index].laid_width;
     let free_width = (widths.content[index] - laid_width).max(0.0);
     let alignment_offset = match widths.alignment[index] {
         super::ColumnAlignment::Start => 0.0,
@@ -811,6 +926,7 @@ fn visible_indices(
 
 fn measure_table_min_content<S: TextShaper>(
     document: &LayoutDocument,
+    layout_index: &DocumentLayoutIndex,
     hierarchy: &BlockHierarchy,
     table: usize,
     source: &SourceText,
@@ -820,11 +936,8 @@ fn measure_table_min_content<S: TextShaper>(
     for &row in &hierarchy.children[table] {
         for &cell in &hierarchy.children[row] {
             let mut width = 0.0_f64;
-            for run in document
-                .text_runs
-                .iter()
-                .filter(|run| run.id == document.blocks[cell].id)
-            {
+            for run_index in &layout_index.run_indices[cell] {
+                let run = &document.text_runs[*run_index];
                 width = width.max(shaper.min_content_width(source, run)?);
             }
             intrinsic_widths[cell] = width;
@@ -833,52 +946,39 @@ fn measure_table_min_content<S: TextShaper>(
     Ok(())
 }
 
-fn estimated_block_layout_data(
-    block: &LayoutBlock,
-    document: &LayoutDocument,
-    width: f64,
-) -> BlockLayoutData {
-    let text_height = document
-        .text_runs
-        .iter()
-        .filter(|run| run.id == block.id)
-        .map(|run| run.metrics.font_size as f64)
-        .fold(0.0, f64::max);
-    let height = document
-        .embedded_blocks
-        .iter()
-        .filter(|embedded| embedded.id == block.id)
-        .map(|embedded| embedded.size.y)
-        .fold(text_height, f64::max);
-    BlockLayoutData {
-        block: BlockGeometry::new(
-            block.id,
-            block.source_range,
-            Rect {
-                pos: dvec2(0.0, 0.0),
-                size: dvec2(width, height),
-            },
-        ),
-        visual_lines: Arc::from([]),
-        glyph_clusters: Arc::from([]),
+fn estimated_block_measurement(
+    index: &DocumentLayoutIndex,
+    block_index: usize,
+) -> BlockMeasurement {
+    BlockMeasurement {
+        height: index.estimated_heights[block_index],
+        laid_width: 0.0,
     }
 }
 
 fn measure_block<S: TextShaper>(
-    block: &LayoutBlock,
+    block_index: usize,
     document: &LayoutDocument,
+    layout_index: &DocumentLayoutIndex,
     presentation: &MarkdownDocumentSnapshot,
     width: f64,
     shaper: &mut S,
 ) -> Arc<BlockLayoutData> {
-    let (output, fallback) =
-        match layout_block(block, document, presentation, 0.0, 0.0, width, shaper) {
-            Ok(output) => (output, false),
-            Err(_) => (
-                fallback_block(block, document, presentation, 0.0, 0.0, width),
-                true,
-            ),
-        };
+    let block = &document.blocks[block_index];
+    let (output, fallback) = match layout_block(
+        block_index,
+        document,
+        layout_index,
+        presentation,
+        width,
+        shaper,
+    ) {
+        Ok(output) => (output, false),
+        Err(_) => (
+            fallback_block(block_index, document, layout_index, presentation, width),
+            true,
+        ),
+    };
     Arc::new(block_layout_data(block, width, output, fallback))
 }
 
@@ -949,19 +1049,19 @@ fn append_positioned_block(
 }
 
 fn layout_block<S: TextShaper>(
-    block: &LayoutBlock,
+    block_index: usize,
     document: &LayoutDocument,
+    layout_index: &DocumentLayoutIndex,
     presentation: &MarkdownDocumentSnapshot,
-    x: f64,
-    y: f64,
     max_width: f64,
     shaper: &mut S,
 ) -> Result<BlockOutput, LayoutError> {
-    let runs = document
-        .text_runs
+    let x = 0.0;
+    let y = 0.0;
+    let block = &document.blocks[block_index];
+    let runs = layout_index.run_indices[block_index]
         .iter()
-        .filter(|run| run.id == block.id)
-        .cloned()
+        .map(|index| document.text_runs[*index].clone())
         .collect::<Vec<_>>();
     if let super::BlockFlow::Hanging {
         marker_range,
@@ -1071,11 +1171,9 @@ fn layout_block<S: TextShaper>(
     }
     let (mut output, _) = composer.finish();
     if output.lines.is_empty() {
-        output.height = document
-            .embedded_blocks
+        output.height = layout_index.embedded_indices[block_index]
             .iter()
-            .filter(|embedded| embedded.id == block.id)
-            .map(|embedded| embedded.size.y)
+            .map(|index| document.embedded_blocks[*index].size.y)
             .fold(0.0, f64::max);
     }
     Ok(output)
@@ -1145,13 +1243,15 @@ fn shift_output_y(output: &mut BlockOutput, delta: f64) {
 }
 
 fn fallback_block(
-    block: &LayoutBlock,
+    block_index: usize,
     document: &LayoutDocument,
+    layout_index: &DocumentLayoutIndex,
     presentation: &MarkdownDocumentSnapshot,
-    x: f64,
-    y: f64,
     max_width: f64,
 ) -> BlockOutput {
+    let x = 0.0;
+    let y = 0.0;
+    let block = &document.blocks[block_index];
     let text = presentation.text().slice(block.source_range).unwrap_or("");
     let mut shaped = Vec::new();
     for (relative, character) in text.char_indices() {
@@ -1170,7 +1270,7 @@ fn fallback_block(
                 advance: 8.0,
                 paint_scale: 1.0,
                 font: None,
-                font_key: document_metrics(block, document).font,
+                font_key: document_metrics(block_index, document, layout_index).font,
                 font_size: 16.0,
                 ascender: 12.8,
                 descender: -3.2,
@@ -1187,7 +1287,7 @@ fn fallback_block(
         descender: 3.2,
         line_gap: 0.0,
     };
-    let metrics = document_metrics(block, document);
+    let metrics = document_metrics(block_index, document, layout_index);
     let mut composer = InlineComposer::new(block.id, x, y, max_width);
     let mut next_ordinal = 0;
     composer.push_run(metrics, run, &mut next_ordinal);
@@ -1406,12 +1506,14 @@ fn reorder_by_bidi_level(clusters: &mut [PendingCluster]) {
     }
 }
 
-fn document_metrics(block: &LayoutBlock, document: &LayoutDocument) -> TextMetrics {
-    document
-        .text_runs
-        .iter()
-        .find(|run| run.id == block.id)
-        .map(|run| run.metrics)
+fn document_metrics(
+    block_index: usize,
+    document: &LayoutDocument,
+    layout_index: &DocumentLayoutIndex,
+) -> TextMetrics {
+    layout_index.run_indices[block_index]
+        .first()
+        .map(|index| document.text_runs[*index].metrics)
         .unwrap_or(TextMetrics {
             font: super::FontKey(0),
             font_size: 16.0,
@@ -1500,40 +1602,6 @@ fn flow_fingerprint(block: &LayoutBlock) -> u64 {
             super::ColumnAlignment::End => 2_u8,
         }
         .hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-fn content_fingerprint(
-    block: &LayoutBlock,
-    document: &LayoutDocument,
-    presentation: &MarkdownDocumentSnapshot,
-) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    block.source_range.hash(&mut hasher);
-    presentation
-        .text()
-        .slice(block.source_range)
-        .unwrap_or("")
-        .as_bytes()
-        .hash(&mut hasher);
-    for run in document.text_runs.iter().filter(|run| run.id == block.id) {
-        run.range.hash(&mut hasher);
-        run.metrics.font.hash(&mut hasher);
-        run.metrics.font_size.to_bits().hash(&mut hasher);
-        run.metrics.line_spacing.to_bits().hash(&mut hasher);
-        run.metrics.weight.hash(&mut hasher);
-        run.metrics.italic.hash(&mut hasher);
-    }
-    for embedded in document
-        .embedded_blocks
-        .iter()
-        .filter(|embedded| embedded.id == block.id)
-    {
-        embedded.source_range.hash(&mut hasher);
-        embedded.size.x.to_bits().hash(&mut hasher);
-        embedded.size.y.to_bits().hash(&mut hasher);
-        embedded.baseline.map(f64::to_bits).hash(&mut hasher);
     }
     hasher.finish()
 }
