@@ -38,6 +38,10 @@ impl SyntaxIdentity {
             Some(Arc::<str>::from(self.get().to_string())),
         )
     }
+
+    pub(crate) fn from_annotation_data(data: &str) -> Option<Self> {
+        data.parse::<u64>().ok().and_then(NonZeroU64::new).map(Self)
+    }
 }
 
 #[derive(Debug)]

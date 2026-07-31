@@ -3,7 +3,14 @@ N root/0 ThematicBreak 0..4
 T root/0/0 ThematicBreakToken 0..3 missing=false leading="" text="---" trailing=""
 T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
 N root/1 Paragraph 4..19
-T root/1/0 TextToken 4..19 missing=false leading="" text="ordinary prose\n" trailing=""
+N root/1/0 Text 4..12
+T root/1/0/0 TextToken 4..12 missing=false leading="" text="ordinary" trailing=""
+N root/1/1 Text 12..13
+T root/1/1/0 WhitespaceToken 12..13 missing=false leading="" text=" " trailing=""
+N root/1/2 Text 13..18
+T root/1/2/0 TextToken 13..18 missing=false leading="" text="prose" trailing=""
+N root/1/3 SoftLineBreak 18..19
+T root/1/3/0 NewlineToken 18..19 missing=false leading="" text="\n" trailing=""
 T root/2 NewlineToken 19..20 missing=false leading="" text="\n" trailing=""
 N root/3 AtxHeading 20..31
 T root/3/0 HeadingMarkerToken 20..22 missing=false leading="" text="##" trailing=""

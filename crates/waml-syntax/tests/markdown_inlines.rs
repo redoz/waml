@@ -76,6 +76,7 @@ fn snapshot_queries_use_the_first_normalized_reference_definition() {
         source.find("/one").unwrap()
     );
     assert_eq!(links[0].kind, MarkdownLinkKind::Reference);
+    assert!(!snapshot.queries().reference_backlinks(" ID ").is_empty());
     assert_eq!(
         snapshot.tree().write_to_string(),
         snapshot.text().shared().as_str()

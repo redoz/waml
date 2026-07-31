@@ -62,10 +62,41 @@ T root/11/2/3/0 TextToken 178..185 missing=false leading="" text=" value " trail
 T root/11/2/4 TextToken 185..187 missing=false leading="" text="|\n" trailing=""
 T root/12 NewlineToken 187..188 missing=false leading="" text="\n" trailing=""
 N root/13 Paragraph 188..208
-T root/13/0 TextToken 188..208 missing=false leading="" text="[^note]: # footnote\n" trailing=""
+N root/13/0 Link 188..195
+T root/13/0/0 LinkLabelOpenToken 188..189 missing=false leading="" text="[" trailing=""
+N root/13/0/1 Text 189..194
+T root/13/0/1/0 TextToken 189..194 missing=false leading="" text="^note" trailing=""
+T root/13/0/2 LinkLabelCloseToken 194..195 missing=false leading="" text="]" trailing=""
+N root/13/1 Text 195..196
+T root/13/1/0 TextToken 195..196 missing=false leading="" text=":" trailing=""
+N root/13/2 Text 196..197
+T root/13/2/0 WhitespaceToken 196..197 missing=false leading="" text=" " trailing=""
+N root/13/3 Text 197..198
+T root/13/3/0 TextToken 197..198 missing=false leading="" text="#" trailing=""
+N root/13/4 Text 198..199
+T root/13/4/0 WhitespaceToken 198..199 missing=false leading="" text=" " trailing=""
+N root/13/5 Text 199..207
+T root/13/5/0 TextToken 199..207 missing=false leading="" text="footnote" trailing=""
+N root/13/6 SoftLineBreak 207..208
+T root/13/6/0 NewlineToken 207..208 missing=false leading="" text="\n" trailing=""
 T root/14 NewlineToken 208..209 missing=false leading="" text="\n" trailing=""
 N root/15 Paragraph 209..230
-T root/15/0 TextToken 209..230 missing=false leading="" text="Term\n: ## definition\n" trailing=""
+N root/15/0 Text 209..213
+T root/15/0/0 TextToken 209..213 missing=false leading="" text="Term" trailing=""
+N root/15/1 SoftLineBreak 213..214
+T root/15/1/0 NewlineToken 213..214 missing=false leading="" text="\n" trailing=""
+N root/15/2 Text 214..215
+T root/15/2/0 TextToken 214..215 missing=false leading="" text=":" trailing=""
+N root/15/3 Text 215..216
+T root/15/3/0 WhitespaceToken 215..216 missing=false leading="" text=" " trailing=""
+N root/15/4 Text 216..218
+T root/15/4/0 TextToken 216..218 missing=false leading="" text="##" trailing=""
+N root/15/5 Text 218..219
+T root/15/5/0 WhitespaceToken 218..219 missing=false leading="" text=" " trailing=""
+N root/15/6 Text 219..229
+T root/15/6/0 TextToken 219..229 missing=false leading="" text="definition" trailing=""
+N root/15/7 SoftLineBreak 229..230
+T root/15/7/0 NewlineToken 229..230 missing=false leading="" text="\n" trailing=""
 T root/16 NewlineToken 230..231 missing=false leading="" text="\n" trailing=""
 N root/17 AtxHeading 231..237
 T root/17/0 HeadingMarkerToken 231..232 missing=false leading="" text="#" trailing=""
