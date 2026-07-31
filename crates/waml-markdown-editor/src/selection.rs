@@ -122,29 +122,32 @@ impl SelectionSet {
             Self::validate_position(text, selection.cursor)?;
         }
 
-        let primary_cursor = selections[primary].cursor.offset;
-        let mut selections = selections;
-        selections.sort_unstable_by_key(|selection| selection.range().start());
+        let mut selections: Vec<_> = selections.into_iter().enumerate().collect();
+        selections.sort_unstable_by_key(|(_, selection)| selection.range().start());
 
         let mut normalized = Vec::with_capacity(selections.len());
-        for selection in selections {
-            if let Some(previous) = normalized.last_mut() {
+        for (index, selection) in selections {
+            if let Some((previous, contains_primary)) = normalized.last_mut() {
                 if Self::should_merge(*previous, selection) {
                     *previous = Self::merge(*previous, selection);
+                    *contains_primary |= index == primary;
                     continue;
                 }
             }
-            normalized.push(selection);
+            normalized.push((selection, index == primary));
         }
 
         let primary = normalized
             .iter()
-            .position(|selection| Self::contains_cursor(*selection, primary_cursor))
-            .expect("normalized selection retains the primary cursor");
+            .position(|(_, contains_primary)| *contains_primary)
+            .expect("normalized selection retains the requested primary");
 
         Ok(Self {
             revision,
-            selections: normalized,
+            selections: normalized
+                .into_iter()
+                .map(|(selection, _)| selection)
+                .collect(),
             primary,
         })
     }
@@ -193,11 +196,5 @@ impl SelectionSet {
             TextPosition::new(range.start(), Affinity::Before),
             TextPosition::new(range.end(), Affinity::After),
         )
-    }
-
-    fn contains_cursor(selection: Selection, cursor: TextSize) -> bool {
-        let range = selection.range();
-        selection.is_empty() && cursor == range.start()
-            || !selection.is_empty() && range.start() <= cursor && cursor <= range.end()
     }
 }

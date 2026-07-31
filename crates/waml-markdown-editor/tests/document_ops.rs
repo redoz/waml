@@ -67,3 +67,17 @@ fn overlapping_selections_are_sorted_and_normalized() {
     assert_eq!(set.as_slice()[1].range().end().to_usize(), 5);
     assert_eq!(set.primary_index(), 1);
 }
+
+#[test]
+fn primary_tracks_the_requested_adjacent_selection() {
+    let snapshot = snapshot("ab", 5);
+    let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+    let set = SelectionSet::from_selections(
+        &snapshot,
+        vec![Selection::new(p(0), p(1)), Selection::new(p(2), p(1))],
+        1,
+    )
+    .unwrap();
+
+    assert_eq!(set.primary_index(), 1);
+}
