@@ -274,7 +274,7 @@ fn indent_uses_crlf_logical_lines_and_translates_selection() {
         session.snapshot().text().shared().as_str(),
         "  a\r\n  b\r\n"
     );
-    assert_eq!(session.selections().primary().range().start().to_usize(), 2);
+    assert_eq!(session.selections().primary().range().start().to_usize(), 0);
 }
 
 #[test]

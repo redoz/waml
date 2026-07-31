@@ -72,14 +72,20 @@ pub fn translate_position(
     changes: &[TextChange],
 ) -> Result<TextPosition, SelectionError> {
     let map = ChangeMap::checked(snapshot.text(), changes).map_err(SelectionError::Changes)?;
+    translate_position_with_map(&map, position).ok_or(SelectionError::InvalidBoundary {
+        offset: position.offset,
+    })
+}
+
+pub(crate) fn translate_position_with_map(
+    map: &ChangeMap,
+    position: TextPosition,
+) -> Option<TextPosition> {
     let offset = match position.affinity {
         Affinity::Before => map.translate_end_boundary(position.offset),
         Affinity::After => map.translate_start_boundary(position.offset),
-    }
-    .ok_or(SelectionError::InvalidBoundary {
-        offset: position.offset,
-    })?;
-    Ok(TextPosition::new(offset, position.affinity))
+    }?;
+    Some(TextPosition::new(offset, position.affinity))
 }
 
 pub fn translate_selection_set(

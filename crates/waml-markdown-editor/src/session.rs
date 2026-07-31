@@ -7,7 +7,10 @@ use crate::{
         ProposedMarkdownEdit,
     },
     history::{History, HistoryEntry},
-    selection::{Affinity, Selection, SelectionError, SelectionSet, TextPosition},
+    selection::{
+        translate_position_with_map, Affinity, Selection, SelectionError, SelectionSet,
+        TextPosition,
+    },
     unicode::{logical_lines, next_grapheme_boundary, previous_grapheme_boundary, word_range_at},
 };
 use waml_syntax::{
@@ -813,16 +816,9 @@ fn pieces_to_changes(pieces: Vec<Piece>, original_len: usize) -> Vec<TextChange>
     changes
 }
 fn map_selection(selection: Selection, map: &ChangeMap) -> Option<Selection> {
-    let point = |p: TextPosition| {
-        let offset = match p.affinity {
-            Affinity::Before => map.translate_start_boundary(p.offset),
-            Affinity::After => map.translate_end_boundary(p.offset),
-        }?;
-        Some(TextPosition::new(offset, p.affinity))
-    };
     Some(Selection::new(
-        point(selection.anchor)?,
-        point(selection.cursor)?,
+        translate_position_with_map(map, selection.anchor)?,
+        translate_position_with_map(map, selection.cursor)?,
     ))
 }
 fn delimiter_pair(text: &str) -> Option<(char, char)> {

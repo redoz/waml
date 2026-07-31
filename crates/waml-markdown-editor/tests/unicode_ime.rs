@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
-    selection::{Affinity, TextPosition},
+    edit::{EditCommand, HistoryGroup},
+    selection::{Affinity, Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
     unicode::{offset_to_utf16, utf16_to_offset, Utf16Position},
 };
@@ -81,6 +82,34 @@ fn insertion_affinity_translates_equal_boundaries_differently() {
             .to_usize(),
         2
     );
+}
+
+#[test]
+fn insertion_affinity_translation_matches_session_indent_mapping() {
+    let old = session("ab");
+    let at = TextSize::try_from_usize(0).unwrap();
+    let change = TextChange {
+        old_range: TextRange::new(at, at).unwrap(),
+        replacement: Arc::from(" "),
+    };
+    for affinity in [Affinity::Before, Affinity::After] {
+        let position = TextPosition::new(at, affinity);
+        let selections = SelectionSet::single(old.snapshot(), Selection::caret(position)).unwrap();
+        let expected = waml_markdown_editor::selection::translate_position(
+            old.snapshot(),
+            position,
+            &[change.clone()],
+        )
+        .unwrap();
+
+        let mut session =
+            MarkdownDocumentSession::with_selections(old.snapshot().clone(), selections).unwrap();
+        session
+            .execute(EditCommand::Indent { spaces: 1 }, HistoryGroup::isolated())
+            .unwrap();
+
+        assert_eq!(session.selections().primary().cursor, expected);
+    }
 }
 
 #[test]
