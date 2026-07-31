@@ -28,6 +28,21 @@ pub(crate) fn change_touches_reference_definition(
     })
 }
 
+/// Returns true when an edited line can add, remove, or join a reference use.
+/// A local shell window cannot resolve such a use against definitions outside
+/// that window, so the incremental bridge must use a named full fallback.
+pub(crate) fn change_may_affect_reference_use(
+    old: &SourceText,
+    new: &SourceText,
+    changes: &[TextChange],
+    map: &ChangeMap,
+) -> bool {
+    changes.iter().zip(map.segments()).any(|(change, segment)| {
+        intersecting_lines(old.shared(), change.old_range).any(line_may_reference_use)
+            || intersecting_lines(new.shared(), segment.new).any(line_may_reference_use)
+    })
+}
+
 fn intersecting_lines(source: &str, range: TextRange) -> impl Iterator<Item = &str> {
     let start = range.start().to_usize().min(source.len());
     let end = range.end().to_usize().min(source.len());
@@ -39,6 +54,10 @@ fn intersecting_lines(source: &str, range: TextRange) -> impl Iterator<Item = &s
 fn line_is_definition(line: &str) -> bool {
     let line = line.trim();
     line.starts_with('[') && line.contains("]:")
+}
+
+fn line_may_reference_use(line: &str) -> bool {
+    line.contains('[') && !line_is_definition(line)
 }
 
 pub(crate) fn changed_reference_labels(

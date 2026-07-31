@@ -4,7 +4,8 @@ use std::{fmt::Debug, sync::Arc};
 
 use waml_syntax::{
     parse_markdown, DocumentRevision, GreenText, MarkdownDialect, MarkdownStructureMap,
-    OkfMarkdownLanguage, SourceText, SyntaxElement, SyntaxLanguage, SyntaxTree, TextRange, TextSize,
+    OkfMarkdownLanguage, SourceText, SyntaxElement, SyntaxLanguage, SyntaxTree, TextRange,
+    TextSize,
 };
 
 const MAX_INPUT_BYTES: usize = 256 * 1024;
@@ -34,7 +35,7 @@ fn element_range<L: SyntaxLanguage>(element: &SyntaxElement<L>) -> TextRange {
     }
 }
 
-fn assert_range(value: &str, range: TextRange) {
+pub fn assert_range(value: &str, range: TextRange) {
     let start = range.start().to_usize();
     let end = range.end().to_usize();
     assert!(start <= end);

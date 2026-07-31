@@ -1,6 +1,6 @@
 use waml_syntax::{
-    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, SyntaxElement, SyntaxNode,
-    SyntaxToken, TextRange,
+    parse_markdown, DocumentRevision, MarkdownDialect, MarkdownSemanticRole, OkfMarkdownSyntaxKind,
+    SourceText, SyntaxElement, SyntaxNode, SyntaxToken, TextRange,
 };
 
 fn leaf_tokens(
@@ -16,10 +16,36 @@ fn leaf_tokens(
     tokens
 }
 
+fn recovery_ranges(
+    node: &SyntaxNode<waml_syntax::OkfMarkdownLanguage>,
+    output: &mut Vec<TextRange>,
+) {
+    if node.kind() == OkfMarkdownSyntaxKind::SkippedTokensSyntax {
+        output.push(node.range());
+    }
+    for child in node.children() {
+        match child {
+            SyntaxElement::Node(node) => recovery_ranges(&node, output),
+            SyntaxElement::Token(token)
+                if token.kind() == OkfMarkdownSyntaxKind::BadToken
+                    || token.flags().is_bad()
+                    || (token.flags().is_missing()
+                        && token.kind() != OkfMarkdownSyntaxKind::EndOfFileToken) =>
+            {
+                output.push(token.range());
+            }
+            SyntaxElement::Token(_) => {}
+        }
+    }
+}
+
 fn assert_range(source: &str, range: TextRange) {
     let start = range.start().to_usize();
     let end = range.end().to_usize();
-    assert!(start <= end && end <= source.len(), "range {range:?} is in source");
+    assert!(
+        start <= end && end <= source.len(),
+        "range {range:?} is in source"
+    );
     assert!(source.is_char_boundary(start));
     assert!(source.is_char_boundary(end));
 }
@@ -32,7 +58,11 @@ fn assert_recovery_matrix_case(name: &str, source: &str, expects_recovery: bool)
     )
     .unwrap_or_else(|error| panic!("{name} parses: {error:?}"));
     let tree = snapshot.tree();
-    assert_eq!(tree.write_to_string(), source, "{name} retains exact source");
+    assert_eq!(
+        tree.write_to_string(),
+        source,
+        "{name} retains exact source"
+    );
 
     let tokens = leaf_tokens(&tree.root());
     for token in &tokens {
@@ -56,6 +86,24 @@ fn assert_recovery_matrix_case(name: &str, source: &str, expects_recovery: bool)
             "{name}: recovery is query-visible"
         );
     }
+    let mut recovery = Vec::new();
+    recovery_ranges(&tree.root(), &mut recovery);
+    recovery.extend(
+        snapshot
+            .queries()
+            .spans(tree.root().range())
+            .filter(|span| span.semantic_role == MarkdownSemanticRole::Recovery)
+            .map(|span| span.range),
+    );
+    recovery.sort_unstable_by_key(|value| (value.start(), value.end()));
+    recovery.dedup();
+    for range in recovery {
+        assert_range(source, range);
+        assert!(
+            snapshot.queries().has_recovery(range),
+            "{name}: recovery semantic node or token at {range:?} is query-visible"
+        );
+    }
     assert_eq!(
         !snapshot.diagnostics().is_empty(),
         expects_recovery,
@@ -66,16 +114,32 @@ fn assert_recovery_matrix_case(name: &str, source: &str, expects_recovery: bool)
 #[test]
 fn malformed_markdown_retains_all_source_and_exposes_recovery() {
     let cases = [
-        ("bom-crlf-tabs-unicode", "\u{feff}# café\r\n\ttext e\u{301}\r\n", false),
+        (
+            "bom-crlf-tabs-unicode",
+            "\u{feff}# café\r\n\ttext e\u{301}\r\n",
+            false,
+        ),
         ("mixed-line-endings", "# one\r\nparagraph\nnext\r", false),
         ("unclosed-fence", "```rust\nfn main() {}\n", true),
         ("unclosed-link", "[label](destination\n", false),
         ("unclosed-emphasis", "before *emphasis\n", false),
-        ("malformed-table", "| a | b |\n| --- | nope |\n| one |\n", false),
+        (
+            "malformed-table",
+            "| a | b |\n| --- | nope |\n| one |\n",
+            false,
+        ),
         ("raw-html", "<script>\n# not a heading\n", true),
-        ("unclosed-frontmatter", "---\ntitle: broken\n# heading\n", true),
+        (
+            "unclosed-frontmatter",
+            "---\ntitle: broken\n# heading\n",
+            true,
+        ),
         ("waml-heading-in-fence", "```waml\n# not markdown\n", true),
-        ("waml-heading-in-html", "<div>\n# not markdown\n</div>\n", false),
+        (
+            "waml-heading-in-html",
+            "<div>\n# not markdown\n</div>\n",
+            false,
+        ),
     ];
 
     for (name, source, expects_recovery) in cases {

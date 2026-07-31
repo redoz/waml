@@ -809,6 +809,12 @@ pub(crate) fn reparse_okf_markdown_with_structure(
     if !same_containers(&old_structure, &new_structure, &map) {
         return full(FullReparseReason::MarkdownContainerBoundaryChanged);
     }
+    if width_change_may_shift_reference_definition(previous, &map) {
+        return full(FullReparseReason::UnsafeSynchronization);
+    }
+    if crate::markdown::reparse::change_may_affect_reference_use(&old, &new_text, changes, &map) {
+        return full(FullReparseReason::UnsafeSynchronization);
+    }
 
     let windows = shell_windows(previous, &old)?;
     let Some(window) = select_window(&windows, &map) else {
@@ -1291,6 +1297,30 @@ fn same_containers(
             &new.tab_indented_item_lines,
             map,
         )
+}
+
+fn width_change_may_shift_reference_definition(
+    previous: &SyntaxTree<OkfMarkdownLanguage>,
+    map: &ChangeMap,
+) -> bool {
+    let mut definition_ends = Vec::new();
+    let mut stack = vec![previous.root()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == OkfMarkdownSyntaxKind::LinkReferenceDefinition {
+            definition_ends.push(node.range().end());
+        }
+        for child in node.children() {
+            if let SyntaxElement::Node(child) = child {
+                stack.push(child);
+            }
+        }
+    }
+
+    map.segments().iter().any(|segment| {
+        let old_len = segment.old.end().to_usize() - segment.old.start().to_usize();
+        let new_len = segment.new.end().to_usize() - segment.new.start().to_usize();
+        old_len != new_len && definition_ends.iter().any(|end| segment.old.start() < *end)
+    })
 }
 
 #[cfg(test)]
