@@ -185,3 +185,38 @@ fn dialect_profiles_gate_provisional_frontmatter_and_sections() {
     assert!(commonmark.structure().headings.is_empty());
     assert_eq!(waml.structure().headings.len(), 1);
 }
+
+#[test]
+fn commonmark_reparse_preserves_disabled_waml_projection() {
+    let revision = DocumentRevision::INITIAL;
+    let first = parse_markdown(
+        revision,
+        SourceText::new("title: Dialect\n# Heading\n").unwrap(),
+        MarkdownDialect::COMMONMARK_0_31_2,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &first,
+        revision.checked_next().unwrap(),
+        SourceText::new("---\ntitle: Dialect\n# Heading\n").unwrap(),
+        &[TextChange {
+            old_range: TextRange::new(TextSize::new(0), TextSize::new(0)).unwrap(),
+            replacement: "---\n".into(),
+        }],
+    )
+    .unwrap();
+    let has_kind =
+        |expected| {
+            update.snapshot.tree().root_green().children().iter().any(
+                |element| matches!(element, GreenElement::Node(node) if node.kind() == expected),
+            )
+        };
+
+    assert_eq!(
+        update.snapshot.structure().dialect,
+        MarkdownDialect::COMMONMARK_0_31_2
+    );
+    assert!(update.snapshot.structure().headings.is_empty());
+    assert!(!has_kind(OkfMarkdownSyntaxKind::Frontmatter));
+    assert!(!has_kind(OkfMarkdownSyntaxKind::Heading));
+}

@@ -182,6 +182,9 @@ impl<L: SyntaxLanguage> SyntaxTree<L> {
     pub fn diagnostics(&self) -> &[TreeDiagnostic<L::DiagnosticCode>] {
         &self.diagnostics
     }
+    pub(crate) fn dialect(&self) -> MarkdownDialect {
+        self.dialect
+    }
     pub fn write_to_string(&self) -> String {
         let mut s = String::new();
         write_green_to(&self.root_green, &mut s).expect("String");
