@@ -20,17 +20,19 @@ pub use incremental::{
     transfer_mapped_annotations, ChangeMap, ChangeSegment, FullReparseReason, RebasedGreen,
     ReparseOutcome, TextChange,
 };
-pub use markdown::{ConfirmedHeading, MarkdownStructureMap};
+pub use markdown::{
+    parse_markdown, reparse_markdown, ConfirmedHeading, MarkdownReparseOutcome,
+    MarkdownStructureMap, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
+    OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity,
+};
 pub use red::{
     RewriteError, SyntaxElement, SyntaxLocator, SyntaxNode, SyntaxPath, SyntaxSeverity,
     SyntaxToken, SyntaxTree, TreeDiagnostic, TreeInstanceId,
 };
-pub use shell::{
-    parse_okf_markdown, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode,
-    ParseError, ShellParse,
-};
+pub use shell::{parse_okf_markdown, ParseError, ShellParse};
 pub use text::{
-    LineColumn, LineIndex, MarkdownDialect, SourceText, TextError, TextRange, TextSize,
+    DocumentRevision, LineColumn, LineIndex, MarkdownDialect, SourceText, TextError, TextRange,
+    TextSize,
 };
 
 use std::{fmt::Debug, hash::Hash};

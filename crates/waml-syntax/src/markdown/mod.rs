@@ -1,3 +1,12 @@
+mod kind;
+mod snapshot;
+
+pub use kind::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity};
+pub use snapshot::{
+    parse_markdown, reparse_markdown, MarkdownReparseOutcome, MarkdownSyntaxQueries,
+    MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
+};
+
 use std::sync::Arc;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};

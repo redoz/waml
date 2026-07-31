@@ -25,9 +25,54 @@ pub struct LineColumn {
     pub byte_column: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MarkdownDialect {
-    CommonMarkCurrent,
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MarkdownDialect {
+    bits: u8,
+}
+
+impl MarkdownDialect {
+    const TABLES: u8 = 1 << 0;
+    const TASK_LISTS: u8 = 1 << 1;
+    const STRIKETHROUGH: u8 = 1 << 2;
+    const EXTENDED_AUTOLINKS: u8 = 1 << 3;
+    const TAG_FILTER: u8 = 1 << 4;
+    const WAML_FRONTMATTER: u8 = 1 << 5;
+    const WAML_SECTIONS: u8 = 1 << 6;
+
+    pub const COMMONMARK_0_31_2: Self = Self { bits: 0 };
+    pub const WAML_DEFAULT: Self = Self {
+        bits: Self::TABLES
+            | Self::TASK_LISTS
+            | Self::STRIKETHROUGH
+            | Self::EXTENDED_AUTOLINKS
+            | Self::TAG_FILTER
+            | Self::WAML_FRONTMATTER
+            | Self::WAML_SECTIONS,
+    };
+
+    #[allow(non_upper_case_globals)]
+    pub const CommonMarkCurrent: Self = Self::WAML_DEFAULT;
+
+    pub(crate) const fn contains(self, flag: u8) -> bool {
+        self.bits & flag != 0
+    }
+    pub(crate) const fn tables(self) -> bool { self.contains(Self::TABLES) }
+    pub(crate) const fn task_lists(self) -> bool { self.contains(Self::TASK_LISTS) }
+    pub(crate) const fn strikethrough(self) -> bool { self.contains(Self::STRIKETHROUGH) }
+    pub(crate) const fn extended_autolinks(self) -> bool { self.contains(Self::EXTENDED_AUTOLINKS) }
+    pub(crate) const fn tag_filter(self) -> bool { self.contains(Self::TAG_FILTER) }
+    pub(crate) const fn waml_frontmatter(self) -> bool { self.contains(Self::WAML_FRONTMATTER) }
+    pub(crate) const fn waml_sections(self) -> bool { self.contains(Self::WAML_SECTIONS) }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DocumentRevision(u64);
+
+impl DocumentRevision {
+    pub const INITIAL: Self = Self(0);
+    pub const fn new(value: u64) -> Self { Self(value) }
+    pub const fn get(self) -> u64 { self.0 }
+    pub fn checked_next(self) -> Option<Self> { self.0.checked_add(1).map(Self) }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,6 +108,7 @@ impl fmt::Display for TextError {
 impl std::error::Error for TextError {}
 
 impl TextSize {
+    pub const fn new(value: u32) -> Self { Self(value) }
     pub fn try_from_usize(value: usize) -> Result<Self, TextError> {
         u32::try_from(value)
             .map(Self)
@@ -121,6 +167,9 @@ impl TextRange {
 }
 
 impl SourceText {
+    pub fn new(source: impl Into<String>) -> Result<Self, TextError> {
+        Self::from_shared(Arc::new(source.into()))
+    }
     pub fn from_shared(source: Arc<String>) -> Result<Self, TextError> {
         TextSize::try_from_usize(source.len())?;
         Ok(Self { source })

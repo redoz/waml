@@ -1,40 +1,7 @@
 mod parser;
-use crate::{MarkdownDialect, SourceText, SyntaxLanguage, SyntaxTree, TextRange, TextSize};
+use crate::{MarkdownDialect, SourceText, SyntaxTree, TextRange, TextSize};
 use std::{fmt, sync::Arc};
-#[derive(Debug)]
-pub struct OkfMarkdownLanguage;
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum OkfMarkdownSyntaxKind {
-    Root,
-    Frontmatter,
-    FrontmatterOpenFence,
-    FrontmatterEntry,
-    FrontmatterKey,
-    ColonToken,
-    FrontmatterValue,
-    FrontmatterCloseFence,
-    Heading,
-    HeadingMarkerToken,
-    HeadingText,
-    MarkdownRegion,
-    RawTextToken,
-    NewlineToken,
-    EndOfFileToken,
-    BadToken,
-    SkippedTokensSyntax,
-}
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum OkfSyntaxDiagnosticCode {
-    FrontmatterNotClean,
-    MissingFrontmatterFence,
-    MalformedFrontmatterEntry,
-    InvalidUtf8Boundary,
-    ParserStalled,
-}
-impl SyntaxLanguage for OkfMarkdownLanguage {
-    type Kind = OkfMarkdownSyntaxKind;
-    type DiagnosticCode = OkfSyntaxDiagnosticCode;
-}
+pub use crate::markdown::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode};
 #[derive(Debug)]
 pub enum ParseError {
     SourceTooLarge { bytes: usize },
@@ -42,6 +9,10 @@ pub enum ParseError {
     WidthOverflow,
     StructuralInvariant { reason: Arc<str> },
     ParserStalled { offset: TextSize },
+    NonMonotonicRevision {
+        previous: crate::DocumentRevision,
+        requested: crate::DocumentRevision,
+    },
 }
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
