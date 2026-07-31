@@ -1219,10 +1219,13 @@ fn quote_prefix_end(source: &str, start: usize, end: usize) -> usize {
 }
 fn list_prefix_end(source: &str, start: usize, end: usize) -> usize {
     let bytes = source.as_bytes();
-    if matches!(bytes.get(start), Some(b'-' | b'+' | b'*')) {
-        return (start + 1).min(end);
-    }
     let mut at = start;
+    while at < end && bytes[at] == b' ' && at - start < 3 {
+        at += 1;
+    }
+    if matches!(bytes.get(at), Some(b'-' | b'+' | b'*')) {
+        return (at + 1).min(end);
+    }
     while at < end && bytes[at].is_ascii_digit() {
         at += 1;
     }

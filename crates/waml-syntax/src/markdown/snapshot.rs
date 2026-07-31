@@ -615,10 +615,17 @@ fn collect_queries(
         }
         Kind::List | Kind::ListItem => {
             let owner = owner.unwrap();
-            let marker = first_token(node, Kind::ListMarkerToken)
-                .ok_or_else(|| invariant("Markdown list has no marker"))?;
+            let Some(marker) = first_token(node, Kind::ListMarkerToken) else {
+                for child in node.children() {
+                    if let crate::SyntaxElement::Node(child) = child {
+                        collect_queries(&child, out)?;
+                    }
+                }
+                return Ok(());
+            };
             let marker_text = marker.text().write_to_string();
             let kind = marker_text
+                .trim_start()
                 .trim_end_matches(['.', ')'])
                 .parse::<u64>()
                 .map(|start| MarkdownListKind::Ordered { start })

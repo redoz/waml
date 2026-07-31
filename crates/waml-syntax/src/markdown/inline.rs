@@ -1237,6 +1237,11 @@ fn extended_autolink(
         .is_some_and(|value| value.eq_ignore_ascii_case("https://"))
     {
         Some(8)
+    } else if rest
+        .get(..6)
+        .is_some_and(|value| value.eq_ignore_ascii_case("ftp://"))
+    {
+        Some(6)
     } else {
         None
     };
@@ -1307,6 +1312,9 @@ fn extended_autolink(
         .count();
     while domain_len > 0 && rest.as_bytes()[domain_start + domain_len - 1] == b'.' {
         domain_len -= 1;
+    }
+    if matches!(rest.as_bytes().get(domain_start + domain_len), Some(b'_' | b'-')) {
+        return None;
     }
     let domain = &rest[domain_start..domain_start + domain_len];
     if local.is_empty()
@@ -1389,9 +1397,9 @@ fn valid_domain(domain: &str) -> bool {
     };
     valid_label(first)
         && rest.iter().all(|label| valid_label(label))
-        && rest.last().is_some_and(|label| {
-            label.len() >= 2 && label.bytes().all(|byte| byte.is_ascii_alphabetic())
-        })
+        && rest
+            .last()
+            .is_some_and(|label| label.bytes().all(|byte| byte.is_ascii_alphabetic()))
 }
 
 fn find_unescaped(source: &str, mut at: usize, end: usize, wanted: char) -> Option<usize> {
