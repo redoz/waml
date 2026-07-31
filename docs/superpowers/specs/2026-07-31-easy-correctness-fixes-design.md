@@ -4,9 +4,10 @@ Date: 2026-07-31
 
 ## Goal
 
-Fix two verified, independent editor defects with small changes and focused
-regression tests. Keep larger parser, persistence, LSP, delivery, and
-architecture decisions out of this batch.
+Validate two reviewed, independent editor defects and fix those that reproduce with
+small changes and focused regression tests.
+Keep larger parser, persistence, LSP, delivery, and architecture decisions out
+of this batch.
 
 ## Constraints
 
@@ -47,6 +48,13 @@ for that call, so the second configuration store can fail.
   before production code changes on Windows.
 - Run the new config test, the existing native replacement test, all editor
   tests, formatting, and strict editor Clippy.
+
+### Outcome
+
+On `x86_64-pc-windows-msvc` with the current `main` and toolchain, the required
+repeated-store regression passed against the unchanged `std::fs::rename`.
+Task 1 was parked with no production change. Revalidate the issue on an
+affected supported toolchain before changing persistence.
 
 ## Fix 2: promote the exact active preview tab
 
