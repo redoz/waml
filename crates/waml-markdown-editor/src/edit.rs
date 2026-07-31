@@ -68,6 +68,7 @@ impl fmt::Debug for ProposedMarkdownEdit {
 
 #[derive(Debug)]
 pub enum MarkdownEditError {
+    ReadOnly,
     StaleRevision {
         base: DocumentRevision,
         current: DocumentRevision,
@@ -91,6 +92,7 @@ pub enum MarkdownEditError {
 impl fmt::Display for MarkdownEditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ReadOnly => write!(f, "document is read-only"),
             Self::StaleRevision { base, current } => {
                 write!(
                     f,

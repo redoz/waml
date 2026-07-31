@@ -463,3 +463,83 @@ fn explicit_history_break_splits_named_insert_groups() {
     session.undo().unwrap().unwrap();
     assert_eq!(session.snapshot().text().shared().as_str(), "");
 }
+
+#[test]
+fn failed_undo_keeps_history_group_available_and_ordered() {
+    let mut session = MarkdownDocumentSession::new(snapshot("", u64::MAX - 1));
+    session
+        .execute(
+            EditCommand::Insert(Arc::from("a")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    for _ in 0..2 {
+        let error = session.undo().unwrap_err();
+        assert!(matches!(
+            error,
+            MarkdownEditError::RevisionOverflow { current }
+                if current == DocumentRevision::new(u64::MAX)
+        ));
+        assert!(session.can_undo());
+        assert!(!session.can_redo());
+        assert_eq!(session.snapshot().text().shared().as_str(), "a");
+    }
+}
+
+#[test]
+fn failed_redo_keeps_history_group_available_and_ordered() {
+    let mut session = MarkdownDocumentSession::new(snapshot("", u64::MAX - 2));
+    session
+        .execute(
+            EditCommand::Insert(Arc::from("a")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    session.undo().unwrap().unwrap();
+    assert_eq!(session.local_revision(), DocumentRevision::new(u64::MAX));
+    for _ in 0..2 {
+        let error = session.redo().unwrap_err();
+        assert!(matches!(
+            error,
+            MarkdownEditError::RevisionOverflow { current }
+                if current == DocumentRevision::new(u64::MAX)
+        ));
+        assert!(session.can_redo());
+        assert!(!session.can_undo());
+        assert_eq!(session.snapshot().text().shared().as_str(), "");
+    }
+}
+
+#[test]
+fn read_only_rejects_all_direct_mutation_apis_without_state_change() {
+    let mut session = MarkdownDocumentSession::new(snapshot("ab", 100));
+    session
+        .execute(
+            EditCommand::Insert(Arc::from("x")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    session.set_read_only(true);
+    let before = session.snapshot().clone();
+    let selections = session.selections().clone();
+    for command in [
+        EditCommand::Insert(Arc::from("x")),
+        EditCommand::ReplaceSelections(Arc::from("x")),
+        EditCommand::Paste(Arc::from("x")),
+        EditCommand::Cut,
+        EditCommand::DeleteBackward,
+        EditCommand::DeleteForward,
+        EditCommand::Indent { spaces: 2 },
+        EditCommand::Outdent { spaces: 2 },
+    ] {
+        assert!(matches!(
+            session.execute(command, HistoryGroup::isolated()),
+            Err(MarkdownEditError::ReadOnly)
+        ));
+    }
+    assert!(matches!(session.undo(), Err(MarkdownEditError::ReadOnly)));
+    assert!(matches!(session.redo(), Err(MarkdownEditError::ReadOnly)));
+    assert!(Arc::ptr_eq(session.snapshot(), &before));
+    assert_eq!(session.selections(), &selections);
+    assert!(session.can_undo());
+}

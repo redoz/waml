@@ -303,3 +303,94 @@ fn accepted_edit_cancels_composition_and_later_update_and_commit_are_typed() {
         MarkdownEditError::Ime(ImeError::NotActive)
     ));
 }
+
+#[test]
+fn stale_edit_failure_preserves_active_ime_composition() {
+    let mut session = session("ab");
+    session.begin_ime().unwrap();
+    session.update_ime("候", 0..1).unwrap();
+    let next_text = SourceText::new("xab".to_owned()).unwrap();
+    let selection_after = SelectionSet::caret_in_text(
+        DocumentRevision::new(1),
+        &next_text,
+        TextSize::try_from_usize(1).unwrap(),
+    )
+    .unwrap();
+    let error = session
+        .apply_edit(waml_markdown_editor::edit::MarkdownEdit {
+            base_revision: DocumentRevision::new(9),
+            changes: vec![TextChange {
+                old_range: TextRange::new(
+                    TextSize::try_from_usize(0).unwrap(),
+                    TextSize::try_from_usize(0).unwrap(),
+                )
+                .unwrap(),
+                replacement: Arc::from("x"),
+            }],
+            selection_after,
+            history_group: HistoryGroup::isolated(),
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MarkdownEditError::StaleRevision { base, current }
+            if base == DocumentRevision::new(9) && current == DocumentRevision::INITIAL
+    ));
+    assert_eq!(session.ime().unwrap().preedit(), "候");
+    assert_eq!(session.snapshot().text().shared().as_str(), "ab");
+}
+
+#[test]
+fn revision_overflow_failure_preserves_active_ime_composition() {
+    let mut session = session_at_revision("ab", DocumentRevision::new(u64::MAX));
+    session.begin_ime().unwrap();
+    session.update_ime("候", 0..1).unwrap();
+    let error = session
+        .execute(
+            EditCommand::Insert(Arc::from("x")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MarkdownEditError::RevisionOverflow { current }
+            if current == DocumentRevision::new(u64::MAX)
+    ));
+    assert_eq!(session.ime().unwrap().preedit(), "候");
+    assert_eq!(session.snapshot().text().shared().as_str(), "ab");
+}
+
+#[test]
+fn selection_validation_failure_preserves_active_ime_composition() {
+    let mut session = session("ab");
+    session.begin_ime().unwrap();
+    session.update_ime("候", 0..1).unwrap();
+    let wrong_revision = SelectionSet::caret_in_text(
+        DocumentRevision::new(7),
+        session.snapshot().text(),
+        TextSize::try_from_usize(0).unwrap(),
+    )
+    .unwrap();
+    let error = session
+        .apply_edit(waml_markdown_editor::edit::MarkdownEdit {
+            base_revision: DocumentRevision::INITIAL,
+            changes: vec![TextChange {
+                old_range: TextRange::new(
+                    TextSize::try_from_usize(0).unwrap(),
+                    TextSize::try_from_usize(0).unwrap(),
+                )
+                .unwrap(),
+                replacement: Arc::from("x"),
+            }],
+            selection_after: wrong_revision,
+            history_group: HistoryGroup::isolated(),
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MarkdownEditError::SelectionRevision { selection, expected }
+            if selection == DocumentRevision::new(7) && expected == DocumentRevision::new(1)
+    ));
+    assert_eq!(session.ime().unwrap().preedit(), "候");
+    assert_eq!(session.snapshot().text().shared().as_str(), "ab");
+}

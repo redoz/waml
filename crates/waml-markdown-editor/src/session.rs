@@ -364,7 +364,9 @@ impl MarkdownDocumentSession {
         command: EditCommand,
         group: HistoryGroup,
     ) -> Result<EditOutcome, MarkdownEditError> {
-        self.cancel_ime();
+        if self.read_only {
+            return Err(MarkdownEditError::ReadOnly);
+        }
         let skipped_primary = self.closing_delimiter_target(&command);
         let clipboard = if matches!(command, EditCommand::Cut) {
             Some(
@@ -415,6 +417,7 @@ impl MarkdownDocumentSession {
             history_group: group,
         };
         let proposal = self.apply_with_history(edit)?;
+        self.ime = None;
         Ok(EditOutcome {
             proposal: Some(proposal),
             clipboard,
@@ -422,12 +425,14 @@ impl MarkdownDocumentSession {
     }
 
     pub fn undo(&mut self) -> Result<Option<ProposedMarkdownEdit>, MarkdownEditError> {
-        self.cancel_ime();
-        let Some(group) = self.history.undo.pop() else {
+        if self.read_only {
+            return Err(MarkdownEditError::ReadOnly);
+        }
+        let Some(group) = self.history.undo.last().cloned() else {
             return Ok(None);
         };
         if group.is_empty() {
-            return self.undo();
+            return Ok(None);
         }
         let selection = group.first().unwrap().before_selection.clone();
         let changes = compose_group_changes(
@@ -438,13 +443,17 @@ impl MarkdownDocumentSession {
                 .map(|entry| entry.inverse_changes.as_slice()),
         )?;
         let proposal = self.apply_restoring(changes, selection)?;
+        self.history.undo.pop();
         self.history.redo.push(group);
+        self.ime = None;
         Ok(Some(proposal))
     }
 
     pub fn redo(&mut self) -> Result<Option<ProposedMarkdownEdit>, MarkdownEditError> {
-        self.cancel_ime();
-        let Some(group) = self.history.redo.pop() else {
+        if self.read_only {
+            return Err(MarkdownEditError::ReadOnly);
+        }
+        let Some(group) = self.history.redo.last().cloned() else {
             return Ok(None);
         };
         let selection = group.last().unwrap().after_selection.clone();
@@ -453,7 +462,9 @@ impl MarkdownDocumentSession {
             group.iter().map(|entry| entry.forward_changes.as_slice()),
         )?;
         let proposal = self.apply_restoring(changes, selection)?;
+        self.history.redo.pop();
         self.history.undo.push(group);
+        self.ime = None;
         Ok(Some(proposal))
     }
 
@@ -461,8 +472,12 @@ impl MarkdownDocumentSession {
         &mut self,
         edit: MarkdownEdit,
     ) -> Result<ProposedMarkdownEdit, MarkdownEditError> {
-        self.cancel_ime();
-        self.apply_edit_without_history(edit)
+        if self.read_only {
+            return Err(MarkdownEditError::ReadOnly);
+        }
+        let proposal = self.apply_edit_without_history(edit)?;
+        self.ime = None;
+        Ok(proposal)
     }
 
     fn apply_with_history(
