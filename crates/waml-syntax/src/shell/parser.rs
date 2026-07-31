@@ -30,7 +30,13 @@ pub(super) fn parse_with_structure(
     let eof_trivia_start = trailing_eof_whitespace_start(source, at);
     if at < eof_trivia_start {
         let blocks = crate::markdown::block::parse(&text, dialect, at, eof_trivia_start)?;
-        children.extend(blocks.root.children().iter().cloned());
+        children.extend(crate::markdown::block::wrap_waml_sections(
+            &factory,
+            source,
+            dialect,
+            at,
+            blocks.root.children().to_vec(),
+        )?);
         diagnostics.extend(blocks.diagnostics.iter().cloned());
     }
     let eof_leading = trivia(&factory, &text, eof_trivia_start, source.len())?;
@@ -42,10 +48,9 @@ pub(super) fn parse_with_structure(
     let root = factory
         .node(OkfMarkdownSyntaxKind::Root, children)
         .map_err(|_| ParseError::WidthOverflow)?;
-    Ok(ShellParse {
-        tree: Arc::new(SyntaxTree::new(root, diagnostics.into(), dialect)),
-        structure,
-    })
+    let tree = Arc::new(SyntaxTree::new(root, diagnostics.into(), dialect));
+    let structure = Arc::new(crate::markdown::from_tree(&tree, source)?);
+    Ok(ShellParse { tree, structure })
 }
 
 #[derive(Clone, Copy)]

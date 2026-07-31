@@ -24,7 +24,7 @@ pub use markdown::{
     parse_markdown, reparse_markdown, ConfirmedHeading, MarkdownEntity, MarkdownLink,
     MarkdownLinkKind, MarkdownReparseOutcome, MarkdownStructureMap, MarkdownSyntaxQueries,
     MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, OkfMarkdownLanguage, OkfMarkdownSyntaxKind,
-    OkfSyntaxDiagnosticCode, SyntaxIdentity,
+    OkfSyntaxDiagnosticCode, SyntaxIdentity, WamlLanguageIsland, WamlSectionKind,
 };
 pub use red::{
     RewriteError, SyntaxElement, SyntaxLocator, SyntaxNode, SyntaxPath, SyntaxSeverity,

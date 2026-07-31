@@ -214,6 +214,92 @@ pub(crate) fn parse(
     })
 }
 
+pub(crate) fn wrap_waml_sections(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    source: &str,
+    dialect: MarkdownDialect,
+    start: usize,
+    children: Vec<GreenElement<OkfMarkdownLanguage>>,
+) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
+    if !dialect.waml_sections() {
+        return Ok(children);
+    }
+    let mut offsets = Vec::with_capacity(children.len());
+    let mut at = start;
+    for child in &children {
+        offsets.push(at);
+        at += match child {
+            GreenElement::Node(node) => node.width().to_usize(),
+            GreenElement::Token(token) => token.width().to_usize(),
+        };
+    }
+    let mut out = Vec::with_capacity(children.len());
+    let mut index = 0;
+    while index < children.len() {
+        let Some((level, text_range)) = heading_at(&children[index], source, offsets[index]) else {
+            out.push(children[index].clone());
+            index += 1;
+            continue;
+        };
+        if super::projection::waml_kind(source, text_range).is_none() {
+            out.push(children[index].clone());
+            index += 1;
+            continue;
+        }
+        let mut end = index + 1;
+        while end < children.len() {
+            if let Some((next_level, _)) = heading_at(&children[end], source, offsets[end]) {
+                if next_level <= level {
+                    break;
+                }
+            }
+            end += 1;
+        }
+        let identity = SyntaxIdentity::fresh()?;
+        let section = factory
+            .node_with_annotations(
+                Kind::WamlSection,
+                children[index..end].to_vec(),
+                vec![identity.annotation()].into(),
+            )
+            .map_err(|_| ParseError::WidthOverflow)?;
+        out.push(GreenElement::Node(section));
+        index = end;
+    }
+    Ok(out)
+}
+
+fn heading_at(
+    element: &GreenElement<OkfMarkdownLanguage>,
+    source: &str,
+    start: usize,
+) -> Option<(u8, TextRange)> {
+    let GreenElement::Node(node) = element else {
+        return None;
+    };
+    if !matches!(node.kind(), Kind::AtxHeading | Kind::SetextHeading) {
+        return None;
+    }
+    let end = start + node.width().to_usize();
+    let line_end = source[start..end]
+        .find('\n')
+        .map_or(end, |offset| start + offset + 1);
+    let line = &source[start..line_end];
+    let trimmed = line.trim_start();
+    let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
+    let level = if hashes > 0 { hashes as u8 } else { 2 };
+    let text_start = if hashes > 0 {
+        start
+            + (line.len() - trimmed.len())
+            + hashes
+            + usize::from(trimmed.as_bytes().get(hashes) == Some(&b' '))
+    } else {
+        start
+    };
+    let text_range = range(text_start, line_end).ok()?;
+    Some((level, text_range))
+}
+
 fn build_frame(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,

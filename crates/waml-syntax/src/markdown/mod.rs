@@ -2,6 +2,7 @@ pub(crate) mod block;
 pub(crate) mod gfm;
 pub(crate) mod inline;
 mod kind;
+mod projection;
 pub(crate) mod reference;
 mod snapshot;
 
@@ -9,50 +10,18 @@ pub use gfm::{HtmlTagFilter, TableAlignment, TaskListState};
 pub use kind::{
     OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity,
 };
+pub(crate) use projection::from_tree;
+pub use projection::{ConfirmedHeading, MarkdownStructureMap, WamlLanguageIsland, WamlSectionKind};
 pub use snapshot::{
     parse_markdown, reparse_markdown, MarkdownEntity, MarkdownLink, MarkdownLinkKind,
     MarkdownReparseOutcome, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
 };
-
-use std::sync::Arc;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use crate::{MarkdownDialect, SourceText, TextRange, TextSize};
 
 use crate::shell::ParseError;
-
-#[derive(Clone, Debug)]
-pub struct ConfirmedHeading {
-    pub level: u8,
-    pub range: TextRange,
-    pub text_range: TextRange,
-}
-
-#[derive(Clone, Debug)]
-pub struct MarkdownStructureMap {
-    /// Shell section boundaries. Only container-free H1/H2 headings are
-    /// included so existing top-level consumers retain their contract.
-    pub headings: Arc<[ConfirmedHeading]>,
-    /// Container-free H3-H6 headings. Embedded languages may use these as
-    /// shell-confirmed nested structure without promoting them to sections.
-    pub nested_headings: Arc<[ConfirmedHeading]>,
-    pub protected_ranges: Arc<[TextRange]>,
-    /// Exact source lines whose bullets CommonMark confirmed as top-level list
-    /// items.
-    /// Kept separately from normalized protected ranges so nested opaque blocks
-    /// cannot inherit list-item status from an overlapping outer list.
-    pub list_item_lines: Arc<[TextRange]>,
-    /// Task-language-compatible tab-indented bullet lines. CommonMark treats
-    /// these as indented code, so they remain explicit rather than being
-    /// conflated with confirmed list items.
-    pub tab_indented_item_lines: Arc<[TextRange]>,
-    /// Protected leaf/container ranges that must remain opaque to embedded
-    /// language parsers. Outer List/Item ownership is deliberately omitted;
-    /// nested code and other protected content remains represented here.
-    pub opaque_ranges: Arc<[TextRange]>,
-    pub dialect: MarkdownDialect,
-}
 
 /// Maps CommonMark block structure without making any OKF-specific claims.
 /// Container depth is deliberately tracked independently of pulldown's event
@@ -170,6 +139,7 @@ pub(crate) fn map(
         tab_indented_item_lines: tab_indented_item_lines.into(),
         opaque_ranges: opaque.into(),
         dialect,
+        islands: [].into(),
     })
 }
 
