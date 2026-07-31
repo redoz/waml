@@ -1073,6 +1073,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::navigation::DocumentLocator;
     use crate::popup::root::PopupRootAction;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -1081,6 +1082,95 @@ mod tests {
     struct QuitProbe {
         reasons: Vec<QuitReason>,
         cancelled_after_failed_save: usize,
+    }
+
+    fn promotion_app() -> (Cx, App, LiveId) {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.widget_tree_mark_dirty(WidgetUid(0));
+        let mut app = cx.with_vm(App::script_new_with_default);
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "order.md",
+            "---\ntype: Runbook\ntitle: Order\n---\n# Order\n",
+        )])
+        .unwrap();
+        app.session.replace(source).unwrap();
+
+        app.open_view_source(&mut cx, "order");
+        let source_id = app.documents.active_id();
+        app.documents.transition(
+            &mut cx,
+            &app.ui,
+            &app.session,
+            DocumentCommand::Promote(source_id),
+        );
+        app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: DocumentLocator::primary("order"),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        );
+
+        let primary_id = app.documents.active_id();
+        assert!(app.documents.active_tab().unwrap().preview);
+        (cx, app, primary_id)
+    }
+
+    #[test]
+    fn view_outcome_promotes_entry_active_preview_after_source_navigation() {
+        let (mut cx, mut app, primary_id) = promotion_app();
+
+        app.apply_view_outcome(
+            &mut cx,
+            crate::doc_view::ViewOutcome {
+                promote_active: true,
+                view_source: Some("order".into()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(app.documents.active_id(), primary_id);
+        let primary = app
+            .documents
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == primary_id)
+            .unwrap();
+        assert!(!primary.preview);
+    }
+
+    #[test]
+    fn failed_view_edit_keeps_active_preview_unpinned() {
+        let (mut cx, mut app, primary_id) = promotion_app();
+        let edit = crate::document::EditIntent {
+            edit: waml::edit::PendingEdit::new(waml::uml::Batch(vec![
+                waml::uml::Op::AttributeRemove {
+                    node: "missing".into(),
+                    name: "missing".into(),
+                },
+            ])),
+            label: "Broken".into(),
+            merge_key: None,
+            after_location: None,
+        };
+
+        app.apply_view_outcome(
+            &mut cx,
+            crate::doc_view::ViewOutcome {
+                edit: Some(edit),
+                promote_active: true,
+                ..Default::default()
+            },
+        );
+
+        let primary = app
+            .documents
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == primary_id)
+            .unwrap();
+        assert!(primary.preview);
     }
 
     #[test]
