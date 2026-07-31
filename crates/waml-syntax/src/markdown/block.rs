@@ -151,6 +151,7 @@ pub(crate) fn parse(
             source,
             frame,
             &mut diagnostics,
+            dialect,
         )?));
     }
     emit_uncovered(
@@ -171,7 +172,8 @@ pub(crate) fn parse(
         });
     }
     let references = super::reference::MarkdownReferenceMap::from_tree(source, &root, start)?;
-    let inline = super::inline::apply(text, &root, references, start)?;
+    let inline = super::inline::apply(text, &root, references, start, dialect)?;
+    diagnostics.extend(inline.diagnostics.iter().cloned());
     Ok(BlockParse {
         root: inline.root,
         diagnostics: diagnostics.into(),
@@ -187,6 +189,7 @@ fn build_frame(
     source: &str,
     mut frame: BlockFrame,
     diagnostics: &mut Vec<TreeDiagnostic<Diagnostic>>,
+    dialect: MarkdownDialect,
 ) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
     frame
         .children
@@ -199,6 +202,7 @@ fn build_frame(
             frame.kind,
             frame.source_range.clone(),
             diagnostics,
+            dialect,
         )?;
         return semantic_node(factory, frame.kind, children);
     }
@@ -220,6 +224,7 @@ fn build_frame(
             frame.cursor,
             child.source_range.start,
             &mut children,
+            dialect,
         )?;
         frame.cursor = child.source_range.end;
         children.push(GreenElement::Node(build_frame(
@@ -228,6 +233,7 @@ fn build_frame(
             source,
             child,
             diagnostics,
+            dialect,
         )?));
     }
     emit_frame_gap(
@@ -238,7 +244,24 @@ fn build_frame(
         frame.cursor,
         frame.source_range.end,
         &mut children,
+        dialect,
     )?;
+    if frame.kind == Kind::Table {
+        let mut grouped = Vec::new();
+        let mut body = Vec::new();
+        for child in children {
+            if matches!(&child, GreenElement::Node(node) if node.kind() == Kind::TableRow) {
+                body.push(child);
+            } else {
+                if !body.is_empty() {
+                    grouped.push(GreenElement::Node(semantic_node(factory, Kind::TableBody, std::mem::take(&mut body))?));
+                }
+                grouped.push(child);
+            }
+        }
+        if !body.is_empty() { grouped.push(GreenElement::Node(semantic_node(factory, Kind::TableBody, body)?)); }
+        children = grouped;
+    }
     semantic_node(factory, frame.kind, children)
 }
 
@@ -290,6 +313,7 @@ fn leaf_tokens(
     kind: Kind,
     range: Range<usize>,
     diagnostics: &mut Vec<TreeDiagnostic<Diagnostic>>,
+    dialect: MarkdownDialect,
 ) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
     match kind {
         Kind::AtxHeading => heading_tokens(factory, text, source, range),
@@ -299,13 +323,14 @@ fn leaf_tokens(
         }
         Kind::IndentedCodeBlock => indented_tokens(factory, text, source, range),
         Kind::FencedCodeBlock => fence_tokens(factory, text, source, range, diagnostics),
-        Kind::HtmlBlock => Ok(vec![token(
-            factory,
-            text,
-            range.start,
-            range.end,
-            Kind::HtmlToken,
-        )?]),
+        Kind::HtmlBlock => {
+            if dialect.tag_filter() {
+                if let Some((tag_start, tag_end, super::gfm::HtmlTagFilter::Disallowed)) = super::gfm::filtered_tag(&source[range.clone()]) {
+                    diagnostics.push(diagnostic(Diagnostic::FilteredHtmlTag, range.start + tag_start, range.start + tag_end, "disallowed GFM HTML tag")?);
+                }
+            }
+            Ok(vec![token(factory, text, range.start, range.end, Kind::HtmlToken)?])
+        }
         Kind::Paragraph => Ok(vec![token(
             factory,
             text,
@@ -322,7 +347,12 @@ fn leaf_tokens(
                 marker_end,
                 Kind::ListMarkerToken,
             )?];
-            if marker_end < range.end {
+            let task_start = marker_end + usize::from(source.as_bytes().get(marker_end) == Some(&b' '));
+            if let Some((task_end, _)) = dialect.task_lists().then(|| super::gfm::task_marker(source, task_start, range.end)).flatten() {
+                if marker_end < task_start { out.push(token(factory, text, marker_end, task_start, Kind::WhitespaceToken)?); }
+                out.push(token(factory, text, task_start, task_end, Kind::TaskListMarkerToken)?);
+                if task_end < range.end { out.push(token(factory, text, task_end, range.end, Kind::TextToken)?); }
+            } else if marker_end < range.end {
                 out.push(token(
                     factory,
                     text,
@@ -351,8 +381,33 @@ fn emit_frame_gap(
     start: usize,
     end: usize,
     out: &mut Vec<GreenElement<OkfMarkdownLanguage>>,
+    dialect: MarkdownDialect,
 ) -> Result<(), ParseError> {
     if start == end {
+        return Ok(());
+    }
+    if parent == Kind::TableRow {
+        let mut at = start;
+        while at < end {
+            if source.as_bytes()[at] == b'|' {
+                out.push(token(factory, text, at, at + 1, Kind::TablePipeToken)?);
+                at += 1;
+            } else {
+                let next = source[at..end].find('|').map(|offset| at + offset).unwrap_or(end);
+                out.push(token(factory, text, at, next, Kind::TextToken)?);
+                at = next;
+            }
+        }
+        return Ok(());
+    }
+    if matches!(parent, Kind::TableHead | Kind::Table) {
+        let mut at = start;
+        while at < end {
+            let kind = if source.as_bytes()[at] == b':' { Kind::TableAlignmentColonToken } else if source.as_bytes()[at] == b'|' { Kind::TablePipeToken } else { Kind::TextToken };
+            let mut next = at + 1;
+            while next < end && ((kind == Kind::TableAlignmentColonToken && source.as_bytes()[next] == b':') || (kind == Kind::TablePipeToken && source.as_bytes()[next] == b'|') || (kind == Kind::TextToken && !matches!(source.as_bytes()[next], b':' | b'|'))) { next += 1; }
+            out.push(token(factory, text, at, next, kind)?); at = next;
+        }
         return Ok(());
     }
     let marker_kind = match parent {
@@ -368,6 +423,15 @@ fn emit_frame_gap(
         };
         if marker_end > start {
             out.push(token(factory, text, start, marker_end, marker_kind)?);
+        }
+        if parent == Kind::ListItem {
+            let task_start = marker_end + usize::from(source.as_bytes().get(marker_end) == Some(&b' '));
+            if let Some((task_end, _)) = dialect.task_lists().then(|| super::gfm::task_marker(source, task_start, end)).flatten() {
+                if marker_end < task_start { out.push(token(factory, text, marker_end, task_start, Kind::WhitespaceToken)?); }
+                out.push(token(factory, text, task_start, task_end, Kind::TaskListMarkerToken)?);
+                if task_end < end { out.push(token(factory, text, task_end, end, Kind::TextToken)?); }
+                return Ok(());
+            }
         }
         if marker_end < end {
             out.push(token(factory, text, marker_end, end, Kind::TextToken)?);

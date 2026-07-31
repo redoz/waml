@@ -5,7 +5,7 @@ use pulldown_cmark::{Event, Parser};
 use crate::{
     GreenElement, GreenFactory, GreenNode, GreenText, OkfMarkdownLanguage,
     OkfMarkdownSyntaxKind as Kind, ParseError, SourceText, SyntaxAnnotation, SyntaxIdentity,
-    TextRange, TextSize,
+    TextRange, TextSize, MarkdownDialect, TreeDiagnostic, OkfSyntaxDiagnosticCode as Diagnostic,
 };
 
 use super::reference::{decode_destination, normalize_label, MarkdownReferenceMap};
@@ -30,6 +30,7 @@ pub(crate) struct InlineParse {
     pub root: GreenNode<OkfMarkdownLanguage>,
     pub inline_roots: Arc<[GreenNode<OkfMarkdownLanguage>]>,
     pub references: MarkdownReferenceMap,
+    pub diagnostics: Arc<[TreeDiagnostic<Diagnostic>]>,
 }
 
 pub(crate) fn apply(
@@ -37,23 +38,27 @@ pub(crate) fn apply(
     root: &GreenNode<OkfMarkdownLanguage>,
     references: MarkdownReferenceMap,
     start: usize,
+    dialect: MarkdownDialect,
 ) -> Result<InlineParse, ParseError> {
-    let (root, inline_roots, backlinks) = {
+    let (root, inline_roots, backlinks, diagnostics) = {
         let mut context = InlineContext {
             text,
             references: &references,
             inline_roots: Vec::new(),
             backlinks: HashMap::new(),
+            dialect,
+            diagnostics: Vec::new(),
         };
         let mut at = start;
         let root = rebuild(&mut context, root, &mut at)?;
-        (root, context.inline_roots, context.backlinks)
+        (root, context.inline_roots, context.backlinks, context.diagnostics)
     };
     let references = references.with_backlinks(backlinks);
     Ok(InlineParse {
         root,
         inline_roots: inline_roots.into(),
         references,
+        diagnostics: diagnostics.into(),
     })
 }
 
@@ -62,6 +67,8 @@ struct InlineContext<'a> {
     references: &'a MarkdownReferenceMap,
     inline_roots: Vec<GreenNode<OkfMarkdownLanguage>>,
     backlinks: HashMap<Arc<str>, Vec<SyntaxIdentity>>,
+    dialect: MarkdownDialect,
+    diagnostics: Vec<TreeDiagnostic<Diagnostic>>,
 }
 
 fn rebuild(
@@ -269,6 +276,17 @@ fn parse_inlines(
                 continue;
             }
         }
+        if context.dialect.strikethrough() && rest.starts_with("~~") {
+            if let Some(relative) = source[at + 2..end].find("~~") {
+                let close = at + 2 + relative;
+                flush(context.text, plain, at, &mut out)?;
+                let mut children = vec![tok(context.text, at, at + 2, Kind::StrikethroughDelimiterToken)?];
+                children.extend(parse_inlines(context, at + 2, close, owner, allow_links)?);
+                children.push(tok(context.text, close, close + 2, Kind::StrikethroughDelimiterToken)?);
+                out.push(node(Kind::Strikethrough, children, Vec::new())?);
+                at = close + 2; plain = at; continue;
+            }
+        }
         if rest.starts_with('\\') {
             let next_start = at + 1;
             if let Some(next) = source[next_start..end].chars().next() {
@@ -322,6 +340,15 @@ fn parse_inlines(
                 };
                 if let Some(kind) = kind {
                     flush(context.text, plain, at, &mut out)?;
+                    let mut annotations = Vec::new();
+                    if kind == Kind::RawHtml && context.dialect.tag_filter() {
+                        if let Some((tag_start, tag_end, state)) = super::gfm::filtered_tag(&source[at..close]) {
+                            annotations.push(super::gfm::annotation(u64::MAX - 20, super::gfm::HTML_TAG_FILTER, match state { super::gfm::HtmlTagFilter::Allowed => "allowed", super::gfm::HtmlTagFilter::Disallowed => "disallowed" }));
+                            if state == super::gfm::HtmlTagFilter::Disallowed {
+                                context.diagnostics.push(TreeDiagnostic { code: Diagnostic::FilteredHtmlTag, range: TextRange::new(TextSize::try_from_usize(at + tag_start).map_err(|_| ParseError::SourceTooLarge { bytes: at + tag_start })?, TextSize::try_from_usize(at + tag_end).map_err(|_| ParseError::SourceTooLarge { bytes: at + tag_end })?).map_err(|_| ParseError::StructuralInvariant { reason: "invalid filtered HTML range".into() })?, severity: crate::SyntaxSeverity::Error, message: Arc::from("disallowed GFM HTML tag") });
+                            }
+                        }
+                    }
                     out.push(node(
                         kind,
                         vec![
@@ -338,7 +365,7 @@ fn parse_inlines(
                             )?,
                             tok(context.text, close - 1, close, Kind::AutolinkCloseToken)?,
                         ],
-                        Vec::new(),
+                        annotations,
                     )?);
                     at = close;
                     plain = at;
@@ -353,6 +380,13 @@ fn parse_inlines(
             at = parsed.end;
             plain = at;
             continue;
+        }
+        if context.dialect.extended_autolinks() && allow_links {
+            if let Some(close) = extended_autolink_end(source, at, end) {
+                flush(context.text, plain, at, &mut out)?;
+                out.push(node(Kind::Autolink, vec![tok(context.text, at, close, Kind::TextToken)?], Vec::new())?);
+                at = close; plain = at; continue;
+            }
         }
         if rest.starts_with('\r') || rest.starts_with('\n') {
             flush(context.text, plain, at, &mut out)?;
@@ -998,6 +1032,17 @@ fn is_raw_html(value: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|first| first.is_ascii_alphabetic())
+}
+
+fn extended_autolink_end(source: &str, at: usize, end: usize) -> Option<usize> {
+    let rest = &source[at..end];
+    let candidate = rest.bytes().take_while(|byte| !byte.is_ascii_whitespace() && !matches!(byte, b'<' | b'>' | b'`' | b'[' | b']')).count();
+    if candidate == 0 { return None; }
+    let mut close = at + candidate;
+    while close > at && matches!(source.as_bytes()[close - 1], b'?' | b'!' | b'.' | b',' | b':' | b'*' | b'_' | b'~') { close -= 1; }
+    let value = &source[at..close];
+    let valid = value.starts_with("http://") || value.starts_with("https://") || value.starts_with("www.") || (value.contains('@') && value.split_once('@').is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.') && !domain.ends_with('.')));
+    valid.then_some(close)
 }
 
 fn find_unescaped(source: &str, mut at: usize, end: usize, wanted: char) -> Option<usize> {

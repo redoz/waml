@@ -1,4 +1,5 @@
 pub(crate) mod block;
+pub(crate) mod gfm;
 pub(crate) mod inline;
 mod kind;
 pub(crate) mod reference;
@@ -7,6 +8,7 @@ mod snapshot;
 pub use kind::{
     OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity,
 };
+pub use gfm::{HtmlTagFilter, TableAlignment, TaskListState};
 pub use snapshot::{
     parse_markdown, reparse_markdown, MarkdownEntity, MarkdownLink, MarkdownLinkKind,
     MarkdownReparseOutcome, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
