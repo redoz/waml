@@ -318,6 +318,82 @@ fn bidi_levels_reorder_clusters_and_keep_boundary_affinities_distinct() {
     );
 }
 
+#[test]
+fn content_extent_and_offscreen_virtualization_remain_document_wide() {
+    let (document, presentation, mut shaper) = fixtures::one_hundred_blocks();
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 80.0, 1_200.0, 20.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(layout.block_summaries().len(), 100);
+    assert!(layout.content_size().y >= 2_000.0);
+    assert!(layout.visible_block_range().start > 0);
+    assert!(layout.visible_block_range().end < 100);
+    assert!(layout.visible_source_range().start() > t(0));
+    assert!(shaper.shaped_block_count() < 20);
+}
+
+#[test]
+fn embedded_measurement_invalidation_reshapes_only_the_stable_block_id() {
+    let (document, presentation, mut shaper) = fixtures::failing_second_block();
+    shaper.fail_fragment = None;
+    let mut engine = LayoutEngine::default();
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    shaper.shaped.clear();
+    let target = document.blocks[1].id;
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::BlockMeasurement(target),
+            &mut shaper,
+        )
+        .unwrap();
+    assert!(shaper.shaped.contains(&target));
+    assert_eq!(shaper.shaped.len(), document.text_runs.len());
+}
+
+#[test]
+fn selection_across_blocks_uses_layout_geometry_and_reaches_eof() {
+    let (document, presentation, mut shaper) = fixtures::failing_second_block();
+    shaper.fail_fragment = None;
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let start = document.text_runs[0].range.start();
+    let end = document.text_runs[1].range.end();
+    let rects = layout
+        .selection_rects(Selection::new(
+            TextPosition::new(start, Affinity::Before),
+            TextPosition::new(end, Affinity::After),
+        ))
+        .unwrap();
+    assert!(rects.len() >= 2);
+    let eof = TextPosition::new(end, Affinity::After);
+    let point = layout.source_to_point(eof).unwrap().rect.pos;
+    assert_eq!(layout.point_to_source(point), eof);
+}
+
 struct FixedShaper(ShapedRun);
 
 impl TextShaper for FixedShaper {

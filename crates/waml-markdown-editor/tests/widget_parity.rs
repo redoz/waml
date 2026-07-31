@@ -20,20 +20,37 @@ use waml_syntax::{
 };
 
 #[test]
-fn click_drag_double_and_triple_click_match_retained_editor_behavior() {
+fn retained_normal_click_places_caret() {
     let mut fixture = Fixture::new("alpha beta\nsecond\n");
     fixture.click_at_offset(2, 1, SelectionModifier::Replace);
     assert!(fixture.primary().is_empty());
+    assert_eq!(fixture.primary().cursor.offset, t(2));
+}
+
+#[test]
+fn retained_drag_extends_selection() {
+    let mut fixture = Fixture::new("alpha beta\nsecond\n");
+    fixture.click_at_offset(2, 1, SelectionModifier::Replace);
     fixture.drag_to_offset(5);
     assert_eq!(fixture.selected_text(), "pha");
+}
+
+#[test]
+fn retained_double_click_selects_word() {
+    let mut fixture = Fixture::new("alpha beta\nsecond\n");
     fixture.click_at_offset(8, 2, SelectionModifier::Replace);
     assert_eq!(fixture.selected_text(), "beta");
+}
+
+#[test]
+fn retained_triple_click_selects_source_line() {
+    let mut fixture = Fixture::new("alpha beta\nsecond\n");
     fixture.click_at_offset(13, 3, SelectionModifier::Replace);
     assert_eq!(fixture.selected_text(), "second\n");
 }
 
 #[test]
-fn platform_modifier_adds_selection_and_shift_extends_primary() {
+fn retained_platform_modifier_adds_selection() {
     let mut fixture = Fixture::new("one two");
     fixture.click_at_offset(1, 1, SelectionModifier::Replace);
     fixture.click_at_offset(5, 1, SelectionModifier::Add);
@@ -54,7 +71,7 @@ fn read_only_mode_allows_selection_and_copy_but_not_mutation() {
 }
 
 #[test]
-fn caret_visibility_and_resize_use_geometry_not_line_numbers() {
+fn retained_keyboard_motion_keeps_caret_visible() {
     let mut fixture = Fixture::with_variable_layout();
     fixture.set_viewport(100.0, 40.0);
     fixture.place_caret_at_end();
@@ -120,7 +137,7 @@ fn mutating_input_does_not_publish_ime_coordinates_from_entry_layout() {
 }
 
 #[test]
-fn mounted_widget_emits_the_exact_proposal_from_text_input() {
+fn divergence_widget_emits_exact_changes_not_full_string() {
     let (mut cx, widget, mut session) = mounted_editor("ab");
     widget.set_key_focus(&mut cx);
     let actions = widget
@@ -130,6 +147,78 @@ fn mounted_widget_emits_the_exact_proposal_from_text_input() {
     assert_eq!(proposal.edit.base_revision, DocumentRevision::INITIAL);
     assert_eq!(proposal.edit.changes.len(), 1);
     assert_eq!(proposal.snapshot.text().shared().as_str(), "xab");
+}
+
+#[test]
+fn retained_copy_cut_paste_use_source_text() {
+    let mut fixture = Fixture::new("raw *markdown*");
+    fixture.select_all();
+    assert_eq!(fixture.copy(), "raw *markdown*");
+    let cut = fixture.handle(EditorInput::Cut);
+    assert_eq!(cut.clipboard.as_deref(), Some("raw *markdown*"));
+    assert_eq!(fixture.text(), "");
+    fixture.refresh_layout();
+    fixture.handle(EditorInput::Paste(Arc::from("raw *markdown*")));
+    assert_eq!(fixture.text(), "raw *markdown*");
+}
+
+#[test]
+fn retained_undo_redo_restore_selection() {
+    let mut fixture = Fixture::new("");
+    fixture.type_text("abc");
+    fixture.refresh_layout();
+    fixture.handle(EditorInput::Key(
+        waml_markdown_editor::input::EditorKey::Undo,
+    ));
+    assert_eq!(fixture.text(), "");
+    assert_eq!(fixture.primary().cursor.offset, t(0));
+    fixture.refresh_layout();
+    fixture.handle(EditorInput::Key(
+        waml_markdown_editor::input::EditorKey::Redo,
+    ));
+    assert_eq!(fixture.text(), "abc");
+    assert_eq!(fixture.primary().cursor.offset, t(3));
+}
+
+#[test]
+fn divergence_extended_graphemes_replace_scalar_steps() {
+    let mut fixture = Fixture::new("a👩‍💻b");
+    fixture.place_caret_at_end();
+    fixture.handle(EditorInput::Key(
+        waml_markdown_editor::input::EditorKey::Left { extend: false },
+    ));
+    fixture.handle(EditorInput::Key(
+        waml_markdown_editor::input::EditorKey::Left { extend: false },
+    ));
+    assert_eq!(fixture.primary().cursor.offset.to_usize(), 1);
+}
+
+#[test]
+fn divergence_variable_metrics_replace_fixed_cell_grid() {
+    let layout = variable_layout();
+    assert_eq!(
+        layout
+            .source_to_point(TextPosition::new(t(3), Affinity::Before))
+            .unwrap()
+            .rect
+            .pos,
+        dvec2(0.0, 50.0)
+    );
+}
+
+#[test]
+fn divergence_ime_preedit_is_not_committed_text() {
+    let mut fixture = Fixture::new("ab");
+    fixture.handle(EditorInput::ImeStart);
+    fixture.handle(EditorInput::ImeUpdate {
+        preedit: "候補".to_owned(),
+        selection: 0..2,
+    });
+    assert_eq!(fixture.text(), "ab");
+    assert_eq!(
+        fixture.session().local_revision(),
+        DocumentRevision::INITIAL
+    );
 }
 
 #[test]
@@ -359,6 +448,10 @@ impl Fixture {
         self.handle(EditorInput::Text(Arc::from(text)))
     }
 
+    fn refresh_layout(&mut self) {
+        self.layout = linear_layout_at(self.text(), self.session.local_revision());
+    }
+
     fn text(&self) -> &str {
         self.session.snapshot().text().shared().as_str()
     }
@@ -393,6 +486,10 @@ impl Fixture {
 }
 
 fn linear_layout(text: &str) -> LayoutSnapshot {
+    linear_layout_at(text, DocumentRevision::INITIAL)
+}
+
+fn linear_layout_at(text: &str, revision: DocumentRevision) -> LayoutSnapshot {
     let mut clusters = Vec::new();
     for index in 0..text.len() {
         clusters.push(GlyphCluster::for_test(
@@ -414,7 +511,7 @@ fn linear_layout(text: &str) -> LayoutSnapshot {
         ));
     }
     LayoutSnapshot::from_parts_for_test(
-        DocumentRevision::INITIAL,
+        revision,
         dvec2(text.len() as f64 * 10.0, 20.0),
         vec![VisualLine::for_test(range(0, text.len()), 0.0, 20.0)],
         clusters,

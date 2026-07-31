@@ -346,3 +346,120 @@ fn grouped_history_replays_multi_change_entries_in_one_coordinate_space() {
     session.redo().unwrap().unwrap();
     assert_eq!(session.snapshot().text().shared().as_str(), "aXb X efX");
 }
+
+#[test]
+fn insert_delete_replace_matrix_has_exact_changes_and_one_revision_step() {
+    struct Case {
+        source: &'static str,
+        selection: (usize, usize),
+        command: EditCommand,
+        old_range: (usize, usize),
+        replacement: &'static str,
+        result: &'static str,
+    }
+    let cases = [
+        Case {
+            source: "",
+            selection: (0, 0),
+            command: EditCommand::Insert(Arc::from("x")),
+            old_range: (0, 0),
+            replacement: "x",
+            result: "x",
+        },
+        Case {
+            source: "ab",
+            selection: (2, 2),
+            command: EditCommand::DeleteBackward,
+            old_range: (1, 2),
+            replacement: "",
+            result: "a",
+        },
+        Case {
+            source: "abc",
+            selection: (1, 2),
+            command: EditCommand::Insert(Arc::from("XY")),
+            old_range: (1, 2),
+            replacement: "XY",
+            result: "aXYc",
+        },
+    ];
+    for case in cases {
+        let before = snapshot(case.source, 70);
+        let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+        let selections = SelectionSet::single(
+            &before,
+            Selection::new(p(case.selection.0), p(case.selection.1)),
+        )
+        .unwrap();
+        let mut session = MarkdownDocumentSession::with_selections(before, selections).unwrap();
+        let proposal = session
+            .execute(case.command, HistoryGroup::isolated())
+            .unwrap()
+            .proposal
+            .unwrap();
+        assert_eq!(proposal.edit.base_revision, DocumentRevision::new(70));
+        assert_eq!(proposal.edit.changes.len(), 1);
+        assert_eq!(
+            proposal.edit.changes[0].old_range,
+            TextRange::new(
+                TextSize::try_from_usize(case.old_range.0).unwrap(),
+                TextSize::try_from_usize(case.old_range.1).unwrap(),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            proposal.edit.changes[0].replacement.as_ref(),
+            case.replacement
+        );
+        assert_eq!(session.snapshot().text().shared().as_str(), case.result);
+        assert_eq!(session.local_revision(), DocumentRevision::new(71));
+        assert_eq!(session.selections().revision(), DocumentRevision::new(71));
+    }
+}
+
+#[test]
+fn stale_proposal_after_one_accepted_local_edit_is_rejected_exactly() {
+    let before = snapshot("ab", 80);
+    let stale_selection = SelectionSet::caret_in_text(
+        DocumentRevision::new(81),
+        before.text(),
+        TextSize::try_from_usize(0).unwrap(),
+    )
+    .unwrap();
+    let stale = MarkdownEdit {
+        base_revision: DocumentRevision::new(80),
+        changes: vec![replace(0, 0, "stale")],
+        selection_after: stale_selection,
+        history_group: HistoryGroup::isolated(),
+    };
+    let mut session = MarkdownDocumentSession::new(before);
+    session
+        .execute(
+            EditCommand::Insert(Arc::from("x")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    let error = session.apply_edit(stale).unwrap_err();
+    assert!(matches!(
+        error,
+        MarkdownEditError::StaleRevision { base, current }
+            if base == DocumentRevision::new(80) && current == DocumentRevision::new(81)
+    ));
+    assert_eq!(session.snapshot().text().shared().as_str(), "xab");
+}
+
+#[test]
+fn explicit_history_break_splits_named_insert_groups() {
+    let mut session = MarkdownDocumentSession::new(snapshot("", 90));
+    session
+        .execute(EditCommand::Insert(Arc::from("a")), HistoryGroup::named(1))
+        .unwrap();
+    session.break_history_group();
+    session
+        .execute(EditCommand::Insert(Arc::from("b")), HistoryGroup::named(1))
+        .unwrap();
+    session.undo().unwrap().unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "a");
+    session.undo().unwrap().unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "");
+}

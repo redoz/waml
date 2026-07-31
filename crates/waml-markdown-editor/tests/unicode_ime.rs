@@ -3,9 +3,10 @@ use std::sync::Arc;
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     edit::{EditCommand, HistoryGroup, MarkdownEditError},
+    ime::ImeError,
     selection::{Affinity, Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
-    unicode::{offset_to_utf16, utf16_to_offset, Utf16Position},
+    unicode::{offset_to_utf16, utf16_to_offset, PositionError, Utf16Position},
 };
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextChange, TextRange, TextSize,
@@ -179,4 +180,126 @@ fn ime_commit_revision_overflow_does_not_panic_or_discard_composition() {
     ));
     assert_eq!(session.ime().unwrap().preedit(), "に");
     assert_eq!(session.local_revision(), DocumentRevision::new(u64::MAX));
+}
+
+#[test]
+fn lf_crlf_and_mixed_line_endings_round_trip_every_boundary() {
+    for text in ["a\nb\n", "a\r\nb\r\n", "a\r\nb\nc\r\n"] {
+        let session = session(text);
+        for line in 0..text.lines().count() as u32 {
+            for character in [0, 1] {
+                let position = Utf16Position { line, character };
+                if let Ok(offset) = utf16_to_offset(session.snapshot(), position) {
+                    assert_eq!(
+                        offset_to_utf16(session.snapshot(), offset).unwrap(),
+                        position
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn malformed_utf16_columns_return_concrete_position_errors() {
+    let session = session("😀\n");
+    assert_eq!(
+        utf16_to_offset(
+            session.snapshot(),
+            Utf16Position {
+                line: 0,
+                character: 1,
+            },
+        ),
+        Err(PositionError::SplitUtf16Scalar {
+            line: 0,
+            character: 1,
+        })
+    );
+    assert_eq!(
+        utf16_to_offset(
+            session.snapshot(),
+            Utf16Position {
+                line: 0,
+                character: 3,
+            },
+        ),
+        Err(PositionError::Utf16ColumnOutOfBounds {
+            line: 0,
+            character: 3,
+        })
+    );
+    assert_eq!(
+        utf16_to_offset(
+            session.snapshot(),
+            Utf16Position {
+                line: 9,
+                character: 0,
+            },
+        ),
+        Err(PositionError::LineOutOfBounds { line: 9 })
+    );
+}
+
+#[test]
+fn combining_zwj_flags_and_non_latin_words_use_unicode_boundaries() {
+    for text in ["e\u{301}", "👩‍💻", "🇳🇱"] {
+        let mut session = session(text);
+        session
+            .set_primary_offset(TextSize::try_from_usize(0).unwrap())
+            .unwrap();
+        session.move_right(false).unwrap();
+        assert_eq!(
+            session.selections().primary().cursor.offset.to_usize(),
+            text.len()
+        );
+    }
+    let mut session = session("γειά 世界");
+    let selection = session
+        .select_word_at(TextSize::try_from_usize(1).unwrap())
+        .unwrap();
+    assert_eq!(
+        session.snapshot().text().slice(selection.range()).unwrap(),
+        "γειά"
+    );
+}
+
+#[test]
+fn ime_replaces_nonempty_selection_and_cancel_models_focus_loss() {
+    let source = session("abc");
+    let p = |n| TextPosition::new(TextSize::try_from_usize(n).unwrap(), Affinity::Before);
+    let selected = SelectionSet::single(source.snapshot(), Selection::new(p(1), p(2))).unwrap();
+    let mut session =
+        MarkdownDocumentSession::with_selections(source.snapshot().clone(), selected).unwrap();
+    session.begin_ime().unwrap();
+    session.update_ime("候", 0..1).unwrap();
+    session.commit_ime(HistoryGroup::isolated()).unwrap();
+    assert_eq!(session.snapshot().text().shared().as_str(), "a候c");
+
+    let committed = session.snapshot().clone();
+    session.begin_ime().unwrap();
+    session.update_ime("補", 0..1).unwrap();
+    session.cancel_ime();
+    assert!(Arc::ptr_eq(session.snapshot(), &committed));
+    assert!(session.ime().is_none());
+}
+
+#[test]
+fn accepted_edit_cancels_composition_and_later_update_and_commit_are_typed() {
+    let mut session = session("ab");
+    session.begin_ime().unwrap();
+    session.update_ime("x", 0..1).unwrap();
+    session
+        .execute(
+            EditCommand::Insert(Arc::from("y")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    let update = session.update_ime("z", 0..1).unwrap_err();
+    assert_eq!(update, ImeError::NotActive);
+    let commit = session.commit_ime(HistoryGroup::isolated()).unwrap_err();
+    assert!(matches!(
+        commit,
+        MarkdownEditError::Ime(ImeError::NotActive)
+    ));
 }
