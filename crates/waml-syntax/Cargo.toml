@@ -10,6 +10,5 @@ pulldown-cmark.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-pulldown-cmark = { workspace = true, features = ["html"] }
 serde.workspace = true
 serde_json.workspace = true

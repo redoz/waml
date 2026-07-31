@@ -52,7 +52,8 @@ pub(crate) fn normalize_label(label: &str) -> Option<Arc<str>> {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-        .to_lowercase();
+        .to_lowercase()
+        .replace('ß', "ss");
     (!normalized.is_empty() && normalized.chars().count() <= 999).then(|| normalized.into())
 }
 
@@ -126,20 +127,22 @@ fn parse_definition(
     let after_colon = close + 2;
     let value = spelling[after_colon..].trim_start();
     let value_start = after_colon + spelling[after_colon..].len() - value.len();
-    let (destination, destination_start, rest) = if let Some(value) = value.strip_prefix('<') {
-        let Some(close) = value.find('>') else {
-            return Ok(None);
+    let (destination, destination_start, rest, angle_destination) =
+        if let Some(value) = value.strip_prefix('<') {
+            let Some(close) = value.find('>') else {
+                return Ok(None);
+            };
+            (&value[..close], value_start + 1, &value[close + 1..], true)
+        } else {
+            let destination_end = value.find(char::is_whitespace).unwrap_or(value.len());
+            (
+                &value[..destination_end],
+                value_start,
+                &value[destination_end..],
+                false,
+            )
         };
-        (&value[..close], value_start + 1, &value[close + 1..])
-    } else {
-        let destination_end = value.find(char::is_whitespace).unwrap_or(value.len());
-        (
-            &value[..destination_end],
-            value_start,
-            &value[destination_end..],
-        )
-    };
-    if destination.is_empty() {
+    if destination.is_empty() && !angle_destination {
         return Ok(None);
     }
     let title = parse_title(rest);
@@ -150,7 +153,7 @@ fn parse_definition(
         source_range: range(start, end)?,
         destination: decode_destination(destination).into(),
         destination_range: range(destination_start, destination_start + destination.len())?,
-        title: title.map(Arc::from),
+        title: title.map(decode_destination).map(Arc::from),
     }))
 }
 
@@ -167,13 +170,29 @@ fn parse_title(rest: &str) -> Option<&str> {
 
 pub(crate) fn decode_destination(value: &str) -> String {
     let mut out = String::new();
-    let mut chars = value.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' && chars.peek().is_some_and(|next| next.is_ascii_punctuation()) {
-            out.push(chars.next().expect("peeked"));
-        } else {
-            out.push(ch);
+    let mut at = 0;
+    while at < value.len() {
+        let ch = value[at..].chars().next().expect("valid UTF-8 offset");
+        if ch == '\\' {
+            let next = value[at + 1..].chars().next();
+            if next.is_some_and(|next| next.is_ascii_punctuation()) {
+                let next = next.expect("checked");
+                out.push(next);
+                at += 1 + next.len_utf8();
+                continue;
+            }
+        } else if ch == '&' {
+            if let Some(relative_end) = value[at..].find(';') {
+                let end = at + relative_end + 1;
+                if let Some(decoded) = super::inline::decode_entity(&value[at..end]) {
+                    out.push_str(&decoded);
+                    at = end;
+                    continue;
+                }
+            }
         }
+        out.push(ch);
+        at += ch.len_utf8();
     }
     out
 }

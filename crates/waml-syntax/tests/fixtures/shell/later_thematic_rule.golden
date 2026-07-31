@@ -8,8 +8,7 @@ T root/1 NewlineToken 8..9 missing=false leading="" text="\n" trailing=""
 N root/2 Paragraph 9..20
 N root/2/0 Text 9..19
 T root/2/0/0 TextToken 9..19 missing=false leading="" text="Paragraph." trailing=""
-N root/2/1 SoftLineBreak 19..20
-T root/2/1/0 NewlineToken 19..20 missing=false leading="" text="\n" trailing=""
+T root/2/1 NewlineToken 19..20 missing=false leading="" text="\n" trailing=""
 T root/3 NewlineToken 20..21 missing=false leading="" text="\n" trailing=""
 N root/4 ThematicBreak 21..25
 T root/4/0 ThematicBreakToken 21..24 missing=false leading="" text="---" trailing=""

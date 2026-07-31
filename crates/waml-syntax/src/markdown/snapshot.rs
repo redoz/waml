@@ -1,10 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    ChangeMap, DocumentRevision, FullReparseReason,
-    GreenElement, GreenText, MarkdownDialect, MarkdownStructureMap, OkfMarkdownLanguage,
-    OkfSyntaxDiagnosticCode, ParseError, ReparseOutcome, SourceText, SyntaxElement, SyntaxIdentity,
-    SyntaxTree, TextChange, TextRange, TreeDiagnostic,
+    ChangeMap, DocumentRevision, FullReparseReason, GreenElement, GreenText, MarkdownDialect,
+    MarkdownStructureMap, OkfMarkdownLanguage, OkfSyntaxDiagnosticCode, ParseError, ReparseOutcome,
+    SourceText, SyntaxElement, SyntaxIdentity, SyntaxTree, TextChange, TextRange, TreeDiagnostic,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,6 +95,7 @@ pub struct MarkdownRawHtml {
     pub owner: SyntaxIdentity,
     pub range: TextRange,
     pub filter: super::HtmlTagFilter,
+    pub filtered_ranges: Arc<[TextRange]>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MarkdownImage {
@@ -327,12 +327,11 @@ pub fn reparse_markdown(
             requested: revision,
         });
     }
-    let (outcome, _structure) =
-        crate::incremental::reparse_okf_markdown_with_structure(
-            previous.tree.as_ref(),
-            new_text.clone(),
-            changes,
-        )?;
+    let (outcome, _structure) = crate::incremental::reparse_okf_markdown_with_structure(
+        previous.tree.as_ref(),
+        new_text.clone(),
+        changes,
+    )?;
     let (mut tree, shared_source_independent_green, reparsed_range) = match outcome {
         ReparseOutcome::Incremental {
             tree,
@@ -508,13 +507,8 @@ fn queries(
 ) -> Result<MarkdownSyntaxQueries, ParseError> {
     let mut collected = Collected::default();
     let mut spans = Vec::new();
-    collect_queries(&tree.root(), &mut collected)?;
-    collect_spans(
-        &tree.root(),
-        None,
-        MarkdownSemanticRole::Document,
-        &mut spans,
-    )?;
+    collect_queries(&tree.root(), &mut collected, tree.dialect().tag_filter())?;
+    collect_spans(&tree.root(), None, &mut spans)?;
     collected
         .links
         .sort_by_key(|link| (link.source_range.start(), link.source_range.end()));
@@ -590,6 +584,7 @@ fn identity_map<T>(
 fn collect_queries(
     node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
     out: &mut Collected,
+    tag_filter: bool,
 ) -> Result<(), ParseError> {
     use crate::OkfMarkdownSyntaxKind as Kind;
     if node.kind() != Kind::Root && is_semantic(node.kind()) && identity(node).is_none() {
@@ -615,21 +610,17 @@ fn collect_queries(
         }
         Kind::List | Kind::ListItem => {
             let owner = owner.unwrap();
-            let Some(marker) = first_token(node, Kind::ListMarkerToken) else {
+            let marker = first_token(node, Kind::ListMarkerToken).or_else(|| first_any_token(node));
+            let Some(marker) = marker else {
                 for child in node.children() {
                     if let crate::SyntaxElement::Node(child) = child {
-                        collect_queries(&child, out)?;
+                        collect_queries(&child, out, tag_filter)?;
                     }
                 }
                 return Ok(());
             };
             let marker_text = marker.text().write_to_string();
-            let kind = marker_text
-                .trim_start()
-                .trim_end_matches(['.', ')'])
-                .parse::<u64>()
-                .map(|start| MarkdownListKind::Ordered { start })
-                .unwrap_or(MarkdownListKind::Bullet);
+            let kind = list_kind(&marker_text);
             out.lists.push(MarkdownList {
                 owner,
                 range: node.range(),
@@ -655,10 +646,35 @@ fn collect_queries(
             let filter = annotation_data(node, super::gfm::HTML_TAG_FILTER)
                 .and_then(parse_html_filter)
                 .unwrap_or(super::HtmlTagFilter::Allowed);
+            let mut source = String::new();
+            crate::write_green_to(node.green(), &mut source)
+                .map_err(|_| invariant("failed to reconstruct raw HTML source"))?;
+            let source_start = node.range().start().to_usize();
+            let filtered_ranges = tag_filter
+                .then(|| super::gfm::disallowed_html_tag_ranges(&source))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(start, end)| {
+                    TextRange::new(
+                        crate::TextSize::try_from_usize(source_start + start).map_err(|_| {
+                            ParseError::SourceTooLarge {
+                                bytes: source_start + start,
+                            }
+                        })?,
+                        crate::TextSize::try_from_usize(source_start + end).map_err(|_| {
+                            ParseError::SourceTooLarge {
+                                bytes: source_start + end,
+                            }
+                        })?,
+                    )
+                    .map_err(|_| invariant("filtered HTML tag has a reversed range"))
+                })
+                .collect::<Result<Arc<[_]>, _>>()?;
             out.html.push(MarkdownRawHtml {
                 owner,
                 range: node.range(),
                 filter,
+                filtered_ranges,
             });
         }
         Kind::FencedCodeBlock => {
@@ -668,7 +684,9 @@ fn collect_queries(
             let info_token = first_token(node, Kind::InfoStringToken);
             let info = info_token
                 .as_ref()
-                .map(|token| token.text().write_to_string().trim().to_owned())
+                .map(|token| {
+                    super::reference::decode_destination(token.text().write_to_string().trim())
+                })
                 .unwrap_or_default();
             let content_range = token_cover(node, |kind| kind == Kind::CodeTextToken)
                 .unwrap_or(TextRange::new(fence.range().end(), fence.range().end()).unwrap());
@@ -786,7 +804,7 @@ fn collect_queries(
     }
     for child in node.children() {
         if let SyntaxElement::Node(child) = child {
-            collect_queries(&child, out)?;
+            collect_queries(&child, out, tag_filter)?;
         }
     }
     Ok(())
@@ -911,6 +929,40 @@ fn first_token(
     None
 }
 
+fn first_any_token(
+    node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
+) -> Option<crate::SyntaxToken<crate::OkfMarkdownLanguage>> {
+    for child in node.children() {
+        match child {
+            SyntaxElement::Token(token) => return Some(token),
+            SyntaxElement::Node(child) => {
+                if let Some(token) = first_any_token(&child) {
+                    return Some(token);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn list_kind(marker: &str) -> MarkdownListKind {
+    let marker = marker.trim_start();
+    let digits = marker.bytes().take_while(u8::is_ascii_digit).count();
+    if digits > 0
+        && marker
+            .as_bytes()
+            .get(digits)
+            .is_some_and(|byte| matches!(byte, b'.' | b')'))
+    {
+        marker[..digits]
+            .parse::<u64>()
+            .map(|start| MarkdownListKind::Ordered { start })
+            .unwrap_or(MarkdownListKind::Bullet)
+    } else {
+        MarkdownListKind::Bullet
+    }
+}
+
 fn token_cover(
     node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
     predicate: impl Copy + Fn(crate::OkfMarkdownSyntaxKind) -> bool,
@@ -934,8 +986,17 @@ fn token_cover(
 
 fn delimited_content(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Option<TextRange> {
     use crate::OkfMarkdownSyntaxKind as Kind;
-    let open = first_token(node, Kind::LinkLabelOpenToken)?;
-    let close = first_token(node, Kind::LinkLabelCloseToken)?;
+    let open = node.children().find_map(|child| match child {
+        SyntaxElement::Token(token) if token.kind() == Kind::LinkLabelOpenToken => Some(token),
+        _ => None,
+    })?;
+    let close = node
+        .children()
+        .filter_map(|child| match child {
+            SyntaxElement::Token(token) if token.kind() == Kind::LinkLabelCloseToken => Some(token),
+            _ => None,
+        })
+        .last()?;
     TextRange::new(open.range().end(), close.range().start()).ok()
 }
 
@@ -961,7 +1022,6 @@ fn heading_level(node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>) -> Result
 fn collect_spans(
     node: &crate::SyntaxNode<crate::OkfMarkdownLanguage>,
     inherited: Option<SyntaxIdentity>,
-    role: MarkdownSemanticRole,
     out: &mut Vec<MarkdownSyntaxSpan>,
 ) -> Result<(), ParseError> {
     if node.kind() == crate::OkfMarkdownSyntaxKind::Root {
@@ -970,7 +1030,7 @@ fn collect_spans(
         for (index, child) in children.iter().enumerate() {
             match child {
                 SyntaxElement::Node(child) => {
-                    collect_spans(child, None, MarkdownSemanticRole::Document, out)?;
+                    collect_spans(child, None, out)?;
                     previous_owner = first_semantic_identity(child);
                 }
                 SyntaxElement::Token(token) if token.range().start() < token.range().end() => {
@@ -1001,7 +1061,7 @@ fn collect_spans(
     let Some(owner) = own.or(inherited) else {
         for child in node.children() {
             if let SyntaxElement::Node(child) = child {
-                collect_spans(&child, None, MarkdownSemanticRole::Document, out)?;
+                collect_spans(&child, None, out)?;
             }
         }
         return Ok(());
@@ -1009,7 +1069,7 @@ fn collect_spans(
     let role = semantic_role(node.kind());
     for child in node.children() {
         match child {
-            SyntaxElement::Node(child) => collect_spans(&child, Some(owner), role, out)?,
+            SyntaxElement::Node(child) => collect_spans(&child, Some(owner), out)?,
             SyntaxElement::Token(token) if token.range().start() < token.range().end() => {
                 out.push(MarkdownSyntaxSpan {
                     owner,

@@ -46,7 +46,6 @@ fn inline_phase_builds_lossless_commonmark_nodes() {
         Kind::Image,
         Kind::Autolink,
         Kind::RawHtml,
-        Kind::SoftLineBreak,
         Kind::HardLineBreak,
     ] {
         assert!(found.contains(&kind), "missing {kind:?}: {found:?}");
@@ -205,14 +204,10 @@ fn hard_breaks_keep_delimiters_separate_from_newlines() {
         .into_iter()
         .filter(|node| node.kind() == Kind::HardLineBreak)
         .collect();
-    assert_eq!(hard_breaks.len(), 2);
+    assert_eq!(hard_breaks.len(), 1);
     assert_eq!(
         direct_token_kinds(&hard_breaks[0]),
         [Kind::WhitespaceToken, Kind::NewlineToken]
-    );
-    assert_eq!(
-        direct_token_kinds(&hard_breaks[1]),
-        [Kind::BackslashToken, Kind::NewlineToken]
     );
 }
 

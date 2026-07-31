@@ -66,39 +66,62 @@ pub(crate) fn task_marker(source: &str, at: usize, end: usize) -> Option<(usize,
         .then_some((at + 3, state))
 }
 pub(crate) fn classify_html(source: &str) -> (Option<(usize, usize)>, HtmlTagFilter) {
-    let bytes = source.as_bytes();
-    let mut at = usize::from(bytes.first() == Some(&b'<'));
-    if bytes.get(at) == Some(&b'/') {
-        at += 1;
-    }
-    while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
-        at += 1;
-    }
-    let start = at;
-    while bytes.get(at).is_some_and(u8::is_ascii_alphanumeric) {
-        at += 1;
-    }
-    if start == at {
+    let Some((_, start, end, blocked)) = html_tags(source).next() else {
         return (None, HtmlTagFilter::Allowed);
-    }
-    let name = &source[start..at];
-    let blocked = [
-        "title",
-        "textarea",
-        "style",
-        "xmp",
-        "iframe",
-        "noembed",
-        "noframes",
-        "script",
-        "plaintext",
-    ];
+    };
     (
-        Some((start, at)),
-        if blocked.iter().any(|item| name.eq_ignore_ascii_case(item)) {
+        Some((start, end)),
+        if blocked {
             HtmlTagFilter::Disallowed
         } else {
             HtmlTagFilter::Allowed
         },
     )
+}
+
+pub(crate) fn disallowed_html_tag_ranges(source: &str) -> Vec<(usize, usize)> {
+    html_tags(source)
+        .filter_map(|(marker, _, end, blocked)| blocked.then_some((marker, end)))
+        .collect()
+}
+
+pub(crate) fn disallowed_html_tag_name_ranges(source: &str) -> Vec<(usize, usize)> {
+    html_tags(source)
+        .filter_map(|(_, start, end, blocked)| blocked.then_some((start, end)))
+        .collect()
+}
+
+fn html_tags(source: &str) -> impl Iterator<Item = (usize, usize, usize, bool)> + '_ {
+    source.match_indices('<').filter_map(|(marker_start, _)| {
+        let bytes = source.as_bytes();
+        let mut at = marker_start + 1;
+        if bytes.get(at) == Some(&b'/') {
+            at += 1;
+        }
+        while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+            at += 1;
+        }
+        let name_start = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_alphanumeric) {
+            at += 1;
+        }
+        if name_start == at {
+            return None;
+        }
+        let name = &source[name_start..at];
+        let blocked = [
+            "title",
+            "textarea",
+            "style",
+            "xmp",
+            "iframe",
+            "noembed",
+            "noframes",
+            "script",
+            "plaintext",
+        ]
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate));
+        Some((marker_start, name_start, at, blocked))
+    })
 }

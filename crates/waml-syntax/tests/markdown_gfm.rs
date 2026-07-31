@@ -337,9 +337,16 @@ fn gfm_tag_filter_is_case_insensitive_and_leaves_html_lossless() {
             diagnostic.code == waml_syntax::OkfSyntaxDiagnosticCode::FilteredHtmlTag
         })
         .collect();
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].range.start().to_usize(), 1);
-    assert_eq!(filtered[0].range.end().to_usize(), 7);
+    let ranges: Vec<_> = filtered
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic.range.start().to_usize(),
+                diagnostic.range.end().to_usize(),
+            )
+        })
+        .collect();
+    assert_eq!(ranges, [(1, 7), (11, 17)]);
     let html: Vec<_> = descendants(&parsed.tree.root())
         .into_iter()
         .filter(|node| matches!(node.kind(), Kind::RawHtml | Kind::HtmlBlock))

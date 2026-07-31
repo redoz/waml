@@ -56,9 +56,16 @@ pub(crate) fn parse(
     };
     let mut stack = Vec::<BlockFrame>::new();
     let mut blocks = Vec::<BlockFrame>::new();
-    for (event, offsets) in
-        Parser::new_ext(&source[event_start..end], pulldown_options(dialect)).into_offset_iter()
-    {
+    let parser = Parser::new_ext(&source[event_start..end], pulldown_options(dialect));
+    let mut reference_spans: Vec<_> = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, definition)| {
+            (event_start + definition.span.start)..(event_start + definition.span.end)
+        })
+        .collect();
+    reference_spans.sort_by_key(|definition| (definition.start, definition.end));
+    for (event, offsets) in parser.into_offset_iter() {
         let mut offsets = (event_start + offsets.start)..(event_start + offsets.end);
         validate_event_range(source, event_start, end, &offsets)?;
         match event {
@@ -174,6 +181,7 @@ pub(crate) fn parse(
             frame.source_range.start,
             &mut children,
             &mut definitions,
+            &reference_spans,
         )?;
         cursor = frame.source_range.end;
         children.push(GreenElement::Node(build_frame(
@@ -183,6 +191,8 @@ pub(crate) fn parse(
             frame,
             &mut diagnostics,
             dialect,
+            &reference_spans,
+            &mut definitions,
         )?));
     }
     emit_uncovered(
@@ -193,6 +203,7 @@ pub(crate) fn parse(
         end,
         &mut children,
         &mut definitions,
+        &reference_spans,
     )?;
     let root = factory
         .node(Kind::Root, children)
@@ -307,12 +318,17 @@ fn build_frame(
     mut frame: BlockFrame,
     diagnostics: &mut Vec<TreeDiagnostic<Diagnostic>>,
     dialect: MarkdownDialect,
+    reference_spans: &[Range<usize>],
+    definitions: &mut Vec<TextRange>,
 ) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
     let metadata = frame_metadata(source, &frame, dialect);
     frame
         .children
         .sort_by_key(|child| (child.source_range.start, child.source_range.end));
-    if frame.children.is_empty() {
+    let contains_definition = reference_spans.iter().any(|definition| {
+        definition.start >= frame.source_range.start && definition.end <= frame.source_range.end
+    });
+    if frame.children.is_empty() && !contains_definition {
         let children = leaf_tokens(
             factory,
             text,
@@ -343,6 +359,8 @@ fn build_frame(
             child.source_range.start,
             &mut children,
             dialect,
+            reference_spans,
+            definitions,
         )?;
         frame.cursor = child.source_range.end;
         children.push(GreenElement::Node(build_frame(
@@ -352,6 +370,8 @@ fn build_frame(
             child,
             diagnostics,
             dialect,
+            reference_spans,
+            definitions,
         )?));
     }
     emit_frame_gap(
@@ -363,6 +383,8 @@ fn build_frame(
         frame.source_range.end,
         &mut children,
         dialect,
+        reference_spans,
+        definitions,
     )?;
     if frame.kind == Kind::Table {
         let mut grouped = Vec::new();
@@ -474,8 +496,8 @@ fn leaf_tokens(
         Kind::FencedCodeBlock => fence_tokens(factory, text, source, range, diagnostics),
         Kind::HtmlBlock => {
             if dialect.tag_filter() {
-                if let (Some((tag_start, tag_end)), super::gfm::HtmlTagFilter::Disallowed) =
-                    super::gfm::classify_html(&source[range.clone()])
+                for (tag_start, tag_end) in
+                    super::gfm::disallowed_html_tag_name_ranges(&source[range.clone()])
                 {
                     diagnostics.push(diagnostic(
                         Diagnostic::FilteredHtmlTag,
@@ -565,9 +587,46 @@ fn emit_frame_gap(
     end: usize,
     out: &mut Vec<GreenElement<OkfMarkdownLanguage>>,
     dialect: MarkdownDialect,
+    reference_spans: &[Range<usize>],
+    definitions: &mut Vec<TextRange>,
 ) -> Result<(), ParseError> {
     if start == end {
         return Ok(());
+    }
+    if let Some(definition) = reference_spans
+        .iter()
+        .find(|definition| definition.start >= start && definition.end <= end)
+    {
+        emit_frame_gap(
+            factory,
+            text,
+            source,
+            parent,
+            start,
+            definition.start,
+            out,
+            dialect,
+            &[],
+            definitions,
+        )?;
+        definitions.push(range(definition.start, definition.end)?);
+        out.push(GreenElement::Node(semantic_node(
+            factory,
+            Kind::LinkReferenceDefinition,
+            definition_tokens(factory, text, source, definition.start, definition.end)?,
+        )?));
+        return emit_frame_gap(
+            factory,
+            text,
+            source,
+            parent,
+            definition.end,
+            end,
+            out,
+            dialect,
+            reference_spans,
+            definitions,
+        );
     }
     if parent == Kind::TableRow {
         let mut at = start;
@@ -670,6 +729,7 @@ fn emit_uncovered(
     end: usize,
     out: &mut Vec<GreenElement<OkfMarkdownLanguage>>,
     definitions: &mut Vec<TextRange>,
+    reference_spans: &[Range<usize>],
 ) -> Result<(), ParseError> {
     while start < end {
         if start == 0 && source.starts_with('\u{feff}') {
@@ -681,6 +741,38 @@ fn emit_uncovered(
                 Kind::BomToken,
             )?);
             start = '\u{feff}'.len_utf8();
+            continue;
+        }
+        if let Some(definition) = reference_spans
+            .iter()
+            .find(|definition| definition.start >= start && definition.start < end)
+        {
+            if start < definition.start {
+                out.push(token(
+                    factory,
+                    text,
+                    start,
+                    definition.start,
+                    if source[start..definition.start]
+                        .trim_matches([' ', '\t', '\r', '\n'])
+                        .is_empty()
+                    {
+                        Kind::WhitespaceToken
+                    } else {
+                        Kind::BadToken
+                    },
+                )?);
+                start = definition.start;
+                continue;
+            }
+            let definition_end = definition.end.min(end);
+            definitions.push(range(start, definition_end)?);
+            out.push(GreenElement::Node(semantic_node(
+                factory,
+                Kind::LinkReferenceDefinition,
+                definition_tokens(factory, text, source, start, definition_end)?,
+            )?));
+            start = definition_end;
             continue;
         }
         let line_end = next_line(source, start, end);
@@ -727,14 +819,21 @@ fn heading_tokens(
     let text_start = open_end + usize::from(source.as_bytes().get(open_end) == Some(&b' '));
     let trimmed = source[text_start..content_end].trim_end_matches(' ');
     let candidate_end = text_start + trimmed.len();
-    let closing_start = source[text_start..candidate_end]
-        .rfind(' ')
-        .filter(|at| {
-            source[text_start + at + 1..candidate_end]
-                .bytes()
-                .all(|b| b == b'#')
-        })
-        .map(|at| text_start + at + 1);
+    let closing_start = if source[text_start..candidate_end]
+        .bytes()
+        .all(|byte| byte == b'#')
+    {
+        Some(text_start)
+    } else {
+        source[text_start..candidate_end]
+            .rfind(' ')
+            .filter(|at| {
+                source[text_start + at + 1..candidate_end]
+                    .bytes()
+                    .all(|b| b == b'#')
+            })
+            .map(|at| text_start + at + 1)
+    };
     let text_end = closing_start.unwrap_or(candidate_end);
     let mut out = vec![token(
         factory,
@@ -797,13 +896,39 @@ fn setext_tokens(
         .map(|at| range.start + at + 1)
         .unwrap_or(range.start);
     let underline_end = content_end;
-    let mut out = vec![token(
-        factory,
-        text,
-        range.start,
-        underline_start,
-        Kind::TextToken,
-    )?];
+    let content_line_end = trim_newline(source, range.start, underline_start);
+    let text_end = range.start
+        + source[range.start..content_line_end]
+            .trim_end_matches([' ', '\t'])
+            .len();
+    let mut out = Vec::new();
+    if range.start < text_end {
+        out.push(token(
+            factory,
+            text,
+            range.start,
+            text_end,
+            Kind::TextToken,
+        )?);
+    }
+    if text_end < content_line_end {
+        out.push(token(
+            factory,
+            text,
+            text_end,
+            content_line_end,
+            Kind::WhitespaceToken,
+        )?);
+    }
+    if content_line_end < underline_start {
+        out.push(token(
+            factory,
+            text,
+            content_line_end,
+            underline_start,
+            Kind::NewlineToken,
+        )?);
+    }
     out.push(token(
         factory,
         text,
@@ -876,6 +1001,13 @@ fn fence_tokens(
     diagnostics: &mut Vec<TreeDiagnostic<Diagnostic>>,
 ) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
     let first_end = next_line(source, range.start, range.end);
+    let line_start = source[..range.start].rfind('\n').map_or(0, |at| at + 1);
+    let container_indent = range.start - line_start;
+    let closing_indent_limit = if container_indent <= 3 {
+        3
+    } else {
+        container_indent + 3
+    };
     let indent = source[range.start..first_end]
         .bytes()
         .take_while(|b| *b == b' ')
@@ -898,7 +1030,7 @@ fn fence_tokens(
             .bytes()
             .take_while(|b| *b == b' ')
             .count();
-        if spaces <= 3 {
+        if spaces <= closing_indent_limit {
             let marker_start = at + spaces;
             let count = source[marker_start..content_end]
                 .bytes()
@@ -1205,10 +1337,14 @@ fn validate_event_range(
     Ok(())
 }
 fn heading_is_setext(source: &str, range: &Range<usize>, _level: HeadingLevel) -> bool {
-    source[range.clone()].lines().nth(1).is_some_and(|line| {
-        let line = line.trim();
-        !line.is_empty() && line.bytes().all(|byte| matches!(byte, b'=' | b'-'))
-    })
+    source[range.clone()]
+        .trim_end_matches(['\r', '\n'])
+        .rsplit_once('\n')
+        .map(|(_, line)| line)
+        .is_some_and(|line| {
+            let line = line.trim();
+            !line.is_empty() && line.bytes().all(|byte| matches!(byte, b'=' | b'-'))
+        })
 }
 fn quote_prefix_end(source: &str, start: usize, end: usize) -> usize {
     if source.as_bytes().get(start) == Some(&b'>') {

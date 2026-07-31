@@ -202,13 +202,26 @@ fn parse_inlines(
     allow_links: bool,
 ) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
     let source = context.text.shared();
-    let emphasis = emphasis_pairs(source, start, end);
+    let brackets = bracket_matches(context, start, end, allow_links);
+    let crosses_link_label = |pair: &EmphasisPair| {
+        brackets.iter().any(|bracket| {
+            let open_inside = pair.open > bracket.open && pair.open < bracket.label_end;
+            let close_inside = pair.close > bracket.open && pair.close < bracket.label_end;
+            open_inside != close_inside
+        })
+    };
+    let emphasis: Vec<_> = emphasis_pairs(source, start, end)
+        .into_iter()
+        .filter(|pair| !crosses_link_label(pair))
+        .collect();
     let strikethrough = if context.dialect.strikethrough() {
         strikethrough_pairs(source, start, end)
+            .into_iter()
+            .filter(|pair| !crosses_link_label(pair))
+            .collect()
     } else {
         Vec::new()
     };
-    let brackets = bracket_matches(context, start, end, allow_links);
     let mut out = Vec::new();
     let mut at = start;
     let mut plain = start;
@@ -268,9 +281,21 @@ fn parse_inlines(
 
         let rest = &source[at..end];
         if rest.starts_with("\\\r\n") || rest.starts_with("\\\n") {
-            flush(context.text, plain, at, &mut out)?;
             let newline_start = at + 1;
             let newline_end = newline_start + newline_width(&source[newline_start..end]);
+            if newline_end == end {
+                flush(context.text, plain, newline_start, &mut out)?;
+                out.push(tok(
+                    context.text,
+                    newline_start,
+                    newline_end,
+                    Kind::NewlineToken,
+                )?);
+                at = newline_end;
+                plain = at;
+                continue;
+            }
+            flush(context.text, plain, at, &mut out)?;
             out.push(node(
                 Kind::HardLineBreak,
                 vec![
@@ -291,8 +316,26 @@ fn parse_inlines(
                     Some(b'\r' | b'\n')
                 )
             {
-                flush(context.text, plain, at, &mut out)?;
                 let newline_end = whitespace_end + newline_width(&source[whitespace_end..end]);
+                if newline_end == end {
+                    flush(context.text, plain, at, &mut out)?;
+                    out.push(tok(
+                        context.text,
+                        at,
+                        whitespace_end,
+                        Kind::WhitespaceToken,
+                    )?);
+                    out.push(tok(
+                        context.text,
+                        whitespace_end,
+                        newline_end,
+                        Kind::NewlineToken,
+                    )?);
+                    at = newline_end;
+                    plain = at;
+                    continue;
+                }
+                flush(context.text, plain, at, &mut out)?;
                 out.push(node(
                     Kind::HardLineBreak,
                     vec![
@@ -328,6 +371,8 @@ fn parse_inlines(
                 plain = at;
                 continue;
             }
+            at += run;
+            continue;
         }
         if rest.starts_with('\\') {
             let next_start = at + 1;
@@ -370,8 +415,7 @@ fn parse_inlines(
             }
         }
         if rest.starts_with('<') {
-            if let Some(relative) = rest.find('>') {
-                let close = at + relative + 1;
+            if let Some(close) = html_close(source, at, end) {
                 let inside = &source[at + 1..close - 1];
                 let kind = if is_autolink(inside) {
                     Some(Kind::Autolink)
@@ -385,7 +429,7 @@ fn parse_inlines(
                     let identity = SyntaxIdentity::fresh()?;
                     let mut annotations = if kind == Kind::Autolink {
                         link_annotations(
-                            if inside.contains('@') {
+                            if inside.contains('@') && !inside.contains(':') {
                                 format!("mailto:{inside}")
                             } else {
                                 inside.to_owned()
@@ -478,8 +522,19 @@ fn parse_inlines(
             }
         }
         if rest.starts_with('\r') || rest.starts_with('\n') {
-            flush(context.text, plain, at, &mut out)?;
             let newline_end = at + newline_width(rest);
+            if newline_end == end {
+                flush(context.text, plain, at, &mut out)?;
+                out.push(tok(context.text, at, newline_end, Kind::NewlineToken)?);
+                at = newline_end;
+                plain = at;
+                continue;
+            }
+            let content_end = plain + source[plain..at].trim_end_matches([' ', '\t']).len();
+            flush(context.text, plain, content_end, &mut out)?;
+            if content_end < at {
+                out.push(tok(context.text, content_end, at, Kind::WhitespaceToken)?);
+            }
             out.push(node(
                 Kind::SoftLineBreak,
                 vec![tok(context.text, at, newline_end, Kind::NewlineToken)?],
@@ -530,8 +585,7 @@ fn bracket_matches(
             }
         }
         if rest.starts_with('<') {
-            if let Some(relative) = rest.find('>') {
-                let close = at + relative + 1;
+            if let Some(close) = html_close(source, at, end) {
                 let inside = &source[at + 1..close - 1];
                 if is_autolink(inside) || is_raw_html(inside) {
                     at = close;
@@ -608,7 +662,9 @@ fn bracket_match_end(
     let label = &source[open + 1..label_end];
     let after_label = label_end + 1;
     if source[after_label..end].starts_with('(') {
-        return inline_destination(source, after_label, end).map(|parts| parts.close + 1);
+        if let Some(parts) = inline_destination(source, after_label, end) {
+            return Some(parts.close + 1);
+        }
     }
     let (reference_label, reference_end) = if source[after_label..end].starts_with('[') {
         let reference_end = find_unescaped(source, after_label + 1, end, ']')?;
@@ -658,16 +714,16 @@ fn parse_link(
         normalized_reference,
         destination_parts,
         link_kind,
-    ) = if source[after_label..end].starts_with('(') {
-        let parts = inline_destination(source, after_label, end).ok_or_else(|| {
-            ParseError::StructuralInvariant {
-                reason: "matched inline link has no destination".into(),
-            }
-        })?;
+    ) = if let Some(parts) = source[after_label..end]
+        .starts_with('(')
+        .then(|| inline_destination(source, after_label, end))
+        .flatten()
+        .filter(|parts| parts.close + 1 == matched_end)
+    {
         let semantic_title = parts
             .title
             .clone()
-            .map(|range| source[range.start + 1..range.end - 1].to_owned());
+            .map(|range| decode_destination(&source[range.start + 1..range.end - 1]));
         (
             parts.close + 1,
             decode_destination(&source[parts.destination.clone()]),
@@ -893,6 +949,9 @@ fn inline_destination(source: &str, open: usize, end: usize) -> Option<InlineDes
     let mut at = skip_whitespace(source, open + 1, end);
     let destination = if source[at..end].starts_with('<') {
         let close = find_unescaped(source, at + 1, end, '>')?;
+        if source[at + 1..close].contains(['\r', '\n', '<']) {
+            return None;
+        }
         let result = at + 1..close;
         at = close + 1;
         result
@@ -915,13 +974,10 @@ fn inline_destination(source: &str, open: usize, end: usize) -> Option<InlineDes
                     break;
                 }
                 depth -= 1;
-            } else if ch.is_whitespace() && depth == 0 {
+            } else if is_link_whitespace(ch) && depth == 0 {
                 break;
             }
             at += ch.len_utf8();
-        }
-        if at == start {
-            return None;
         }
         start..at
     };
@@ -959,7 +1015,8 @@ fn emit_link_gap(
 }
 
 fn emphasis_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
-    let protected = code_spans(source, start, end);
+    let mut protected = code_spans(source, start, end);
+    protected.extend(angle_spans(source, start, end));
     let mut delimiters = Vec::<Delimiter>::new();
     let mut pairs = Vec::new();
     let mut at = start;
@@ -1003,6 +1060,7 @@ fn emphasis_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
                 }) else {
                     break;
                 };
+                delimiters.truncate(index + 1);
                 let opener = &mut delimiters[index];
                 let width = usize::from(opener.remaining >= 2 && closer.remaining >= 2) + 1;
                 let open = opener.start + opener.remaining - width;
@@ -1034,7 +1092,8 @@ fn emphasis_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
 }
 
 fn strikethrough_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
-    let protected = code_spans(source, start, end);
+    let mut protected = code_spans(source, start, end);
+    protected.extend(angle_spans(source, start, end));
     let mut openers = Vec::new();
     let mut pairs = Vec::new();
     let mut at = start;
@@ -1124,14 +1183,7 @@ fn flanking(
 }
 
 fn is_unicode_punctuation(ch: char) -> bool {
-    ch.is_ascii_punctuation()
-        || matches!(
-            ch,
-            '\u{00a1}'..='\u{00bf}'
-                | '\u{2000}'..='\u{206f}'
-                | '\u{2e00}'..='\u{2e7f}'
-                | '\u{3000}'..='\u{303f}'
-        )
+    ch.is_ascii_punctuation() || (!ch.is_alphanumeric() && !ch.is_whitespace() && !ch.is_control())
 }
 
 fn rule_of_three(opener: Delimiter, closer: Delimiter) -> bool {
@@ -1166,6 +1218,53 @@ fn code_spans(source: &str, start: usize, end: usize) -> Vec<std::ops::Range<usi
     spans
 }
 
+fn angle_spans(source: &str, start: usize, end: usize) -> Vec<std::ops::Range<usize>> {
+    let mut spans = Vec::new();
+    let mut at = start;
+    while at < end {
+        let Some(relative) = source[at..end].find('<') else {
+            break;
+        };
+        at += relative;
+        let Some(close) = html_close(source, at, end) else {
+            break;
+        };
+        let inside = &source[at + 1..close - 1];
+        if is_autolink(inside) || is_raw_html(inside) {
+            spans.push(at..close);
+        }
+        at = close;
+    }
+    spans
+}
+
+fn html_close(source: &str, start: usize, end: usize) -> Option<usize> {
+    let rest = &source[start..end];
+    if rest.starts_with("<!-->") || rest.starts_with("<!--->") {
+        return rest.find('>').map(|relative| start + relative + 1);
+    }
+    for (open, close) in [("<!--", "-->"), ("<![CDATA[", "]]>"), ("<?", "?>")] {
+        if let Some(after_open) = rest.strip_prefix(open) {
+            return after_open
+                .find(close)
+                .map(|relative| start + open.len() + relative + close.len());
+        }
+    }
+    let mut quote = None;
+    let mut at = start + 1;
+    while at < end {
+        let character = source[at..end].chars().next()?;
+        match (quote, character) {
+            (Some(open), close) if open == close => quote = None,
+            (None, '"' | '\'') => quote = Some(character),
+            (None, '>') => return Some(at + 1),
+            _ => {}
+        }
+        at += character.len_utf8();
+    }
+    None
+}
+
 fn code_span_close(source: &str, mut at: usize, end: usize, wanted: usize) -> Option<usize> {
     while at < end {
         let relative = source[at..end].find('`')?;
@@ -1182,7 +1281,7 @@ fn code_span_close(source: &str, mut at: usize, end: usize, wanted: usize) -> Op
     None
 }
 
-fn decode_entity(spelling: &str) -> Option<String> {
+pub(crate) fn decode_entity(spelling: &str) -> Option<String> {
     let mut text = String::new();
     for event in Parser::new(spelling) {
         if let Event::Text(value) = event {
@@ -1193,8 +1292,10 @@ fn decode_entity(spelling: &str) -> Option<String> {
 }
 
 fn is_autolink(value: &str) -> bool {
-    value.contains('@')
-        || value.split_once(':').is_some_and(|(scheme, rest)| {
+    let has_whitespace = value.chars().any(char::is_whitespace);
+    let email = value.contains('@') && !value.contains('\\') && !has_whitespace;
+    let uri = !has_whitespace
+        && value.split_once(':').is_some_and(|(scheme, rest)| {
             !rest.is_empty()
                 && scheme.len() >= 2
                 && scheme.len() <= 32
@@ -1202,17 +1303,26 @@ fn is_autolink(value: &str) -> bool {
                     byte.is_ascii_alphanumeric()
                         || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
                 })
-        })
+        });
+    email || uri
 }
 
 fn is_raw_html(value: &str) -> bool {
-    value.starts_with('/')
-        || value.starts_with('!')
-        || value.starts_with('?')
+    if let Some(comment) = value.strip_prefix("!--") {
+        return value.ends_with("--") && !comment.starts_with('>') && !comment.starts_with("->");
+    }
+    if (value.starts_with("![CDATA[") && value.ends_with("]]"))
+        || (value.starts_with('?') && value.ends_with('?'))
         || value
-            .chars()
-            .next()
-            .is_some_and(|first| first.is_ascii_alphabetic())
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("!doctype"))
+    {
+        return true;
+    }
+    let candidate = format!("<{value}>");
+    Parser::new(&candidate).any(
+        |event| matches!(event, Event::InlineHtml(html) | Event::Html(html) if html.as_ref() == candidate),
+    )
 }
 
 struct ExtendedAutolink {
@@ -1313,7 +1423,10 @@ fn extended_autolink(
     while domain_len > 0 && rest.as_bytes()[domain_start + domain_len - 1] == b'.' {
         domain_len -= 1;
     }
-    if matches!(rest.as_bytes().get(domain_start + domain_len), Some(b'_' | b'-')) {
+    if matches!(
+        rest.as_bytes().get(domain_start + domain_len),
+        Some(b'_' | b'-')
+    ) {
         return None;
     }
     let domain = &rest[domain_start..domain_start + domain_len];
@@ -1426,12 +1539,16 @@ fn escaped(source: &str, start: usize, at: usize) -> bool {
 fn skip_whitespace(source: &str, mut at: usize, end: usize) -> usize {
     while at < end {
         let ch = source[at..end].chars().next().expect("non-empty");
-        if !ch.is_whitespace() {
+        if !is_link_whitespace(ch) {
             break;
         }
         at += ch.len_utf8();
     }
     at
+}
+
+fn is_link_whitespace(ch: char) -> bool {
+    matches!(ch, ' ' | '\t' | '\r' | '\n')
 }
 
 fn newline_width(value: &str) -> usize {

@@ -80,8 +80,7 @@ N root/13/3 Text 198..199
 T root/13/3/0 WhitespaceToken 198..199 missing=false leading="" text=" " trailing=""
 N root/13/4 Text 199..207
 T root/13/4/0 TextToken 199..207 missing=false leading="" text="footnote" trailing=""
-N root/13/5 SoftLineBreak 207..208
-T root/13/5/0 NewlineToken 207..208 missing=false leading="" text="\n" trailing=""
+T root/13/5 NewlineToken 207..208 missing=false leading="" text="\n" trailing=""
 T root/14 NewlineToken 208..209 missing=false leading="" text="\n" trailing=""
 N root/15 Paragraph 209..230
 N root/15/0 Text 209..213
@@ -98,8 +97,7 @@ N root/15/5 Text 218..219
 T root/15/5/0 WhitespaceToken 218..219 missing=false leading="" text=" " trailing=""
 N root/15/6 Text 219..229
 T root/15/6/0 TextToken 219..229 missing=false leading="" text="definition" trailing=""
-N root/15/7 SoftLineBreak 229..230
-T root/15/7/0 NewlineToken 229..230 missing=false leading="" text="\n" trailing=""
+T root/15/7 NewlineToken 229..230 missing=false leading="" text="\n" trailing=""
 T root/16 NewlineToken 230..231 missing=false leading="" text="\n" trailing=""
 N root/17 AtxHeading 231..237
 T root/17/0 HeadingMarkerToken 231..232 missing=false leading="" text="#" trailing=""
