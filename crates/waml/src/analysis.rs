@@ -614,6 +614,23 @@ pub mod test_support {
         )
     }
 
+    pub fn prepare_candidate_with_recovery_probe(
+        candidate_source: SourceBundle,
+        previous: PreviousAnalyses<'_>,
+        candidate_revision: u64,
+        recovered: PromotedMarkdownUpdate,
+        probe: &mut PreparationProbe,
+    ) -> Result<PreparedCandidate, AnalysisError> {
+        prepare_candidate_inner_with_markdown_updates(
+            candidate_source,
+            Some(previous),
+            candidate_revision,
+            &[],
+            Some(&recovered),
+            probe,
+        )
+    }
+
     fn phase_name(stage: &AnalysisStage) -> &'static str {
         match stage {
             AnalysisStage::Shell => "shell",
@@ -775,44 +792,49 @@ fn analyze_okf_inner(
     hooks.before(AnalysisStage::Shell)?;
     let mut markdown_documents = BTreeMap::new();
     for document in candidate.documents.values() {
-        let snapshot = match markdown_updates.get(&document.id()) {
-            Some(update) => {
-                hooks.markdown_promoted(document.id());
-                update.snapshot.clone()
-            }
-            None => match previous.and_then(|analysis| analysis.markdown.document(document.id())) {
-                Some(previous_snapshot) if previous_snapshot.revision() == document.revision() => {
-                    previous_snapshot.clone()
-                }
-                Some(previous_snapshot) => {
-                    let snapshot = reparse_markdown(
-                        previous_snapshot,
-                        document.revision(),
-                        document.text().clone(),
-                        &single_text_change(previous_snapshot.text(), document.text()),
-                    )
-                    .map_err(|source| shell_error(document.path().clone(), source))?
-                    .snapshot;
-                    hooks.markdown_reparsed(document.id());
-                    snapshot
+        let snapshot = match recovered
+            .as_ref()
+            .filter(|(recovered, _, _)| *recovered == document.id())
+        {
+            Some((_, _, snapshot)) => snapshot.clone(),
+            None => match markdown_updates.get(&document.id()) {
+                Some(update) => {
+                    hooks.markdown_promoted(document.id());
+                    update.snapshot.clone()
                 }
                 None => {
-                    let snapshot = parse_markdown(
-                        document.revision(),
-                        document.text().clone(),
-                        MarkdownDialect::WAML_DEFAULT,
-                    )
-                    .map_err(|source| shell_error(document.path().clone(), source))?;
-                    hooks.markdown_parsed(document.id());
-                    snapshot
+                    match previous.and_then(|analysis| analysis.markdown.document(document.id())) {
+                        Some(previous_snapshot)
+                            if previous_snapshot.revision() == document.revision() =>
+                        {
+                            previous_snapshot.clone()
+                        }
+                        Some(previous_snapshot) => {
+                            let snapshot = reparse_markdown(
+                                previous_snapshot,
+                                document.revision(),
+                                document.text().clone(),
+                                &single_text_change(previous_snapshot.text(), document.text()),
+                            )
+                            .map_err(|source| shell_error(document.path().clone(), source))?
+                            .snapshot;
+                            hooks.markdown_reparsed(document.id());
+                            snapshot
+                        }
+                        None => {
+                            let snapshot = parse_markdown(
+                                document.revision(),
+                                document.text().clone(),
+                                MarkdownDialect::WAML_DEFAULT,
+                            )
+                            .map_err(|source| shell_error(document.path().clone(), source))?;
+                            hooks.markdown_parsed(document.id());
+                            snapshot
+                        }
+                    }
                 }
             },
         };
-        let snapshot = recovered
-            .as_ref()
-            .filter(|(recovered, _, _)| *recovered == document.id())
-            .map(|(_, _, snapshot)| snapshot.clone())
-            .unwrap_or(snapshot);
         markdown_documents.insert(document.id(), snapshot);
     }
     hooks.before(AnalysisStage::Okf)?;

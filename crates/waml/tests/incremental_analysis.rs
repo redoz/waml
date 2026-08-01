@@ -316,6 +316,49 @@ fn promoted_markdown_update_is_installed_by_arc_without_a_second_parse() {
     assert_eq!(probe.markdown_promotions(document), 1);
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+fn recovered_markdown_update_is_installed_by_arc_without_parse_or_reparse() {
+    let before = prepared_two_document_fixture(41);
+    let document = document_id(&before, "order.md");
+    let old = before.okf().markdown_snapshot(document).unwrap().clone();
+    let changes: Arc<[TextChange]> = Arc::from([replace(2, 7, "Purchase")]);
+    let next_text = SourceText::new("# Purchase\n").unwrap();
+    let recovered = promoted_order_update(
+        &before,
+        old.revision().checked_next().unwrap(),
+        next_text.clone(),
+        &changes,
+    );
+    let expected = recovered.snapshot.clone();
+    let candidate = apply_exact_order_edit(&before, next_text, changes);
+    let mut probe = waml::analysis::test_support::PreparationProbe::succeed();
+
+    let after = waml::analysis::test_support::prepare_candidate_with_recovery_probe(
+        candidate,
+        PreviousAnalyses {
+            okf: before.okf(),
+            uml: before.uml(),
+        },
+        42,
+        PromotedMarkdownUpdate {
+            document,
+            base_revision: old.revision(),
+            update: recovered,
+        },
+        &mut probe,
+    )
+    .unwrap();
+
+    assert!(Arc::ptr_eq(
+        after.okf().markdown_snapshot(document).unwrap(),
+        &expected,
+    ));
+    assert_eq!(probe.markdown_parse_calls(document), 0);
+    assert_eq!(probe.markdown_reparse_calls(document), 0);
+}
+
+#[cfg(feature = "test-support")]
 #[test]
 fn chained_promoted_updates_never_parse_or_reparse() {
     let before = prepared_two_document_fixture(41);
