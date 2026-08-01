@@ -1,0 +1,165 @@
+TEXT 0..1 owner=1 ordinal=0 role=SyntaxMarker source=#
+TEXT 1..2 owner=1 ordinal=0 role=Whitespace source= 
+TEXT 2..9 owner=2 ordinal=0 role=Heading(1) source=Heading
+TEXT 9..10 owner=3 ordinal=0 role=Whitespace source= 
+TEXT 10..11 owner=4 ordinal=0 role=SyntaxMarker source=*
+TEXT 11..13 owner=5 ordinal=0 role=Emphasis source=em
+TEXT 13..14 owner=4 ordinal=1 role=SyntaxMarker source=*
+TEXT 14..15 owner=6 ordinal=0 role=Whitespace source= 
+TEXT 15..18 owner=7 ordinal=0 role=Heading(1) source=and
+TEXT 18..19 owner=8 ordinal=0 role=Whitespace source= 
+TEXT 19..21 owner=9 ordinal=0 role=SyntaxMarker source=**
+TEXT 21..27 owner=10 ordinal=0 role=Strong source=strong
+TEXT 27..29 owner=9 ordinal=1 role=SyntaxMarker source=**
+TEXT 29..30 owner=1 ordinal=0 role=LineBreak source=\n
+TEXT 30..31 owner=1 ordinal=1 role=LineBreak source=\n
+TEXT 31..33 owner=11 ordinal=0 role=SyntaxMarker source=##
+TEXT 33..34 owner=11 ordinal=0 role=Whitespace source= 
+TEXT 34..43 owner=11 ordinal=0 role=Heading(2) source=Heading 2
+TEXT 43..44 owner=11 ordinal=0 role=LineBreak source=\n
+TEXT 44..47 owner=12 ordinal=0 role=SyntaxMarker source=###
+TEXT 47..48 owner=12 ordinal=0 role=Whitespace source= 
+TEXT 48..55 owner=13 ordinal=0 role=Heading(3) source=Heading
+TEXT 55..56 owner=14 ordinal=0 role=Whitespace source= 
+TEXT 56..57 owner=15 ordinal=0 role=Heading(3) source=3
+TEXT 57..58 owner=16 ordinal=0 role=Whitespace source= 
+TEXT 58..62 owner=17 ordinal=0 role=Heading(3) source=with
+TEXT 62..63 owner=18 ordinal=0 role=Whitespace source= 
+TEXT 63..64 owner=19 ordinal=0 role=SyntaxMarker source=*
+TEXT 64..66 owner=20 ordinal=0 role=SyntaxMarker source=**
+TEXT 66..72 owner=21 ordinal=0 role=StrongEmphasis source=strong
+TEXT 72..73 owner=22 ordinal=0 role=Whitespace source= 
+TEXT 73..81 owner=23 ordinal=0 role=StrongEmphasis source=emphasis
+TEXT 81..83 owner=20 ordinal=1 role=SyntaxMarker source=**
+TEXT 83..84 owner=19 ordinal=1 role=SyntaxMarker source=*
+TEXT 84..85 owner=12 ordinal=0 role=LineBreak source=\n
+TEXT 85..89 owner=24 ordinal=0 role=SyntaxMarker source=####
+TEXT 89..90 owner=24 ordinal=0 role=Whitespace source= 
+TEXT 90..99 owner=24 ordinal=0 role=Heading(4) source=Heading 4
+TEXT 99..100 owner=24 ordinal=0 role=LineBreak source=\n
+TEXT 100..105 owner=25 ordinal=0 role=SyntaxMarker source=#####
+TEXT 105..106 owner=25 ordinal=0 role=Whitespace source= 
+TEXT 106..115 owner=25 ordinal=0 role=Heading(5) source=Heading 5
+TEXT 115..116 owner=25 ordinal=0 role=LineBreak source=\n
+TEXT 116..122 owner=26 ordinal=0 role=SyntaxMarker source=######
+TEXT 122..123 owner=26 ordinal=0 role=Whitespace source= 
+TEXT 123..132 owner=26 ordinal=0 role=Heading(6) source=Heading 6
+TEXT 132..133 owner=26 ordinal=0 role=LineBreak source=\n
+TEXT 133..134 owner=26 ordinal=1 role=LineBreak source=\n
+TEXT 134..138 owner=27 ordinal=0 role=Body source=Body
+TEXT 138..139 owner=28 ordinal=0 role=Whitespace source= 
+TEXT 139..143 owner=29 ordinal=0 role=Body source=with
+TEXT 143..144 owner=30 ordinal=0 role=Whitespace source= 
+TEXT 144..146 owner=31 ordinal=0 role=SyntaxMarker source=~~
+TEXT 146..152 owner=32 ordinal=0 role=Strikethrough source=strike
+TEXT 152..154 owner=31 ordinal=1 role=SyntaxMarker source=~~
+TEXT 154..155 owner=33 ordinal=0 role=Body source=,
+TEXT 155..156 owner=34 ordinal=0 role=Whitespace source= 
+TEXT 156..157 owner=35 ordinal=0 role=SyntaxMarker source=[
+TEXT 157..162 owner=36 ordinal=0 role=LinkLabel source=label
+TEXT 162..163 owner=35 ordinal=1 role=SyntaxMarker source=]
+TEXT 163..164 owner=35 ordinal=2 role=SyntaxMarker source=(
+TEXT 164..179 owner=35 ordinal=0 role=LinkDestination source=./other.md#part
+TEXT 179..180 owner=35 ordinal=3 role=SyntaxMarker source=)
+TEXT 180..181 owner=37 ordinal=0 role=Body source=,
+TEXT 181..182 owner=38 ordinal=0 role=Whitespace source= 
+TEXT 182..183 owner=39 ordinal=0 role=SyntaxMarker source=`
+TEXT 183..189 owner=39 ordinal=0 role=InlineCode source=inline
+TEXT 189..190 owner=39 ordinal=1 role=SyntaxMarker source=`
+TEXT 190..191 owner=40 ordinal=0 role=Body source=,
+TEXT 191..192 owner=41 ordinal=0 role=Whitespace source= 
+TEXT 192..195 owner=42 ordinal=0 role=Body source=and
+TEXT 195..196 owner=43 ordinal=0 role=Whitespace source= 
+TEXT 196..197 owner=44 ordinal=0 role=SyntaxMarker source=<
+TEXT 197..200 owner=44 ordinal=0 role=RawHtml source=kbd
+TEXT 200..201 owner=44 ordinal=1 role=SyntaxMarker source=>
+TEXT 201..204 owner=45 ordinal=0 role=Body source=raw
+TEXT 204..205 owner=46 ordinal=0 role=SyntaxMarker source=<
+TEXT 205..209 owner=46 ordinal=0 role=RawHtml source=/kbd
+TEXT 209..210 owner=46 ordinal=1 role=SyntaxMarker source=>
+TEXT 210..211 owner=47 ordinal=0 role=Body source=.
+TEXT 211..212 owner=48 ordinal=0 role=LineBreak source=\n
+TEXT 212..213 owner=48 ordinal=1 role=LineBreak source=\n
+TEXT 213..214 owner=49 ordinal=0 role=ListMarker source=-
+TEXT 214..224 owner=49 ordinal=0 role=Body source= bullet\n  
+TEXT 224..226 owner=50 ordinal=0 role=ListMarker source=1.
+TEXT 226..235 owner=50 ordinal=0 role=Body source= ordered\n
+TEXT 235..236 owner=51 ordinal=0 role=ListMarker source=-
+TEXT 236..237 owner=51 ordinal=0 role=Whitespace source= 
+TEXT 237..240 owner=51 ordinal=0 role=TaskMarker source=[x]
+TEXT 240..249 owner=51 ordinal=0 role=Body source= checked\n
+TEXT 249..250 owner=52 ordinal=0 role=ListMarker source=-
+TEXT 250..251 owner=52 ordinal=0 role=Whitespace source= 
+TEXT 251..254 owner=52 ordinal=0 role=TaskMarker source=[ ]
+TEXT 254..261 owner=52 ordinal=0 role=Body source= open\n\n
+TEXT 261..263 owner=53 ordinal=0 role=QuoteMarker source=> 
+TEXT 263..269 owner=54 ordinal=0 role=Body source=quoted
+TEXT 269..270 owner=55 ordinal=0 role=Whitespace source= 
+TEXT 270..272 owner=56 ordinal=0 role=SyntaxMarker source=**
+TEXT 272..276 owner=57 ordinal=0 role=Strong source=text
+TEXT 276..278 owner=56 ordinal=1 role=SyntaxMarker source=**
+TEXT 278..279 owner=58 ordinal=0 role=LineBreak source=\n
+TEXT 279..280 owner=53 ordinal=0 role=LineBreak source=\n
+TEXT 280..283 owner=59 ordinal=0 role=CodeFence source=```
+TEXT 283..287 owner=59 ordinal=0 role=CodeInfo source=waml
+TEXT 287..288 owner=59 ordinal=0 role=LineBreak source=\n
+TEXT 288..304 owner=59 ordinal=0 role=CodeContent source=type: uml.class\n
+TEXT 304..307 owner=59 ordinal=1 role=CodeFence source=```
+TEXT 307..308 owner=59 ordinal=1 role=LineBreak source=\n
+TEXT 308..309 owner=59 ordinal=2 role=LineBreak source=\n
+TEXT 309..310 owner=60 ordinal=0 role=TableDelimiter source=|
+TEXT 310..316 owner=61 ordinal=0 role=Body source= left 
+TEXT 316..317 owner=60 ordinal=1 role=TableDelimiter source=|
+TEXT 317..325 owner=62 ordinal=0 role=Body source= center 
+TEXT 325..326 owner=60 ordinal=2 role=TableDelimiter source=|
+TEXT 326..333 owner=63 ordinal=0 role=Body source= right 
+TEXT 333..334 owner=60 ordinal=3 role=TableDelimiter source=|
+TEXT 334..335 owner=60 ordinal=0 role=LineBreak source=\n
+TEXT 335..336 owner=64 ordinal=0 role=TableDelimiter source=|
+TEXT 336..337 owner=64 ordinal=0 role=Whitespace source= 
+TEXT 337..338 owner=64 ordinal=1 role=TableDelimiter source=:
+TEXT 338..342 owner=64 ordinal=0 role=Body source=--- 
+TEXT 342..343 owner=64 ordinal=2 role=TableDelimiter source=|
+TEXT 343..344 owner=64 ordinal=1 role=Whitespace source= 
+TEXT 344..345 owner=64 ordinal=3 role=TableDelimiter source=:
+TEXT 345..349 owner=64 ordinal=1 role=Body source=----
+TEXT 349..350 owner=64 ordinal=4 role=TableDelimiter source=:
+TEXT 350..351 owner=64 ordinal=2 role=Whitespace source= 
+TEXT 351..352 owner=64 ordinal=5 role=TableDelimiter source=|
+TEXT 352..357 owner=64 ordinal=2 role=Body source= ----
+TEXT 357..358 owner=64 ordinal=6 role=TableDelimiter source=:
+TEXT 358..359 owner=64 ordinal=3 role=Whitespace source= 
+TEXT 359..360 owner=64 ordinal=7 role=TableDelimiter source=|
+TEXT 360..361 owner=64 ordinal=0 role=LineBreak source=\n
+TEXT 361..362 owner=65 ordinal=0 role=TableDelimiter source=|
+TEXT 362..365 owner=66 ordinal=0 role=Body source= a 
+TEXT 365..366 owner=65 ordinal=1 role=TableDelimiter source=|
+TEXT 366..369 owner=67 ordinal=0 role=Body source= b 
+TEXT 369..370 owner=65 ordinal=2 role=TableDelimiter source=|
+TEXT 370..373 owner=68 ordinal=0 role=Body source= c 
+TEXT 373..374 owner=65 ordinal=3 role=TableDelimiter source=|
+TEXT 374..375 owner=65 ordinal=0 role=LineBreak source=\n
+TEXT 375..376 owner=64 ordinal=1 role=LineBreak source=\n
+TEXT 376..377 owner=69 ordinal=0 role=SyntaxMarker source=!
+TEXT 377..378 owner=69 ordinal=1 role=SyntaxMarker source=[
+TEXT 378..385 owner=70 ordinal=0 role=Body source=checker
+TEXT 385..386 owner=69 ordinal=2 role=SyntaxMarker source=]
+TEXT 386..387 owner=69 ordinal=3 role=SyntaxMarker source=(
+TEXT 387..398 owner=69 ordinal=0 role=LinkDestination source=checker.svg
+TEXT 398..399 owner=69 ordinal=0 role=Whitespace source= 
+TEXT 399..408 owner=69 ordinal=4 role=SyntaxMarker source="fixture"
+TEXT 408..409 owner=69 ordinal=5 role=SyntaxMarker source=)
+TEXT 409..410 owner=71 ordinal=0 role=LineBreak source=\n
+TEXT 410..411 owner=71 ordinal=1 role=LineBreak source=\n
+TEXT 411..414 owner=72 ordinal=0 role=SyntaxMarker source=---
+TEXT 414..415 owner=72 ordinal=0 role=LineBreak source=\n
+BLOCK 182..190 owner=39 ordinal=0 kind=InlineCodeFill
+BLOCK 237..240 owner=51 ordinal=0 kind=TaskCheckbox { checked: true }
+BLOCK 251..254 owner=52 ordinal=0 kind=TaskCheckbox { checked: false }
+BLOCK 261..263 owner=53 ordinal=0 kind=QuoteRule
+BLOCK 280..307 owner=59 ordinal=0 kind=FencedCodeSurface
+BLOCK 309..334 owner=60 ordinal=0 kind=TableGrid { columns: 3 }
+BLOCK 309..334 owner=60 ordinal=0 kind=TableHeaderFill
+BLOCK 411..414 owner=72 ordinal=0 kind=ThematicRule
+EMBED 376..409 owner=69 ordinal=0 kind=Image { destination: "checker.svg", alt: "checker", title: Some("fixture") }
+LINK 156..180 owner=35 destination=./other.md#part

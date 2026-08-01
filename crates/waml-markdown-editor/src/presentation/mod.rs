@@ -4,6 +4,12 @@
 //! Block decorations and embedded blocks describe the same source without
 //! owning any of its bytes, so they may overlap their owner's range freely.
 
+pub mod compile;
+pub mod style;
+
+pub use compile::{compile_presentation, render_plan_golden};
+pub use style::PresentationStyles;
+
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use waml_syntax::{DocumentRevision, SyntaxIdentity, TextError, TextRange, TextSize};
