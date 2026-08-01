@@ -639,6 +639,17 @@ fn prevent_quit_after_failed_save(event: &Event, result: &Result<(), String>) ->
     false
 }
 
+fn restore_markdown_asset_host_after_open(
+    installed: &mut Option<crate::markdown_hosts::SharedMarkdownAssetHost>,
+    previous: Option<crate::markdown_hosts::SharedMarkdownAssetHost>,
+    opened: bool,
+) -> bool {
+    if !opened {
+        *installed = previous;
+    }
+    opened
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn browser_save_fragment(ticket: &SaveTicket) -> (String, SaveCompletion) {
     (
@@ -674,6 +685,8 @@ pub struct App {
     open_name: String,
     #[rust]
     documents: DocumentHost,
+    #[rust]
+    markdown_assets: Option<crate::markdown_hosts::SharedMarkdownAssetHost>,
     #[rust]
     view_history: ViewHistory,
     /// Complete recent-config backing list. `StartScreen` renders a capped copy
@@ -790,26 +803,30 @@ impl App {
 
     fn sync_history_controls(&mut self, cx: &mut Cx) {
         let has_active_document = self.documents.active_tab().is_some();
-        let can_back = self
-            .view_history
-            .can_traverse(HistoryDirection::Back, |location| {
-                crate::documents::open_locator(
-                    self.session.okf_analysis(),
-                    self.session.uml_analysis(),
-                    &location.document,
-                )
-                .is_some()
-            });
-        let can_forward = self
-            .view_history
-            .can_traverse(HistoryDirection::Forward, |location| {
-                crate::documents::open_locator(
-                    self.session.okf_analysis(),
-                    self.session.uml_analysis(),
-                    &location.document,
-                )
-                .is_some()
-            });
+        let can_back = self.markdown_assets.as_ref().is_some_and(|assets| {
+            self.view_history
+                .can_traverse(HistoryDirection::Back, |location| {
+                    crate::documents::open_locator_with_asset_host(
+                        self.session.okf_analysis(),
+                        self.session.uml_analysis(),
+                        &location.document,
+                        assets,
+                    )
+                    .is_some()
+                })
+        });
+        let can_forward = self.markdown_assets.as_ref().is_some_and(|assets| {
+            self.view_history
+                .can_traverse(HistoryDirection::Forward, |location| {
+                    crate::documents::open_locator_with_asset_host(
+                        self.session.okf_analysis(),
+                        self.session.uml_analysis(),
+                        &location.document,
+                        assets,
+                    )
+                    .is_some()
+                })
+        });
         if let Some(mut header) = self
             .ui
             .widget(cx, ids!(document_header))
@@ -1195,10 +1212,22 @@ impl App {
                 self.view_history.refresh_current(departing);
             }
         }
-        if !self
-            .documents
-            .restore_location(cx, &self.ui, &self.session, &location)
-        {
+        if self.markdown_assets.is_none() {
+            self.markdown_assets = Some(crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            ));
+        }
+        let assets = self
+            .markdown_assets
+            .as_ref()
+            .expect("navigation initialized the Markdown asset host");
+        if !self.documents.restore_location_with_asset_host(
+            cx,
+            &self.ui,
+            &self.session,
+            &location,
+            assets,
+        ) {
             return false;
         }
         if matches!(
@@ -1275,11 +1304,15 @@ impl App {
     }
 
     fn traverse_view_history(&mut self, cx: &mut Cx, direction: HistoryDirection) -> bool {
+        let Some(assets) = self.markdown_assets.as_ref() else {
+            return false;
+        };
         let Some(target) = self.view_history.target(direction, |location| {
-            crate::documents::open_locator(
+            crate::documents::open_locator_with_asset_host(
                 self.session.okf_analysis(),
                 self.session.uml_analysis(),
                 &location.document,
+                assets,
             )
             .is_some()
         }) else {
@@ -1866,16 +1899,21 @@ impl App {
         let ExternalReplacement::Installed(change) = &replacement else {
             return Ok(replacement);
         };
+        let assets = self
+            .markdown_assets
+            .as_ref()
+            .ok_or_else(|| "Markdown asset host is not initialized".to_string())?;
 
         let prepared = self
             .documents
             .tabs()
             .iter()
             .map(|tab| {
-                crate::documents::reopen(
+                crate::documents::reopen_with_asset_host(
                     self.session.okf_analysis(),
                     self.session.uml_analysis(),
                     tab,
+                    assets,
                 )
             })
             .collect();
@@ -2022,7 +2060,24 @@ impl App {
         // Record this open in the recents store (best-effort; see config.rs).
         // Recents are a filesystem affordance: only an open with a path behind
         // it can be reopened later, so this stays on the `open_dir` side.
-        if !self.open_bundle(cx, bundle, display_name, wanted_diagram) {
+        let asset_policy = match crate::markdown_hosts::MarkdownAssetPolicy::native(&next_root) {
+            Ok(policy) => policy,
+            Err(error) => {
+                log!("failed to canonicalize Markdown asset root {next_root:?}: {error}");
+                return false;
+            }
+        };
+        let previous_assets =
+            self.markdown_assets
+                .replace(crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+                    asset_policy,
+                ));
+        let opened = self.open_bundle(cx, bundle, display_name, wanted_diagram);
+        if !restore_markdown_asset_host_after_open(
+            &mut self.markdown_assets,
+            previous_assets,
+            opened,
+        ) {
             return false;
         }
         self.open_dir = Some(next_root);
@@ -2055,6 +2110,11 @@ impl App {
         display_name: String,
         wanted_diagram: Option<&str>,
     ) -> bool {
+        if self.markdown_assets.is_none() {
+            self.markdown_assets = Some(crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            ));
+        }
         cx.stop_timer(self.save_timer);
         let change = match self.session.replace(files) {
             Ok(change) => change,
@@ -2259,6 +2319,7 @@ impl App {
 
         cx.stop_timer(self.save_timer);
         self.open_dir = None;
+        self.markdown_assets = None;
         self.sync_save_error(cx);
         self.show_start_screen(cx);
         true
@@ -2968,8 +3029,9 @@ mod tests {
     use super::{
         browser_save_fragment, close_after_save, doc_switcher_items, logo_command_for, next_narrow,
         open_overlay_contains, place_rm_for, prevent_quit_after_failed_save,
-        project_document_header, replace_after_save, should_dismiss_narrow_dock, should_flush_save,
-        App, BackingTransitionError, LogoCommand, PendingFragment, SaveFeedback, TransitionCause,
+        project_document_header, replace_after_save, restore_markdown_asset_host_after_open,
+        should_dismiss_narrow_dock, should_flush_save, App, BackingTransitionError, LogoCommand,
+        PendingFragment, SaveFeedback, TransitionCause,
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
     use crate::doc_view::{BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData};
@@ -3004,6 +3066,24 @@ mod tests {
             self.opened.push(url.into());
             self.error.clone().map_or(Ok(()), Err)
         }
+    }
+
+    #[test]
+    fn failed_open_restores_the_previous_markdown_asset_root() {
+        let previous = crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+            crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+        );
+        let candidate = crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+            crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+        );
+        let mut installed = Some(candidate);
+
+        assert!(!restore_markdown_asset_host_after_open(
+            &mut installed,
+            Some(previous.clone()),
+            false,
+        ));
+        assert!(Rc::ptr_eq(installed.as_ref().unwrap(), &previous));
     }
 
     #[test]

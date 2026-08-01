@@ -172,17 +172,19 @@ impl DocumentHost {
             .is_some_and(|view| view.restore_anchor(cx, &body, snapshot.borrowed().into(), anchor))
     }
 
-    pub fn restore_location(
+    pub fn restore_location_with_asset_host(
         &mut self,
         cx: &mut Cx,
         ui: &WidgetRef,
         session: &EditorSession,
         location: &ViewLocation,
+        assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
     ) -> bool {
-        let Some(document) = crate::documents::open_locator(
+        let Some(document) = crate::documents::open_locator_with_asset_host(
             session.okf_analysis(),
             session.uml_analysis(),
             &location.document,
+            assets,
         ) else {
             return false;
         };
@@ -201,6 +203,25 @@ impl DocumentHost {
         }
         let _ = self.restore_active_anchor(cx, ui, session, &location.anchor);
         true
+    }
+
+    #[cfg(test)]
+    pub fn restore_location(
+        &mut self,
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        session: &EditorSession,
+        location: &ViewLocation,
+    ) -> bool {
+        self.restore_location_with_asset_host(
+            cx,
+            ui,
+            session,
+            location,
+            &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            ),
+        )
     }
 
     fn refresh_tabs(&self, cx: &mut Cx, ui: &WidgetRef) {

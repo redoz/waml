@@ -854,15 +854,25 @@ impl App {
         cx: &mut Cx,
         change: crate::editor_session::SessionChange,
     ) {
+        if self.markdown_assets.is_none() {
+            self.markdown_assets = Some(crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            ));
+        }
         let prepared = if change.okf_changed || change.uml_changed {
+            let assets = self
+                .markdown_assets
+                .as_ref()
+                .expect("an open editor session owns one Markdown asset host");
             self.documents
                 .tabs()
                 .iter()
                 .map(|tab| {
-                    crate::documents::reopen(
+                    crate::documents::reopen_with_asset_host(
                         self.session.okf_analysis(),
                         self.session.uml_analysis(),
                         tab,
+                        assets,
                     )
                 })
                 .collect()

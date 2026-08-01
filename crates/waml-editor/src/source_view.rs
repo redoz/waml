@@ -4,11 +4,12 @@ use makepad_widgets::*;
 use waml::analysis::DocumentId;
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
+    layout::LayoutInvalidation,
     motion::LayoutChangeCause,
     presentation::{
-        build_layout_document, compile_presentation, EmbeddedAssets, EmbeddedMeasurements,
-        HighlighterRegistry, InstalledPresentation, PresentationPlan, PresentationStyles,
-        PresentedDiagnostic, PresentedDiagnosticSeverity,
+        build_layout_document, compile_presentation, AssetEventOutcome, EmbeddedAssets,
+        HighlighterRegistry, InstalledPresentation, MarkdownAssetHost, PresentationPlan,
+        PresentationStyles, PresentedDiagnostic, PresentedDiagnosticSeverity,
     },
     session::{HostSnapshotCause, MarkdownDocumentSession},
     syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText},
@@ -24,6 +25,9 @@ use crate::editor_session::{
 };
 use crate::icons::Icon;
 use crate::inspector::Subject;
+use crate::markdown_hosts::{
+    EditorMarkdownAssetHost, MarkdownAssetLease, SharedMarkdownAssetHost, WamlCodeHighlightHost,
+};
 use crate::navigation::NavigationIntent;
 use crate::view_history::ViewAnchor;
 
@@ -40,6 +44,7 @@ struct MissingSourceView {
 
 struct ReadySourceView {
     document: DocumentId,
+    path: waml::source::BundlePath,
     session: MarkdownDocumentSession,
     plan: Arc<PresentationPlan>,
     styles: Arc<PresentationStyles>,
@@ -103,25 +108,34 @@ pub struct SourceView {
     read_only: bool,
     fragment: Option<String>,
     state: SourceViewState,
+    asset_lease: Option<MarkdownAssetLease>,
 }
 
 impl SourceView {
+    #[cfg(test)]
     pub fn new(key: String) -> SourceView {
+        Self::new_with_asset_host(
+            key,
+            EditorMarkdownAssetHost::shared(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            ),
+        )
+    }
+
+    pub fn new_with_asset_host(key: String, assets: SharedMarkdownAssetHost) -> SourceView {
         SourceView {
             key,
             read_only: false,
             fragment: None,
             state: SourceViewState::Uninitialized,
+            asset_lease: Some(EditorMarkdownAssetHost::open_lease(&assets)),
         }
     }
 
-    pub(crate) fn new_read_only(key: String) -> SourceView {
-        SourceView {
-            key,
-            read_only: true,
-            fragment: None,
-            state: SourceViewState::Uninitialized,
-        }
+    pub(crate) fn new_read_only(key: String, assets: SharedMarkdownAssetHost) -> SourceView {
+        let mut view = Self::new_with_asset_host(key, assets);
+        view.read_only = true;
+        view
     }
 
     pub(crate) fn resolve_document(
@@ -140,13 +154,22 @@ impl SourceView {
     fn compile(
         syntax: &waml_markdown_editor::syntax::MarkdownSyntaxSnapshot,
         diagnostics: Arc<[PresentedDiagnostic]>,
+        highlighters: &HighlighterRegistry,
+        mut assets: EmbeddedAssets,
+        asset_host: Option<(&mut MarkdownAssetLease, &waml::source::BundlePath)>,
     ) -> Result<CompiledPresentation, String> {
         let styles = Arc::new(PresentationStyles::balanced());
-        let plan = compile_presentation(syntax, &styles, &HighlighterRegistry::default())
+        let plan = compile_presentation(syntax, &styles, highlighters)
             .map_err(|error| format!("presentation compile failed: {error:?}"))?;
-        let assets = EmbeddedAssets::default();
+        if let Some((host, path)) = asset_host {
+            host.reconcile_presentation(&plan, path.clone());
+            assets.reconcile(host, &plan);
+            for event in host.drain_events() {
+                let _ = assets.apply_event(event);
+            }
+        }
         let layout = Arc::new(
-            build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
+            build_layout_document(&plan, &styles, &assets.measurements(f64::INFINITY))
                 .map_err(|error| format!("presentation layout failed: {error:?}"))?,
         );
         let installed = InstalledPresentation::new(
@@ -161,6 +184,11 @@ impl SourceView {
     }
 
     fn set_missing(&mut self, cx: &mut Cx, editor: &MarkdownEditorRef) {
+        if let SourceViewState::Ready(ready) = &self.state {
+            if let Some(lease) = self.asset_lease.as_mut() {
+                lease.unbind_document(&ready.path);
+            }
+        }
         let message: Arc<str> = format!("No source for '{}'", self.key).into();
         let text = SourceText::new(format!("# Source unavailable\n\n{message}\n"))
             .expect("the static missing-source message is valid UTF-8 source text");
@@ -173,7 +201,13 @@ impl SourceView {
         let snapshot = Arc::new(MarkdownDocumentSnapshot::new(syntax.clone()));
         let mut session = MarkdownDocumentSession::new(snapshot);
         session.set_read_only(true);
-        match Self::compile(&syntax, Arc::from([])) {
+        match Self::compile(
+            &syntax,
+            Arc::from([]),
+            &HighlighterRegistry::default(),
+            EmbeddedAssets::default(),
+            None,
+        ) {
             Ok((_, _, _, installed)) => {
                 editor.install_presentation(cx, installed, LayoutChangeCause::ExternalReplacement)
             }
@@ -196,6 +230,14 @@ impl SourceView {
         body.show_markdown_editor(cx);
         let editor = body.markdown_editor();
         let Some((document, syntax)) = Self::resolve_document(workspace, &self.key) else {
+            self.set_missing(cx, &editor);
+            return;
+        };
+        let Some(path) = workspace
+            .source
+            .document_by_concept_id(&self.key)
+            .map(|source| source.path().clone())
+        else {
             self.set_missing(cx, &editor);
             return;
         };
@@ -242,8 +284,15 @@ impl SourceView {
             SourceViewState::Ready(ref ready) if ready.document == document
         );
         if needs_session {
+            if let SourceViewState::Ready(ready) = &self.state {
+                self.asset_lease
+                    .as_mut()
+                    .expect("SourceView owns its Markdown asset lease")
+                    .unbind_document(&ready.path);
+            }
             self.state = SourceViewState::Ready(Box::new(ReadySourceView {
                 document,
+                path: path.clone(),
                 session: {
                     let mut session = MarkdownDocumentSession::new(incoming);
                     session.set_read_only(self.read_only);
@@ -272,13 +321,28 @@ impl SourceView {
                 || ready.diagnostics != diagnostics
         );
         if should_compile {
-            let Ok((plan, styles, assets, installed)) = Self::compile(&syntax, diagnostics.clone())
-            else {
+            let highlighters = WamlCodeHighlightHost::registry(Arc::new(workspace.clone()));
+            let retained_assets = match &mut self.state {
+                SourceViewState::Ready(ready) => std::mem::take(&mut ready.assets),
+                _ => EmbeddedAssets::default(),
+            };
+            let asset_lease = self
+                .asset_lease
+                .as_mut()
+                .expect("SourceView owns its Markdown asset lease");
+            let Ok((plan, styles, assets, installed)) = Self::compile(
+                &syntax,
+                diagnostics.clone(),
+                &highlighters,
+                retained_assets,
+                Some((asset_lease, &path)),
+            ) else {
                 self.set_missing(cx, &editor);
                 return;
             };
             if let SourceViewState::Ready(ready) = &mut self.state {
                 ready.session.set_read_only(self.read_only);
+                ready.path = path;
                 ready.plan = plan;
                 ready.styles = styles;
                 ready.assets = assets;
@@ -289,7 +353,53 @@ impl SourceView {
         }
     }
 
+    fn apply_asset_events(&mut self, cx: &mut Cx, editor: &MarkdownEditorRef) {
+        let events = self
+            .asset_lease
+            .as_mut()
+            .expect("SourceView owns its Markdown asset lease")
+            .drain_events();
+        for event in events {
+            let SourceViewState::Ready(ready) = &mut self.state else {
+                continue;
+            };
+            let AssetEventOutcome::Applied {
+                invalidation: Some(LayoutInvalidation::BlockMeasurement(id)),
+            } = ready.assets.apply_event(event)
+            else {
+                continue;
+            };
+            let layout = match build_layout_document(
+                &ready.plan,
+                &ready.styles,
+                &ready.assets.measurements(f64::INFINITY),
+            ) {
+                Ok(layout) => Arc::new(layout),
+                Err(error) => {
+                    log!("image measurement layout failed: {error:?}");
+                    continue;
+                }
+            };
+            let installed = match InstalledPresentation::new(
+                ready.plan.clone(),
+                ready.styles.clone(),
+                layout,
+                ready.diagnostics.clone(),
+                ready.assets.frame(&ready.plan),
+            ) {
+                Ok(installed) => installed,
+                Err(error) => {
+                    log!("image measurement install failed: {error:?}");
+                    continue;
+                }
+            };
+            editor.install_presentation(cx, installed, LayoutChangeCause::ImageMeasurement(id));
+        }
+    }
+
     pub(crate) fn route_editor_event(&mut self, cx: &mut Cx, ui: &WidgetRef, event: &Event) {
+        let body = BodyWidgets::new(cx, ui);
+        self.apply_asset_events(cx, &body.markdown_editor());
         match &mut self.state {
             SourceViewState::Ready(ready) => {
                 ui.handle_event(cx, event, &mut Scope::with_data(&mut ready.session));
@@ -493,6 +603,7 @@ impl DocView for SourceView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markdown_hosts::{EditorMarkdownAssetHost, MarkdownAssetPolicy};
     use waml::analysis::{DiagnosticSource, RevisionedDiagnostic};
     use waml::diagnostic::Severity;
     use waml::source::SourceBundle;
@@ -513,6 +624,13 @@ mod tests {
         let mut root = cx.with_vm(View::script_new_with_default);
         root.children.push((live_id!(markdown_surface), surface));
         WidgetRef::new_with_inner(Box::new(root))
+    }
+
+    fn source_view(key: &str) -> SourceView {
+        SourceView::new_with_asset_host(
+            key.to_owned(),
+            EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle),
+        )
     }
 
     fn draw_markdown_widget(cx: &mut Cx, ui: &WidgetRef, session: &mut MarkdownDocumentSession) {
@@ -548,6 +666,135 @@ mod tests {
             )
             .unwrap();
         session
+    }
+
+    #[test]
+    fn source_view_compiles_fenced_waml_with_the_snapshot_highlighter() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let assets = EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle);
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(
+                SourceBundle::try_from_pairs([(
+                    "runbook.md",
+                    "---\ntype: Runbook\n---\n# Runbook\n\n```waml\n## Attributes\n- unknown: Number {0..42}\n```\n",
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        let snapshot = session.snapshot();
+        let mut view = SourceView::new_with_asset_host("runbook".into(), assets);
+
+        view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
+
+        let SourceViewState::Ready(ready) = &view.state else {
+            panic!("the source view must retain its ready presentation");
+        };
+        assert!(ready.plan.items.iter().any(|item| matches!(
+            item,
+            waml_markdown_editor::presentation::PresentationItem::TextRun {
+                id: waml_markdown_editor::presentation::PresentationItemId {
+                    role: waml_markdown_editor::presentation::PresentationRole::Text(
+                        waml_markdown_editor::presentation::TextRole::CodeToken(
+                            waml_markdown_editor::presentation::CodeTokenRole::Property
+                        )
+                    ),
+                    ..
+                },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn source_view_applies_browser_asset_failure_before_installing_the_plan() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let assets = EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle);
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(
+                SourceBundle::try_from_pairs([(
+                    "runbook.md",
+                    "---\ntype: Runbook\n---\n# Runbook\n\n![diagram](tiny.svg)\n",
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        let snapshot = session.snapshot();
+        let mut view = SourceView::new_with_asset_host("runbook".into(), assets);
+
+        view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
+
+        let SourceViewState::Ready(ready) = &view.state else {
+            panic!("the source view must retain its ready presentation");
+        };
+        let image = ready
+            .plan
+            .items
+            .iter()
+            .find_map(|item| match item {
+                waml_markdown_editor::presentation::PresentationItem::EmbeddedBlock {
+                    id, ..
+                } => Some(*id),
+                _ => None,
+            })
+            .expect("the image must produce an embedded presentation item");
+        assert!(matches!(
+            ready.assets.state(image),
+            Some(waml_markdown_editor::presentation::EmbeddedState::Failed { .. })
+        ));
+    }
+
+    #[test]
+    fn source_view_applies_async_image_completion_without_mutating_source() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/markdown-assets");
+        let assets = EditorMarkdownAssetHost::shared(
+            MarkdownAssetPolicy::native(fixture_root).expect("fixture root must exist"),
+        );
+        let authored = "---\ntype: Runbook\n---\n# Runbook\n\n![diagram](tiny.svg)\n";
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(SourceBundle::try_from_pairs([("runbook.md", authored)]).unwrap())
+            .unwrap();
+        let snapshot = session.snapshot();
+        let mut view = SourceView::new_with_asset_host("runbook".into(), assets);
+        view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            view.apply_asset_events(&mut cx, &body.markdown_editor());
+            let SourceViewState::Ready(ready) = &view.state else {
+                panic!("the source view must remain ready");
+            };
+            if ready
+                .assets
+                .frame(&ready.plan)
+                .items
+                .iter()
+                .any(|(_, state)| {
+                    matches!(
+                        state,
+                        waml_markdown_editor::presentation::EmbeddedState::Ready { .. }
+                    )
+                })
+            {
+                assert_eq!(ready.session.snapshot().text().shared().as_str(), authored);
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "image completion timed out"
+            );
+            std::thread::yield_now();
+        }
     }
 
     #[test]
@@ -671,7 +918,7 @@ mod tests {
 
     #[test]
     fn source_views_declare_live_state_retention() {
-        let view = SourceView::new("shop/order".into());
+        let view = source_view("shop/order");
         assert_eq!(
             view.reconcile_policy(),
             ViewReconcilePolicy::RetainLiveState
@@ -683,11 +930,18 @@ mod tests {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let ui = mounted_body(&mut cx);
         let body = BodyWidgets::new(&mut cx, &ui);
-        let mut view = SourceView::new("shop/order".into());
+        let mut view = source_view("shop/order");
         let ready = source_session().snapshot();
         let (_, syntax) = SourceView::resolve_document(&ready, "shop/order")
             .expect("the ready fixture must resolve");
-        SourceView::compile(&syntax, Arc::from([])).expect("the ready fixture must compile");
+        SourceView::compile(
+            &syntax,
+            Arc::from([]),
+            &HighlighterRegistry::default(),
+            EmbeddedAssets::default(),
+            None,
+        )
+        .expect("the ready fixture must compile");
         view.install_snapshot(&mut cx, &body, &ready, HostSnapshotCause::InitialLoad);
         assert!(matches!(view.state, SourceViewState::Ready(_)));
 
@@ -727,7 +981,7 @@ mod tests {
         let body = BodyWidgets::new(&mut cx, &ui);
         let editor = body.markdown_editor();
         editor.set_paint_evidence_enabled(true);
-        let mut view = SourceView::new("shop/order".into());
+        let mut view = source_view("shop/order");
         let ready = source_session().snapshot();
         view.install_snapshot(&mut cx, &body, &ready, HostSnapshotCause::InitialLoad);
 
@@ -767,7 +1021,7 @@ mod tests {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let ui = mounted_body(&mut cx);
         let body = BodyWidgets::new(&mut cx, &ui);
-        let mut view = SourceView::new("shop/order".into());
+        let mut view = source_view("shop/order");
         let workspace = source_session().snapshot();
         view.install_snapshot(&mut cx, &body, &workspace, HostSnapshotCause::InitialLoad);
         let SourceViewState::Ready(ready) = &mut view.state else {
@@ -807,7 +1061,7 @@ mod tests {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let ui = mounted_body(&mut cx);
         let body = BodyWidgets::new(&mut cx, &ui);
-        let mut view = SourceView::new("shop/order".into());
+        let mut view = source_view("shop/order");
         let workspace = source_session().snapshot();
         view.install_snapshot(&mut cx, &body, &workspace, HostSnapshotCause::InitialLoad);
         let SourceViewState::Ready(ready) = &mut view.state else {

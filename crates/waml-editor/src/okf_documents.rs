@@ -41,7 +41,11 @@ pub fn describe(
     })
 }
 
-pub fn open(analysis: &waml::analysis::OkfAnalysis, concept_id: &str) -> Option<OpenDocument> {
+pub fn open_with_asset_host(
+    analysis: &waml::analysis::OkfAnalysis,
+    concept_id: &str,
+    assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
     let mut presentation = presentation(analysis, concept_id)?;
     presentation.icon = Icon::FileText;
@@ -57,15 +61,30 @@ pub fn open(analysis: &waml::analysis::OkfAnalysis, concept_id: &str) -> Option<
                 .to_string()
         }),
         presentation,
-        view: Box::new(crate::generic_okf_view::GenericOkfView::new(
-            concept_id.to_string(),
-        )),
+        view: Box::new(
+            crate::generic_okf_view::GenericOkfView::new_with_asset_host(
+                concept_id.to_string(),
+                assets.clone(),
+            ),
+        ),
     })
 }
 
-pub fn open_source(
+#[cfg(test)]
+pub fn open(analysis: &waml::analysis::OkfAnalysis, concept_id: &str) -> Option<OpenDocument> {
+    open_with_asset_host(
+        analysis,
+        concept_id,
+        &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+            crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+        ),
+    )
+}
+
+pub fn open_source_with_asset_host(
     analysis: &waml::analysis::OkfAnalysis,
     concept_id: &str,
+    assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
 ) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
     let mut presentation = presentation(analysis, concept_id)?;
@@ -82,14 +101,37 @@ pub fn open_source(
                 .to_string()
         }),
         presentation,
-        view: Box::new(crate::source_view::SourceView::new(concept_id.to_string())),
+        view: Box::new(crate::source_view::SourceView::new_with_asset_host(
+            concept_id.to_string(),
+            assets.clone(),
+        )),
     })
+}
+
+#[cfg(test)]
+pub fn open_source(
+    analysis: &waml::analysis::OkfAnalysis,
+    concept_id: &str,
+) -> Option<OpenDocument> {
+    open_source_with_asset_host(
+        analysis,
+        concept_id,
+        &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+            crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+        ),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use waml::source::SourceBundle;
+
+    fn assets() -> crate::markdown_hosts::SharedMarkdownAssetHost {
+        crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+            crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+        )
+    }
 
     #[test]
     fn generic_provider_excludes_reserved_index_and_log_documents() {
@@ -101,11 +143,14 @@ mod tests {
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         assert_eq!(
-            open(prepared.okf(), "runbook").unwrap().presentation.icon,
+            open_with_asset_host(prepared.okf(), "runbook", &assets())
+                .unwrap()
+                .presentation
+                .icon,
             Icon::FileText
         );
-        assert!(open(prepared.okf(), "index").is_none());
-        assert!(open(prepared.okf(), "log").is_none());
+        assert!(open_with_asset_host(prepared.okf(), "index", &assets()).is_none());
+        assert!(open_with_asset_host(prepared.okf(), "log", &assets()).is_none());
     }
 
     #[test]
@@ -126,7 +171,8 @@ mod tests {
                 .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
 
-        let source_document = open_source(prepared.okf(), "runbook").unwrap();
+        let source_document =
+            open_source_with_asset_host(prepared.okf(), "runbook", &assets()).unwrap();
 
         assert_eq!(source_document.presentation.icon, Icon::FileBraces);
     }

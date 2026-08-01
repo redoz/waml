@@ -14,9 +14,22 @@ pub struct GenericOkfView {
 }
 
 impl GenericOkfView {
+    #[cfg(test)]
     pub fn new(concept_id: String) -> Self {
+        Self::new_with_asset_host(
+            concept_id,
+            crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            ),
+        )
+    }
+
+    pub fn new_with_asset_host(
+        concept_id: String,
+        assets: crate::markdown_hosts::SharedMarkdownAssetHost,
+    ) -> Self {
         Self {
-            source: SourceView::new_read_only(concept_id),
+            source: SourceView::new_read_only(concept_id, assets),
         }
     }
 }
@@ -112,9 +125,18 @@ impl DocView for GenericOkfView {
 mod tests {
     use super::*;
 
+    fn generic_view() -> GenericOkfView {
+        GenericOkfView::new_with_asset_host(
+            "runbook".into(),
+            crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            ),
+        )
+    }
+
     #[test]
     fn generic_markdown_view_is_retained_and_read_only_by_construction() {
-        let view = GenericOkfView::new("runbook".into());
+        let view = generic_view();
         assert_eq!(
             view.reconcile_policy(),
             ViewReconcilePolicy::RetainLiveState
@@ -124,7 +146,7 @@ mod tests {
 
     #[test]
     fn generic_document_hides_all_diagram_chrome_and_has_stable_accent() {
-        let view = GenericOkfView::new("runbook".into());
+        let view = generic_view();
         assert_eq!(
             view.chrome(),
             BodyChrome {
