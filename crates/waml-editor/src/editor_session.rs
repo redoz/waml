@@ -10,7 +10,8 @@ use waml::edit::{
 use waml::source::{BundlePath, SourceBundle};
 use waml_markdown_editor::edit::ProposedMarkdownEdit;
 use waml_syntax::{
-    DocumentRevision, FullReparseReason, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, TextChange,
+    ChangeMap, DocumentRevision, FullReparseReason, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
+    TextChange, TextRange,
 };
 
 use crate::document::EditIntent;
@@ -39,10 +40,18 @@ pub struct EditorSessionSnapshot {
     pub uml_analysis: Arc<waml::uml::Analysis>,
     pub dirty_revision: Option<u64>,
     pub affected_documents: Arc<[DocumentId]>,
+    pub affected_diagrams: Arc<[Arc<str>]>,
     pub semantic_diagnostics: Arc<BTreeMap<DocumentId, SemanticFailureDiagnostic>>,
     document_paths: Arc<BTreeMap<DocumentId, BundlePath>>,
     pub(crate) semantic_source: Arc<SourceBundle>,
     pending_semantic_steps: Arc<[SemanticRevisionStep]>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceRangeMapError {
+    DocumentNotFound,
+    SourceRevisionUnavailable,
+    RangeChanged,
 }
 
 #[derive(Clone, Copy)]
@@ -70,6 +79,69 @@ impl EditorSessionSnapshot {
 
     pub fn markdown_snapshot(&self, document: DocumentId) -> Option<&Arc<MarkdownSyntaxSnapshot>> {
         self.markdown_snapshots.get(&document)
+    }
+
+    /// Map a range from a known source revision to the current Markdown
+    /// snapshot. A change that touches the range fails instead of selecting
+    /// text that no longer has the same meaning.
+    pub fn map_source_range_to_current(
+        &self,
+        document: DocumentId,
+        revision: DocumentRevision,
+        range: TextRange,
+    ) -> Result<TextRange, SourceRangeMapError> {
+        let target = self
+            .markdown_snapshot(document)
+            .ok_or(SourceRangeMapError::DocumentNotFound)?;
+        if revision == target.revision() {
+            target
+                .text()
+                .slice(range)
+                .map_err(|_| SourceRangeMapError::RangeChanged)?;
+            return Ok(range);
+        }
+
+        let baseline = self
+            .okf_analysis
+            .markdown_snapshot(document)
+            .ok_or(SourceRangeMapError::DocumentNotFound)?;
+        let mut current = if baseline.revision() == revision {
+            baseline.clone()
+        } else {
+            self.pending_semantic_steps
+                .iter()
+                .find_map(|step| {
+                    (step.promoted.document == document
+                        && step.promoted.update.snapshot.revision() == revision)
+                        .then(|| step.promoted.update.snapshot.clone())
+                })
+                .ok_or(SourceRangeMapError::SourceRevisionUnavailable)?
+        };
+        current
+            .text()
+            .slice(range)
+            .map_err(|_| SourceRangeMapError::RangeChanged)?;
+        let mut mapped = range;
+        for step in self.pending_semantic_steps.iter() {
+            if step.promoted.document != document
+                || step.promoted.base_revision < current.revision()
+            {
+                continue;
+            }
+            if step.promoted.base_revision != current.revision() {
+                return Err(SourceRangeMapError::SourceRevisionUnavailable);
+            }
+            let map = ChangeMap::checked(current.text(), &step.changes)
+                .map_err(|_| SourceRangeMapError::SourceRevisionUnavailable)?;
+            mapped = map
+                .translate_unchanged(mapped)
+                .ok_or(SourceRangeMapError::RangeChanged)?;
+            current = step.promoted.update.snapshot.clone();
+            if current.revision() == target.revision() {
+                return Ok(mapped);
+            }
+        }
+        Err(SourceRangeMapError::SourceRevisionUnavailable)
     }
 }
 
@@ -175,7 +247,7 @@ impl Default for EditorSession {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionChange {
     pub revision: u64,
     pub source_changed: bool,
@@ -183,6 +255,8 @@ pub struct SessionChange {
     pub uml_changed: bool,
     pub navigation_changed: bool,
     pub conflicts_changed: bool,
+    pub affected_documents: Arc<[DocumentId]>,
+    pub affected_diagrams: Arc<[Arc<str>]>,
 }
 
 pub struct EditRequest {
@@ -197,7 +271,11 @@ pub struct HistoryEffect {
 }
 
 impl SessionChange {
-    fn full(revision: u64) -> SessionChange {
+    fn full(
+        revision: u64,
+        affected_documents: Arc<[DocumentId]>,
+        affected_diagrams: Arc<[Arc<str>]>,
+    ) -> SessionChange {
         SessionChange {
             revision,
             source_changed: true,
@@ -205,11 +283,13 @@ impl SessionChange {
             uml_changed: true,
             navigation_changed: true,
             conflicts_changed: true,
+            affected_documents,
+            affected_diagrams,
         }
     }
 
     #[allow(dead_code)] // Used when the Task 2 proposal path is mounted in Task 4.
-    fn source_only(revision: u64) -> SessionChange {
+    fn source_only(revision: u64, document: DocumentId) -> SessionChange {
         SessionChange {
             revision,
             source_changed: true,
@@ -217,6 +297,8 @@ impl SessionChange {
             uml_changed: false,
             navigation_changed: false,
             conflicts_changed: false,
+            affected_documents: Arc::from([document]),
+            affected_diagrams: Arc::from([]),
         }
     }
 }
@@ -232,7 +314,11 @@ impl EditorSession {
         let affected = affected_documents(prepared.source(), prepared.okf());
         self.current = snapshot_from_prepared(prepared, None, affected);
         self.history.reset();
-        Ok(SessionChange::full(self.current.revision))
+        Ok(SessionChange::full(
+            self.current.revision,
+            self.current.affected_documents.clone(),
+            self.current.affected_diagrams.clone(),
+        ))
     }
 
     #[cfg(test)]
@@ -314,7 +400,14 @@ impl EditorSession {
         );
         let revision = self.current.revision;
         self.set_dirty_revision(Some(revision));
-        Ok((SessionChange::full(revision), applied.inverse))
+        Ok((
+            SessionChange::full(
+                revision,
+                self.current.affected_documents.clone(),
+                self.current.affected_diagrams.clone(),
+            ),
+            applied.inverse,
+        ))
     }
 
     fn apply_edit_with_preparer<F>(
@@ -555,6 +648,7 @@ impl EditorSession {
                 })?;
         let previous = self.current.clone();
         let source = Arc::new(applied.source);
+        let changes = proposal.changes.clone();
         let promoted = PromotedMarkdownUpdate {
             document: proposal.document,
             base_revision: proposal.base_revision,
@@ -565,6 +659,7 @@ impl EditorSession {
             session_revision: next_session_revision,
             source: source.clone(),
             promoted,
+            changes,
         });
         let pending_semantic_steps: Arc<[SemanticRevisionStep]> = pending_semantic_steps.into();
         let mut markdown_snapshots = (*self.current.markdown_snapshots).clone();
@@ -578,6 +673,7 @@ impl EditorSession {
             uml_analysis: self.current.uml_analysis.clone(),
             dirty_revision: Some(next_session_revision),
             affected_documents: Arc::from([proposal.document]),
+            affected_diagrams: Arc::from([]),
             semantic_diagnostics: self.current.semantic_diagnostics.clone(),
             document_paths: self.current.document_paths.clone(),
             semantic_source: self.current.semantic_source.clone(),
@@ -592,7 +688,7 @@ impl EditorSession {
             before_location,
         );
         self.current = next;
-        let change = SessionChange::source_only(next_session_revision);
+        let change = SessionChange::source_only(next_session_revision, proposal.document);
         Ok((
             change,
             SemanticAnalysisRequest {
@@ -647,6 +743,8 @@ impl EditorSession {
             uml_changed: true,
             navigation_changed: true,
             conflicts_changed: true,
+            affected_documents: prepared.affected.documents.clone(),
+            affected_diagrams: prepared.affected.diagrams.clone(),
         };
         self.current = Arc::new(EditorSessionSnapshot {
             revision,
@@ -656,7 +754,8 @@ impl EditorSession {
             okf_analysis: prepared.okf_analysis.clone(),
             uml_analysis: prepared.uml_analysis.clone(),
             dirty_revision: self.current.dirty_revision,
-            affected_documents: self.current.affected_documents.clone(),
+            affected_documents: prepared.affected.documents.clone(),
+            affected_diagrams: prepared.affected.diagrams.clone(),
             semantic_diagnostics: prepared.diagnostics.clone(),
             document_paths: self.current.document_paths.clone(),
             semantic_source: prepared.semantic_source.clone(),
@@ -745,6 +844,7 @@ fn snapshot_from_prepared(
                 .map(|id| (id, document.path().clone()))
         })
         .collect();
+    let affected_diagrams = prepared.uml().affected().diagrams.clone();
     let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
     let source = Arc::new(source);
     Arc::new(EditorSessionSnapshot {
@@ -756,6 +856,7 @@ fn snapshot_from_prepared(
         uml_analysis: Arc::new(uml_analysis),
         dirty_revision: None,
         affected_documents,
+        affected_diagrams,
         semantic_diagnostics: Arc::new(BTreeMap::new()),
         document_paths: Arc::new(document_paths),
         semantic_source: source.clone(),
@@ -856,6 +957,26 @@ mod tests {
             .unwrap()
     }
 
+    fn local_insert(
+        syntax: Arc<waml_syntax::MarkdownSyntaxSnapshot>,
+        offset: usize,
+        inserted: &str,
+    ) -> ProposedMarkdownEdit {
+        let mut local =
+            MarkdownDocumentSession::new(Arc::new(MarkdownDocumentSnapshot::new(syntax)));
+        local
+            .set_primary_offset(waml_syntax::TextSize::new(offset.try_into().unwrap()))
+            .unwrap();
+        local
+            .execute(
+                MarkdownEditCommand::Insert(Arc::from(inserted)),
+                HistoryGroup::isolated(),
+            )
+            .unwrap()
+            .proposal
+            .unwrap()
+    }
+
     #[test]
     fn accepted_source_edit_advances_once_and_promotes_the_same_syntax_arc() {
         let mut session = source_session("# Order\n");
@@ -906,6 +1027,105 @@ mod tests {
                 .shared(),
             syntax.text().shared(),
         ));
+    }
+
+    #[test]
+    fn pending_source_changes_map_only_unchanged_diagnostic_ranges() {
+        let mut session = source_session("# Order\nBody\n");
+        let before = session.snapshot();
+        let document = document_id(&before, "order.md");
+        let body_range = waml_syntax::TextRange::new(
+            waml_syntax::TextSize::new(8),
+            waml_syntax::TextSize::new(12),
+        )
+        .unwrap();
+        let insert = local_insert(before.markdown_snapshot(document).unwrap().clone(), 0, "X");
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(document, insert),
+                source_location("order"),
+            )
+            .unwrap();
+
+        assert_eq!(
+            session.snapshot().map_source_range_to_current(
+                document,
+                before.markdown_snapshot(document).unwrap().revision(),
+                body_range,
+            ),
+            Ok(waml_syntax::TextRange::new(
+                waml_syntax::TextSize::new(9),
+                waml_syntax::TextSize::new(13),
+            )
+            .unwrap())
+        );
+
+        let pending = session.snapshot();
+        let replacement = local_replacement(
+            pending.markdown_snapshot(document).unwrap().clone(),
+            "# Order\nChanged\n",
+        );
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(document, replacement),
+                source_location("order"),
+            )
+            .unwrap();
+        assert_eq!(
+            session.snapshot().map_source_range_to_current(
+                document,
+                before.markdown_snapshot(document).unwrap().revision(),
+                body_range,
+            ),
+            Err(SourceRangeMapError::RangeChanged)
+        );
+    }
+
+    #[test]
+    fn semantic_completion_installs_affected_documents_and_diagrams() {
+        let mut session = EditorSession::default();
+        session.replace(diagram_bundle("")).unwrap();
+        let before = session.snapshot();
+        let document = document_id(&before, "dia.md");
+        let local = local_replacement(
+            before.markdown_snapshot(document).unwrap().clone(),
+            "---\ntype: Diagram\ntitle: Changed\nprofile: uml-domain\n---\n# D\n\n## Layout\n",
+        );
+        let request = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(document, local),
+                source_location("dia"),
+            )
+            .unwrap()
+            .1;
+
+        let completion = run_semantic_request(request).unwrap();
+        assert_eq!(completion.prepared.affected.documents.as_ref(), &[document]);
+        assert_eq!(
+            completion
+                .prepared
+                .affected
+                .diagrams
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            ["dia"]
+        );
+        assert!(matches!(
+            session.install_semantic_completion(completion),
+            CompletionInstall::Installed(_)
+        ));
+
+        let installed = session.snapshot();
+        assert_eq!(installed.affected_documents.as_ref(), &[document]);
+        assert_eq!(
+            installed
+                .affected_diagrams
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            ["dia"]
+        );
     }
 
     #[test]
@@ -1869,7 +2089,14 @@ mod tests {
 
         let change = session.replace(bundle.clone()).unwrap();
 
-        assert_eq!(change, SessionChange::full(1));
+        assert_eq!(
+            change,
+            SessionChange::full(
+                1,
+                session.current.affected_documents.clone(),
+                session.current.affected_diagrams.clone(),
+            )
+        );
         assert_eq!(session.okf_analysis().catalog.session_revision(), 1);
         assert_eq!(
             session.uml_analysis().syntax.catalog().session_revision(),
@@ -1943,7 +2170,14 @@ mod tests {
 
         let change = session.replace(bundle.clone()).unwrap();
 
-        assert_eq!(change, SessionChange::full(1));
+        assert_eq!(
+            change,
+            SessionChange::full(
+                1,
+                session.current.affected_documents.clone(),
+                session.current.affected_diagrams.clone(),
+            )
+        );
         assert_eq!(session.bundle(), &bundle);
         assert_eq!(session.persisted_bundle(), &bundle);
         assert!(session
@@ -1972,7 +2206,14 @@ mod tests {
 
         let change = session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
 
-        assert_eq!(change, SessionChange::full(2));
+        assert_eq!(
+            change,
+            SessionChange::full(
+                2,
+                session.current.affected_documents.clone(),
+                session.current.affected_diagrams.clone(),
+            )
+        );
         assert_eq!(session.revision(), 2);
         assert!(session.is_dirty());
         assert!(session.bundle().documents()[0].text().contains("left of"));

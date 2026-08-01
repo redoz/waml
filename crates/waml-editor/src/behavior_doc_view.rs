@@ -11,16 +11,86 @@ use crate::canvas::{
 };
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
+    ViewReconcilePolicy,
 };
+use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icons::Icon;
 use crate::inspector::Subject;
 use crate::node_style::AccentBucket;
+use waml::analysis::ProjectionFreshness;
 use waml::diagnostic::Diagnostic;
 use waml::model::{FlowDoc, FlowEdge, FlowFlavor, SeqNode, SequenceDoc};
 use waml::solve::flow::{measure_flow, resolve_flow, solve_flow, FlowConfig};
 use waml::solve::interaction::{measure_interaction, solve_interaction, InteractionConfig};
 
 const NO_RENDERABLE_ELEMENTS: &str = "No renderable elements";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BehaviorRefresh {
+    PreserveLiveState,
+    RetainedStale {
+        failed_revision: waml_syntax::DocumentRevision,
+    },
+    None,
+}
+
+fn refresh_for(
+    change: &SessionChange,
+    affected: bool,
+    freshness: ProjectionFreshness,
+) -> BehaviorRefresh {
+    if !change.uml_changed || !affected {
+        return BehaviorRefresh::None;
+    }
+    match freshness {
+        ProjectionFreshness::Current => BehaviorRefresh::PreserveLiveState,
+        ProjectionFreshness::RetainedStale { failed_revision } => {
+            BehaviorRefresh::RetainedStale { failed_revision }
+        }
+    }
+}
+
+fn behavior_document(
+    snapshot: &EditorSessionSnapshot,
+    change: &SessionChange,
+    key: &str,
+) -> Option<waml::analysis::DocumentId> {
+    change.affected_documents.iter().copied().find(|document| {
+        snapshot
+            .okf_analysis
+            .catalog
+            .document(*document)
+            .is_some_and(|source| waml::okf::id_of(source.path().as_str()) == key)
+    })
+}
+
+fn behavior_freshness(
+    snapshot: &EditorSessionSnapshot,
+    document: waml::analysis::DocumentId,
+) -> ProjectionFreshness {
+    snapshot
+        .uml_analysis
+        .affected()
+        .islands
+        .iter()
+        .filter(|island| {
+            snapshot
+                .uml_analysis
+                .island_syntax
+                .by_owner(document, **island)
+                .is_some()
+        })
+        .filter_map(
+            |island| match snapshot.uml_analysis.projection_freshness(*island) {
+                ProjectionFreshness::Current => None,
+                ProjectionFreshness::RetainedStale { failed_revision } => Some(failed_revision),
+            },
+        )
+        .max()
+        .map_or(ProjectionFreshness::Current, |failed_revision| {
+            ProjectionFreshness::RetainedStale { failed_revision }
+        })
+}
 
 /// The empty-state message, with the solver's diagnostic count when there is
 /// one (spec §5.3): a document that renders nothing usually renders nothing
@@ -442,6 +512,70 @@ impl BehaviorDocView {
             inspector.set_subject(cx, model, subject);
         }
     }
+
+    fn scene_and_diagnostics(
+        &self,
+        model: &waml::model::Model,
+    ) -> (BehaviorScene, Vec<Diagnostic>) {
+        match self.kind {
+            BehaviorKind::Flow => model
+                .flows
+                .iter()
+                .find(|doc| doc.key == self.key)
+                .map(|doc| build_flow_scene(model, doc)),
+            BehaviorKind::Interaction => model
+                .interactions
+                .iter()
+                .find(|doc| doc.key == self.key)
+                .map(|doc| build_interaction_scene(model, doc)),
+        }
+        .unwrap_or_else(|| {
+            (
+                BehaviorScene::Empty {
+                    message: empty_message(0),
+                },
+                Vec::new(),
+            )
+        })
+    }
+
+    fn install_model(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        model: &waml::model::Model,
+        preserve_live_state: bool,
+    ) {
+        let (scene, diagnostics) = self.scene_and_diagnostics(model);
+        if let Some(mut canvas) = body
+            .behavior_canvas(cx)
+            .borrow_mut::<crate::canvas::BehaviorSurface>()
+        {
+            canvas.set_projection_stale(cx, false);
+            if preserve_live_state {
+                canvas.update_scene(cx, scene);
+            } else {
+                canvas.set_scene(cx, scene);
+            }
+        }
+        if preserve_live_state {
+            let selection_survives = body
+                .behavior_canvas(cx)
+                .borrow::<crate::canvas::BehaviorSurface>()
+                .is_some_and(|canvas| canvas.selected_target().is_some());
+            if !selection_survives {
+                self.sync_inspector_subject(cx, body, model, Subject::None);
+            }
+        }
+        let status = diagnostics_status(&diagnostics);
+        if status != self.last_diagnostics {
+            if let Some(line) = &status {
+                log!("behavior solver: {line}");
+            }
+            body.set_solver_diagnostics(cx, status.as_deref());
+            self.last_diagnostics = status;
+        }
+    }
 }
 
 impl DocView for BehaviorDocView {
@@ -452,53 +586,46 @@ impl DocView for BehaviorDocView {
         }
     }
 
+    fn reconcile_policy(&self) -> ViewReconcilePolicy {
+        ViewReconcilePolicy::RetainLiveState
+    }
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
         body.set_behavior_canvas_visible(cx, true);
-        let model = &data.uml_analysis.projection;
-        let (scene, diagnostics) = match self.kind {
-            BehaviorKind::Flow => model
-                .flows
-                .iter()
-                .find(|doc| doc.key == self.key)
-                .map(|doc| build_flow_scene(model, doc))
-                .unwrap_or_else(|| {
-                    (
-                        BehaviorScene::Empty {
-                            message: empty_message(0),
-                        },
-                        Vec::new(),
-                    )
-                }),
-            BehaviorKind::Interaction => model
-                .interactions
-                .iter()
-                .find(|doc| doc.key == self.key)
-                .map(|doc| build_interaction_scene(model, doc))
-                .unwrap_or_else(|| {
-                    (
-                        BehaviorScene::Empty {
-                            message: empty_message(0),
-                        },
-                        Vec::new(),
-                    )
-                }),
-        };
-        if let Some(mut canvas) = body
-            .behavior_canvas(cx)
-            .borrow_mut::<crate::canvas::BehaviorSurface>()
-        {
-            canvas.set_scene(cx, scene);
-        }
-        // Forward the solve's diagnostics to the shared status-bar channel
-        // (spec §5.3), but only when the line actually changed -- `sync` runs
-        // on every revision.
-        let status = diagnostics_status(&diagnostics);
-        if status != self.last_diagnostics {
-            if let Some(line) = &status {
-                log!("behavior solver: {line}");
+        self.install_model(cx, body, &data.uml_analysis.projection, false);
+    }
+
+    fn after_session_snapshot(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &EditorSessionSnapshot,
+        change: SessionChange,
+    ) {
+        let document = behavior_document(snapshot, &change, &self.key);
+        let freshness = document.map_or(ProjectionFreshness::Current, |document| {
+            behavior_freshness(snapshot, document)
+        });
+        match refresh_for(&change, document.is_some(), freshness) {
+            BehaviorRefresh::PreserveLiveState => {
+                body.set_behavior_canvas_visible(cx, true);
+                self.install_model(cx, body, &snapshot.uml_analysis.projection, true);
             }
-            body.set_solver_diagnostics(cx, status.as_deref());
-            self.last_diagnostics = status;
+            BehaviorRefresh::RetainedStale { failed_revision } => {
+                let status = format!(
+                    "Stale behavior: source revision {} did not produce a valid projection",
+                    failed_revision.get()
+                );
+                body.set_solver_diagnostics(cx, Some(&status));
+                self.last_diagnostics = Some(status);
+                if let Some(mut canvas) = body
+                    .behavior_canvas(cx)
+                    .borrow_mut::<crate::canvas::BehaviorSurface>()
+                {
+                    canvas.set_projection_stale(cx, true);
+                }
+            }
+            BehaviorRefresh::None => {}
         }
     }
 
@@ -642,6 +769,48 @@ mod tests {
         assert_eq!(
             BehaviorDocView::interaction("a".into()).kind,
             BehaviorKind::Interaction
+        );
+    }
+
+    #[test]
+    fn only_current_affected_behavior_selects_a_scene_refresh() {
+        let changed = crate::editor_session::SessionChange {
+            revision: 2,
+            source_changed: false,
+            okf_changed: true,
+            uml_changed: true,
+            navigation_changed: true,
+            conflicts_changed: true,
+            affected_documents: std::sync::Arc::from([]),
+            affected_diagrams: std::sync::Arc::from([]),
+        };
+        assert_eq!(
+            refresh_for(&changed, true, ProjectionFreshness::Current),
+            BehaviorRefresh::PreserveLiveState
+        );
+        assert_eq!(
+            refresh_for(&changed, false, ProjectionFreshness::Current),
+            BehaviorRefresh::None
+        );
+        assert_eq!(
+            refresh_for(
+                &changed,
+                true,
+                ProjectionFreshness::RetainedStale {
+                    failed_revision: waml_syntax::DocumentRevision::INITIAL,
+                },
+            ),
+            BehaviorRefresh::RetainedStale {
+                failed_revision: waml_syntax::DocumentRevision::INITIAL,
+            }
+        );
+    }
+
+    #[test]
+    fn behavior_view_retains_live_state_during_session_reconciliation() {
+        assert_eq!(
+            BehaviorDocView::flow("flow".into()).reconcile_policy(),
+            ViewReconcilePolicy::RetainLiveState
         );
     }
 

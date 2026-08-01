@@ -8,6 +8,7 @@ use waml_markdown_editor::{
     presentation::{
         build_layout_document, compile_presentation, EmbeddedAssets, EmbeddedMeasurements,
         HighlighterRegistry, InstalledPresentation, PresentationPlan, PresentationStyles,
+        PresentedDiagnostic, PresentedDiagnosticSeverity,
     },
     session::{HostSnapshotCause, MarkdownDocumentSession},
     syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText},
@@ -41,6 +42,7 @@ struct ReadySourceView {
     plan: Arc<PresentationPlan>,
     styles: Arc<PresentationStyles>,
     assets: EmbeddedAssets,
+    diagnostics: Arc<[PresentedDiagnostic]>,
     pending_changes: Option<Arc<[waml_syntax::TextChange]>>,
 }
 
@@ -50,6 +52,43 @@ type CompiledPresentation = (
     EmbeddedAssets,
     Arc<InstalledPresentation>,
 );
+
+fn presented_diagnostics_for(
+    document: DocumentId,
+    syntax: &waml_syntax::MarkdownSyntaxSnapshot,
+    semantic: &[waml::analysis::RevisionedDiagnostic],
+) -> Arc<[PresentedDiagnostic]> {
+    let revision = syntax.revision();
+    let mut diagnostics = syntax
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| PresentedDiagnostic {
+            revision,
+            range: diagnostic.range,
+            severity: match diagnostic.severity {
+                waml_syntax::SyntaxSeverity::Error => PresentedDiagnosticSeverity::Error,
+                waml_syntax::SyntaxSeverity::Warning => PresentedDiagnosticSeverity::Warning,
+                waml_syntax::SyntaxSeverity::Info => PresentedDiagnosticSeverity::Information,
+            },
+            message: diagnostic.message.clone(),
+        })
+        .collect::<Vec<_>>();
+    diagnostics.extend(
+        semantic
+            .iter()
+            .filter(|diagnostic| diagnostic.document == document && diagnostic.revision == revision)
+            .map(|diagnostic| PresentedDiagnostic {
+                revision,
+                range: diagnostic.range,
+                severity: match diagnostic.severity {
+                    waml::diagnostic::Severity::Error => PresentedDiagnosticSeverity::Error,
+                    waml::diagnostic::Severity::Warning => PresentedDiagnosticSeverity::Warning,
+                },
+                message: diagnostic.message.clone(),
+            }),
+    );
+    diagnostics.into()
+}
 
 pub struct SourceView {
     key: String,
@@ -89,6 +128,7 @@ impl SourceView {
 
     fn compile(
         syntax: &waml_syntax::MarkdownSyntaxSnapshot,
+        diagnostics: Arc<[PresentedDiagnostic]>,
     ) -> Result<CompiledPresentation, String> {
         let styles = Arc::new(PresentationStyles::balanced());
         let plan = compile_presentation(syntax, &styles, &HighlighterRegistry::default())
@@ -102,7 +142,7 @@ impl SourceView {
             plan.clone(),
             styles.clone(),
             layout,
-            Arc::from([]),
+            diagnostics,
             assets.frame(&plan),
         )
         .map_err(|error| format!("presentation install failed: {error:?}"))?;
@@ -122,7 +162,7 @@ impl SourceView {
         let snapshot = Arc::new(MarkdownDocumentSnapshot::new(syntax.clone()));
         let mut session = MarkdownDocumentSession::new(snapshot);
         session.set_read_only(true);
-        match Self::compile(&syntax) {
+        match Self::compile(&syntax, Arc::from([])) {
             Ok((_, _, _, installed)) => {
                 editor.install_presentation(cx, installed, LayoutChangeCause::ExternalReplacement)
             }
@@ -149,6 +189,11 @@ impl SourceView {
             return;
         };
         let incoming = Arc::new(MarkdownDocumentSnapshot::new(syntax.clone()));
+        let diagnostics = presented_diagnostics_for(
+            document,
+            &syntax,
+            workspace.uml_analysis.revisioned_diagnostics(),
+        );
 
         let mut layout_cause = match host_cause {
             HostSnapshotCause::InitialLoad => LayoutChangeCause::InitialLoad,
@@ -201,6 +246,7 @@ impl SourceView {
                 }),
                 styles: Arc::new(PresentationStyles::balanced()),
                 assets: EmbeddedAssets::default(),
+                diagnostics: Arc::from([]),
                 pending_changes: None,
             }));
             layout_cause = LayoutChangeCause::InitialLoad;
@@ -210,9 +256,11 @@ impl SourceView {
             &self.state,
             SourceViewState::Ready(ready) if ready.plan.revision != syntax.revision()
                 || ready.plan.items.is_empty()
+                || ready.diagnostics != diagnostics
         );
         if should_compile {
-            let Ok((plan, styles, assets, installed)) = Self::compile(&syntax) else {
+            let Ok((plan, styles, assets, installed)) = Self::compile(&syntax, diagnostics.clone())
+            else {
                 self.set_missing(cx, &editor);
                 return;
             };
@@ -221,6 +269,7 @@ impl SourceView {
                 ready.plan = plan;
                 ready.styles = styles;
                 ready.assets = assets;
+                ready.diagnostics = diagnostics;
             }
             editor.set_read_only(cx, self.read_only);
             editor.install_presentation(cx, installed, layout_cause);
@@ -411,6 +460,8 @@ impl DocView for SourceView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use waml::analysis::{DiagnosticSource, RevisionedDiagnostic};
+    use waml::diagnostic::Severity;
     use waml::source::SourceBundle;
     use waml_markdown_editor::{
         input::{EditorInput, ScrollState},
@@ -467,6 +518,99 @@ mod tests {
     }
 
     #[test]
+    fn presented_diagnostics_include_current_syntax_and_only_current_document_semantics() {
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(
+                SourceBundle::try_from_pairs([
+                    ("shop/order.md", "# Order\n"),
+                    ("shop/customer.md", "# Customer\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        let workspace = session.snapshot();
+        let order = workspace
+            .okf_analysis
+            .catalog
+            .id_for_path(
+                workspace
+                    .source
+                    .document_by_concept_id("shop/order")
+                    .unwrap()
+                    .path(),
+            )
+            .unwrap();
+        let customer = workspace
+            .okf_analysis
+            .catalog
+            .id_for_path(
+                workspace
+                    .source
+                    .document_by_concept_id("shop/customer")
+                    .unwrap()
+                    .path(),
+            )
+            .unwrap();
+        let revision = DocumentRevision::new(7);
+        let syntax = parse_markdown(
+            revision,
+            SourceText::new("```waml\n".to_owned()).unwrap(),
+            MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        assert!(
+            !syntax.diagnostics().is_empty(),
+            "the fixture must carry one immediate syntax diagnostic"
+        );
+        let semantic = [
+            RevisionedDiagnostic {
+                document: order,
+                revision,
+                range: syntax.diagnostics()[0].range,
+                source: DiagnosticSource::Semantic,
+                severity: Severity::Warning,
+                code: Arc::from("current"),
+                message: Arc::from("current semantic"),
+            },
+            RevisionedDiagnostic {
+                document: order,
+                revision: DocumentRevision::new(6),
+                range: syntax.diagnostics()[0].range,
+                source: DiagnosticSource::Semantic,
+                severity: Severity::Error,
+                code: Arc::from("stale"),
+                message: Arc::from("stale semantic"),
+            },
+            RevisionedDiagnostic {
+                document: customer,
+                revision,
+                range: syntax.diagnostics()[0].range,
+                source: DiagnosticSource::Semantic,
+                severity: Severity::Error,
+                code: Arc::from("other"),
+                message: Arc::from("other document"),
+            },
+        ];
+
+        let presented = presented_diagnostics_for(order, &syntax, &semantic);
+
+        assert_eq!(presented.len(), syntax.diagnostics().len() + 1);
+        assert!(presented
+            .iter()
+            .any(|diagnostic| diagnostic.message.as_ref() == "current semantic"));
+        assert!(!presented.iter().any(|diagnostic| {
+            matches!(
+                diagnostic.message.as_ref(),
+                "stale semantic" | "other document"
+            )
+        }));
+        assert!(presented
+            .iter()
+            .all(|diagnostic| diagnostic.revision == revision));
+    }
+
+    #[test]
     fn nested_source_resolves_to_the_immutable_application_snapshot() {
         let mut session = crate::editor_session::EditorSession::default();
         session
@@ -510,7 +654,7 @@ mod tests {
         let ready = source_session().snapshot();
         let (_, syntax) = SourceView::resolve_document(&ready, "shop/order")
             .expect("the ready fixture must resolve");
-        SourceView::compile(&syntax).expect("the ready fixture must compile");
+        SourceView::compile(&syntax, Arc::from([])).expect("the ready fixture must compile");
         view.install_snapshot(&mut cx, &body, &ready, HostSnapshotCause::InitialLoad);
         assert!(matches!(view.state, SourceViewState::Ready(_)));
 

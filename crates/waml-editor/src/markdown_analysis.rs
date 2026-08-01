@@ -4,8 +4,9 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use waml::analysis::{
     prepare_candidate, prepare_candidate_with_markdown_recovery,
-    prepare_candidate_with_markdown_updates, semantic_source_with_promoted_document, AnalysisError,
-    DocumentId, OkfAnalysis, PreparedCandidate, PreviousAnalyses, PromotedMarkdownUpdate,
+    prepare_candidate_with_markdown_updates, semantic_source_with_promoted_document,
+    AffectedAnalysis, AnalysisError, DocumentId, OkfAnalysis, PreparedCandidate, PreviousAnalyses,
+    PromotedMarkdownUpdate,
 };
 use waml::source::SourceBundle;
 
@@ -16,6 +17,7 @@ pub struct SemanticRevisionStep {
     pub session_revision: u64,
     pub source: Arc<SourceBundle>,
     pub promoted: PromotedMarkdownUpdate,
+    pub changes: Arc<[waml_syntax::TextChange]>,
 }
 
 #[derive(Clone)]
@@ -45,6 +47,7 @@ pub struct PreparedSemanticSnapshot {
     pub okf_analysis: Arc<OkfAnalysis>,
     pub uml_analysis: Arc<waml::uml::Analysis>,
     pub revision: u64,
+    pub affected: AffectedAnalysis,
     pub diagnostics: Arc<BTreeMap<DocumentId, SemanticFailureDiagnostic>>,
 }
 
@@ -155,6 +158,7 @@ where
     let prepared = prepared.ok_or_else(|| AnalysisError::CatalogInvariant {
         reason: "semantic request has no revision steps".into(),
     })?;
+    let affected = prepared.uml().affected().clone();
     let (semantic_source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
     Ok(SemanticAnalysisCompletion {
         session_revision: request.session_revision,
@@ -164,6 +168,7 @@ where
             okf_analysis: Arc::new(okf_analysis),
             uml_analysis: Arc::new(uml_analysis),
             revision,
+            affected,
             diagnostics: Arc::new(diagnostics),
         }),
     })

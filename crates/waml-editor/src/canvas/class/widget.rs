@@ -23,6 +23,50 @@ use crate::scene::{bounding_box, Scene};
 use makepad_widgets::event::{TouchPoint, TouchState, TouchUpdateEvent};
 use makepad_widgets::*;
 
+const STALE_BADGE_LABEL: &str = "STALE";
+const STALE_BADGE_WIDTH: f64 = 58.0;
+const STALE_BADGE_HEIGHT: f64 = 24.0;
+const STALE_BADGE_INSET: f64 = 12.0;
+
+fn stale_badge_rect(view_rect: Rect) -> Rect {
+    Rect {
+        pos: dvec2(
+            view_rect.pos.x + view_rect.size.x - STALE_BADGE_WIDTH - STALE_BADGE_INSET,
+            view_rect.pos.y + STALE_BADGE_INSET,
+        ),
+        size: dvec2(STALE_BADGE_WIDTH, STALE_BADGE_HEIGHT),
+    }
+}
+
+fn draw_stale_badge_overlay(
+    cx: &mut Cx2d,
+    view_rect: Rect,
+    badge: &mut DrawColor,
+    text: &mut DrawText,
+) {
+    let rect = stale_badge_rect(view_rect);
+    badge.draw_abs(cx, rect);
+    let size = text
+        .layout(
+            cx,
+            0.0,
+            0.0,
+            None,
+            false,
+            Align::default(),
+            STALE_BADGE_LABEL,
+        )
+        .size_in_lpxs;
+    text.draw_abs(
+        cx,
+        dvec2(
+            rect.pos.x + (rect.size.x - size.width as f64) * 0.5,
+            rect.pos.y + (rect.size.y - size.height as f64) * 0.5,
+        ),
+        STALE_BADGE_LABEL,
+    );
+}
+
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
@@ -313,6 +357,17 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
+        draw_stale_badge +: { color: atlas.bucket_amber }
+        draw_stale_text +: {
+            color: atlas.canvas_ground
+            text_style: TextStyle{
+                font_size: 11
+                font_family: FontFamily{
+                    latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Mono/IBMPlexMono-Bold.ttf") asc: -0.1 desc: 0.0}
+                }
+                line_spacing: 1.2
+            }
+        }
     }
 }
 
@@ -378,6 +433,12 @@ pub struct ClassDiagramSurface {
     #[redraw]
     #[live]
     draw_mono_amber: DrawText,
+    #[redraw]
+    #[live]
+    draw_stale_badge: DrawColor,
+    #[redraw]
+    #[live]
+    draw_stale_text: DrawText,
 
     #[rust]
     scene: Scene,
@@ -405,6 +466,8 @@ pub struct ClassDiagramSurface {
     dwell_timer: Timer,
     #[rust]
     selection: SelectionState,
+    #[rust]
+    projection_stale: bool,
     #[live(true)]
     interaction_enabled: bool,
 }
@@ -613,6 +676,9 @@ impl Widget for ClassDiagramSurface {
             draw_mono_bold,
             draw_mono_accent,
             draw_mono_amber,
+            draw_stale_badge,
+            draw_stale_text,
+            projection_stale,
             ..
         } = self;
 
@@ -646,6 +712,9 @@ impl Widget for ClassDiagramSurface {
             mono_amber: draw_mono_amber,
         };
         render::draw(cx, &snapshot, &mut draws);
+        if *projection_stale {
+            draw_stale_badge_overlay(cx, viewport.view_rect, draw_stale_badge, draw_stale_text);
+        }
         DrawStep::done()
     }
 }
@@ -684,6 +753,18 @@ fn reconciliation_policy(update: &SceneUpdate) -> ReconciliationPolicy {
 }
 
 impl ClassDiagramSurface {
+    pub(crate) fn set_projection_stale(&mut self, cx: &mut Cx, stale: bool) {
+        if self.projection_stale != stale {
+            self.projection_stale = stale;
+            self.draw_bg.redraw(cx);
+        }
+    }
+
+    #[cfg(test)]
+    fn projection_stale(&self) -> bool {
+        self.projection_stale
+    }
+
     /// Enable or disable every raw camera/selection/placement interaction.
     /// Disabling cancels in-flight animation and placement without changing
     /// the settled camera or current selection.
@@ -1635,6 +1716,31 @@ mod tests {
                     selection: SelectionPolicy::Preserve,
                     camera: CameraPolicy::Retain,
                 },
+            );
+        }
+
+        #[test]
+        fn stale_projection_state_is_explicit_and_reversible() {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = ClassDiagramSurface::script_new(&mut vm);
+
+            surface.set_projection_stale(vm.cx_mut(), true);
+            assert!(surface.projection_stale());
+            surface.set_projection_stale(vm.cx_mut(), false);
+            assert!(!surface.projection_stale());
+        }
+
+        #[test]
+        fn stale_badge_is_fixed_to_the_canvas_top_right() {
+            assert_eq!(
+                stale_badge_rect(Rect {
+                    pos: dvec2(100.0, 50.0),
+                    size: dvec2(800.0, 600.0),
+                }),
+                Rect {
+                    pos: dvec2(830.0, 62.0),
+                    size: dvec2(58.0, 24.0),
+                }
             );
         }
 

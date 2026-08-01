@@ -1,7 +1,9 @@
 use crate::tree::{build_tree, TreeNode};
 pub use crate::view_history::{DocumentKind, DocumentLocator};
 use url::Url;
+use waml::analysis::DocumentId;
 use waml::okf::DirectoryAddress;
+use waml_syntax::{DocumentRevision, TextRange};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NavigationTarget {
@@ -36,6 +38,13 @@ pub enum NavigationIntent {
     MarkdownLink {
         current_concept_id: String,
         href: String,
+    },
+    #[allow(dead_code)]
+    // Diagnostic list actions construct this intent in the integration follow-up.
+    SourceRange {
+        document: DocumentId,
+        revision: DocumentRevision,
+        range: TextRange,
     },
 }
 
@@ -281,7 +290,7 @@ mod tests {
     fn resolved_target(intent: &NavigationIntent) -> Option<&NavigationTarget> {
         match intent {
             NavigationIntent::Resolved { target, .. } => Some(target),
-            NavigationIntent::MarkdownLink { .. } => None,
+            NavigationIntent::MarkdownLink { .. } | NavigationIntent::SourceRange { .. } => None,
         }
     }
 

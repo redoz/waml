@@ -765,6 +765,8 @@ mod tests {
                 uml_changed: true,
                 navigation_changed: false,
                 conflicts_changed: false,
+                affected_documents: std::sync::Arc::from([]),
+                affected_diagrams: std::sync::Arc::from([]),
             },
             vec![Some(replacement)],
         );
@@ -858,6 +860,8 @@ mod tests {
                 uml_changed: true,
                 navigation_changed: false,
                 conflicts_changed: false,
+                affected_documents: std::sync::Arc::from([]),
+                affected_diagrams: std::sync::Arc::from([]),
             },
             vec![Some(replacement)],
         );
@@ -918,6 +922,8 @@ mod tests {
                 uml_changed: true,
                 navigation_changed: false,
                 conflicts_changed: false,
+                affected_documents: std::sync::Arc::from([]),
+                affected_diagrams: std::sync::Arc::from([]),
             },
             vec![Some(replacement), None],
         );

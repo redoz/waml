@@ -3,6 +3,7 @@
 
 use makepad_widgets::*;
 use std::collections::HashSet;
+use waml::analysis::ProjectionFreshness;
 use waml::model::Model;
 
 use crate::canvas::ConstraintVisibility;
@@ -10,9 +11,9 @@ use crate::diagram_display::resolve_display;
 use crate::diagram_properties::{DiagramPropertiesAction, DiagramPropertiesWidgetRefExt};
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, PopupRequest,
-    ViewData, ViewOutcome,
+    ViewData, ViewOutcome, ViewReconcilePolicy,
 };
-use crate::editor_session::SessionChange;
+use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icons::Icon;
 use crate::inspector::{diagram_elements, subject_from, Subject};
 use crate::popup::base::{PopupItem, PopupResult};
@@ -69,15 +70,95 @@ fn show_hidden_borders_for(action: &crate::view_bar::ViewBarAction) -> Option<bo
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DiagramRefresh {
     PreserveCamera,
+    RetainedStale {
+        failed_revision: waml_syntax::DocumentRevision,
+    },
     None,
 }
 
-fn refresh_for(change: SessionChange) -> DiagramRefresh {
-    if change.uml_changed {
-        DiagramRefresh::PreserveCamera
-    } else {
-        DiagramRefresh::None
+fn refresh_for(
+    change: &SessionChange,
+    key: &str,
+    freshness: ProjectionFreshness,
+) -> DiagramRefresh {
+    if !change.uml_changed
+        || !change
+            .affected_diagrams
+            .iter()
+            .any(|affected| &**affected == key)
+    {
+        return DiagramRefresh::None;
     }
+    match freshness {
+        ProjectionFreshness::Current => DiagramRefresh::PreserveCamera,
+        ProjectionFreshness::RetainedStale { failed_revision } => {
+            DiagramRefresh::RetainedStale { failed_revision }
+        }
+    }
+}
+
+fn group_contains(group: &waml::model::DiagramGroup, key: &str) -> bool {
+    group.members.iter().any(|member| member == key)
+        || group
+            .children
+            .iter()
+            .any(|child| group_contains(child, key))
+}
+
+fn document_freshness(
+    analysis: &waml::uml::Analysis,
+    document: waml::analysis::DocumentId,
+) -> ProjectionFreshness {
+    let failed_revision = analysis
+        .affected()
+        .islands
+        .iter()
+        .filter(|island| {
+            analysis
+                .island_syntax
+                .by_owner(document, **island)
+                .is_some()
+        })
+        .filter_map(|island| match analysis.projection_freshness(*island) {
+            ProjectionFreshness::Current => None,
+            ProjectionFreshness::RetainedStale { failed_revision } => Some(failed_revision),
+        })
+        .max();
+    failed_revision.map_or(ProjectionFreshness::Current, |failed_revision| {
+        ProjectionFreshness::RetainedStale { failed_revision }
+    })
+}
+
+fn diagram_freshness(
+    snapshot: &EditorSessionSnapshot,
+    change: &SessionChange,
+    key: &str,
+) -> ProjectionFreshness {
+    let diagram = snapshot.uml_analysis.diagram(key);
+    change
+        .affected_documents
+        .iter()
+        .filter_map(|document| {
+            let ProjectionFreshness::RetainedStale { failed_revision } =
+                document_freshness(&snapshot.uml_analysis, *document)
+            else {
+                return None;
+            };
+            let document = snapshot.okf_analysis.catalog.document(*document)?;
+            let document_key = waml::okf::id_of(document.path().as_str());
+            let depends_on_document = document_key == key
+                || diagram.is_some_and(|diagram| {
+                    diagram
+                        .groups
+                        .iter()
+                        .any(|group| group_contains(group, &document_key))
+                });
+            depends_on_document.then_some(failed_revision)
+        })
+        .max()
+        .map_or(ProjectionFreshness::Current, |failed_revision| {
+            ProjectionFreshness::RetainedStale { failed_revision }
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -114,6 +195,7 @@ pub struct ClassDiagramView {
     /// the shell in Task 3. Cleared when the diagram changes.
     expanded: HashSet<String>,
     mode: ClassDiagramMode,
+    projection_status: Option<String>,
 }
 
 impl ClassDiagramView {
@@ -122,6 +204,7 @@ impl ClassDiagramView {
             key,
             expanded: HashSet::new(),
             mode: ClassDiagramMode::default(),
+            projection_status: None,
         }
     }
 
@@ -233,6 +316,10 @@ impl ClassDiagramView {
     fn update_scene(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
         self.sync_properties(cx, body, model);
         if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
+            let selected_key = body
+                .canvas(cx)
+                .borrow::<crate::canvas::ClassDiagramSurface>()
+                .and_then(|canvas| canvas.selected_key().map(str::to_owned));
             let (scene, diagnostics) = build_scene(
                 model,
                 diagram,
@@ -250,6 +337,7 @@ impl ClassDiagramView {
                 canvas.update_scene(cx, scene);
             }
             self.sync_inspector_elements(cx, body, model, &diagram.key, &diagram.title, &node_keys);
+            self.sync_selection(cx, body, model, selected_key.as_deref());
         }
     }
 
@@ -318,6 +406,10 @@ impl ClassDiagramView {
 impl DocView for ClassDiagramView {
     fn identity(&self) -> DocViewIdentity {
         DocViewIdentity::ClassDiagram
+    }
+
+    fn reconcile_policy(&self) -> ViewReconcilePolicy {
+        ViewReconcilePolicy::RetainLiveState
     }
 
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
@@ -784,16 +876,39 @@ impl DocView for ClassDiagramView {
         ViewOutcome::default()
     }
 
-    fn after_session_change(
+    fn after_session_snapshot(
         &mut self,
         cx: &mut Cx,
         body: &BodyWidgets,
-        data: ViewData<'_>,
+        snapshot: &EditorSessionSnapshot,
         change: SessionChange,
     ) {
-        match refresh_for(change) {
+        let freshness = diagram_freshness(snapshot, &change, &self.key);
+        match refresh_for(&change, &self.key, freshness) {
             DiagramRefresh::PreserveCamera => {
-                self.update_scene(cx, body, &data.uml_analysis.projection);
+                self.projection_status = None;
+                body.set_solver_diagnostics(cx, None);
+                if let Some(mut canvas) = body
+                    .canvas(cx)
+                    .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+                {
+                    canvas.set_projection_stale(cx, false);
+                }
+                self.update_scene(cx, body, &snapshot.uml_analysis.projection);
+            }
+            DiagramRefresh::RetainedStale { failed_revision } => {
+                let status = format!(
+                    "Stale diagram: source revision {} did not produce a valid projection",
+                    failed_revision.get()
+                );
+                self.projection_status = Some(status);
+                body.set_solver_diagnostics(cx, self.projection_status.as_deref());
+                if let Some(mut canvas) = body
+                    .canvas(cx)
+                    .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+                {
+                    canvas.set_projection_stale(cx, true);
+                }
             }
             DiagramRefresh::None => {}
         }
@@ -825,10 +940,12 @@ impl DocView for ClassDiagramView {
 
     fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         self.show_mode(cx, body);
+        body.set_solver_diagnostics(cx, self.projection_status.as_deref());
     }
 
     fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         self.return_to_canvas(cx, body);
+        body.set_solver_diagnostics(cx, None);
     }
 
     fn on_escape(&mut self, cx: &mut Cx, body: &BodyWidgets) {
@@ -888,7 +1005,7 @@ mod tests {
     };
     use crate::canvas::ConstraintVisibility;
     use crate::diagram_properties::DiagramPropertiesAction;
-    use crate::doc_view::{BodyChrome, DocView, ViewOutcome};
+    use crate::doc_view::{BodyChrome, DocView, ViewOutcome, ViewReconcilePolicy};
     use crate::tool_dock::{Tool, ToolDockAction};
     use crate::view_bar::{ViewBarAction, ViewOption};
     use crate::view_history::ViewAnchor;
@@ -897,6 +1014,7 @@ mod tests {
         ScriptVmCx, Trigger, Walk, Widget, WidgetNode, WidgetRef, WidgetUid,
     };
     use std::path::Path;
+    use waml::analysis::ProjectionFreshness;
     use waml::model::CardinalityVisibility;
     use waml::ops::DiagramDisplaySet;
 
@@ -1281,28 +1399,94 @@ mod tests {
     }
 
     #[test]
-    fn model_change_selects_the_camera_preserving_refresh() {
+    fn only_current_affected_diagram_selects_the_camera_preserving_refresh() {
         assert_eq!(
-            refresh_for(crate::editor_session::SessionChange {
-                revision: 2,
-                source_changed: true,
-                okf_changed: true,
-                uml_changed: true,
-                navigation_changed: true,
-                conflicts_changed: true,
-            }),
+            refresh_for(
+                &crate::editor_session::SessionChange {
+                    revision: 2,
+                    source_changed: true,
+                    okf_changed: true,
+                    uml_changed: true,
+                    navigation_changed: true,
+                    conflicts_changed: true,
+                    affected_documents: std::sync::Arc::from([]),
+                    affected_diagrams: std::sync::Arc::from([std::sync::Arc::<str>::from(
+                        "orders"
+                    ),]),
+                },
+                "orders",
+                ProjectionFreshness::Current,
+            ),
             DiagramRefresh::PreserveCamera
         );
         assert_eq!(
-            refresh_for(crate::editor_session::SessionChange {
-                revision: 3,
-                source_changed: true,
-                okf_changed: false,
-                uml_changed: false,
-                navigation_changed: false,
-                conflicts_changed: false,
-            }),
+            refresh_for(
+                &crate::editor_session::SessionChange {
+                    revision: 3,
+                    source_changed: true,
+                    okf_changed: false,
+                    uml_changed: false,
+                    navigation_changed: false,
+                    conflicts_changed: false,
+                    affected_documents: std::sync::Arc::from([]),
+                    affected_diagrams: std::sync::Arc::from([std::sync::Arc::<str>::from(
+                        "orders"
+                    ),]),
+                },
+                "orders",
+                ProjectionFreshness::Current,
+            ),
             DiagramRefresh::None
+        );
+        assert_eq!(
+            refresh_for(
+                &crate::editor_session::SessionChange {
+                    revision: 4,
+                    source_changed: false,
+                    okf_changed: true,
+                    uml_changed: true,
+                    navigation_changed: true,
+                    conflicts_changed: true,
+                    affected_documents: std::sync::Arc::from([]),
+                    affected_diagrams: std::sync::Arc::from([std::sync::Arc::<str>::from(
+                        "orders"
+                    ),]),
+                },
+                "customers",
+                ProjectionFreshness::Current,
+            ),
+            DiagramRefresh::None
+        );
+        assert_eq!(
+            refresh_for(
+                &crate::editor_session::SessionChange {
+                    revision: 5,
+                    source_changed: false,
+                    okf_changed: true,
+                    uml_changed: true,
+                    navigation_changed: true,
+                    conflicts_changed: true,
+                    affected_documents: std::sync::Arc::from([]),
+                    affected_diagrams: std::sync::Arc::from([std::sync::Arc::<str>::from(
+                        "orders"
+                    ),]),
+                },
+                "orders",
+                ProjectionFreshness::RetainedStale {
+                    failed_revision: waml_syntax::DocumentRevision::INITIAL,
+                },
+            ),
+            DiagramRefresh::RetainedStale {
+                failed_revision: waml_syntax::DocumentRevision::INITIAL,
+            }
+        );
+    }
+
+    #[test]
+    fn class_diagram_retains_live_state_during_session_reconciliation() {
+        assert_eq!(
+            ClassDiagramView::new("orders".into()).reconcile_policy(),
+            ViewReconcilePolicy::RetainLiveState
         );
     }
 

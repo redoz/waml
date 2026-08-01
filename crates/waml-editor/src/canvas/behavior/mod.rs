@@ -16,6 +16,50 @@ use makepad_widgets::*;
 use render::{BehaviorDrawResources, BehaviorPalette};
 use scene::BehaviorScene;
 
+const STALE_BADGE_LABEL: &str = "STALE";
+const STALE_BADGE_WIDTH: f64 = 58.0;
+const STALE_BADGE_HEIGHT: f64 = 24.0;
+const STALE_BADGE_INSET: f64 = 12.0;
+
+fn stale_badge_rect(view_rect: Rect) -> Rect {
+    Rect {
+        pos: dvec2(
+            view_rect.pos.x + view_rect.size.x - STALE_BADGE_WIDTH - STALE_BADGE_INSET,
+            view_rect.pos.y + STALE_BADGE_INSET,
+        ),
+        size: dvec2(STALE_BADGE_WIDTH, STALE_BADGE_HEIGHT),
+    }
+}
+
+fn draw_stale_badge_overlay(
+    cx: &mut Cx2d,
+    view_rect: Rect,
+    badge: &mut DrawColor,
+    text: &mut DrawText,
+) {
+    let rect = stale_badge_rect(view_rect);
+    badge.draw_abs(cx, rect);
+    let size = text
+        .layout(
+            cx,
+            0.0,
+            0.0,
+            None,
+            false,
+            Align::default(),
+            STALE_BADGE_LABEL,
+        )
+        .size_in_lpxs;
+    text.draw_abs(
+        cx,
+        dvec2(
+            rect.pos.x + (rect.size.x - size.width as f64) * 0.5,
+            rect.pos.y + (rect.size.y - size.height as f64) * 0.5,
+        ),
+        STALE_BADGE_LABEL,
+    );
+}
+
 script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
@@ -197,6 +241,11 @@ script_mod! {
             color: atlas.text
             text_style: fonts.text_heading
         }
+        draw_stale_badge +: { color: atlas.bucket_amber }
+        draw_stale_text +: {
+            color: atlas.canvas_ground
+            text_style: fonts.text_heading
+        }
     }
 }
 
@@ -247,6 +296,12 @@ pub struct BehaviorSurface {
     #[redraw]
     #[live]
     draw_pentagon: DrawColor,
+    #[redraw]
+    #[live]
+    draw_stale_badge: DrawColor,
+    #[redraw]
+    #[live]
+    draw_stale_text: DrawText,
 
     /// Theme roles the renderers stroke with (`render::BehaviorPalette`).
     #[live]
@@ -275,6 +330,8 @@ pub struct BehaviorSurface {
     /// instead requests the View Source path.
     #[rust]
     selected: Option<BehaviorTarget>,
+    #[rust]
+    projection_stale: bool,
     #[live(true)]
     interaction_enabled: bool,
 }
@@ -449,11 +506,31 @@ impl Widget for BehaviorSurface {
             self.selected.as_ref(),
             &mut draws,
         );
+        if self.projection_stale {
+            draw_stale_badge_overlay(
+                cx,
+                rect,
+                &mut self.draw_stale_badge,
+                &mut self.draw_stale_text,
+            );
+        }
         DrawStep::done()
     }
 }
 
 impl BehaviorSurface {
+    pub(crate) fn set_projection_stale(&mut self, cx: &mut Cx, stale: bool) {
+        if self.projection_stale != stale {
+            self.projection_stale = stale;
+            self.draw_bg.redraw(cx);
+        }
+    }
+
+    #[cfg(test)]
+    fn projection_stale(&self) -> bool {
+        self.projection_stale
+    }
+
     /// Enable or disable every raw camera interaction. Disabling cancels any
     /// in-flight glide without changing the settled camera (mirrors
     /// `ClassDiagramSurface::set_interaction_enabled`).
@@ -489,8 +566,34 @@ impl BehaviorSurface {
                 None => InitialFit::ScenePending,
             });
         }
-        self.scene = scene;
+        self.install_scene(scene);
         self.draw_bg.redraw(cx);
+    }
+
+    /// Install an affected same-document solve without changing the settled
+    /// viewport. Keep the selected/hovered target only while its identity is
+    /// still present in the replacement scene.
+    pub(crate) fn update_scene(&mut self, cx: &mut Cx, scene: BehaviorScene) {
+        self.install_scene(scene);
+        self.draw_bg.redraw(cx);
+    }
+
+    fn install_scene(&mut self, scene: BehaviorScene) {
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|target| hit::target_bounds(&scene, target).is_none())
+        {
+            self.selected = None;
+        }
+        if self
+            .hovered
+            .as_ref()
+            .is_some_and(|target| hit::target_bounds(&scene, target).is_none())
+        {
+            self.hovered = None;
+        }
+        self.scene = scene;
     }
 
     /// Frame the whole scene (the view bar's Fit to Size). An `Empty` scene or a
@@ -519,6 +622,10 @@ impl BehaviorSurface {
     /// fit-to-selection button between enabled and dim.
     pub(crate) fn has_selection(&self) -> bool {
         self.selected.is_some()
+    }
+
+    pub(crate) fn selected_target(&self) -> Option<&BehaviorTarget> {
+        self.selected.as_ref()
     }
 
     /// Element count of the current scene, for the status bar (mirrors
@@ -671,5 +778,64 @@ mod tests {
             "an unchanged re-sync must not refit"
         );
         assert_eq!(surface.viewport.camera(), fitted);
+    }
+
+    #[test]
+    fn affected_scene_update_preserves_camera_and_surviving_selection() {
+        use makepad_widgets::ScriptNew;
+        let mut vm = crate::script_gate::boot_test_vm();
+        let mut surface = BehaviorSurface::script_new(&mut vm);
+        surface
+            .viewport
+            .restore_camera(crate::canvas::viewport::Camera {
+                pan_x: 17.0,
+                pan_y: 29.0,
+                zoom: 1.4,
+            });
+        surface.selected = Some(BehaviorTarget::FlowNode("n1".into()));
+        let camera = surface.viewport.camera();
+
+        surface.update_scene(vm.cx_mut(), flow_scene());
+
+        assert_eq!(surface.viewport.camera(), camera);
+        assert_eq!(
+            surface.selected,
+            Some(BehaviorTarget::FlowNode("n1".into()))
+        );
+
+        surface.update_scene(
+            vm.cx_mut(),
+            BehaviorScene::Empty {
+                message: String::new(),
+            },
+        );
+        assert_eq!(surface.viewport.camera(), camera);
+        assert_eq!(surface.selected, None);
+    }
+
+    #[test]
+    fn stale_projection_state_is_explicit_and_reversible() {
+        use makepad_widgets::ScriptNew;
+        let mut vm = crate::script_gate::boot_test_vm();
+        let mut surface = BehaviorSurface::script_new(&mut vm);
+
+        surface.set_projection_stale(vm.cx_mut(), true);
+        assert!(surface.projection_stale());
+        surface.set_projection_stale(vm.cx_mut(), false);
+        assert!(!surface.projection_stale());
+    }
+
+    #[test]
+    fn stale_badge_is_fixed_to_the_canvas_top_right() {
+        assert_eq!(
+            stale_badge_rect(Rect {
+                pos: dvec2(100.0, 50.0),
+                size: dvec2(800.0, 600.0),
+            }),
+            Rect {
+                pos: dvec2(830.0, 62.0),
+                size: dvec2(58.0, 24.0),
+            }
+        );
     }
 }

@@ -844,6 +844,11 @@ impl App {
         intent: crate::navigation::NavigationIntent,
     ) -> bool {
         let (target, disposition) = match intent {
+            crate::navigation::NavigationIntent::SourceRange {
+                document,
+                revision,
+                range,
+            } => return self.navigate_to_source_range(cx, document, revision, range),
             crate::navigation::NavigationIntent::Resolved {
                 target,
                 disposition,
@@ -867,6 +872,71 @@ impl App {
             }
         };
         self.navigate_with(cx, target, disposition, &mut PlatformBrowser)
+    }
+
+    fn navigate_to_source_range(
+        &mut self,
+        cx: &mut Cx,
+        document: waml::analysis::DocumentId,
+        revision: waml_syntax::DocumentRevision,
+        range: waml_syntax::TextRange,
+    ) -> bool {
+        let snapshot = self.session.snapshot();
+        let mapped = match snapshot.map_source_range_to_current(document, revision, range) {
+            Ok(mapped) => mapped,
+            Err(_) => {
+                self.set_navigation_message(cx, Some("Source location is no longer available"));
+                return false;
+            }
+        };
+        let Some(syntax) = snapshot.markdown_snapshot(document) else {
+            self.set_navigation_message(cx, Some("Source location is no longer available"));
+            return false;
+        };
+        let Some(version) = snapshot.okf_analysis.catalog.document(document) else {
+            self.set_navigation_message(cx, Some("Source location is no longer available"));
+            return false;
+        };
+        let markdown =
+            waml_markdown_editor::document::MarkdownDocumentSnapshot::new(syntax.clone());
+        let selection = waml_markdown_editor::selection::SelectionSet::single(
+            &markdown,
+            waml_markdown_editor::selection::Selection::new(
+                waml_markdown_editor::selection::TextPosition::new(
+                    mapped.start(),
+                    waml_markdown_editor::selection::Affinity::Before,
+                ),
+                waml_markdown_editor::selection::TextPosition::new(
+                    mapped.end(),
+                    waml_markdown_editor::selection::Affinity::After,
+                ),
+            ),
+        );
+        let Ok(selection) = selection else {
+            self.set_navigation_message(cx, Some("Source location is no longer available"));
+            return false;
+        };
+        let changed = self.transition_to_location(
+            cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::source(waml::okf::id_of(
+                    version.path().as_str(),
+                )),
+                anchor: ViewAnchor::Markdown {
+                    fragment: None,
+                    revision: syntax.revision(),
+                    selection,
+                    scroll: waml_markdown_editor::input::ScrollState::default(),
+                },
+            },
+            TransitionCause::UserNavigation,
+        );
+        if changed {
+            self.set_navigation_message(cx, None);
+        } else {
+            self.set_navigation_message(cx, Some("Source location is no longer available"));
+        }
+        changed
     }
 
     fn navigate_with<B: ExternalUrlAdapter>(
@@ -2853,7 +2923,7 @@ mod tests {
     use std::sync::Arc;
     use waml_markdown_editor::layout::LayoutSnapshot;
     use waml_markdown_editor::widget::MarkdownEditorWidgetRefExt;
-    use waml_syntax::TextSize;
+    use waml_syntax::{TextRange, TextSize};
 
     #[derive(Default)]
     struct FakeBrowser {
@@ -3057,7 +3127,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_property_widget_action_is_ignored_after_revision_bound_view_replacement() {
+    fn retained_property_widget_accepts_sequential_actions_after_session_refresh() {
         let (mut cx, mut app) = diagram_properties_app();
         let initial_revision = app.session.revision();
         let tool_dock_uid = app.ui.widget(&cx, ids!(tool_dock)).widget_uid();
@@ -3092,7 +3162,7 @@ mod tests {
             )],
         );
 
-        assert_eq!(app.session.revision(), initial_revision + 1);
+        assert_eq!(app.session.revision(), initial_revision + 2);
         assert_eq!(
             app.session
                 .uml_analysis()
@@ -3101,10 +3171,10 @@ mod tests {
                 .iter()
                 .find(|diagram| diagram.key == "orders")
                 .and_then(|diagram| diagram.description.as_deref()),
-            Some("First edit"),
+            Some("Second edit"),
         );
         let text = app.session.source().documents()[0].text();
-        assert!(text.contains("description: First edit"), "{text}");
+        assert!(text.contains("description: Second edit"), "{text}");
     }
 
     fn mount_markdown_surface(cx: &mut Cx, app: &mut App) {
@@ -3203,6 +3273,124 @@ mod tests {
         };
         assert_eq!(selection.revision(), revision);
         assert_eq!(selection.primary().cursor.offset, TextSize::new(1));
+    }
+
+    #[test]
+    fn source_range_navigation_activates_source_and_selects_the_current_range() {
+        let (mut cx, mut app) = mounted_source_app();
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary("notes/order"),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+        let snapshot = app.session.snapshot();
+        let source = snapshot
+            .source
+            .document_by_concept_id("notes/order")
+            .unwrap();
+        let document = snapshot
+            .okf_analysis
+            .catalog
+            .id_for_path(source.path())
+            .unwrap();
+        let syntax = snapshot.markdown_snapshot(document).unwrap();
+        let start = source.text().find("Body").unwrap();
+        let range = TextRange::new(
+            TextSize::try_from_usize(start).unwrap(),
+            TextSize::try_from_usize(start + 4).unwrap(),
+        )
+        .unwrap();
+
+        assert!(app.handle_navigation_intent(
+            &mut cx,
+            NavigationIntent::SourceRange {
+                document,
+                revision: syntax.revision(),
+                range,
+            },
+        ));
+
+        assert_eq!(
+            app.documents.active_tab().unwrap().kind,
+            crate::view_history::DocumentKind::Source
+        );
+        let location = app
+            .documents
+            .capture_active_location(&mut cx, &app.ui)
+            .unwrap();
+        let ViewAnchor::Markdown { selection, .. } = location.anchor else {
+            panic!("source navigation must install a Markdown selection");
+        };
+        assert_eq!(selection.primary().range(), range);
+    }
+
+    #[test]
+    fn changed_source_range_navigation_preserves_selection_and_publishes_status() {
+        let (mut cx, mut app) = mounted_source_app();
+        let before = app.session.snapshot();
+        let source = before.source.document_by_concept_id("notes/order").unwrap();
+        let document = before
+            .okf_analysis
+            .catalog
+            .id_for_path(source.path())
+            .unwrap();
+        let revision = before.markdown_snapshot(document).unwrap().revision();
+        let editor = app
+            .ui
+            .widget(&cx, ids!(markdown_surface.editor))
+            .as_markdown_editor();
+        editor.set_key_focus(&mut cx);
+        let actions = cx.capture_actions(|cx| {
+            <App as AppMain>::handle_event(
+                &mut app,
+                cx,
+                &Event::TextInput(TextInputEvent {
+                    input: "X".to_owned(),
+                    ..Default::default()
+                }),
+            );
+        });
+        app.handle_action_batch(&mut cx, &actions);
+        let selection_before = match app
+            .documents
+            .capture_active_location(&mut cx, &app.ui)
+            .unwrap()
+            .anchor
+        {
+            ViewAnchor::Markdown { selection, .. } => selection,
+            _ => panic!("the source tab must own a Markdown selection"),
+        };
+
+        assert!(!app.handle_navigation_intent(
+            &mut cx,
+            NavigationIntent::SourceRange {
+                document,
+                revision,
+                range: TextRange::new(TextSize::new(0), TextSize::new(1)).unwrap(),
+            },
+        ));
+
+        let selection_after = match app
+            .documents
+            .capture_active_location(&mut cx, &app.ui)
+            .unwrap()
+            .anchor
+        {
+            ViewAnchor::Markdown { selection, .. } => selection,
+            _ => panic!("the source tab must retain its Markdown selection"),
+        };
+        assert_eq!(selection_after, selection_before);
+        let statusbar = app.ui.widget(&cx, ids!(statusbar));
+        let statusbar = statusbar
+            .borrow::<crate::statusbar::Statusbar>()
+            .expect("test statusbar is mounted");
+        assert_eq!(
+            crate::statusbar::navigation_message(&statusbar),
+            Some("Source location is no longer available")
+        );
     }
 
     #[test]
@@ -3697,7 +3885,7 @@ mod tests {
     fn resolved_target(intent: &NavigationIntent) -> Option<&NavigationTarget> {
         match intent {
             NavigationIntent::Resolved { target, .. } => Some(target),
-            NavigationIntent::MarkdownLink { .. } => None,
+            NavigationIntent::MarkdownLink { .. } | NavigationIntent::SourceRange { .. } => None,
         }
     }
 

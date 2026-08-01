@@ -839,7 +839,7 @@ impl App {
             before_location,
         }) {
             Ok(change) => {
-                self.complete_session_change(cx, change);
+                self.complete_session_change(cx, change.clone());
                 Some(change)
             }
             Err(error) => {
@@ -870,7 +870,7 @@ impl App {
             Vec::new()
         };
         self.documents
-            .after_session_change(cx, &self.ui, &self.session, change, prepared);
+            .after_session_change(cx, &self.ui, &self.session, change.clone(), prepared);
         if change.uml_changed {
             self.sync_document_shell(cx);
         }
