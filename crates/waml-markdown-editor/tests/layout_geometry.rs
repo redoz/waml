@@ -9,11 +9,11 @@ use waml_markdown_editor::{
     layout::{
         Affinity, BlockFlow, BlockGeometry, BlockLayoutData, BlockLayoutSpec, CaretStop,
         ColumnAlignment, ColumnConstraint, EdgeInsets, FontKey, FontWeight, GeometryElementId,
-        GlyphCluster, LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine, LayoutError,
-        LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport, MeasuredBlock,
-        ParagraphIntrinsic, ParagraphIntrinsicRequest, ParagraphShapeRequest, ShapeSpan,
-        ShapedCluster, ShapedFragment, ShapedGlyph, ShapedParagraph, ShapedRow, ShapedRun,
-        TextMetrics, TextShaper, VisualLine,
+        GlyphCluster, LayoutBlock, LayoutBudget, LayoutDocument, LayoutElementId, LayoutEngine,
+        LayoutError, LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport,
+        LayoutWorkPhase, MeasuredBlock, ParagraphIntrinsic, ParagraphIntrinsicRequest,
+        ParagraphShapeRequest, ShapeSpan, ShapedCluster, ShapedFragment, ShapedGlyph,
+        ShapedParagraph, ShapedRow, ShapedRun, TextMetrics, TextShaper, VisualLine,
     },
     selection::{Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
@@ -2596,6 +2596,162 @@ fn removed_tables_prune_intrinsic_cache_entries() {
         )
         .unwrap();
     assert_eq!(engine.cached_table_intrinsic_count_for_test(), 0);
+}
+
+#[test]
+fn adversarial_height_changes_stop_at_structural_hydration_bound() {
+    let (document, presentation, _) = fixtures::one_hundred_blocks();
+    let mut shaper = AdversarialHeightShaper::default();
+    let mut engine = LayoutEngine::default();
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let stats = engine.last_shape_call_stats_for_test();
+    assert!(stats.full_shape <= 100, "{stats:?}");
+    assert!(stats.hydration_passes <= 101, "{stats:?}");
+}
+
+#[test]
+fn exhausted_shape_budget_returns_typed_error_before_backend_call() {
+    let (document, presentation, mut shaper) = fixtures::paragraph();
+    let error = LayoutEngine::default()
+        .layout_with_budget_for_test(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+            LayoutBudget::for_test(0, 0, 1),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            LayoutError::BudgetExceeded {
+                phase: LayoutWorkPhase::FullShape,
+                limit: 0,
+                observed: 0,
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(shaper.shaped.is_empty());
+}
+
+#[test]
+fn exhausted_hydration_budget_returns_typed_error() {
+    let (document, presentation, mut shaper) = fixtures::paragraph();
+    let error = LayoutEngine::default()
+        .layout_with_budget_for_test(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+            LayoutBudget::for_test(4, 4, 0),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            LayoutError::BudgetExceeded {
+                phase: LayoutWorkPhase::Hydration,
+                limit: 0,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn total_shape_calls_equal_unique_visible_paragraph_keys() {
+    let (document, presentation, mut shaper) = fixtures::one_hundred_blocks();
+    let mut engine = LayoutEngine::default();
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let stats = engine.last_shape_call_stats_for_test();
+    assert_eq!(stats.full_shape, shaper.paragraph_requests.len());
+    assert!(stats.full_shape < 100, "{stats:?}");
+    assert_eq!(stats.intrinsic, 0);
+}
+
+#[test]
+fn table_intrinsic_calls_are_counted_apart_from_full_shaping() {
+    let (document, presentation, mut shaper) = fixtures::nested_table();
+    let mut engine = LayoutEngine::default();
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(300.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let stats = engine.last_shape_call_stats_for_test();
+    assert_eq!(stats.intrinsic, 1);
+    assert!(stats.full_shape >= 1, "{stats:?}");
+}
+
+/// Reports a different height on every paragraph, so each hydration pass moves
+/// the measurement window.
+#[derive(Default)]
+struct AdversarialHeightShaper {
+    inner: FakeShaper,
+    calls: usize,
+}
+
+impl TextShaper for AdversarialHeightShaper {
+    fn shape_paragraph(
+        &mut self,
+        request: ParagraphShapeRequest<'_>,
+    ) -> Result<ShapedParagraph, LayoutError> {
+        self.calls += 1;
+        let scale = 1.0 + (self.calls % 5) as f64;
+        let mut paragraph = self.inner.shape_paragraph(request)?;
+        let clusters = paragraph
+            .clusters
+            .iter()
+            .cloned()
+            .map(|mut cluster| {
+                cluster.glyphs = cluster
+                    .glyphs
+                    .iter()
+                    .cloned()
+                    .map(|mut glyph| {
+                        glyph.ascender *= scale;
+                        glyph.descender *= scale;
+                        glyph
+                    })
+                    .collect::<Vec<_>>()
+                    .into();
+                cluster
+            })
+            .collect::<Vec<_>>();
+        paragraph.clusters = clusters.into();
+        Ok(paragraph)
+    }
+
+    fn measure_paragraph_intrinsic(
+        &mut self,
+        request: ParagraphIntrinsicRequest<'_>,
+    ) -> Result<ParagraphIntrinsic, LayoutError> {
+        self.inner.measure_paragraph_intrinsic(request)
+    }
 }
 
 mod fixtures {

@@ -448,8 +448,184 @@ impl IntrinsicSize {
     }
 }
 
+/// Hard structural limits on one layout's shaping work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LayoutBudget {
+    max_full_shape_calls: usize,
+    max_intrinsic_calls: usize,
+    max_hydration_passes: usize,
+    max_full_shape_source_bytes: usize,
+    max_intrinsic_source_bytes: usize,
+}
+
+impl LayoutBudget {
+    /// Structural limits derived from the validated index. Production layout
+    /// always uses these.
+    fn for_index(
+        document: &LayoutDocument,
+        layout_index: &DocumentLayoutIndex,
+        hierarchy: &BlockHierarchy,
+    ) -> Self {
+        let block_bytes = |index: usize| {
+            let range = document.blocks[index].source_range;
+            range
+                .end()
+                .to_usize()
+                .saturating_sub(range.start().to_usize())
+        };
+        // A block can be shaped once per distinct final width, and a width can
+        // only change when a table first measures its intrinsics.
+        let tables = document
+            .blocks
+            .iter()
+            .filter(|block| matches!(block.spec.flow, super::BlockFlow::Table))
+            .count();
+        let width_generations = tables + 1;
+        let shapeable = document.blocks.len();
+        let shapeable_bytes = (0..document.blocks.len()).map(block_bytes).sum::<usize>();
+
+        let mut in_table = vec![false; document.blocks.len()];
+        for (index, block) in document.blocks.iter().enumerate() {
+            if !matches!(block.spec.flow, super::BlockFlow::Table) {
+                continue;
+            }
+            let mut stack = vec![index];
+            while let Some(current) = stack.pop() {
+                in_table[current] = true;
+                stack.extend(hierarchy.children[current].iter().copied());
+            }
+        }
+        let intrinsic_indexes = (0..document.blocks.len())
+            .filter(|index| in_table[*index] && !layout_index.run_indices[*index].is_empty())
+            .collect::<Vec<_>>();
+        Self {
+            max_full_shape_calls: shapeable * width_generations,
+            max_intrinsic_calls: intrinsic_indexes.len(),
+            max_hydration_passes: shapeable * width_generations + 1,
+            max_full_shape_source_bytes: shapeable_bytes * width_generations,
+            max_intrinsic_source_bytes: intrinsic_indexes
+                .iter()
+                .copied()
+                .map(block_bytes)
+                .sum::<usize>(),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn for_test(
+        max_full_shape_calls: usize,
+        max_intrinsic_calls: usize,
+        max_hydration_passes: usize,
+    ) -> Self {
+        Self {
+            max_full_shape_calls,
+            max_intrinsic_calls,
+            max_hydration_passes,
+            max_full_shape_source_bytes: usize::MAX,
+            max_intrinsic_source_bytes: usize::MAX,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ShapeCallStats {
+    pub full_shape: usize,
+    pub intrinsic: usize,
+    pub hydration_passes: usize,
+}
+
+/// Monotonic record of the shaping work one layout is allowed to do. A key is
+/// block ID, paragraph content fingerprint, and final width; it can be fully
+/// shaped at most once.
+struct ShapeLedger {
+    budget: LayoutBudget,
+    stats: ShapeCallStats,
+    keys: std::collections::HashSet<(LayoutElementId, u64, u64)>,
+    full_shape_bytes: usize,
+    intrinsic_bytes: usize,
+}
+
+impl ShapeLedger {
+    fn new(budget: LayoutBudget) -> Self {
+        Self {
+            budget,
+            stats: ShapeCallStats::default(),
+            keys: std::collections::HashSet::new(),
+            full_shape_bytes: 0,
+            intrinsic_bytes: 0,
+        }
+    }
+
+    /// Records one full shape of `key`. Returns whether the key was new.
+    /// Checked before the backend call, so an exhausted budget never reaches
+    /// the shaper.
+    fn claim_full_shape(
+        &mut self,
+        key: (LayoutElementId, u64, u64),
+        source_bytes: usize,
+    ) -> Result<bool, LayoutError> {
+        if self.stats.full_shape >= self.budget.max_full_shape_calls {
+            return Err(LayoutError::BudgetExceeded {
+                phase: super::LayoutWorkPhase::FullShape,
+                limit: self.budget.max_full_shape_calls,
+                observed: self.stats.full_shape,
+            });
+        }
+        if self.full_shape_bytes + source_bytes > self.budget.max_full_shape_source_bytes {
+            return Err(LayoutError::BudgetExceeded {
+                phase: super::LayoutWorkPhase::FullShape,
+                limit: self.budget.max_full_shape_source_bytes,
+                observed: self.full_shape_bytes + source_bytes,
+            });
+        }
+        if !self.keys.insert(key) {
+            // The same key can be fully shaped at most once per layout.
+            return Err(LayoutError::NonConvergent {
+                passes: self.stats.hydration_passes,
+                pending: self.keys.len(),
+            });
+        }
+        self.stats.full_shape += 1;
+        self.full_shape_bytes += source_bytes;
+        Ok(true)
+    }
+
+    fn claim_intrinsic(&mut self, source_bytes: usize) -> Result<(), LayoutError> {
+        if self.stats.intrinsic >= self.budget.max_intrinsic_calls {
+            return Err(LayoutError::BudgetExceeded {
+                phase: super::LayoutWorkPhase::Intrinsic,
+                limit: self.budget.max_intrinsic_calls,
+                observed: self.stats.intrinsic,
+            });
+        }
+        if self.intrinsic_bytes + source_bytes > self.budget.max_intrinsic_source_bytes {
+            return Err(LayoutError::BudgetExceeded {
+                phase: super::LayoutWorkPhase::Intrinsic,
+                limit: self.budget.max_intrinsic_source_bytes,
+                observed: self.intrinsic_bytes + source_bytes,
+            });
+        }
+        self.stats.intrinsic += 1;
+        self.intrinsic_bytes += source_bytes;
+        Ok(())
+    }
+
+    fn claim_hydration_pass(&mut self) -> Result<(), LayoutError> {
+        if self.stats.hydration_passes >= self.budget.max_hydration_passes {
+            return Err(LayoutError::BudgetExceeded {
+                phase: super::LayoutWorkPhase::Hydration,
+                limit: self.budget.max_hydration_passes,
+                observed: self.stats.hydration_passes,
+            });
+        }
+        self.stats.hydration_passes += 1;
+        Ok(())
+    }
+}
+
 struct TableIntrinsicState<'a> {
     sizes: &'a mut [IntrinsicSize],
+    ledger: &'a mut ShapeLedger,
     memo: &'a mut [Option<IntrinsicSize>],
     cache: &'a mut HashMap<LayoutElementId, CachedTableIntrinsics>,
 }
@@ -459,6 +635,7 @@ pub struct LayoutEngine {
     blocks: HashMap<LayoutElementId, CachedBlock>,
     table_intrinsics: HashMap<LayoutElementId, CachedTableIntrinsics>,
     last_index_build_stats: IndexBuildStats,
+    last_shape_call_stats: ShapeCallStats,
     last_lane_offset_stats: LaneOffsetStats,
     last_subtree_fingerprints: HashMap<LayoutElementId, u64>,
 }
@@ -506,6 +683,11 @@ impl LayoutEngine {
         self.last_subtree_fingerprints.get(&id).copied()
     }
 
+    #[doc(hidden)]
+    pub fn last_shape_call_stats_for_test(&self) -> ShapeCallStats {
+        self.last_shape_call_stats
+    }
+
     pub fn layout<S: TextShaper>(
         &mut self,
         document: &LayoutDocument,
@@ -513,6 +695,38 @@ impl LayoutEngine {
         viewport: LayoutViewport,
         invalidation: LayoutInvalidation,
         shaper: &mut S,
+    ) -> Result<LayoutSnapshot, LayoutError> {
+        self.layout_with_budget(document, presentation, viewport, invalidation, shaper, None)
+    }
+
+    #[doc(hidden)]
+    pub fn layout_with_budget_for_test<S: TextShaper>(
+        &mut self,
+        document: &LayoutDocument,
+        presentation: &MarkdownDocumentSnapshot,
+        viewport: LayoutViewport,
+        invalidation: LayoutInvalidation,
+        shaper: &mut S,
+        budget: LayoutBudget,
+    ) -> Result<LayoutSnapshot, LayoutError> {
+        self.layout_with_budget(
+            document,
+            presentation,
+            viewport,
+            invalidation,
+            shaper,
+            Some(budget),
+        )
+    }
+
+    fn layout_with_budget<S: TextShaper>(
+        &mut self,
+        document: &LayoutDocument,
+        presentation: &MarkdownDocumentSnapshot,
+        viewport: LayoutViewport,
+        invalidation: LayoutInvalidation,
+        shaper: &mut S,
+        budget: Option<LayoutBudget>,
     ) -> Result<LayoutSnapshot, LayoutError> {
         if document.revision != presentation.revision() {
             return Err(LayoutError::RevisionMismatch {
@@ -539,6 +753,9 @@ impl LayoutEngine {
             .zip(layout_index.subtree_fingerprints.iter().copied())
             .map(|(block, fingerprint)| (block.id, fingerprint))
             .collect();
+        let mut ledger = ShapeLedger::new(
+            budget.unwrap_or_else(|| LayoutBudget::for_index(document, &layout_index, &hierarchy)),
+        );
         let mut intrinsics = vec![IntrinsicSize::default(); document.blocks.len()];
         let mut intrinsic_memo = vec![None; document.blocks.len()];
         let mut table_intrinsics_ready = vec![false; document.blocks.len()];
@@ -571,6 +788,14 @@ impl LayoutEngine {
                 let cached = cached.expect("a reusable block has cached data");
                 (cached.data.clone(), cached.measurement, cached.measured)
             } else if force_measure {
+                ledger.claim_full_shape(
+                    (block.id, content_fingerprint, width_key),
+                    block
+                        .source_range
+                        .end()
+                        .to_usize()
+                        .saturating_sub(block.source_range.start().to_usize()),
+                )?;
                 let data = measure_block(
                     index,
                     document,
@@ -599,6 +824,7 @@ impl LayoutEngine {
         let measurement_min = (viewport.scroll_y - measurement_overscan).max(0.0);
         let measurement_max = viewport.scroll_y + viewport.height + measurement_overscan;
         let (placements, content_y) = loop {
+            ledger.claim_hydration_pass()?;
             let (placements, content_y) =
                 position_block_tree(document, &hierarchy, &widths, &measurements);
             let measurement_indices =
@@ -622,6 +848,7 @@ impl LayoutEngine {
                         shaper,
                         TableIntrinsicState {
                             sizes: &mut intrinsics,
+                            ledger: &mut ledger,
                             memo: &mut intrinsic_memo,
                             cache: &mut self.table_intrinsics,
                         },
@@ -647,7 +874,24 @@ impl LayoutEngine {
             if pending.is_empty() {
                 break (placements, content_y);
             }
+            let pending_count = pending.len();
+            let mut fresh_keys = 0;
             for index in pending {
+                let block = &document.blocks[index];
+                if ledger.claim_full_shape(
+                    (
+                        block.id,
+                        layout_index.content_fingerprints[index],
+                        widths.content[index].to_bits(),
+                    ),
+                    block
+                        .source_range
+                        .end()
+                        .to_usize()
+                        .saturating_sub(block.source_range.start().to_usize()),
+                )? {
+                    fresh_keys += 1;
+                }
                 let data = measure_block(
                     index,
                     document,
@@ -659,6 +903,13 @@ impl LayoutEngine {
                 measurements[index] = BlockMeasurement::from_data(&data);
                 block_data[index] = Some(data);
                 measured[index] = true;
+            }
+            if fresh_keys == 0 {
+                // A pass that adds no ledger key cannot make progress.
+                return Err(LayoutError::NonConvergent {
+                    passes: ledger.stats.hydration_passes,
+                    pending: pending_count,
+                });
             }
         };
         let measurement_indices = visible_indices(&placements, measurement_min, measurement_max);
@@ -771,6 +1022,7 @@ impl LayoutEngine {
                 .is_some_and(|fingerprint| *fingerprint == cached.fingerprint)
         });
 
+        self.last_shape_call_stats = ledger.stats;
         self.last_lane_offset_stats = lane_offset_stats;
         let (rows, lanes) = assemble_rows(lane_drafts, &mut clusters);
         // Array order is not part of the visible range: it folds every lane.
@@ -1312,7 +1564,10 @@ fn measure_table_intrinsics<S: TextShaper>(
                 cell,
                 source,
                 shaper,
-                state.memo,
+                IntrinsicWork {
+                    memo: state.memo,
+                    ledger: state.ledger,
+                },
             )?;
             state.sizes[cell] = size;
             cells.push((document.blocks[cell].id, size));
@@ -1324,6 +1579,11 @@ fn measure_table_intrinsics<S: TextShaper>(
     Ok(())
 }
 
+struct IntrinsicWork<'a> {
+    memo: &'a mut [Option<IntrinsicSize>],
+    ledger: &'a mut ShapeLedger,
+}
+
 /// Fills `memo` for every block in the subtree rooted at `root` in postorder,
 /// measuring each paragraph at most once per layout, and returns the root size.
 fn measure_subtree_intrinsic<S: TextShaper>(
@@ -1333,8 +1593,9 @@ fn measure_subtree_intrinsic<S: TextShaper>(
     root: usize,
     source: &SourceText,
     shaper: &mut S,
-    memo: &mut [Option<IntrinsicSize>],
+    work: IntrinsicWork<'_>,
 ) -> Result<IntrinsicSize, LayoutError> {
+    let IntrinsicWork { memo, ledger } = work;
     let mut stack = vec![root];
     let mut discovered = Vec::new();
     while let Some(index) = stack.pop() {
@@ -1345,7 +1606,7 @@ fn measure_subtree_intrinsic<S: TextShaper>(
         if memo[index].is_some() {
             continue;
         }
-        let mut size = own_intrinsic(document, layout_index, index, source, shaper)?;
+        let mut size = own_intrinsic(document, layout_index, index, source, shaper, ledger)?;
         for &child in &hierarchy.children[index] {
             if let Some(child_size) = memo[child] {
                 size = size.combine(child_size);
@@ -1363,6 +1624,7 @@ fn own_intrinsic<S: TextShaper>(
     block_index: usize,
     source: &SourceText,
     shaper: &mut S,
+    ledger: &mut ShapeLedger,
 ) -> Result<IntrinsicSize, LayoutError> {
     let embedded = layout_index.embedded_indices[block_index]
         .iter()
@@ -1379,6 +1641,12 @@ fn own_intrinsic<S: TextShaper>(
     if !runs.is_empty() {
         let spans = shape_spans(&runs);
         let paragraph_range = span_range(&spans, document.blocks[block_index].source_range);
+        ledger.claim_intrinsic(
+            paragraph_range
+                .end()
+                .to_usize()
+                .saturating_sub(paragraph_range.start().to_usize()),
+        )?;
         let intrinsic = shaper.measure_paragraph_intrinsic(ParagraphIntrinsicRequest {
             source,
             paragraph_id: paragraph_geometry_id(document.blocks[block_index].id, 0),

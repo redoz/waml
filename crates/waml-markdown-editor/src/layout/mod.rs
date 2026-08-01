@@ -10,9 +10,10 @@ use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 pub use crate::selection::Affinity;
 pub use engine::{
     BaseDirection, BlockSummary, IndexBuildStats, IntrinsicCluster, IntrinsicRun, IntrinsicSize,
-    LaneOffsetStats, LayoutEngine, LayoutInvalidation, LayoutViewport, ParagraphIntrinsic,
-    ParagraphIntrinsicRequest, ParagraphShapeRequest, ShapeSpan, ShapedCluster, ShapedFragment,
-    ShapedGlyph, ShapedParagraph, ShapedRow, ShapedRun, TextShaper,
+    LaneOffsetStats, LayoutBudget, LayoutEngine, LayoutInvalidation, LayoutViewport,
+    ParagraphIntrinsic, ParagraphIntrinsicRequest, ParagraphShapeRequest, ShapeCallStats,
+    ShapeSpan, ShapedCluster, ShapedFragment, ShapedGlyph, ShapedParagraph, ShapedRow, ShapedRun,
+    TextShaper,
 };
 pub use geometry::{
     BlockGeometry, BlockLane, BlockLayoutData, CaretGeometry, CaretStop, GlyphCluster,
@@ -129,7 +130,23 @@ pub struct LayoutDocument {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayoutWorkPhase {
+    Intrinsic,
+    FullShape,
+    Hydration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LayoutError {
+    BudgetExceeded {
+        phase: LayoutWorkPhase,
+        limit: usize,
+        observed: usize,
+    },
+    NonConvergent {
+        passes: usize,
+        pending: usize,
+    },
     RevisionMismatch {
         document: DocumentRevision,
         layout: DocumentRevision,
