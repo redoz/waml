@@ -488,15 +488,29 @@ pub struct MarkdownEditor {
 }
 
 impl Widget for MarkdownEditor {
-    fn handle_event(&mut self, _cx: &mut Cx, _event: &Event, _scope: &mut Scope) {}
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        let Some(session) = scope.data.get_mut::<MarkdownDocumentSession>() else {
+            self.view.handle_event(cx, event, scope);
+            return;
+        };
+        match self.handle_event_with_session(cx, event, session) {
+            Ok(actions) => cx.extend_actions(actions),
+            Err(error) => log!("markdown editor event failed: {error:?}"),
+        }
+    }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        let _ = (&mut self.layout_engine, self.pointer_drag_active);
-        if let Some(layout) = &self.frame_layout {
-            self.last_draw = DrawRecorder::default();
-            draw_visible_layers_for_test(layout, &mut self.last_draw);
+        let Some(session) = scope.data.get_mut::<MarkdownDocumentSession>() else {
+            return self.view.draw_walk(cx, scope, walk);
+        };
+        let mut child_scope = Scope::empty();
+        match self.draw_walk_with_session(cx, session, &mut child_scope, walk) {
+            Ok(step) => step,
+            Err(error) => {
+                log!("markdown editor draw failed: {error:?}");
+                self.view.draw_walk(cx, &mut child_scope, walk)
+            }
         }
-        self.view.draw_walk(cx, scope, walk)
     }
 }
 

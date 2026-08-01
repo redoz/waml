@@ -15,6 +15,7 @@ use crate::popup::base::PopupItem;
 use crate::popup::base::PopupResult;
 use crate::popup::select::SelectItem;
 use crate::view_history::ViewAnchor;
+use waml_markdown_editor::widget::{MarkdownEditorRef, MarkdownEditorWidgetRefExt};
 
 /// Typed handles to the single shared body surface (canvas + inspector + tool
 /// dock + selection toolbar) the active `DocView` renders through. Cheap: holds
@@ -25,7 +26,7 @@ pub struct BodyWidgets {
     ui: WidgetRef,
     canvas: WidgetRef,
     behavior_canvas: WidgetRef,
-    markdown: WidgetRef,
+    markdown_editor: MarkdownEditorRef,
 }
 
 impl BodyWidgets {
@@ -34,7 +35,9 @@ impl BodyWidgets {
             ui: ui.clone(),
             canvas: ui.widget(_cx, ids!(canvas)),
             behavior_canvas: ui.widget(_cx, ids!(behavior_canvas)),
-            markdown: crate::markdown_surface::surface(ui, _cx).widget(_cx, ids!(md)),
+            markdown_editor: ui
+                .widget(_cx, ids!(markdown_surface.editor))
+                .as_markdown_editor(),
         }
     }
 
@@ -61,7 +64,9 @@ impl BodyWidgets {
     /// `set_canvas_interaction_enabled` (which drives both at once for the
     /// diagram-vs-properties/source seam).
     pub fn set_behavior_canvas_visible(&self, cx: &mut Cx, visible: bool) {
-        crate::markdown_surface::hide(&self.ui, cx);
+        self.ui
+            .widget(cx, ids!(markdown_surface))
+            .set_visible(cx, false);
         self.ui
             .widget(cx, ids!(canvas_wrap))
             .set_visible(cx, !visible);
@@ -160,38 +165,23 @@ impl BodyWidgets {
     }
 
     pub fn show_canvas(&self, cx: &mut Cx) {
-        crate::markdown_surface::hide(&self.ui, cx);
+        self.ui
+            .widget(cx, ids!(markdown_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
         self.set_canvas_interaction_enabled(cx, true);
     }
 
-    pub fn show_markdown(&self, cx: &mut Cx) {
-        crate::markdown_surface::show(&self.ui, cx);
+    pub fn show_markdown_editor(&self, cx: &mut Cx) {
+        self.ui
+            .widget(cx, ids!(markdown_surface))
+            .set_visible(cx, true);
+        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
     }
 
-    pub fn set_markdown(&self, cx: &mut Cx, markdown: &str) {
-        crate::markdown_surface::set_markdown(&self.ui, cx, markdown);
-    }
-
-    pub fn markdown_link(&self, actions: &Actions) -> Option<String> {
-        crate::markdown_surface::link_navigated(actions)
-    }
-
-    pub fn scroll_markdown_to_fragment(&self, cx: &mut Cx, fragment: &str) -> bool {
-        let _ = cx;
-        self.markdown.text().lines().any(|line| {
-            let heading = line.trim_start().trim_start_matches('#').trim();
-            heading.eq_ignore_ascii_case(fragment)
-        })
-    }
-
-    pub fn markdown_scroll_y(&self) -> f64 {
-        0.0
-    }
-
-    pub fn set_markdown_scroll_y(&self, cx: &mut Cx, scroll_y: f64) {
-        let _ = (cx, scroll_y, &self.markdown);
+    pub fn markdown_editor(&self) -> MarkdownEditorRef {
+        self.markdown_editor.clone()
     }
 
     pub fn apply_chrome(&self, cx: &mut Cx, chrome: BodyChrome) {
@@ -232,6 +222,7 @@ impl BodyWidgets {
 #[derive(Default)]
 pub struct ViewOutcome {
     pub edit: Option<EditIntent>,
+    pub source_edit: Option<crate::editor_session::ProposedSourceEdit>,
     /// Ask the shell to open an element preview by key (spec §5). Unused this
     /// A cross-tree popup the shell must place via `popup_root`.
     pub popup: Option<PopupRequest>,
@@ -360,6 +351,7 @@ impl ViewData<'_> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocViewIdentity {
     ClassDiagram,
@@ -370,10 +362,34 @@ pub enum DocViewIdentity {
     Source,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ViewReconcilePolicy {
+    Replace,
+    RetainLiveState,
+}
+
+#[allow(dead_code)]
 pub trait DocView {
     fn identity(&self) -> DocViewIdentity;
 
+    fn reconcile_policy(&self) -> ViewReconcilePolicy {
+        ViewReconcilePolicy::Replace
+    }
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>);
+
+    fn sync_from_session(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &crate::editor_session::EditorSessionSnapshot,
+    ) {
+        self.sync(cx, body, snapshot.borrowed().into());
+    }
+
+    fn route_ui_event(&mut self, cx: &mut Cx, ui: &WidgetRef, event: &Event) {
+        ui.handle_event(cx, event, &mut Scope::empty());
+    }
 
     fn handle(
         &mut self,
@@ -415,6 +431,16 @@ pub trait DocView {
         _change: SessionChange,
     ) {
         self.sync(cx, body, data);
+    }
+
+    fn after_session_snapshot(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &crate::editor_session::EditorSessionSnapshot,
+        change: SessionChange,
+    ) {
+        self.after_session_change(cx, body, snapshot.borrowed().into(), change);
     }
 
     fn chrome(&self) -> BodyChrome;
@@ -489,6 +515,7 @@ mod tests {
     fn view_outcome_default_is_all_empty() {
         let o = ViewOutcome::default();
         assert!(o.edit.is_none());
+        assert!(o.source_edit.is_none());
         assert!(o.popup.is_none());
         assert!(!o.promote_active);
         assert!(!o.close_active);

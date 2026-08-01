@@ -1,5 +1,5 @@
 use crate::doc_tabs::{DocTab, DocTabs, OpenTabs};
-use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewOutcome};
+use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewOutcome, ViewReconcilePolicy};
 use crate::document::{NavCategory, OpenDocument};
 use crate::editor_session::{EditorSession, SessionChange};
 use crate::popup::base::PopupResult;
@@ -132,18 +132,20 @@ impl DocumentHost {
             return false;
         }
         let body = BodyWidgets::new(cx, ui);
-        if !body.scroll_markdown_to_fragment(cx, fragment) {
-            return false;
-        }
-        let anchor = ViewAnchor::Markdown {
-            fragment: Some(fragment.to_owned()),
-            scroll_y: body.markdown_scroll_y(),
-        };
         if let Some(view) = self.views.get_mut(&self.tabs.active) {
+            let mut anchor = view.capture_anchor(&body);
+            let ViewAnchor::Markdown {
+                fragment: anchor_fragment,
+                ..
+            } = &mut anchor
+            else {
+                return false;
+            };
+            *anchor_fragment = Some(fragment.to_owned());
             let snapshot = session.snapshot();
-            let _ = view.restore_anchor(cx, &body, snapshot.borrowed().into(), &anchor);
+            return view.restore_anchor(cx, &body, snapshot.borrowed().into(), &anchor);
         }
-        true
+        false
     }
 
     pub fn capture_active_location(&self, cx: &mut Cx, ui: &WidgetRef) -> Option<ViewLocation> {
@@ -215,7 +217,7 @@ impl DocumentHost {
         let active = self.tabs.active;
         if let Some(view) = self.views.get_mut(&active) {
             let snapshot = session.snapshot();
-            view.sync(cx, &body, snapshot.borrowed().into());
+            view.sync_from_session(cx, &body, &snapshot);
         } else {
             // No active view at all: neither canvas may take input.
             body.set_canvas_interaction_enabled(cx, false);
@@ -292,7 +294,7 @@ impl DocumentHost {
             ActiveReconciliation::Retained => {
                 if let Some(view) = self.views.get_mut(&self.tabs.active) {
                     let snapshot = session.snapshot();
-                    view.after_session_change(cx, &body, snapshot.borrowed().into(), change);
+                    view.after_session_snapshot(cx, &body, &snapshot, change);
                 }
             }
             ActiveReconciliation::Replaced { mut old_view } => {
@@ -302,7 +304,7 @@ impl DocumentHost {
                 if let Some(view) = self.views.get_mut(&self.tabs.active) {
                     view.on_activate(cx, &body);
                     let snapshot = session.snapshot();
-                    view.sync(cx, &body, snapshot.borrowed().into());
+                    view.sync_from_session(cx, &body, &snapshot);
                 }
             }
         }
@@ -325,7 +327,7 @@ impl DocumentHost {
             };
             let compatible = prepared.tab_id == current_id
                 && self.views.get(&current_id).is_some_and(|current_view| {
-                    current_view.identity() == prepared.view.identity()
+                    current_view.reconcile_policy() == ViewReconcilePolicy::RetainLiveState
                 });
             if compatible {
                 self.tabs.tabs[index].title = prepared.title;
@@ -362,6 +364,14 @@ impl DocumentHost {
         self.views
             .get_mut(&self.tabs.active)
             .map(|view| view.handle(cx, &body, actions, snapshot.borrowed().into()))
+    }
+
+    pub fn route_ui_event(&mut self, cx: &mut Cx, ui: &WidgetRef, event: &Event) {
+        if let Some(view) = self.views.get_mut(&self.tabs.active) {
+            view.route_ui_event(cx, ui, event);
+        } else {
+            ui.handle_event(cx, event, &mut Scope::empty());
+        }
     }
 
     pub fn on_active_escape(&mut self, cx: &mut Cx, ui: &WidgetRef) {
@@ -405,7 +415,7 @@ impl DocumentHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::doc_view::{DocViewIdentity, DocumentHeaderChrome, ViewData};
+    use crate::doc_view::{DocViewIdentity, DocumentHeaderChrome, ViewData, ViewReconcilePolicy};
     use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
     use crate::icons::Icon;
     use std::cell::{Cell, RefCell};
@@ -431,6 +441,7 @@ mod tests {
 
     struct ProbeView {
         identity: DocViewIdentity,
+        reconcile_policy: ViewReconcilePolicy,
         chrome_calls: Rc<Cell<usize>>,
         lifecycle: Rc<RefCell<ProbeLifecycle>>,
     }
@@ -438,6 +449,10 @@ mod tests {
     impl DocView for ProbeView {
         fn identity(&self) -> DocViewIdentity {
             self.identity
+        }
+
+        fn reconcile_policy(&self) -> ViewReconcilePolicy {
+            self.reconcile_policy
         }
 
         fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {
@@ -524,6 +539,7 @@ mod tests {
             },
             view: Box::new(ProbeView {
                 identity,
+                reconcile_policy: ViewReconcilePolicy::Replace,
                 chrome_calls: calls,
                 lifecycle,
             }),
@@ -712,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn compatible_prepared_document_keeps_the_live_view() {
+    fn revision_bound_view_replaces_even_when_identity_is_compatible() {
         let old_calls = Rc::new(Cell::new(0));
         let new_calls = Rc::new(Cell::new(0));
         let old_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
@@ -755,13 +771,54 @@ mod tests {
 
         assert_eq!(host.active_tab().unwrap().title, "Purchase Order");
         assert_eq!(host.active_tab().unwrap().presentation.icon, Icon::Package);
-        assert_eq!(old_lifecycle.borrow().after_session_change, 1);
+        assert_eq!(old_lifecycle.borrow().after_session_change, 0);
         assert_eq!(old_lifecycle.borrow().sync, 0);
         assert_eq!(new_lifecycle.borrow().after_session_change, 0);
-        assert_eq!(new_lifecycle.borrow().sync, 0);
+        assert_eq!(old_lifecycle.borrow().on_deactivate, 1);
+        assert_eq!(new_lifecycle.borrow().on_activate, 1);
+        assert_eq!(new_lifecycle.borrow().sync, 1);
         assert_eq!(new_calls.get(), 0);
         assert_eq!(old_calls.get(), 0);
         assert!(!host.active_tab().unwrap().preview);
+    }
+
+    #[test]
+    fn retaining_view_keeps_its_allocation_when_a_compatible_document_is_reprepared() {
+        let old_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let replacement_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let mut current = prepared_with_identity(
+            "order",
+            NavCategory::OkfDocument,
+            DocViewIdentity::Source,
+            Rc::new(Cell::new(0)),
+            old_lifecycle.clone(),
+        );
+        current.view = Box::new(ProbeView {
+            identity: DocViewIdentity::Source,
+            reconcile_policy: ViewReconcilePolicy::RetainLiveState,
+            chrome_calls: Rc::new(Cell::new(0)),
+            lifecycle: old_lifecycle.clone(),
+        });
+        let current_id = current.tab_id;
+        let mut host = DocumentHost::default();
+        host.apply_command(DocumentCommand::Open {
+            document: current,
+            persistent: true,
+        });
+
+        let replacement = prepared_with_identity(
+            "order",
+            NavCategory::OkfDocument,
+            DocViewIdentity::Source,
+            Rc::new(Cell::new(0)),
+            replacement_lifecycle.clone(),
+        );
+        host.reconcile_documents(vec![Some(replacement)]);
+
+        assert_eq!(host.active_id(), current_id);
+        assert!(host.views.contains_key(&current_id));
+        assert_eq!(old_lifecycle.borrow().on_deactivate, 0);
+        assert_eq!(replacement_lifecycle.borrow().on_activate, 0);
     }
 
     #[test]

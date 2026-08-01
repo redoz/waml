@@ -1,36 +1,244 @@
-//! `SourceView` -- the View Source tab body. Renders the subject classifier's
-//! raw markdown into the shared `markdown_surface` slot (a scrolling `Markdown`
-//! surface fed the verbatim bundle file text; the feed itself is pushed from
-//! the shell in `App::sync_active_tab`) and hides the diagram chrome: the
-//! canvas is occluded by the opaque slot, while its `BodyChrome` declaration
-//! hides the diagram tool dock and the inspector's element picker explicitly.
+use std::sync::Arc;
+
+use makepad_widgets::*;
+use waml::analysis::DocumentId;
+use waml_markdown_editor::{
+    document::MarkdownDocumentSnapshot,
+    motion::LayoutChangeCause,
+    presentation::{
+        build_layout_document, compile_presentation, EmbeddedAssets, EmbeddedMeasurements,
+        HighlighterRegistry, InstalledPresentation, PresentationPlan, PresentationStyles,
+    },
+    session::{HostSnapshotCause, MarkdownDocumentSession},
+    syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText},
+    widget::MarkdownEditorRef,
+};
 
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
+    ViewReconcilePolicy,
 };
+use crate::editor_session::{EditorSessionSnapshot, ProposedSourceEdit, SessionChange};
 use crate::icons::Icon;
 use crate::inspector::Subject;
 use crate::navigation::NavigationIntent;
 use crate::view_history::ViewAnchor;
-use makepad_widgets::*;
+
+enum SourceViewState {
+    Uninitialized,
+    Ready(Box<ReadySourceView>),
+    Missing(Box<MissingSourceView>),
+}
+
+struct MissingSourceView {
+    message: Arc<str>,
+    session: MarkdownDocumentSession,
+}
+
+struct ReadySourceView {
+    document: DocumentId,
+    session: MarkdownDocumentSession,
+    plan: Arc<PresentationPlan>,
+    styles: Arc<PresentationStyles>,
+    assets: EmbeddedAssets,
+    pending_changes: Option<Arc<[waml_syntax::TextChange]>>,
+}
+
+type CompiledPresentation = (
+    Arc<PresentationPlan>,
+    Arc<PresentationStyles>,
+    EmbeddedAssets,
+    Arc<InstalledPresentation>,
+);
 
 pub struct SourceView {
     key: String,
+    read_only: bool,
     fragment: Option<String>,
+    state: SourceViewState,
 }
 
 impl SourceView {
     pub fn new(key: String) -> SourceView {
         SourceView {
             key,
+            read_only: false,
             fragment: None,
+            state: SourceViewState::Uninitialized,
         }
     }
 
-    fn markdown<'a>(&self, data: ViewData<'a>) -> std::borrow::Cow<'a, str> {
-        crate::load::source_for(data.source, &self.key)
-            .map(std::borrow::Cow::Borrowed)
-            .unwrap_or_else(|| std::borrow::Cow::Owned(format!("*No source for `{}`*", self.key)))
+    pub(crate) fn new_read_only(key: String) -> SourceView {
+        SourceView {
+            key,
+            read_only: true,
+            fragment: None,
+            state: SourceViewState::Uninitialized,
+        }
+    }
+
+    pub(crate) fn resolve_document(
+        snapshot: &EditorSessionSnapshot,
+        key: &str,
+    ) -> Option<(DocumentId, Arc<waml_syntax::MarkdownSyntaxSnapshot>)> {
+        let _ = crate::load::source_for(&snapshot.source, key)?;
+        let source = snapshot.source.document_by_concept_id(key)?;
+        let document = snapshot.okf_analysis.catalog.id_for_path(source.path())?;
+        Some((document, snapshot.markdown_snapshot(document)?.clone()))
+    }
+
+    fn compile(
+        syntax: &waml_syntax::MarkdownSyntaxSnapshot,
+    ) -> Result<CompiledPresentation, String> {
+        let styles = Arc::new(PresentationStyles::balanced());
+        let plan = compile_presentation(syntax, &styles, &HighlighterRegistry::default())
+            .map_err(|error| format!("presentation compile failed: {error:?}"))?;
+        let assets = EmbeddedAssets::default();
+        let layout = Arc::new(
+            build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
+                .map_err(|error| format!("presentation layout failed: {error:?}"))?,
+        );
+        let installed = InstalledPresentation::new(
+            plan.clone(),
+            styles.clone(),
+            layout,
+            Arc::from([]),
+            assets.frame(&plan),
+        )
+        .map_err(|error| format!("presentation install failed: {error:?}"))?;
+        Ok((plan, styles, assets, installed))
+    }
+
+    fn set_missing(&mut self, cx: &mut Cx, editor: &MarkdownEditorRef) {
+        let message: Arc<str> = format!("No source for '{}'", self.key).into();
+        let text = SourceText::new(format!("# Source unavailable\n\n{message}\n"))
+            .expect("the static missing-source message is valid UTF-8 source text");
+        let syntax = parse_markdown(
+            DocumentRevision::INITIAL,
+            text,
+            MarkdownDialect::WAML_DEFAULT,
+        )
+        .expect("the static missing-source message is valid markdown");
+        let snapshot = Arc::new(MarkdownDocumentSnapshot::new(syntax.clone()));
+        let mut session = MarkdownDocumentSession::new(snapshot);
+        session.set_read_only(true);
+        match Self::compile(&syntax) {
+            Ok((_, _, _, installed)) => {
+                editor.install_presentation(cx, installed, LayoutChangeCause::ExternalReplacement)
+            }
+            Err(error) => {
+                log!("missing-source presentation failed: {error}");
+                editor.clear_presentation(cx);
+            }
+        }
+        editor.set_read_only(cx, true);
+        self.state = SourceViewState::Missing(Box::new(MissingSourceView { message, session }));
+    }
+
+    pub(crate) fn install_snapshot(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        workspace: &EditorSessionSnapshot,
+        host_cause: HostSnapshotCause,
+    ) {
+        body.show_markdown_editor(cx);
+        let editor = body.markdown_editor();
+        let Some((document, syntax)) = Self::resolve_document(workspace, &self.key) else {
+            self.set_missing(cx, &editor);
+            return;
+        };
+        let incoming = Arc::new(MarkdownDocumentSnapshot::new(syntax.clone()));
+
+        let mut layout_cause = match host_cause {
+            HostSnapshotCause::InitialLoad => LayoutChangeCause::InitialLoad,
+            HostSnapshotCause::ExternalReplacement => LayoutChangeCause::ExternalReplacement,
+            HostSnapshotCause::AcknowledgedLocalEdit | HostSnapshotCause::ApplicationHistory => {
+                LayoutChangeCause::ExternalReplacement
+            }
+        };
+        if let SourceViewState::Ready(ready) = &mut self.state {
+            if ready.document == document {
+                let changes = ready.pending_changes.take();
+                let cause = if ready.session.local_revision() == incoming.revision() {
+                    HostSnapshotCause::AcknowledgedLocalEdit
+                } else {
+                    host_cause
+                };
+                if let Err(error) =
+                    ready
+                        .session
+                        .synchronize_from_host(incoming.clone(), changes.as_deref(), cause)
+                {
+                    log!("source host synchronization failed: {error:?}");
+                    return;
+                }
+                if let Some(changes) = changes {
+                    layout_cause = LayoutChangeCause::LocalEdit { changes };
+                }
+            }
+        }
+
+        let needs_session = !matches!(
+            self.state,
+            SourceViewState::Ready(ref ready) if ready.document == document
+        );
+        if needs_session {
+            self.state = SourceViewState::Ready(Box::new(ReadySourceView {
+                document,
+                session: {
+                    let mut session = MarkdownDocumentSession::new(incoming);
+                    session.set_read_only(self.read_only);
+                    session
+                },
+                plan: Arc::new(PresentationPlan {
+                    revision: syntax.revision(),
+                    source_len: syntax.text().len(),
+                    items: Arc::from([]),
+                    links: Arc::from([]),
+                    blocks: Arc::from([]),
+                    diagnostics: Arc::from([]),
+                }),
+                styles: Arc::new(PresentationStyles::balanced()),
+                assets: EmbeddedAssets::default(),
+                pending_changes: None,
+            }));
+            layout_cause = LayoutChangeCause::InitialLoad;
+        }
+
+        let should_compile = matches!(
+            &self.state,
+            SourceViewState::Ready(ready) if ready.plan.revision != syntax.revision()
+                || ready.plan.items.is_empty()
+        );
+        if should_compile {
+            let Ok((plan, styles, assets, installed)) = Self::compile(&syntax) else {
+                self.set_missing(cx, &editor);
+                return;
+            };
+            if let SourceViewState::Ready(ready) = &mut self.state {
+                ready.session.set_read_only(self.read_only);
+                ready.plan = plan;
+                ready.styles = styles;
+                ready.assets = assets;
+            }
+            editor.set_read_only(cx, self.read_only);
+            editor.install_presentation(cx, installed, layout_cause);
+        }
+    }
+
+    pub(crate) fn route_editor_event(&mut self, cx: &mut Cx, ui: &WidgetRef, event: &Event) {
+        match &mut self.state {
+            SourceViewState::Ready(ready) => {
+                ui.handle_event(cx, event, &mut Scope::with_data(&mut ready.session));
+            }
+            SourceViewState::Missing(missing) => {
+                ui.handle_event(cx, event, &mut Scope::with_data(&mut missing.session));
+            }
+            SourceViewState::Uninitialized => {
+                ui.handle_event(cx, event, &mut Scope::empty());
+            }
+        }
     }
 }
 
@@ -39,10 +247,12 @@ impl DocView for SourceView {
         DocViewIdentity::Source
     }
 
+    fn reconcile_policy(&self) -> ViewReconcilePolicy {
+        ViewReconcilePolicy::RetainLiveState
+    }
+
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
-        body.show_markdown(cx);
-        let markdown = self.markdown(data);
-        body.set_markdown(cx, markdown.as_ref());
+        body.show_markdown_editor(cx);
         if let Some(mut inspector) = body
             .inspector(cx)
             .borrow_mut::<crate::inspector_panel::Inspector>()
@@ -52,33 +262,67 @@ impl DocView for SourceView {
                 data.uml_analysis,
                 Subject::Classifier(self.key.clone()),
             );
-            // A source view is not a diagram: no element picker.
             inspector.set_picker_visible(cx, false);
         }
+    }
+
+    fn sync_from_session(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &EditorSessionSnapshot,
+    ) {
+        self.sync(cx, body, snapshot.borrowed().into());
+        self.install_snapshot(cx, body, snapshot, HostSnapshotCause::InitialLoad);
+    }
+
+    fn after_session_snapshot(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &EditorSessionSnapshot,
+        change: SessionChange,
+    ) {
+        let cause = if change.source_changed {
+            HostSnapshotCause::ApplicationHistory
+        } else {
+            HostSnapshotCause::AcknowledgedLocalEdit
+        };
+        self.install_snapshot(cx, body, snapshot, cause);
+    }
+
+    fn route_ui_event(&mut self, cx: &mut Cx, ui: &WidgetRef, event: &Event) {
+        self.route_editor_event(cx, ui, event);
     }
 
     fn handle(
         &mut self,
         _cx: &mut Cx,
-        body: &BodyWidgets,
+        _body: &BodyWidgets,
         actions: &Actions,
         _data: ViewData<'_>,
     ) -> ViewOutcome {
-        let Some(href) = body.markdown_link(actions) else {
-            return ViewOutcome::default();
-        };
-        ViewOutcome {
-            navigation: Some(NavigationIntent::MarkdownLink {
-                current_concept_id: self.key.clone(),
-                href,
-            }),
-            ..ViewOutcome::default()
+        let mut outcome = ViewOutcome::default();
+        if let SourceViewState::Ready(ready) = &mut self.state {
+            if let Some(local) = MarkdownEditorRef::proposed_edit(actions) {
+                ready.pending_changes = Some(Arc::from(local.edit.changes.clone()));
+                outcome.source_edit = Some(ProposedSourceEdit::from_local(ready.document, local));
+            }
+            if let Some(position) = MarkdownEditorRef::navigation_requested(actions) {
+                if let Some(link) = ready.plan.links.iter().find(|link| {
+                    link.source_range.start() <= position.offset
+                        && position.offset <= link.source_range.end()
+                }) {
+                    outcome.navigation = Some(NavigationIntent::MarkdownLink {
+                        current_concept_id: self.key.clone(),
+                        href: link.destination.to_string(),
+                    });
+                }
+            }
         }
+        outcome
     }
 
-    /// Neutral slate, deliberately not the subject's node-kind swatch: a source
-    /// tab shows raw text rather than a rendered model view, and the flat grey
-    /// says so next to the coloured preview tabs.
     fn chrome(&self) -> BodyChrome {
         BodyChrome {
             tool_dock: false,
@@ -97,28 +341,69 @@ impl DocView for SourceView {
         ))
     }
 
-    fn capture_anchor(&self, body: &BodyWidgets) -> ViewAnchor {
+    fn capture_anchor(&self, _body: &BodyWidgets) -> ViewAnchor {
+        let session = match &self.state {
+            SourceViewState::Ready(ready) => &ready.session,
+            SourceViewState::Missing(missing) => {
+                let _ = missing.message.len();
+                &missing.session
+            }
+            SourceViewState::Uninitialized => return ViewAnchor::None,
+        };
         ViewAnchor::Markdown {
             fragment: self.fragment.clone(),
-            scroll_y: body.markdown_scroll_y(),
+            revision: session.local_revision(),
+            selection: session.selections().clone(),
+            scroll: *session.scroll_state(),
         }
     }
 
     fn restore_anchor(
         &mut self,
-        cx: &mut Cx,
-        body: &BodyWidgets,
+        _cx: &mut Cx,
+        _body: &BodyWidgets,
         _data: ViewData<'_>,
         anchor: &ViewAnchor,
     ) -> bool {
-        let ViewAnchor::Markdown { fragment, scroll_y } = anchor else {
+        let ViewAnchor::Markdown {
+            fragment,
+            revision,
+            selection,
+            scroll,
+        } = anchor
+        else {
             return false;
         };
-        self.fragment = fragment
-            .as_deref()
-            .filter(|fragment| body.scroll_markdown_to_fragment(cx, fragment))
-            .map(str::to_owned);
-        body.set_markdown_scroll_y(cx, *scroll_y);
+        if selection.revision() != *revision {
+            return false;
+        }
+        if let Some(fragment) = fragment {
+            let SourceViewState::Ready(ready) = &self.state else {
+                return false;
+            };
+            let syntax = ready.session.snapshot().syntax();
+            let found = syntax.queries().headings().any(|heading| {
+                syntax
+                    .text()
+                    .slice(heading.content_range)
+                    .is_ok_and(|text| text.trim().eq_ignore_ascii_case(fragment))
+            });
+            if !found {
+                return false;
+            }
+        }
+        self.fragment = fragment.clone();
+        let session = match &mut self.state {
+            SourceViewState::Ready(ready) => &mut ready.session,
+            SourceViewState::Missing(missing) => &mut missing.session,
+            SourceViewState::Uninitialized => return false,
+        };
+        if session.local_revision() == *revision {
+            if session.set_selections(selection.clone()).is_err() {
+                return false;
+            }
+            session.set_scroll_state(*scroll);
+        }
         true
     }
 }
@@ -126,132 +411,247 @@ impl DocView for SourceView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::navigation::NavigationIntent;
     use waml::source::SourceBundle;
+    use waml_markdown_editor::{
+        input::{EditorInput, ScrollState},
+        selection::{Affinity, Selection, SelectionSet, TextPosition},
+    };
+    use waml_syntax::TextSize;
 
-    fn markdown_link_action(widget_uid: WidgetUid, href: &str) -> Action {
-        Box::new(WidgetAction {
-            data: None,
-            action: Box::new(MarkdownAction::LinkNavigated(href.into())),
-            widget_uid,
-            group: None,
-        })
-    }
-
-    fn mounted_body(cx: &mut Cx) -> (WidgetRef, BodyWidgets, WidgetUid) {
-        cx.widget_tree_mark_dirty(WidgetUid(0));
-        let markdown =
-            WidgetRef::new_with_inner(Box::new(cx.with_vm(Markdown::script_new_with_default)));
-        let markdown_uid = markdown.widget_uid();
-        let mut surface = cx.with_vm(View::script_new_with_default);
-        surface.children.push((live_id!(md), markdown));
-        let mut root = cx.with_vm(View::script_new_with_default);
-        root.children.push((
-            live_id!(markdown_surface),
-            WidgetRef::new_with_inner(Box::new(surface)),
+    fn mounted_body(cx: &mut Cx) -> WidgetRef {
+        waml_markdown_editor::live_design(cx);
+        let markdown = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(waml_markdown_editor::widget::MarkdownEditor::script_new_with_default),
         ));
-        let ui = WidgetRef::new_with_inner(Box::new(root));
-        let body = BodyWidgets::new(cx, &ui);
-        (ui, body, markdown_uid)
+        let mut surface = cx.with_vm(View::script_new_with_default);
+        surface.children.push((live_id!(editor), markdown));
+        let surface = WidgetRef::new_with_inner(Box::new(surface));
+        let mut root = cx.with_vm(View::script_new_with_default);
+        root.children.push((live_id!(markdown_surface), surface));
+        WidgetRef::new_with_inner(Box::new(root))
     }
 
-    fn data<'a>(
-        source: &'a SourceBundle,
-        okf_analysis: &'a waml::analysis::OkfAnalysis,
-        uml_analysis: &'a waml::uml::Analysis,
-    ) -> ViewData<'a> {
-        ViewData {
-            source,
-            okf_analysis,
-            uml_analysis,
-            revision: 7,
+    fn draw_markdown_widget(cx: &mut Cx, ui: &WidgetRef, session: &mut MarkdownDocumentSession) {
+        let draw_event = DrawEvent {
+            redraw_all: true,
+            ..DrawEvent::default()
+        };
+        let pass = DrawPass::new_with_name(cx, "source-view-draw-test");
+        let mut draw_list = DrawList2d::new(cx);
+        let mut draw_cx = CxDraw::new(cx, &draw_event);
+        draw_cx.begin_pass(&pass, None);
+        draw_list.begin_always(&mut draw_cx);
+        {
+            let mut cx_2d = Cx2d::new(&mut draw_cx);
+            cx_2d.begin_root_turtle(dvec2(640.0, 480.0), Layout::default());
+            ui.widget(&cx_2d, ids!(markdown_surface.editor))
+                .draw_walk_all(&mut cx_2d, &mut Scope::with_data(session), Walk::fill());
+            cx_2d.end_turtle();
+            draw_list.end(&mut cx_2d);
         }
+        draw_cx.end_pass(&pass);
+    }
+
+    fn source_session() -> crate::editor_session::EditorSession {
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(
+                SourceBundle::try_from_pairs([(
+                    "shop/order.md",
+                    "---\ntype: Runbook\ntitle: Order\n---\n# Order\nBody\n",
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        session
     }
 
     #[test]
-    fn source_markdown_reads_the_raw_bundle() {
-        let source = SourceBundle::try_from_pairs([(
-            "shop/order.md".to_string(),
-            "# Order\nraw source".to_string(),
-        )])
-        .unwrap();
-        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 7).unwrap();
+    fn nested_source_resolves_to_the_immutable_application_snapshot() {
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(
+                SourceBundle::try_from_pairs([(
+                    "shop/order.md",
+                    "---\ntype: uml.Class\n---\n# Order\n",
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        let snapshot = session.snapshot();
+
+        let (document, syntax) = SourceView::resolve_document(&snapshot, "shop/order").unwrap();
+
+        assert!(Arc::ptr_eq(
+            snapshot.markdown_snapshot(document).unwrap(),
+            &syntax
+        ));
+        assert_eq!(
+            syntax.text().shared().as_str(),
+            "---\ntype: uml.Class\n---\n# Order\n"
+        );
+    }
+
+    #[test]
+    fn source_views_declare_live_state_retention() {
         let view = SourceView::new("shop/order".into());
-
         assert_eq!(
-            view.markdown(data(&source, prepared.okf(), prepared.uml())),
-            "# Order\nraw source"
+            view.reconcile_policy(),
+            ViewReconcilePolicy::RetainLiveState
         );
     }
 
     #[test]
-    fn missing_source_keeps_the_existing_italic_fallback() {
-        let source = SourceBundle::default();
-        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 7).unwrap();
-        let view = SourceView::new("missing".into());
-
-        assert_eq!(
-            view.markdown(data(&source, prepared.okf(), prepared.uml())),
-            "*No source for `missing`*"
-        );
-    }
-
-    #[test]
-    fn mounted_markdown_link_emits_raw_navigation_intent_from_source_subject() {
-        let source = SourceBundle::try_from_pairs([
-            (
-                "shop/order.md",
-                "---\ntype: vendor.Runbook\n---\n# Order\n\n[Next](./next.md#details)\n",
-            ),
-            (
-                "shop/next.md",
-                "---\ntype: vendor.Runbook\n---\n# Next\n\n## Details\n",
-            ),
-        ])
-        .unwrap();
-        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
-        let (_, okf_analysis, uml_analysis, _) = prepared.into_parts();
+    fn mounted_ready_view_replaces_old_content_with_a_read_only_missing_presentation() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
-        let (ui, body, markdown_uid) = mounted_body(&mut cx);
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
         let mut view = SourceView::new("shop/order".into());
-        view.sync(&mut cx, &body, data(&source, &okf_analysis, &uml_analysis));
-        assert!(ui
-            .widget(&cx, ids!(markdown_surface.plain_source))
-            .text()
-            .contains("[Next](./next.md#details)"));
-        let actions: ActionsBuf = vec![markdown_link_action(markdown_uid, "./next.md#details")];
+        let ready = source_session().snapshot();
+        let (_, syntax) = SourceView::resolve_document(&ready, "shop/order")
+            .expect("the ready fixture must resolve");
+        SourceView::compile(&syntax).expect("the ready fixture must compile");
+        view.install_snapshot(&mut cx, &body, &ready, HostSnapshotCause::InitialLoad);
+        assert!(matches!(view.state, SourceViewState::Ready(_)));
 
-        let outcome = view.handle(
+        let missing = crate::editor_session::EditorSession::default().snapshot();
+        view.install_snapshot(
             &mut cx,
             &body,
-            &actions,
-            data(&source, &okf_analysis, &uml_analysis),
+            &missing,
+            HostSnapshotCause::ExternalReplacement,
         );
 
-        assert_eq!(
-            outcome.navigation,
-            Some(NavigationIntent::MarkdownLink {
-                current_concept_id: "shop/order".into(),
-                href: "./next.md#details".into(),
-            })
-        );
+        let SourceViewState::Missing(missing) = &mut view.state else {
+            panic!("the mounted source view must enter its explicit missing state");
+        };
+        assert_eq!(missing.message.as_ref(), "No source for 'shop/order'");
+        assert!(missing.session.is_read_only());
+        let text = missing.session.snapshot().text().shared().as_str();
+        assert!(text.contains("Source unavailable"));
+        assert!(text.contains("No source for 'shop/order'"));
+        assert!(!text.contains("# Order"));
+        let actions = body
+            .markdown_editor()
+            .handle_input_with_session(
+                &mut cx,
+                &mut missing.session,
+                EditorInput::Text(Arc::from("X")),
+            )
+            .unwrap();
+        assert!(MarkdownEditorRef::proposed_edit(&actions).is_none());
     }
-}
-
-#[cfg(test)]
-mod ownership_contract_tests {
-    use super::*;
-    use crate::doc_view::DocView;
 
     #[test]
-    fn source_view_is_constructed_with_all_tab_identity() {
-        let view = SourceView::new("shop/order".into());
+    fn standard_widget_draw_paints_ready_and_missing_presentations() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let editor = body.markdown_editor();
+        editor.set_paint_evidence_enabled(true);
+        let mut view = SourceView::new("shop/order".into());
+        let ready = source_session().snapshot();
+        view.install_snapshot(&mut cx, &body, &ready, HostSnapshotCause::InitialLoad);
 
-        assert_eq!(
-            view.tab_accent(),
-            Some(crate::accent::bucket_color(
-                crate::node_style::AccentBucket::None,
-            ))
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            panic!("the source view must retain its ready session");
+        };
+        draw_markdown_widget(&mut cx, &ui, &mut ready.session);
+
+        let ready_generation = editor.test_paint_evidence_generation();
+        assert!(ready_generation > 0);
+        assert!(!editor.test_painted_text_ranges().is_empty());
+
+        let missing = crate::editor_session::EditorSession::default().snapshot();
+        view.install_snapshot(
+            &mut cx,
+            &body,
+            &missing,
+            HostSnapshotCause::ExternalReplacement,
         );
+        let SourceViewState::Missing(missing) = &mut view.state else {
+            panic!("the source view must retain its explicit missing presentation");
+        };
+        draw_markdown_widget(&mut cx, &ui, &mut missing.session);
+
+        assert!(editor.test_paint_evidence_generation() > ready_generation);
+        assert!(!editor.test_painted_text_ranges().is_empty());
+        let SourceViewState::Missing(missing) = &view.state else {
+            panic!("the source view must retain its explicit missing presentation");
+        };
+        let text = missing.session.snapshot().text().shared().as_str();
+        assert!(text.contains("No source for 'shop/order'"));
+        assert!(!text.contains("# Order"));
+    }
+
+    #[test]
+    fn exact_revision_anchor_restores_full_selection_and_scroll() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let mut view = SourceView::new("shop/order".into());
+        let workspace = source_session().snapshot();
+        view.install_snapshot(&mut cx, &body, &workspace, HostSnapshotCause::InitialLoad);
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            panic!("the source view must be ready");
+        };
+        let position = |offset, affinity| TextPosition::new(TextSize::new(offset), affinity);
+        let selections = SelectionSet::from_selections(
+            ready.session.snapshot(),
+            vec![
+                Selection::new(position(2, Affinity::Before), position(6, Affinity::After)),
+                Selection::caret(position(10, Affinity::Before)),
+            ],
+            1,
+        )
+        .unwrap();
+        ready.session.set_selections(selections.clone()).unwrap();
+        let scroll = ScrollState { x: 12.0, y: 84.0 };
+        ready.session.set_scroll_state(scroll);
+        let anchor = view.capture_anchor(&body);
+
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            unreachable!();
+        };
+        ready.session.set_primary_offset(TextSize::new(0)).unwrap();
+        ready.session.set_scroll_state(ScrollState::default());
+        assert!(view.restore_anchor(&mut cx, &body, workspace.borrowed().into(), &anchor,));
+
+        let SourceViewState::Ready(ready) = &view.state else {
+            unreachable!();
+        };
+        assert_eq!(ready.session.selections(), &selections);
+        assert_eq!(*ready.session.scroll_state(), scroll);
+    }
+
+    #[test]
+    fn different_revision_anchor_keeps_the_retained_live_selection_and_scroll() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let mut view = SourceView::new("shop/order".into());
+        let workspace = source_session().snapshot();
+        view.install_snapshot(&mut cx, &body, &workspace, HostSnapshotCause::InitialLoad);
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            panic!("the source view must be ready");
+        };
+        ready.session.set_primary_offset(TextSize::new(7)).unwrap();
+        let retained_selection = ready.session.selections().clone();
+        let retained_scroll = ScrollState { x: 3.0, y: 45.0 };
+        ready.session.set_scroll_state(retained_scroll);
+        let anchor = ViewAnchor::markdown_start(
+            ready.session.local_revision().checked_next().unwrap(),
+            None,
+            ScrollState::default(),
+        );
+
+        assert!(view.restore_anchor(&mut cx, &body, workspace.borrowed().into(), &anchor,));
+
+        let SourceViewState::Ready(ready) = &view.state else {
+            unreachable!();
+        };
+        assert_eq!(ready.session.selections(), &retained_selection);
+        assert_eq!(*ready.session.scroll_state(), retained_scroll);
     }
 }

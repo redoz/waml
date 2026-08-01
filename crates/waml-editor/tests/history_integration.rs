@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use waml_editor::view_history::{
     DiagramCameraAnchor, DocumentLocator, HistoryDirection, ViewAnchor, ViewHistory, ViewLocation,
 };
+use waml_markdown_editor::input::ScrollState;
+use waml_syntax::DocumentRevision;
 
 fn location(document: &str, anchor: ViewAnchor) -> ViewLocation {
     ViewLocation {
@@ -54,10 +56,11 @@ fn back_and_forward_restore_view_anchors_without_tab_metadata() {
     );
     let source = ViewLocation {
         document: DocumentLocator::source("orders"),
-        anchor: ViewAnchor::Markdown {
-            fragment: Some("layout".into()),
-            scroll_y: 320.0,
-        },
+        anchor: ViewAnchor::markdown_start(
+            DocumentRevision::INITIAL,
+            Some("layout".into()),
+            ScrollState { x: 0.0, y: 320.0 },
+        ),
     };
     let mut history = ViewHistory::default();
     history.reset(Some(diagram.clone()));
@@ -74,17 +77,15 @@ fn back_and_forward_restore_view_anchors_without_tab_metadata() {
 fn passive_refresh_changes_anchor_without_growing_the_logical_timeline() {
     let initial = location(
         "orders",
-        ViewAnchor::Markdown {
-            fragment: None,
-            scroll_y: 0.0,
-        },
+        ViewAnchor::markdown_start(DocumentRevision::INITIAL, None, ScrollState::default()),
     );
     let refreshed = location(
         "orders",
-        ViewAnchor::Markdown {
-            fragment: Some("details".into()),
-            scroll_y: 144.0,
-        },
+        ViewAnchor::markdown_start(
+            DocumentRevision::INITIAL,
+            Some("details".into()),
+            ScrollState { x: 0.0, y: 144.0 },
+        ),
     );
     let mut history = ViewHistory::default();
     history.reset(Some(initial));

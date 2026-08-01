@@ -1839,10 +1839,14 @@ mod tests {
     fn location(scroll_y: f64) -> ViewLocation {
         ViewLocation {
             document: DocumentLocator::primary("dia"),
-            anchor: ViewAnchor::Markdown {
-                fragment: None,
-                scroll_y,
-            },
+            anchor: ViewAnchor::markdown_start(
+                DocumentRevision::INITIAL,
+                None,
+                waml_markdown_editor::input::ScrollState {
+                    x: 0.0,
+                    y: scroll_y,
+                },
+            ),
         }
     }
 

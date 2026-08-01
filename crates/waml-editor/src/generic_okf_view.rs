@@ -1,31 +1,23 @@
-use std::borrow::Cow;
+use makepad_widgets::*;
+use waml_markdown_editor::session::HostSnapshotCause;
 
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
+    ViewReconcilePolicy,
 };
-use crate::navigation::NavigationIntent;
+use crate::editor_session::{EditorSessionSnapshot, SessionChange};
+use crate::source_view::SourceView;
 use crate::view_history::ViewAnchor;
-use makepad_widgets::*;
 
 pub struct GenericOkfView {
-    concept_id: String,
-    fragment: Option<String>,
+    source: SourceView,
 }
 
 impl GenericOkfView {
     pub fn new(concept_id: String) -> Self {
         Self {
-            concept_id,
-            fragment: None,
+            source: SourceView::new_read_only(concept_id),
         }
-    }
-
-    fn markdown<'a>(&self, data: ViewData<'a>) -> Cow<'a, str> {
-        data.okf_analysis
-            .bundle
-            .concept(&self.concept_id)
-            .map(|concept| Cow::Borrowed(concept.body.as_str()))
-            .unwrap_or_else(|| Cow::Owned(format!("*No source for `{}`*", self.concept_id)))
     }
 }
 
@@ -34,29 +26,55 @@ impl DocView for GenericOkfView {
         DocViewIdentity::GenericOkf
     }
 
-    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, data: ViewData<'_>) {
-        let markdown = self.markdown(data);
-        body.show_markdown(cx);
-        body.set_markdown(cx, markdown.as_ref());
+    fn reconcile_policy(&self) -> ViewReconcilePolicy {
+        ViewReconcilePolicy::RetainLiveState
+    }
+
+    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {
+        body.show_markdown_editor(cx);
+        body.markdown_editor().set_read_only(cx, true);
+    }
+
+    fn sync_from_session(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &EditorSessionSnapshot,
+    ) {
+        self.sync(cx, body, snapshot.borrowed().into());
+        self.source
+            .install_snapshot(cx, body, snapshot, HostSnapshotCause::InitialLoad);
+    }
+
+    fn after_session_snapshot(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &EditorSessionSnapshot,
+        change: SessionChange,
+    ) {
+        let cause = if change.source_changed {
+            HostSnapshotCause::ApplicationHistory
+        } else {
+            HostSnapshotCause::AcknowledgedLocalEdit
+        };
+        self.source.install_snapshot(cx, body, snapshot, cause);
+    }
+
+    fn route_ui_event(&mut self, cx: &mut Cx, ui: &WidgetRef, event: &Event) {
+        self.source.route_editor_event(cx, ui, event);
     }
 
     fn handle(
         &mut self,
-        _cx: &mut Cx,
+        cx: &mut Cx,
         body: &BodyWidgets,
         actions: &Actions,
-        _data: ViewData<'_>,
+        data: ViewData<'_>,
     ) -> ViewOutcome {
-        let Some(href) = body.markdown_link(actions) else {
-            return ViewOutcome::default();
-        };
-        ViewOutcome {
-            navigation: Some(NavigationIntent::MarkdownLink {
-                current_concept_id: self.concept_id.clone(),
-                href,
-            }),
-            ..ViewOutcome::default()
-        }
+        let mut outcome = self.source.handle(cx, body, actions, data);
+        outcome.source_edit = None;
+        outcome
     }
 
     fn chrome(&self) -> BodyChrome {
@@ -76,110 +94,32 @@ impl DocView for GenericOkfView {
     }
 
     fn capture_anchor(&self, body: &BodyWidgets) -> ViewAnchor {
-        ViewAnchor::Markdown {
-            fragment: self.fragment.clone(),
-            scroll_y: body.markdown_scroll_y(),
-        }
+        self.source.capture_anchor(body)
     }
 
     fn restore_anchor(
         &mut self,
         cx: &mut Cx,
         body: &BodyWidgets,
-        _data: ViewData<'_>,
+        data: ViewData<'_>,
         anchor: &ViewAnchor,
     ) -> bool {
-        let ViewAnchor::Markdown { fragment, scroll_y } = anchor else {
-            return false;
-        };
-        self.fragment = fragment
-            .as_deref()
-            .filter(|fragment| body.scroll_markdown_to_fragment(cx, fragment))
-            .map(str::to_owned);
-        body.set_markdown_scroll_y(cx, *scroll_y);
-        true
+        self.source.restore_anchor(cx, body, data, anchor)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::navigation::NavigationIntent;
-    use waml::source::SourceBundle;
-
-    fn markdown_link_action(widget_uid: WidgetUid, href: &str) -> Action {
-        Box::new(WidgetAction {
-            data: None,
-            action: Box::new(MarkdownAction::LinkNavigated(href.into())),
-            widget_uid,
-            group: None,
-        })
-    }
-
-    fn mounted_body(cx: &mut Cx) -> (WidgetRef, BodyWidgets, WidgetUid) {
-        cx.widget_tree_mark_dirty(WidgetUid(0));
-        let markdown =
-            WidgetRef::new_with_inner(Box::new(cx.with_vm(Markdown::script_new_with_default)));
-        let markdown_uid = markdown.widget_uid();
-        let mut surface = cx.with_vm(View::script_new_with_default);
-        surface.children.push((live_id!(md), markdown));
-        let mut root = cx.with_vm(View::script_new_with_default);
-        root.children.push((
-            live_id!(markdown_surface),
-            WidgetRef::new_with_inner(Box::new(surface)),
-        ));
-        let ui = WidgetRef::new_with_inner(Box::new(root));
-        let body = BodyWidgets::new(cx, &ui);
-        (ui, body, markdown_uid)
-    }
-
-    fn fixture(
-        pairs: impl IntoIterator<Item = (&'static str, &'static str)>,
-    ) -> (
-        SourceBundle,
-        waml::analysis::OkfAnalysis,
-        waml::uml::Analysis,
-    ) {
-        let source = SourceBundle::try_from_pairs(pairs).unwrap();
-        let prepared = waml::analysis::prepare_candidate(source, None, 3).unwrap();
-        let (source, okf, uml, _) = prepared.into_parts();
-        (source, okf, uml)
-    }
-
-    fn data<'a>(
-        source: &'a SourceBundle,
-        okf_analysis: &'a waml::analysis::OkfAnalysis,
-        uml_analysis: &'a waml::uml::Analysis,
-    ) -> ViewData<'a> {
-        ViewData {
-            source,
-            okf_analysis,
-            uml_analysis,
-            revision: 3,
-        }
-    }
 
     #[test]
-    fn markdown_renders_the_semantic_concept_body() {
-        let (source, okf, uml) = fixture([(
-            "runbook.md",
-            "---\ntype: vendor.Runbook\ntitle: Recovery\n---\n# Recovery\n\nRestart it.\n",
-        )]);
+    fn generic_markdown_view_is_retained_and_read_only_by_construction() {
         let view = GenericOkfView::new("runbook".into());
         assert_eq!(
-            view.markdown(data(&source, &okf, &uml)),
-            "# Recovery\n\nRestart it.\n"
+            view.reconcile_policy(),
+            ViewReconcilePolicy::RetainLiveState
         );
-    }
-
-    #[test]
-    fn missing_concept_has_an_italic_fallback() {
-        let (source, okf, uml) = fixture([]);
-        let view = GenericOkfView::new("missing".into());
-        assert_eq!(
-            view.markdown(data(&source, &okf, &uml)),
-            "*No source for `missing`*"
-        );
+        assert_eq!(view.identity(), DocViewIdentity::GenericOkf);
     }
 
     #[test]
@@ -200,65 +140,6 @@ mod tests {
         assert_eq!(
             view.tab_accent(),
             crate::okf_documents::generic_okf_accent()
-        );
-    }
-
-    #[test]
-    fn mounted_markdown_link_emits_raw_navigation_intent_from_generic_concept() {
-        let (source, okf, uml) = fixture([
-            (
-                "shop/order.md",
-                "---\ntype: vendor.Runbook\n---\n# Order\n\n[Next](./next.md#details)\n",
-            ),
-            (
-                "shop/next.md",
-                "---\ntype: vendor.Runbook\n---\n# Next\n\n## Details\n",
-            ),
-        ]);
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        let (ui, body, markdown_uid) = mounted_body(&mut cx);
-        let mut view = GenericOkfView::new("shop/order".into());
-        view.sync(&mut cx, &body, data(&source, &okf, &uml));
-        assert!(ui
-            .widget(&cx, ids!(markdown_surface.plain_source))
-            .text()
-            .contains("[Next](./next.md#details)"));
-        let actions: ActionsBuf = vec![markdown_link_action(markdown_uid, "./next.md#details")];
-
-        let outcome = view.handle(&mut cx, &body, &actions, data(&source, &okf, &uml));
-
-        assert_eq!(
-            outcome.navigation,
-            Some(NavigationIntent::MarkdownLink {
-                current_concept_id: "shop/order".into(),
-                href: "./next.md#details".into(),
-            })
-        );
-    }
-
-    #[test]
-    fn markdown_anchor_restores_the_pre_layout_origin_without_a_fragment() {
-        let (source, okf, uml) = fixture([("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n")]);
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        let (_ui, body, _) = mounted_body(&mut cx);
-        let mut view = GenericOkfView::new("runbook".into());
-        view.sync(&mut cx, &body, data(&source, &okf, &uml));
-
-        assert!(view.restore_anchor(
-            &mut cx,
-            &body,
-            data(&source, &okf, &uml),
-            &ViewAnchor::Markdown {
-                fragment: None,
-                scroll_y: 0.0,
-            },
-        ));
-        assert_eq!(
-            view.capture_anchor(&body),
-            ViewAnchor::Markdown {
-                fragment: None,
-                scroll_y: 0.0,
-            }
         );
     }
 }

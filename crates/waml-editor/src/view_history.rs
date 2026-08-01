@@ -7,6 +7,9 @@
 
 use std::collections::VecDeque;
 
+use waml_markdown_editor::{input::ScrollState, selection::SelectionSet};
+use waml_syntax::{DocumentRevision, SourceText, TextSize};
+
 pub const VIEW_HISTORY_LIMIT: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -50,12 +53,33 @@ pub enum ViewAnchor {
     None,
     Markdown {
         fragment: Option<String>,
-        scroll_y: f64,
+        revision: DocumentRevision,
+        selection: SelectionSet,
+        scroll: ScrollState,
     },
     Diagram {
         selected_key: Option<String>,
         camera: DiagramCameraAnchor,
     },
+}
+
+impl ViewAnchor {
+    pub fn markdown_start(
+        revision: DocumentRevision,
+        fragment: Option<String>,
+        scroll: ScrollState,
+    ) -> Self {
+        let empty =
+            SourceText::new(String::new()).expect("an empty string is always valid source text");
+        let selection = SelectionSet::caret_in_text(revision, &empty, TextSize::new(0))
+            .expect("zero is a valid caret offset in empty source text");
+        Self::Markdown {
+            fragment,
+            revision,
+            selection,
+            scroll,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

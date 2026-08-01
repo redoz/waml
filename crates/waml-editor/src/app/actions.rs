@@ -849,7 +849,7 @@ impl App {
         }
     }
 
-    fn complete_session_change(
+    pub(super) fn complete_session_change(
         &mut self,
         cx: &mut Cx,
         change: crate::editor_session::SessionChange,
@@ -1024,12 +1024,52 @@ impl App {
     ) -> ActionFlow {
         let outcome_active_id = self.documents.active_id();
         let mut flow = ActionFlow::Continue;
-        let edit_succeeded = if let Some(edit) = outcome.edit {
+        let mut edit_succeeded = if let Some(edit) = outcome.edit {
             self.apply_session_edit(cx, edit, "view edit failed")
                 .is_some()
         } else {
             true
         };
+
+        if let Some(source_edit) = outcome.source_edit {
+            let Some(before_location) = self.documents.capture_active_location(cx, &self.ui) else {
+                log!("source edit failed: no active document");
+                return ActionFlow::Consumed;
+            };
+            match self
+                .session
+                .promote_source_edit(source_edit, before_location)
+            {
+                Ok((change, request)) => {
+                    self.complete_session_change(cx, change);
+                    match crate::markdown_analysis::run_semantic_request(request) {
+                        Ok(completion) => {
+                            match self.session.install_semantic_completion(completion) {
+                                crate::markdown_analysis::CompletionInstall::Installed(change) => {
+                                    self.complete_session_change(cx, change);
+                                }
+                                crate::markdown_analysis::CompletionInstall::IgnoredStale => {}
+                                crate::markdown_analysis::CompletionInstall::RejectedInvariant(
+                                    error,
+                                ) => {
+                                    log!("source semantic completion rejected: {error:?}");
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            log!("source semantic analysis failed: {error:?}");
+                        }
+                    }
+                    flow = ActionFlow::Consumed;
+                }
+                Err(error) => {
+                    log!("source edit promotion failed: {error:?}");
+                    self.documents.sync_active(cx, &self.ui, &self.session);
+                    edit_succeeded = false;
+                    flow = ActionFlow::Consumed;
+                }
+            }
+        }
 
         if let Some(intent) = outcome.navigation {
             self.handle_navigation_intent(cx, intent);

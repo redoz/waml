@@ -2,14 +2,20 @@ use waml_editor::view_history::{
     DiagramCameraAnchor, DocumentKind, DocumentLocator, HistoryDirection, ViewAnchor, ViewHistory,
     ViewLocation, VIEW_HISTORY_LIMIT,
 };
+use waml_markdown_editor::input::ScrollState;
+use waml_syntax::DocumentRevision;
 
 fn location(concept_id: &str, scroll_y: f64) -> ViewLocation {
     ViewLocation {
         document: DocumentLocator::primary(concept_id),
-        anchor: ViewAnchor::Markdown {
-            fragment: None,
-            scroll_y,
-        },
+        anchor: ViewAnchor::markdown_start(
+            DocumentRevision::INITIAL,
+            None,
+            ScrollState {
+                x: 0.0,
+                y: scroll_y,
+            },
+        ),
     }
 }
 
@@ -28,17 +34,19 @@ fn locator_distinguishes_primary_and_source_views_of_the_same_concept() {
 fn anchors_are_value_only_and_preserve_markdown_and_diagram_state() {
     let markdown = ViewLocation {
         document: DocumentLocator::primary("runbook"),
-        anchor: ViewAnchor::Markdown {
-            fragment: Some("recovery".into()),
-            scroll_y: 384.5,
-        },
+        anchor: ViewAnchor::markdown_start(
+            DocumentRevision::INITIAL,
+            Some("recovery".into()),
+            ScrollState { x: 0.0, y: 384.5 },
+        ),
     };
     assert_eq!(
         markdown.anchor,
-        ViewAnchor::Markdown {
-            fragment: Some("recovery".into()),
-            scroll_y: 384.5,
-        }
+        ViewAnchor::markdown_start(
+            DocumentRevision::INITIAL,
+            Some("recovery".into()),
+            ScrollState { x: 0.0, y: 384.5 },
+        )
     );
 
     let diagram = ViewAnchor::Diagram {

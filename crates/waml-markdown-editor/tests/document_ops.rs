@@ -91,6 +91,35 @@ fn primary_tracks_the_requested_adjacent_selection() {
     assert_eq!(set.primary_index(), 1);
 }
 
+#[test]
+fn session_restores_a_valid_selection_set_without_rebuilding_history() {
+    let mut session = MarkdownDocumentSession::new(snapshot("abc", 5));
+    session
+        .execute(
+            EditCommand::Insert(Arc::from("x")),
+            HistoryGroup::isolated(),
+        )
+        .unwrap();
+    let restored = SelectionSet::caret(session.snapshot(), TextSize::new(2)).unwrap();
+
+    session.set_selections(restored.clone()).unwrap();
+
+    assert_eq!(session.selections(), &restored);
+    assert!(session.can_undo());
+
+    let stale = SelectionSet::caret(&snapshot("abc", 5), TextSize::new(1)).unwrap();
+    assert!(matches!(
+        session.set_selections(stale),
+        Err(MarkdownEditError::SelectionRevision {
+            selection,
+            expected,
+        }) if selection == DocumentRevision::new(5)
+            && expected == session.local_revision()
+    ));
+    assert_eq!(session.selections(), &restored);
+    assert!(session.can_undo());
+}
+
 fn replace(start: usize, end: usize, replacement: &str) -> TextChange {
     TextChange {
         old_range: TextRange::new(

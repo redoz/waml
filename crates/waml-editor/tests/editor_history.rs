@@ -5,6 +5,8 @@ use waml_editor::editor_history::{
     EditMergeKey, EditMergeKind, EditorHistory, ATOMIC_TAIL, HISTORY_LIMIT,
 };
 use waml_editor::view_history::{DocumentLocator, ViewAnchor, ViewLocation};
+use waml_markdown_editor::input::ScrollState;
+use waml_syntax::DocumentRevision;
 
 fn fake_edit() -> PendingEdit {
     PendingEdit::sequence_reciprocals(Vec::new())
@@ -13,10 +15,14 @@ fn fake_edit() -> PendingEdit {
 fn location(document: &str, scroll_y: f64) -> ViewLocation {
     ViewLocation {
         document: DocumentLocator::primary(document),
-        anchor: ViewAnchor::Markdown {
-            fragment: None,
-            scroll_y,
-        },
+        anchor: ViewAnchor::markdown_start(
+            DocumentRevision::INITIAL,
+            None,
+            ScrollState {
+                x: 0.0,
+                y: scroll_y,
+            },
+        ),
     }
 }
 

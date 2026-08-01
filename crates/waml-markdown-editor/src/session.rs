@@ -91,6 +91,20 @@ impl MarkdownDocumentSession {
     pub fn selections(&self) -> &SelectionSet {
         &self.selections
     }
+    pub fn set_selections(&mut self, selections: SelectionSet) -> Result<(), MarkdownEditError> {
+        if selections.revision() != self.snapshot.revision() {
+            return Err(MarkdownEditError::SelectionRevision {
+                selection: selections.revision(),
+                expected: self.snapshot.revision(),
+            });
+        }
+        selections
+            .validate_for_text(self.snapshot.text())
+            .map_err(map_selection_error)?;
+        self.selections = selections;
+        self.preferred_x = None;
+        Ok(())
+    }
     pub fn local_revision(&self) -> DocumentRevision {
         self.snapshot.revision()
     }
