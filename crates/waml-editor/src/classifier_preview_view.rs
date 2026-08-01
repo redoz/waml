@@ -143,7 +143,7 @@ impl DocView for ClassifierPreviewView {
             canvas_overlays: false,
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
-                right_dock: Some(Icon::SlidersHorizontal),
+                right_dock: Some(Icon::PanelRight),
             },
         }
     }

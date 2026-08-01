@@ -3631,6 +3631,58 @@ script_mod! {
         }
     }
 
+    // Panel left: rounded frame with a left-hand divider -- the dock/sidebar
+    // toggle. Reads at 18px, where the three rows of a tree glyph collapse.
+    // Faithful port of resources/icons/panel-left.svg via scripts/gen-icon.py.
+    mod.draw.IconPanelLeft = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3750, s * 0.1250)
+            sdf.line_to(s * 0.3750, s * 0.8750)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Panel right: the mirror of IconPanelLeft, for the right (inspector) dock
+    // toggle. The pair reads as one control family at chrome size.
+    // Faithful port of resources/icons/panel-right.svg via scripts/gen-icon.py.
+    mod.draw.IconPanelRight = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.1250)
+            sdf.line_to(s * 0.6250, s * 0.8750)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3746,6 +3798,8 @@ script_mod! {
         arrow_down_left: mod.draw.IconArrowDownLeft{ color: atlas.accent }
         arrow_left: mod.draw.IconArrowLeft{ color: atlas.accent }
         arrow_up_left: mod.draw.IconArrowUpLeft{ color: atlas.accent }
+        panel_left: mod.draw.IconPanelLeft{ color: atlas.accent }
+        panel_right: mod.draw.IconPanelRight{ color: atlas.accent }
     }
 }
 
@@ -3973,6 +4027,10 @@ pub struct IconSet {
     pub arrow_left: DrawColor,
     #[live]
     pub arrow_up_left: DrawColor,
+    #[live]
+    pub panel_left: DrawColor,
+    #[live]
+    pub panel_right: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -4094,6 +4152,8 @@ impl IconSet {
             Icon::ArrowDownLeft => &mut self.arrow_down_left,
             Icon::ArrowLeft => &mut self.arrow_left,
             Icon::ArrowUpLeft => &mut self.arrow_up_left,
+            Icon::PanelLeft => &mut self.panel_left,
+            Icon::PanelRight => &mut self.panel_right,
         }
     }
 
@@ -4222,13 +4282,15 @@ pub enum Icon {
     ArrowDownLeft,
     ArrowLeft,
     ArrowUpLeft,
+    PanelLeft,
+    PanelRight,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 110] = [
+    pub const ALL: [Icon; 112] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4339,6 +4401,8 @@ impl Icon {
         Icon::ArrowDownLeft,
         Icon::ArrowLeft,
         Icon::ArrowUpLeft,
+        Icon::PanelLeft,
+        Icon::PanelRight,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -4455,6 +4519,8 @@ impl Icon {
             Icon::ArrowDownLeft => "arrow-down-left",
             Icon::ArrowLeft => "arrow-left",
             Icon::ArrowUpLeft => "arrow-up-left",
+            Icon::PanelLeft => "panel-left",
+            Icon::PanelRight => "panel-right",
         }
     }
 }
@@ -4464,8 +4530,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_110_entries() {
-        assert_eq!(Icon::ALL.len(), 110);
+    fn icon_all_has_112_entries() {
+        assert_eq!(Icon::ALL.len(), 112);
     }
 
     #[test]
@@ -4499,6 +4565,10 @@ mod tests {
         assert_eq!(Icon::ALL[107], Icon::ArrowDownLeft);
         assert_eq!(Icon::ALL[108], Icon::ArrowLeft);
         assert_eq!(Icon::ALL[109], Icon::ArrowUpLeft);
+        // Dock toggles, replacing the illegible `ListTree` / off-metaphor
+        // `SlidersHorizontal`.
+        assert_eq!(Icon::ALL[110], Icon::PanelLeft);
+        assert_eq!(Icon::ALL[111], Icon::PanelRight);
     }
 
     #[test]
@@ -4520,7 +4590,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 110);
+        assert_eq!(seen.len(), 112);
     }
 
     #[test]

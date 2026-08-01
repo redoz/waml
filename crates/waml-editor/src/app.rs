@@ -263,8 +263,9 @@ script_mod! {
                             // flush with them; `top: 1` centres the 30px box in the 32px
                             // row. Hidden until a model opens
                             // (`show_editor`/`show_start_screen`), which also sets the
-                            // glyph (`Icon::ListTree`, inherited from the retired tree
-                            // flag spine).
+                            // glyph (`Icon::PanelLeft`: the dock frame reads at
+                            // 18px, where the old `ListTree`'s three rows plus
+                            // connector smeared into an unreadable blob).
                             //
                             // `left: 2` stacks this glyph on the burger's centreline one
                             // row above: the burger gets its 2px from `title_row`'s
@@ -2018,7 +2019,7 @@ impl App {
         self.ui
             .widget(cx, ids!(tree_btn))
             .as_icon_button()
-            .set_icon(cx, crate::icons::Icon::ListTree);
+            .set_icon(cx, crate::icons::Icon::PanelLeft);
         if let Some(mut doc_tabs) = self
             .ui
             .widget(cx, ids!(doc_tabs))
@@ -3258,7 +3259,7 @@ mod tests {
                     },
                 }],
             );
-            header.set_right_dock(cx, Some(Icon::SlidersHorizontal));
+            header.set_right_dock(cx, Some(Icon::PanelRight));
         } else {
             header.set_segments(cx, Vec::new());
             header.set_right_dock(cx, None);
@@ -4674,12 +4675,12 @@ mod tests {
     fn document_header_projection_keeps_icon_when_breadcrumb_is_missing() {
         let chrome = DocumentHeaderChrome {
             breadcrumb: true,
-            right_dock: Some(Icon::SlidersHorizontal),
+            right_dock: Some(Icon::PanelRight),
         };
         let (segments, icon) = project_document_header(chrome, None);
 
         assert!(segments.is_empty());
-        assert_eq!(icon, Some(Icon::SlidersHorizontal));
+        assert_eq!(icon, Some(Icon::PanelRight));
     }
 
     #[test]
@@ -4693,11 +4694,11 @@ mod tests {
         };
         let icon_only = DocumentHeaderChrome {
             breadcrumb: false,
-            right_dock: Some(Icon::SlidersHorizontal),
+            right_dock: Some(Icon::PanelRight),
         };
         assert_eq!(
             project_document_header(icon_only, Some(vec![segment.clone()])),
-            (Vec::new(), Some(Icon::SlidersHorizontal))
+            (Vec::new(), Some(Icon::PanelRight))
         );
 
         let breadcrumb = DocumentHeaderChrome {
@@ -4764,7 +4765,7 @@ mod tests {
             &cx,
             &app,
             &["Root", "Sales", "Order"],
-            Some(Icon::SlidersHorizontal),
+            Some(Icon::PanelRight),
             crate::document_header::DOCUMENT_HEADER_H,
         );
 
@@ -4838,7 +4839,7 @@ mod tests {
             &cx,
             &app,
             &["Root", "Sales", "Order"],
-            Some(Icon::SlidersHorizontal),
+            Some(Icon::PanelRight),
             crate::document_header::DOCUMENT_HEADER_H,
         );
         assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
@@ -4862,7 +4863,7 @@ mod tests {
                 .borrow_mut::<crate::document_header::DocumentHeader>()
                 .expect("test document header is mounted");
             header.set_segments(&mut cx, vec![segment]);
-            header.set_right_dock(&mut cx, Some(Icon::SlidersHorizontal));
+            header.set_right_dock(&mut cx, Some(Icon::PanelRight));
         }
         let header_rect = draw_document_header(&mut cx, &app, dvec2(360.0, 30.0));
         assert_eq!(

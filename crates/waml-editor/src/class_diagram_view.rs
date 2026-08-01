@@ -817,7 +817,7 @@ impl DocView for ClassDiagramView {
                 canvas_overlays: true,
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
-                    right_dock: Some(Icon::SlidersHorizontal),
+                    right_dock: Some(Icon::PanelRight),
                 },
             }
         }
@@ -1128,7 +1128,7 @@ mod tests {
                 canvas_overlays: true,
                 document_header: crate::doc_view::DocumentHeaderChrome {
                     breadcrumb: true,
-                    right_dock: Some(crate::icons::Icon::SlidersHorizontal),
+                    right_dock: Some(crate::icons::Icon::PanelRight),
                 },
             }
         );

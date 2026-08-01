@@ -32,10 +32,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(MousePointer2, "Select tool"),
             ie!(SquarePlus, "Add tool"),
             ie!(Spline, "Connect tool"),
-            ie!(
-                SlidersHorizontal,
-                "Properties tool / caption right-dock toggle"
-            ),
+            ie!(SlidersHorizontal, "Properties tool / logo-menu Properties"),
             ie!(CircleX, "Close / clear"),
         ],
     ),
@@ -70,7 +67,9 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
     (
         "TREE PANEL / DOCUMENT TABS",
         &[
-            ie!(ListTree, "Caption tree-column toggle"),
+            ie!(PanelLeft, "Caption tree-column toggle"),
+            ie!(PanelRight, "Document-header right-dock toggle"),
+            ie!(ListTree, "Retired tree toggle -- illegible at 18px"),
             ie!(Folder, "Folder / package node"),
             ie!(Funnel, "Filter chip"),
             ie!(FileText, "Generic OKF document"),
@@ -279,7 +278,8 @@ mod drift {
     /// code draws them right now: the catalog is add-only (prune deliberately),
     /// so losing a call site must not silently hide a glyph from the reference.
     /// Guard 2 allows exactly these rows to have no `Icon::<Variant>` call site.
-    const UNWIRED_BUT_LISTED: &[Icon] = &[Icon::PinOff, Icon::InspectionPanel];
+    const UNWIRED_BUT_LISTED: &[Icon] =
+        &[Icon::PinOff, Icon::InspectionPanel, Icon::ListTree];
 
     fn table_icons() -> Vec<Icon> {
         ICON_GROUPS

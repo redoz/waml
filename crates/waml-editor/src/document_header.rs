@@ -734,7 +734,7 @@ mod tests {
         let layout = layout_header(260.0, &[36.0, 42.0, 48.0, 50.0], 30.0);
         let state = DocumentHeaderState::for_test(
             segments.clone(),
-            Some(Icon::SlidersHorizontal),
+            Some(Icon::PanelRight),
             layout.segment_rects.clone(),
         );
 

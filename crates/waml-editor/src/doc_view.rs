@@ -516,7 +516,7 @@ mod tests {
                 canvas_overlays: true,
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
-                    right_dock: Some(Icon::SlidersHorizontal),
+                    right_dock: Some(Icon::PanelRight),
                 },
             }
         );
@@ -529,7 +529,7 @@ mod tests {
                     canvas_overlays: false,
                     document_header: DocumentHeaderChrome {
                         breadcrumb: true,
-                        right_dock: Some(Icon::SlidersHorizontal),
+                        right_dock: Some(Icon::PanelRight),
                     },
                 }
             );
