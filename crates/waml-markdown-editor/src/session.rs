@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{
     document::MarkdownDocumentSnapshot,
     edit::{
-        EditCommand, EditOutcome, HistoryGroup, MarkdownEdit, MarkdownEditError,
-        ProposedMarkdownEdit,
+        EditCommand, EditOutcome, HistoryGroup, HostSnapshotMismatch, MarkdownEdit,
+        MarkdownEditError, ProposedMarkdownEdit,
     },
     history::{History, HistoryEntry},
     ime::{ImeComposition, ImeError},
@@ -20,6 +20,21 @@ use waml_syntax::{
     reparse_markdown, ChangeMap, DocumentRevision, LineIndex, SourceText, TextChange, TextError,
     TextRange, TextSize,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostSnapshotCause {
+    InitialLoad,
+    AcknowledgedLocalEdit,
+    ApplicationHistory,
+    ExternalReplacement,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostSyncOutcome {
+    Installed,
+    Acknowledged,
+    IgnoredStale,
+}
 
 pub struct MarkdownDocumentSession {
     snapshot: Arc<MarkdownDocumentSnapshot>,
@@ -88,11 +103,17 @@ impl MarkdownDocumentSession {
         }
         self.read_only = read_only;
     }
+    pub fn scroll_state(&self) -> &ScrollState {
+        &self.scroll
+    }
+    pub fn set_scroll_state(&mut self, scroll: ScrollState) {
+        self.scroll = scroll;
+    }
     pub fn scroll(&self) -> ScrollState {
-        self.scroll
+        *self.scroll_state()
     }
     pub(crate) fn set_scroll(&mut self, scroll: ScrollState) {
-        self.scroll = scroll;
+        self.set_scroll_state(scroll);
     }
     pub fn can_undo(&self) -> bool {
         !self.history.undo.is_empty()
@@ -106,6 +127,97 @@ impl MarkdownDocumentSession {
 
     pub fn ime(&self) -> Option<&ImeComposition> {
         self.ime.as_ref()
+    }
+
+    pub fn synchronize_from_host(
+        &mut self,
+        snapshot: Arc<MarkdownDocumentSnapshot>,
+        changes: Option<&[TextChange]>,
+        cause: HostSnapshotCause,
+    ) -> Result<HostSyncOutcome, MarkdownEditError> {
+        let local = self.snapshot.revision();
+        let incoming = snapshot.revision();
+        if incoming < local {
+            return Ok(HostSyncOutcome::IgnoredStale);
+        }
+        if cause == HostSnapshotCause::AcknowledgedLocalEdit && incoming != local {
+            return Err(MarkdownEditError::HostSnapshot(
+                HostSnapshotMismatch::AcknowledgementRevision { local, incoming },
+            ));
+        }
+        if incoming == local {
+            if !Arc::ptr_eq(self.snapshot.text().shared(), snapshot.text().shared()) {
+                return Err(MarkdownEditError::HostSnapshot(
+                    HostSnapshotMismatch::EqualRevisionText { revision: local },
+                ));
+            }
+            if !Arc::ptr_eq(self.snapshot.syntax(), snapshot.syntax()) {
+                return Err(MarkdownEditError::HostSnapshot(
+                    HostSnapshotMismatch::EqualRevisionSyntaxIdentity { revision: local },
+                ));
+            }
+            if cause == HostSnapshotCause::AcknowledgedLocalEdit {
+                return Ok(HostSyncOutcome::Acknowledged);
+            }
+        }
+
+        let (selections, preserve_scroll) = if let Some(changes) = changes {
+            let map = ChangeMap::checked(self.snapshot.text(), changes).map_err(|reason| {
+                MarkdownEditError::HostSnapshot(HostSnapshotMismatch::InvalidChanges {
+                    base: local,
+                    incoming,
+                    reason,
+                })
+            })?;
+            let result = apply_changes(self.snapshot.text(), changes)?;
+            if result.shared().as_str() != snapshot.text().shared().as_str() {
+                return Err(MarkdownEditError::HostSnapshot(
+                    HostSnapshotMismatch::ChangesDoNotProduceSnapshot {
+                        base: local,
+                        incoming,
+                    },
+                ));
+            }
+            let mapped = self
+                .selections
+                .as_slice()
+                .iter()
+                .copied()
+                .map(|selection| map_selection(selection, &map))
+                .collect::<Option<Vec<_>>>();
+            match mapped {
+                Some(mapped) => (
+                    SelectionSet::from_selections(
+                        snapshot.as_ref(),
+                        mapped,
+                        self.selections.primary_index(),
+                    )
+                    .map_err(map_selection_error)?,
+                    true,
+                ),
+                None => (
+                    SelectionSet::caret(snapshot.as_ref(), TextSize::new(0))
+                        .map_err(map_selection_error)?,
+                    false,
+                ),
+            }
+        } else {
+            (
+                SelectionSet::caret(snapshot.as_ref(), TextSize::new(0))
+                    .map_err(map_selection_error)?,
+                false,
+            )
+        };
+
+        self.snapshot = snapshot;
+        self.selections = selections;
+        self.history = History::default();
+        self.ime = None;
+        self.preferred_x = None;
+        if !preserve_scroll {
+            self.scroll = ScrollState::default();
+        }
+        Ok(HostSyncOutcome::Installed)
     }
 
     pub fn begin_ime(&mut self) -> Result<(), ImeError> {

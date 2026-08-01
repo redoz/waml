@@ -86,7 +86,31 @@ pub enum MarkdownEditError {
     RevisionOverflow {
         current: DocumentRevision,
     },
+    HostSnapshot(HostSnapshotMismatch),
     Ime(ImeError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostSnapshotMismatch {
+    AcknowledgementRevision {
+        local: DocumentRevision,
+        incoming: DocumentRevision,
+    },
+    EqualRevisionText {
+        revision: DocumentRevision,
+    },
+    EqualRevisionSyntaxIdentity {
+        revision: DocumentRevision,
+    },
+    InvalidChanges {
+        base: DocumentRevision,
+        incoming: DocumentRevision,
+        reason: FullReparseReason,
+    },
+    ChangesDoNotProduceSnapshot {
+        base: DocumentRevision,
+        incoming: DocumentRevision,
+    },
 }
 
 impl fmt::Display for MarkdownEditError {
@@ -119,7 +143,47 @@ impl fmt::Display for MarkdownEditError {
             Self::RevisionOverflow { current } => {
                 write!(f, "revision {} cannot advance", current.get())
             }
+            Self::HostSnapshot(reason) => write!(f, "host snapshot mismatch: {reason}"),
             Self::Ime(error) => write!(f, "IME error: {error:?}"),
+        }
+    }
+}
+
+impl fmt::Display for HostSnapshotMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AcknowledgementRevision { local, incoming } => write!(
+                f,
+                "acknowledgement revision {} does not match local revision {}",
+                incoming.get(),
+                local.get()
+            ),
+            Self::EqualRevisionText { revision } => write!(
+                f,
+                "revision {} has different source text identity",
+                revision.get()
+            ),
+            Self::EqualRevisionSyntaxIdentity { revision } => write!(
+                f,
+                "revision {} has different syntax identity",
+                revision.get()
+            ),
+            Self::InvalidChanges {
+                base,
+                incoming,
+                reason,
+            } => write!(
+                f,
+                "changes from revision {} to {} are invalid: {reason:?}",
+                base.get(),
+                incoming.get()
+            ),
+            Self::ChangesDoNotProduceSnapshot { base, incoming } => write!(
+                f,
+                "changes from revision {} do not produce snapshot revision {}",
+                base.get(),
+                incoming.get()
+            ),
         }
     }
 }

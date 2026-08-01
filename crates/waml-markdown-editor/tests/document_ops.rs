@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
-    edit::{EditCommand, HistoryGroup, MarkdownEdit, MarkdownEditError},
+    edit::{EditCommand, HistoryGroup, HostSnapshotMismatch, MarkdownEdit, MarkdownEditError},
+    input::ScrollState,
     selection::{Affinity, Selection, SelectionError, SelectionSet, TextPosition},
-    session::MarkdownDocumentSession,
+    session::{HostSnapshotCause, HostSyncOutcome, MarkdownDocumentSession},
 };
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextChange, TextRange, TextSize,
@@ -12,6 +13,10 @@ use waml_syntax::{
 
 fn snapshot(text: &str, revision: u64) -> Arc<MarkdownDocumentSnapshot> {
     let text = SourceText::from_shared(Arc::new(text.to_owned())).unwrap();
+    snapshot_from_source(text, revision)
+}
+
+fn snapshot_from_source(text: SourceText, revision: u64) -> Arc<MarkdownDocumentSnapshot> {
     let syntax = parse_markdown(
         DocumentRevision::new(revision),
         text,
@@ -542,4 +547,296 @@ fn read_only_rejects_all_direct_mutation_apis_without_state_change() {
     assert!(Arc::ptr_eq(session.snapshot(), &before));
     assert_eq!(session.selections(), &selections);
     assert!(session.can_undo());
+}
+
+#[test]
+fn host_acknowledgement_keeps_selection_scroll_history_and_ime() {
+    let mut session = MarkdownDocumentSession::new(snapshot("# A\n", 10));
+    let proposal = session
+        .execute(EditCommand::Insert(Arc::from("x")), HistoryGroup::named(1))
+        .unwrap()
+        .proposal
+        .unwrap();
+    session.set_scroll_state(ScrollState { x: 3.0, y: 48.0 });
+    session.begin_ime().unwrap();
+    let selection = session.selections().clone();
+
+    assert_eq!(
+        session
+            .synchronize_from_host(
+                proposal.snapshot.clone(),
+                Some(&proposal.edit.changes),
+                HostSnapshotCause::AcknowledgedLocalEdit,
+            )
+            .unwrap(),
+        HostSyncOutcome::Acknowledged
+    );
+    assert!(Arc::ptr_eq(session.snapshot(), &proposal.snapshot));
+    assert_eq!(session.selections(), &selection);
+    assert_eq!(session.scroll_state().x, 3.0);
+    assert_eq!(session.scroll_state().y, 48.0);
+    assert!(session.can_undo());
+    assert!(session.ime().is_some());
+}
+
+#[test]
+fn host_stale_snapshot_is_ignored_without_mutating_local_state() {
+    let stale = snapshot("abc", 20);
+    let mut session = MarkdownDocumentSession::new(stale.clone());
+    session
+        .execute(EditCommand::Insert(Arc::from("x")), HistoryGroup::named(2))
+        .unwrap();
+    session.set_scroll_state(ScrollState { x: 1.0, y: 32.0 });
+    session.begin_ime().unwrap();
+    let current = session.snapshot().clone();
+    let selection = session.selections().clone();
+
+    assert_eq!(
+        session
+            .synchronize_from_host(stale, None, HostSnapshotCause::ExternalReplacement)
+            .unwrap(),
+        HostSyncOutcome::IgnoredStale
+    );
+    assert!(Arc::ptr_eq(session.snapshot(), &current));
+    assert_eq!(session.selections(), &selection);
+    assert_eq!(session.scroll_state().x, 1.0);
+    assert_eq!(session.scroll_state().y, 32.0);
+    assert!(session.can_undo());
+    assert!(session.ime().is_some());
+}
+
+#[test]
+fn host_application_history_maps_selection_and_clears_local_transients() {
+    let mut session = MarkdownDocumentSession::new(snapshot("abc", 30));
+    session.set_primary_offset(TextSize::new(2)).unwrap();
+    session
+        .execute(EditCommand::Insert(Arc::from("x")), HistoryGroup::named(3))
+        .unwrap();
+    session.undo().unwrap().unwrap();
+    assert!(session.can_redo());
+    session.set_scroll_state(ScrollState { x: 0.0, y: 24.0 });
+    session.begin_ime().unwrap();
+    let change = replace(1, 1, "Z");
+    let incoming = snapshot("aZbc", 33);
+
+    assert_eq!(
+        session
+            .synchronize_from_host(
+                incoming.clone(),
+                Some(std::slice::from_ref(&change)),
+                HostSnapshotCause::ApplicationHistory,
+            )
+            .unwrap(),
+        HostSyncOutcome::Installed
+    );
+    assert!(Arc::ptr_eq(session.snapshot(), &incoming));
+    assert_eq!(
+        session.selections().primary().cursor.offset,
+        TextSize::new(3)
+    );
+    assert_eq!(session.selections().revision(), DocumentRevision::new(33));
+    assert_eq!(session.scroll_state().y, 24.0);
+    assert!(!session.can_undo());
+    assert!(!session.can_redo());
+    assert!(session.ime().is_none());
+}
+
+#[test]
+fn host_external_replacement_translates_selection_through_supplied_changes() {
+    let current = snapshot("abcdef", 35);
+    let selections = SelectionSet::caret(&current, TextSize::new(5)).unwrap();
+    let mut session = MarkdownDocumentSession::with_selections(current, selections).unwrap();
+    session.set_scroll_state(ScrollState { x: 0.0, y: 18.0 });
+    let change = replace(1, 3, "XYZ");
+    let incoming = snapshot("aXYZdef", 36);
+
+    assert_eq!(
+        session
+            .synchronize_from_host(
+                incoming,
+                Some(std::slice::from_ref(&change)),
+                HostSnapshotCause::ExternalReplacement,
+            )
+            .unwrap(),
+        HostSyncOutcome::Installed
+    );
+    assert_eq!(
+        session.selections().primary().cursor.offset,
+        TextSize::new(6)
+    );
+    assert_eq!(session.scroll_state().y, 18.0);
+}
+
+#[test]
+fn host_external_replacement_without_a_map_resets_selection_and_scroll() {
+    let mut session = MarkdownDocumentSession::new(snapshot("abc", 40));
+    session.set_primary_offset(TextSize::new(2)).unwrap();
+    session
+        .execute(EditCommand::Insert(Arc::from("x")), HistoryGroup::named(4))
+        .unwrap();
+    session.set_scroll_state(ScrollState { x: 2.0, y: 64.0 });
+    session.begin_ime().unwrap();
+    let change = replace(0, 4, "replacement");
+    let incoming = snapshot("replacement", 42);
+
+    assert_eq!(
+        session
+            .synchronize_from_host(
+                incoming.clone(),
+                Some(std::slice::from_ref(&change)),
+                HostSnapshotCause::ExternalReplacement,
+            )
+            .unwrap(),
+        HostSyncOutcome::Installed
+    );
+    assert!(Arc::ptr_eq(session.snapshot(), &incoming));
+    assert_eq!(
+        session.selections().primary().cursor.offset,
+        TextSize::new(0)
+    );
+    assert_eq!(session.scroll_state().x, 0.0);
+    assert_eq!(session.scroll_state().y, 0.0);
+    assert!(!session.can_undo());
+    assert!(session.ime().is_none());
+}
+
+#[test]
+fn host_initial_load_installs_the_supplied_snapshot_arc() {
+    let mut session = MarkdownDocumentSession::new(snapshot("", 0));
+    let incoming = snapshot("# Loaded\n", 1);
+
+    assert_eq!(
+        session
+            .synchronize_from_host(incoming.clone(), None, HostSnapshotCause::InitialLoad)
+            .unwrap(),
+        HostSyncOutcome::Installed
+    );
+    assert!(Arc::ptr_eq(session.snapshot(), &incoming));
+    assert_eq!(session.snapshot().text().shared().as_str(), "# Loaded\n");
+}
+
+#[test]
+fn host_acknowledgement_rejects_a_different_revision_without_mutation() {
+    let current = snapshot("abc", 50);
+    let mut session = MarkdownDocumentSession::new(current.clone());
+    let incoming = snapshot("abc", 51);
+
+    let error = session
+        .synchronize_from_host(incoming, None, HostSnapshotCause::AcknowledgedLocalEdit)
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        MarkdownEditError::HostSnapshot(HostSnapshotMismatch::AcknowledgementRevision {
+            local,
+            incoming,
+        }) if local == DocumentRevision::new(50) && incoming == DocumentRevision::new(51)
+    ));
+    assert!(Arc::ptr_eq(session.snapshot(), &current));
+}
+
+#[test]
+fn host_equal_revision_with_different_text_is_a_typed_error() {
+    let current = snapshot("abc", 60);
+    let mut session = MarkdownDocumentSession::new(current.clone());
+    let incoming = snapshot("abd", 60);
+
+    let error = session
+        .synchronize_from_host(incoming, None, HostSnapshotCause::ExternalReplacement)
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        MarkdownEditError::HostSnapshot(HostSnapshotMismatch::EqualRevisionText { revision })
+            if revision == DocumentRevision::new(60)
+    ));
+    assert!(Arc::ptr_eq(session.snapshot(), &current));
+}
+
+#[test]
+fn host_equal_revision_with_equal_bytes_but_different_text_identity_is_a_typed_error() {
+    let current = snapshot("abc", 65);
+    let incoming = snapshot("abc", 65);
+    let mut session = MarkdownDocumentSession::new(current.clone());
+
+    let error = session
+        .synchronize_from_host(incoming, None, HostSnapshotCause::ExternalReplacement)
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        MarkdownEditError::HostSnapshot(HostSnapshotMismatch::EqualRevisionText { revision })
+            if revision == DocumentRevision::new(65)
+    ));
+    assert!(Arc::ptr_eq(session.snapshot(), &current));
+}
+
+#[test]
+fn host_equal_revision_with_different_syntax_identity_is_a_typed_error() {
+    let current = snapshot("abc", 70);
+    let incoming = snapshot_from_source(current.text().clone(), 70);
+    let mut session = MarkdownDocumentSession::new(current.clone());
+
+    let error = session
+        .synchronize_from_host(incoming, None, HostSnapshotCause::ApplicationHistory)
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        MarkdownEditError::HostSnapshot(
+            HostSnapshotMismatch::EqualRevisionSyntaxIdentity { revision }
+        ) if revision == DocumentRevision::new(70)
+    ));
+    assert!(Arc::ptr_eq(session.snapshot(), &current));
+}
+
+#[test]
+fn host_invalid_changes_are_typed_and_leave_state_unchanged() {
+    let current = snapshot("abc", 80);
+    let mut session = MarkdownDocumentSession::new(current.clone());
+    let incoming = snapshot("xyabc", 81);
+    let changes = [replace(0, 0, "x"), replace(0, 0, "y")];
+
+    let error = session
+        .synchronize_from_host(
+            incoming,
+            Some(&changes),
+            HostSnapshotCause::ExternalReplacement,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        MarkdownEditError::HostSnapshot(HostSnapshotMismatch::InvalidChanges {
+            base,
+            incoming,
+            ..
+        }) if base == DocumentRevision::new(80) && incoming == DocumentRevision::new(81)
+    ));
+    assert!(Arc::ptr_eq(session.snapshot(), &current));
+}
+
+#[test]
+fn host_changes_must_produce_the_supplied_snapshot() {
+    let current = snapshot("abc", 90);
+    let mut session = MarkdownDocumentSession::new(current.clone());
+    let incoming = snapshot("ayc", 91);
+    let wrong_change = replace(1, 2, "x");
+
+    let error = session
+        .synchronize_from_host(
+            incoming,
+            Some(std::slice::from_ref(&wrong_change)),
+            HostSnapshotCause::ApplicationHistory,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        MarkdownEditError::HostSnapshot(HostSnapshotMismatch::ChangesDoNotProduceSnapshot {
+            base,
+            incoming,
+        }) if base == DocumentRevision::new(90) && incoming == DocumentRevision::new(91)
+    ));
+    assert!(Arc::ptr_eq(session.snapshot(), &current));
 }
