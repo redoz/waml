@@ -1,13 +1,12 @@
 name: CI
 
-# CI temporarily disabled -- workflows are failing and will be fixed later.
-# Manual-only trigger so nothing runs on push/PR; restore the push/pull_request
-# block below to re-enable.
+# There is deliberately no `push: [main]` trigger here. pages.yml calls this
+# workflow via `workflow_call` and gates the deploy on it, so a push to main
+# runs this gate exactly once instead of twice.
 on:
+  pull_request:
+  workflow_call:
   workflow_dispatch:
-#  push:
-#    branches: [main]
-#  pull_request:
 
 # Cancel superseded runs on the same branch/PR.
 concurrency:

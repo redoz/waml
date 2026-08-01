@@ -278,8 +278,7 @@ mod drift {
     /// code draws them right now: the catalog is add-only (prune deliberately),
     /// so losing a call site must not silently hide a glyph from the reference.
     /// Guard 2 allows exactly these rows to have no `Icon::<Variant>` call site.
-    const UNWIRED_BUT_LISTED: &[Icon] =
-        &[Icon::PinOff, Icon::InspectionPanel, Icon::ListTree];
+    const UNWIRED_BUT_LISTED: &[Icon] = &[Icon::PinOff, Icon::InspectionPanel, Icon::ListTree];
 
     fn table_icons() -> Vec<Icon> {
         ICON_GROUPS

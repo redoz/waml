@@ -1,9 +1,9 @@
 # Publishes the makepad waml-editor to GitHub Pages as a WebAssembly app.
 #
-# Deliberately separate from ci.yml: that workflow is currently disabled and
-# gates the Rust/pnpm test suites, which have nothing to do with shipping the
-# editor. Keeping them apart means re-enabling CI later cannot break the deploy
-# and a red test cannot silently stop the site from updating.
+# Gated on ci.yml: the `ci` job below calls that workflow and the build/deploy
+# jobs need it, so a red test suite stops the site from updating. ci.yml has no
+# push trigger of its own precisely so this call is the single run for a push
+# to main.
 name: Publish web editor
 
 on:
@@ -23,8 +23,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The full lint/test gate. Nothing ships unless this is green.
+  ci:
+    name: ci
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: build wasm bundle
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +48,7 @@ jobs:
 
       # The build tool and the framework are pinned SEPARATELY and currently sit
       # on different revs: the framework is whatever crates/waml-editor/Cargo.toml
-      # names (c38f5299 at the time of writing), while this is 25d78a4d plus two
+      # names (e656873a at the time of writing), while this is 25d78a4d plus two
       # commits, 7162231f, on the fork branch `waml-wasm-dep-dirs`.
       #
       # That commit is what makes this deploy produce a working site at all.
