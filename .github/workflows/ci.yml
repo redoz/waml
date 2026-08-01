@@ -24,17 +24,17 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           # The VS Code extension is a standalone Node project; its
           # "packageManager" field pins the pnpm version.
           package_json_file: editors/vscode/package.json
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # Matches the "engines.node" floor in editors/vscode/package.json.
           node-version: 22

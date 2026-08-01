@@ -33,7 +33,7 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # cargo-makepad shells out to `rustup run nightly cargo build` with
       # `-Z build-std=panic_abort,std` and `-Z json-target-spec`, so nightly is
@@ -129,7 +129,7 @@ jobs:
       # names 8. Prune to what the source actually references: 67 MB -> 17 MB.
       # Only needed to run the dependency-free scripts/*.mjs below; there is no
       # root package.json (the VS Code extension owns its own in editors/vscode).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -163,11 +163,11 @@ jobs:
       - name: Verify the artifact is complete
         run: node scripts/verify-web-artifact.mjs target/makepad-wasm-app/release/waml-editor
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       # Layout emitted by cargo-makepad: index.html, waml-editor.wasm, the
       # makepad_platform/* JS glue, and one resources/ tree per crate.
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: target/makepad-wasm-app/release/waml-editor
 
@@ -180,4 +180,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
