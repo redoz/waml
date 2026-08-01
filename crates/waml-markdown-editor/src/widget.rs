@@ -32,14 +32,14 @@ script_mod! {
     mod.widgets.MarkdownEditor = set_type_default() do mod.widgets.MarkdownEditorBase {
         width: Fill
         height: Fill
-        draw_text_sans: {text_style: theme.font_regular{}}
-        draw_text_sans_italic: {text_style: theme.font_italic{}}
-        draw_text_sans_semibold: {text_style: theme.font_bold{}}
-        draw_text_sans_semibold_italic: {text_style: theme.font_bold_italic{}}
-        draw_text_mono: {text_style: theme.font_code{}}
-        draw_text_mono_italic: {text_style: theme.font_code{}}
-        draw_text_mono_semibold: {text_style: theme.font_code{}}
-        draw_text_mono_semibold_italic: {text_style: theme.font_code{}}
+        draw_text_sans +: {text_style: theme.font_regular}
+        draw_text_sans_italic +: {text_style: theme.font_italic}
+        draw_text_sans_semibold +: {text_style: theme.font_bold}
+        draw_text_sans_semibold_italic +: {text_style: theme.font_bold_italic}
+        draw_text_mono +: {text_style: theme.font_code}
+        draw_text_mono_italic +: {text_style: theme.font_code}
+        draw_text_mono_semibold +: {text_style: theme.font_code}
+        draw_text_mono_semibold_italic +: {text_style: theme.font_code}
         motion_duration: 0.100
         motion_ease: OutCubic
         body_color: #202124
@@ -332,6 +332,14 @@ pub fn navigation_position(
         .then_some(position)
 }
 
+struct TextGlyphPaint {
+    id: crate::layout::GeometryElementId,
+    range: waml_syntax::TextRange,
+    face: TextFace,
+    metrics: TextMetrics,
+    color: ColorRole,
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct MarkdownEditor {
     #[deref]
@@ -428,6 +436,8 @@ pub struct MarkdownEditor {
     image_cache: DecodedImageCache,
     #[rust]
     last_draw: DrawRecorder,
+    #[rust]
+    painted_text_ranges: Vec<waml_syntax::TextRange>,
 }
 
 impl Widget for MarkdownEditor {
@@ -482,7 +492,7 @@ impl MarkdownEditor {
             Hit::TextCopy(event) => {
                 let layout = match self.frame_layout.as_ref() {
                     Some(layout) => layout.clone(),
-                    None => self.install_layout(cx, session)?,
+                    None => self.install_layout(cx, session, None)?,
                 };
                 let response = self
                     .controller
@@ -494,7 +504,7 @@ impl MarkdownEditor {
             Hit::TextCut(event) => {
                 let layout = match self.frame_layout.as_ref() {
                     Some(layout) => layout.clone(),
-                    None => self.install_layout(cx, session)?,
+                    None => self.install_layout(cx, session, None)?,
                 };
                 let copied = self
                     .controller
@@ -580,7 +590,8 @@ impl MarkdownEditor {
         scope: &mut Scope,
         walk: Walk,
     ) -> Result<DrawStep, MarkdownEditorError> {
-        let layout = self.install_layout(cx, session)?;
+        let viewport_size = cx.peek_walk_turtle(walk).size;
+        let layout = self.install_layout(cx, session, Some(viewport_size))?;
         let installed = self
             .installed
             .as_ref()
@@ -604,6 +615,7 @@ impl MarkdownEditor {
         )
         .map_err(MarkdownEditorError::Presentation)?;
         self.last_draw = DrawRecorder::default();
+        self.painted_text_ranges.clear();
         for layer in [
             DrawLayer::BlockBackground,
             DrawLayer::Selection,
@@ -675,7 +687,13 @@ impl MarkdownEditor {
             DrawCommand::EmbeddedBlock { rect, state, .. } => match state {
                 EmbeddedState::Ready { source } => {
                     if let Some(image) = self.image_for_source(cx, source) {
-                        let _ = image.draw_walk(cx, scope, Walk::abs_rect(*rect));
+                        let walk = Walk::abs_rect(*rect);
+                        debug_assert_eq!(
+                            cx.peek_walk_turtle(walk),
+                            *rect,
+                            "ready image walk must keep draw-command coordinates"
+                        );
+                        let _ = image.draw_walk(cx, scope, walk);
                     } else {
                         self.draw_embedded.color = self.code_fill;
                         self.draw_embedded.draw_abs(cx, *rect);
@@ -724,7 +742,18 @@ impl MarkdownEditor {
                 face,
                 metrics,
                 color,
-            } => self.paint_text(cx, installed, layout, id, range, face, metrics, color),
+            } => self.paint_text(
+                cx,
+                installed,
+                layout,
+                TextGlyphPaint {
+                    id,
+                    range,
+                    face,
+                    metrics,
+                    color,
+                },
+            ),
             TextPaintOperation::Underline { rect, color }
             | TextPaintOperation::Strikethrough { rect, color } => {
                 self.draw_decoration.color = self.color_for_role(color);
@@ -738,47 +767,30 @@ impl MarkdownEditor {
         cx: &mut Cx2d,
         installed: &InstalledPresentation,
         layout: &LayoutSnapshot,
-        id: crate::layout::GeometryElementId,
-        range: waml_syntax::TextRange,
-        face: TextFace,
-        metrics: TextMetrics,
-        color: ColorRole,
+        paint: TextGlyphPaint,
     ) {
         let Some(cluster) = layout
             .glyph_clusters()
             .iter()
-            .find(|cluster| cluster.id == id)
+            .find(|cluster| cluster.id == paint.id)
         else {
             return;
         };
-        let Some((run_id, run_range)) = installed.plan.items.iter().find_map(|item| match item {
-            crate::presentation::PresentationItem::TextRun {
-                id,
-                range: run_range,
-                ..
-            } if run_range.start() <= range.start() && range.end() <= run_range.end() => Some((
-                LayoutElementId {
-                    owner: id.owner,
-                    fragment_ordinal: id.fragment_ordinal,
-                },
-                *run_range,
-            )),
-            _ => None,
-        }) else {
-            return;
-        };
-        let Some(laid_out) = self
-            .text_layout_cache
-            .laid_out(installed.revision, run_id, metrics)
-        else {
+        let Some((shaped_range, laid_out)) = self.text_layout_cache.laid_out(
+            installed.revision,
+            paint.id.layout,
+            paint.range,
+            paint.metrics,
+        ) else {
             return;
         };
         self.fonts
-            .configure_face(face, metrics, &mut self.draw_text_sans);
-        let cluster_offset = range
+            .configure_face(paint.face, paint.metrics, &mut self.draw_text_sans);
+        let cluster_offset = paint
+            .range
             .start()
             .to_usize()
-            .saturating_sub(run_range.start().to_usize());
+            .saturating_sub(shaped_range.start().to_usize());
         let laid_glyphs = laid_out
             .rows
             .iter()
@@ -805,8 +817,14 @@ impl MarkdownEditor {
                 ))
             })
             .collect::<Vec<_>>();
-        self.draw_text_sans
-            .draw_rasterized_glyphs_abs(cx, &glyphs, self.color_for_role(color));
+        self.draw_text_sans.draw_rasterized_glyphs_abs(
+            cx,
+            &glyphs,
+            self.color_for_role(paint.color),
+        );
+        if !glyphs.is_empty() {
+            self.painted_text_ranges.push(paint.range);
+        }
     }
 
     fn color_for_role(&self, role: ColorRole) -> Vec4 {
@@ -886,6 +904,7 @@ impl MarkdownEditor {
         &mut self,
         cx: &mut Cx,
         session: &MarkdownDocumentSession,
+        requested_viewport: Option<DVec2>,
     ) -> Result<Arc<LayoutSnapshot>, MarkdownEditorError> {
         let installed = self
             .installed
@@ -903,7 +922,8 @@ impl MarkdownEditor {
                 return Ok(layout.clone());
             }
         }
-        let viewport_rect = self.view.area().rect(cx);
+        let viewport_size =
+            resolved_layout_viewport(self.view.area().rect(cx).size, requested_viewport);
         self.fonts.sans_regular = Some(self.draw_text_sans.text_style.font_family.clone());
         self.fonts.sans_regular_italic =
             Some(self.draw_text_sans_italic.text_style.font_family.clone());
@@ -940,8 +960,8 @@ impl MarkdownEditor {
                 &installed.layout_document,
                 session.snapshot(),
                 LayoutViewport::new(
-                    viewport_rect.size.x.max(1.0),
-                    viewport_rect.size.y.max(1.0),
+                    viewport_size.x.max(1.0),
+                    viewport_size.y.max(1.0),
                     self.scroll_y,
                     0.0,
                 ),
@@ -951,8 +971,7 @@ impl MarkdownEditor {
             .map_err(MarkdownEditorError::Layout)?;
         let layout = Arc::new(layout);
         self.previous_layout = self.target_layout.replace(layout.clone());
-        self.motion
-            .set_viewport_height(viewport_rect.size.y.max(1.0));
+        self.motion.set_viewport_height(viewport_size.y.max(1.0));
         let cause = self.pending_cause.take().unwrap_or_else(|| {
             if self.frame_layout.is_some() {
                 LayoutChangeCause::ViewportResize
@@ -1006,7 +1025,7 @@ impl MarkdownEditor {
         }
         let layout = match self.frame_layout.as_ref() {
             Some(layout) => layout.clone(),
-            None => self.install_layout(cx, session)?,
+            None => self.install_layout(cx, session, None)?,
         };
         let old_selection = session.selections().clone();
         let response = self
@@ -1075,6 +1094,12 @@ fn strikethrough_rect(rect: Rect) -> Rect {
         ),
         size: dvec2(rect.size.x, rect.size.y.min(2.0)),
     }
+}
+
+fn resolved_layout_viewport(area_size: DVec2, requested: Option<DVec2>) -> DVec2 {
+    requested
+        .filter(|size| size.x > 0.0 && size.y > 0.0)
+        .unwrap_or(area_size)
 }
 
 fn key_input(event: KeyEvent) -> Option<EditorInput> {
@@ -1256,6 +1281,12 @@ impl MarkdownEditorRef {
         self.borrow()
             .map_or(DVec2::default(), |inner| inner.last_ime_point)
     }
+
+    #[doc(hidden)]
+    pub fn test_painted_text_ranges(&self) -> Vec<waml_syntax::TextRange> {
+        self.borrow()
+            .map_or_else(Vec::new, |inner| inner.painted_text_ranges.clone())
+    }
 }
 
 fn find_action<T>(
@@ -1274,4 +1305,39 @@ fn find_action<T>(
 
 fn has_action(actions: &Actions, predicate: impl Fn(&MarkdownEditorAction) -> bool) -> bool {
     find_action(actions, |action| predicate(action).then_some(())).is_some()
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::*;
+
+    #[test]
+    fn positive_pre_draw_viewport_overrides_a_stale_redraw_area() {
+        assert_eq!(
+            resolved_layout_viewport(dvec2(0.0, 0.0), Some(dvec2(1280.0, 871.0))),
+            dvec2(1280.0, 871.0)
+        );
+    }
+
+    #[test]
+    fn invalid_pre_draw_viewport_keeps_the_event_path_area_fallback() {
+        assert_eq!(
+            resolved_layout_viewport(dvec2(640.0, 480.0), Some(dvec2(0.0, 480.0))),
+            dvec2(640.0, 480.0)
+        );
+    }
+
+    #[test]
+    fn image_walk_stays_absolute_with_a_nonzero_turtle_origin() {
+        let current_turtle_origin = dvec2(568.0, 29.0);
+        let rect = Rect {
+            pos: dvec2(24.0, 200.0),
+            size: dvec2(96.0, 48.0),
+        };
+        let walk = Walk::abs_rect(rect);
+        assert_eq!(walk.abs_pos, Some(dvec2(24.0, 200.0)));
+        assert_ne!(walk.abs_pos, Some(rect.pos - current_turtle_origin));
+        assert!(matches!(walk.width, Size::Fixed(value) if value == 96.0));
+        assert!(matches!(walk.height, Size::Fixed(value) if value == 48.0));
+    }
 }

@@ -601,7 +601,7 @@ fn block_kind(
         Kind::Table => PresentationBlockKind::Table {
             columns: table_columns(node),
         },
-        Kind::TableRow => PresentationBlockKind::TableRow,
+        Kind::TableHead | Kind::TableRow => PresentationBlockKind::TableRow,
         Kind::TableCell => {
             let column = node
                 .parent()

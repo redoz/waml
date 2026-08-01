@@ -20,6 +20,7 @@ const FULL_SHAPE_WIDTH: f64 = 1_000_000.0;
 struct TextLayoutKey {
     revision: DocumentRevision,
     id: LayoutElementId,
+    range: TextRange,
     font: FontKey,
     font_size_bits: u32,
     line_spacing_bits: u32,
@@ -38,11 +39,28 @@ impl MakepadTextLayoutCache {
         &self,
         revision: DocumentRevision,
         id: LayoutElementId,
+        range: TextRange,
         metrics: TextMetrics,
-    ) -> Option<Rc<LaidoutText>> {
-        self.entries
-            .get(&text_layout_key(revision, id, metrics, FULL_SHAPE_WIDTH).ok()?)
-            .cloned()
+    ) -> Option<(TextRange, Rc<LaidoutText>)> {
+        if let Some((key, laid_out)) = self.entries.iter().find(|(key, _)| {
+            text_layout_key_matches_paint_range(key, revision, id, range, metrics, FULL_SHAPE_WIDTH)
+        }) {
+            return Some((key.range, laid_out.clone()));
+        }
+        let mut source_matches = self.entries.iter().filter(|(key, _)| {
+            text_layout_key_matches_source_paint_range(
+                key,
+                revision,
+                range,
+                metrics,
+                FULL_SHAPE_WIDTH,
+            )
+        });
+        let (key, laid_out) = source_matches.next()?;
+        source_matches
+            .next()
+            .is_none()
+            .then(|| (key.range, laid_out.clone()))
     }
 
     pub(crate) fn retain_revision(&mut self, revision: DocumentRevision) {
@@ -103,8 +121,14 @@ fn shape_makepad_paragraph<R: FontResolver>(
         let paint_scale = shaper.draw_text.font_scale as f64;
         let layout_scale = shaper.draw_text.font_scale.max(0.0001);
         let max_width = FULL_SHAPE_WIDTH / layout_scale as f64;
-        let key = text_layout_key(shaper.revision, span.run_id, span.metrics, FULL_SHAPE_WIDTH)
-            .map_err(|_| LayoutError::ShapingFailed { run: span.run_id })?;
+        let key = text_layout_key(
+            shaper.revision,
+            span.run_id,
+            span.source_range,
+            span.metrics,
+            FULL_SHAPE_WIDTH,
+        )
+        .map_err(|_| LayoutError::ShapingFailed { run: span.run_id })?;
         let laid_out = if let Some(cache) = shaper.cache.as_deref_mut() {
             if let Some(cached) = cache.entries.get(&key) {
                 cached.clone()
@@ -190,6 +214,7 @@ fn shape_makepad_paragraph<R: FontResolver>(
 fn text_layout_key(
     revision: DocumentRevision,
     id: LayoutElementId,
+    range: TextRange,
     metrics: TextMetrics,
     width: f64,
 ) -> Result<TextLayoutKey, ()> {
@@ -205,6 +230,7 @@ fn text_layout_key(
     Ok(TextLayoutKey {
         revision,
         id,
+        range,
         font: metrics.font,
         font_size_bits: metrics.font_size.to_bits(),
         line_spacing_bits: metrics.line_spacing.to_bits(),
@@ -212,6 +238,42 @@ fn text_layout_key(
         italic: metrics.italic,
         width_bits: width.to_bits(),
     })
+}
+
+fn text_layout_key_matches_paint_range(
+    key: &TextLayoutKey,
+    revision: DocumentRevision,
+    id: LayoutElementId,
+    paint_range: TextRange,
+    metrics: TextMetrics,
+    width: f64,
+) -> bool {
+    let Ok(paint_key) = text_layout_key(revision, id, paint_range, metrics, width) else {
+        return false;
+    };
+    key.id == paint_key.id
+        && text_layout_key_matches_source_paint_range(key, revision, paint_range, metrics, width)
+}
+
+fn text_layout_key_matches_source_paint_range(
+    key: &TextLayoutKey,
+    revision: DocumentRevision,
+    paint_range: TextRange,
+    metrics: TextMetrics,
+    width: f64,
+) -> bool {
+    let Ok(paint_key) = text_layout_key(revision, key.id, paint_range, metrics, width) else {
+        return false;
+    };
+    key.revision == paint_key.revision
+        && key.font == paint_key.font
+        && key.font_size_bits == paint_key.font_size_bits
+        && key.line_spacing_bits == paint_key.line_spacing_bits
+        && key.weight == paint_key.weight
+        && key.italic == paint_key.italic
+        && key.width_bits == paint_key.width_bits
+        && key.range.start() <= paint_range.start()
+        && paint_range.end() <= key.range.end()
 }
 
 fn measure_makepad_intrinsic<R: FontResolver>(
@@ -701,9 +763,92 @@ mod tests {
     use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
 
     use super::{
-        bidi_level_at, reduce_intrinsic_advances, text_size, FontResolver, MakepadTextShaper,
-        TextRange,
+        bidi_level_at, reduce_intrinsic_advances, text_layout_key,
+        text_layout_key_matches_paint_range, text_size, FontResolver, MakepadTextShaper, TextRange,
+        FULL_SHAPE_WIDTH,
     };
+
+    #[test]
+    fn text_layout_cache_keys_include_the_exact_source_range() {
+        let id = LayoutElementId {
+            owner: waml_syntax::SyntaxIdentity::from_raw_for_test(7),
+            fragment_ordinal: 0,
+        };
+        let metrics = TextMetrics {
+            font: FontKey(0),
+            font_size: 16.0,
+            line_spacing: 1.0,
+            weight: FontWeight(400),
+            italic: false,
+        };
+        let first = text_layout_key(
+            DocumentRevision::INITIAL,
+            id,
+            TextRange::new(text_size(0), text_size(4)).unwrap(),
+            metrics,
+            FULL_SHAPE_WIDTH,
+        )
+        .unwrap();
+        let second = text_layout_key(
+            DocumentRevision::INITIAL,
+            id,
+            TextRange::new(text_size(5), text_size(9)).unwrap(),
+            metrics,
+            FULL_SHAPE_WIDTH,
+        )
+        .unwrap();
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn coalesced_shape_cache_key_resolves_each_contained_paint_range() {
+        let revision = DocumentRevision::INITIAL;
+        let id = LayoutElementId {
+            owner: waml_syntax::SyntaxIdentity::from_raw_for_test(8),
+            fragment_ordinal: 0,
+        };
+        let metrics = TextMetrics {
+            font: FontKey(0),
+            font_size: 16.0,
+            line_spacing: 1.0,
+            weight: FontWeight(400),
+            italic: false,
+        };
+        let shaped = text_layout_key(
+            revision,
+            id,
+            TextRange::new(text_size(0), text_size(9)).unwrap(),
+            metrics,
+            FULL_SHAPE_WIDTH,
+        )
+        .unwrap();
+        let first = TextRange::new(text_size(0), text_size(4)).unwrap();
+        let second = TextRange::new(text_size(5), text_size(9)).unwrap();
+        assert!(text_layout_key_matches_paint_range(
+            &shaped,
+            revision,
+            id,
+            first,
+            metrics,
+            FULL_SHAPE_WIDTH,
+        ));
+        assert!(text_layout_key_matches_paint_range(
+            &shaped,
+            revision,
+            id,
+            second,
+            metrics,
+            FULL_SHAPE_WIDTH,
+        ));
+        assert_eq!(
+            first.start().to_usize() - shaped.range.start().to_usize(),
+            0
+        );
+        assert_eq!(
+            second.start().to_usize() - shaped.range.start().to_usize(),
+            5
+        );
+    }
     use crate::{
         document::MarkdownDocumentSnapshot,
         layout::{

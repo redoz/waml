@@ -121,3 +121,40 @@ MAKEPAD=headless MAKEPAD_HEADLESS_OUT_DIR=<out-dir> \
   cargo run -p waml-editor -- crates/waml-editor/tests/fixtures/mini
 # -> writes <out-dir>/window_0_frame_000000.png for eyeball review
 ```
+
+## Markdown presentation and motion
+
+The native harness presents a fixed `1280 x 900` logical window for each source
+and motion state. Build it in release mode, then capture only the PID created for
+the current case. A case-specific ready marker is written after the final redraw
+has been presented. The capture waits for both that marker and the launched
+process window; a nonzero window handle alone is not the readiness contract.
+
+Store the evidence outside the repository at
+`C:\tmp\markdown-presentation-verification`:
+
+```powershell
+rtk cargo build -p waml-editor --bin markdown_presentation_harness --release
+rtk proxy pwsh -NoProfile -Command '$out = "C:\tmp\markdown-presentation-verification"; New-Item -ItemType Directory -Force -Path $out | Out-Null; $cases = @("headings","inline","lists","quotes","code","tables","images","invalid","selection","motion-start","motion-mid","motion-end"); foreach ($case in $cases) { $ready = "$out\$case.ready"; Remove-Item -LiteralPath $ready -ErrorAction SilentlyContinue; $p = Start-Process -FilePath "target\release\markdown_presentation_harness.exe" -ArgumentList @("--case",$case) -PassThru; try { $deadline = [DateTime]::UtcNow.AddSeconds(20); while (($p.MainWindowHandle -eq 0 -or -not (Test-Path -LiteralPath $ready)) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100; $p.Refresh() }; if ($p.MainWindowHandle -eq 0) { throw "window did not open for $case" }; if (-not (Test-Path -LiteralPath $ready)) { throw "final frame was not presented for $case" }; & pwsh -NoProfile -File scripts/capture-window.ps1 -Out "$out\$case.png" -ProcessId $p.Id; if ($LASTEXITCODE -ne 0) { throw "capture failed for $case" } } finally { Stop-Process -Id $p.Id -ErrorAction SilentlyContinue } }'
+```
+
+Expect these twelve native-pixel PNGs: `headings`, `inline`, `lists`, `quotes`,
+`code`, `tables`, `images`, `invalid`, `selection`, `motion-start`,
+`motion-mid`, and `motion-end`. `PrintWindow` captures `1280 x 900` logical
+window content at the host native DPI. The workflow never finds, reuses, or
+stops a process by name.
+
+Inspect every image and record these checks:
+
+- All literal delimiters stay visible. Markers have lower contrast, and active
+  markers keep the same geometry.
+- Heading hierarchy is moderate. The document inset is 24 logical pixels on
+  the left, right, top, and bottom. Lists hang from their literal markers.
+- Quote, code, table, checkbox, thematic-rule, and image decorations do not
+  replace source. Raw HTML stays visible and inert.
+- The three image source lines remain visible in loading, failed/retry, and
+  approved `checker.svg` byte states.
+- Motion start, midpoint, and end keep the same surviving identities. The
+  midpoint is 87.5% of displacement because `OutCubic(0.5) = 0.875`.
+- Selection, diagnostics, image geometry, caret, and IME stay attached to their
+  source text at each applicable sampled phase.

@@ -15,6 +15,10 @@ use waml_markdown_editor::{
         ParagraphShapeRequest, ShapeSpan, ShapedCluster, ShapedFragment, ShapedGlyph,
         ShapedParagraph, ShapedRow, ShapedRun, TextMetrics, TextShaper, VisualLine,
     },
+    presentation::{
+        build_draw_commands, build_layout_document, compile_presentation, EmbeddedAssetFrame,
+        EmbeddedMeasurements, HighlighterRegistry, PresentationFrame, PresentationStyles,
+    },
     selection::{Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
 };
@@ -32,6 +36,78 @@ fn range(start: usize, end: usize) -> TextRange {
 }
 
 fn assert_send_sync<T: Send + Sync>() {}
+
+#[test]
+fn closing_fenced_code_marker_has_exact_geometry_and_a_text_paint_command() {
+    let source = "```waml\numl.class Foo {}\n```\n";
+    let syntax = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source.to_owned()).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let presentation = Arc::new(MarkdownDocumentSnapshot::new(syntax.clone()));
+    let styles = PresentationStyles::balanced();
+    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default()).unwrap();
+    let document = build_layout_document(&plan, &styles, &EmbeddedMeasurements::default()).unwrap();
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(640.0, 480.0, 0.0, 480.0),
+            LayoutInvalidation::Document,
+            &mut FakeShaper::default(),
+        )
+        .unwrap();
+    let closing_start = source.rfind("```").unwrap();
+    let closing = range(closing_start, closing_start + 3);
+    let geometry_ranges = layout
+        .glyph_clusters()
+        .iter()
+        .filter(|cluster| {
+            closing.start() < cluster.source_range.end()
+                && cluster.source_range.start() < closing.end()
+        })
+        .map(|cluster| cluster.source_range)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        geometry_ranges
+            .iter()
+            .flat_map(|range| range.start().to_usize()..range.end().to_usize())
+            .collect::<Vec<_>>(),
+        (closing_start..closing_start + 3).collect::<Vec<_>>()
+    );
+
+    let selection = SelectionSet::caret(presentation.as_ref(), t(closing_start)).unwrap();
+    let frame = PresentationFrame {
+        revision: DocumentRevision::INITIAL,
+        layout: Arc::new(layout),
+        active_owners: Arc::from([]),
+        diagnostics: Arc::from([]),
+        assets: Arc::new(EmbeddedAssetFrame {
+            revision: DocumentRevision::INITIAL,
+            items: Arc::from([]),
+        }),
+    };
+    let commands = build_draw_commands(&frame, &plan, &styles, &selection, None).unwrap();
+    let painted = commands
+        .iter()
+        .filter_map(|command| match command {
+            waml_markdown_editor::presentation::DrawCommand::Text { range, .. }
+                if closing.start() < range.end() && range.start() < closing.end() =>
+            {
+                Some(range.start().to_usize()..range.end().to_usize())
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        painted,
+        (closing_start..closing_start + 3).collect::<Vec<_>>(),
+        "the closing fence remains literal in the paint plan"
+    );
+}
 
 #[test]
 fn unpositioned_blocks_use_an_optional_document_index() {
@@ -1169,6 +1245,38 @@ fn quote_hanging_tree_aggregates_children_without_phantom_height() {
 }
 
 #[test]
+fn hanging_parent_places_nested_children_at_its_content_indent() {
+    let (mut document, presentation, mut shaper) = fixtures::fixture(&[16.0, 16.0], &[4, 4], None);
+    let mut blocks = document.blocks.to_vec();
+    let parent = blocks[0].id;
+    let marker_start = document.text_runs[0].range.start().to_usize();
+    blocks[0].spec.flow = BlockFlow::Hanging {
+        marker_range: range(marker_start, marker_start + 1),
+        content_indent: 20.0,
+    };
+    blocks[0].spec.space_after = 0.0;
+    blocks[1].parent = Some(parent);
+    document.blocks = blocks.into();
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(200.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let child = layout
+        .visible_blocks()
+        .iter()
+        .find(|block| block.id == document.blocks[1].id)
+        .expect("the nested child is visible");
+    assert_eq!(child.rect.pos.x, 20.0);
+    assert_eq!(child.rect.size.x, 180.0);
+}
+
+#[test]
 fn hanging_wrapped_multi_run_clusters_have_unique_block_ordinals() {
     let (mut document, presentation, mut shaper) = fixtures::paragraph();
     let mut blocks = document.blocks.to_vec();
@@ -1468,6 +1576,42 @@ fn table_intrinsic_crosses_styles_and_includes_nested_embedded_width() {
         .find(|block| block.id == cell)
         .unwrap();
     assert_eq!(cell_geometry.rect.size.x, 90.0);
+}
+
+#[test]
+fn embedded_block_geometry_uses_measured_size_instead_of_filling_available_width() {
+    let (mut document, presentation, mut shaper) = fixtures::paragraph();
+    let id = document.blocks[0].id;
+    let source_range = document.blocks[0].source_range;
+    let mut blocks = document.blocks.to_vec();
+    blocks[0].spec.flow = BlockFlow::Embedded;
+    document.blocks = blocks.into();
+    document.text_runs = Arc::from([]);
+    document.embedded_blocks = Arc::from([MeasuredBlock {
+        id,
+        source_range,
+        size: dvec2(96.0, 48.0),
+        baseline: None,
+    }]);
+
+    for (viewport_width, expected_width) in [(640.0, 96.0), (64.0, 64.0)] {
+        let layout = LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(viewport_width, 480.0, 0.0, 480.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap();
+        let rect = layout
+            .visible_blocks()
+            .iter()
+            .find(|block| block.id == id)
+            .unwrap()
+            .rect;
+        assert_eq!(rect.size, dvec2(expected_width, 48.0));
+    }
 }
 
 #[test]

@@ -434,8 +434,13 @@ impl LayoutSnapshot {
                 };
                 let mut moved = cluster.clone();
                 moved.rect = lerp_rect(from.rect, cluster.rect, eased);
-                moved.caret_stops =
-                    interpolate_stops(&from.caret_stops, &cluster.caret_stops, eased);
+                moved.caret_stops = interpolate_stops(
+                    from.source_range,
+                    cluster.source_range,
+                    &from.caret_stops,
+                    &cluster.caret_stops,
+                    eased,
+                );
                 moved.glyphs = interpolate_glyphs(&from.glyphs, &cluster.glyphs, eased);
                 moved
             })
@@ -794,16 +799,36 @@ fn lerp_rect(from: Rect, to: Rect, eased: f64) -> Rect {
     }
 }
 
-/// Caret stops interpolate only when the two sides agree on their positions;
-/// otherwise the target stops are authoritative.
-fn interpolate_stops(from: &[CaretStop], to: &[CaretStop], eased: f64) -> Arc<[CaretStop]> {
+/// Caret stops of one stable cluster interpolate when their relative byte
+/// offsets and affinities agree. The target source position stays authoritative
+/// because an edit before the cluster can shift its absolute offsets.
+fn interpolate_stops(
+    from_range: TextRange,
+    to_range: TextRange,
+    from: &[CaretStop],
+    to: &[CaretStop],
+    eased: f64,
+) -> Arc<[CaretStop]> {
     if from.len() != to.len() {
         return to.into();
     }
     from.iter()
         .zip(to)
         .map(|(from, to)| {
-            if from.position != to.position {
+            let relative = |stop: &CaretStop, range: TextRange| {
+                let offset = stop.position.offset.to_usize();
+                let start = range.start().to_usize();
+                let end = range.end().to_usize();
+                (start <= offset && offset <= end)
+                    .then(|| offset.checked_sub(start))
+                    .flatten()
+            };
+            let from_relative = relative(from, from_range);
+            let to_relative = relative(to, to_range);
+            if from_relative.is_none()
+                || from_relative != to_relative
+                || from.position.affinity != to.position.affinity
+            {
                 return *to;
             }
             CaretStop::new(
@@ -1021,4 +1046,39 @@ fn fixture_identity() -> SyntaxIdentity {
         .expect("fixture contains a heading")
         .owner;
     owner
+}
+
+#[cfg(test)]
+mod interpolation_tests {
+    use makepad_widgets::dvec2;
+    use waml_syntax::{TextRange, TextSize};
+
+    use super::{interpolate_stops, Affinity, CaretStop, TextPosition};
+
+    fn range(start: usize, end: usize) -> TextRange {
+        TextRange::new(
+            TextSize::try_from_usize(start).unwrap(),
+            TextSize::try_from_usize(end).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn shifted_stable_cluster_caret_stops_follow_each_motion_phase() {
+        let from_range = range(10, 20);
+        let to_range = range(30, 40);
+        let from = [CaretStop::new(
+            TextPosition::new(range(12, 12).start(), Affinity::Before),
+            dvec2(8.0, 10.0),
+        )];
+        let to = [CaretStop::new(
+            TextPosition::new(range(32, 32).start(), Affinity::Before),
+            dvec2(8.0, 40.0),
+        )];
+        for (eased, expected_y) in [(0.0, 10.0), (0.5, 25.0), (1.0, 40.0)] {
+            let stops = interpolate_stops(from_range, to_range, &from, &to, eased);
+            assert_eq!(stops[0].position, to[0].position);
+            assert_eq!(stops[0].point.y, expected_y);
+        }
+    }
 }

@@ -9,6 +9,7 @@ use waml_markdown_editor::{
 };
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, MarkdownSyntaxSnapshot, SourceText,
+    TextRange,
 };
 
 fn document_for(source: &str) -> (Arc<MarkdownSyntaxSnapshot>, LayoutDocument) {
@@ -80,7 +81,7 @@ fn headings_and_paragraphs_use_the_balanced_spacing_table() {
 fn nested_lists_use_hanging_flow_with_a_parsed_marker_range() {
     let source = "- bullet\n  1. ordered\n";
     let (snapshot, document) = document_for(source);
-    let hanging = document
+    let mut hanging = document
         .blocks
         .iter()
         .filter_map(|block| match &block.spec.flow {
@@ -91,6 +92,8 @@ fn nested_lists_use_hanging_flow_with_a_parsed_marker_range() {
             _ => None,
         })
         .collect::<Vec<_>>();
+    hanging.sort_by_key(|(range, _)| (range.start(), range.end()));
+    hanging.dedup_by_key(|(range, _)| (range.start(), range.end()));
     assert_eq!(hanging.len(), 2, "one hanging block per list item");
     for (marker_range, content_indent) in hanging {
         let marker = snapshot.text().slice(marker_range).unwrap_or_default();
@@ -152,6 +155,11 @@ fn a_table_creates_parented_rows_and_aligned_columns() {
         .collect::<Vec<_>>();
     assert!(cells.len() >= 3);
     assert!(cells.iter().all(|cell| cell.parent.is_some()));
+    assert!(cells.iter().all(|cell| {
+        cell.parent
+            .and_then(|parent| document.blocks.iter().find(|block| block.id == parent))
+            .is_some_and(|parent| matches!(parent.spec.flow, BlockFlow::TableRow))
+    }));
 }
 
 #[test]
@@ -193,6 +201,82 @@ fn an_image_keeps_its_literal_source_line_and_measured_embed() {
 }
 
 #[test]
+fn measured_image_block_starts_below_its_literal_source_geometry() {
+    use makepad_widgets::dvec2;
+    use waml_markdown_editor::{
+        document::MarkdownDocumentSnapshot,
+        layout::{
+            LayoutElementId, LayoutEngine, LayoutInvalidation, LayoutViewport, MeasuredBlock,
+        },
+        presentation::PresentationItem,
+    };
+    let source = "![checker](checker.svg)\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source.to_owned()).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let styles = PresentationStyles::balanced();
+    let plan = compile_presentation(&snapshot, &styles, &HighlighterRegistry::default()).unwrap();
+    let (item, source_range) = plan
+        .items
+        .iter()
+        .find_map(|item| match item {
+            PresentationItem::EmbeddedBlock {
+                id, source_range, ..
+            } => Some((*id, *source_range)),
+            _ => None,
+        })
+        .expect("the image has an embedded presentation item");
+    let embedded_id = LayoutElementId {
+        owner: item.owner,
+        fragment_ordinal: item.fragment_ordinal,
+    };
+    let measurements = EmbeddedMeasurements {
+        revision: Some(DocumentRevision::INITIAL),
+        blocks: Arc::from([MeasuredBlock {
+            id: embedded_id,
+            source_range,
+            size: dvec2(96.0, 48.0),
+            baseline: None,
+        }]),
+    };
+    let document = build_layout_document(&plan, &styles, &measurements).unwrap();
+    let presentation = Arc::new(MarkdownDocumentSnapshot::new(snapshot));
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut CountingShaper,
+        )
+        .unwrap();
+    let literal_bottom = layout
+        .glyph_clusters()
+        .iter()
+        .filter(|cluster| {
+            source_range.start() <= cluster.source_range.start()
+                && cluster.source_range.end() <= source_range.end()
+        })
+        .map(|cluster| cluster.rect.pos.y + cluster.rect.size.y)
+        .reduce(f64::max)
+        .expect("the literal image source has geometry");
+    let embedded = layout
+        .visible_blocks()
+        .iter()
+        .find(|block| block.id == embedded_id)
+        .expect("the measured image has block geometry");
+    assert!(
+        embedded.rect.pos.y >= literal_bottom,
+        "literal_bottom={literal_bottom:?}, embedded={:?}, blocks={:?}",
+        embedded.rect,
+        layout.visible_blocks()
+    );
+}
+
+#[test]
 fn every_text_run_belongs_to_a_declared_block() {
     let source = std::fs::read_to_string("tests/fixtures/presentation-all.md").unwrap();
     let (_, document) = document_for(&source);
@@ -202,6 +286,25 @@ fn every_text_run_belongs_to_a_declared_block() {
             "run {:?} has no block",
             run.range
         );
+    }
+}
+
+#[test]
+fn parent_owned_text_is_fragmented_between_its_child_blocks() {
+    let presentation_all = std::fs::read_to_string("tests/fixtures/presentation-all.md").unwrap();
+    for source in [presentation_all.as_str(), "> outer\n>\n> > inner\n"] {
+        let (_, document) = document_for(source);
+        for run in document.text_runs.iter() {
+            assert!(
+                !document
+                    .blocks
+                    .iter()
+                    .any(|block| block.parent == Some(run.id)),
+                "run {:?} is laid before child blocks of {:?}",
+                run.range,
+                run.id
+            );
+        }
     }
 }
 
@@ -220,6 +323,16 @@ impl waml_markdown_editor::layout::TextShaper for CountingShaper {
         use waml_markdown_editor::layout::{
             ShapedCluster, ShapedFragment, ShapedParagraph, ShapedRow,
         };
+        let covered_bytes = request
+            .spans
+            .iter()
+            .map(|span| span.source_range.end().to_usize() - span.source_range.start().to_usize())
+            .sum::<usize>();
+        let envelope_bytes =
+            request.paragraph_range.end().to_usize() - request.paragraph_range.start().to_usize();
+        // Model a renderer that scans the paragraph envelope for line breaks.
+        // A discontiguous set of spans must not create a large hidden envelope.
+        let envelope_gap = envelope_bytes.saturating_sub(covered_bytes) as f64;
         let mut clusters = Vec::new();
         for (ordinal, span) in request.spans.iter().enumerate() {
             clusters.push(ShapedCluster {
@@ -252,7 +365,7 @@ impl waml_markdown_editor::layout::TextShaper for CountingShaper {
                     request.paragraph_range.start(),
                     request.paragraph_range.end(),
                 ]),
-                ascender: 12.0,
+                ascender: 12.0 + envelope_gap,
                 descender: 3.0,
                 line_gap: 0.0,
                 line_spacing_scale: 1.0,
@@ -314,4 +427,180 @@ fn the_foundation_engine_accepts_the_built_document() {
         .expect("the engine accepts the presentation-built hierarchy");
     assert!(layout.content_size().y > 0.0);
     assert!(!layout.visible_blocks().is_empty());
+}
+
+#[test]
+fn the_first_heading_starts_near_the_document_top_inset() {
+    use waml_markdown_editor::{
+        document::MarkdownDocumentSnapshot,
+        layout::{LayoutEngine, LayoutInvalidation, LayoutViewport},
+    };
+    let source = std::fs::read_to_string("tests/fixtures/presentation-all.md").unwrap();
+    let (snapshot, document) = document_for(&source);
+    let top_inset = document.content_insets.top;
+    let root = document
+        .blocks
+        .iter()
+        .find(|block| block.parent.is_none())
+        .expect("the layout document has a structural root");
+    assert!(
+        document.text_runs.iter().all(|run| run.id != root.id),
+        "the structural root must not shape source-wide gap runs before its children"
+    );
+    let presentation = Arc::new(MarkdownDocumentSnapshot::new(snapshot));
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(1280.0, 871.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut CountingShaper,
+        )
+        .expect("the presentation fixture lays out");
+    let first_heading_y = layout
+        .glyph_clusters()
+        .iter()
+        .filter(|cluster| cluster.source_range.start().to_usize() < 30)
+        .map(|cluster| cluster.rect.pos.y)
+        .reduce(f64::min)
+        .expect("the first heading has visible text geometry");
+    assert!(
+        first_heading_y < top_inset + 100.0,
+        "first heading y={first_heading_y}, top inset={top_inset}"
+    );
+}
+
+#[test]
+fn presentation_nested_list_marker_is_indented_from_outer_marker() {
+    use waml_markdown_editor::{
+        document::MarkdownDocumentSnapshot,
+        layout::{LayoutEngine, LayoutInvalidation, LayoutViewport},
+    };
+    let source = "- bullet\n  1. ordered\n";
+    let (snapshot, document) = document_for(source);
+    let mut marker_ranges = document
+        .blocks
+        .iter()
+        .filter_map(|block| match block.spec.flow {
+            BlockFlow::Hanging { marker_range, .. } => Some(marker_range),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    marker_ranges.sort_by_key(|range| (range.start(), range.end()));
+    marker_ranges.dedup();
+    assert_eq!(marker_ranges.len(), 2);
+    let presentation = Arc::new(MarkdownDocumentSnapshot::new(snapshot));
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut CountingShaper,
+        )
+        .unwrap();
+    let marker_x = |marker: TextRange| {
+        layout
+            .glyph_clusters()
+            .iter()
+            .find(|cluster| {
+                cluster.source_range.start() <= marker.start()
+                    && marker.end() <= cluster.source_range.end()
+            })
+            .expect("marker has glyph geometry")
+            .rect
+            .pos
+            .x
+    };
+    assert!(marker_x(marker_ranges[1]) > marker_x(marker_ranges[0]));
+}
+
+#[test]
+fn quote_marker_and_first_content_share_one_source_row() {
+    use waml_markdown_editor::{
+        document::MarkdownDocumentSnapshot,
+        layout::{LayoutEngine, LayoutInvalidation, LayoutViewport},
+    };
+    let source = "> quoted **text**\n";
+    let (snapshot, mut document) = document_for(source);
+    let mut runs = document.text_runs.to_vec();
+    runs.iter_mut()
+        .find(|run| run.range.start().to_usize() == 0)
+        .expect("quote marker has a layout run")
+        .metrics
+        .italic = true;
+    document.text_runs = runs.into();
+    let mut ordered_ranges = document
+        .text_runs
+        .iter()
+        .map(|run| run.range)
+        .collect::<Vec<_>>();
+    ordered_ranges.sort_by_key(|range| (range.start(), range.end()));
+    let reconstructed = ordered_ranges
+        .iter()
+        .map(|range| snapshot.text().slice(*range).unwrap())
+        .collect::<String>();
+    assert_eq!(reconstructed, source);
+    let presentation = Arc::new(MarkdownDocumentSnapshot::new(snapshot));
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut CountingShaper,
+        )
+        .unwrap();
+    let cluster_at = |offset: usize| {
+        layout
+            .glyph_clusters()
+            .iter()
+            .find(|cluster| {
+                cluster.source_range.start().to_usize() <= offset
+                    && offset < cluster.source_range.end().to_usize()
+            })
+            .expect("source offset has glyph geometry")
+    };
+    let marker = cluster_at(0);
+    let content = cluster_at(2);
+    assert_eq!(marker.rect.pos.y, content.rect.pos.y);
+    assert!(marker.rect.pos.x < content.rect.pos.x);
+}
+
+#[test]
+fn table_header_cells_share_a_row_with_increasing_column_origins() {
+    use waml_markdown_editor::{
+        document::MarkdownDocumentSnapshot,
+        layout::{LayoutEngine, LayoutInvalidation, LayoutViewport},
+    };
+    let source = "| left | center | right |\n| :--- | :----: | ----: |\n| a | b | c |\n";
+    let (snapshot, document) = document_for(source);
+    let presentation = Arc::new(MarkdownDocumentSnapshot::new(snapshot));
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(800.0, 400.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut CountingShaper,
+        )
+        .unwrap();
+    let cluster_for = |needle: &str| {
+        let offset = source.find(needle).unwrap();
+        layout
+            .glyph_clusters()
+            .iter()
+            .find(|cluster| {
+                cluster.source_range.start().to_usize() <= offset
+                    && offset < cluster.source_range.end().to_usize()
+            })
+            .expect("header text has glyph geometry")
+    };
+    let left = cluster_for("left");
+    let center = cluster_for("center");
+    let right = cluster_for("right");
+    assert_eq!(left.rect.pos.y, center.rect.pos.y);
+    assert_eq!(center.rect.pos.y, right.rect.pos.y);
+    assert!(left.rect.pos.x < center.rect.pos.x);
+    assert!(center.rect.pos.x < right.rect.pos.x);
 }

@@ -1217,6 +1217,60 @@ fn assign_block_widths(
                 }
             }
         }
+        super::BlockFlow::Hanging {
+            marker_range,
+            content_indent,
+        } => {
+            plan.outer[index] = available_width.max(1.0);
+            plan.content[index] = available_width.max(1.0);
+            for &child in &hierarchy.children[index] {
+                let child_range = document.blocks[child].source_range;
+                let carries_parent_marker = child_range.start() <= marker_range.start()
+                    && marker_range.end() <= child_range.end();
+                let child_x = if carries_parent_marker {
+                    0.0
+                } else {
+                    content_indent
+                };
+                plan.child_x[child] = child_x;
+                assign_block_widths(
+                    document,
+                    hierarchy,
+                    child,
+                    (available_width - child_x).max(1.0),
+                    intrinsics,
+                    plan,
+                );
+            }
+        }
+        super::BlockFlow::Embedded => {
+            let available_content = (available_width - horizontal_insets).max(1.0);
+            let measured_width = document
+                .embedded_blocks
+                .iter()
+                .filter(|embedded| embedded.id == block.id)
+                .map(|embedded| embedded.size.x)
+                .fold(0.0, f64::max);
+            let content_width = if measured_width > 0.0 {
+                measured_width.min(available_content)
+            } else {
+                available_content
+            };
+            plan.content[index] = content_width.max(1.0);
+            plan.outer[index] = (plan.content[index] + horizontal_insets)
+                .min(available_width)
+                .max(1.0);
+            for &child in &hierarchy.children[index] {
+                assign_block_widths(
+                    document,
+                    hierarchy,
+                    child,
+                    plan.content[index],
+                    intrinsics,
+                    plan,
+                );
+            }
+        }
         _ => {
             plan.outer[index] = available_width.max(1.0);
             plan.content[index] = (available_width - horizontal_insets).max(1.0);

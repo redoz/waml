@@ -239,6 +239,144 @@ fn commands_follow_the_six_foundation_layers_exactly() {
 }
 
 #[test]
+fn quote_rule_stays_narrow_and_parent_owned_marker_keeps_a_text_command() {
+    let source = "> quote";
+    let styles = PresentationStyles::balanced();
+    let marker = text_item(2, 0, 0..2, TextRole::QuoteMarker);
+    let rule_id = item_id(
+        2,
+        PresentationRole::Block(BlockDecorationRole::QuoteRule),
+        0,
+    );
+    let plan = PresentationPlan {
+        revision: DocumentRevision::INITIAL,
+        source_len: t(source.len()),
+        items: Arc::from([
+            marker,
+            text_item(3, 0, 2..source.len(), TextRole::Body),
+            PresentationItem::BlockDecoration {
+                id: rule_id,
+                owner: owner(2),
+                source_range: range(0, source.len()),
+                kind: BlockDecorationKind::QuoteRule,
+            },
+        ]),
+        links: Arc::from([]),
+        blocks: Arc::from([]),
+        diagnostics: Arc::from([]),
+    };
+    let quote_rect = Rect {
+        pos: dvec2(24.0, 20.0),
+        size: dvec2(400.0, 40.0),
+    };
+    let marker_layout_id = layout_id(2, u32::MAX - 1);
+    let marker_cluster = cluster(2, u32::MAX - 1, 0..2, 36.0, TextRole::QuoteMarker);
+    let layout = snapshot(
+        source.len(),
+        vec![marker_cluster],
+        vec![BlockGeometry::new(
+            layout_id(2, 0),
+            range(0, source.len()),
+            quote_rect,
+        )],
+    );
+    let frame = PresentationFrame {
+        revision: DocumentRevision::INITIAL,
+        layout,
+        active_owners: Arc::from([owner(2)]),
+        diagnostics: Arc::from([]),
+        assets: Arc::new(EmbeddedAssetFrame {
+            revision: DocumentRevision::INITIAL,
+            items: Arc::from([]),
+        }),
+    };
+    let commands =
+        build_draw_commands(&frame, &plan, &styles, &selection(source, 2, 2), None).unwrap();
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        DrawCommand::Text {
+            id,
+            range: command_range,
+            ..
+        } if id.layout == marker_layout_id && *command_range == range(0, 2)
+    )));
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        DrawCommand::BlockBackground {
+            rect,
+            role: BlockDecorationRole::QuoteRule,
+            ..
+        } if rect.size.x == styles.spacing().quote_rule
+    )));
+}
+
+#[test]
+fn thematic_rule_is_a_narrow_centered_background_and_keeps_literal_source_text() {
+    let source = "---";
+    let styles = PresentationStyles::balanced();
+    let rule_id = item_id(
+        2,
+        PresentationRole::Block(BlockDecorationRole::ThematicRule),
+        0,
+    );
+    let plan = PresentationPlan {
+        revision: DocumentRevision::INITIAL,
+        source_len: t(source.len()),
+        items: Arc::from([
+            text_item(2, 0, 0..source.len(), TextRole::SyntaxMarker),
+            PresentationItem::BlockDecoration {
+                id: rule_id,
+                owner: owner(2),
+                source_range: range(0, source.len()),
+                kind: BlockDecorationKind::ThematicRule,
+            },
+        ]),
+        links: Arc::from([]),
+        blocks: Arc::from([]),
+        diagnostics: Arc::from([]),
+    };
+    let block_rect = Rect {
+        pos: dvec2(24.0, 20.0),
+        size: dvec2(400.0, 44.0),
+    };
+    let layout = snapshot(
+        source.len(),
+        vec![cluster(2, 0, 0..source.len(), 36.0, TextRole::SyntaxMarker)],
+        vec![BlockGeometry::new(
+            layout_id(2, 0),
+            range(0, source.len()),
+            block_rect,
+        )],
+    );
+    let frame = PresentationFrame {
+        revision: DocumentRevision::INITIAL,
+        layout,
+        active_owners: Arc::from([]),
+        diagnostics: Arc::from([]),
+        assets: Arc::new(EmbeddedAssetFrame {
+            revision: DocumentRevision::INITIAL,
+            items: Arc::from([]),
+        }),
+    };
+    let commands =
+        build_draw_commands(&frame, &plan, &styles, &selection(source, 0, 0), None).unwrap();
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        DrawCommand::Text { range: command_range, .. } if *command_range == range(0, 3)
+    )));
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        DrawCommand::BlockBackground {
+            rect,
+            role: BlockDecorationRole::ThematicRule,
+            ..
+        } if rect.size.x == block_rect.size.x
+            && rect.size.y == styles.spacing().quote_rule
+            && rect.pos.y == block_rect.pos.y + (block_rect.size.y - rect.size.y) * 0.5
+    )));
+}
+
+#[test]
 fn active_markers_change_only_color_and_keep_semantic_content_metrics() {
     let source = "**bold**";
     let plan = PresentationPlan {

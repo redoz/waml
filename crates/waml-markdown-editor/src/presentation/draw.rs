@@ -148,7 +148,7 @@ impl DrawCommand {
 pub fn build_draw_commands(
     frame: &PresentationFrame,
     plan: &PresentationPlan,
-    _styles: &PresentationStyles,
+    styles: &PresentationStyles,
     selection: &SelectionSet,
     ime: Option<&ImeComposition>,
 ) -> Result<Arc<[DrawCommand]>, PresentationError> {
@@ -176,9 +176,21 @@ pub fn build_draw_commands(
             .iter()
             .find(|block| block.id == id)
         {
+            let mut rect = block.rect;
+            match kind.role() {
+                BlockDecorationRole::QuoteRule => {
+                    rect.size.x = styles.spacing().quote_rule;
+                }
+                BlockDecorationRole::ThematicRule => {
+                    let height = styles.spacing().quote_rule.min(rect.size.y);
+                    rect.pos.y += (rect.size.y - height) * 0.5;
+                    rect.size.y = height;
+                }
+                _ => {}
+            }
             commands.push(DrawCommand::BlockBackground {
                 id,
-                rect: block.rect,
+                rect,
                 role: kind.role(),
             });
         }
