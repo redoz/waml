@@ -2315,9 +2315,11 @@ version = "0.0.0"
 dependencies = [
  "dirs",
  "makepad-widgets",
+ "quote",
  "rfd",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "taffy",
  "url",
  "waml",
