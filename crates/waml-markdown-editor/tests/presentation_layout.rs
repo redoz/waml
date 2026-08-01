@@ -3,8 +3,8 @@ use std::sync::Arc;
 use waml_markdown_editor::{
     layout::{BlockFlow, ColumnAlignment, LayoutDocument},
     presentation::{
-        build_layout_document, compile_presentation, EmbeddedMeasurements, PresentationBlockKind,
-        PresentationStyles,
+        build_layout_document, compile_presentation, EmbeddedMeasurements, HighlighterRegistry,
+        PresentationBlockKind, PresentationStyles,
     },
 };
 use waml_syntax::{
@@ -19,7 +19,8 @@ fn document_for(source: &str) -> (Arc<MarkdownSyntaxSnapshot>, LayoutDocument) {
     )
     .expect("the source parses");
     let styles = PresentationStyles::balanced();
-    let plan = compile_presentation(&snapshot, &styles).expect("the plan compiles");
+    let plan = compile_presentation(&snapshot, &styles, &HighlighterRegistry::default())
+        .expect("the plan compiles");
     let document = build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
         .expect("the layout document builds");
     (snapshot, document)
@@ -51,7 +52,7 @@ fn measurements_from_another_revision_are_rejected() {
     )
     .unwrap();
     let styles = PresentationStyles::balanced();
-    let plan = compile_presentation(&snapshot, &styles).unwrap();
+    let plan = compile_presentation(&snapshot, &styles, &HighlighterRegistry::default()).unwrap();
     let stale = EmbeddedMeasurements {
         revision: Some(DocumentRevision::new(99)),
         blocks: Arc::from([]),
@@ -171,7 +172,7 @@ fn an_image_keeps_its_literal_source_line_and_measured_embed() {
     let source = "![checker](checker.svg)\n";
     let (snapshot, document) = document_for(source);
     let styles = PresentationStyles::balanced();
-    let plan = compile_presentation(&snapshot, &styles).unwrap();
+    let plan = compile_presentation(&snapshot, &styles, &HighlighterRegistry::default()).unwrap();
     // The literal source stays in text runs.
     let covered = plan
         .items

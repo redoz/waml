@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use waml_markdown_editor::presentation::{
     compile_presentation, render_plan_golden, BlockDecorationKind, EmbeddedBlockKind,
-    PresentationItem, PresentationPlan, PresentationStyles, TextRole,
+    HighlighterRegistry, PresentationItem, PresentationPlan, PresentationStyles, TextRole,
 };
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, MarkdownSyntaxSnapshot, SourceText,
@@ -18,7 +18,12 @@ fn compile_fixture(name: &str) -> (Arc<MarkdownSyntaxSnapshot>, Arc<Presentation
         MarkdownDialect::WAML_DEFAULT,
     )
     .expect("the fixture parses");
-    let plan = compile_presentation(&snapshot, &PresentationStyles).expect("the fixture compiles");
+    let plan = compile_presentation(
+        &snapshot,
+        &PresentationStyles,
+        &HighlighterRegistry::default(),
+    )
+    .expect("the fixture compiles");
     (snapshot, plan)
 }
 

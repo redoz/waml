@@ -8,7 +8,10 @@ use waml_syntax::TextRange;
 
 use crate::layout::{EdgeInsets, FontKey, FontWeight, TextMetrics};
 
-use super::{ColorRole, FontRole, FontSizeRole, FontWeightRole, TextRole, TextStyle};
+use super::{
+    highlight::CodeTokenRole, ColorRole, FontRole, FontSizeRole, FontWeightRole, TextRole,
+    TextStyle,
+};
 
 pub const FONT_SANS: FontKey = FontKey(1);
 pub const FONT_MONO: FontKey = FontKey(2);
@@ -118,6 +121,7 @@ impl PresentationStyles {
             TextRole::StrongEmphasis => sans(14.0, 1.35, WEIGHT_SEMIBOLD, true),
             TextRole::InlineCode
             | TextRole::CodeContent
+            | TextRole::CodeToken(_)
             | TextRole::CodeFence
             | TextRole::CodeInfo
             | TextRole::Frontmatter => TextMetrics {
@@ -130,6 +134,30 @@ impl PresentationStyles {
             // Every other role, including roles added later, keeps body metrics
             // so its source range stays visible.
             _ => sans(14.0, 1.35, WEIGHT_REGULAR, false),
+        }
+    }
+
+    /// The style of one highlighted code token. Font family, size, and line
+    /// spacing stay exactly those of code content, so highlighting can never
+    /// move a glyph.
+    pub fn code_token(&self, role: CodeTokenRole) -> TextStyle {
+        let base = self.text_style(TextRole::CodeContent);
+        let color = match role {
+            CodeTokenRole::Keyword | CodeTokenRole::Type => ColorRole::Link,
+            CodeTokenRole::Property => ColorRole::Text,
+            CodeTokenRole::String | CodeTokenRole::Number => ColorRole::Code,
+            CodeTokenRole::Comment | CodeTokenRole::Punctuation => ColorRole::Muted,
+            CodeTokenRole::Invalid => ColorRole::Recovery,
+        };
+        TextStyle {
+            color,
+            active_color: color,
+            italic: matches!(role, CodeTokenRole::Comment),
+            weight: match role {
+                CodeTokenRole::Keyword => FontWeightRole::SemiBold,
+                _ => base.weight,
+            },
+            ..base
         }
     }
 
@@ -209,6 +237,7 @@ impl PresentationStyles {
                 active_color: ColorRole::ActiveMarker,
                 ..base
             },
+            TextRole::CodeToken(token) => self.code_token(token),
             TextRole::CodeContent => TextStyle {
                 font: FontRole::Monospace,
                 size: FontSizeRole::Code,

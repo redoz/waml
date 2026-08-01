@@ -5,10 +5,15 @@
 //! owning any of its bytes, so they may overlap their owner's range freely.
 
 pub mod compile;
+pub mod highlight;
 pub mod layout;
 pub mod style;
 
 pub use compile::{compile_presentation, render_plan_golden};
+pub use highlight::{
+    CodeHighlightError, CodeHighlightHost, CodeHighlightRequest, CodeHighlightResult,
+    CodeHighlightSpan, CodeTokenRole, HighlightOutcome, HighlighterRegistry,
+};
 pub use layout::{build_layout_document, EmbeddedMeasurements};
 pub use style::PresentationStyles;
 
@@ -50,6 +55,8 @@ pub enum TextRole {
     CodeFence,
     CodeInfo,
     CodeContent,
+    /// A highlighted token inside fenced-code content.
+    CodeToken(CodeTokenRole),
     TableDelimiter,
     RawHtml,
     Frontmatter,
@@ -253,6 +260,15 @@ pub enum PresentationBlockKind {
     Image,
 }
 
+/// A non-fatal problem kept next to the block it affects. Presentation stays
+/// editable; nothing is hidden or rolled back.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PresentationDiagnostic {
+    pub owner: SyntaxIdentity,
+    pub source_range: TextRange,
+    pub message: Arc<str>,
+}
+
 #[derive(Clone, Debug)]
 pub struct PresentationPlan {
     pub revision: DocumentRevision,
@@ -261,6 +277,8 @@ pub struct PresentationPlan {
     pub links: Arc<[PresentedLink]>,
     /// Parsed block structure, outermost first, in source order.
     pub blocks: Arc<[PresentationBlock]>,
+    /// Non-fatal per-block problems, such as a failed code highlighter.
+    pub diagnostics: Arc<[PresentationDiagnostic]>,
 }
 
 impl PresentationPlan {

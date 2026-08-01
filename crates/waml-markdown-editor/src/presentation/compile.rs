@@ -15,8 +15,10 @@ use waml_syntax::{
 };
 
 use super::{
-    style::PresentationStyles, BlockDecorationKind, EmbeddedBlockKind, PresentationBlock,
-    PresentationBlockKind, PresentationError, PresentationItem, PresentationItemId,
+    highlight::{CodeHighlightRequest, CodeHighlightSpan, HighlightOutcome, HighlighterRegistry},
+    style::PresentationStyles,
+    BlockDecorationKind, EmbeddedBlockKind, PresentationBlock, PresentationBlockKind,
+    PresentationDiagnostic, PresentationError, PresentationItem, PresentationItemId,
     PresentationPlan, PresentationRole, PresentedLink, TextRole,
 };
 
@@ -24,6 +26,7 @@ use super::{
 pub fn compile_presentation(
     snapshot: &MarkdownSyntaxSnapshot,
     styles: &PresentationStyles,
+    highlighters: &HighlighterRegistry,
 ) -> Result<Arc<PresentationPlan>, PresentationError> {
     let queries = snapshot.queries();
     let text = snapshot.text();
@@ -34,6 +37,7 @@ pub fn compile_presentation(
     let mut builder = PlanBuilder::new(styles);
     let mut wrappers = WrapperStack::default();
     let headings = queries.headings().cloned().collect::<Vec<_>>();
+    let (highlights, mut diagnostics) = collect_highlights(snapshot, highlighters);
 
     for span in &spans {
         if span.range.start() == span.range.end() {
@@ -45,8 +49,13 @@ pub fn compile_presentation(
         } else {
             content_role(span, snapshot, text, &headings, &wrappers)
         };
-        builder.push_text(span.range, role, span.owner);
+        if role == TextRole::CodeContent {
+            push_highlighted_content(&mut builder, span, &highlights);
+        } else {
+            builder.push_text(span.range, role, span.owner);
+        }
     }
+    diagnostics.sort_by_key(|diagnostic| diagnostic.source_range.start().to_usize());
 
     add_decorations(&mut builder, &spans, snapshot)?;
 
@@ -56,6 +65,7 @@ pub fn compile_presentation(
         items: builder.items.into(),
         links: builder.links.into(),
         blocks: collect_blocks(snapshot).into(),
+        diagnostics: diagnostics.into(),
     };
     plan.validate_source_partition()?;
     Ok(Arc::new(plan))
@@ -637,4 +647,87 @@ fn table_columns(node: &SyntaxNode<OkfMarkdownLanguage>) -> u32 {
         columns = columns.max(cells);
     }
     columns
+}
+
+/// Runs the registered highlighter for every parsed fenced block with a
+/// language. Failures stay local: the block keeps unclassified code content and
+/// records one non-fatal diagnostic.
+fn collect_highlights(
+    snapshot: &MarkdownSyntaxSnapshot,
+    highlighters: &HighlighterRegistry,
+) -> (Vec<CodeHighlightSpan>, Vec<PresentationDiagnostic>) {
+    let mut spans = Vec::new();
+    let mut diagnostics = Vec::new();
+    if highlighters.is_empty() {
+        return (spans, diagnostics);
+    }
+    let queries = snapshot.queries();
+    let mut owners = Vec::new();
+    let Ok(zero) = TextSize::try_from_usize(0) else {
+        return (spans, diagnostics);
+    };
+    let Ok(full) = TextRange::new(zero, snapshot.text().len()) else {
+        return (spans, diagnostics);
+    };
+    for span in queries.spans(full) {
+        if span.semantic_role == MarkdownSemanticRole::FencedCode && !owners.contains(&span.owner) {
+            owners.push(span.owner);
+        }
+    }
+    for owner in owners {
+        let Some(fenced) = queries.fenced_code(owner) else {
+            continue;
+        };
+        let Some(language) = fenced.language.clone() else {
+            continue;
+        };
+        let request = CodeHighlightRequest {
+            revision: snapshot.revision(),
+            owner,
+            language,
+            content_range: fenced.content_range,
+        };
+        match highlighters.highlight(&request, snapshot.text()) {
+            HighlightOutcome::Classified(classified) => spans.extend(classified.iter().cloned()),
+            HighlightOutcome::Unclassified => {}
+            HighlightOutcome::Failed(error) => diagnostics.push(PresentationDiagnostic {
+                owner,
+                source_range: fenced.source_range,
+                message: Arc::from(error.to_string()),
+            }),
+        }
+    }
+    spans.sort_by_key(|span| span.range.start().to_usize());
+    (spans, diagnostics)
+}
+
+/// Splits one code-content run at highlight boundaries. Token roles override
+/// only code content; fences, info strings, and markers keep their roles.
+fn push_highlighted_content(
+    builder: &mut PlanBuilder<'_>,
+    span: &MarkdownSyntaxSpan,
+    highlights: &[CodeHighlightSpan],
+) {
+    let mut cursor = span.range.start();
+    for highlight in highlights.iter() {
+        if highlight.range.end() <= cursor || highlight.range.start() >= span.range.end() {
+            continue;
+        }
+        let start = highlight.range.start().max(cursor);
+        let end = highlight.range.end().min(span.range.end());
+        if start > cursor {
+            if let Ok(range) = TextRange::new(cursor, start) {
+                builder.push_text(range, TextRole::CodeContent, span.owner);
+            }
+        }
+        if let Ok(range) = TextRange::new(start, end) {
+            builder.push_text(range, TextRole::CodeToken(highlight.role), span.owner);
+        }
+        cursor = end;
+    }
+    if cursor < span.range.end() {
+        if let Ok(range) = TextRange::new(cursor, span.range.end()) {
+            builder.push_text(range, TextRole::CodeContent, span.owner);
+        }
+    }
 }
