@@ -7,8 +7,8 @@ use std::{
 pub use waml_syntax::DocumentRevision;
 use waml_syntax::{
     parse_markdown, reparse_markdown, LineIndex, MarkdownDialect, MarkdownSyntaxSnapshot,
-    MarkdownSyntaxUpdate, ParseError, SourceText, SyntaxIdentity, SyntaxLanguage, SyntaxTree,
-    TextChange, TextRange, TextSize,
+    MarkdownSyntaxUpdate, ParseError, SourceText, SyntaxElement, SyntaxIdentity, SyntaxLanguage,
+    SyntaxNode, SyntaxToken, SyntaxTree, TextChange, TextRange, TextSize,
 };
 
 use crate::{
@@ -124,12 +124,233 @@ pub struct OkfAnalysis {
     pub catalog: Arc<DocumentCatalog>,
     pub markdown: MarkdownSyntaxSet,
     pub bundle: okf::Bundle,
+    code_syntax: Arc<BTreeMap<SyntaxIdentity, WamlCodeSyntaxSnapshot>>,
 }
 
 impl OkfAnalysis {
     pub fn markdown_snapshot(&self, document: DocumentId) -> Option<&Arc<MarkdownSyntaxSnapshot>> {
         self.markdown.document(document)
     }
+
+    pub fn code_spans(
+        &self,
+        owner: SyntaxIdentity,
+        content_range: TextRange,
+    ) -> Option<Arc<[WamlCodeSpan]>> {
+        let markdown = self.markdown.documents().values().find(|snapshot| {
+            snapshot
+                .queries()
+                .island(owner)
+                .is_some_and(|island| island.content_range == content_range)
+        })?;
+        let syntax = self.code_syntax.get(&owner)?;
+        if syntax.content_range != content_range || syntax.revision != markdown.revision() {
+            return None;
+        }
+
+        let mut spans = Vec::new();
+        collect_waml_code_spans(
+            syntax.syntax.root(),
+            syntax.source_range.start(),
+            content_range,
+            &mut spans,
+        )?;
+        spans.sort_by_key(|span| (span.range.start(), span.range.end()));
+        spans.dedup_by_key(|span| span.range);
+        Some(Arc::from(spans))
+    }
+
+    fn attach_code_syntax(&mut self, uml: &crate::uml::Analysis) {
+        let mut snapshots = BTreeMap::new();
+        for (document, markdown) in self.markdown.documents() {
+            for island in markdown.structure().islands.iter() {
+                let Some(snapshot) = uml.island_syntax.by_owner(*document, island.owner) else {
+                    continue;
+                };
+                if snapshot.content_range() != island.content_range {
+                    continue;
+                }
+                snapshots.insert(
+                    island.owner,
+                    WamlCodeSyntaxSnapshot {
+                        revision: markdown.revision(),
+                        source_range: snapshot.source_range(),
+                        content_range: snapshot.content_range(),
+                        syntax: snapshot.syntax().clone(),
+                    },
+                );
+            }
+        }
+        self.code_syntax = Arc::new(snapshots);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WamlCodeRole {
+    Keyword,
+    Type,
+    Property,
+    String,
+    Number,
+    Comment,
+    Punctuation,
+    Invalid,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WamlCodeSpan {
+    pub range: TextRange,
+    pub role: WamlCodeRole,
+}
+
+struct WamlCodeSyntaxSnapshot {
+    revision: DocumentRevision,
+    source_range: TextRange,
+    content_range: TextRange,
+    syntax: Arc<SyntaxTree<crate::uml::syntax::UmlLanguage>>,
+}
+
+fn collect_waml_code_spans(
+    node: SyntaxNode<crate::uml::syntax::UmlLanguage>,
+    absolute_start: TextSize,
+    content_range: TextRange,
+    spans: &mut Vec<WamlCodeSpan>,
+) -> Option<()> {
+    for element in node.children() {
+        match element {
+            SyntaxElement::Node(child) => {
+                collect_waml_code_spans(child, absolute_start, content_range, spans)?
+            }
+            SyntaxElement::Token(token) => {
+                let Some(role) = waml_code_role(&token) else {
+                    continue;
+                };
+                let local = token_content_range(&token)?;
+                let start = absolute_start.checked_add(local.start()).ok()?;
+                let end = absolute_start.checked_add(local.end()).ok()?;
+                let start = start.max(content_range.start());
+                let end = end.min(content_range.end());
+                if start < end {
+                    spans.push(WamlCodeSpan {
+                        range: TextRange::new(start, end).ok()?,
+                        role,
+                    });
+                }
+            }
+        }
+    }
+    Some(())
+}
+
+fn token_content_range(token: &SyntaxToken<crate::uml::syntax::UmlLanguage>) -> Option<TextRange> {
+    let leading_bytes = token
+        .leading_trivia()
+        .iter()
+        .map(|trivia| trivia.text.write_to_string().len())
+        .sum::<usize>();
+    let leading = TextSize::try_from_usize(leading_bytes).ok()?;
+    let authored = token.text().write_to_string();
+    let trimmed = authored.trim_matches(char::is_whitespace);
+    let prefix =
+        TextSize::try_from_usize(authored.len().checked_sub(authored.trim_start().len())?).ok()?;
+    let content = TextSize::try_from_usize(trimmed.len()).ok()?;
+    let start = token
+        .range()
+        .start()
+        .checked_add(leading)
+        .and_then(|start| start.checked_add(prefix))
+        .ok()?;
+    TextRange::new(start, start.checked_add(content).ok()?).ok()
+}
+
+fn waml_code_role(token: &SyntaxToken<crate::uml::syntax::UmlLanguage>) -> Option<WamlCodeRole> {
+    use crate::uml::syntax::UmlSyntaxKind as Kind;
+
+    let kind = token.kind();
+    if token.flags().is_bad() || token.flags().is_missing() || kind == Kind::BadToken {
+        return Some(WamlCodeRole::Invalid);
+    }
+    if matches!(
+        kind,
+        Kind::BulletToken
+            | Kind::ColonToken
+            | Kind::OpenBracketToken
+            | Kind::CloseBracketToken
+            | Kind::CommaToken
+            | Kind::ArrowToken
+            | Kind::EqualsToken
+            | Kind::LayoutOpenParenToken
+            | Kind::LayoutCloseParenToken
+            | Kind::LayoutCommaToken
+            | Kind::HeadingMarkerToken
+    ) {
+        return Some(WamlCodeRole::Punctuation);
+    }
+    let ancestors = std::iter::successors(token.parent(), |node| node.parent())
+        .map(|node| node.kind())
+        .collect::<Vec<_>>();
+    let text = token.text().write_to_string();
+    if text.chars().any(|character| character.is_ascii_digit())
+        && ancestors
+            .iter()
+            .any(|ancestor| matches!(ancestor, Kind::Multiplicity | Kind::Margin))
+    {
+        return Some(WamlCodeRole::Number);
+    }
+    if kind == Kind::TypeToken || ancestors.contains(&Kind::TypeReference) {
+        return Some(WamlCodeRole::Type);
+    }
+    if kind == Kind::IdentifierToken
+        && ancestors.iter().any(|ancestor| {
+            matches!(
+                ancestor,
+                Kind::Attribute | Kind::Slot | Kind::InlineSlot | Kind::FlowNodeKindSlot
+            )
+        })
+    {
+        return Some(WamlCodeRole::Property);
+    }
+    if kind == Kind::LayoutQuoteToken {
+        return Some(WamlCodeRole::String);
+    }
+    if matches!(
+        kind,
+        Kind::VisibilityToken
+            | Kind::RelationshipKindToken
+            | Kind::AsToken
+            | Kind::WithToken
+            | Kind::SetToToken
+            | Kind::ToToken
+            | Kind::LayoutKeywordToken
+            | Kind::FlowKeywordToken
+            | Kind::MessageKeywordToken
+            | Kind::OperandKeywordToken
+            | Kind::InternalKeywordToken
+            | Kind::ElseToken
+    ) {
+        return Some(WamlCodeRole::Keyword);
+    }
+    if kind == Kind::LayoutWordToken
+        && ancestors.iter().any(|ancestor| {
+            matches!(
+                ancestor,
+                Kind::LayoutPlacement
+                    | Kind::LayoutAlignment
+                    | Kind::LayoutStandalone
+                    | Kind::Anchored
+                    | Kind::DirectionClause
+                    | Kind::HintClause
+                    | Kind::Axis
+                    | Kind::Hint
+                    | Kind::Shape
+                    | Kind::Margin
+                    | Kind::Flag
+            )
+        })
+    {
+        return Some(WamlCodeRole::Keyword);
+    }
+    (kind == Kind::RawMarkdownToken).then_some(WamlCodeRole::Comment)
 }
 
 #[derive(Clone)]
@@ -501,7 +722,7 @@ fn prepare_candidate_inner_with_markdown_updates(
     recovered: Option<&PromotedMarkdownUpdate>,
     hooks: &mut impl PreparationHooks,
 ) -> Result<PreparedCandidate, AnalysisError> {
-    let okf = analyze_okf_inner(
+    let mut okf = analyze_okf_inner(
         &candidate_source,
         previous.as_ref().map(|analyses| analyses.okf),
         candidate_revision,
@@ -520,6 +741,7 @@ fn prepare_candidate_inner_with_markdown_updates(
         },
         previous.as_ref().map(|analyses| analyses.uml),
     )?;
+    okf.attach_code_syntax(&uml);
     hooks.before(AnalysisStage::Claims)?;
     validate_disjoint_claims([("uml", &uml.claims)])?;
     Ok(PreparedCandidate {
@@ -877,6 +1099,7 @@ fn analyze_okf_inner(
         catalog: candidate.clone(),
         markdown,
         bundle,
+        code_syntax: Arc::new(BTreeMap::new()),
     })
 }
 

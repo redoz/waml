@@ -5,7 +5,7 @@ use waml::{
     analysis::{
         prepare_candidate, prepare_candidate_with_markdown_updates, AnalysisError,
         InvalidPromotedMarkdownUpdateReason, PreparedCandidate, PreviousAnalyses,
-        ProjectionFreshness, PromotedMarkdownUpdate,
+        ProjectionFreshness, PromotedMarkdownUpdate, WamlCodeRole,
     },
     edit::{
         apply_exact_source_edit, EditBatch, EditContext, ExactSourceEdit, ExactSourceEditError,
@@ -134,6 +134,172 @@ fn island_owner(
         .find(|island| island.kind == kind)
         .unwrap()
         .owner
+}
+
+#[test]
+fn shared_waml_code_spans_use_exact_island_tokens_and_absolute_ranges() {
+    let authored = "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- count: Number {0..42}\n\n## Layout\n- column of \"Café\", ([Order](order.md)) as row with frame, small margins left of Ghost\n";
+    let candidate = prepared(
+        SourceBundle::try_from_pairs([("order.md", authored)]).unwrap(),
+        None,
+        41,
+    );
+    let document = document_id(&candidate, "order.md");
+    let markdown = candidate.okf().markdown_snapshot(document).unwrap();
+    let island = markdown
+        .structure()
+        .islands
+        .iter()
+        .find(|island| island.kind == WamlSectionKind::Attributes)
+        .unwrap();
+
+    let spans = candidate
+        .okf()
+        .code_spans(island.owner, island.content_range)
+        .expect("the exact immutable WAML island must have shared code roles");
+
+    assert!(!spans.is_empty());
+    assert!(spans.iter().all(|span| {
+        island.content_range.start() <= span.range.start()
+            && span.range.end() <= island.content_range.end()
+    }));
+    assert!(spans
+        .windows(2)
+        .all(|pair| pair[0].range.end() <= pair[1].range.start()));
+    let classified = spans
+        .iter()
+        .map(|span| {
+            (
+                &authored[span.range.start().to_usize()..span.range.end().to_usize()],
+                span.role,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(classified.contains(&("count", WamlCodeRole::Property)));
+    assert!(classified.contains(&("Number", WamlCodeRole::Type)));
+    assert!(classified.contains(&("0..42", WamlCodeRole::Number)));
+    assert!(classified.contains(&(":", WamlCodeRole::Punctuation)));
+    assert!(classified.contains(&("{", WamlCodeRole::Punctuation)));
+    assert!(classified.contains(&("}", WamlCodeRole::Punctuation)));
+
+    let clipped = TextRange::new(
+        island
+            .content_range
+            .start()
+            .checked_add(TextSize::new(1))
+            .unwrap(),
+        island.content_range.end(),
+    )
+    .unwrap();
+    assert!(candidate.okf().code_spans(island.owner, clipped).is_none());
+}
+
+#[test]
+fn shared_waml_code_roles_cover_layout_strings_keywords_and_recovery() {
+    let authored = "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- column of \"Café\", ([Order](order.md)) as row with frame, small margins left of Ghost\n";
+    let candidate = prepared(
+        SourceBundle::try_from_pairs([("diagram.md", authored)]).unwrap(),
+        None,
+        42,
+    );
+    let document = document_id(&candidate, "diagram.md");
+    let island = candidate
+        .okf()
+        .markdown_snapshot(document)
+        .unwrap()
+        .structure()
+        .islands
+        .iter()
+        .find(|island| island.kind == WamlSectionKind::Layout)
+        .unwrap();
+    let spans = candidate
+        .okf()
+        .code_spans(island.owner, island.content_range)
+        .unwrap();
+    let classified = spans
+        .iter()
+        .map(|span| {
+            (
+                &authored[span.range.start().to_usize()..span.range.end().to_usize()],
+                span.role,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        classified.contains(&("column", WamlCodeRole::Keyword)),
+        "{classified:?}"
+    );
+    assert!(classified.contains(&("\"Café\"", WamlCodeRole::String)));
+
+    let broken =
+        "---\ntype: uml.Class\n---\n# Broken\n\n## Attributes\n- repeated: T {1} trailing\n";
+    let recovered = prepared(
+        SourceBundle::try_from_pairs([("broken.md", broken)]).unwrap(),
+        None,
+        43,
+    );
+    let document = document_id(&recovered, "broken.md");
+    let island = recovered
+        .okf()
+        .markdown_snapshot(document)
+        .unwrap()
+        .structure()
+        .islands
+        .iter()
+        .find(|island| island.kind == WamlSectionKind::Attributes)
+        .unwrap();
+    let spans = recovered
+        .okf()
+        .code_spans(island.owner, island.content_range)
+        .unwrap();
+    assert!(spans.iter().any(|span| span.role == WamlCodeRole::Invalid));
+}
+
+#[test]
+fn shared_waml_code_spans_follow_the_installed_document_revision() {
+    let original = "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- count: Number {0..42}\n";
+    let baseline_source = SourceBundle::try_from_pairs([("order.md", original)]).unwrap();
+    let baseline = prepared(baseline_source.clone(), None, 44);
+    let edited_text = "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- total: Text {1..8}\n";
+    let edited_source = replace_document(
+        &baseline_source,
+        SourceDocument::new(path("order.md"), edited_text.into()),
+    )
+    .unwrap();
+    let current = prepared(
+        edited_source,
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
+        45,
+    );
+    let document = document_id(&current, "order.md");
+    let markdown = current.okf().markdown_snapshot(document).unwrap();
+    let island = markdown
+        .structure()
+        .islands
+        .iter()
+        .find(|island| island.kind == WamlSectionKind::Attributes)
+        .unwrap();
+    let spans = current
+        .okf()
+        .code_spans(island.owner, island.content_range)
+        .unwrap();
+    let classified = spans
+        .iter()
+        .map(|span| {
+            (
+                &edited_text[span.range.start().to_usize()..span.range.end().to_usize()],
+                span.role,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(markdown.revision(), DocumentRevision::new(2));
+    assert!(classified.contains(&("total", WamlCodeRole::Property)));
+    assert!(classified.contains(&("Text", WamlCodeRole::Type)));
+    assert!(classified.contains(&("1..8", WamlCodeRole::Number)));
+    assert!(!classified.iter().any(|(text, _)| *text == "count"));
 }
 
 #[test]
