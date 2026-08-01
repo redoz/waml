@@ -9,8 +9,8 @@ use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 
 pub use crate::selection::Affinity;
 pub use engine::{
-    BaseDirection, BlockSummary, IndexBuildStats, IntrinsicCluster, IntrinsicRun, LaneOffsetStats,
-    LayoutEngine, LayoutInvalidation, LayoutViewport, ParagraphIntrinsic,
+    BaseDirection, BlockSummary, IndexBuildStats, IntrinsicCluster, IntrinsicRun, IntrinsicSize,
+    LaneOffsetStats, LayoutEngine, LayoutInvalidation, LayoutViewport, ParagraphIntrinsic,
     ParagraphIntrinsicRequest, ParagraphShapeRequest, ShapeSpan, ShapedCluster, ShapedFragment,
     ShapedGlyph, ShapedParagraph, ShapedRow, ShapedRun, TextShaper,
 };

@@ -2529,8 +2529,189 @@ fn cluster_alignment_offset_lookup_is_constant_time() {
     assert_eq!(stats.linear_lane_offset_scans, 0);
 }
 
+#[test]
+fn unconstrained_table_uses_intrinsic_column_bases() {
+    let (document, layout) = fixtures::unconstrained_unequal_table();
+    let width = |index: usize| {
+        layout
+            .visible_blocks()
+            .iter()
+            .find(|block| block.id == document.blocks[index].id)
+            .unwrap()
+            .rect
+            .size
+            .x
+    };
+    assert!(width(3) > width(2) * 2.0, "{} vs {}", width(3), width(2));
+}
+
+#[test]
+fn styled_unbreakable_min_content_overflows_narrow_table() {
+    let (document, layout) = fixtures::styled_unbreakable_table();
+    let table = layout
+        .visible_blocks()
+        .iter()
+        .find(|block| block.id == document.blocks[0].id)
+        .unwrap();
+    assert!(table.rect.size.x > 80.0, "{:?}", table.rect);
+}
+
+#[test]
+fn nested_tables_measure_each_intrinsic_paragraph_once() {
+    let (document, presentation, mut shaper) = fixtures::nested_table();
+    LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(300.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(shaper.intrinsic_measured, 1);
+}
+
+#[test]
+fn removed_tables_prune_intrinsic_cache_entries() {
+    let mut engine = LayoutEngine::default();
+    let (document, presentation, mut shaper) = fixtures::styled_unbreakable_table_document();
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(80.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(engine.cached_table_intrinsic_count_for_test(), 1);
+    let (document, presentation, mut shaper) = fixtures::paragraph();
+    engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(200.0, 200.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    assert_eq!(engine.cached_table_intrinsic_count_for_test(), 0);
+}
+
 mod fixtures {
     use super::*;
+
+    /// A table with no column constraints whose second cell holds four times
+    /// the content of the first.
+    pub fn unconstrained_unequal_table() -> (LayoutDocument, LayoutSnapshot) {
+        let (document, presentation, mut shaper) = table_document(&[2, 8], &[]);
+        let layout = LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(300.0, 200.0, 0.0, 0.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap();
+        (document, layout)
+    }
+
+    pub fn styled_unbreakable_table() -> (LayoutDocument, LayoutSnapshot) {
+        let (document, presentation, mut shaper) = styled_unbreakable_table_document();
+        let layout = LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(80.0, 200.0, 0.0, 0.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap();
+        (document, layout)
+    }
+
+    /// One cell holding a single unbreakable 20-character word.
+    pub fn styled_unbreakable_table_document(
+    ) -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        table_document(&[20], &[])
+    }
+
+    /// An outer table whose only cell holds a nested table.
+    pub fn nested_table() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        let (mut document, presentation, shaper) = fixture(&[16.0; 6], &[1, 1, 1, 1, 1, 4], None);
+        let mut blocks = document.blocks.to_vec();
+        let outer = blocks[0].id;
+        let outer_row = blocks[1].id;
+        let outer_cell = blocks[2].id;
+        let inner = blocks[3].id;
+        let inner_row = blocks[4].id;
+        for index in [0, 3] {
+            blocks[index].spec.flow = BlockFlow::Table;
+            blocks[index].spec.space_after = 0.0;
+            blocks[index].spec.columns = Arc::from([]);
+        }
+        for (index, parent) in [(1, outer), (4, inner)] {
+            blocks[index].parent = Some(parent);
+            blocks[index].spec.flow = BlockFlow::TableRow;
+            blocks[index].spec.space_after = 0.0;
+        }
+        for (index, parent) in [(2, outer_row), (5, inner_row)] {
+            blocks[index].parent = Some(parent);
+            blocks[index].spec.flow = BlockFlow::TableCell { column: 0 };
+            blocks[index].spec.space_after = 0.0;
+        }
+        blocks[3].parent = Some(outer_cell);
+        let structural = HashSet::from([outer, outer_row, outer_cell, inner, inner_row]);
+        document.blocks = blocks.into();
+        document.text_runs = document
+            .text_runs
+            .iter()
+            .filter(|run| !structural.contains(&run.id))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        (document, presentation, shaper)
+    }
+
+    /// One table row with one cell per entry in `cells`, each holding that many
+    /// unbreakable characters.
+    pub(super) fn table_document(
+        cells: &[usize],
+        constraints: &[ColumnConstraint],
+    ) -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        let mut characters = vec![1, 1];
+        characters.extend_from_slice(cells);
+        let (mut document, presentation, shaper) =
+            fixture(&vec![16.0; characters.len()], &characters, None);
+        let mut blocks = document.blocks.to_vec();
+        let table = blocks[0].id;
+        let row = blocks[1].id;
+        blocks[0].spec.flow = BlockFlow::Table;
+        blocks[0].spec.space_after = 0.0;
+        blocks[0].spec.columns = constraints.to_vec().into();
+        blocks[1].parent = Some(table);
+        blocks[1].spec.flow = BlockFlow::TableRow;
+        blocks[1].spec.space_after = 0.0;
+        for column in 0..cells.len() {
+            let index = 2 + column;
+            blocks[index].parent = Some(row);
+            blocks[index].spec.flow = BlockFlow::TableCell {
+                column: column as u32,
+            };
+            blocks[index].spec.space_after = 0.0;
+        }
+        let structural = HashSet::from([table, row]);
+        document.blocks = blocks.into();
+        document.text_runs = document
+            .text_runs
+            .iter()
+            .filter(|run| !structural.contains(&run.id))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        (document, presentation, shaper)
+    }
 
     pub fn two_by_two_table() -> (LayoutDocument, LayoutSnapshot) {
         let (mut document, presentation, mut shaper) = fixture(

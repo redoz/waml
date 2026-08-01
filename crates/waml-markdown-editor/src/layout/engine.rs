@@ -429,11 +429,28 @@ impl DocumentLayoutIndex {
 
 struct CachedTableIntrinsics {
     fingerprint: u64,
-    cells: Vec<(LayoutElementId, f64)>,
+    cells: Vec<(LayoutElementId, IntrinsicSize)>,
+}
+
+/// Width bounds of one block subtree at its current fingerprint.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct IntrinsicSize {
+    pub min_content: f64,
+    pub max_content: f64,
+}
+
+impl IntrinsicSize {
+    fn combine(self, other: Self) -> Self {
+        Self {
+            min_content: self.min_content.max(other.min_content),
+            max_content: self.max_content.max(other.max_content),
+        }
+    }
 }
 
 struct TableIntrinsicState<'a> {
-    widths: &'a mut [f64],
+    sizes: &'a mut [IntrinsicSize],
+    memo: &'a mut [Option<IntrinsicSize>],
     cache: &'a mut HashMap<LayoutElementId, CachedTableIntrinsics>,
 }
 
@@ -472,6 +489,11 @@ impl LayoutEngine {
     #[doc(hidden)]
     pub fn last_index_build_stats_for_test(&self) -> IndexBuildStats {
         self.last_index_build_stats
+    }
+
+    #[doc(hidden)]
+    pub fn cached_table_intrinsic_count_for_test(&self) -> usize {
+        self.table_intrinsics.len()
     }
 
     #[doc(hidden)]
@@ -517,9 +539,10 @@ impl LayoutEngine {
             .zip(layout_index.subtree_fingerprints.iter().copied())
             .map(|(block, fingerprint)| (block.id, fingerprint))
             .collect();
-        let mut intrinsic_widths = vec![0.0; document.blocks.len()];
+        let mut intrinsics = vec![IntrinsicSize::default(); document.blocks.len()];
+        let mut intrinsic_memo = vec![None; document.blocks.len()];
         let mut table_intrinsics_ready = vec![false; document.blocks.len()];
-        let mut widths = WidthPlan::new(document, &hierarchy, viewport.width, &intrinsic_widths);
+        let mut widths = WidthPlan::new(document, &hierarchy, viewport.width, &intrinsics);
         let mut block_data = Vec::with_capacity(document.blocks.len());
         let mut measurements = Vec::with_capacity(document.blocks.len());
         let mut measured = Vec::with_capacity(document.blocks.len());
@@ -590,7 +613,7 @@ impl LayoutEngine {
                 .collect::<Vec<_>>();
             if !pending_tables.is_empty() {
                 for table in pending_tables {
-                    measure_table_min_content(
+                    measure_table_intrinsics(
                         document,
                         &layout_index,
                         &hierarchy,
@@ -598,14 +621,14 @@ impl LayoutEngine {
                         presentation.text(),
                         shaper,
                         TableIntrinsicState {
-                            widths: &mut intrinsic_widths,
+                            sizes: &mut intrinsics,
+                            memo: &mut intrinsic_memo,
                             cache: &mut self.table_intrinsics,
                         },
                     )?;
                     table_intrinsics_ready[table] = true;
                 }
-                let next_widths =
-                    WidthPlan::new(document, &hierarchy, viewport.width, &intrinsic_widths);
+                let next_widths = WidthPlan::new(document, &hierarchy, viewport.width, &intrinsics);
                 for index in 0..document.blocks.len() {
                     if widths.content[index].to_bits() != next_widths.content[index].to_bits() {
                         block_data[index] = None;
@@ -733,6 +756,20 @@ impl LayoutEngine {
                 )
             })
             .collect();
+
+        // Removed or replaced tables cannot leave stale intrinsic entries.
+        let live_tables = document
+            .blocks
+            .iter()
+            .zip(layout_index.subtree_fingerprints.iter().copied())
+            .filter(|(block, _)| matches!(block.spec.flow, super::BlockFlow::Table))
+            .map(|(block, fingerprint)| (block.id, fingerprint))
+            .collect::<HashMap<_, _>>();
+        self.table_intrinsics.retain(|id, cached| {
+            live_tables
+                .get(id)
+                .is_some_and(|fingerprint| *fingerprint == cached.fingerprint)
+        });
 
         self.last_lane_offset_stats = lane_offset_stats;
         let (rows, lanes) = assemble_rows(lane_drafts, &mut clusters);
@@ -870,7 +907,7 @@ impl WidthPlan {
         document: &LayoutDocument,
         hierarchy: &BlockHierarchy,
         viewport_width: f64,
-        intrinsic_widths: &[f64],
+        intrinsics: &[IntrinsicSize],
     ) -> Self {
         let mut plan = Self {
             outer: vec![1.0; document.blocks.len()],
@@ -882,14 +919,7 @@ impl WidthPlan {
             (viewport_width - document.content_insets.left - document.content_insets.right)
                 .max(1.0);
         for &root in &hierarchy.roots {
-            assign_block_widths(
-                document,
-                hierarchy,
-                root,
-                root_width,
-                intrinsic_widths,
-                &mut plan,
-            );
+            assign_block_widths(document, hierarchy, root, root_width, intrinsics, &mut plan);
         }
         plan
     }
@@ -900,20 +930,15 @@ fn assign_block_widths(
     hierarchy: &BlockHierarchy,
     index: usize,
     available_width: f64,
-    intrinsic_widths: &[f64],
+    intrinsics: &[IntrinsicSize],
     plan: &mut WidthPlan,
 ) {
     let block = &document.blocks[index];
     let horizontal_insets = block.spec.insets.left + block.spec.insets.right;
     match block.spec.flow {
         super::BlockFlow::Table => {
-            let columns = solve_table_columns(
-                document,
-                hierarchy,
-                index,
-                available_width,
-                intrinsic_widths,
-            );
+            let columns =
+                solve_table_columns(document, hierarchy, index, available_width, intrinsics);
             let content_width = columns.iter().sum::<f64>().max(1.0);
             plan.content[index] = content_width;
             plan.outer[index] = content_width + horizontal_insets;
@@ -925,7 +950,7 @@ fn assign_block_widths(
                         child,
                         &columns,
                         &document.blocks[index].spec.columns,
-                        intrinsic_widths,
+                        intrinsics,
                         plan,
                     );
                 } else {
@@ -934,7 +959,7 @@ fn assign_block_widths(
                         hierarchy,
                         child,
                         content_width,
-                        intrinsic_widths,
+                        intrinsics,
                         plan,
                     );
                 }
@@ -949,7 +974,7 @@ fn assign_block_widths(
                     hierarchy,
                     child,
                     plan.content[index],
-                    intrinsic_widths,
+                    intrinsics,
                     plan,
                 );
             }
@@ -963,7 +988,7 @@ fn assign_table_row_widths(
     index: usize,
     columns: &[f64],
     constraints: &[super::ColumnConstraint],
-    intrinsic_widths: &[f64],
+    intrinsics: &[IntrinsicSize],
     plan: &mut WidthPlan,
 ) {
     let row_width = columns.iter().sum::<f64>().max(1.0);
@@ -985,7 +1010,7 @@ fn assign_table_row_widths(
             hierarchy,
             child,
             columns.get(column).copied().unwrap_or(row_width),
-            intrinsic_widths,
+            intrinsics,
             plan,
         );
     }
@@ -996,11 +1021,11 @@ fn solve_table_columns(
     hierarchy: &BlockHierarchy,
     table: usize,
     available_width: f64,
-    intrinsic_widths: &[f64],
+    intrinsics: &[IntrinsicSize],
 ) -> Vec<f64> {
     let constraints = &document.blocks[table].spec.columns;
-    if constraints.is_empty() {
-        let count = hierarchy.children[table]
+    let count = if constraints.is_empty() {
+        hierarchy.children[table]
             .iter()
             .flat_map(|row| hierarchy.children[*row].iter())
             .filter_map(|cell| match document.blocks[*cell].spec.flow {
@@ -1008,58 +1033,83 @@ fn solve_table_columns(
                 _ => None,
             })
             .max()
-            .unwrap_or(1);
-        return vec![(available_width / count as f64).max(1.0); count];
-    }
-    let mut intrinsic_columns = vec![0.0_f64; constraints.len()];
+            .unwrap_or(1)
+    } else {
+        constraints.len()
+    };
+    // Column bases come from measured cell content. Explicit constraints join
+    // the same minimum/preferred calculation instead of bypassing it.
+    let mut minimums = vec![0.0_f64; count];
+    let mut preferred = vec![0.0_f64; count];
     for &row in &hierarchy.children[table] {
         for &cell in &hierarchy.children[row] {
             if let super::BlockFlow::TableCell { column } = document.blocks[cell].spec.flow {
-                if let Some(width) = intrinsic_columns.get_mut(column as usize) {
-                    *width = (*width).max(intrinsic_widths[cell]);
+                let column = column as usize;
+                if column < count {
+                    minimums[column] = minimums[column].max(intrinsics[cell].min_content);
+                    preferred[column] = preferred[column].max(intrinsics[cell].max_content);
                 }
             }
         }
     }
-    let mut widths = constraints
-        .iter()
-        .zip(&intrinsic_columns)
-        .map(|(constraint, intrinsic)| {
-            constraint
-                .max_width
-                .map_or(constraint.min_width.max(*intrinsic), |max| {
-                    constraint.min_width.max(*intrinsic).min(max)
-                })
-                .max(1.0)
-        })
-        .collect::<Vec<_>>();
-    let mut remaining = (available_width - widths.iter().sum::<f64>()).max(0.0);
-    while remaining > 0.0 {
-        let growable = constraints
+    for column in 0..count {
+        let constraint = constraints.get(column);
+        minimums[column] = minimums[column]
+            .max(constraint.map_or(0.0, |constraint| constraint.min_width))
+            .max(1.0);
+        preferred[column] = preferred[column].max(minimums[column]);
+        if let Some(max) = constraint.and_then(|constraint| constraint.max_width) {
+            let max = max.max(1.0);
+            preferred[column] = preferred[column].min(max);
+            minimums[column] = minimums[column].min(preferred[column]);
+        }
+    }
+
+    let minimum_sum = minimums.iter().sum::<f64>();
+    let preferred_sum = preferred.iter().sum::<f64>();
+    if minimum_sum >= available_width {
+        // The table overflows rather than breaking an unbreakable word.
+        return minimums;
+    }
+    if preferred_sum >= available_width {
+        let excess = preferred_sum - available_width;
+        let slack = preferred_sum - minimum_sum;
+        return preferred
             .iter()
-            .enumerate()
-            .filter(|(index, constraint)| {
-                constraint
-                    .max_width
-                    .map_or(true, |max| widths[*index] < max)
+            .zip(&minimums)
+            .map(|(preferred, minimum)| {
+                (preferred - excess * (preferred - minimum) / slack).max(*minimum)
             })
-            .map(|(index, _)| index)
+            .collect();
+    }
+
+    let mut widths = preferred;
+    let mut remaining = available_width - preferred_sum;
+    while remaining > 1e-9 {
+        let growable = (0..count)
+            .filter(|column| {
+                constraints
+                    .get(*column)
+                    .and_then(|constraint| constraint.max_width)
+                    .map_or(true, |max| widths[*column] < max)
+            })
             .collect::<Vec<_>>();
         if growable.is_empty() {
             break;
         }
         let total_weight = growable
             .iter()
-            .map(|index| intrinsic_columns[*index].max(1.0))
+            .map(|column| widths[*column].max(1.0))
             .sum::<f64>();
         let mut consumed = 0.0;
-        for index in growable {
-            let share = remaining * intrinsic_columns[index].max(1.0) / total_weight;
-            let capacity = constraints[index]
-                .max_width
-                .map_or(share, |max| (max - widths[index]).max(0.0));
+        for column in growable {
+            let share = remaining * widths[column].max(1.0) / total_weight;
+            let capacity = constraints
+                .get(column)
+                .and_then(|constraint| constraint.max_width)
+                .map_or(share, |max| (max - widths[column]).max(0.0));
             let growth = share.min(capacity);
-            widths[index] += growth;
+            widths[column] += growth;
             consumed += growth;
         }
         if consumed <= f64::EPSILON {
@@ -1228,7 +1278,7 @@ fn visible_indices(
         .collect()
 }
 
-fn measure_table_min_content<S: TextShaper>(
+fn measure_table_intrinsics<S: TextShaper>(
     document: &LayoutDocument,
     layout_index: &DocumentLayoutIndex,
     hierarchy: &BlockHierarchy,
@@ -1244,9 +1294,10 @@ fn measure_table_min_content<S: TextShaper>(
         .get(&table_id)
         .filter(|cached| cached.fingerprint == fingerprint)
     {
-        for (cell_id, width) in &cached.cells {
+        for (cell_id, size) in &cached.cells {
             if let Some(index) = layout_index.block_indices.get(cell_id) {
-                state.widths[*index] = *width;
+                state.sizes[*index] = *size;
+                state.memo[*index] = Some(*size);
             }
         }
         return Ok(());
@@ -1254,10 +1305,17 @@ fn measure_table_min_content<S: TextShaper>(
     let mut cells = Vec::new();
     for &row in &hierarchy.children[table] {
         for &cell in &hierarchy.children[row] {
-            let width =
-                measure_block_intrinsic(document, layout_index, hierarchy, cell, source, shaper)?;
-            state.widths[cell] = width;
-            cells.push((document.blocks[cell].id, width));
+            let size = measure_subtree_intrinsic(
+                document,
+                layout_index,
+                hierarchy,
+                cell,
+                source,
+                shaper,
+                state.memo,
+            )?;
+            state.sizes[cell] = size;
+            cells.push((document.blocks[cell].id, size));
         }
     }
     state
@@ -1266,18 +1324,54 @@ fn measure_table_min_content<S: TextShaper>(
     Ok(())
 }
 
-fn measure_block_intrinsic<S: TextShaper>(
+/// Fills `memo` for every block in the subtree rooted at `root` in postorder,
+/// measuring each paragraph at most once per layout, and returns the root size.
+fn measure_subtree_intrinsic<S: TextShaper>(
     document: &LayoutDocument,
     layout_index: &DocumentLayoutIndex,
     hierarchy: &BlockHierarchy,
+    root: usize,
+    source: &SourceText,
+    shaper: &mut S,
+    memo: &mut [Option<IntrinsicSize>],
+) -> Result<IntrinsicSize, LayoutError> {
+    let mut stack = vec![root];
+    let mut discovered = Vec::new();
+    while let Some(index) = stack.pop() {
+        discovered.push(index);
+        stack.extend(hierarchy.children[index].iter().copied());
+    }
+    for &index in discovered.iter().rev() {
+        if memo[index].is_some() {
+            continue;
+        }
+        let mut size = own_intrinsic(document, layout_index, index, source, shaper)?;
+        for &child in &hierarchy.children[index] {
+            if let Some(child_size) = memo[child] {
+                size = size.combine(child_size);
+            }
+        }
+        memo[index] = Some(size);
+    }
+    Ok(memo[root].unwrap_or_default())
+}
+
+/// Intrinsic width bounds of one block's own runs and embedded items.
+fn own_intrinsic<S: TextShaper>(
+    document: &LayoutDocument,
+    layout_index: &DocumentLayoutIndex,
     block_index: usize,
     source: &SourceText,
     shaper: &mut S,
-) -> Result<f64, LayoutError> {
-    let mut width = layout_index.embedded_indices[block_index]
+) -> Result<IntrinsicSize, LayoutError> {
+    let embedded = layout_index.embedded_indices[block_index]
         .iter()
         .map(|index| document.embedded_blocks[*index].size.x)
         .fold(0.0, f64::max);
+    let mut size = IntrinsicSize {
+        min_content: embedded,
+        max_content: embedded,
+    };
     let runs = layout_index.run_indices[block_index]
         .iter()
         .map(|index| document.text_runs[*index].clone())
@@ -1292,19 +1386,12 @@ fn measure_block_intrinsic<S: TextShaper>(
             spans: &spans,
             base_direction: BaseDirection::Auto,
         })?;
-        width = width.max(intrinsic.min_content);
+        size = size.combine(IntrinsicSize {
+            min_content: intrinsic.min_content,
+            max_content: intrinsic.max_content.max(intrinsic.min_content),
+        });
     }
-    for child in &hierarchy.children[block_index] {
-        width = width.max(measure_block_intrinsic(
-            document,
-            layout_index,
-            hierarchy,
-            *child,
-            source,
-            shaper,
-        )?);
-    }
-    Ok(width)
+    Ok(size)
 }
 
 fn estimated_block_measurement(
