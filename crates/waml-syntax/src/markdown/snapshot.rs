@@ -834,7 +834,9 @@ fn is_semantic(kind: crate::OkfMarkdownSyntaxKind) -> bool {
     use crate::OkfMarkdownSyntaxKind as Kind;
     matches!(
         kind,
-        Kind::BlockQuote
+        Kind::Frontmatter
+            | Kind::FrontmatterEntry
+            | Kind::BlockQuote
             | Kind::List
             | Kind::ListItem
             | Kind::Paragraph

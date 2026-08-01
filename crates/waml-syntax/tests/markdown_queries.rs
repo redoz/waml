@@ -36,6 +36,48 @@ fn tight_list_items_publish_typed_link_queries() {
     assert_eq!(links[1].destination.as_ref(), "./target.md");
 }
 
+#[test]
+fn frontmatter_spans_cover_the_source_with_semantic_owners() {
+    let source = "---\ntype: uml.Class\n---\n# Class\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let frontmatter_end = source.find("# Class").unwrap();
+    let spans = snapshot
+        .queries()
+        .spans(whole(source))
+        .filter(|span| span.range.end().to_usize() <= frontmatter_end)
+        .collect::<Vec<_>>();
+
+    assert_eq!(spans.first().unwrap().range.start(), TextSize::new(0));
+    assert_eq!(
+        spans.last().unwrap().range.end(),
+        TextSize::try_from(frontmatter_end).unwrap()
+    );
+    assert!(spans
+        .windows(2)
+        .all(|pair| pair[0].range.end() == pair[1].range.start()));
+
+    let owner_for = |needle: &str| {
+        let range = range_of(source, needle);
+        spans
+            .iter()
+            .find(|span| span.range.start() <= range.start() && range.end() <= span.range.end())
+            .map(|span| {
+                assert_eq!(span.semantic_role, MarkdownSemanticRole::Frontmatter);
+                span.owner
+            })
+            .unwrap()
+    };
+    let fence_owner = owner_for("---");
+    let entry_owner = owner_for("type");
+    assert_eq!(entry_owner, owner_for("uml.Class"));
+    assert_ne!(fence_owner, entry_owner);
+}
+
 fn token_ranges(node: &SyntaxNode<OkfMarkdownLanguage>, out: &mut Vec<TextRange>) {
     for child in node.children() {
         match child {

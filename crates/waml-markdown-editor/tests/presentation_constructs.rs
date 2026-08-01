@@ -27,6 +27,26 @@ fn compile_fixture(name: &str) -> (Arc<MarkdownSyntaxSnapshot>, Arc<Presentation
     (snapshot, plan)
 }
 
+#[test]
+fn real_waml_frontmatter_compiles_into_a_complete_source_partition() {
+    let source = "---\ntype: uml.Class\n---\n# Class\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).expect("the WAML source is valid"),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("the WAML source parses");
+
+    let plan = compile_presentation(
+        &snapshot,
+        &PresentationStyles,
+        &HighlighterRegistry::default(),
+    )
+    .expect("frontmatter participates in presentation coverage");
+
+    assert_eq!(plan.validate_source_partition(), Ok(()));
+}
+
 /// Every text run of the source slice that matches `needle`.
 fn roles_for(
     plan: &PresentationPlan,

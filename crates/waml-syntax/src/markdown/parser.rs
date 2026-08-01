@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{
     shell::{ParseError, ParsedShellWindow, ShellParse, ShellWindow, ShellWindowKind},
     GreenElement, GreenFactory, GreenText, GreenTrivia, MarkdownDialect, OkfMarkdownLanguage,
-    OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SourceText, SyntaxSeverity, SyntaxTree,
-    TextRange, TextSize, TreeDiagnostic, TriviaKind,
+    OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SourceText, SyntaxIdentity, SyntaxSeverity,
+    SyntaxTree, TextRange, TextSize, TreeDiagnostic, TriviaKind,
 };
 
 pub(crate) fn parse(text: SourceText, dialect: MarkdownDialect) -> Result<ShellParse, ParseError> {
@@ -199,9 +199,7 @@ fn frontmatter(
         ));
     }
     Ok((
-        factory
-            .node(OkfMarkdownSyntaxKind::Frontmatter, children)
-            .map_err(|_| ParseError::WidthOverflow)?,
+        identified_node(factory, OkfMarkdownSyntaxKind::Frontmatter, children)?,
         range.end().to_usize(),
     ))
 }
@@ -352,9 +350,7 @@ fn frontmatter_entry(
             children.push(GreenElement::Token(newline_token(factory, text, line)?));
         }
         return Ok((
-            factory
-                .node(OkfMarkdownSyntaxKind::FrontmatterEntry, children)
-                .map_err(|_| ParseError::WidthOverflow)?,
+            identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)?,
             false,
         ));
     }
@@ -376,9 +372,7 @@ fn frontmatter_entry(
             children.push(GreenElement::Token(newline_token(factory, text, line)?));
         }
         return Ok((
-            factory
-                .node(OkfMarkdownSyntaxKind::FrontmatterEntry, children)
-                .map_err(|_| ParseError::WidthOverflow)?,
+            identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)?,
             true,
         ));
     };
@@ -401,9 +395,7 @@ fn frontmatter_entry(
             children.push(GreenElement::Token(newline_token(factory, text, line)?));
         }
         return Ok((
-            factory
-                .node(OkfMarkdownSyntaxKind::FrontmatterEntry, children)
-                .map_err(|_| ParseError::WidthOverflow)?,
+            identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)?,
             true,
         ));
     }
@@ -447,11 +439,20 @@ fn frontmatter_entry(
         children.push(GreenElement::Token(newline_token(factory, text, line)?));
     }
     Ok((
-        factory
-            .node(OkfMarkdownSyntaxKind::FrontmatterEntry, children)
-            .map_err(|_| ParseError::WidthOverflow)?,
+        identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)?,
         false,
     ))
+}
+
+fn identified_node(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    kind: OkfMarkdownSyntaxKind,
+    children: Vec<GreenElement<OkfMarkdownLanguage>>,
+) -> Result<crate::GreenNode<OkfMarkdownLanguage>, ParseError> {
+    let identity = SyntaxIdentity::fresh()?;
+    factory
+        .node_with_annotations(kind, children, vec![identity.annotation()].into())
+        .map_err(|_| ParseError::WidthOverflow)
 }
 
 fn line_tokens(
