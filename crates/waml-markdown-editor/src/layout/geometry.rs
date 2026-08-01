@@ -41,6 +41,8 @@ pub struct GlyphCluster {
     pub metrics: TextMetrics,
     /// Exact renderer glyphs and font instances retained by the shaper.
     pub glyphs: Arc<[ShapedGlyph]>,
+    /// Index of the owning lane in `LayoutSnapshot::visual_lanes`.
+    pub lane_index: usize,
 }
 
 impl GlyphCluster {
@@ -78,6 +80,7 @@ impl GlyphCluster {
             caret_stops,
             metrics,
             glyphs,
+            lane_index: 0,
         }
     }
 
@@ -96,6 +99,55 @@ impl GlyphCluster {
             caret_stops.into(),
         )
     }
+}
+
+/// Identity of one visual row. A row groups every lane that shares one
+/// horizontal band because the container placed them there, never because their
+/// rectangles happen to overlap in Y.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct VisualRowId {
+    /// Container that owns the row: the table for table cells, otherwise the
+    /// block itself.
+    pub owner: LayoutElementId,
+    /// Table-row ordinal inside `owner`, or zero outside a table.
+    pub row_ordinal: u32,
+    /// Line ordinal inside the owning container's row.
+    pub line_ordinal: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct VisualLaneId {
+    pub row: VisualRowId,
+    pub block: LayoutElementId,
+    pub stable_order: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VisualLaneKind {
+    Paragraph,
+    TableCell { column: u32 },
+    HangingMarker,
+    HangingContent,
+}
+
+/// One independently navigable text lane inside a visual row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisualLane {
+    pub id: VisualLaneId,
+    pub row_index: usize,
+    pub kind: VisualLaneKind,
+    pub source_range: TextRange,
+    pub rect: Rect,
+    pub cluster_range: Range<usize>,
+    pub stable_order: u32,
+}
+
+/// A horizontal band owning one or more independent lanes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisualRow {
+    pub id: VisualRowId,
+    pub rect: Rect,
+    pub lanes: Range<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,11 +186,22 @@ pub struct BlockGeometry {
     plain_text_fallback: bool,
 }
 
+/// Block-local lane record. Parallel to `BlockLayoutData::visual_lines`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockLane {
+    pub kind: VisualLaneKind,
+    /// Line ordinal inside this lane's own flow, used as the row key.
+    pub line_ordinal: u32,
+    /// Block-local cluster indexes owned by this lane.
+    pub cluster_range: Range<usize>,
+}
+
 /// Immutable block-local geometry cached and reused across layout passes.
 #[derive(Clone, Debug)]
 pub struct BlockLayoutData {
     pub(crate) block: BlockGeometry,
     pub(crate) visual_lines: Arc<[VisualLine]>,
+    pub(crate) lanes: Arc<[BlockLane]>,
     pub(crate) glyph_clusters: Arc<[GlyphCluster]>,
 }
 
@@ -149,6 +212,10 @@ impl BlockLayoutData {
 
     pub fn visual_lines(&self) -> &[VisualLine] {
         &self.visual_lines
+    }
+
+    pub fn lanes(&self) -> &[BlockLane] {
+        &self.lanes
     }
 
     pub fn glyph_clusters(&self) -> &[GlyphCluster] {
@@ -201,6 +268,8 @@ pub struct LayoutSnapshot {
     viewport_width: f64,
     content_size: DVec2,
     visual_lines: Arc<[VisualLine]>,
+    rows: Arc<[VisualRow]>,
+    lanes: Arc<[VisualLane]>,
     blocks: Arc<[BlockGeometry]>,
     clusters: Arc<[GlyphCluster]>,
     visible_source_range: TextRange,
@@ -219,12 +288,19 @@ pub struct LayoutSnapshotMetadata {
     pub dirty_block_range: Range<usize>,
 }
 
+/// Positioned geometry arrays of one snapshot.
+pub struct LayoutGeometryParts {
+    pub visual_lines: Arc<[VisualLine]>,
+    pub rows: Arc<[VisualRow]>,
+    pub lanes: Arc<[VisualLane]>,
+    pub blocks: Arc<[BlockGeometry]>,
+    pub clusters: Arc<[GlyphCluster]>,
+}
+
 impl LayoutSnapshot {
     pub fn new(
         metadata: LayoutSnapshotMetadata,
-        visual_lines: Arc<[VisualLine]>,
-        blocks: Arc<[BlockGeometry]>,
-        clusters: Arc<[GlyphCluster]>,
+        geometry: LayoutGeometryParts,
         block_summaries: Arc<[BlockSummary]>,
         block_layouts: Arc<[Arc<BlockLayoutData>]>,
     ) -> Self {
@@ -232,9 +308,11 @@ impl LayoutSnapshot {
             revision: metadata.revision,
             viewport_width: metadata.viewport_width,
             content_size: metadata.content_size,
-            visual_lines,
-            blocks,
-            clusters,
+            visual_lines: geometry.visual_lines,
+            rows: geometry.rows,
+            lanes: geometry.lanes,
+            blocks: geometry.blocks,
+            clusters: geometry.clusters,
             visible_source_range: metadata.visible_source_range,
             visible_block_range: metadata.visible_block_range,
             block_summaries,
@@ -291,8 +369,18 @@ impl LayoutSnapshot {
         &self.blocks
     }
 
+    /// Flattened compatibility view of the lanes. Navigation, hit testing,
+    /// selection, and visible-range logic use `visual_rows` and `visual_lanes`.
     pub fn visual_lines(&self) -> &[VisualLine] {
         &self.visual_lines
+    }
+
+    pub fn visual_rows(&self) -> &[VisualRow] {
+        &self.rows
+    }
+
+    pub fn visual_lanes(&self) -> &[VisualLane] {
+        &self.lanes
     }
 
     /// Renderer-ready glyph placements. These are the same clusters used by
@@ -314,10 +402,8 @@ impl LayoutSnapshot {
     }
 
     pub fn source_to_point(&self, position: TextPosition) -> Option<CaretGeometry> {
-        let stop = self.find_stop(position)?;
-        let height = self
-            .line_at_y(stop.point.y)
-            .map_or(0.0, |line| line.rect.size.y);
+        let (stop, row) = self.find_owned_stop(position)?;
+        let height = row.map_or(0.0, |index| self.rows[index].rect.size.y);
         Some(CaretGeometry {
             position,
             rect: Rect {
@@ -328,14 +414,20 @@ impl LayoutSnapshot {
     }
 
     pub fn point_to_source(&self, point: DVec2) -> TextPosition {
-        let line = self.line_at_y(point.y).or_else(|| {
-            self.visual_lines.iter().min_by(|left, right| {
-                distance_to_y(left.rect, point.y)
-                    .partial_cmp(&distance_to_y(right.rect, point.y))
-                    .unwrap_or(Ordering::Equal)
-            })
+        let row = self.row_index_at_y(point.y).or_else(|| {
+            self.rows
+                .iter()
+                .enumerate()
+                .min_by(|(_, left), (_, right)| {
+                    distance_to_y(left.rect, point.y)
+                        .partial_cmp(&distance_to_y(right.rect, point.y))
+                        .unwrap_or(Ordering::Equal)
+                })
+                .map(|(index, _)| index)
         });
-        let stops = line.map_or_else(Vec::new, |line| self.stops_for_line(line));
+        let stops = row
+            .and_then(|row| self.lane_at(row, point.x))
+            .map_or_else(Vec::new, |lane| self.stops_for_lane(&self.lanes[lane]));
         stops
             .into_iter()
             .min_by(|left, right| {
@@ -354,18 +446,18 @@ impl LayoutSnapshot {
     pub fn selection_rects(&self, selection: Selection) -> Option<Vec<Rect>> {
         let selection_range = selection.range();
         let mut rects = Vec::new();
-        for line in self.visual_lines.iter() {
-            let start = selection_range.start().max(line.source_range.start());
-            let end = selection_range.end().min(line.source_range.end());
+        for lane in self.lanes.iter() {
+            let start = selection_range.start().max(lane.source_range.start());
+            let end = selection_range.end().min(lane.source_range.end());
             if start >= end {
                 continue;
             }
-            let stops = self.stops_for_line(line);
+            let stops = self.stops_for_lane(lane);
             let start_x = boundary_x(&stops, start, true)?;
             let end_x = boundary_x(&stops, end, false)?;
             rects.push(Rect {
-                pos: dvec2(start_x.min(end_x), line.rect.pos.y),
-                size: dvec2((end_x - start_x).abs(), line.rect.size.y),
+                pos: dvec2(start_x.min(end_x), lane.rect.pos.y),
+                size: dvec2((end_x - start_x).abs(), lane.rect.size.y),
             });
         }
         Some(rects)
@@ -377,29 +469,50 @@ impl LayoutSnapshot {
         preferred_x: Option<f64>,
         lines: i32,
     ) -> Option<(TextPosition, f64)> {
-        let caret = self.source_to_point(position)?;
-        let preferred_x = preferred_x.unwrap_or(caret.rect.pos.x);
-        let current = self.line_index_at_y(caret.rect.pos.y)? as i64;
-        let target = current.checked_add(lines as i64)?;
-        if !(0..self.visual_lines.len() as i64).contains(&target) {
+        let (stop, row) = self.find_owned_stop(position)?;
+        let preferred_x = preferred_x.unwrap_or(stop.point.x);
+        let target = (row? as i64).checked_add(lines as i64)?;
+        if !(0..self.rows.len() as i64).contains(&target) {
             return None;
         }
-        let stops = self.stops_for_line(&self.visual_lines[target as usize]);
-        let stop = stops.into_iter().min_by(|left, right| {
-            (left.point.x - preferred_x)
-                .abs()
-                .partial_cmp(&(right.point.x - preferred_x).abs())
-                .unwrap_or(Ordering::Equal)
-        })?;
+        let row = &self.rows[target as usize];
+        let stop = self.lanes[row.lanes.clone()]
+            .iter()
+            .flat_map(|lane| self.stops_for_lane(lane))
+            .min_by(|left, right| {
+                (left.point.x - preferred_x)
+                    .abs()
+                    .partial_cmp(&(right.point.x - preferred_x).abs())
+                    .unwrap_or(Ordering::Equal)
+            })?;
         Some((stop.position, preferred_x))
     }
 
-    fn find_stop(&self, position: TextPosition) -> Option<CaretStop> {
-        let stops = self.all_stops();
-        stops
-            .binary_search_by(|candidate| compare_position(candidate.position, position))
-            .ok()
-            .map(|index| stops[index])
+    /// Resolves a source position to the stop of the lane that owns it, with
+    /// that lane's row. Falls back to the global ordered stops when no lane
+    /// claims the position.
+    fn find_owned_stop(&self, position: TextPosition) -> Option<(CaretStop, Option<usize>)> {
+        let owning = self
+            .lanes
+            .iter()
+            .filter(|lane| {
+                lane.source_range.start() <= position.offset
+                    && position.offset <= lane.source_range.end()
+            })
+            .find_map(|lane| {
+                self.stops_for_lane(lane)
+                    .into_iter()
+                    .find(|stop| compare_position(stop.position, position) == Ordering::Equal)
+                    .map(|stop| (stop, Some(lane.row_index)))
+            });
+        owning.or_else(|| {
+            let stops = self.all_stops();
+            let stop = stops
+                .binary_search_by(|candidate| compare_position(candidate.position, position))
+                .ok()
+                .map(|index| stops[index])?;
+            Some((stop, self.row_index_at_y(stop.point.y)))
+        })
     }
 
     fn all_stops(&self) -> Vec<CaretStop> {
@@ -413,14 +526,12 @@ impl LayoutSnapshot {
         stops
     }
 
-    fn stops_for_line(&self, line: &VisualLine) -> Vec<CaretStop> {
+    fn stops_for_lane(&self, lane: &VisualLane) -> Vec<CaretStop> {
         let mut stops: Vec<_> = self
             .clusters
+            .get(lane.cluster_range.clone())
+            .unwrap_or_default()
             .iter()
-            .filter(|cluster| {
-                cluster.rect.pos.y < line.rect.pos.y + line.rect.size.y
-                    && cluster.rect.pos.y + cluster.rect.size.y > line.rect.pos.y
-            })
             .flat_map(|cluster| cluster.caret_stops.iter().copied())
             .collect();
         stops.sort_by(|left, right| {
@@ -432,18 +543,36 @@ impl LayoutSnapshot {
         stops
     }
 
-    fn line_at_y(&self, y: f64) -> Option<&VisualLine> {
-        self.line_index_at_y(y)
-            .map(|index| &self.visual_lines[index])
+    fn row_index_at_y(&self, y: f64) -> Option<usize> {
+        let index = self
+            .rows
+            .partition_point(|row| row.rect.pos.y + row.rect.size.y <= y);
+        self.rows.get(index).and_then(|row| {
+            (row.rect.pos.y <= y && y <= row.rect.pos.y + row.rect.size.y).then_some(index)
+        })
     }
 
-    fn line_index_at_y(&self, y: f64) -> Option<usize> {
-        let index = self
-            .visual_lines
-            .partition_point(|line| line.rect.pos.y + line.rect.size.y <= y);
-        self.visual_lines.get(index).and_then(|line| {
-            (line.rect.pos.y <= y && y <= line.rect.pos.y + line.rect.size.y).then_some(index)
-        })
+    /// Selects the lane of `row` that owns `x`. Uses the nearest lane only when
+    /// the point falls outside every lane in the row.
+    fn lane_at(&self, row: usize, x: f64) -> Option<usize> {
+        let lanes = self.rows.get(row)?.lanes.clone();
+        let start = lanes.start;
+        let slice = self.lanes.get(lanes)?;
+        slice
+            .iter()
+            .position(|lane| lane.rect.pos.x <= x && x <= lane.rect.pos.x + lane.rect.size.x)
+            .or_else(|| {
+                slice
+                    .iter()
+                    .enumerate()
+                    .min_by(|(_, left), (_, right)| {
+                        distance_to_x(left.rect, x)
+                            .partial_cmp(&distance_to_x(right.rect, x))
+                            .unwrap_or(Ordering::Equal)
+                    })
+                    .map(|(index, _)| index)
+            })
+            .map(|index| start + index)
     }
 
     #[doc(hidden)]
@@ -451,11 +580,12 @@ impl LayoutSnapshot {
         revision: DocumentRevision,
         content_size: DVec2,
         visual_lines: Vec<VisualLine>,
-        clusters: Vec<GlyphCluster>,
+        mut clusters: Vec<GlyphCluster>,
         blocks: Vec<BlockGeometry>,
     ) -> Self {
         let visible_source_range = visible_range(&visual_lines);
         let visible_block_range = 0..blocks.len();
+        let (rows, lanes) = fixture_rows_and_lanes(&visual_lines, &mut clusters);
         Self::new(
             LayoutSnapshotMetadata {
                 revision,
@@ -465,9 +595,13 @@ impl LayoutSnapshot {
                 visible_block_range,
                 dirty_block_range: 0..0,
             },
-            visual_lines.into(),
-            blocks.into(),
-            clusters.into(),
+            LayoutGeometryParts {
+                visual_lines: visual_lines.into(),
+                rows: rows.into(),
+                lanes: lanes.into(),
+                blocks: blocks.into(),
+                clusters: clusters.into(),
+            },
             Arc::from([]),
             Arc::from([]),
         )
@@ -587,6 +721,67 @@ fn boundary_x(stops: &[CaretStop], offset: TextSize, start: bool) -> Option<f64>
             (None, None) => None,
         }
     })
+}
+
+/// Builds one paragraph lane per fixture line, each in its own visual row.
+fn fixture_rows_and_lanes(
+    lines: &[VisualLine],
+    clusters: &mut [GlyphCluster],
+) -> (Vec<VisualRow>, Vec<VisualLane>) {
+    let owner = LayoutElementId {
+        owner: fixture_identity(),
+        fragment_ordinal: 0,
+    };
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut lanes = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        let start = clusters
+            .iter()
+            .position(|cluster| cluster.rect.pos.y == line.rect.pos.y)
+            .unwrap_or(clusters.len());
+        let end = start
+            + clusters[start..]
+                .iter()
+                .take_while(|cluster| cluster.rect.pos.y == line.rect.pos.y)
+                .count();
+        for cluster in &mut clusters[start..end] {
+            cluster.lane_index = index;
+        }
+        let id = VisualRowId {
+            owner,
+            row_ordinal: 0,
+            line_ordinal: index as u32,
+        };
+        rows.push(VisualRow {
+            id,
+            rect: line.rect,
+            lanes: index..index + 1,
+        });
+        lanes.push(VisualLane {
+            id: VisualLaneId {
+                row: id,
+                block: owner,
+                stable_order: 0,
+            },
+            row_index: index,
+            kind: VisualLaneKind::Paragraph,
+            source_range: line.source_range,
+            rect: line.rect,
+            cluster_range: start..end,
+            stable_order: 0,
+        });
+    }
+    (rows, lanes)
+}
+
+fn distance_to_x(rect: Rect, x: f64) -> f64 {
+    if x < rect.pos.x {
+        rect.pos.x - x
+    } else if x > rect.pos.x + rect.size.x {
+        x - (rect.pos.x + rect.size.x)
+    } else {
+        0.0
+    }
 }
 
 fn distance_to_y(rect: Rect, y: f64) -> f64 {

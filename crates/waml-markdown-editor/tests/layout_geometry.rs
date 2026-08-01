@@ -2427,8 +2427,218 @@ impl TextShaper for FakeShaper {
     }
 }
 
+#[test]
+fn same_y_table_lanes_keep_hit_testing_vertical_motion_and_selection_independent() {
+    let (document, layout) = fixtures::two_by_two_table();
+    let run_range = |index: usize| {
+        document
+            .text_runs
+            .iter()
+            .find(|run| run.id == document.blocks[index].id)
+            .unwrap()
+            .range
+    };
+    let owns = |index: usize, position: TextPosition| {
+        let range = run_range(index);
+        range.start() <= position.offset && position.offset <= range.end()
+    };
+
+    // The two first-row cells share a Y band but own their own X lanes.
+    assert!(owns(2, layout.point_to_source(dvec2(10.0, 8.0))));
+    assert!(owns(3, layout.point_to_source(dvec2(50.0, 8.0))));
+
+    // Vertical motion leaves the current visual row instead of stepping into a
+    // sibling lane that happens to share the row's Y band.
+    let (from_right_cell, _) = layout
+        .move_vertical(
+            TextPosition::new(run_range(3).start(), Affinity::Before),
+            None,
+            1,
+        )
+        .unwrap();
+    assert!(owns(2, from_right_cell));
+    let (from_continuation, _) = layout
+        .move_vertical(
+            TextPosition::new(run_range(2).end(), Affinity::After),
+            Some(6.0),
+            1,
+        )
+        .unwrap();
+    assert!(owns(5, from_continuation));
+
+    // Selection intersects one lane at a time and never bridges two columns.
+    let rects = layout
+        .selection_rects(Selection::new(
+            TextPosition::new(run_range(2).start(), Affinity::Before),
+            TextPosition::new(run_range(3).end(), Affinity::After),
+        ))
+        .unwrap();
+    let first_row = rects
+        .iter()
+        .filter(|rect| rect.pos.y == 0.0)
+        .collect::<Vec<_>>();
+    assert_eq!(first_row.len(), 2);
+    assert!(first_row
+        .iter()
+        .any(|rect| rect.pos.x >= 5.0 && rect.pos.x + rect.size.x <= 45.0));
+    assert!(first_row.iter().any(|rect| rect.pos.x >= 45.0));
+}
+
+#[test]
+fn hanging_marker_and_content_share_a_row_without_sharing_stops() {
+    let (document, layout) = fixtures::wrapped_hanging_item();
+    let marker = document.blocks[0].spec.clone();
+    let BlockFlow::Hanging { marker_range, .. } = marker.flow else {
+        panic!("the hanging fixture keeps its hanging flow");
+    };
+    let rows = layout.visual_rows();
+    assert_eq!(layout.visual_lanes()[rows[0].lanes.clone()].len(), 2);
+    let marker_stop = layout.point_to_source(dvec2(1.0, 4.0));
+    let content_stop = layout.point_to_source(dvec2(60.0, 4.0));
+    assert!(marker_stop.offset <= marker_range.end());
+    assert!(content_stop.offset >= marker_range.end());
+}
+
+#[test]
+fn visible_source_range_uses_all_lane_min_and_max_boundaries() {
+    let (document, layout) = fixtures::hanging_with_content_prefix();
+    let prefix_start = document.text_runs[0].range.start();
+    let last_end = document.text_runs[0].range.end();
+    assert_eq!(layout.visible_source_range().start(), prefix_start);
+    assert_eq!(layout.visible_source_range().end(), last_end);
+}
+
+#[test]
+fn cluster_alignment_offset_lookup_is_constant_time() {
+    let (document, presentation, mut shaper) = fixtures::fixture(&[16.0], &[2000], None);
+    let mut engine = LayoutEngine::default();
+    let layout = engine
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 100_000.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+    let stats = engine.last_lane_offset_stats_for_test();
+    assert_eq!(
+        stats.direct_lane_offset_lookups,
+        layout.glyph_clusters().len()
+    );
+    assert_eq!(stats.linear_lane_offset_scans, 0);
+}
+
 mod fixtures {
     use super::*;
+
+    pub fn two_by_two_table() -> (LayoutDocument, LayoutSnapshot) {
+        let (mut document, presentation, mut shaper) = fixture(
+            &[16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0],
+            &[1, 1, 8, 4, 1, 2, 2],
+            None,
+        );
+        let mut blocks = document.blocks.to_vec();
+        let table = blocks[0].id;
+        let row_one = blocks[1].id;
+        let row_two = blocks[4].id;
+        blocks[0].spec.flow = BlockFlow::Table;
+        blocks[0].spec.insets.left = 5.0;
+        blocks[0].spec.space_after = 0.0;
+        blocks[0].spec.columns = Arc::from([
+            ColumnConstraint {
+                min_width: 40.0,
+                max_width: Some(40.0),
+                alignment: ColumnAlignment::Start,
+            },
+            ColumnConstraint {
+                min_width: 60.0,
+                max_width: Some(60.0),
+                alignment: ColumnAlignment::Start,
+            },
+        ]);
+        for row_index in [1, 4] {
+            blocks[row_index].parent = Some(table);
+            blocks[row_index].spec.flow = BlockFlow::TableRow;
+            blocks[row_index].spec.space_after = 0.0;
+        }
+        for (index, parent, column) in [
+            (2, row_one, 0),
+            (3, row_one, 1),
+            (5, row_two, 0),
+            (6, row_two, 1),
+        ] {
+            blocks[index].parent = Some(parent);
+            blocks[index].spec.flow = BlockFlow::TableCell { column };
+            blocks[index].spec.space_after = 0.0;
+        }
+        let structural = HashSet::from([table, row_one, row_two]);
+        document.blocks = blocks.into();
+        document.text_runs = document
+            .text_runs
+            .iter()
+            .filter(|run| !structural.contains(&run.id))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        let layout = LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(200.0, 100.0, 0.0, 0.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap();
+        (document, layout)
+    }
+
+    /// A hanging item whose content wraps under a shared first row.
+    pub fn wrapped_hanging_item() -> (LayoutDocument, LayoutSnapshot) {
+        let (mut document, presentation, mut shaper) = fixture(&[16.0], &[12], None);
+        let content = document.text_runs[0].range;
+        let start = content.start().to_usize();
+        let mut blocks = document.blocks.to_vec();
+        blocks[0].spec.flow = BlockFlow::Hanging {
+            marker_range: range(start, start + 1),
+            content_indent: 20.0,
+        };
+        document.blocks = blocks.into();
+        let layout = LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(96.0, 200.0, 0.0, 0.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap();
+        (document, layout)
+    }
+
+    /// A hanging item whose marker starts after some content, so the lane that
+    /// holds the earliest source offset is stored after later lanes.
+    pub fn hanging_with_content_prefix() -> (LayoutDocument, LayoutSnapshot) {
+        let (mut document, presentation, mut shaper) = fixture(&[16.0], &[12], None);
+        let content = document.text_runs[0].range;
+        let start = content.start().to_usize();
+        let mut blocks = document.blocks.to_vec();
+        blocks[0].spec.flow = BlockFlow::Hanging {
+            marker_range: range(start + 2, start + 3),
+            content_indent: 20.0,
+        };
+        document.blocks = blocks.into();
+        let layout = LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(400.0, 200.0, 0.0, 0.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap();
+        (document, layout)
+    }
 
     pub fn mixed_heading_and_body(
         _width: f64,

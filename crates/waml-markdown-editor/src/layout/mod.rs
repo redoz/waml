@@ -9,14 +9,15 @@ use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 
 pub use crate::selection::Affinity;
 pub use engine::{
-    BaseDirection, BlockSummary, IndexBuildStats, IntrinsicCluster, IntrinsicRun, LayoutEngine,
-    LayoutInvalidation, LayoutViewport, ParagraphIntrinsic, ParagraphIntrinsicRequest,
-    ParagraphShapeRequest, ShapeSpan, ShapedCluster, ShapedFragment, ShapedGlyph, ShapedParagraph,
-    ShapedRow, ShapedRun, TextShaper,
+    BaseDirection, BlockSummary, IndexBuildStats, IntrinsicCluster, IntrinsicRun, LaneOffsetStats,
+    LayoutEngine, LayoutInvalidation, LayoutViewport, ParagraphIntrinsic,
+    ParagraphIntrinsicRequest, ParagraphShapeRequest, ShapeSpan, ShapedCluster, ShapedFragment,
+    ShapedGlyph, ShapedParagraph, ShapedRow, ShapedRun, TextShaper,
 };
 pub use geometry::{
-    BlockGeometry, BlockLayoutData, CaretGeometry, CaretStop, GlyphCluster, LayoutSnapshot,
-    LayoutSnapshotMetadata, VisualLine,
+    BlockGeometry, BlockLane, BlockLayoutData, CaretGeometry, CaretStop, GlyphCluster,
+    LayoutGeometryParts, LayoutSnapshot, LayoutSnapshotMetadata, VisualLane, VisualLaneId,
+    VisualLaneKind, VisualLine, VisualRow, VisualRowId,
 };
 pub use makepad::{FontResolver, MakepadTextShaper};
 

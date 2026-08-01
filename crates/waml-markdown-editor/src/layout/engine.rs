@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{hash_map::DefaultHasher, HashMap},
     fmt,
     hash::{Hash, Hasher},
@@ -16,9 +17,10 @@ use waml_syntax::{MarkdownSyntaxUpdate, SourceText, TextRange, TextSize};
 use crate::{document::MarkdownDocumentSnapshot, selection::TextPosition};
 
 use super::{
-    Affinity, BlockGeometry, BlockLayoutData, GeometryElementId, GlyphCluster, LayoutBlock,
-    LayoutDocument, LayoutElementId, LayoutError, LayoutSnapshot, LayoutSnapshotMetadata,
-    LayoutTextRun, TextMetrics, VisualLine,
+    Affinity, BlockGeometry, BlockLane, BlockLayoutData, GeometryElementId, GlyphCluster,
+    LayoutBlock, LayoutDocument, LayoutElementId, LayoutError, LayoutGeometryParts, LayoutSnapshot,
+    LayoutSnapshotMetadata, LayoutTextRun, TextMetrics, VisualLane, VisualLaneId, VisualLaneKind,
+    VisualLine, VisualRow, VisualRowId,
 };
 use crate::layout::geometry::CaretStop;
 
@@ -440,6 +442,7 @@ pub struct LayoutEngine {
     blocks: HashMap<LayoutElementId, CachedBlock>,
     table_intrinsics: HashMap<LayoutElementId, CachedTableIntrinsics>,
     last_index_build_stats: IndexBuildStats,
+    last_lane_offset_stats: LaneOffsetStats,
     last_subtree_fingerprints: HashMap<LayoutElementId, u64>,
 }
 
@@ -469,6 +472,11 @@ impl LayoutEngine {
     #[doc(hidden)]
     pub fn last_index_build_stats_for_test(&self) -> IndexBuildStats {
         self.last_index_build_stats
+    }
+
+    #[doc(hidden)]
+    pub fn last_lane_offset_stats_for_test(&self) -> LaneOffsetStats {
+        self.last_lane_offset_stats
     }
 
     #[doc(hidden)]
@@ -659,7 +667,26 @@ impl LayoutEngine {
             summaries.push(summary);
         }
         let dirty_block_range = dirty_first.map_or(0..0, |first| first..dirty_end);
+        // Row ownership comes from the container, never from a Y comparison:
+        // every cell of one table row shares that row's key.
+        let mut row_owners = document
+            .blocks
+            .iter()
+            .map(|block| (block.id, 0u32))
+            .collect::<Vec<_>>();
+        for (index, block) in document.blocks.iter().enumerate() {
+            if !matches!(block.spec.flow, super::BlockFlow::Table) {
+                continue;
+            }
+            for (ordinal, row) in hierarchy.children[index].iter().enumerate() {
+                for cell in &hierarchy.children[*row] {
+                    row_owners[*cell] = (block.id, ordinal as u32);
+                }
+            }
+        }
         let mut visual_lines = Vec::new();
+        let mut lane_drafts = Vec::new();
+        let mut lane_offset_stats = LaneOffsetStats::default();
         let mut clusters = Vec::new();
         let mut blocks = Vec::new();
         let mut visible_block_layouts = Vec::new();
@@ -675,9 +702,14 @@ impl LayoutEngine {
                 index,
                 data,
                 placements[index],
-                &mut visual_lines,
-                &mut clusters,
-                &mut blocks,
+                row_owners[index],
+                PositionedBlockSink {
+                    lines: &mut visual_lines,
+                    lanes: &mut lane_drafts,
+                    clusters: &mut clusters,
+                    blocks: &mut blocks,
+                    stats: &mut lane_offset_stats,
+                },
             );
             visible_block_layouts.push(data.clone());
         }
@@ -702,12 +734,15 @@ impl LayoutEngine {
             })
             .collect();
 
-        let visible_source_range = visual_lines
-            .first()
-            .zip(visual_lines.last())
-            .and_then(|(first, last)| {
-                TextRange::new(first.source_range.start(), last.source_range.end()).ok()
-            })
+        self.last_lane_offset_stats = lane_offset_stats;
+        let (rows, lanes) = assemble_rows(lane_drafts, &mut clusters);
+        // Array order is not part of the visible range: it folds every lane.
+        let visible_source_range = lanes
+            .iter()
+            .map(|lane| lane.source_range.start())
+            .min()
+            .zip(lanes.iter().map(|lane| lane.source_range.end()).max())
+            .and_then(|(start, end)| TextRange::new(start, end).ok())
             .unwrap_or_else(empty_range);
         let visible_block_range = visible_indices
             .first()
@@ -723,9 +758,13 @@ impl LayoutEngine {
                 visible_block_range,
                 dirty_block_range,
             },
-            visual_lines.into(),
-            blocks.into(),
-            clusters.into(),
+            LayoutGeometryParts {
+                visual_lines: visual_lines.into(),
+                rows: rows.into(),
+                lanes: lanes.into(),
+                blocks: blocks.into(),
+                clusters: clusters.into(),
+            },
             summaries.into(),
             visible_block_layouts.into(),
         ))
@@ -1142,6 +1181,8 @@ fn position_block(
 
 struct BlockOutput {
     lines: Vec<VisualLine>,
+    /// Parallel to `lines`. One lane record per produced line.
+    lanes: Vec<BlockLane>,
     clusters: Vec<GlyphCluster>,
     height: f64,
 }
@@ -1161,6 +1202,7 @@ struct PendingCluster {
 }
 
 struct InlineComposer {
+    kind: VisualLaneKind,
     start_x: f64,
     start_y: f64,
     max_width: f64,
@@ -1318,18 +1360,52 @@ fn block_layout_data(
     BlockLayoutData {
         block: geometry,
         visual_lines: output.lines.into(),
+        lanes: output.lanes.into(),
         glyph_clusters: output.clusters.into(),
     }
+}
+
+/// One lane produced by a positioned block, before rows are assembled.
+struct LaneDraft {
+    row: VisualRowId,
+    block: LayoutElementId,
+    kind: VisualLaneKind,
+    source_range: TextRange,
+    rect: Rect,
+    cluster_range: Range<usize>,
+    stable_order: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LaneOffsetStats {
+    /// Cluster placements that read their lane offset by direct array index.
+    pub direct_lane_offset_lookups: usize,
+    /// Cluster placements that had to scan lanes to find their offset.
+    pub linear_lane_offset_scans: usize,
+}
+
+struct PositionedBlockSink<'a> {
+    lines: &'a mut Vec<VisualLine>,
+    lanes: &'a mut Vec<LaneDraft>,
+    clusters: &'a mut Vec<GlyphCluster>,
+    blocks: &'a mut Vec<BlockGeometry>,
+    stats: &'a mut LaneOffsetStats,
 }
 
 fn append_positioned_block(
     document_index: usize,
     data: &BlockLayoutData,
     placement: BlockPlacement,
-    lines: &mut Vec<VisualLine>,
-    clusters: &mut Vec<GlyphCluster>,
-    blocks: &mut Vec<BlockGeometry>,
+    row_owner: (LayoutElementId, u32),
+    sink: PositionedBlockSink<'_>,
 ) {
+    let PositionedBlockSink {
+        lines,
+        lanes,
+        clusters,
+        blocks,
+        stats,
+    } = sink;
     let rect = placement.rect;
     let x = placement.content_origin.x;
     let y = placement.content_origin.y;
@@ -1340,58 +1416,174 @@ fn append_positioned_block(
     };
     block.set_document_index(document_index);
     blocks.push(block);
-    let line_offsets = data
+    // Each lane owns a contiguous block-local cluster range, so every cluster
+    // reads its alignment offset by direct index instead of scanning lines.
+    let lane_offsets = data
         .visual_lines
         .iter()
         .map(|line| {
-            (
-                line.source_range,
-                line.rect.pos.y,
-                alignment_offset(
-                    placement.alignment,
-                    placement.content_width,
-                    line.rect.size.x,
-                ),
+            alignment_offset(
+                placement.alignment,
+                placement.content_width,
+                line.rect.size.x,
             )
         })
         .collect::<Vec<_>>();
-    lines.extend(
-        data.visual_lines
+    let mut cluster_lane = vec![usize::MAX; data.glyph_clusters.len()];
+    for (index, lane) in data.lanes.iter().enumerate() {
+        for slot in cluster_lane
+            .get_mut(lane.cluster_range.clone())
+            .unwrap_or_default()
+        {
+            *slot = index;
+        }
+    }
+    let cluster_base = clusters.len();
+    for (index, (line, lane)) in data.visual_lines.iter().zip(data.lanes.iter()).enumerate() {
+        let offset = lane_offsets[index];
+        let mut line = *line;
+        line.rect.pos.x += x + offset;
+        line.rect.pos.y += y;
+        lines.push(line);
+        lanes.push(LaneDraft {
+            row: VisualRowId {
+                owner: row_owner.0,
+                row_ordinal: row_owner.1,
+                line_ordinal: lane.line_ordinal,
+            },
+            block: data.block.id,
+            kind: lane.kind,
+            source_range: line.source_range,
+            rect: line.rect,
+            cluster_range: cluster_base + lane.cluster_range.start
+                ..cluster_base + lane.cluster_range.end,
+            stable_order: index as u32,
+        });
+    }
+    let lane_base = lanes.len() - data.lanes.len();
+    clusters.extend(
+        data.glyph_clusters
             .iter()
-            .zip(&line_offsets)
-            .map(|(line, offset)| {
-                let mut line = *line;
-                line.rect.pos.x += x + offset.2;
-                line.rect.pos.y += y;
-                line
+            .cloned()
+            .enumerate()
+            .map(|(index, mut cluster)| {
+                let lane = cluster_lane[index];
+                let line_offset = lane_offsets.get(lane).copied().unwrap_or(0.0);
+                if lane == usize::MAX {
+                    stats.linear_lane_offset_scans += 1;
+                } else {
+                    stats.direct_lane_offset_lookups += 1;
+                    cluster.lane_index = lane_base + lane;
+                }
+                cluster.rect.pos.x += x + line_offset;
+                cluster.rect.pos.y += y;
+                let mut stops = cluster.caret_stops.to_vec();
+                for stop in &mut stops {
+                    stop.point.x += x + line_offset;
+                    stop.point.y += y;
+                }
+                cluster.caret_stops = stops.into();
+                let mut glyphs = cluster.glyphs.to_vec();
+                for glyph in &mut glyphs {
+                    glyph.origin.x += x + line_offset;
+                    glyph.origin.y += y;
+                    glyph.baseline += y;
+                }
+                cluster.glyphs = glyphs.into();
+                cluster
             }),
     );
-    clusters.extend(data.glyph_clusters.iter().cloned().map(|mut cluster| {
-        let line_offset = line_offsets
-            .iter()
-            .find(|(range, line_y, _)| {
-                *line_y == cluster.rect.pos.y
-                    && range.start() <= cluster.source_range.start()
-                    && cluster.source_range.end() <= range.end()
+}
+
+/// Groups lane drafts into visual rows. Rows are ordered by Y, then by X; lanes
+/// inside a row are ordered by X. Cluster lane indexes are remapped to the final
+/// lane order.
+fn assemble_rows(
+    drafts: Vec<LaneDraft>,
+    clusters: &mut [GlyphCluster],
+) -> (Vec<VisualRow>, Vec<VisualLane>) {
+    let mut order: HashMap<VisualRowId, usize> = HashMap::new();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (index, draft) in drafts.iter().enumerate() {
+        let group = *order.entry(draft.row).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[group].push(index);
+    }
+    for group in &mut groups {
+        group.sort_by(|left, right| {
+            drafts[*left]
+                .rect
+                .pos
+                .x
+                .partial_cmp(&drafts[*right].rect.pos.x)
+                .unwrap_or(Ordering::Equal)
+                .then(left.cmp(right))
+        });
+    }
+    groups.sort_by(|left, right| {
+        let left = &drafts[left[0]];
+        let right = &drafts[right[0]];
+        left.rect
+            .pos
+            .y
+            .partial_cmp(&right.rect.pos.y)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| {
+                left.rect
+                    .pos
+                    .x
+                    .partial_cmp(&right.rect.pos.x)
+                    .unwrap_or(Ordering::Equal)
             })
-            .map_or(0.0, |(_, _, offset)| *offset);
-        cluster.rect.pos.x += x + line_offset;
-        cluster.rect.pos.y += y;
-        let mut stops = cluster.caret_stops.to_vec();
-        for stop in &mut stops {
-            stop.point.x += x + line_offset;
-            stop.point.y += y;
+    });
+
+    let mut rows = Vec::with_capacity(groups.len());
+    let mut lanes: Vec<VisualLane> = Vec::with_capacity(drafts.len());
+    let mut remap = vec![0usize; drafts.len()];
+    for (row_index, group) in groups.iter().enumerate() {
+        let start = lanes.len();
+        let mut rect = drafts[group[0]].rect;
+        for draft_index in group {
+            let draft = &drafts[*draft_index];
+            rect = union_rect(rect, draft.rect);
+            remap[*draft_index] = lanes.len();
+            lanes.push(VisualLane {
+                id: VisualLaneId {
+                    row: draft.row,
+                    block: draft.block,
+                    stable_order: draft.stable_order,
+                },
+                row_index,
+                kind: draft.kind,
+                source_range: draft.source_range,
+                rect: draft.rect,
+                cluster_range: draft.cluster_range.clone(),
+                stable_order: draft.stable_order,
+            });
         }
-        cluster.caret_stops = stops.into();
-        let mut glyphs = cluster.glyphs.to_vec();
-        for glyph in &mut glyphs {
-            glyph.origin.x += x + line_offset;
-            glyph.origin.y += y;
-            glyph.baseline += y;
-        }
-        cluster.glyphs = glyphs.into();
-        cluster
-    }));
+        rows.push(VisualRow {
+            id: drafts[group[0]].row,
+            rect,
+            lanes: start..lanes.len(),
+        });
+    }
+    for cluster in clusters.iter_mut() {
+        cluster.lane_index = remap.get(cluster.lane_index).copied().unwrap_or(0);
+    }
+    (rows, lanes)
+}
+
+fn union_rect(left: Rect, right: Rect) -> Rect {
+    let x = left.pos.x.min(right.pos.x);
+    let y = left.pos.y.min(right.pos.y);
+    let right_edge = (left.pos.x + left.size.x).max(right.pos.x + right.size.x);
+    let bottom = (left.pos.y + left.size.y).max(right.pos.y + right.size.y);
+    Rect {
+        pos: dvec2(x, y),
+        size: dvec2(right_edge - x, bottom - y),
+    }
 }
 
 fn alignment_offset(alignment: super::ColumnAlignment, content_width: f64, line_width: f64) -> f64 {
@@ -1469,8 +1661,13 @@ fn layout_block<S: TextShaper>(
 
         let marker_width = content_indent.max(1.0);
         let content_width = (max_width - content_indent).max(1.0);
-        let mut marker = InlineComposer::new(block.id, x, y, marker_width);
-        let mut content = InlineComposer::new(block.id, x + content_indent, y, content_width);
+        let mut marker = InlineComposer::new(VisualLaneKind::HangingMarker, x, y, marker_width);
+        let mut content = InlineComposer::new(
+            VisualLaneKind::HangingContent,
+            x + content_indent,
+            y,
+            content_width,
+        );
         let marker_runs = pieces
             .iter()
             .filter(|piece| piece.is_marker)
@@ -1509,12 +1706,22 @@ fn layout_block<S: TextShaper>(
             shift_output_y(&mut marker_output, shared_baseline - marker_baseline);
             shift_output_y(&mut content_output, shared_baseline - content_baseline);
         }
+        let marker_clusters = marker_output.clusters.len();
         return Ok(BlockOutput {
             height: marker_output.height.max(content_output.height),
             lines: marker_output
                 .lines
                 .into_iter()
                 .chain(content_output.lines)
+                .collect(),
+            lanes: marker_output
+                .lanes
+                .into_iter()
+                .chain(content_output.lanes.into_iter().map(|mut lane| {
+                    lane.cluster_range = lane.cluster_range.start + marker_clusters
+                        ..lane.cluster_range.end + marker_clusters;
+                    lane
+                }))
                 .collect(),
             clusters: marker_output
                 .clusters
@@ -1528,7 +1735,7 @@ fn layout_block<S: TextShaper>(
     for run in runs {
         push_coalesced_run(&mut coalesced, run);
     }
-    let mut composer = InlineComposer::new(block.id, x, y, max_width);
+    let mut composer = InlineComposer::new(lane_kind(&block.spec.flow), x, y, max_width);
     if !coalesced.is_empty() {
         shape_into_composer(
             shaper,
@@ -1547,6 +1754,13 @@ fn layout_block<S: TextShaper>(
             .fold(0.0, f64::max);
     }
     Ok(output)
+}
+
+fn lane_kind(flow: &super::BlockFlow) -> VisualLaneKind {
+    match flow {
+        super::BlockFlow::TableCell { column } => VisualLaneKind::TableCell { column: *column },
+        _ => VisualLaneKind::Paragraph,
+    }
 }
 
 fn paragraph_geometry_id(layout: LayoutElementId, lane_ordinal: u32) -> GeometryElementId {
@@ -1812,14 +2026,15 @@ fn fallback_block(
         bidi_levels: Arc::from([]),
         legal_breaks: Arc::from([block.source_range.end()]),
     };
-    let mut composer = InlineComposer::new(block.id, x, y, max_width);
+    let mut composer = InlineComposer::new(lane_kind(&block.spec.flow), x, y, max_width);
     composer.push_paragraph(paragraph);
     composer.finish().0
 }
 
 impl InlineComposer {
-    fn new(_layout_id: LayoutElementId, start_x: f64, start_y: f64, max_width: f64) -> Self {
+    fn new(kind: VisualLaneKind, start_x: f64, start_y: f64, max_width: f64) -> Self {
         Self {
+            kind,
             start_x,
             start_y,
             max_width: max_width.max(1.0),
@@ -1828,6 +2043,7 @@ impl InlineComposer {
             line: Vec::new(),
             output: BlockOutput {
                 lines: Vec::new(),
+                lanes: Vec::new(),
                 clusters: Vec::new(),
                 height: 0.0,
             },
@@ -1870,6 +2086,12 @@ impl InlineComposer {
             }
             if self.line.is_empty() {
                 let height = (row.ascender + row.descender.abs() + row.line_gap).max(1.0);
+                let clusters = self.output.clusters.len();
+                self.output.lanes.push(BlockLane {
+                    kind: self.kind,
+                    line_ordinal: self.output.lines.len() as u32,
+                    cluster_range: clusters..clusters,
+                });
                 self.output.lines.push(VisualLine::new(
                     row.source_range,
                     Rect {
@@ -1886,8 +2108,13 @@ impl InlineComposer {
     }
 
     fn flush_line(&mut self) {
-        let Some(ascender) = flush_inline_line(&mut self.output, &self.line, self.start_x, self.y)
-        else {
+        let Some(ascender) = flush_inline_line(
+            &mut self.output,
+            self.kind,
+            &self.line,
+            self.start_x,
+            self.y,
+        ) else {
             return;
         };
         self.first_baseline.get_or_insert(self.y + ascender);
@@ -1906,6 +2133,7 @@ impl InlineComposer {
 
 fn flush_inline_line(
     output: &mut BlockOutput,
+    kind: VisualLaneKind,
     line_clusters: &[PendingCluster],
     start_x: f64,
     y: f64,
@@ -1938,6 +2166,12 @@ fn flush_inline_line(
         .map(|cluster| cluster.line_gap)
         .fold(0.0, f64::max);
     let height = (ascender + descender + line_gap).max(1.0);
+    let cluster_start = output.clusters.len();
+    output.lanes.push(BlockLane {
+        kind,
+        line_ordinal: output.lines.len() as u32,
+        cluster_range: cluster_start..cluster_start + line_clusters.len(),
+    });
     output.lines.push(VisualLine::new(
         TextRange::new(source_start, source_end).expect("shaped clusters remain source ordered"),
         Rect {
