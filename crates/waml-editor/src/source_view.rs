@@ -45,7 +45,7 @@ struct ReadySourceView {
     styles: Arc<PresentationStyles>,
     assets: EmbeddedAssets,
     diagnostics: Arc<[PresentedDiagnostic]>,
-    pending_changes: Option<Arc<[waml_syntax::TextChange]>>,
+    pending_changes: Option<Arc<[waml_markdown_editor::syntax::TextChange]>>,
 }
 
 type CompiledPresentation = (
@@ -57,7 +57,7 @@ type CompiledPresentation = (
 
 fn presented_diagnostics_for(
     document: DocumentId,
-    syntax: &waml_syntax::MarkdownSyntaxSnapshot,
+    syntax: &waml_markdown_editor::syntax::MarkdownSyntaxSnapshot,
     semantic: &[waml::analysis::RevisionedDiagnostic],
 ) -> Arc<[PresentedDiagnostic]> {
     let revision = syntax.revision();
@@ -68,9 +68,15 @@ fn presented_diagnostics_for(
             revision,
             range: diagnostic.range,
             severity: match diagnostic.severity {
-                waml_syntax::SyntaxSeverity::Error => PresentedDiagnosticSeverity::Error,
-                waml_syntax::SyntaxSeverity::Warning => PresentedDiagnosticSeverity::Warning,
-                waml_syntax::SyntaxSeverity::Info => PresentedDiagnosticSeverity::Information,
+                waml_markdown_editor::syntax::SyntaxSeverity::Error => {
+                    PresentedDiagnosticSeverity::Error
+                }
+                waml_markdown_editor::syntax::SyntaxSeverity::Warning => {
+                    PresentedDiagnosticSeverity::Warning
+                }
+                waml_markdown_editor::syntax::SyntaxSeverity::Info => {
+                    PresentedDiagnosticSeverity::Information
+                }
             },
             message: diagnostic.message.clone(),
         })
@@ -121,7 +127,10 @@ impl SourceView {
     pub(crate) fn resolve_document(
         snapshot: &EditorSessionSnapshot,
         key: &str,
-    ) -> Option<(DocumentId, Arc<waml_syntax::MarkdownSyntaxSnapshot>)> {
+    ) -> Option<(
+        DocumentId,
+        Arc<waml_markdown_editor::syntax::MarkdownSyntaxSnapshot>,
+    )> {
         let _ = crate::load::source_for(&snapshot.source, key)?;
         let source = snapshot.source.document_by_concept_id(key)?;
         let document = snapshot.okf_analysis.catalog.id_for_path(source.path())?;
@@ -129,7 +138,7 @@ impl SourceView {
     }
 
     fn compile(
-        syntax: &waml_syntax::MarkdownSyntaxSnapshot,
+        syntax: &waml_markdown_editor::syntax::MarkdownSyntaxSnapshot,
         diagnostics: Arc<[PresentedDiagnostic]>,
     ) -> Result<CompiledPresentation, String> {
         let styles = Arc::new(PresentationStyles::balanced());
@@ -487,11 +496,11 @@ mod tests {
     use waml::analysis::{DiagnosticSource, RevisionedDiagnostic};
     use waml::diagnostic::Severity;
     use waml::source::SourceBundle;
+    use waml_markdown_editor::syntax::TextSize;
     use waml_markdown_editor::{
         input::{EditorInput, ScrollState},
         selection::{Affinity, Selection, SelectionSet, TextPosition},
     };
-    use waml_syntax::TextSize;
 
     fn mounted_body(cx: &mut Cx) -> WidgetRef {
         waml_markdown_editor::live_design(cx);

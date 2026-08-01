@@ -890,8 +890,8 @@ impl App {
         &mut self,
         cx: &mut Cx,
         document: waml::analysis::DocumentId,
-        revision: waml_syntax::DocumentRevision,
-        range: waml_syntax::TextRange,
+        revision: waml_markdown_editor::syntax::DocumentRevision,
+        range: waml_markdown_editor::syntax::TextRange,
     ) -> bool {
         let snapshot = self.session.snapshot();
         let mapped = match snapshot.map_source_range_to_current(document, revision, range) {
@@ -1845,7 +1845,7 @@ impl App {
         &mut self,
         cx: &mut Cx,
         document: waml::analysis::DocumentId,
-        base_revision: waml_syntax::DocumentRevision,
+        base_revision: waml_markdown_editor::syntax::DocumentRevision,
         text: String,
     ) -> Result<ExternalReplacement, String> {
         let mut replacement = self

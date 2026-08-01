@@ -8,10 +8,12 @@ use waml::edit::{
     apply_exact_source_edit, EditBatch, EditContext, EditError, ExactSourceEditError, PendingEdit,
 };
 use waml::source::{BundlePath, SourceBundle};
-use waml_markdown_editor::edit::ProposedMarkdownEdit;
-use waml_syntax::{
-    reparse_markdown, ChangeMap, DocumentRevision, FullReparseReason, MarkdownSyntaxSnapshot,
-    MarkdownSyntaxUpdate, SourceText, TextChange, TextRange, TextSize,
+use waml_markdown_editor::{
+    edit::ProposedMarkdownEdit,
+    syntax::{
+        reparse_markdown, ChangeMap, DocumentRevision, FullReparseReason, MarkdownSyntaxSnapshot,
+        MarkdownSyntaxUpdate, SourceText, TextChange, TextRange, TextSize,
+    },
 };
 
 use crate::document::EditIntent;

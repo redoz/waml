@@ -17,7 +17,7 @@ pub struct SemanticRevisionStep {
     pub session_revision: u64,
     pub source: Arc<SourceBundle>,
     pub promoted: PromotedMarkdownUpdate,
-    pub changes: Arc<[waml_syntax::TextChange]>,
+    pub changes: Arc<[waml_markdown_editor::syntax::TextChange]>,
 }
 
 #[derive(Clone)]

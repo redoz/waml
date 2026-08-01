@@ -71,7 +71,7 @@ fn show_hidden_borders_for(action: &crate::view_bar::ViewBarAction) -> Option<bo
 enum DiagramRefresh {
     PreserveCamera,
     RetainedStale {
-        failed_revision: waml_syntax::DocumentRevision,
+        failed_revision: waml_markdown_editor::syntax::DocumentRevision,
     },
     None,
 }
@@ -1473,11 +1473,11 @@ mod tests {
                 },
                 "orders",
                 ProjectionFreshness::RetainedStale {
-                    failed_revision: waml_syntax::DocumentRevision::INITIAL,
+                    failed_revision: waml_markdown_editor::syntax::DocumentRevision::INITIAL,
                 },
             ),
             DiagramRefresh::RetainedStale {
-                failed_revision: waml_syntax::DocumentRevision::INITIAL,
+                failed_revision: waml_markdown_editor::syntax::DocumentRevision::INITIAL,
             }
         );
     }

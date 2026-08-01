@@ -10,7 +10,6 @@ description = "Native, read-only GPU viewer for WAML/OKF diagrams."
 [dependencies]
 waml = { path = "../waml", features = ["serde"] }
 waml-markdown-editor = { path = "../waml-markdown-editor" }
-waml-syntax = { path = "../waml-syntax" }
 # Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch fix/layout-params-wasm,
 # which is the line rebased onto the newer upstream dev — NOT waml-scroll-occlusion, whose
 # remote tip is a pre-rebase leftover from 07-20 —
@@ -39,3 +38,4 @@ winresource = "0.1"
 
 [dev-dependencies]
 waml = { path = "../waml", features = ["serde", "test-support"] }
+waml-syntax = { path = "../waml-syntax" }

@@ -7,8 +7,11 @@
 
 use std::collections::VecDeque;
 
-use waml_markdown_editor::{input::ScrollState, selection::SelectionSet};
-use waml_syntax::{DocumentRevision, SourceText, TextSize};
+use waml_markdown_editor::{
+    input::ScrollState,
+    selection::SelectionSet,
+    syntax::{DocumentRevision, SourceText, TextSize},
+};
 
 pub const VIEW_HISTORY_LIMIT: usize = 256;
 

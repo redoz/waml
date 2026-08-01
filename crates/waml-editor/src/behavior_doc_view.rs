@@ -29,7 +29,7 @@ const NO_RENDERABLE_ELEMENTS: &str = "No renderable elements";
 enum BehaviorRefresh {
     PreserveLiveState,
     RetainedStale {
-        failed_revision: waml_syntax::DocumentRevision,
+        failed_revision: waml_markdown_editor::syntax::DocumentRevision,
     },
     None,
 }
@@ -797,11 +797,11 @@ mod tests {
                 &changed,
                 true,
                 ProjectionFreshness::RetainedStale {
-                    failed_revision: waml_syntax::DocumentRevision::INITIAL,
+                    failed_revision: waml_markdown_editor::syntax::DocumentRevision::INITIAL,
                 },
             ),
             BehaviorRefresh::RetainedStale {
-                failed_revision: waml_syntax::DocumentRevision::INITIAL,
+                failed_revision: waml_markdown_editor::syntax::DocumentRevision::INITIAL,
             }
         );
     }

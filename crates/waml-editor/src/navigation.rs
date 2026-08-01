@@ -3,7 +3,7 @@ pub use crate::view_history::{DocumentKind, DocumentLocator};
 use url::Url;
 use waml::analysis::DocumentId;
 use waml::okf::DirectoryAddress;
-use waml_syntax::{DocumentRevision, TextRange};
+use waml_markdown_editor::syntax::{DocumentRevision, TextRange};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NavigationTarget {
