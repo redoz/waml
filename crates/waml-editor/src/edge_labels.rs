@@ -337,8 +337,7 @@ mod tests {
     fn orientation_follows_the_segment_the_midpoint_lands_on() {
         // The midpoint of this bend falls on the long vertical leg, even though
         // the route starts out horizontal.
-        let label =
-            mid_route_label(&[(0.0, 0.0), (10.0, 0.0), (10.0, 90.0)], "x".into()).unwrap();
+        let label = mid_route_label(&[(0.0, 0.0), (10.0, 0.0), (10.0, 90.0)], "x".into()).unwrap();
         assert_eq!(label.align, LabelAlign::Right);
     }
 

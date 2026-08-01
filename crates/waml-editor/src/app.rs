@@ -3387,7 +3387,11 @@ mod tests {
     fn mounted_history_buttons_lead_the_tab_strip_past_the_tree_column() {
         let size = dvec2(600.0, 32.0);
         let (mut cx, app) = mounted_production_shell();
-        for id in [ids!(tree_btn), ids!(history_back_btn), ids!(history_forward_btn)] {
+        for id in [
+            ids!(tree_btn),
+            ids!(history_back_btn),
+            ids!(history_forward_btn),
+        ] {
             app.ui.widget(&cx, id).set_visible(&mut cx, true);
         }
 

@@ -382,11 +382,7 @@ mod tests {
         // The scope package IS the single root row; its members hang beneath it.
         let roots: Vec<&str> = t.roots.iter().map(|r| r.key.as_str()).collect();
         assert_eq!(roots, vec!["/"]);
-        let keys: Vec<&str> = t.roots[0]
-            .children
-            .iter()
-            .map(|r| r.key.as_str())
-            .collect();
+        let keys: Vec<&str> = t.roots[0].children.iter().map(|r| r.key.as_str()).collect();
         assert_eq!(keys, vec!["/sub", "iface"]);
     }
 

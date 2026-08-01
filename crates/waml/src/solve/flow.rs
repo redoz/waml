@@ -160,8 +160,7 @@ pub fn measure_flow(nodes: &[&ActivityNode], flavor: FlowFlavor, cfg: &FlowConfi
             FlowNodeKind::Decision | FlowNodeKind::Merge => {
                 // A node title is drawn in the `text_heading` SemiBold cut, so
                 // it must be measured in that cut too.
-                let text_w =
-                    sizing::text_width(label_for(node), cfg.font_size, Font::SansSemiBold);
+                let text_w = sizing::text_width(label_for(node), cfg.font_size, Font::SansSemiBold);
                 let side = (text_w + cfg.pad_x * 2.0).max(cfg.diamond_min);
                 Size { w: side, h: side }
             }

@@ -4,7 +4,7 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
-use super::{ARROW_HEAD, BehaviorPalette, Emphasis};
+use super::{BehaviorPalette, Emphasis, ARROW_HEAD};
 use crate::canvas::linework::BehaviorLineworkMetrics;
 use crate::canvas::primitives::{
     edge_point_to_screen, fill_rect, stroke_quad, world_rect_to_screen,
@@ -12,8 +12,8 @@ use crate::canvas::primitives::{
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
 use waml::model::FlowNodeKind;
-use waml::solve::SolvedGroup;
 use waml::solve::flow::FlowConfig;
+use waml::solve::SolvedGroup;
 
 /// Behavior accent bucket wash, at low alpha, for a node fill.
 const NODE_ALPHA: f32 = 0.16;
@@ -169,7 +169,9 @@ fn draw_route(
         .iter()
         .map(|p| edge_point_to_screen(&camera, rect_pos, *p))
         .collect();
-    let thickness = draws.linework.thickness(emphasis.thickness(ROUTE_THICKNESS));
+    let thickness = draws
+        .linework
+        .thickness(emphasis.thickness(ROUTE_THICKNESS));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     for pair in screen.windows(2) {
         let quad = stroke_quad(cx, pair[0], pair[1], thickness);
@@ -280,7 +282,9 @@ fn draw_node(
             draws.node_box.draw_abs(cx, screen);
             draw_title(cx, screen, zoom, &node.title, draws);
             for (i, line) in node.lines.iter().enumerate() {
-                draws.text_body.draw_abs(cx, line_pos(screen, zoom, i), line);
+                draws
+                    .text_body
+                    .draw_abs(cx, line_pos(screen, zoom, i), line);
             }
             if node.refines {
                 let glyph = Rect {

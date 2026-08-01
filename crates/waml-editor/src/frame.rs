@@ -404,7 +404,9 @@ mod tests {
             .1;
         let pixel = frame
             .split_once("pixel: fn() {")
-            .and_then(|(_, body)| body.split_once("\n        }\n    }\n\n    mod.draw.PanelSurface"))
+            .and_then(|(_, body)| {
+                body.split_once("\n        }\n    }\n\n    mod.draw.PanelSurface")
+            })
             .map(|(body, _)| body)
             .expect("AccentFrame pixel block");
         let code = pixel
@@ -414,9 +416,7 @@ mod tests {
             .join("\n");
 
         assert!(frame.contains("screen_space: uniform(0.0)"));
-        assert!(code.contains(
-            "let z = mix(max(0.35, self.zoom), self.zoom, self.screen_space)"
-        ));
+        assert!(code.contains("let z = mix(max(0.35, self.zoom), self.zoom, self.screen_space)"));
         assert!(code.contains(
             "let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85) * (1.0 - self.screen_space)"
         ));

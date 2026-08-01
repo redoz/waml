@@ -18,6 +18,11 @@ impl SyntaxIdentity {
         self.0.get()
     }
 
+    #[doc(hidden)]
+    pub fn from_raw_for_test(value: u64) -> Self {
+        Self(NonZeroU64::new(value).expect("a test identity is non-zero"))
+    }
+
     pub(crate) fn fresh() -> Result<Self, ParseError> {
         let value = NEXT_MARKDOWN_ID
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {

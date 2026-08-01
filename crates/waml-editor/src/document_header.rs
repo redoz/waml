@@ -196,10 +196,7 @@ fn content_clip_rect(origin: DVec2, available_width: f64, right_button_width: f6
     };
     Rect {
         pos: origin,
-        size: dvec2(
-            (available_width - reserved).max(0.0),
-            DOCUMENT_HEADER_H,
-        ),
+        size: dvec2((available_width - reserved).max(0.0), DOCUMENT_HEADER_H),
     }
 }
 

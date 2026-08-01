@@ -5,7 +5,7 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
-use super::{ARROW_HEAD, BehaviorPalette, Emphasis};
+use super::{BehaviorPalette, Emphasis, ARROW_HEAD};
 use crate::accent;
 use crate::canvas::linework::BehaviorLineworkMetrics;
 use crate::canvas::primitives::{
@@ -279,7 +279,9 @@ fn draw_message(
 ) {
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    let thickness = draws.linework.thickness(emphasis.thickness(MESSAGE_THICKNESS));
+    let thickness = draws
+        .linework
+        .thickness(emphasis.thickness(MESSAGE_THICKNESS));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let dashed = matches!(message.verb, MessageVerb::Replies | MessageVerb::Creates);
 
@@ -401,8 +403,12 @@ fn draw_fragment(
     // The frame is stroked by an SDF pen, so both its rect and its width have to
     // be snapped here -- `stroke_quad` only covers the quad-drawn linework.
     let screen = snap_rect(cx, world_rect_to_screen(viewport, fragment.rect));
-    let border =
-        snap_stroke_width(cx, draws.linework.thickness(emphasis.thickness(FRAME_THICKNESS))) as f32;
+    let border = snap_stroke_width(
+        cx,
+        draws
+            .linework
+            .thickness(emphasis.thickness(FRAME_THICKNESS)),
+    ) as f32;
     let divider = draws.linework.thickness(DIVIDER_THICKNESS);
     draws.frame_border.color = emphasis.stroke(draws.palette.line, draws.palette);
     draws
@@ -431,15 +437,7 @@ fn draw_fragment(
         if let Some(y) = operand.divider_y {
             let left = (fragment.rect.x, y);
             let right = (fragment.rect.x + fragment.rect.w, y);
-            draw_dashed_segment(
-                cx,
-                &camera,
-                rect_pos,
-                draws.fill,
-                left,
-                right,
-                divider,
-            );
+            draw_dashed_segment(cx, &camera, rect_pos, draws.fill, left, right, divider);
         }
         let guard_screen = world_rect_to_screen(viewport, operand.guard_rect);
         draws.text.draw_abs(
