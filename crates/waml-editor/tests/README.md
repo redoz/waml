@@ -168,3 +168,66 @@ Inspect every image and record these checks:
   midpoint is 87.5% of displacement because `OutCubic(0.5) = 0.875`.
 - Selection, diagnostics, image geometry, caret, and IME stay attached to their
   source text at each applicable sampled phase.
+
+## Markdown editor integration rollout
+
+The native verification fixture is
+`crates/waml-editor/tests/fixtures/markdown-integration`. It contains a loadable
+`index.md`, the source document `evidence.md`, and its local `evidence.svg`.
+`waml list` loads the `evidence` `uml.Class`, while `waml check` reports exactly
+the intended recoverable `unterminated multiplicity` diagnostic.
+
+The verification-of-record capture is
+`target/markdown-editor-integration.png`. It is generated evidence and is not
+committed. The successful capture used commit `2d23c7e9`, Windows DPI 96
+(scale 1.0), a `1280 x 1200` native-pixel window, and the default reduced-motion
+state (not forced). The editor needs approximately 10 seconds to present the
+populated first frame on this machine.
+
+The successful launch used a byte-for-byte staging copy of the committed
+fixture at `target/task9-native-fixture`:
+
+```powershell
+rtk cargo build -p waml-editor --bin waml-editor
+rtk pwsh -NoProfile -Command '$p = Start-Process -FilePath "target\debug\waml-editor.exe" -ArgumentList "target\task9-native-fixture" -PassThru; $p.Id'
+```
+
+That staging directory contained only the committed fixture's `index.md`,
+`evidence.md`, and `evidence.svg`. The fixture is now directly launchable with
+the same binary. There is no production CLI flag for SourceView, so the native
+flow used the Project Tree context menu's **View Source** action. It then resized
+the exact launched window, made a deterministic text selection, and captured
+only that PID:
+
+```powershell
+rtk pwsh -File scripts/capture-window.ps1 `
+  -Out target/markdown-editor-integration.png -ProcessId <launched-pid>
+```
+
+The `1280 x 1200` PNG visibly contains all required cases: the complete
+mixed-metric heading with literal `#`, `**`, and backticks; a real blue
+selection and caret; the image source plus explicit SVG placeholder; a red
+diagnostic underline; a complete fenced `waml` block with highlighted `String`;
+and no canvas bleed-through.
+
+Final verification before integration:
+
+- `cargo test -p waml-editor --test markdown_authority`: 5 passed.
+- `cargo test -p waml-markdown-editor`: 220 passed.
+- `cargo test -p waml-editor`: 1001 passed, 4 ignored.
+- `cargo test -p waml-cli`: 84 passed.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`:
+  0 errors; only the two existing duplicate-package Cargo notices.
+- `cargo test --workspace -- --skip randomized_full_and_incremental_snapshots_agree --skip valid_edit_sequences_match_full_parse`:
+  2013 passed, 4 ignored, 2 filtered out across 79 suites.
+- `editors/vscode`: `pnpm run build` passed, `pnpm test` passed 14 tests,
+  and `pnpm run lint` passed.
+
+An unfiltered `cargo test --workspace` was also run. It reproduced only the
+documented pre-existing `waml-syntax` incremental property defect:
+`randomized_full_and_incremental_snapshots_agree` retains the trailing space of
+`# Mod: ` as heading whitespace, while the full parse attaches it to EOF. The
+isolated property rerun reproduced the same mismatch and minimal edit sequence
+`[(127, 213, 85), (113, 164, 200), (35, 208, 160)]`. No rollout claim treats
+that run as green.
