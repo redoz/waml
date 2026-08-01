@@ -5,7 +5,7 @@ use waml::{
     analysis::{
         prepare_candidate, prepare_candidate_with_markdown_updates, AnalysisError,
         InvalidPromotedMarkdownUpdateReason, PreparedCandidate, PreviousAnalyses,
-        PromotedMarkdownUpdate,
+        ProjectionFreshness, PromotedMarkdownUpdate,
     },
     edit::{
         apply_exact_source_edit, EditBatch, EditContext, ExactSourceEdit, ExactSourceEditError,
@@ -97,6 +97,209 @@ fn promoted_order_update(
         changes,
     )
     .unwrap()
+}
+
+fn task5_diagram_fixture() -> SourceBundle {
+    SourceBundle::try_from_pairs([
+        (
+            "order.md",
+            "---\ntype: Diagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- [Order](order-node.md)\n",
+        ),
+        (
+            "customer.md",
+            "---\ntype: Diagram\ntitle: Customer\nprofile: uml-domain\n---\n# Customer\n\n## Layout\n- [Customer](customer-node.md)\n",
+        ),
+        ("order-node.md", "---\ntype: uml.Class\n---\n# Order\n"),
+        (
+            "customer-node.md",
+            "---\ntype: uml.Class\n---\n# Customer\n",
+        ),
+    ])
+    .unwrap()
+}
+
+fn island_owner(
+    candidate: &PreparedCandidate,
+    path: &str,
+    kind: WamlSectionKind,
+) -> waml_syntax::SyntaxIdentity {
+    let document = document_id(candidate, path);
+    candidate
+        .okf()
+        .markdown_snapshot(document)
+        .unwrap()
+        .structure()
+        .islands
+        .iter()
+        .find(|island| island.kind == kind)
+        .unwrap()
+        .owner
+}
+
+#[test]
+fn invalid_edited_island_keeps_unrelated_projection_current() {
+    let source = task5_diagram_fixture();
+    let baseline = prepared(source.clone(), None, 1);
+    let order = document_id(&baseline, "order.md");
+    let customer_island = island_owner(&baseline, "customer.md", WamlSectionKind::Layout);
+    let order_projection = baseline.uml().diagram("order").unwrap().clone();
+    let customer_projection = baseline.uml().diagram("customer").unwrap().clone();
+    let edited = replace_document(
+        &source,
+        SourceDocument::new(
+            path("order.md"),
+            "---\ntype: Diagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- left of\n".into(),
+        ),
+    )
+    .unwrap();
+
+    let after = prepared(
+        edited,
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
+        2,
+    );
+    let failed_revision = after.okf().catalog.document(order).unwrap().revision();
+    let order_island = island_owner(&after, "order.md", WamlSectionKind::Layout);
+    assert_eq!(
+        after.uml().projection_freshness(order_island),
+        ProjectionFreshness::RetainedStale { failed_revision }
+    );
+    assert_eq!(
+        after.uml().projection_freshness(customer_island),
+        ProjectionFreshness::Current
+    );
+    assert!(Arc::ptr_eq(
+        after.uml().diagram("order").unwrap(),
+        &order_projection
+    ));
+    assert!(Arc::ptr_eq(
+        after.uml().diagram("customer").unwrap(),
+        &customer_projection
+    ));
+    assert!(after
+        .uml()
+        .revisioned_diagnostics()
+        .iter()
+        .any(|diagnostic| {
+            diagnostic.document == order && diagnostic.revision == failed_revision
+        }));
+}
+
+#[test]
+fn affected_analysis_is_sorted_deduplicated_and_includes_semantic_dependents() {
+    let source = SourceBundle::try_from_pairs([
+        (
+            "order.md",
+            "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- id: String\n",
+        ),
+        (
+            "customer.md",
+            "---\ntype: uml.Class\n---\n# Customer\n\n## Attributes\n- id: String\n",
+        ),
+        (
+            "overview.md",
+            "---\ntype: Diagram\n---\n# Overview\n\n## Members\n- [Order](order.md)\n- [Customer](customer.md)\n",
+        ),
+    ])
+    .unwrap();
+    let baseline = prepared(source.clone(), None, 1);
+    let order = document_id(&baseline, "order.md");
+    let customer = document_id(&baseline, "customer.md");
+    let edited = replace_document(
+        &replace_document(
+            &source,
+            SourceDocument::new(
+                path("customer.md"),
+                "---\ntype: uml.Class\n---\n# Customer\n\n## Attributes\n- name: String\n".into(),
+            ),
+        )
+        .unwrap(),
+        SourceDocument::new(
+            path("order.md"),
+            "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- number: String\n".into(),
+        ),
+    )
+    .unwrap();
+
+    let after = prepared(
+        edited,
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
+        2,
+    );
+    let affected = after.uml().affected();
+
+    assert_eq!(affected.documents.as_ref(), &[order, customer]);
+    assert!(affected.islands.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(
+        affected
+            .diagrams
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>(),
+        vec!["overview"]
+    );
+}
+
+#[test]
+fn valid_recovery_replaces_stale_projection_and_clears_diagnostic() {
+    let source = task5_diagram_fixture();
+    let baseline = prepared(source.clone(), None, 1);
+    let order = document_id(&baseline, "order.md");
+    let invalid = replace_document(
+        &source,
+        SourceDocument::new(
+            path("order.md"),
+            "---\ntype: Diagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- left of\n".into(),
+        ),
+    )
+    .unwrap();
+    let stale = prepared(
+        invalid.clone(),
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
+        2,
+    );
+    let stale_projection = stale.uml().diagram("order").unwrap().clone();
+    let recovered_source = replace_document(
+        &invalid,
+        SourceDocument::new(
+            path("order.md"),
+            "---\ntype: Diagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- [Order](order-node.md)\n".into(),
+        ),
+    )
+    .unwrap();
+
+    let recovered = prepared(
+        recovered_source,
+        Some(PreviousAnalyses {
+            okf: stale.okf(),
+            uml: stale.uml(),
+        }),
+        3,
+    );
+    let owner = island_owner(&recovered, "order.md", WamlSectionKind::Layout);
+
+    assert_eq!(
+        recovered.uml().projection_freshness(owner),
+        ProjectionFreshness::Current
+    );
+    assert!(!Arc::ptr_eq(
+        recovered.uml().diagram("order").unwrap(),
+        &stale_projection
+    ));
+    assert!(recovered
+        .uml()
+        .revisioned_diagnostics()
+        .iter()
+        .all(|diagnostic| diagnostic.document != order));
 }
 
 #[test]

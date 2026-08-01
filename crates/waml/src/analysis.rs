@@ -7,8 +7,8 @@ use std::{
 pub use waml_syntax::DocumentRevision;
 use waml_syntax::{
     parse_markdown, reparse_markdown, LineIndex, MarkdownDialect, MarkdownSyntaxSnapshot,
-    MarkdownSyntaxUpdate, ParseError, SourceText, SyntaxLanguage, SyntaxTree, TextChange,
-    TextRange, TextSize,
+    MarkdownSyntaxUpdate, ParseError, SourceText, SyntaxIdentity, SyntaxLanguage, SyntaxTree,
+    TextChange, TextRange, TextSize,
 };
 
 use crate::{
@@ -165,6 +165,36 @@ pub struct DomainAnalysisContext<'a> {
     pub markdown: &'a MarkdownSyntaxSet,
     pub okf: &'a okf::Bundle,
     pub session_revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectionFreshness {
+    Current,
+    RetainedStale { failed_revision: DocumentRevision },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticSource {
+    Syntax,
+    Semantic,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionedDiagnostic {
+    pub document: DocumentId,
+    pub revision: DocumentRevision,
+    pub range: TextRange,
+    pub source: DiagnosticSource,
+    pub severity: crate::diagnostic::Severity,
+    pub code: Arc<str>,
+    pub message: Arc<str>,
+}
+
+#[derive(Clone, Default)]
+pub struct AffectedAnalysis {
+    pub documents: Arc<[DocumentId]>,
+    pub islands: Arc<[SyntaxIdentity]>,
+    pub diagrams: Arc<[Arc<str>]>,
 }
 
 #[derive(Default)]

@@ -4,7 +4,8 @@ use super::{
 };
 use crate::{
     analysis::{
-        single_text_change, AnalysisError, ClaimSet, DocumentId, DomainAnalysisContext, SyntaxSet,
+        single_text_change, AffectedAnalysis, AnalysisError, ClaimSet, DiagnosticSource,
+        DocumentId, DomainAnalysisContext, ProjectionFreshness, RevisionedDiagnostic, SyntaxSet,
         SyntaxSnapshot,
     },
     diagnostic::Diagnostic,
@@ -25,6 +26,10 @@ pub struct Analysis {
     pub projection: super::Projection,
     pub diagnostics: Arc<[Diagnostic]>,
     pub markdown: crate::analysis::MarkdownSyntaxSet,
+    affected: AffectedAnalysis,
+    projection_freshness: BTreeMap<SyntaxIdentity, ProjectionFreshness>,
+    diagram_projections: BTreeMap<Arc<str>, Arc<crate::model::Diagram>>,
+    revisioned_diagnostics: Arc<[RevisionedDiagnostic]>,
     session_revision: u64,
 }
 
@@ -127,6 +132,25 @@ pub mod test_support {
 impl Analysis {
     pub fn session_revision(&self) -> u64 {
         self.session_revision
+    }
+
+    pub fn affected(&self) -> &AffectedAnalysis {
+        &self.affected
+    }
+
+    pub fn projection_freshness(&self, island: SyntaxIdentity) -> ProjectionFreshness {
+        self.projection_freshness
+            .get(&island)
+            .copied()
+            .unwrap_or(ProjectionFreshness::Current)
+    }
+
+    pub fn diagram(&self, key: &str) -> Option<&Arc<crate::model::Diagram>> {
+        self.diagram_projections.get(key)
+    }
+
+    pub fn revisioned_diagnostics(&self) -> &[RevisionedDiagnostic] {
+        &self.revisioned_diagnostics
     }
 
     pub fn referrers(&self, target: &str) -> Vec<String> {
@@ -617,6 +641,13 @@ pub fn analyze(
     }
     validate_declared_semantics(&context, &declared, &mut diagnostics);
     let projection = declared_projection(&context, &declared, &mut diagnostics);
+    let metadata = analysis_metadata(
+        &context,
+        previous,
+        &island_snapshots,
+        &projection,
+        &diagnostics,
+    );
     Ok(Analysis {
         claims,
         syntax: SyntaxSet::from_snapshots(context.catalog.clone(), snapshots),
@@ -627,8 +658,203 @@ pub fn analyze(
         projection,
         diagnostics: diagnostics.into(),
         markdown: context.markdown.clone(),
+        affected: metadata.affected,
+        projection_freshness: metadata.projection_freshness,
+        diagram_projections: metadata.diagram_projections,
+        revisioned_diagnostics: metadata.revisioned_diagnostics,
         session_revision: context.session_revision,
     })
+}
+
+struct AnalysisMetadata {
+    affected: AffectedAnalysis,
+    projection_freshness: BTreeMap<SyntaxIdentity, ProjectionFreshness>,
+    diagram_projections: BTreeMap<Arc<str>, Arc<crate::model::Diagram>>,
+    revisioned_diagnostics: Arc<[RevisionedDiagnostic]>,
+}
+
+fn analysis_metadata(
+    context: &DomainAnalysisContext<'_>,
+    previous: Option<&Analysis>,
+    islands: &UmlIslandDocuments,
+    projection: &super::Projection,
+    diagnostics: &[Diagnostic],
+) -> AnalysisMetadata {
+    let mut affected_documents = BTreeSet::new();
+    for (document, current) in context.markdown.documents() {
+        let changed = previous
+            .and_then(|analysis| analysis.markdown.document(*document))
+            .map_or(true, |prior| !Arc::ptr_eq(prior, current));
+        if changed {
+            affected_documents.insert(*document);
+        }
+    }
+
+    let mut affected_islands = BTreeSet::new();
+    let mut failed_islands = BTreeMap::new();
+    for (document, current) in islands {
+        let prior = previous.and_then(|analysis| analysis.island_syntax.document(*document));
+        for snapshot in current.values() {
+            let prior_snapshot = prior.and_then(|prior| {
+                prior
+                    .values()
+                    .find(|candidate| candidate.owner == snapshot.owner)
+            });
+            let changed = prior_snapshot.map_or(true, |prior| {
+                !Arc::ptr_eq(&prior.syntax, &snapshot.syntax)
+                    || prior.source_range != snapshot.source_range
+                    || prior.content_range != snapshot.content_range
+            });
+            if changed {
+                affected_islands.insert(snapshot.owner);
+            }
+        }
+        if let Some(prior) = prior {
+            for snapshot in prior.values() {
+                if !current
+                    .values()
+                    .any(|candidate| candidate.owner == snapshot.owner)
+                {
+                    affected_islands.insert(snapshot.owner);
+                }
+            }
+        }
+    }
+
+    for diagnostic in diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == crate::diagnostic::Severity::Error)
+    {
+        let (Some(document), Some(revision), Some(range)) = (
+            diagnostic.document,
+            diagnostic.document_revision,
+            diagnostic.range,
+        ) else {
+            continue;
+        };
+        let Some(document_islands) = islands.get(&document) else {
+            continue;
+        };
+        for snapshot in document_islands.values().filter(|snapshot| {
+            affected_islands.contains(&snapshot.owner)
+                && ranges_overlap(snapshot.source_range, range)
+        }) {
+            failed_islands.insert(snapshot.owner, (document, revision));
+        }
+    }
+
+    let affected_concepts = concept_ids(context, affected_documents.iter().copied());
+    let failed_concepts = concept_ids(
+        context,
+        failed_islands.values().map(|(document, _)| *document),
+    );
+    let mut affected_diagrams = BTreeSet::new();
+    for diagram in projection.diagrams.iter().chain(
+        previous
+            .into_iter()
+            .flat_map(|analysis| analysis.projection.diagrams.iter()),
+    ) {
+        if diagram_depends_on(diagram, &affected_concepts) {
+            affected_diagrams.insert(diagram.key.clone());
+        }
+    }
+    let mut stale_diagrams = BTreeSet::new();
+    for diagram in projection.diagrams.iter().chain(
+        previous
+            .into_iter()
+            .flat_map(|analysis| analysis.projection.diagrams.iter()),
+    ) {
+        if diagram_depends_on(diagram, &failed_concepts) {
+            stale_diagrams.insert(diagram.key.clone());
+        }
+    }
+
+    let mut diagram_projections = BTreeMap::new();
+    for diagram in &projection.diagrams {
+        let reuse = previous
+            .and_then(|analysis| analysis.diagram(&diagram.key))
+            .filter(|_| {
+                !affected_diagrams.contains(&diagram.key) || stale_diagrams.contains(&diagram.key)
+            });
+        let projection = reuse.cloned().unwrap_or_else(|| Arc::new(diagram.clone()));
+        diagram_projections.insert(Arc::<str>::from(diagram.key.as_str()), projection);
+    }
+
+    let projection_freshness = islands
+        .values()
+        .flat_map(|document| document.values())
+        .map(|snapshot| {
+            let freshness = failed_islands
+                .get(&snapshot.owner)
+                .map(|(_, failed_revision)| ProjectionFreshness::RetainedStale {
+                    failed_revision: *failed_revision,
+                })
+                .unwrap_or(ProjectionFreshness::Current);
+            (snapshot.owner, freshness)
+        })
+        .collect();
+
+    let revisioned_diagnostics = diagnostics
+        .iter()
+        .filter_map(|diagnostic| {
+            Some(RevisionedDiagnostic {
+                document: diagnostic.document?,
+                revision: diagnostic.document_revision?,
+                range: diagnostic.range?,
+                source: DiagnosticSource::Semantic,
+                severity: diagnostic.severity,
+                code: Arc::from(diagnostic.code.as_str()),
+                message: Arc::from(diagnostic.message.as_str()),
+            })
+        })
+        .collect::<Vec<_>>()
+        .into();
+
+    AnalysisMetadata {
+        affected: AffectedAnalysis {
+            documents: affected_documents.into_iter().collect::<Vec<_>>().into(),
+            islands: affected_islands.into_iter().collect::<Vec<_>>().into(),
+            diagrams: affected_diagrams
+                .into_iter()
+                .map(Arc::<str>::from)
+                .collect::<Vec<_>>()
+                .into(),
+        },
+        projection_freshness,
+        diagram_projections,
+        revisioned_diagnostics,
+    }
+}
+
+fn concept_ids(
+    context: &DomainAnalysisContext<'_>,
+    documents: impl IntoIterator<Item = DocumentId>,
+) -> BTreeSet<String> {
+    documents
+        .into_iter()
+        .filter_map(|document| context.catalog.document(document))
+        .map(|document| crate::okf::id_of(document.path().as_str()))
+        .collect()
+}
+
+fn diagram_depends_on(diagram: &crate::model::Diagram, concepts: &BTreeSet<String>) -> bool {
+    concepts.contains(&diagram.key)
+        || diagram
+            .groups
+            .iter()
+            .any(|group| group_depends_on(group, concepts))
+}
+
+fn group_depends_on(group: &crate::model::DiagramGroup, concepts: &BTreeSet<String>) -> bool {
+    group.members.iter().any(|member| concepts.contains(member))
+        || group
+            .children
+            .iter()
+            .any(|child| group_depends_on(child, concepts))
+}
+
+fn ranges_overlap(left: TextRange, right: TextRange) -> bool {
+    left.start() <= right.end() && right.start() <= left.end()
 }
 
 fn validate_shared_context(context: &DomainAnalysisContext<'_>) -> Result<(), AnalysisError> {
