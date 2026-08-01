@@ -340,6 +340,53 @@ struct TextGlyphPaint {
     color: ColorRole,
 }
 
+#[derive(Default)]
+struct PaintEvidence {
+    enabled: bool,
+    generation: u64,
+    ranges: Vec<waml_syntax::TextRange>,
+}
+
+impl PaintEvidence {
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.ranges = Vec::new();
+        }
+    }
+
+    #[cfg(test)]
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn begin_frame(&mut self) {
+        if self.enabled {
+            self.generation = self.generation.saturating_add(1);
+            self.ranges.clear();
+        }
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn record(&mut self, range: waml_syntax::TextRange) {
+        if self.enabled {
+            self.ranges.push(range);
+        }
+    }
+
+    fn ranges(&self) -> &[waml_syntax::TextRange] {
+        &self.ranges
+    }
+
+    #[cfg(test)]
+    fn capacity(&self) -> usize {
+        self.ranges.capacity()
+    }
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct MarkdownEditor {
     #[deref]
@@ -437,7 +484,7 @@ pub struct MarkdownEditor {
     #[rust]
     last_draw: DrawRecorder,
     #[rust]
-    painted_text_ranges: Vec<waml_syntax::TextRange>,
+    paint_evidence: PaintEvidence,
 }
 
 impl Widget for MarkdownEditor {
@@ -615,7 +662,7 @@ impl MarkdownEditor {
         )
         .map_err(MarkdownEditorError::Presentation)?;
         self.last_draw = DrawRecorder::default();
-        self.painted_text_ranges.clear();
+        self.paint_evidence.begin_frame();
         for layer in [
             DrawLayer::BlockBackground,
             DrawLayer::Selection,
@@ -823,7 +870,7 @@ impl MarkdownEditor {
             self.color_for_role(paint.color),
         );
         if !glyphs.is_empty() {
-            self.painted_text_ranges.push(paint.range);
+            self.paint_evidence.record(paint.range);
         }
     }
 
@@ -1283,9 +1330,22 @@ impl MarkdownEditorRef {
     }
 
     #[doc(hidden)]
+    pub fn set_paint_evidence_enabled(&self, enabled: bool) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.paint_evidence.set_enabled(enabled);
+        }
+    }
+
+    #[doc(hidden)]
     pub fn test_painted_text_ranges(&self) -> Vec<waml_syntax::TextRange> {
         self.borrow()
-            .map_or_else(Vec::new, |inner| inner.painted_text_ranges.clone())
+            .map_or_else(Vec::new, |inner| inner.paint_evidence.ranges().to_vec())
+    }
+
+    #[doc(hidden)]
+    pub fn test_paint_evidence_generation(&self) -> u64 {
+        self.borrow()
+            .map_or(0, |inner| inner.paint_evidence.generation())
     }
 }
 
@@ -1310,6 +1370,61 @@ fn has_action(actions: &Actions, predicate: impl Fn(&MarkdownEditorAction) -> bo
 #[cfg(test)]
 mod viewport_tests {
     use super::*;
+
+    #[test]
+    fn paint_evidence_is_disabled_without_allocation_by_default() {
+        let mut evidence = PaintEvidence::default();
+
+        evidence.begin_frame();
+        evidence.record(
+            waml_syntax::TextRange::new(
+                waml_syntax::TextSize::new(1),
+                waml_syntax::TextSize::new(2),
+            )
+            .unwrap(),
+        );
+
+        assert!(!evidence.enabled());
+        assert!(evidence.ranges().is_empty());
+        assert_eq!(evidence.capacity(), 0);
+    }
+
+    #[test]
+    fn paint_evidence_records_and_clears_only_after_opt_in() {
+        let mut evidence = PaintEvidence::default();
+        let range = waml_syntax::TextRange::new(
+            waml_syntax::TextSize::new(3),
+            waml_syntax::TextSize::new(5),
+        )
+        .unwrap();
+
+        evidence.set_enabled(true);
+        evidence.record(range);
+        assert_eq!(evidence.ranges(), &[range]);
+
+        evidence.begin_frame();
+        assert!(evidence.enabled());
+        assert!(evidence.ranges().is_empty());
+
+        evidence.set_enabled(false);
+        assert_eq!(evidence.capacity(), 0);
+    }
+
+    #[test]
+    fn paint_evidence_generation_advances_only_for_enabled_draws() {
+        let mut evidence = PaintEvidence::default();
+
+        evidence.begin_frame();
+        assert_eq!(evidence.generation(), 0);
+
+        evidence.set_enabled(true);
+        evidence.begin_frame();
+        assert_eq!(evidence.generation(), 1);
+
+        evidence.set_enabled(false);
+        evidence.begin_frame();
+        assert_eq!(evidence.generation(), 1);
+    }
 
     #[test]
     fn positive_pre_draw_viewport_overrides_a_stale_redraw_area() {

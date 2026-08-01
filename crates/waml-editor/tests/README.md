@@ -144,6 +144,16 @@ Expect these twelve native-pixel PNGs: `headings`, `inline`, `lists`, `quotes`,
 window content at the host native DPI. The workflow never finds, reuses, or
 stops a process by name.
 
+The ready marker is valid only after the opt-in native paint generation has
+advanced for the final requested draw. No redraw is pending after the marker.
+For endpoint comparison, set `WAML_MARKDOWN_HARNESS_TARGET_ONLY=1` only for a
+second `motion-end` launch and capture it as `motion-end-target.png`. This mode
+installs the same incremental target without interpolation and is not an extra
+matrix case. Compare decoded pixels with `motion-end.png`. Require nonempty and
+equal foreground-pixel counts in the heading, insertion, stable paragraph, and
+image-source regions. Permit at most a one-value RGB raster quantization delta;
+do not permit a changed layout or a missing region.
+
 Inspect every image and record these checks:
 
 - All literal delimiters stay visible. Markers have lower contrast, and active

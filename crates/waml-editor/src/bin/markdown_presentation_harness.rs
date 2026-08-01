@@ -23,11 +23,11 @@ use waml_markdown_editor::{
     },
     selection::{Affinity, Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
+    syntax::{
+        parse_markdown, reparse_markdown, DocumentRevision, MarkdownDialect,
+        MarkdownSyntaxSnapshot, SourceText, TextChange, TextRange, TextSize,
+    },
     widget::{MarkdownEditorRef, MarkdownEditorWidgetRefExt},
-};
-use waml_syntax::{
-    parse_markdown, reparse_markdown, DocumentRevision, MarkdownDialect, MarkdownSyntaxSnapshot,
-    SourceText, TextChange, TextRange, TextSize,
 };
 
 #[path = "../fonts.rs"]
@@ -270,6 +270,8 @@ pub struct App {
     #[rust]
     before_layout: Option<Arc<LayoutSnapshot>>,
     #[rust]
+    motion_target_layout: Option<Arc<LayoutSnapshot>>,
+    #[rust]
     before_source: Option<Arc<str>>,
     #[rust]
     ready_path: Option<PathBuf>,
@@ -277,6 +279,10 @@ pub struct App {
     final_redraw_count: u8,
     #[rust]
     installed: Option<Arc<InstalledPresentation>>,
+    #[rust]
+    ready_after_generation: Option<u64>,
+    #[rust]
+    target_only: bool,
 }
 
 impl App {
@@ -293,13 +299,17 @@ impl App {
         let editor = self.editor(cx);
         match self.stage {
             HarnessStage::StaticWarm => {
-                if editor
+                let Some(target) = editor
                     .target_layout()
-                    .map_or(true, |layout| layout.glyph_clusters().is_empty())
-                {
+                    .filter(|layout| !layout.glyph_clusters().is_empty())
+                else {
                     editor.redraw(cx);
                     self.kick = cx.new_next_frame();
                     return;
+                };
+                if self.target_only {
+                    self.before_layout = Some(target.clone());
+                    self.motion_target_layout = Some(target);
                 }
                 editor.redraw(cx);
                 self.kick = cx.new_next_frame();
@@ -312,6 +322,19 @@ impl App {
                     self.kick = cx.new_next_frame();
                     return;
                 }
+                self.ready_after_generation = Some(editor.test_paint_evidence_generation());
+                editor.redraw(cx);
+                self.kick = cx.new_next_frame();
+                self.stage = HarnessStage::ReadyMarker;
+            }
+            HarnessStage::ReadyMarker => {
+                let previous_generation = self
+                    .ready_after_generation
+                    .expect("ready marker waits for a requested native draw");
+                if editor.test_paint_evidence_generation() <= previous_generation {
+                    self.kick = cx.new_next_frame();
+                    return;
+                }
                 let layout = editor
                     .frame_layout()
                     .expect("final frame layout was presented");
@@ -320,11 +343,6 @@ impl App {
                     "ready marker requires drawable text geometry"
                 );
                 self.assert_ready_evidence(layout, &editor);
-                editor.redraw(cx);
-                self.kick = cx.new_next_frame();
-                self.stage = HarnessStage::ReadyMarker;
-            }
-            HarnessStage::ReadyMarker => {
                 self.write_ready_marker();
                 self.kick = NextFrame::default();
                 self.stage = HarnessStage::Ready;
@@ -364,7 +382,7 @@ impl App {
                 };
                 let before = self
                     .before_layout
-                    .take()
+                    .clone()
                     .expect("motion-before layout is retained for interpolation");
                 let before_source = self
                     .before_source
@@ -405,6 +423,7 @@ impl App {
                 let stable_id = before_cluster.id;
                 let before_y = before_cluster.rect.pos.y;
                 let after_y = after_cluster.rect.pos.y;
+                self.motion_target_layout = Some(after.clone());
                 let mut motion = MotionController::new(900.0);
                 motion.commit(
                     0.0,
@@ -541,6 +560,22 @@ impl App {
                 );
                 assert_eq!(ready[0].pos.x, 24.0, "checker uses the left content inset");
                 assert_eq!(ready[0].size, dvec2(96.0, 48.0));
+                assert_motion_paint_and_overlay_evidence(MotionEvidence {
+                    case,
+                    source,
+                    session,
+                    commands: &commands,
+                    layout: &layout,
+                    painted_ranges: &editor.test_painted_text_ranges(),
+                    before: self
+                        .before_layout
+                        .as_deref()
+                        .expect("motion evidence retains the before layout"),
+                    target: self
+                        .motion_target_layout
+                        .as_deref()
+                        .expect("motion evidence retains the exact target layout"),
+                });
             }
             _ => {}
         }
@@ -558,6 +593,12 @@ impl MatchEvent for App {
 
         let editor = self.editor(cx);
         editor.set_read_only(cx, true);
+        editor.set_paint_evidence_enabled(true);
+        self.target_only = case == HarnessCase::MotionEnd
+            && matches!(
+                std::env::var("WAML_MARKDOWN_HARNESS_TARGET_ONLY").as_deref(),
+                Ok("1")
+            );
         if let Some(sample_time) = case.motion_sample_time() {
             let _ = sample_time;
             let before_source = motion_source(MOTION_BEFORE);
@@ -574,12 +615,19 @@ impl MatchEvent for App {
             .snapshot;
             let before = prepare_syntax(case, Arc::from(before_source), before_syntax);
             let after = prepare_syntax(case, Arc::from(after_source), after_syntax);
-            self.before_source = Some(before.source.clone());
-            self.session = Some(before.session);
-            self.installed = Some(before.installed.clone());
-            self.pending_after = Some(after);
-            editor.install_presentation(cx, before.installed, LayoutChangeCause::InitialLoad);
-            self.stage = HarnessStage::MotionBeforeWarm;
+            if self.target_only {
+                self.session = Some(after.session);
+                self.installed = Some(after.installed.clone());
+                editor.install_presentation(cx, after.installed, LayoutChangeCause::InitialLoad);
+                self.stage = HarnessStage::StaticWarm;
+            } else {
+                self.before_source = Some(before.source.clone());
+                self.session = Some(before.session);
+                self.installed = Some(before.installed.clone());
+                self.pending_after = Some(after);
+                editor.install_presentation(cx, before.installed, LayoutChangeCause::InitialLoad);
+                self.stage = HarnessStage::MotionBeforeWarm;
+            }
         } else {
             let source = source_for(case);
             let prepared = prepare(case, &source, DocumentRevision::INITIAL);
@@ -1092,4 +1140,269 @@ fn assert_source_ranges_cover_bytes(
         expected.collect::<Vec<_>>(),
         "every expected source byte has {message}"
     );
+}
+
+struct MotionEvidence<'a> {
+    case: HarnessCase,
+    source: &'a str,
+    session: &'a MarkdownDocumentSession,
+    commands: &'a [DrawCommand],
+    layout: &'a LayoutSnapshot,
+    painted_ranges: &'a [TextRange],
+    before: &'a LayoutSnapshot,
+    target: &'a LayoutSnapshot,
+}
+
+fn assert_motion_paint_and_overlay_evidence(evidence: MotionEvidence<'_>) {
+    let MotionEvidence {
+        case,
+        source,
+        session,
+        commands,
+        layout,
+        painted_ranges,
+        before,
+        target,
+    } = evidence;
+    let heading = unique_range(source, "# Before");
+    let insertion = unique_range(source, "An inserted paragraph.");
+    let stable = unique_range(source, "One paragraph that stays.");
+    let image_source = unique_line_range(source, CHECKER_LINE);
+    for (label, range) in [
+        ("heading", heading.clone()),
+        ("insertion", insertion.clone()),
+        ("stable paragraph", stable.clone()),
+        ("image source", image_source),
+    ] {
+        assert_non_whitespace_source_bytes_are_painted(
+            painted_ranges,
+            source,
+            range,
+            &format!("{label} bytes reached native glyph rasterization"),
+        );
+    }
+
+    let diagnostic = commands
+        .iter()
+        .find_map(|command| match command {
+            DrawCommand::Decoration {
+                range,
+                rects,
+                role: waml_markdown_editor::presentation::DecorationRole::DiagnosticUnderline(_),
+                ..
+            } => Some((*range, rects.clone())),
+            _ => None,
+        })
+        .expect("motion phase paints one diagnostic underline");
+    let diagnostic_range = unique_range(source, "Before");
+    assert_eq!(
+        diagnostic.0,
+        text_range(diagnostic_range.start, diagnostic_range.end)
+    );
+    assert_eq!(
+        diagnostic.1.as_ref(),
+        range_rects(layout, diagnostic.0).as_slice(),
+        "diagnostic underline follows exact phase geometry"
+    );
+    assert_source_ranges_cover_bytes(
+        painted_ranges,
+        diagnostic_range,
+        "diagnostic source bytes reached native glyph rasterization",
+    );
+
+    let selection_rects = commands
+        .iter()
+        .filter_map(|command| match command {
+            DrawCommand::Selection { rect } => Some(*rect),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let expected_selection = session
+        .selections()
+        .as_slice()
+        .iter()
+        .filter(|selection| !selection.is_empty())
+        .flat_map(|selection| layout.selection_rects(*selection).unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selection_rects, expected_selection,
+        "selection follows exact phase geometry"
+    );
+
+    let (caret, composition) = commands
+        .iter()
+        .find_map(|command| match command {
+            DrawCommand::CaretAndIme { caret, composition } => Some((*caret, composition.clone())),
+            _ => None,
+        })
+        .expect("motion phase paints the caret and IME");
+    let cursor = session.selections().primary().cursor;
+    assert_eq!(
+        caret,
+        layout
+            .source_to_point(cursor)
+            .expect("motion caret has phase geometry")
+            .rect,
+        "caret follows exact phase geometry"
+    );
+    let cursor_offset = cursor.offset.to_usize();
+    assert_source_ranges_cover_bytes(
+        painted_ranges,
+        cursor_offset..cursor_offset + 1,
+        "caret source byte reached native glyph rasterization",
+    );
+    let ime = session.ime().expect("motion phase retains IME");
+    assert_eq!(
+        composition.as_ref(),
+        range_rects(layout, ime.replace_range()).as_slice(),
+        "IME underline follows exact phase geometry"
+    );
+    assert_source_ranges_cover_bytes(
+        painted_ranges,
+        ime.replace_range().start().to_usize()..ime.replace_range().end().to_usize(),
+        "IME source bytes reached native glyph rasterization",
+    );
+
+    assert_target_only_clusters_use_target_geometry(layout, target, &insertion);
+    if case == HarnessCase::MotionStart {
+        assert_start_survivors_use_before_geometry(layout, before, target, &stable);
+        let insertion_rect = cluster_bounds(layout, &insertion);
+        let stable_rect = cluster_bounds(layout, &stable);
+        assert!(
+            insertion_rect.pos.y < stable_rect.pos.y + stable_rect.size.y
+                && stable_rect.pos.y < insertion_rect.pos.y + insertion_rect.size.y,
+            "motion-start intentionally overlaps target-only insertion geometry with survivors at their before geometry"
+        );
+    }
+    if case == HarnessCase::MotionEnd {
+        assert_exact_target_layout(layout, target);
+    }
+}
+
+fn range_rects(layout: &LayoutSnapshot, range: TextRange) -> Vec<Rect> {
+    layout
+        .selection_rects(Selection::new(
+            position(range.start().to_usize(), Affinity::Before),
+            position(range.end().to_usize(), Affinity::After),
+        ))
+        .unwrap_or_default()
+}
+
+fn assert_non_whitespace_source_bytes_are_painted(
+    ranges: &[TextRange],
+    source: &str,
+    expected: std::ops::Range<usize>,
+    message: &str,
+) {
+    let expected = expected
+        .filter(|offset| !source.as_bytes()[*offset].is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    let painted = ranges
+        .iter()
+        .flat_map(|range| range.start().to_usize()..range.end().to_usize())
+        .filter(|offset| expected.contains(offset))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        painted, expected,
+        "every visible expected source byte has {message}"
+    );
+}
+
+fn assert_target_only_clusters_use_target_geometry(
+    actual: &LayoutSnapshot,
+    target: &LayoutSnapshot,
+    range: &std::ops::Range<usize>,
+) {
+    let expected = clusters_in_range(target, range);
+    assert!(!expected.is_empty(), "target insertion has glyph geometry");
+    assert_eq!(
+        clusters_in_range(actual, range),
+        expected,
+        "target-only elements appear immediately at target geometry"
+    );
+}
+
+fn assert_start_survivors_use_before_geometry(
+    actual: &LayoutSnapshot,
+    before: &LayoutSnapshot,
+    target: &LayoutSnapshot,
+    target_range: &std::ops::Range<usize>,
+) {
+    for target_cluster in clusters_in_range(target, target_range) {
+        let actual_cluster = actual
+            .glyph_clusters()
+            .iter()
+            .find(|cluster| cluster.id == target_cluster.id)
+            .expect("motion-start retains each stable target identity");
+        let before_cluster = before
+            .glyph_clusters()
+            .iter()
+            .find(|cluster| cluster.id == target_cluster.id)
+            .expect("motion-start stable identity exists in before geometry");
+        assert_eq!(actual_cluster.source_range, target_cluster.source_range);
+        assert_eq!(
+            actual_cluster.rect, before_cluster.rect,
+            "motion-start survivors begin at before geometry"
+        );
+    }
+}
+
+fn clusters_in_range<'a>(
+    layout: &'a LayoutSnapshot,
+    range: &std::ops::Range<usize>,
+) -> Vec<&'a waml_markdown_editor::layout::GlyphCluster> {
+    layout
+        .glyph_clusters()
+        .iter()
+        .filter(|cluster| {
+            text_size(range.start) <= cluster.source_range.start()
+                && cluster.source_range.end() <= text_size(range.end)
+        })
+        .collect()
+}
+
+fn cluster_bounds(layout: &LayoutSnapshot, range: &std::ops::Range<usize>) -> Rect {
+    let clusters = clusters_in_range(layout, range);
+    assert!(
+        !clusters.is_empty(),
+        "checked source range has glyph geometry"
+    );
+    let min_x = clusters
+        .iter()
+        .map(|cluster| cluster.rect.pos.x)
+        .reduce(f64::min)
+        .unwrap();
+    let min_y = clusters
+        .iter()
+        .map(|cluster| cluster.rect.pos.y)
+        .reduce(f64::min)
+        .unwrap();
+    let max_x = clusters
+        .iter()
+        .map(|cluster| cluster.rect.pos.x + cluster.rect.size.x)
+        .reduce(f64::max)
+        .unwrap();
+    let max_y = clusters
+        .iter()
+        .map(|cluster| cluster.rect.pos.y + cluster.rect.size.y)
+        .reduce(f64::max)
+        .unwrap();
+    Rect {
+        pos: dvec2(min_x, min_y),
+        size: dvec2(max_x - min_x, max_y - min_y),
+    }
+}
+
+fn assert_exact_target_layout(actual: &LayoutSnapshot, target: &LayoutSnapshot) {
+    assert_eq!(actual.revision(), target.revision());
+    assert_eq!(actual.viewport_width(), target.viewport_width());
+    assert_eq!(actual.content_size(), target.content_size());
+    assert_eq!(actual.visible_source_range(), target.visible_source_range());
+    assert_eq!(actual.visible_block_range(), target.visible_block_range());
+    assert_eq!(actual.blocks(), target.blocks());
+    assert_eq!(actual.visual_lines(), target.visual_lines());
+    assert_eq!(actual.visual_rows(), target.visual_rows());
+    assert_eq!(actual.visual_lanes(), target.visual_lanes());
+    assert_eq!(actual.glyph_clusters(), target.glyph_clusters());
+    assert_eq!(actual.block_summaries(), target.block_summaries());
 }
