@@ -316,6 +316,78 @@ fn promoted_markdown_update_is_installed_by_arc_without_a_second_parse() {
     assert_eq!(probe.markdown_promotions(document), 1);
 }
 
+#[test]
+fn chained_promoted_updates_never_parse_or_reparse() {
+    let before = prepared_two_document_fixture(41);
+    let document = document_id(&before, "order.md");
+    let mut probe = waml::analysis::test_support::PreparationProbe::succeed();
+    let first_changes: Arc<[TextChange]> = Arc::from([replace(2, 7, "Purchase")]);
+    let first_text = SourceText::new("# Purchase\n").unwrap();
+    let first_update = promoted_order_update(
+        &before,
+        before
+            .okf()
+            .markdown_snapshot(document)
+            .unwrap()
+            .revision()
+            .checked_next()
+            .unwrap(),
+        first_text.clone(),
+        &first_changes,
+    );
+    let first_source = apply_exact_order_edit(&before, first_text, first_changes);
+    let first = waml::analysis::test_support::prepare_candidate_with_promoted_probe(
+        first_source,
+        PreviousAnalyses {
+            okf: before.okf(),
+            uml: before.uml(),
+        },
+        42,
+        Arc::from([PromotedMarkdownUpdate {
+            document,
+            base_revision: before.okf().markdown_snapshot(document).unwrap().revision(),
+            update: first_update,
+        }]),
+        &mut probe,
+    )
+    .unwrap();
+
+    let second_changes: Arc<[TextChange]> = Arc::from([replace(2, 10, "Customer")]);
+    let second_text = SourceText::new("# Customer\n").unwrap();
+    let second_base = first.okf().markdown_snapshot(document).unwrap().revision();
+    let second_update = promoted_order_update(
+        &first,
+        second_base.checked_next().unwrap(),
+        second_text.clone(),
+        &second_changes,
+    );
+    let expected = second_update.snapshot.clone();
+    let second_source = apply_exact_order_edit(&first, second_text, second_changes);
+    let second = waml::analysis::test_support::prepare_candidate_with_promoted_probe(
+        second_source,
+        PreviousAnalyses {
+            okf: first.okf(),
+            uml: first.uml(),
+        },
+        43,
+        Arc::from([PromotedMarkdownUpdate {
+            document,
+            base_revision: second_base,
+            update: second_update,
+        }]),
+        &mut probe,
+    )
+    .unwrap();
+
+    assert!(Arc::ptr_eq(
+        second.okf().markdown_snapshot(document).unwrap(),
+        &expected,
+    ));
+    assert_eq!(probe.markdown_parse_calls(document), 0);
+    assert_eq!(probe.markdown_reparse_calls(document), 0);
+    assert_eq!(probe.markdown_promotions(document), 2);
+}
+
 fn assert_invalid_promoted_update(
     result: Result<PreparedCandidate, AnalysisError>,
     document: waml::analysis::DocumentId,

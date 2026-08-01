@@ -17,7 +17,7 @@ use crate::document::EditIntent;
 use crate::editor_history::{EditorHistory, HistoryStateId};
 use crate::markdown_analysis::{
     CompletionInstall, CompletionInvariantError, SemanticAnalysisCompletion,
-    SemanticAnalysisRequest,
+    SemanticAnalysisRequest, SemanticFailureDiagnostic, SemanticRevisionStep,
 };
 use crate::view_history::ViewLocation;
 #[cfg(test)]
@@ -39,7 +39,10 @@ pub struct EditorSessionSnapshot {
     pub uml_analysis: Arc<waml::uml::Analysis>,
     pub dirty_revision: Option<u64>,
     pub affected_documents: Arc<[DocumentId]>,
+    pub semantic_diagnostics: Arc<BTreeMap<DocumentId, SemanticFailureDiagnostic>>,
     document_paths: Arc<BTreeMap<DocumentId, BundlePath>>,
+    pub(crate) semantic_source: Arc<SourceBundle>,
+    pending_semantic_steps: Arc<[SemanticRevisionStep]>,
 }
 
 #[derive(Clone, Copy)]
@@ -552,11 +555,18 @@ impl EditorSession {
                 })?;
         let previous = self.current.clone();
         let source = Arc::new(applied.source);
-        let promoted: Arc<[PromotedMarkdownUpdate]> = Arc::from([PromotedMarkdownUpdate {
+        let promoted = PromotedMarkdownUpdate {
             document: proposal.document,
             base_revision: proposal.base_revision,
             update: proposal.syntax_update.clone(),
-        }]);
+        };
+        let mut pending_semantic_steps = self.current.pending_semantic_steps.to_vec();
+        pending_semantic_steps.push(SemanticRevisionStep {
+            session_revision: next_session_revision,
+            source: source.clone(),
+            promoted,
+        });
+        let pending_semantic_steps: Arc<[SemanticRevisionStep]> = pending_semantic_steps.into();
         let mut markdown_snapshots = (*self.current.markdown_snapshots).clone();
         markdown_snapshots.insert(proposal.document, proposal.syntax_update.snapshot.clone());
         let next = Arc::new(EditorSessionSnapshot {
@@ -568,7 +578,10 @@ impl EditorSession {
             uml_analysis: self.current.uml_analysis.clone(),
             dirty_revision: Some(next_session_revision),
             affected_documents: Arc::from([proposal.document]),
+            semantic_diagnostics: self.current.semantic_diagnostics.clone(),
             document_paths: self.current.document_paths.clone(),
+            semantic_source: self.current.semantic_source.clone(),
+            pending_semantic_steps: pending_semantic_steps.clone(),
         });
 
         self.history.record_edit(
@@ -586,7 +599,7 @@ impl EditorSession {
                 session_revision: next_session_revision,
                 source,
                 previous,
-                promoted,
+                steps: pending_semantic_steps,
             },
         ))
     }
@@ -609,6 +622,9 @@ impl EditorSession {
                     },
                 );
             };
+            if completion.prepared.diagnostics.contains_key(document) {
+                continue;
+            }
             if !Arc::ptr_eq(current, prepared) {
                 return CompletionInstall::RejectedInvariant(
                     CompletionInvariantError::MarkdownIdentityMismatch {
@@ -617,16 +633,9 @@ impl EditorSession {
                 );
             }
         }
-        let prepared = match Arc::try_unwrap(completion.prepared) {
-            Ok(prepared) => prepared,
-            Err(_) => {
-                return CompletionInstall::RejectedInvariant(
-                    CompletionInvariantError::SharedPreparedCandidate,
-                )
-            }
-        };
-        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
-        if revision != self.current.revision || source != *self.current.source {
+        let prepared = completion.prepared;
+        let revision = prepared.revision;
+        if revision != self.current.revision {
             return CompletionInstall::RejectedInvariant(
                 CompletionInvariantError::PreparedCandidateMismatch,
             );
@@ -644,11 +653,14 @@ impl EditorSession {
             source: self.current.source.clone(),
             persisted_source: self.current.persisted_source.clone(),
             markdown_snapshots: self.current.markdown_snapshots.clone(),
-            okf_analysis: Arc::new(okf_analysis),
-            uml_analysis: Arc::new(uml_analysis),
+            okf_analysis: prepared.okf_analysis.clone(),
+            uml_analysis: prepared.uml_analysis.clone(),
             dirty_revision: self.current.dirty_revision,
             affected_documents: self.current.affected_documents.clone(),
+            semantic_diagnostics: prepared.diagnostics.clone(),
             document_paths: self.current.document_paths.clone(),
+            semantic_source: prepared.semantic_source.clone(),
+            pending_semantic_steps: Arc::from([]),
         });
         CompletionInstall::Installed(change)
     }
@@ -738,13 +750,16 @@ fn snapshot_from_prepared(
     Arc::new(EditorSessionSnapshot {
         revision,
         persisted_source: persisted_source.unwrap_or_else(|| source.clone()),
-        source,
+        source: source.clone(),
         markdown_snapshots: Arc::new(markdown_snapshots),
         okf_analysis: Arc::new(okf_analysis),
         uml_analysis: Arc::new(uml_analysis),
         dirty_revision: None,
         affected_documents,
+        semantic_diagnostics: Arc::new(BTreeMap::new()),
         document_paths: Arc::new(document_paths),
+        semantic_source: source.clone(),
+        pending_semantic_steps: Arc::from([]),
     })
 }
 
@@ -1048,7 +1063,7 @@ mod tests {
         );
         let expected = second.syntax_update.snapshot.clone();
 
-        session
+        let (_, second_request) = session
             .promote_source_edit(
                 ProposedSourceEdit::from_local(id, second),
                 source_location("order"),
@@ -1078,8 +1093,218 @@ mod tests {
             "the semantic catalog must remain behind the second accepted source revision",
         );
 
+        let completion = run_semantic_request(second_request).unwrap();
+        assert!(matches!(
+            session.install_semantic_completion(completion),
+            CompletionInstall::Installed(_)
+        ));
+        assert!(Arc::ptr_eq(
+            session
+                .snapshot()
+                .okf_analysis
+                .markdown_snapshot(id)
+                .unwrap(),
+            &expected,
+        ));
+
         session.undo().unwrap().unwrap();
         assert_eq!(session.source().documents()[0].text(), "# Purchase\n");
+    }
+
+    #[test]
+    fn three_pending_edits_replay_every_successor_without_reparsing() {
+        let mut session = source_session("# Order\n");
+        let id = document_id(&session.snapshot(), "order.md");
+        let mut final_request = None;
+        let mut final_syntax = None;
+        for replacement in ["# Purchase\n", "# Customer\n", "# Invoice\n"] {
+            let local = local_replacement(
+                session.snapshot().markdown_snapshot(id).unwrap().clone(),
+                replacement,
+            );
+            final_syntax = Some(local.syntax_update.snapshot.clone());
+            final_request = Some(
+                session
+                    .promote_source_edit(
+                        ProposedSourceEdit::from_local(id, local),
+                        source_location("order"),
+                    )
+                    .unwrap()
+                    .1,
+            );
+        }
+
+        let completion = run_semantic_request(final_request.unwrap()).unwrap();
+        assert!(matches!(
+            session.install_semantic_completion(completion),
+            CompletionInstall::Installed(_)
+        ));
+        assert!(Arc::ptr_eq(
+            session
+                .snapshot()
+                .okf_analysis
+                .markdown_snapshot(id)
+                .unwrap(),
+            &final_syntax.unwrap(),
+        ));
+    }
+
+    #[test]
+    fn immediate_undo_discards_pending_semantic_steps_and_restores_prior_text() {
+        let mut session = source_session("# Order\n");
+        let id = document_id(&session.snapshot(), "order.md");
+        for replacement in ["# Purchase\n", "# Customer\n"] {
+            let local = local_replacement(
+                session.snapshot().markdown_snapshot(id).unwrap().clone(),
+                replacement,
+            );
+            session
+                .promote_source_edit(
+                    ProposedSourceEdit::from_local(id, local),
+                    source_location("order"),
+                )
+                .unwrap();
+        }
+
+        session.undo().unwrap().unwrap();
+
+        assert_eq!(session.source().documents()[0].text(), "# Purchase\n");
+        assert!(session.snapshot().pending_semantic_steps.is_empty());
+    }
+
+    #[test]
+    fn interleaved_pending_documents_publish_each_exact_syntax_arc() {
+        let mut session = EditorSession::default();
+        session
+            .replace(source(vec![
+                ("order.md".into(), "# Order\n".into()),
+                ("customer.md".into(), "# Customer\n".into()),
+            ]))
+            .unwrap();
+        let initial = session.snapshot();
+        let order = document_id(&initial, "order.md");
+        let customer = document_id(&initial, "customer.md");
+
+        let first = local_replacement(
+            initial.markdown_snapshot(order).unwrap().clone(),
+            "# Purchase\n",
+        );
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(order, first),
+                source_location("order"),
+            )
+            .unwrap();
+        let second = local_replacement(
+            session
+                .snapshot()
+                .markdown_snapshot(customer)
+                .unwrap()
+                .clone(),
+            "# Account\n",
+        );
+        let customer_syntax = second.syntax_update.snapshot.clone();
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(customer, second),
+                source_location("customer"),
+            )
+            .unwrap();
+        let third = local_replacement(
+            session.snapshot().markdown_snapshot(order).unwrap().clone(),
+            "# Invoice\n",
+        );
+        let order_syntax = third.syntax_update.snapshot.clone();
+        let request = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(order, third),
+                source_location("order"),
+            )
+            .unwrap()
+            .1;
+
+        assert!(matches!(
+            session.install_semantic_completion(run_semantic_request(request).unwrap()),
+            CompletionInstall::Installed(_)
+        ));
+        let installed = session.snapshot();
+        assert!(Arc::ptr_eq(
+            installed.okf_analysis.markdown_snapshot(order).unwrap(),
+            &order_syntax,
+        ));
+        assert!(Arc::ptr_eq(
+            installed.okf_analysis.markdown_snapshot(customer).unwrap(),
+            &customer_syntax,
+        ));
+    }
+
+    #[test]
+    fn newer_completion_installs_before_older_completion_without_pruning_state() {
+        let mut session = source_session("# Order\n");
+        let id = document_id(&session.snapshot(), "order.md");
+        let first = local_replacement(
+            session.snapshot().markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let first_request = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, first),
+                source_location("order"),
+            )
+            .unwrap()
+            .1;
+        let first_completion = run_semantic_request(first_request).unwrap();
+        let second = local_replacement(
+            session.snapshot().markdown_snapshot(id).unwrap().clone(),
+            "# Customer\n",
+        );
+        let second_syntax = second.syntax_update.snapshot.clone();
+        let second_request = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, second),
+                source_location("order"),
+            )
+            .unwrap()
+            .1;
+
+        assert!(matches!(
+            session.install_semantic_completion(run_semantic_request(second_request).unwrap()),
+            CompletionInstall::Installed(_)
+        ));
+        let after_newer = session.snapshot();
+        assert!(matches!(
+            session.install_semantic_completion(first_completion),
+            CompletionInstall::IgnoredStale
+        ));
+        assert!(Arc::ptr_eq(&session.snapshot(), &after_newer));
+        assert!(Arc::ptr_eq(
+            after_newer.okf_analysis.markdown_snapshot(id).unwrap(),
+            &second_syntax,
+        ));
+    }
+
+    #[test]
+    fn retained_completion_clone_does_not_control_install_authority() {
+        let mut session = source_session("# Order\n");
+        let id = document_id(&session.snapshot(), "order.md");
+        let local = local_replacement(
+            session.snapshot().markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let request = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, local),
+                source_location("order"),
+            )
+            .unwrap()
+            .1;
+        let completion = run_semantic_request(request).unwrap();
+        let _retained = completion.clone();
+
+        assert!(matches!(
+            session.install_semantic_completion(completion),
+            CompletionInstall::Installed(_)
+        ));
     }
 
     #[test]
@@ -1142,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_failure_keeps_the_accepted_literal_source_and_prior_projection() {
+    fn semantic_failure_completion_keeps_the_accepted_source_and_fallback_syntax() {
         let mut session = source_session("# Order\n");
         let before = session.snapshot();
         let id = document_id(&before, "order.md");
@@ -1158,22 +1383,146 @@ mod tests {
             .unwrap();
         let accepted = session.snapshot();
 
-        let result = run_semantic_request_with_preparer(request, |_, _, _, _| {
+        let completion = run_semantic_request_with_preparer(request, |_, _, _, _| {
             Err(AnalysisError::StructuralInvariant {
                 stage: AnalysisStage::Okf,
                 reason: "injected semantic failure".into(),
             })
-        });
+        })
+        .unwrap();
 
-        assert!(result.is_err());
+        assert!(matches!(
+            session.install_semantic_completion(completion),
+            CompletionInstall::Installed(_)
+        ));
         let after = session.snapshot();
-        assert!(Arc::ptr_eq(&after, &accepted));
+        assert!(Arc::ptr_eq(&after.source, &accepted.source));
         assert_eq!(
             after.source.documents()[0].text(),
             "# Literal invalid island ???\n"
         );
-        assert!(Arc::ptr_eq(&after.okf_analysis, &before.okf_analysis));
-        assert!(Arc::ptr_eq(&after.uml_analysis, &before.uml_analysis));
+        assert!(Arc::ptr_eq(
+            after.okf_analysis.markdown_snapshot(id).unwrap(),
+            before.okf_analysis.markdown_snapshot(id).unwrap(),
+        ));
+        assert!(after.semantic_diagnostics.contains_key(&id));
+    }
+
+    #[test]
+    fn one_failed_semantic_island_keeps_only_its_fallback_and_installs_the_success() {
+        let mut session = EditorSession::default();
+        session
+            .replace(source(vec![
+                ("order.md".into(), "# Order\n".into()),
+                ("customer.md".into(), "# Customer\n".into()),
+            ]))
+            .unwrap();
+        let initial = session.snapshot();
+        let order = document_id(&initial, "order.md");
+        let customer = document_id(&initial, "customer.md");
+        let customer_fallback = initial
+            .okf_analysis
+            .markdown_snapshot(customer)
+            .unwrap()
+            .clone();
+
+        let order_edit = local_replacement(
+            initial.markdown_snapshot(order).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let order_syntax = order_edit.syntax_update.snapshot.clone();
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(order, order_edit),
+                source_location("order"),
+            )
+            .unwrap();
+        let customer_edit = local_replacement(
+            session
+                .snapshot()
+                .markdown_snapshot(customer)
+                .unwrap()
+                .clone(),
+            "# Broken customer island\n",
+        );
+        let request = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(customer, customer_edit),
+                source_location("customer"),
+            )
+            .unwrap()
+            .1;
+        let accepted = session.snapshot();
+
+        let completion =
+            run_semantic_request_with_preparer(request, |source, previous, revision, promoted| {
+                if promoted[0].document == customer {
+                    Err(AnalysisError::StructuralInvariant {
+                        stage: AnalysisStage::Okf,
+                        reason: "injected customer island failure".into(),
+                    })
+                } else {
+                    waml::analysis::prepare_candidate_with_markdown_updates(
+                        source, previous, revision, promoted,
+                    )
+                }
+            })
+            .unwrap();
+        assert!(matches!(
+            session.install_semantic_completion(completion),
+            CompletionInstall::Installed(_)
+        ));
+
+        let installed = session.snapshot();
+        assert!(Arc::ptr_eq(&installed.source, &accepted.source));
+        assert!(Arc::ptr_eq(
+            installed.okf_analysis.markdown_snapshot(order).unwrap(),
+            &order_syntax,
+        ));
+        assert!(Arc::ptr_eq(
+            installed.okf_analysis.markdown_snapshot(customer).unwrap(),
+            &customer_fallback,
+        ));
+        let diagnostic = installed.semantic_diagnostics.get(&customer).unwrap();
+        assert_eq!(diagnostic.document, customer);
+        assert_eq!(diagnostic.session_revision, installed.revision);
+        assert!(matches!(
+            diagnostic.error.as_ref(),
+            AnalysisError::StructuralInvariant {
+                stage: AnalysisStage::Okf,
+                ..
+            }
+        ));
+        assert!(!installed.semantic_diagnostics.contains_key(&order));
+
+        let recovery = local_replacement(
+            installed.markdown_snapshot(customer).unwrap().clone(),
+            "# Recovered customer\n",
+        );
+        let recovery_request = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(customer, recovery),
+                source_location("customer"),
+            )
+            .unwrap()
+            .1;
+        assert!(matches!(
+            session.install_semantic_completion(run_semantic_request(recovery_request).unwrap()),
+            CompletionInstall::Installed(_)
+        ));
+        let recovered = session.snapshot();
+        assert!(!recovered.semantic_diagnostics.contains_key(&customer));
+        assert_eq!(
+            recovered
+                .okf_analysis
+                .catalog
+                .document(customer)
+                .unwrap()
+                .text()
+                .shared()
+                .as_str(),
+            "# Recovered customer\n",
+        );
     }
 
     fn token_content_range<L: waml_syntax::SyntaxLanguage>(

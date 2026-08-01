@@ -13,7 +13,7 @@ use waml_syntax::{
 
 use crate::{
     okf,
-    source::{BundlePath, SourceBundle},
+    source::{BundlePath, SourceBundle, SourceDocument},
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -243,6 +243,10 @@ pub enum InvalidPromotedMarkdownUpdateReason {
     InvalidAffectedRange {
         range: TextRange,
     },
+    RecoveryRevisionNotNewer {
+        previous: DocumentRevision,
+        actual: DocumentRevision,
+    },
 }
 impl fmt::Display for AnalysisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -381,8 +385,66 @@ pub fn prepare_candidate_with_markdown_updates(
         Some(previous),
         candidate_revision,
         &promoted,
+        None,
         &mut NoopPreparationHooks,
     )
+}
+
+pub fn prepare_candidate_with_markdown_recovery(
+    candidate_source: SourceBundle,
+    previous: PreviousAnalyses<'_>,
+    candidate_revision: u64,
+    recovered: PromotedMarkdownUpdate,
+) -> Result<PreparedCandidate, AnalysisError> {
+    prepare_candidate_inner_with_markdown_updates(
+        candidate_source,
+        Some(previous),
+        candidate_revision,
+        &[],
+        Some(&recovered),
+        &mut NoopPreparationHooks,
+    )
+}
+
+pub fn semantic_source_with_promoted_document(
+    semantic_source: &SourceBundle,
+    accepted_source: &SourceBundle,
+    previous: &OkfAnalysis,
+    promoted: &PromotedMarkdownUpdate,
+) -> Result<SourceBundle, AnalysisError> {
+    let previous_document = previous.catalog.document(promoted.document).ok_or(
+        AnalysisError::InvalidPromotedMarkdownUpdate {
+            document: promoted.document,
+            reason: InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+        },
+    )?;
+    let accepted_document = accepted_source.document(previous_document.path()).ok_or(
+        AnalysisError::InvalidPromotedMarkdownUpdate {
+            document: promoted.document,
+            reason: InvalidPromotedMarkdownUpdateReason::MissingCandidateDocument,
+        },
+    )?;
+    if !Arc::ptr_eq(
+        accepted_document.text_arc(),
+        promoted.update.snapshot.text().shared(),
+    ) {
+        return Err(AnalysisError::InvalidPromotedMarkdownUpdate {
+            document: promoted.document,
+            reason: InvalidPromotedMarkdownUpdateReason::ResultTextMismatch,
+        });
+    }
+    let mut candidate = semantic_source.clone();
+    let target = candidate.document_mut(previous_document.path()).ok_or(
+        AnalysisError::InvalidPromotedMarkdownUpdate {
+            document: promoted.document,
+            reason: InvalidPromotedMarkdownUpdateReason::MissingCandidateDocument,
+        },
+    )?;
+    *target = SourceDocument::from_shared(
+        previous_document.path().clone(),
+        accepted_document.text_arc().clone(),
+    );
+    Ok(candidate)
 }
 
 fn prepare_candidate_inner(
@@ -396,6 +458,7 @@ fn prepare_candidate_inner(
         previous,
         candidate_revision,
         &[],
+        None,
         hooks,
     )
 }
@@ -405,6 +468,7 @@ fn prepare_candidate_inner_with_markdown_updates(
     previous: Option<PreviousAnalyses<'_>>,
     candidate_revision: u64,
     promoted: &[PromotedMarkdownUpdate],
+    recovered: Option<&PromotedMarkdownUpdate>,
     hooks: &mut impl PreparationHooks,
 ) -> Result<PreparedCandidate, AnalysisError> {
     let okf = analyze_okf_inner(
@@ -412,6 +476,7 @@ fn prepare_candidate_inner_with_markdown_updates(
         previous.as_ref().map(|analyses| analyses.okf),
         candidate_revision,
         promoted,
+        recovered,
         hooks,
     )?;
     hooks.before(AnalysisStage::Specialization("uml"))?;
@@ -544,6 +609,7 @@ pub mod test_support {
             Some(previous),
             candidate_revision,
             &promoted,
+            None,
             probe,
         )
     }
@@ -582,6 +648,7 @@ pub fn analyze_okf(
         previous,
         session_revision,
         &[],
+        None,
         &mut NoopPreparationHooks,
     )
 }
@@ -591,9 +658,67 @@ fn analyze_okf_inner(
     previous: Option<&OkfAnalysis>,
     session_revision: u64,
     promoted: &[PromotedMarkdownUpdate],
+    recovered: Option<&PromotedMarkdownUpdate>,
     hooks: &mut impl PreparationHooks,
 ) -> Result<OkfAnalysis, AnalysisError> {
     let previous_catalog = previous.map(|analysis| &analysis.catalog);
+    let recovered = recovered
+        .map(|recovered| {
+            let previous_analysis = previous.ok_or_else(|| {
+                invalid_promoted_update(
+                    recovered.document,
+                    InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+                )
+            })?;
+            let previous_document = previous_analysis
+                .catalog
+                .document(recovered.document)
+                .ok_or_else(|| {
+                    invalid_promoted_update(
+                        recovered.document,
+                        InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+                    )
+                })?;
+            let previous_snapshot = previous_analysis
+                .markdown_snapshot(recovered.document)
+                .ok_or_else(|| {
+                    invalid_promoted_update(
+                        recovered.document,
+                        InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+                    )
+                })?;
+            let source_document = source.document(previous_document.path()).ok_or_else(|| {
+                invalid_promoted_update(
+                    recovered.document,
+                    InvalidPromotedMarkdownUpdateReason::MissingCandidateDocument,
+                )
+            })?;
+            if !Arc::ptr_eq(
+                source_document.text_arc(),
+                recovered.update.snapshot.text().shared(),
+            ) {
+                return Err(invalid_promoted_update(
+                    recovered.document,
+                    InvalidPromotedMarkdownUpdateReason::ResultTextMismatch,
+                ));
+            }
+            let actual = recovered.update.snapshot.revision();
+            if actual <= previous_snapshot.revision() {
+                return Err(invalid_promoted_update(
+                    recovered.document,
+                    InvalidPromotedMarkdownUpdateReason::RecoveryRevisionNotNewer {
+                        previous: previous_snapshot.revision(),
+                        actual,
+                    },
+                ));
+            }
+            Ok((
+                recovered.document,
+                actual,
+                recovered.update.snapshot.clone(),
+            ))
+        })
+        .transpose()?;
     let mut documents = BTreeMap::new();
     let mut paths = BTreeMap::new();
     let mut next_id = previous_catalog.map_or(0, |catalog| catalog.next_document_id);
@@ -606,17 +731,26 @@ fn analyze_okf_inner(
             Some(prior) if Arc::ptr_eq(prior.text().shared(), source_document.text_arc()) => {
                 prior.clone()
             }
-            Some(prior) => Arc::new(version(
-                prior.id(),
-                prior
-                    .revision()
-                    .checked_next()
-                    .ok_or_else(|| AnalysisError::CatalogInvariant {
-                        reason: "document revision overflow".into(),
-                    })?,
-                path.clone(),
-                source_document.text_arc().clone(),
-            )?),
+            Some(prior) => {
+                let revision = recovered
+                    .as_ref()
+                    .filter(|(document, _, _)| *document == prior.id())
+                    .map(|(_, revision, _)| *revision)
+                    .map(Ok)
+                    .unwrap_or_else(|| {
+                        prior.revision().checked_next().ok_or_else(|| {
+                            AnalysisError::CatalogInvariant {
+                                reason: "document revision overflow".into(),
+                            }
+                        })
+                    })?;
+                Arc::new(version(
+                    prior.id(),
+                    revision,
+                    path.clone(),
+                    source_document.text_arc().clone(),
+                )?)
+            }
             None => {
                 let id = DocumentId(next_id);
                 next_id += 1;
@@ -674,6 +808,11 @@ fn analyze_okf_inner(
                 }
             },
         };
+        let snapshot = recovered
+            .as_ref()
+            .filter(|(recovered, _, _)| *recovered == document.id())
+            .map(|(_, _, snapshot)| snapshot.clone())
+            .unwrap_or(snapshot);
         markdown_documents.insert(document.id(), snapshot);
     }
     hooks.before(AnalysisStage::Okf)?;
@@ -937,7 +1076,14 @@ mod tests {
                 calls: Vec::new(),
             };
             assert!(matches!(
-                analyze_okf_inner(&candidate_source, Some(&committed), 2, &[], &mut hooks,),
+                analyze_okf_inner(
+                    &candidate_source,
+                    Some(&committed),
+                    2,
+                    &[],
+                    None,
+                    &mut hooks,
+                ),
                 Err(AnalysisError::StructuralInvariant { .. })
             ));
             let calls: Vec<_> = hooks
