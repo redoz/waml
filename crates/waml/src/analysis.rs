@@ -748,14 +748,22 @@ fn validate_promoted_markdown_updates(
             .checked_next()
             .unwrap_or(promoted.base_revision);
         let actual_revision = promoted.update.snapshot.revision();
-        if actual_revision != expected_revision
-            || candidate_document.revision() != expected_revision
-        {
+        if actual_revision != expected_revision {
             return Err(invalid_promoted_update(
                 document,
                 InvalidPromotedMarkdownUpdateReason::NonSuccessorRevision {
                     expected: expected_revision,
                     actual: actual_revision,
+                },
+            ));
+        }
+        let candidate_revision = candidate_document.revision();
+        if candidate_revision != expected_revision {
+            return Err(invalid_promoted_update(
+                document,
+                InvalidPromotedMarkdownUpdateReason::NonSuccessorRevision {
+                    expected: expected_revision,
+                    actual: candidate_revision,
                 },
             ));
         }

@@ -432,6 +432,34 @@ fn promoted_markdown_update_rejects_non_successor_revision() {
 }
 
 #[test]
+fn promoted_markdown_update_reports_stale_candidate_revision_as_actual() {
+    let before = prepared_two_document_fixture(41);
+    let document = document_id(&before, "order.md");
+    let old = before.okf().markdown_snapshot(document).unwrap();
+    let expected = old.revision().checked_next().unwrap();
+    let actual = old.revision();
+    let update = promoted_order_update(&before, expected, old.text().clone(), &[]);
+
+    assert_invalid_promoted_update(
+        prepare_candidate_with_markdown_updates(
+            before.source().clone(),
+            PreviousAnalyses {
+                okf: before.okf(),
+                uml: before.uml(),
+            },
+            42,
+            Arc::from([PromotedMarkdownUpdate {
+                document,
+                base_revision: old.revision(),
+                update,
+            }]),
+        ),
+        document,
+        InvalidPromotedMarkdownUpdateReason::NonSuccessorRevision { expected, actual },
+    );
+}
+
+#[test]
 fn promoted_markdown_update_rejects_duplicate_document() {
     let (before, document, _, _, update, candidate) = promotion_fixture();
     let promoted = PromotedMarkdownUpdate {
