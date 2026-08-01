@@ -5,14 +5,18 @@
 //! owning any of its bytes, so they may overlap their owner's range freely.
 
 pub mod compile;
+pub mod layout;
 pub mod style;
 
 pub use compile::{compile_presentation, render_plan_golden};
+pub use layout::{build_layout_document, EmbeddedMeasurements};
 pub use style::PresentationStyles;
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
-use waml_syntax::{DocumentRevision, SyntaxIdentity, TextError, TextRange, TextSize};
+use waml_syntax::{
+    DocumentRevision, SyntaxIdentity, TableAlignment, TextError, TextRange, TextSize,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PresentationItemId {
@@ -219,12 +223,44 @@ pub struct PresentedLink {
     pub title: Option<Arc<str>>,
 }
 
+/// A parsed block, taken from the syntax tree rather than from the text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PresentationBlock {
+    pub owner: SyntaxIdentity,
+    pub source_range: TextRange,
+    /// Index of the parent block in `PresentationPlan::blocks`.
+    pub parent: Option<usize>,
+    pub kind: PresentationBlockKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PresentationBlockKind {
+    Paragraph,
+    Heading(u8),
+    ListItem {
+        marker_range: TextRange,
+    },
+    Quote,
+    Code,
+    Table {
+        columns: u32,
+    },
+    TableRow,
+    TableCell {
+        column: u32,
+        alignment: TableAlignment,
+    },
+    Image,
+}
+
 #[derive(Clone, Debug)]
 pub struct PresentationPlan {
     pub revision: DocumentRevision,
     pub source_len: TextSize,
     pub items: Arc<[PresentationItem]>,
     pub links: Arc<[PresentedLink]>,
+    /// Parsed block structure, outermost first, in source order.
+    pub blocks: Arc<[PresentationBlock]>,
 }
 
 impl PresentationPlan {

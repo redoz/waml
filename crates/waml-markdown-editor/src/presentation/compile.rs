@@ -9,14 +9,15 @@ use std::{
 };
 
 use waml_syntax::{
-    MarkdownSemanticRole, MarkdownSourceRole, MarkdownSyntaxSnapshot, MarkdownSyntaxSpan,
-    SourceText, SyntaxIdentity, TextRange, TextSize,
+    syntax_identity, MarkdownSemanticRole, MarkdownSourceRole, MarkdownSyntaxSnapshot,
+    MarkdownSyntaxSpan, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SourceText, SyntaxElement,
+    SyntaxIdentity, SyntaxNode, TableAlignment, TextRange, TextSize,
 };
 
 use super::{
-    style::PresentationStyles, BlockDecorationKind, EmbeddedBlockKind, PresentationError,
-    PresentationItem, PresentationItemId, PresentationPlan, PresentationRole, PresentedLink,
-    TextRole,
+    style::PresentationStyles, BlockDecorationKind, EmbeddedBlockKind, PresentationBlock,
+    PresentationBlockKind, PresentationError, PresentationItem, PresentationItemId,
+    PresentationPlan, PresentationRole, PresentedLink, TextRole,
 };
 
 /// Compiles one syntax snapshot into a validated presentation plan.
@@ -54,6 +55,7 @@ pub fn compile_presentation(
         source_len: text.len(),
         items: builder.items.into(),
         links: builder.links.into(),
+        blocks: collect_blocks(snapshot).into(),
     };
     plan.validate_source_partition()?;
     Ok(Arc::new(plan))
@@ -518,4 +520,121 @@ impl<'a> PlanBuilder<'a> {
             kind,
         });
     }
+}
+
+/// Walks the parsed tree for block structure. Block kinds come from node kinds
+/// and metadata queries, never from the text.
+fn collect_blocks(snapshot: &MarkdownSyntaxSnapshot) -> Vec<PresentationBlock> {
+    let mut blocks = Vec::new();
+    visit_block(snapshot, &snapshot.tree().root(), None, &mut blocks);
+    blocks
+}
+
+fn visit_block(
+    snapshot: &MarkdownSyntaxSnapshot,
+    node: &SyntaxNode<OkfMarkdownLanguage>,
+    parent: Option<usize>,
+    blocks: &mut Vec<PresentationBlock>,
+) {
+    let mut next_parent = parent;
+    if let Some((owner, kind)) = block_kind(snapshot, node) {
+        blocks.push(PresentationBlock {
+            owner,
+            source_range: node.range(),
+            parent,
+            kind,
+        });
+        next_parent = Some(blocks.len() - 1);
+    }
+    for child in node.children() {
+        if let SyntaxElement::Node(child) = child {
+            visit_block(snapshot, &child, next_parent, blocks);
+        }
+    }
+}
+
+fn block_kind(
+    snapshot: &MarkdownSyntaxSnapshot,
+    node: &SyntaxNode<OkfMarkdownLanguage>,
+) -> Option<(SyntaxIdentity, PresentationBlockKind)> {
+    use OkfMarkdownSyntaxKind as Kind;
+    let owner = syntax_identity(node)?;
+    let queries = snapshot.queries();
+    let kind = match node.kind() {
+        Kind::Paragraph | Kind::HtmlBlock | Kind::LinkReferenceDefinition | Kind::ThematicBreak => {
+            PresentationBlockKind::Paragraph
+        }
+        Kind::AtxHeading | Kind::SetextHeading => PresentationBlockKind::Heading(
+            queries.heading(owner).map_or(1, |heading| heading.level),
+        ),
+        Kind::BlockQuote => PresentationBlockKind::Quote,
+        Kind::ListItem => {
+            let marker_range = node
+                .children()
+                .find_map(|child| match child {
+                    SyntaxElement::Token(token)
+                        if matches!(
+                            token.kind(),
+                            Kind::ListMarkerToken | Kind::TaskListMarkerToken
+                        ) =>
+                    {
+                        Some(token.range())
+                    }
+                    _ => None,
+                })
+                // An item without a parsed marker keeps an empty marker range
+                // at its own start rather than guessing one from the text.
+                .unwrap_or(TextRange::new(node.range().start(), node.range().start()).ok()?);
+            PresentationBlockKind::ListItem { marker_range }
+        }
+        Kind::FencedCodeBlock | Kind::IndentedCodeBlock => PresentationBlockKind::Code,
+        Kind::Table => PresentationBlockKind::Table {
+            columns: table_columns(node),
+        },
+        Kind::TableRow => PresentationBlockKind::TableRow,
+        Kind::TableCell => {
+            let column = node
+                .parent()
+                .map(|row| {
+                    row.children()
+                        .filter(|child| {
+                            matches!(child, SyntaxElement::Node(cell) if cell.kind() == Kind::TableCell)
+                        })
+                        .position(|child| match child {
+                            SyntaxElement::Node(cell) => cell.range() == node.range(),
+                            SyntaxElement::Token(_) => false,
+                        })
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0) as u32;
+            PresentationBlockKind::TableCell {
+                column,
+                alignment: queries
+                    .table_cell(owner)
+                    .map_or(TableAlignment::None, |cell| cell.alignment),
+            }
+        }
+        Kind::Image => PresentationBlockKind::Image,
+        _ => return None,
+    };
+    Some((owner, kind))
+}
+
+fn table_columns(node: &SyntaxNode<OkfMarkdownLanguage>) -> u32 {
+    use OkfMarkdownSyntaxKind as Kind;
+    let mut columns = 0;
+    let mut stack = vec![node.clone()];
+    while let Some(current) = stack.pop() {
+        let mut cells = 0;
+        for child in current.children() {
+            if let SyntaxElement::Node(child) = child {
+                match child.kind() {
+                    Kind::TableCell => cells += 1,
+                    _ => stack.push(child),
+                }
+            }
+        }
+        columns = columns.max(cells);
+    }
+    columns
 }

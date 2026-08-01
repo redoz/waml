@@ -4,13 +4,135 @@
 //! colors, and document insets are resolved by the style task; the compiler
 //! only attaches roles.
 
+use waml_syntax::TextRange;
+
+use crate::layout::{EdgeInsets, FontKey, FontWeight, TextMetrics};
+
 use super::{ColorRole, FontRole, FontSizeRole, FontWeightRole, TextRole, TextStyle};
+
+pub const FONT_SANS: FontKey = FontKey(1);
+pub const FONT_MONO: FontKey = FontKey(2);
+pub const WEIGHT_REGULAR: FontWeight = FontWeight(400);
+pub const WEIGHT_SEMIBOLD: FontWeight = FontWeight(600);
+
+/// Logical-pixel spacing of the balanced document style.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PresentationSpacing {
+    pub paragraph_after: f64,
+    pub quote_inset: f64,
+    pub quote_rule: f64,
+    pub quote_gap: f64,
+    pub list_marker_gap: f64,
+    pub code_padding: f64,
+    pub cell_padding_x: f64,
+    pub cell_padding_y: f64,
+}
+
+impl PresentationSpacing {
+    /// `(before, after)` margins of one heading level.
+    pub fn heading_margins(&self, level: u8) -> (f64, f64) {
+        match level {
+            1 => (20.0, 10.0),
+            2 => (18.0, 9.0),
+            3 => (16.0, 8.0),
+            4 => (14.0, 7.0),
+            _ => (12.0, 6.0),
+        }
+    }
+}
 
 /// Resolves a presentation text role into its style roles.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PresentationStyles;
 
 impl PresentationStyles {
+    /// The balanced document style. Metrics are fixed logical values and do not
+    /// depend on device pixel ratio.
+    pub fn balanced() -> Self {
+        Self
+    }
+
+    /// Always 24 logical pixels on all four sides.
+    pub fn document_insets(&self) -> EdgeInsets {
+        EdgeInsets {
+            top: 24.0,
+            right: 24.0,
+            bottom: 24.0,
+            left: 24.0,
+        }
+    }
+
+    pub fn spacing(&self) -> PresentationSpacing {
+        PresentationSpacing {
+            paragraph_after: 12.0,
+            quote_inset: 12.0,
+            quote_rule: 3.0,
+            quote_gap: 8.0,
+            list_marker_gap: 8.0,
+            code_padding: 12.0,
+            cell_padding_x: 8.0,
+            cell_padding_y: 6.0,
+        }
+    }
+
+    /// Content width inside the fixed document inset.
+    pub fn content_width(&self, viewport_width: f64) -> f64 {
+        (viewport_width - self.document_insets().left - self.document_insets().right).max(0.0)
+    }
+
+    /// Hanging indent of a list item: the literal marker width plus the gap.
+    pub fn marker_indent(&self, marker_range: TextRange) -> f64 {
+        let characters = marker_range
+            .end()
+            .to_usize()
+            .saturating_sub(marker_range.start().to_usize()) as f64;
+        characters * self.metrics(TextRole::ListMarker).font_size as f64 * 0.5
+            + self.spacing().list_marker_gap
+    }
+
+    /// Layout metrics of one text role. Color roles never enter metrics, so a
+    /// color-only change cannot alter cached geometry.
+    pub fn metrics(&self, role: TextRole) -> TextMetrics {
+        let sans =
+            |font_size: f32, line_spacing: f32, weight: FontWeight, italic: bool| TextMetrics {
+                font: FONT_SANS,
+                font_size,
+                line_spacing,
+                weight,
+                italic,
+            };
+        match role {
+            TextRole::Heading(level) => {
+                let size = match level {
+                    1 => 22.0,
+                    2 => 19.0,
+                    3 => 17.0,
+                    4 => 15.5,
+                    5 => 14.5,
+                    _ => 14.0,
+                };
+                sans(size, 1.20, WEIGHT_SEMIBOLD, false)
+            }
+            TextRole::Emphasis => sans(14.0, 1.35, WEIGHT_REGULAR, true),
+            TextRole::Strong => sans(14.0, 1.35, WEIGHT_SEMIBOLD, false),
+            TextRole::StrongEmphasis => sans(14.0, 1.35, WEIGHT_SEMIBOLD, true),
+            TextRole::InlineCode
+            | TextRole::CodeContent
+            | TextRole::CodeFence
+            | TextRole::CodeInfo
+            | TextRole::Frontmatter => TextMetrics {
+                font: FONT_MONO,
+                font_size: 13.0,
+                line_spacing: 1.30,
+                weight: WEIGHT_REGULAR,
+                italic: false,
+            },
+            // Every other role, including roles added later, keeps body metrics
+            // so its source range stays visible.
+            _ => sans(14.0, 1.35, WEIGHT_REGULAR, false),
+        }
+    }
+
     pub fn text_style(&self, role: TextRole) -> TextStyle {
         let base = TextStyle {
             font: FontRole::Body,

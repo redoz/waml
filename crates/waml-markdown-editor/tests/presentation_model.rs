@@ -60,6 +60,7 @@ fn plan_for_source(
         source_len: t(source.len()),
         items: items.into_iter().collect::<Vec<_>>().into(),
         links: Arc::from([]),
+        blocks: Arc::from([]),
     }
 }
 
