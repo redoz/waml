@@ -37,5 +37,7 @@ rfd = "0.17.2"
 winresource = "0.1"
 
 [dev-dependencies]
+quote = "1"
+syn = { version = "2", features = ["full", "visit-mut"] }
 waml = { path = "../waml", features = ["serde", "test-support"] }
 waml-syntax = { path = "../waml-syntax" }
