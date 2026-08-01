@@ -4,12 +4,12 @@ use waml_markdown_editor::{
     layout::{BlockFlow, ColumnAlignment, LayoutDocument},
     presentation::{
         build_layout_document, compile_presentation, EmbeddedMeasurements, HighlighterRegistry,
-        PresentationBlockKind, PresentationStyles,
+        PresentationBlockKind, PresentationPlan, PresentationStyles,
     },
 };
 use waml_syntax::{
-    parse_markdown, DocumentRevision, MarkdownDialect, MarkdownSyntaxSnapshot, SourceText,
-    TextRange,
+    parse_markdown, reparse_markdown, DocumentRevision, MarkdownDialect, MarkdownSyntaxSnapshot,
+    SourceText, TextChange, TextRange, TextSize,
 };
 
 fn document_for(source: &str) -> (Arc<MarkdownSyntaxSnapshot>, LayoutDocument) {
@@ -25,6 +25,19 @@ fn document_for(source: &str) -> (Arc<MarkdownSyntaxSnapshot>, LayoutDocument) {
     let document = build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
         .expect("the layout document builds");
     (snapshot, document)
+}
+
+fn document_from_snapshot(snapshot: &MarkdownSyntaxSnapshot) -> LayoutDocument {
+    let plan = plan_from_snapshot(snapshot);
+    let styles = PresentationStyles::balanced();
+    build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
+        .expect("the layout document builds")
+}
+
+fn plan_from_snapshot(snapshot: &MarkdownSyntaxSnapshot) -> Arc<PresentationPlan> {
+    let styles = PresentationStyles::balanced();
+    compile_presentation(snapshot, &styles, &HighlighterRegistry::default())
+        .expect("the plan compiles")
 }
 
 fn flows(document: &LayoutDocument) -> Vec<BlockFlow> {
@@ -306,6 +319,79 @@ fn parent_owned_text_is_fragmented_between_its_child_blocks() {
             );
         }
     }
+}
+
+#[test]
+fn inserting_an_early_quote_fragment_preserves_the_later_fragment_identity() {
+    let before_source = "> > nested zero\n>\n> > nested one\n>\n> > nested two\n";
+    let insertion = "> inserted\n>\n";
+    let insertion_offset = before_source.find("> > nested one").unwrap();
+    let mut after_source = before_source.to_owned();
+    after_source.insert_str(insertion_offset, insertion);
+    let (before_snapshot, before_document) = document_for(before_source);
+    let before_fragment = before_document
+        .blocks
+        .iter()
+        .filter(|block| {
+            block.parent.is_some()
+                && block.id.fragment_ordinal != 0
+                && block.id.fragment_ordinal != u32::MAX
+        })
+        .max_by_key(|block| block.source_range.start())
+        .expect("the nested quote has a later parent-owned fragment");
+    let before_anchor = before_document
+        .blocks
+        .iter()
+        .filter(|block| block.parent == before_fragment.parent)
+        .filter(|block| block.source_range.start() >= before_fragment.source_range.end())
+        .min_by_key(|block| block.source_range.start())
+        .expect("the fragment is anchored before an unchanged child block")
+        .id;
+    assert!(
+        before_fragment.source_range.start().to_usize() >= insertion_offset,
+        "the selected survivor must follow the insertion"
+    );
+    let shift = TextSize::try_from_usize(insertion.len()).unwrap();
+    let shifted_range = TextRange::new(
+        (before_fragment.source_range.start() + shift).unwrap(),
+        (before_fragment.source_range.end() + shift).unwrap(),
+    )
+    .unwrap();
+
+    let update = reparse_markdown(
+        &before_snapshot,
+        DocumentRevision::new(2),
+        SourceText::new(after_source).unwrap(),
+        &[TextChange {
+            old_range: TextRange::new(
+                TextSize::try_from_usize(insertion_offset).unwrap(),
+                TextSize::try_from_usize(insertion_offset).unwrap(),
+            )
+            .unwrap(),
+            replacement: insertion.into(),
+        }],
+    )
+    .expect("the quote insertion reparses");
+    let after_document = document_from_snapshot(&update.snapshot);
+    let after_fragment = after_document
+        .blocks
+        .iter()
+        .find(|block| block.source_range == shifted_range)
+        .expect("the unchanged later parent-owned fragment survives at its shifted range");
+    let after_anchor = after_document
+        .blocks
+        .iter()
+        .filter(|block| block.parent == after_fragment.parent)
+        .filter(|block| block.source_range.start() >= after_fragment.source_range.end())
+        .min_by_key(|block| block.source_range.start())
+        .expect("the shifted fragment remains before the same child block")
+        .id;
+
+    assert_eq!(
+        after_anchor, before_anchor,
+        "the child syntax anchor must survive"
+    );
+    assert_eq!(after_fragment.id, before_fragment.id);
 }
 
 /// A minimal shaper: the layout engine only has to accept the document's

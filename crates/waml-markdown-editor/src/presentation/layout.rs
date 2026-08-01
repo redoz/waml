@@ -123,9 +123,9 @@ pub fn build_layout_document(
 ///
 /// Presentation embeds and parsed image source initially share one identity.
 /// If that block also owns text, its rectangle cannot represent both the source
-/// line and the measured visual. The parsed block keeps the text under a fresh,
-/// collision-checked ID. The presentation item keeps its original ID on a
-/// measured child, so draw-command identity remains unchanged.
+/// line and the measured visual. The parsed block keeps the text under a stable,
+/// collision-checked ID anchored to the measured child. The presentation item
+/// keeps its original ID on that child, so draw-command identity stays unchanged.
 fn separate_embedded_source_blocks(
     plan: &PresentationPlan,
     measurements: &EmbeddedMeasurements,
@@ -141,8 +141,6 @@ fn separate_embedded_source_blocks(
             fragment_ordinal: id.fragment_ordinal,
         }
     }));
-    let mut next_ordinal = HashMap::new();
-
     for measured in measurements.blocks.iter() {
         let Some(block_index) = blocks.iter().position(|block| block.id == measured.id) else {
             continue;
@@ -151,7 +149,11 @@ fn separate_embedded_source_blocks(
             continue;
         }
         let original = blocks[block_index].clone();
-        let source_id = next_gap_fragment_id(measured.id, &mut used_ids, &mut next_ordinal);
+        let source_id = stable_synthetic_fragment_id(
+            measured.id,
+            SyntheticFragmentKind::EmbeddedSource,
+            &mut used_ids,
+        );
         for block in blocks.iter_mut() {
             if block.parent == Some(measured.id) {
                 block.parent = Some(source_id);
@@ -253,6 +255,8 @@ fn block_is_ancestor(blocks: &[LayoutBlock], ancestor: LayoutElementId, mut chil
 /// children, so keeping those runs on the parent changes source order. Each
 /// maximal contiguous run sequence becomes a zero-margin paragraph child. The
 /// existing hierarchy sort then interleaves it with parsed children by source.
+/// Its ID uses the following parsed child as its stable syntax anchor. A final
+/// tail uses the preceding child and a different kind tag.
 fn fragment_parent_owned_runs(
     plan: &PresentationPlan,
     measurements: &EmbeddedMeasurements,
@@ -276,7 +280,7 @@ fn fragment_parent_owned_runs(
             fragment_ordinal: id.fragment_ordinal,
         }
     }));
-    let mut next_ordinal = HashMap::new();
+    let parsed_blocks_len = blocks.len();
     let mut active: Option<(LayoutElementId, waml_syntax::TextSize, usize)> = None;
 
     for run in text_runs {
@@ -299,7 +303,9 @@ fn fragment_parent_owned_runs(
             }
         }
 
-        let fragment_id = next_gap_fragment_id(parent_id, &mut used_ids, &mut next_ordinal);
+        let (anchor_id, kind) =
+            parent_fragment_anchor(parent_id, run.range, &blocks[..parsed_blocks_len]);
+        let fragment_id = stable_synthetic_fragment_id(anchor_id, kind, &mut used_ids);
         let fragment_index = blocks.len();
         blocks.push(LayoutBlock {
             id: fragment_id,
@@ -329,23 +335,75 @@ fn gap_fragment_flow(parent_flow: Option<&BlockFlow>, range: TextRange) -> Block
     }
 }
 
-fn next_gap_fragment_id(
+#[derive(Clone, Copy)]
+enum SyntheticFragmentKind {
+    BeforeChild,
+    AfterChild,
+    EmbeddedSource,
+}
+
+fn parent_fragment_anchor(
     parent_id: LayoutElementId,
+    range: TextRange,
+    parsed_blocks: &[LayoutBlock],
+) -> (LayoutElementId, SyntheticFragmentKind) {
+    if let Some(child) = parsed_blocks
+        .iter()
+        .filter(|block| block.parent == Some(parent_id))
+        .filter(|block| range.end() <= block.source_range.start())
+        .min_by_key(|block| block.source_range.start())
+    {
+        return (child.id, SyntheticFragmentKind::BeforeChild);
+    }
+
+    let child = parsed_blocks
+        .iter()
+        .filter(|block| block.parent == Some(parent_id))
+        .filter(|block| block.source_range.end() <= range.start())
+        .max_by_key(|block| block.source_range.end())
+        .expect("a parent-owned tail fragment follows a parsed child");
+    (child.id, SyntheticFragmentKind::AfterChild)
+}
+
+fn stable_synthetic_fragment_id(
+    anchor_id: LayoutElementId,
+    kind: SyntheticFragmentKind,
     used_ids: &mut HashSet<LayoutElementId>,
-    next_ordinal: &mut HashMap<waml_syntax::SyntaxIdentity, u32>,
 ) -> LayoutElementId {
-    let ordinal = next_ordinal.entry(parent_id.owner).or_insert(u32::MAX - 1);
+    const SYNTHETIC_ORDINAL_MIN: u32 = 1 << 31;
+
+    // Use fixed tags and a fixed mixer. Randomized or encounter-order hashes
+    // would make the same syntax anchor produce a different layout identity.
+    let kind_tag = match kind {
+        SyntheticFragmentKind::BeforeChild => 0x243f_6a88_85a3_08d3,
+        SyntheticFragmentKind::AfterChild => 0x1319_8a2e_0370_7344,
+        SyntheticFragmentKind::EmbeddedSource => 0xa409_3822_299f_31d0,
+    };
+    let mut hash =
+        anchor_id.owner.get() ^ (u64::from(anchor_id.fragment_ordinal) << u32::BITS) ^ kind_tag;
+    hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    hash ^= hash >> 31;
+    let folded_hash = hash as u32 ^ (hash >> u32::BITS) as u32;
+    let first_ordinal = SYNTHETIC_ORDINAL_MIN | (folded_hash & (SYNTHETIC_ORDINAL_MIN - 1));
+    let mut ordinal = first_ordinal;
     loop {
         let candidate = LayoutElementId {
-            owner: parent_id.owner,
-            fragment_ordinal: *ordinal,
+            owner: anchor_id.owner,
+            fragment_ordinal: ordinal,
         };
-        *ordinal = ordinal
-            .checked_sub(1)
-            .expect("a document cannot exhaust layout fragment ordinals");
         if used_ids.insert(candidate) {
             return candidate;
         }
+        ordinal = if ordinal == SYNTHETIC_ORDINAL_MIN {
+            u32::MAX
+        } else {
+            ordinal - 1
+        };
+        assert_ne!(
+            ordinal, first_ordinal,
+            "a document cannot exhaust synthetic layout fragment ordinals"
+        );
     }
 }
 
