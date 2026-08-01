@@ -7,7 +7,7 @@ use crate::{
     edit::ProposedMarkdownEdit,
     input::{
         ControllerError, EditorInput, EditorKey, MarkdownEditorController, PointerGesture,
-        ScrollState, SelectionModifier,
+        ScrollAnchor, ScrollState, SelectionModifier,
     },
     layout::{
         FontKey, FontResolver, LayoutElementId, LayoutEngine, LayoutError, LayoutInvalidation,
@@ -32,6 +32,14 @@ script_mod! {
     mod.widgets.MarkdownEditor = set_type_default() do mod.widgets.MarkdownEditorBase {
         width: Fill
         height: Fill
+        draw_text_sans: {text_style: theme.font_regular{}}
+        draw_text_sans_italic: {text_style: theme.font_italic{}}
+        draw_text_sans_semibold: {text_style: theme.font_bold{}}
+        draw_text_sans_semibold_italic: {text_style: theme.font_bold_italic{}}
+        draw_text_mono: {text_style: theme.font_code{}}
+        draw_text_mono_italic: {text_style: theme.font_code{}}
+        draw_text_mono_semibold: {text_style: theme.font_code{}}
+        draw_text_mono_semibold_italic: {text_style: theme.font_code{}}
         motion_duration: 0.100
         motion_ease: OutCubic
         body_color: #202124
@@ -102,23 +110,70 @@ impl From<ControllerError> for MarkdownEditorError {
     }
 }
 
-#[derive(Default)]
-struct WidgetFonts {
-    sans: Option<FontFamily>,
-    mono: Option<FontFamily>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextFace {
+    SansRegular,
+    SansRegularItalic,
+    SansSemibold,
+    SansSemiboldItalic,
+    MonoRegular,
+    MonoRegularItalic,
+    MonoSemibold,
+    MonoSemiboldItalic,
 }
 
-impl FontResolver for WidgetFonts {
-    fn configure_draw_text(&mut self, _key: FontKey, metrics: TextMetrics, draw: &mut DrawText) {
-        if let Some(font) = if _key == FONT_MONO {
-            self.mono.as_ref()
-        } else {
-            self.sans.as_ref()
-        } {
+fn text_face(metrics: TextMetrics) -> TextFace {
+    match (
+        metrics.font == FONT_MONO,
+        metrics.weight.0 >= 600,
+        metrics.italic,
+    ) {
+        (false, false, false) => TextFace::SansRegular,
+        (false, false, true) => TextFace::SansRegularItalic,
+        (false, true, false) => TextFace::SansSemibold,
+        (false, true, true) => TextFace::SansSemiboldItalic,
+        (true, false, false) => TextFace::MonoRegular,
+        (true, false, true) => TextFace::MonoRegularItalic,
+        (true, true, false) => TextFace::MonoSemibold,
+        (true, true, true) => TextFace::MonoSemiboldItalic,
+    }
+}
+
+#[derive(Default)]
+struct WidgetFonts {
+    sans_regular: Option<FontFamily>,
+    sans_regular_italic: Option<FontFamily>,
+    sans_semibold: Option<FontFamily>,
+    sans_semibold_italic: Option<FontFamily>,
+    mono_regular: Option<FontFamily>,
+    mono_regular_italic: Option<FontFamily>,
+    mono_semibold: Option<FontFamily>,
+    mono_semibold_italic: Option<FontFamily>,
+}
+
+impl WidgetFonts {
+    fn configure_face(&self, face: TextFace, metrics: TextMetrics, draw: &mut DrawText) {
+        let font = match face {
+            TextFace::SansRegular => self.sans_regular.as_ref(),
+            TextFace::SansRegularItalic => self.sans_regular_italic.as_ref(),
+            TextFace::SansSemibold => self.sans_semibold.as_ref(),
+            TextFace::SansSemiboldItalic => self.sans_semibold_italic.as_ref(),
+            TextFace::MonoRegular => self.mono_regular.as_ref(),
+            TextFace::MonoRegularItalic => self.mono_regular_italic.as_ref(),
+            TextFace::MonoSemibold => self.mono_semibold.as_ref(),
+            TextFace::MonoSemiboldItalic => self.mono_semibold_italic.as_ref(),
+        };
+        if let Some(font) = font {
             draw.text_style.font_family = font.clone();
         }
         draw.text_style.font_size = metrics.font_size;
         draw.text_style.line_spacing = metrics.line_spacing;
+    }
+}
+
+impl FontResolver for WidgetFonts {
+    fn configure_draw_text(&mut self, _key: FontKey, metrics: TextMetrics, draw: &mut DrawText) {
+        self.configure_face(text_face(metrics), metrics, draw);
     }
 }
 
@@ -141,6 +196,65 @@ pub enum DrawLayer {
     Decoration,
     EmbeddedBlock,
     CaretAndIme,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextPaintOperation {
+    Background {
+        rect: Rect,
+        color: ColorRole,
+    },
+    Glyphs {
+        face: TextFace,
+        metrics: TextMetrics,
+        color: ColorRole,
+    },
+    Underline {
+        rect: Rect,
+        color: ColorRole,
+    },
+    Strikethrough {
+        rect: Rect,
+        color: ColorRole,
+    },
+}
+
+impl TextPaintOperation {
+    pub fn layer(&self) -> DrawLayer {
+        match self {
+            Self::Background { .. } => DrawLayer::BlockBackground,
+            Self::Glyphs { .. } => DrawLayer::Text,
+            Self::Underline { .. } | Self::Strikethrough { .. } => DrawLayer::Decoration,
+        }
+    }
+}
+
+pub fn build_text_paint_operations(
+    rect: Rect,
+    style: crate::presentation::ResolvedTextStyle,
+) -> Vec<TextPaintOperation> {
+    let mut operations = Vec::with_capacity(4);
+    if let Some(color) = style.background {
+        operations.push(TextPaintOperation::Background { rect, color });
+    }
+    operations.push(TextPaintOperation::Glyphs {
+        face: text_face(style.metrics),
+        metrics: style.metrics,
+        color: style.color,
+    });
+    if style.underline {
+        operations.push(TextPaintOperation::Underline {
+            rect: underline_rect(rect),
+            color: style.color,
+        });
+    }
+    if style.strikethrough {
+        operations.push(TextPaintOperation::Strikethrough {
+            rect: strikethrough_rect(rect),
+            color: style.color,
+        });
+    }
+    operations
 }
 
 #[derive(Default)]
@@ -189,6 +303,35 @@ pub fn draw_visible_layers_for_test(layout: &Arc<LayoutSnapshot>, recorder: &mut
     }
 }
 
+pub fn derive_motion_scroll_anchor(
+    on_screen: &LayoutSnapshot,
+    target: &LayoutSnapshot,
+    position: TextPosition,
+    scroll_y: f64,
+) -> Option<ScrollAnchor> {
+    let on_screen_caret = on_screen.source_to_point(position)?;
+    target.source_to_point(position)?;
+    Some(ScrollAnchor {
+        position,
+        viewport_y: on_screen_caret.rect.pos.y - scroll_y,
+    })
+}
+
+pub fn navigation_position(
+    plan: &crate::presentation::PresentationPlan,
+    layout: &LayoutSnapshot,
+    point: DVec2,
+) -> Option<TextPosition> {
+    let position = layout.point_to_source(point);
+    plan.links
+        .iter()
+        .any(|link| {
+            link.source_range.start() <= position.offset
+                && position.offset < link.source_range.end()
+        })
+        .then_some(position)
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct MarkdownEditor {
     #[deref]
@@ -226,7 +369,19 @@ pub struct MarkdownEditor {
     #[live]
     draw_text_sans: DrawText,
     #[live]
+    draw_text_sans_italic: DrawText,
+    #[live]
+    draw_text_sans_semibold: DrawText,
+    #[live]
+    draw_text_sans_semibold_italic: DrawText,
+    #[live]
     draw_text_mono: DrawText,
+    #[live]
+    draw_text_mono_italic: DrawText,
+    #[live]
+    draw_text_mono_semibold: DrawText,
+    #[live]
+    draw_text_mono_semibold_italic: DrawText,
     #[live]
     draw_background: DrawColor,
     #[live]
@@ -377,11 +532,9 @@ impl MarkdownEditor {
                         if let (Some(installed), Some(layout)) =
                             (self.installed.as_ref(), self.frame_layout.as_ref())
                         {
-                            let position = layout.point_to_source(point);
-                            if installed.plan.links.iter().any(|link| {
-                                link.source_range.start() <= position.offset
-                                    && position.offset <= link.source_range.end()
-                            }) {
+                            if let Some(position) =
+                                navigation_position(&installed.plan, layout, point)
+                            {
                                 return Ok(vec![self.make_action(
                                     MarkdownEditorAction::NavigationRequested { position },
                                 )]);
@@ -461,9 +614,25 @@ impl MarkdownEditor {
         ] {
             self.last_draw.record(layer, &layout);
             let mut primitive_count = 0;
-            for command in commands.iter().filter(|command| command.layer() == layer) {
-                self.paint_command(cx, scope, &installed, &layout, command);
-                primitive_count += 1;
+            for command in commands.iter() {
+                if let DrawCommand::Text {
+                    id,
+                    range,
+                    rect,
+                    style,
+                } = command
+                {
+                    for operation in build_text_paint_operations(*rect, *style)
+                        .into_iter()
+                        .filter(|operation| operation.layer() == layer)
+                    {
+                        self.paint_text_operation(cx, &installed, &layout, *id, *range, operation);
+                        primitive_count += 1;
+                    }
+                } else if command.layer() == layer {
+                    self.paint_command(cx, scope, command);
+                    primitive_count += 1;
+                }
             }
             self.last_draw.set_last_primitive_count(primitive_count);
         }
@@ -473,14 +642,7 @@ impl MarkdownEditor {
         Ok(self.view.draw_walk(cx, scope, walk))
     }
 
-    fn paint_command(
-        &mut self,
-        cx: &mut Cx2d,
-        scope: &mut Scope,
-        installed: &InstalledPresentation,
-        layout: &LayoutSnapshot,
-        command: &DrawCommand,
-    ) {
+    fn paint_command(&mut self, cx: &mut Cx2d, scope: &mut Scope, command: &DrawCommand) {
         match command {
             DrawCommand::BlockBackground { rect, role, .. } => {
                 self.draw_background.color = match role {
@@ -500,11 +662,7 @@ impl MarkdownEditor {
                 self.draw_selection.color = self.selection_color;
                 self.draw_selection.draw_abs(cx, *rect);
             }
-            DrawCommand::Text {
-                id, range, style, ..
-            } => {
-                self.paint_text(cx, installed, layout, *id, *range, *style);
-            }
+            DrawCommand::Text { .. } => {}
             DrawCommand::Decoration { rects, role, .. } => {
                 self.draw_decoration.color = match role {
                     DecorationRole::LinkUnderline => self.link_color,
@@ -548,6 +706,33 @@ impl MarkdownEditor {
         }
     }
 
+    fn paint_text_operation(
+        &mut self,
+        cx: &mut Cx2d,
+        installed: &InstalledPresentation,
+        layout: &LayoutSnapshot,
+        id: crate::layout::GeometryElementId,
+        range: waml_syntax::TextRange,
+        operation: TextPaintOperation,
+    ) {
+        match operation {
+            TextPaintOperation::Background { rect, color } => {
+                self.draw_background.color = self.color_for_role(color);
+                self.draw_background.draw_abs(cx, rect);
+            }
+            TextPaintOperation::Glyphs {
+                face,
+                metrics,
+                color,
+            } => self.paint_text(cx, installed, layout, id, range, face, metrics, color),
+            TextPaintOperation::Underline { rect, color }
+            | TextPaintOperation::Strikethrough { rect, color } => {
+                self.draw_decoration.color = self.color_for_role(color);
+                self.draw_decoration.draw_abs(cx, rect);
+            }
+        }
+    }
+
     fn paint_text(
         &mut self,
         cx: &mut Cx2d,
@@ -555,7 +740,9 @@ impl MarkdownEditor {
         layout: &LayoutSnapshot,
         id: crate::layout::GeometryElementId,
         range: waml_syntax::TextRange,
-        style: crate::presentation::ResolvedTextStyle,
+        face: TextFace,
+        metrics: TextMetrics,
+        color: ColorRole,
     ) {
         let Some(cluster) = layout
             .glyph_clusters()
@@ -580,14 +767,14 @@ impl MarkdownEditor {
         }) else {
             return;
         };
-        let Some(laid_out) =
-            self.text_layout_cache
-                .laid_out(installed.revision, run_id, style.metrics)
+        let Some(laid_out) = self
+            .text_layout_cache
+            .laid_out(installed.revision, run_id, metrics)
         else {
             return;
         };
         self.fonts
-            .configure_draw_text(style.metrics.font, style.metrics, &mut self.draw_text_sans);
+            .configure_face(face, metrics, &mut self.draw_text_sans);
         let cluster_offset = range
             .start()
             .to_usize()
@@ -618,11 +805,8 @@ impl MarkdownEditor {
                 ))
             })
             .collect::<Vec<_>>();
-        self.draw_text_sans.draw_rasterized_glyphs_abs(
-            cx,
-            &glyphs,
-            self.color_for_role(style.color),
-        );
+        self.draw_text_sans
+            .draw_rasterized_glyphs_abs(cx, &glyphs, self.color_for_role(color));
     }
 
     fn color_for_role(&self, role: ColorRole) -> Vec4 {
@@ -720,8 +904,28 @@ impl MarkdownEditor {
             }
         }
         let viewport_rect = self.view.area().rect(cx);
-        self.fonts.sans = Some(self.draw_text_sans.text_style.font_family.clone());
-        self.fonts.mono = Some(self.draw_text_mono.text_style.font_family.clone());
+        self.fonts.sans_regular = Some(self.draw_text_sans.text_style.font_family.clone());
+        self.fonts.sans_regular_italic =
+            Some(self.draw_text_sans_italic.text_style.font_family.clone());
+        self.fonts.sans_semibold =
+            Some(self.draw_text_sans_semibold.text_style.font_family.clone());
+        self.fonts.sans_semibold_italic = Some(
+            self.draw_text_sans_semibold_italic
+                .text_style
+                .font_family
+                .clone(),
+        );
+        self.fonts.mono_regular = Some(self.draw_text_mono.text_style.font_family.clone());
+        self.fonts.mono_regular_italic =
+            Some(self.draw_text_mono_italic.text_style.font_family.clone());
+        self.fonts.mono_semibold =
+            Some(self.draw_text_mono_semibold.text_style.font_family.clone());
+        self.fonts.mono_semibold_italic = Some(
+            self.draw_text_mono_semibold_italic
+                .text_style
+                .font_family
+                .clone(),
+        );
         self.text_layout_cache.retain_revision(installed.revision);
         let mut shaper = MakepadTextShaper {
             cx,
@@ -756,6 +960,14 @@ impl MarkdownEditor {
                 LayoutChangeCause::InitialLoad
             }
         });
+        let anchor = self.frame_layout.as_deref().and_then(|on_screen| {
+            derive_motion_scroll_anchor(
+                on_screen,
+                &layout,
+                session.selections().primary().cursor,
+                self.scroll_y,
+            )
+        });
         let frame = self.motion.commit(
             cx.seconds_since_app_start(),
             self.frame_layout
@@ -764,7 +976,7 @@ impl MarkdownEditor {
             layout,
             cause,
             self.reduced_motion,
-            None,
+            anchor,
             MotionConfig {
                 duration_seconds: self.motion_duration,
                 ease: self.motion_ease,
@@ -851,6 +1063,16 @@ impl MarkdownEditor {
 fn underline_rect(rect: Rect) -> Rect {
     Rect {
         pos: dvec2(rect.pos.x, rect.pos.y + (rect.size.y - 2.0).max(0.0)),
+        size: dvec2(rect.size.x, rect.size.y.min(2.0)),
+    }
+}
+
+fn strikethrough_rect(rect: Rect) -> Rect {
+    Rect {
+        pos: dvec2(
+            rect.pos.x,
+            rect.pos.y + ((rect.size.y - 2.0) * 0.5).max(0.0),
+        ),
         size: dvec2(rect.size.x, rect.size.y.min(2.0)),
     }
 }

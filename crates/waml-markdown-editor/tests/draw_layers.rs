@@ -4,9 +4,10 @@ use makepad_widgets::{dvec2, Rect, ScriptValue, ScriptVm};
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     layout::{
-        BlockGeometry, CaretStop, EdgeInsets, GeometryElementId, GlyphCluster, LayoutDocument,
-        LayoutElementId, LayoutSnapshot, VisualLine,
+        BlockGeometry, CaretStop, EdgeInsets, FontKey, FontWeight, GeometryElementId, GlyphCluster,
+        LayoutDocument, LayoutElementId, LayoutSnapshot, TextMetrics, VisualLine,
     },
+    motion::{LayoutChangeCause, MotionConfig, MotionController},
     presentation::{
         draw::{
             build_draw_commands, DecorationRole, DrawCommand, InstalledPresentation,
@@ -18,11 +19,14 @@ use waml_markdown_editor::{
     },
     selection::{Affinity, Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
-    widget::DrawLayer,
+    widget::{
+        build_text_paint_operations, derive_motion_scroll_anchor, navigation_position, DrawLayer,
+        TextFace, TextPaintOperation,
+    },
 };
 use waml_syntax::{
-    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, SyntaxIdentity, TextRange,
-    TextSize,
+    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, SyntaxIdentity, TextChange,
+    TextRange, TextSize,
 };
 
 fn t(value: usize) -> TextSize {
@@ -470,4 +474,136 @@ fn installed_presentation_rejects_each_partial_revision_bundle() {
 #[test]
 fn crate_root_exposes_the_makepad_script_registration_seam() {
     let _: fn(&mut ScriptVm) -> ScriptValue = waml_markdown_editor::script_mod;
+}
+
+#[test]
+fn motion_scroll_follows_the_interpolated_primary_caret() {
+    let previous = snapshot(
+        4,
+        vec![cluster(1, 0, 0..4, 10.0, TextRole::Body)],
+        Vec::new(),
+    );
+    let mut moved = cluster(1, 0, 0..4, 10.0, TextRole::Body);
+    moved.rect.pos.y = 200.0;
+    for stop in Arc::make_mut(&mut moved.caret_stops) {
+        stop.point.y = 200.0;
+    }
+    let target = snapshot(4, vec![moved], Vec::new());
+    let anchor = derive_motion_scroll_anchor(&previous, &target, position(0), 100.0)
+        .expect("both snapshots contain the primary caret");
+    assert_eq!(anchor.viewport_y, -80.0);
+
+    let mut motion = MotionController::new(100.0);
+    motion.commit(
+        10.0,
+        Some(previous),
+        target,
+        LayoutChangeCause::LocalEdit {
+            changes: Arc::from([TextChange {
+                old_range: range(0, 0),
+                replacement: Arc::from("x"),
+            }]),
+        },
+        false,
+        Some(anchor),
+        MotionConfig::default(),
+    );
+    let frame = motion.sample(10.050);
+    let caret_y = frame
+        .layout
+        .source_to_point(position(0))
+        .unwrap()
+        .rect
+        .pos
+        .y;
+    assert_eq!(
+        frame.scroll_y,
+        (caret_y - anchor.viewport_y).clamp(0.0, frame.layout.max_scroll_y(100.0))
+    );
+    assert_ne!(frame.scroll_y, 0.0);
+}
+
+#[test]
+fn renderer_applies_every_resolved_text_attribute_in_its_required_layer() {
+    let rect = Rect {
+        pos: dvec2(10.0, 20.0),
+        size: dvec2(40.0, 18.0),
+    };
+    let metrics = TextMetrics {
+        font: FontKey(1),
+        font_size: 14.0,
+        line_spacing: 1.35,
+        weight: FontWeight(600),
+        italic: true,
+    };
+    let style = waml_markdown_editor::presentation::ResolvedTextStyle {
+        metrics,
+        color: ColorRole::Link,
+        background: Some(ColorRole::CodeSurface),
+        underline: true,
+        strikethrough: true,
+    };
+
+    let operations = build_text_paint_operations(rect, style);
+    assert_eq!(
+        operations
+            .iter()
+            .map(TextPaintOperation::layer)
+            .collect::<Vec<_>>(),
+        vec![
+            DrawLayer::BlockBackground,
+            DrawLayer::Text,
+            DrawLayer::Decoration,
+            DrawLayer::Decoration,
+        ]
+    );
+    assert!(matches!(
+        operations[0],
+        TextPaintOperation::Background {
+            rect: actual,
+            color: ColorRole::CodeSurface,
+        } if actual == rect
+    ));
+    assert!(matches!(
+        operations[1],
+        TextPaintOperation::Glyphs {
+            face: TextFace::SansSemiboldItalic,
+            metrics: actual,
+            color: ColorRole::Link,
+        } if actual == metrics
+    ));
+    assert!(matches!(
+        operations[2],
+        TextPaintOperation::Underline {
+            rect: Rect { pos, size },
+            color: ColorRole::Link,
+        } if pos == dvec2(10.0, 36.0) && size == dvec2(40.0, 2.0)
+    ));
+    assert!(matches!(
+        operations[3],
+        TextPaintOperation::Strikethrough {
+            rect: Rect { pos, size },
+            color: ColorRole::Link,
+        } if pos == dvec2(10.0, 28.0) && size == dvec2(40.0, 2.0)
+    ));
+}
+
+#[test]
+fn link_activation_accepts_source_range_start() {
+    let (plan, frame, _, _) = plan_with_all_layers();
+
+    assert_eq!(
+        navigation_position(&plan, &frame.layout, dvec2(10.0, 20.0)),
+        Some(position(0))
+    );
+}
+
+#[test]
+fn link_activation_rejects_source_range_end() {
+    let (plan, frame, _, _) = plan_with_all_layers();
+
+    assert_eq!(
+        navigation_position(&plan, &frame.layout, dvec2(50.0, 20.0)),
+        None
+    );
 }
