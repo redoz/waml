@@ -46,29 +46,33 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # The build tool and the framework are pinned SEPARATELY and currently sit
-      # on different revs: the framework is whatever crates/waml-editor/Cargo.toml
-      # names (83a46646 at the time of writing), while this is 25d78a4d plus two
-      # commits, 7162231f, on the fork branch `waml-wasm-dep-dirs`.
+      # The build tool and the framework now sit on the SAME rev, the one
+      # crates/waml-editor/Cargo.toml names. They used to be pinned separately --
+      # the tool on 7162231f, on the fork branch `waml-wasm-dep-dirs` -- because
+      # that was the only line carrying the fix that makes this deploy produce a
+      # working site at all: cargo-makepad could not resolve the source directory
+      # of a *git* dependency, since `cargo tree` prints the repository URL
+      # rather than a path and the `<name>.path` marker its build script writes
+      # is absent whenever the build scripts were cached as fresh, which is
+      # exactly what the rust-cache step above arranges. It then copied no JS
+      # glue at all and exited zero, publishing an index.html importing a runtime
+      # that was not there. The verify step below is the standing guard against a
+      # repeat.
       #
-      # That commit is what makes this deploy produce a working site at all.
-      # Before it, cargo-makepad could not resolve the source directory of a
-      # *git* dependency -- `cargo tree` prints the repository URL rather than a
-      # path, and the `<name>.path` marker its build script writes is absent
-      # whenever the build scripts were cached as fresh, which is exactly what
-      # the rust-cache step above arranges. It then copied no JS glue at all and
-      # exited zero, publishing an index.html importing a runtime that was not
-      # there. The verify step below is the standing guard against a repeat.
+      # 377ed372 replaces that fix with a better one -- resolve every package's
+      # directory from `cargo metadata`'s `manifest_path`, which reports a real
+      # path for path, registry and git dependencies alike -- and it is on the
+      # line we build against, so the two pins collapse into one.
       #
       # Note the fork carries several rebase-duplicated lines with identical
-      # commit messages but different shas; `waml-scroll-occlusion` is NOT an
-      # ancestor of this rev. Copy an exact sha rather than reading a branch
-      # tip, or the toolchain and the framework silently diverge.
+      # commit messages but different shas, and `waml-scroll-occlusion`'s remote
+      # tip is a pre-rebase leftover. Copy an exact sha rather than reading a
+      # branch tip, and keep this in step with waml-editor/Cargo.toml.
       - name: Install cargo-makepad
         run: >
           cargo install cargo-makepad
           --git https://github.com/redoz/makepad.git
-          --rev 7162231f51d81d2a00a2a68c77ac7f7da6a85382
+          --rev 83a466461855f6bea1268f5f2f21ef9d2a045fda
           --locked
 
       # binaryen supplies the `wasm-opt` binary that the build step below invokes
