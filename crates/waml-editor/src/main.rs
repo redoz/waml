@@ -41,6 +41,8 @@ mod inspector_panel;
 mod load;
 mod logo;
 mod markdown_analysis;
+#[allow(dead_code)] // Task 7 host API is mounted by the view integration after its focused review.
+mod markdown_hosts;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_save;
 mod nav;
