@@ -1,0 +1,14 @@
+# Deliberately no `retries`: a test that only passes on the second attempt is a
+# bug to fix, not noise to paper over. The value here is the hang guard --
+# `cargo test` will sit on a deadlocked test until the job's 6h timeout.
+# The slowest real test (waml::flow_solver_golden, a deep chain solved on a
+# small stack) takes ~34s in a debug build, so the 60s period only reports
+# and the 4x terminate leaves a wide margin over it.
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 4 }
+
+# CI reports every failure in one run rather than stopping at the first, so a
+# push is not a serial one-bug-per-run grind.
+[profile.ci]
+slow-timeout = { period = "60s", terminate-after = 4 }
+fail-fast = false

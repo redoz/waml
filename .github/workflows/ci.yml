@@ -45,6 +45,20 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: editors/vscode
 
+      # waml-editor pulls in makepad's Linux backend, whose wayland-sys build
+      # script probes pkg-config and panics outright when the .pc files are
+      # absent. The x11/GL/audio libraries are what the resulting test binaries
+      # then link against.
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxkbcommon-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libgl1-mesa-dev libegl1-mesa-dev \
+            libasound2-dev libpulse-dev
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -53,11 +67,19 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Cargo fmt
         run: cargo fmt --check
 
       - name: Cargo test
-        run: cargo test --workspace
+        run: cargo nextest run --workspace --profile ci
+
+      # nextest does not run doctests at all -- it would skip them silently, so
+      # they get their own step.
+      - name: Cargo doctest
+        run: cargo test --workspace --doc
 
       - name: Cargo clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings

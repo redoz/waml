@@ -587,7 +587,7 @@ impl RadialPopup {
     /// radial "outside" (a click there cancels).
     fn outside(&self, cursor: DVec2) -> bool {
         let r = (cursor - self.center).length();
-        r < HUB_RADIUS || r > DISC_RADIUS
+        !(HUB_RADIUS..=DISC_RADIUS).contains(&r)
     }
 
     /// Draw the disc at the stored center. N wedges via `draw_abs`, then hub,
