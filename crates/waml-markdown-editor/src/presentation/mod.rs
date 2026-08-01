@@ -4,11 +4,16 @@
 //! Block decorations and embedded blocks describe the same source without
 //! owning any of its bytes, so they may overlap their owner's range freely.
 
+pub mod assets;
 pub mod compile;
 pub mod highlight;
 pub mod layout;
 pub mod style;
 
+pub use assets::{
+    ApprovedImageSource, AssetEventOutcome, AssetRequestId, EmbeddedAssetFrame, EmbeddedAssets,
+    EmbeddedState, ImageAssetEvent, ImageAssetRequest, ImageMediaType, MarkdownAssetHost,
+};
 pub use compile::{compile_presentation, render_plan_golden};
 pub use highlight::{
     CodeHighlightError, CodeHighlightHost, CodeHighlightRequest, CodeHighlightResult,
