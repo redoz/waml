@@ -40,6 +40,7 @@ mod inspector;
 mod inspector_panel;
 mod load;
 mod logo;
+mod markdown_analysis;
 mod markdown_surface;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_save;

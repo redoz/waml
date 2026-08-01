@@ -7,7 +7,9 @@ use waml::{
         InvalidPromotedMarkdownUpdateReason, PreparedCandidate, PreviousAnalyses,
         PromotedMarkdownUpdate,
     },
-    edit::{EditBatch, EditContext, ExactSourceEdit},
+    edit::{
+        apply_exact_source_edit, EditBatch, EditContext, ExactSourceEdit, ExactSourceEditError,
+    },
     host::replace_document,
     source::{BundlePath, SourceBundle, SourceDocument},
     uml::{DeclaredBundle, DeclaredField, DeclaredLayoutStatement},
@@ -151,18 +153,71 @@ fn exact_source_edit_rejects_unknown_document_without_changing_source() {
 }
 
 #[test]
-fn exact_source_edit_rejects_stale_base_revision_without_changing_source() {
-    let before = prepared_two_document_fixture(41);
-    let mut edit = exact_order_edit(
-        &before,
-        SourceText::new("# Purchase\n").unwrap(),
-        Arc::from([replace(2, 7, "Purchase")]),
+fn exact_source_edit_accepts_current_base_identity_while_semantic_catalog_lags() {
+    let semantic = prepared_two_document_fixture(41);
+    let document = document_id(&semantic, "order.md");
+    let first_text = SourceText::new("# Purchase\n").unwrap();
+    let first_changes: Arc<[TextChange]> = Arc::from([replace(2, 7, "Purchase")]);
+    let first_source = apply_exact_order_edit(&semantic, first_text.clone(), first_changes.clone());
+    let first_revision = semantic
+        .okf()
+        .markdown_snapshot(document)
+        .unwrap()
+        .revision()
+        .checked_next()
+        .unwrap();
+    let first_syntax = reparse_markdown(
+        semantic.okf().markdown_snapshot(document).unwrap(),
+        first_revision,
+        first_text,
+        &first_changes,
+    )
+    .unwrap()
+    .snapshot;
+    let second_text = SourceText::new("# Customer\n").unwrap();
+    let applied = apply_exact_source_edit(
+        &first_source,
+        &path("order.md"),
+        first_syntax.text(),
+        &[replace(2, 10, "Customer")],
+        second_text.clone(),
+    )
+    .unwrap();
+
+    let installed = applied.source.document(&path("order.md")).unwrap();
+    assert_eq!(installed.text(), "# Customer\n");
+    assert!(Arc::ptr_eq(installed.text_shared(), second_text.shared()));
+    assert_eq!(
+        applied
+            .inverse
+            .apply_reversible(EditContext {
+                source: &applied.source,
+                ..edit_context(&semantic)
+            })
+            .unwrap()
+            .source,
+        first_source,
     );
-    edit.base_revision = DocumentRevision::new(0);
+}
 
-    let error = edit.lower(edit_context(&before)).unwrap_err();
+#[test]
+fn exact_source_edit_rejects_equal_bytes_from_a_different_base_allocation() {
+    let before = prepared_two_document_fixture(41);
+    let error = match apply_exact_source_edit(
+        before.source(),
+        &path("order.md"),
+        &SourceText::new("# Order\n").unwrap(),
+        &[replace(2, 7, "Purchase")],
+        SourceText::new("# Purchase\n").unwrap(),
+    ) {
+        Ok(_) => panic!("a copied base allocation must be rejected"),
+        Err(error) => error,
+    };
 
-    assert_eq!(error.op, "source.base_revision");
+    assert!(matches!(
+        error,
+        ExactSourceEditError::BaseIdentityMismatch { .. }
+    ));
     assert_eq!(
         before.source().document(&path("order.md")).unwrap().text(),
         "# Order\n"

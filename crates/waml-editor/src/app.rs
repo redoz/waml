@@ -1735,7 +1735,7 @@ impl App {
         if snapshot.source.is_empty() {
             return Err("cannot save an empty bundle".to_string());
         }
-        self.save_backend(cx, snapshot)?;
+        self.save_backend(cx, snapshot.borrowed())?;
         self.session.mark_saved(revision, state);
         Ok(())
     }
@@ -2099,7 +2099,7 @@ impl App {
                 }
                 let root =
                     root.ok_or_else(|| "native bundle has no opened directory".to_string())?;
-                crate::native_save::save_snapshot_atomic(root, snapshot)
+                crate::native_save::save_snapshot_atomic(root, snapshot.borrowed())
                     .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
             })
         };

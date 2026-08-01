@@ -1,5 +1,5 @@
 use crate::doc_tabs::{DocTab, DocTabs, OpenTabs};
-use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewData, ViewOutcome};
+use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewOutcome};
 use crate::document::{NavCategory, OpenDocument};
 use crate::editor_session::{EditorSession, SessionChange};
 use crate::popup::base::PopupResult;
@@ -28,10 +28,6 @@ type RemovedViews = Vec<(LiveId, Box<dyn DocView>)>;
 enum ActiveReconciliation {
     Retained,
     Replaced { old_view: Option<Box<dyn DocView>> },
-}
-
-fn data(session: &EditorSession) -> ViewData<'_> {
-    session.snapshot().into()
 }
 
 impl DocumentHost {
@@ -144,7 +140,8 @@ impl DocumentHost {
             scroll_y: body.markdown_scroll_y(),
         };
         if let Some(view) = self.views.get_mut(&self.tabs.active) {
-            let _ = view.restore_anchor(cx, &body, data(session), &anchor);
+            let snapshot = session.snapshot();
+            let _ = view.restore_anchor(cx, &body, snapshot.borrowed().into(), &anchor);
         }
         true
     }
@@ -167,9 +164,10 @@ impl DocumentHost {
         anchor: &ViewAnchor,
     ) -> bool {
         let body = BodyWidgets::new(cx, ui);
+        let snapshot = session.snapshot();
         self.views
             .get_mut(&self.tabs.active)
-            .is_some_and(|view| view.restore_anchor(cx, &body, data(session), anchor))
+            .is_some_and(|view| view.restore_anchor(cx, &body, snapshot.borrowed().into(), anchor))
     }
 
     pub fn restore_location(
@@ -216,7 +214,8 @@ impl DocumentHost {
         body.apply_chrome(cx, self.active_chrome());
         let active = self.tabs.active;
         if let Some(view) = self.views.get_mut(&active) {
-            view.sync(cx, &body, data(session));
+            let snapshot = session.snapshot();
+            view.sync(cx, &body, snapshot.borrowed().into());
         } else {
             // No active view at all: neither canvas may take input.
             body.set_canvas_interaction_enabled(cx, false);
@@ -292,7 +291,8 @@ impl DocumentHost {
         match reconciliation {
             ActiveReconciliation::Retained => {
                 if let Some(view) = self.views.get_mut(&self.tabs.active) {
-                    view.after_session_change(cx, &body, data(session), change);
+                    let snapshot = session.snapshot();
+                    view.after_session_change(cx, &body, snapshot.borrowed().into(), change);
                 }
             }
             ActiveReconciliation::Replaced { mut old_view } => {
@@ -301,7 +301,8 @@ impl DocumentHost {
                 }
                 if let Some(view) = self.views.get_mut(&self.tabs.active) {
                     view.on_activate(cx, &body);
-                    view.sync(cx, &body, data(session));
+                    let snapshot = session.snapshot();
+                    view.sync(cx, &body, snapshot.borrowed().into());
                 }
             }
         }
@@ -357,9 +358,10 @@ impl DocumentHost {
         session: &EditorSession,
     ) -> Option<ViewOutcome> {
         let body = BodyWidgets::new(cx, ui);
+        let snapshot = session.snapshot();
         self.views
             .get_mut(&self.tabs.active)
-            .map(|view| view.handle(cx, &body, actions, data(session)))
+            .map(|view| view.handle(cx, &body, actions, snapshot.borrowed().into()))
     }
 
     pub fn on_active_escape(&mut self, cx: &mut Cx, ui: &WidgetRef) {
@@ -378,9 +380,10 @@ impl DocumentHost {
         result: PopupResult,
     ) -> Option<ViewOutcome> {
         let body = BodyWidgets::new(cx, ui);
+        let snapshot = session.snapshot();
         self.views
             .get_mut(&self.tabs.active)
-            .map(|view| view.on_popup_result(cx, &body, data(session), tag, result))
+            .map(|view| view.on_popup_result(cx, &body, snapshot.borrowed().into(), tag, result))
     }
 
     pub fn on_active_popup_armed(
@@ -392,16 +395,17 @@ impl DocumentHost {
         id: Option<LiveId>,
     ) -> Option<ViewOutcome> {
         let body = BodyWidgets::new(cx, ui);
+        let snapshot = session.snapshot();
         self.views
             .get_mut(&self.tabs.active)
-            .map(|view| view.on_popup_armed(cx, &body, data(session), tag, id))
+            .map(|view| view.on_popup_armed(cx, &body, snapshot.borrowed().into(), tag, id))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::doc_view::{DocViewIdentity, DocumentHeaderChrome};
+    use crate::doc_view::{DocViewIdentity, DocumentHeaderChrome, ViewData};
     use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
     use crate::icons::Icon;
     use std::cell::{Cell, RefCell};

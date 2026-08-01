@@ -561,7 +561,8 @@ mod tests {
         let temp = TempDir::new();
         let session = crate::editor_session::EditorSession::default();
 
-        let error = save_snapshot_atomic(temp.path(), session.snapshot()).unwrap_err();
+        let snapshot = session.snapshot();
+        let error = save_snapshot_atomic(temp.path(), snapshot.borrowed()).unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());

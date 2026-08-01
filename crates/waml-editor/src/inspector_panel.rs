@@ -1321,7 +1321,8 @@ mod tests {
             "<invalid multiplicity>"
         );
 
-        let mut actions: Vec<_> = crate::doc_view::ViewData::from(session.snapshot())
+        let snapshot = session.snapshot();
+        let mut actions: Vec<_> = crate::doc_view::ViewData::from(snapshot.borrowed())
             .uml_repair_actions("broken")
             .unwrap();
         let titles: Vec<_> = actions.iter().map(|action| action.title.as_str()).collect();

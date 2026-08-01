@@ -1,22 +1,45 @@
+use std::{collections::BTreeMap, error::Error, fmt, sync::Arc};
+
 use waml::analysis::{
-    prepare_candidate, AnalysisError, OkfAnalysis, PreparedCandidate, PreviousAnalyses,
+    prepare_candidate, AnalysisError, DocumentId, OkfAnalysis, PreparedCandidate, PreviousAnalyses,
+    PromotedMarkdownUpdate,
 };
-use waml::edit::{EditBatch, EditContext, EditError, PendingEdit};
-use waml::source::SourceBundle;
+use waml::edit::{
+    apply_exact_source_edit, EditBatch, EditContext, EditError, ExactSourceEditError, PendingEdit,
+};
+use waml::source::{BundlePath, SourceBundle};
+use waml_markdown_editor::edit::ProposedMarkdownEdit;
+use waml_syntax::{
+    DocumentRevision, FullReparseReason, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, TextChange,
+};
 
 use crate::document::EditIntent;
 use crate::editor_history::{EditorHistory, HistoryStateId};
+use crate::markdown_analysis::{
+    CompletionInstall, CompletionInvariantError, SemanticAnalysisCompletion,
+    SemanticAnalysisRequest,
+};
 use crate::view_history::ViewLocation;
 #[cfg(test)]
 use crate::view_history::{DocumentLocator, ViewAnchor};
 
 pub struct EditorSession {
-    source: SourceBundle,
-    persisted_source: SourceBundle,
-    okf_analysis: OkfAnalysis,
-    uml: waml::uml::Analysis,
-    revision: u64,
+    current: Arc<EditorSessionSnapshot>,
     history: EditorHistory,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
+pub struct EditorSessionSnapshot {
+    pub revision: u64,
+    pub source: Arc<SourceBundle>,
+    pub persisted_source: Arc<SourceBundle>,
+    pub markdown_snapshots: Arc<BTreeMap<DocumentId, Arc<MarkdownSyntaxSnapshot>>>,
+    pub okf_analysis: Arc<OkfAnalysis>,
+    pub uml_analysis: Arc<waml::uml::Analysis>,
+    pub dirty_revision: Option<u64>,
+    pub affected_documents: Arc<[DocumentId]>,
+    document_paths: Arc<BTreeMap<DocumentId, BundlePath>>,
 }
 
 #[derive(Clone, Copy)]
@@ -29,17 +52,121 @@ pub struct EditorSnapshot<'a> {
     pub dirty_revision: Option<u64>,
 }
 
+#[allow(dead_code)]
+impl EditorSessionSnapshot {
+    pub fn borrowed(&self) -> EditorSnapshot<'_> {
+        EditorSnapshot {
+            source: &self.source,
+            persisted_source: &self.persisted_source,
+            okf_analysis: &self.okf_analysis,
+            uml_analysis: &self.uml_analysis,
+            revision: self.revision,
+            dirty_revision: self.dirty_revision,
+        }
+    }
+
+    pub fn markdown_snapshot(&self, document: DocumentId) -> Option<&Arc<MarkdownSyntaxSnapshot>> {
+        self.markdown_snapshots.get(&document)
+    }
+}
+
+#[derive(Clone)]
+#[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
+pub struct ProposedSourceEdit {
+    pub document: DocumentId,
+    pub base_revision: DocumentRevision,
+    pub changes: Arc<[TextChange]>,
+    pub syntax_update: MarkdownSyntaxUpdate,
+}
+
+impl fmt::Debug for ProposedSourceEdit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProposedSourceEdit")
+            .field("document", &self.document)
+            .field("base_revision", &self.base_revision)
+            .field("changes", &self.changes)
+            .field("syntax_revision", &self.syntax_update.snapshot.revision())
+            .finish()
+    }
+}
+
+#[allow(dead_code)]
+impl ProposedSourceEdit {
+    pub fn from_local(document: DocumentId, local: ProposedMarkdownEdit) -> Self {
+        Self {
+            document,
+            base_revision: local.edit.base_revision,
+            changes: Arc::from(local.edit.changes),
+            syntax_update: local.syntax_update,
+        }
+    }
+}
+
+#[derive(Debug)]
+#[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
+pub enum SourceEditError {
+    DocumentNotFound {
+        document: DocumentId,
+    },
+    DocumentPathInvariant {
+        document: DocumentId,
+    },
+    StaleBaseRevision {
+        document: DocumentId,
+        base: DocumentRevision,
+        current: DocumentRevision,
+    },
+    RevisionOverflow {
+        document: DocumentId,
+        current: DocumentRevision,
+    },
+    InvalidChanges {
+        document: DocumentId,
+        reason: FullReparseReason,
+    },
+    SyntaxRevisionMismatch {
+        document: DocumentId,
+        expected: DocumentRevision,
+        actual: DocumentRevision,
+    },
+    ResultTextMismatch {
+        document: DocumentId,
+    },
+    BaseIdentityMismatch {
+        document: DocumentId,
+    },
+    Edit(EditError),
+}
+
+impl fmt::Display for SourceEditError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "source edit error: {self:?}")
+    }
+}
+
+impl Error for SourceEditError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Edit(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<EditError> for SourceEditError {
+    fn from(error: EditError) -> Self {
+        Self::Edit(error)
+    }
+}
+
 impl Default for EditorSession {
     fn default() -> Self {
         let prepared = prepare_candidate(SourceBundle::default(), None, 0)
             .expect("the empty source bundle must produce valid analyses");
-        let (source, okf_analysis, uml, revision) = prepared.into_parts();
+        let current = snapshot_from_prepared(prepared, None, Arc::from([]));
         Self {
-            persisted_source: source.clone(),
-            source,
-            okf_analysis,
-            uml,
-            revision,
+            current,
             history: EditorHistory::default(),
         }
     }
@@ -77,32 +204,32 @@ impl SessionChange {
             conflicts_changed: true,
         }
     }
+
+    #[allow(dead_code)] // Used when the Task 2 proposal path is mounted in Task 4.
+    fn source_only(revision: u64) -> SessionChange {
+        SessionChange {
+            revision,
+            source_changed: true,
+            okf_changed: false,
+            uml_changed: false,
+            navigation_changed: false,
+            conflicts_changed: false,
+        }
+    }
 }
 
 impl EditorSession {
-    pub fn snapshot(&self) -> EditorSnapshot<'_> {
-        EditorSnapshot {
-            source: &self.source,
-            persisted_source: &self.persisted_source,
-            okf_analysis: &self.okf_analysis,
-            uml_analysis: &self.uml,
-            revision: self.revision,
-            dirty_revision: self.is_dirty().then_some(self.revision),
-        }
+    pub fn snapshot(&self) -> Arc<EditorSessionSnapshot> {
+        self.current.clone()
     }
 
     pub fn replace(&mut self, source: SourceBundle) -> Result<SessionChange, EditError> {
-        let next_revision = self.revision.wrapping_add(1);
+        let next_revision = self.current.revision.wrapping_add(1);
         let prepared = prepare_candidate(source, None, next_revision)?;
-        let (source, okf_analysis, uml, revision) = prepared.into_parts();
-
-        self.persisted_source = source.clone();
-        self.source = source;
-        self.okf_analysis = okf_analysis;
-        self.uml = uml;
-        self.revision = revision;
+        let affected = affected_documents(prepared.source(), prepared.okf());
+        self.current = snapshot_from_prepared(prepared, None, affected);
         self.history.reset();
-        Ok(SessionChange::full(self.revision))
+        Ok(SessionChange::full(self.current.revision))
     }
 
     #[cfg(test)]
@@ -162,27 +289,29 @@ impl EditorSession {
         ) -> Result<PreparedCandidate, AnalysisError>,
     {
         let applied = edit.apply_reversible(EditContext {
-            source: &self.source,
-            okf_analysis: &self.okf_analysis,
-            session_revision: self.revision,
-            uml: &self.uml,
+            source: &self.current.source,
+            okf_analysis: &self.current.okf_analysis,
+            session_revision: self.current.revision,
+            uml: &self.current.uml_analysis,
         })?;
-        let next_revision = self.revision.wrapping_add(1);
+        let next_revision = self.current.revision.wrapping_add(1);
         let prepared = prepare(
             applied.source,
             Some(PreviousAnalyses {
-                okf: &self.okf_analysis,
-                uml: &self.uml,
+                okf: &self.current.okf_analysis,
+                uml: &self.current.uml_analysis,
             }),
             next_revision,
         )?;
-        let (source, okf_analysis, uml, revision) = prepared.into_parts();
-
-        self.source = source;
-        self.okf_analysis = okf_analysis;
-        self.uml = uml;
-        self.revision = revision;
-        Ok((SessionChange::full(self.revision), applied.inverse))
+        let affected = changed_documents(&self.current, prepared.source(), prepared.okf());
+        self.current = snapshot_from_prepared(
+            prepared,
+            Some(self.current.persisted_source.clone()),
+            affected,
+        );
+        let revision = self.current.revision;
+        self.set_dirty_revision(Some(revision));
+        Ok((SessionChange::full(revision), applied.inverse))
     }
 
     fn apply_edit_with_preparer<F>(
@@ -211,6 +340,7 @@ impl EditorSession {
         let (change, inverse) = self.apply_pending_with_preparer(&edit, prepare)?;
         self.history
             .record_edit(inverse, label, merge_key, before_location, after_location);
+        self.sync_dirty_revision();
         Ok(change)
     }
 
@@ -228,6 +358,7 @@ impl EditorSession {
             Ok((change, reciprocal)) => {
                 let committed = self.history.commit_undo(prepared, reciprocal);
                 debug_assert!(committed);
+                self.sync_dirty_revision();
                 Ok(Some(HistoryEffect {
                     change,
                     label,
@@ -251,6 +382,7 @@ impl EditorSession {
             Ok((change, reciprocal)) => {
                 let committed = self.history.commit_redo(prepared, reciprocal);
                 debug_assert!(committed);
+                self.sync_dirty_revision();
                 Ok(Some(HistoryEffect {
                     change,
                     label,
@@ -266,7 +398,7 @@ impl EditorSession {
 
     #[allow(dead_code)]
     pub fn source(&self) -> &SourceBundle {
-        &self.source
+        &self.current.source
     }
 
     #[cfg(test)]
@@ -276,23 +408,23 @@ impl EditorSession {
 
     #[allow(dead_code)]
     pub fn persisted_bundle(&self) -> &SourceBundle {
-        &self.persisted_source
+        &self.current.persisted_source
     }
 
     pub fn okf_analysis(&self) -> &OkfAnalysis {
-        &self.okf_analysis
+        &self.current.okf_analysis
     }
 
     pub fn okf(&self) -> &waml::okf::Bundle {
-        &self.okf_analysis.bundle
+        &self.current.okf_analysis.bundle
     }
 
     pub fn uml_analysis(&self) -> &waml::uml::Analysis {
-        &self.uml
+        &self.current.uml_analysis
     }
 
     pub fn uml_projection(&self) -> &waml::uml::Projection {
-        &self.uml.projection
+        &self.current.uml_analysis.projection
     }
 
     #[cfg(test)]
@@ -301,17 +433,20 @@ impl EditorSession {
     }
 
     pub fn revision(&self) -> u64 {
-        self.revision
+        self.current.revision
     }
 
     pub fn is_dirty(&self) -> bool {
-        !self.history.is_saved()
+        self.current.dirty_revision.is_some()
     }
 
     pub fn mark_saved(&mut self, revision: u64, state: HistoryStateId) -> bool {
-        if revision == self.revision && state == self.history.current_state() {
-            self.persisted_source.clone_from(&self.source);
+        if revision == self.current.revision && state == self.history.current_state() {
             self.history.mark_saved();
+            let mut next = (*self.current).clone();
+            next.persisted_source = self.current.source.clone();
+            next.dirty_revision = None;
+            self.current = Arc::new(next);
             true
         } else {
             false
@@ -335,12 +470,291 @@ impl EditorSession {
     pub fn break_edit_merge_group(&mut self) {
         self.history.break_merge_group();
     }
+
+    #[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
+    pub fn promote_source_edit(
+        &mut self,
+        proposal: ProposedSourceEdit,
+        before_location: ViewLocation,
+    ) -> Result<(SessionChange, SemanticAnalysisRequest), SourceEditError> {
+        let current_snapshot = self.current.markdown_snapshot(proposal.document).ok_or(
+            SourceEditError::DocumentNotFound {
+                document: proposal.document,
+            },
+        )?;
+        let path = self
+            .current
+            .document_paths
+            .get(&proposal.document)
+            .ok_or(SourceEditError::DocumentPathInvariant {
+                document: proposal.document,
+            })?
+            .clone();
+        let current_revision = current_snapshot.revision();
+        if proposal.base_revision != current_revision {
+            return Err(SourceEditError::StaleBaseRevision {
+                document: proposal.document,
+                base: proposal.base_revision,
+                current: current_revision,
+            });
+        }
+        let expected_revision =
+            current_revision
+                .checked_next()
+                .ok_or(SourceEditError::RevisionOverflow {
+                    document: proposal.document,
+                    current: current_revision,
+                })?;
+        let syntax_revision = proposal.syntax_update.snapshot.revision();
+        if syntax_revision != expected_revision {
+            return Err(SourceEditError::SyntaxRevisionMismatch {
+                document: proposal.document,
+                expected: expected_revision,
+                actual: syntax_revision,
+            });
+        }
+        let applied = apply_exact_source_edit(
+            &self.current.source,
+            &path,
+            current_snapshot.text(),
+            &proposal.changes,
+            proposal.syntax_update.snapshot.text().clone(),
+        )
+        .map_err(|error| match error {
+            ExactSourceEditError::DocumentNotFound { .. } => {
+                SourceEditError::DocumentPathInvariant {
+                    document: proposal.document,
+                }
+            }
+            ExactSourceEditError::BaseIdentityMismatch { .. } => {
+                SourceEditError::BaseIdentityMismatch {
+                    document: proposal.document,
+                }
+            }
+            ExactSourceEditError::InvalidChanges { reason } => SourceEditError::InvalidChanges {
+                document: proposal.document,
+                reason,
+            },
+            ExactSourceEditError::ResultTextMismatch { .. } => {
+                SourceEditError::ResultTextMismatch {
+                    document: proposal.document,
+                }
+            }
+            ExactSourceEditError::Transaction(error) => SourceEditError::Edit(error),
+        })?;
+        let next_session_revision =
+            self.current
+                .revision
+                .checked_add(1)
+                .ok_or(SourceEditError::RevisionOverflow {
+                    document: proposal.document,
+                    current: current_revision,
+                })?;
+        let previous = self.current.clone();
+        let source = Arc::new(applied.source);
+        let promoted: Arc<[PromotedMarkdownUpdate]> = Arc::from([PromotedMarkdownUpdate {
+            document: proposal.document,
+            base_revision: proposal.base_revision,
+            update: proposal.syntax_update.clone(),
+        }]);
+        let mut markdown_snapshots = (*self.current.markdown_snapshots).clone();
+        markdown_snapshots.insert(proposal.document, proposal.syntax_update.snapshot.clone());
+        let next = Arc::new(EditorSessionSnapshot {
+            revision: next_session_revision,
+            source: source.clone(),
+            persisted_source: self.current.persisted_source.clone(),
+            markdown_snapshots: Arc::new(markdown_snapshots),
+            okf_analysis: self.current.okf_analysis.clone(),
+            uml_analysis: self.current.uml_analysis.clone(),
+            dirty_revision: Some(next_session_revision),
+            affected_documents: Arc::from([proposal.document]),
+            document_paths: self.current.document_paths.clone(),
+        });
+
+        self.history.record_edit(
+            applied.inverse,
+            "Edit source",
+            None,
+            before_location.clone(),
+            before_location,
+        );
+        self.current = next;
+        let change = SessionChange::source_only(next_session_revision);
+        Ok((
+            change,
+            SemanticAnalysisRequest {
+                session_revision: next_session_revision,
+                source,
+                previous,
+                promoted,
+            },
+        ))
+    }
+
+    #[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
+    pub fn install_semantic_completion(
+        &mut self,
+        completion: SemanticAnalysisCompletion,
+    ) -> CompletionInstall {
+        if completion.session_revision != self.current.revision
+            || !Arc::ptr_eq(&completion.source, &self.current.source)
+        {
+            return CompletionInstall::IgnoredStale;
+        }
+        for (document, current) in self.current.markdown_snapshots.iter() {
+            let Some(prepared) = completion.prepared.okf().markdown_snapshot(*document) else {
+                return CompletionInstall::RejectedInvariant(
+                    CompletionInvariantError::MissingMarkdownSnapshot {
+                        document: *document,
+                    },
+                );
+            };
+            if !Arc::ptr_eq(current, prepared) {
+                return CompletionInstall::RejectedInvariant(
+                    CompletionInvariantError::MarkdownIdentityMismatch {
+                        document: *document,
+                    },
+                );
+            }
+        }
+        let prepared = match Arc::try_unwrap(completion.prepared) {
+            Ok(prepared) => prepared,
+            Err(_) => {
+                return CompletionInstall::RejectedInvariant(
+                    CompletionInvariantError::SharedPreparedCandidate,
+                )
+            }
+        };
+        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+        if revision != self.current.revision || source != *self.current.source {
+            return CompletionInstall::RejectedInvariant(
+                CompletionInvariantError::PreparedCandidateMismatch,
+            );
+        }
+        let change = SessionChange {
+            revision,
+            source_changed: false,
+            okf_changed: true,
+            uml_changed: true,
+            navigation_changed: true,
+            conflicts_changed: true,
+        };
+        self.current = Arc::new(EditorSessionSnapshot {
+            revision,
+            source: self.current.source.clone(),
+            persisted_source: self.current.persisted_source.clone(),
+            markdown_snapshots: self.current.markdown_snapshots.clone(),
+            okf_analysis: Arc::new(okf_analysis),
+            uml_analysis: Arc::new(uml_analysis),
+            dirty_revision: self.current.dirty_revision,
+            affected_documents: self.current.affected_documents.clone(),
+            document_paths: self.current.document_paths.clone(),
+        });
+        CompletionInstall::Installed(change)
+    }
+
+    fn sync_dirty_revision(&mut self) {
+        let dirty = (!self.history.is_saved()).then_some(self.current.revision);
+        self.set_dirty_revision(dirty);
+    }
+
+    fn set_dirty_revision(&mut self, dirty_revision: Option<u64>) {
+        if self.current.dirty_revision == dirty_revision {
+            return;
+        }
+        let mut next = (*self.current).clone();
+        next.dirty_revision = dirty_revision;
+        self.current = Arc::new(next);
+    }
+}
+
+fn markdown_snapshots(
+    source: &SourceBundle,
+    okf: &OkfAnalysis,
+) -> BTreeMap<DocumentId, Arc<MarkdownSyntaxSnapshot>> {
+    source
+        .documents()
+        .iter()
+        .filter_map(|document| {
+            let id = okf.catalog.id_for_path(document.path())?;
+            Some((id, okf.markdown_snapshot(id)?.clone()))
+        })
+        .collect()
+}
+
+fn affected_documents(source: &SourceBundle, okf: &OkfAnalysis) -> Arc<[DocumentId]> {
+    Arc::from(
+        source
+            .documents()
+            .iter()
+            .filter_map(|document| okf.catalog.id_for_path(document.path()))
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn changed_documents(
+    previous: &EditorSessionSnapshot,
+    source: &SourceBundle,
+    okf: &OkfAnalysis,
+) -> Arc<[DocumentId]> {
+    Arc::from(
+        source
+            .documents()
+            .iter()
+            .filter_map(|document| {
+                let id = okf.catalog.id_for_path(document.path())?;
+                let changed = previous
+                    .source
+                    .documents()
+                    .iter()
+                    .find(|previous| previous.path() == document.path())
+                    .map_or(true, |previous| previous.text() != document.text());
+                changed.then_some(id)
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn snapshot_from_prepared(
+    prepared: PreparedCandidate,
+    persisted_source: Option<Arc<SourceBundle>>,
+    affected_documents: Arc<[DocumentId]>,
+) -> Arc<EditorSessionSnapshot> {
+    let markdown_snapshots = markdown_snapshots(prepared.source(), prepared.okf());
+    let document_paths = prepared
+        .source()
+        .documents()
+        .iter()
+        .filter_map(|document| {
+            prepared
+                .okf()
+                .catalog
+                .id_for_path(document.path())
+                .map(|id| (id, document.path().clone()))
+        })
+        .collect();
+    let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+    let source = Arc::new(source);
+    Arc::new(EditorSessionSnapshot {
+        revision,
+        persisted_source: persisted_source.unwrap_or_else(|| source.clone()),
+        source,
+        markdown_snapshots: Arc::new(markdown_snapshots),
+        okf_analysis: Arc::new(okf_analysis),
+        uml_analysis: Arc::new(uml_analysis),
+        dirty_revision: None,
+        affected_documents,
+        document_paths: Arc::new(document_paths),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::document::EditIntent;
+    use crate::markdown_analysis::{
+        run_semantic_request, run_semantic_request_with_preparer, CompletionInstall,
+    };
     use crate::view_history::{DocumentLocator, ViewAnchor, ViewLocation};
     use std::{num::NonZeroU64, sync::Arc};
     use waml::action::{
@@ -350,6 +764,11 @@ mod tests {
     use waml::layout::Direction;
     use waml::source::BundlePath;
     use waml::uml::Op;
+    use waml_markdown_editor::{
+        document::MarkdownDocumentSnapshot,
+        edit::{EditCommand as MarkdownEditCommand, HistoryGroup, ProposedMarkdownEdit},
+        session::MarkdownDocumentSession,
+    };
     use waml_syntax::{
         annotate_occurrence, find_annotation, GreenElement, GreenText, MarkdownDialect,
         RewriteError, SyntaxAnnotation, SyntaxTree,
@@ -366,6 +785,395 @@ mod tests {
                 "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n{layout}"
             ),
         )])
+    }
+
+    fn source_location(concept_id: &str) -> ViewLocation {
+        ViewLocation {
+            document: DocumentLocator::primary(concept_id),
+            anchor: ViewAnchor::None,
+        }
+    }
+
+    fn source_session(text: &str) -> EditorSession {
+        let mut session = EditorSession::default();
+        session
+            .replace(source(vec![("order.md".into(), text.into())]))
+            .unwrap();
+        session
+    }
+
+    fn set_current_source(session: &mut EditorSession, source: SourceBundle) {
+        let mut current = (*session.current).clone();
+        current.source = Arc::new(source);
+        session.current = Arc::new(current);
+    }
+
+    fn install_prepared_for_test(session: &mut EditorSession, prepared: PreparedCandidate) {
+        let persisted = session.current.persisted_source.clone();
+        let affected = session.current.affected_documents.clone();
+        let dirty = session.current.dirty_revision;
+        session.current = snapshot_from_prepared(prepared, Some(persisted), affected);
+        session.set_dirty_revision(dirty);
+    }
+
+    fn document_id(snapshot: &EditorSessionSnapshot, path: &str) -> waml::analysis::DocumentId {
+        snapshot
+            .okf_analysis
+            .catalog
+            .id_for_path(&BundlePath::parse(path).unwrap())
+            .unwrap()
+    }
+
+    fn local_replacement(
+        syntax: Arc<waml_syntax::MarkdownSyntaxSnapshot>,
+        replacement: &str,
+    ) -> ProposedMarkdownEdit {
+        let mut local =
+            MarkdownDocumentSession::new(Arc::new(MarkdownDocumentSnapshot::new(syntax)));
+        local.select_all().unwrap();
+        local
+            .execute(
+                MarkdownEditCommand::ReplaceSelections(Arc::from(replacement)),
+                HistoryGroup::isolated(),
+            )
+            .unwrap()
+            .proposal
+            .unwrap()
+    }
+
+    #[test]
+    fn accepted_source_edit_advances_once_and_promotes_the_same_syntax_arc() {
+        let mut session = source_session("# Order\n");
+        let before = session.snapshot();
+        let id = document_id(&before, "order.md");
+        let local = local_replacement(
+            before.markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let syntax = local.syntax_update.snapshot.clone();
+
+        let (change, request) = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, local),
+                source_location("order"),
+            )
+            .unwrap();
+
+        let promoted = session.snapshot();
+        assert_eq!(promoted.revision, before.revision + 1);
+        assert_eq!(change.revision, promoted.revision);
+        assert_eq!(promoted.dirty_revision, Some(promoted.revision));
+        assert!(Arc::ptr_eq(
+            promoted.markdown_snapshot(id).unwrap(),
+            &syntax
+        ));
+        let completion = run_semantic_request(request).unwrap();
+        assert!(matches!(
+            session.install_semantic_completion(completion),
+            CompletionInstall::Installed(_)
+        ));
+        assert!(Arc::ptr_eq(
+            session
+                .snapshot()
+                .okf_analysis
+                .markdown_snapshot(id)
+                .unwrap(),
+            &syntax,
+        ));
+        assert!(Arc::ptr_eq(
+            session
+                .snapshot()
+                .okf_analysis
+                .catalog
+                .document(id)
+                .unwrap()
+                .text()
+                .shared(),
+            syntax.text().shared(),
+        ));
+    }
+
+    #[test]
+    fn stale_or_invalid_source_proposals_do_not_mutate_snapshot_or_history() {
+        let mut session = source_session("# Order\n");
+        let before = session.snapshot();
+        let before_state = session.history_state();
+        let id = document_id(&before, "order.md");
+        let local = local_replacement(
+            before.markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let mut stale = ProposedSourceEdit::from_local(id, local.clone());
+        stale.base_revision = stale.base_revision.checked_next().unwrap();
+
+        assert!(matches!(
+            session.promote_source_edit(stale, source_location("order")),
+            Err(SourceEditError::StaleBaseRevision { .. })
+        ));
+        assert!(Arc::ptr_eq(&session.snapshot(), &before));
+        assert_eq!(session.history_state(), before_state);
+
+        let mut invalid = ProposedSourceEdit::from_local(id, local);
+        let duplicate = invalid.changes[0].clone();
+        invalid.changes = Arc::from([duplicate.clone(), duplicate]);
+        assert!(matches!(
+            session.promote_source_edit(invalid, source_location("order")),
+            Err(SourceEditError::InvalidChanges { .. })
+        ));
+        assert!(Arc::ptr_eq(&session.snapshot(), &before));
+        assert_eq!(session.history_state(), before_state);
+    }
+
+    #[test]
+    fn mismatched_syntax_text_is_rejected_before_history_insertion() {
+        let mut session = source_session("# Order\n");
+        let before = session.snapshot();
+        let before_state = session.history_state();
+        let id = document_id(&before, "order.md");
+        let purchase = local_replacement(
+            before.markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let customer = local_replacement(
+            before.markdown_snapshot(id).unwrap().clone(),
+            "# Customer\n",
+        );
+        let mut proposal = ProposedSourceEdit::from_local(id, purchase);
+        proposal.syntax_update = customer.syntax_update;
+
+        assert!(matches!(
+            session.promote_source_edit(proposal, source_location("order")),
+            Err(SourceEditError::ResultTextMismatch { .. })
+        ));
+        assert!(Arc::ptr_eq(&session.snapshot(), &before));
+        assert_eq!(session.history_state(), before_state);
+    }
+
+    #[test]
+    fn stale_completions_and_equal_bytes_from_another_source_arc_are_ignored() {
+        let mut session = source_session("# Order\n");
+        let before = session.snapshot();
+        let id = document_id(&before, "order.md");
+        let first = local_replacement(
+            before.markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let (_, first_request) = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, first),
+                source_location("order"),
+            )
+            .unwrap();
+        let stale_first_completion = run_semantic_request(first_request.clone()).unwrap();
+        assert!(matches!(
+            session.install_semantic_completion(run_semantic_request(first_request).unwrap()),
+            CompletionInstall::Installed(_)
+        ));
+        let current = session.snapshot();
+        let second = local_replacement(
+            current.markdown_snapshot(id).unwrap().clone(),
+            "# Customer\n",
+        );
+        let (_, second_request) = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, second),
+                source_location("order"),
+            )
+            .unwrap();
+        let second_completion = run_semantic_request(second_request).unwrap();
+        assert!(matches!(
+            session.install_semantic_completion(second_completion),
+            CompletionInstall::Installed(_)
+        ));
+        let after_newer = session.snapshot();
+        assert!(matches!(
+            session.install_semantic_completion(stale_first_completion),
+            CompletionInstall::IgnoredStale
+        ));
+        assert!(Arc::ptr_eq(&session.snapshot(), &after_newer));
+
+        let current = session.snapshot();
+        let third = local_replacement(
+            current.markdown_snapshot(id).unwrap().clone(),
+            "# Invoice\n",
+        );
+        let (_, request) = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, third),
+                source_location("order"),
+            )
+            .unwrap();
+        let mut completion = run_semantic_request(request).unwrap();
+        completion.source = Arc::new((*completion.source).clone());
+        let before_install = session.snapshot();
+        assert!(matches!(
+            session.install_semantic_completion(completion),
+            CompletionInstall::IgnoredStale
+        ));
+        assert!(Arc::ptr_eq(&session.snapshot(), &before_install));
+    }
+
+    #[test]
+    fn proposal_uses_published_syntax_when_semantic_catalog_lags() {
+        let mut session = source_session("# Order\n");
+        let before = session.snapshot();
+        let id = document_id(&before, "order.md");
+        let first = local_replacement(
+            before.markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, first),
+                source_location("order"),
+            )
+            .unwrap();
+        let pending = session.snapshot();
+        assert!(Arc::ptr_eq(
+            pending.source.documents()[0].text_shared(),
+            pending.markdown_snapshot(id).unwrap().text().shared(),
+        ));
+        assert_ne!(
+            pending.markdown_snapshot(id).unwrap().revision(),
+            pending
+                .okf_analysis
+                .markdown_snapshot(id)
+                .unwrap()
+                .revision(),
+            "fixture must keep semantic catalog one accepted edit behind",
+        );
+        let second = local_replacement(
+            pending.markdown_snapshot(id).unwrap().clone(),
+            "# Customer\n",
+        );
+        let expected = second.syntax_update.snapshot.clone();
+
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, second),
+                source_location("order"),
+            )
+            .unwrap();
+
+        assert!(Arc::ptr_eq(
+            session.snapshot().markdown_snapshot(id).unwrap(),
+            &expected,
+        ));
+        let second_pending = session.snapshot();
+        assert!(Arc::ptr_eq(
+            second_pending.source.documents()[0].text_shared(),
+            second_pending
+                .markdown_snapshot(id)
+                .unwrap()
+                .text()
+                .shared(),
+        ));
+        assert!(
+            second_pending
+                .okf_analysis
+                .markdown_snapshot(id)
+                .unwrap()
+                .revision()
+                < second_pending.markdown_snapshot(id).unwrap().revision(),
+            "the semantic catalog must remain behind the second accepted source revision",
+        );
+
+        session.undo().unwrap().unwrap();
+        assert_eq!(session.source().documents()[0].text(), "# Purchase\n");
+    }
+
+    #[test]
+    fn mismatched_document_path_is_an_invariant_and_preserves_state() {
+        let mut session = source_session("# Order\n");
+        let initial = session.snapshot();
+        let id = document_id(&initial, "order.md");
+        let local = local_replacement(
+            initial.markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let mut corrupted = (*initial).clone();
+        let mut paths = (*corrupted.document_paths).clone();
+        paths.insert(id, BundlePath::parse("missing.md").unwrap());
+        corrupted.document_paths = Arc::new(paths);
+        session.current = Arc::new(corrupted);
+        let before = session.snapshot();
+        let history = session.history_state();
+
+        assert!(matches!(
+            session.promote_source_edit(
+                ProposedSourceEdit::from_local(id, local),
+                source_location("order"),
+            ),
+            Err(SourceEditError::DocumentPathInvariant { document }) if document == id
+        ));
+        assert!(Arc::ptr_eq(&session.snapshot(), &before));
+        assert_eq!(session.history_state(), history);
+    }
+
+    #[test]
+    fn copied_source_base_is_rejected_without_mutating_snapshot_or_history() {
+        let mut session = source_session("# Order\n");
+        let initial = session.snapshot();
+        let id = document_id(&initial, "order.md");
+        let local = local_replacement(
+            initial.markdown_snapshot(id).unwrap().clone(),
+            "# Purchase\n",
+        );
+        let copied = SourceBundle::try_from_pairs([("order.md", "# Order\n")]).unwrap();
+        assert!(!Arc::ptr_eq(
+            copied.documents()[0].text_shared(),
+            initial.markdown_snapshot(id).unwrap().text().shared(),
+        ));
+        let mut corrupted = (*initial).clone();
+        corrupted.source = Arc::new(copied);
+        session.current = Arc::new(corrupted);
+        let before = session.snapshot();
+        let history = session.history_state();
+
+        assert!(matches!(
+            session.promote_source_edit(
+                ProposedSourceEdit::from_local(id, local),
+                source_location("order"),
+            ),
+            Err(SourceEditError::BaseIdentityMismatch { document }) if document == id
+        ));
+        assert!(Arc::ptr_eq(&session.snapshot(), &before));
+        assert_eq!(session.history_state(), history);
+    }
+
+    #[test]
+    fn semantic_failure_keeps_the_accepted_literal_source_and_prior_projection() {
+        let mut session = source_session("# Order\n");
+        let before = session.snapshot();
+        let id = document_id(&before, "order.md");
+        let local = local_replacement(
+            before.markdown_snapshot(id).unwrap().clone(),
+            "# Literal invalid island ???\n",
+        );
+        let (_, request) = session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(id, local),
+                source_location("order"),
+            )
+            .unwrap();
+        let accepted = session.snapshot();
+
+        let result = run_semantic_request_with_preparer(request, |_, _, _, _| {
+            Err(AnalysisError::StructuralInvariant {
+                stage: AnalysisStage::Okf,
+                reason: "injected semantic failure".into(),
+            })
+        });
+
+        assert!(result.is_err());
+        let after = session.snapshot();
+        assert!(Arc::ptr_eq(&after, &accepted));
+        assert_eq!(
+            after.source.documents()[0].text(),
+            "# Literal invalid island ???\n"
+        );
+        assert!(Arc::ptr_eq(&after.okf_analysis, &before.okf_analysis));
+        assert!(Arc::ptr_eq(&after.uml_analysis, &before.uml_analysis));
     }
 
     fn token_content_range<L: waml_syntax::SyntaxLanguage>(
@@ -526,15 +1334,20 @@ mod tests {
             ]))
             .unwrap();
         let document_id = session
-            .uml
+            .uml_analysis()
             .syntax
             .catalog()
             .id_for_path(&BundlePath::parse("class.md").unwrap())
             .unwrap();
-        let old_tree = session.uml.syntax.document(document_id).unwrap().syntax();
+        let old_tree = session
+            .uml_analysis()
+            .syntax
+            .document(document_id)
+            .unwrap()
+            .syntax();
         assert_clean_layout_alignment(old_tree);
         let attribute_island = session
-            .uml
+            .uml_analysis()
             .island_syntax
             .document(document_id)
             .unwrap()
@@ -552,18 +1365,20 @@ mod tests {
         ));
         let replacement_syntax =
             waml::uml::analysis::test_support::island_syntax_with_replaced_tree(
-                &session.uml,
+                session.uml_analysis(),
                 document_id,
                 attribute_island.owner(),
                 annotated_tree.clone(),
             )
             .unwrap();
-        session.uml.island_syntax = replacement_syntax;
+        Arc::get_mut(&mut Arc::get_mut(&mut session.current).unwrap().uml_analysis)
+            .unwrap()
+            .island_syntax = replacement_syntax;
         let baseline_current = session.source().clone();
         let baseline_persisted = session.persisted_bundle().clone();
 
         for iteration in 0..32 {
-            let snapshot = session.uml.syntax.document(document_id).unwrap();
+            let snapshot = session.uml_analysis().syntax.document(document_id).unwrap();
             assert_clean_layout_alignment(snapshot.syntax());
             let current_document = snapshot.document();
             let authored = current_document.text().shared();
@@ -592,7 +1407,12 @@ mod tests {
             let batch = SyntaxChangeBatch::new(action).unwrap();
             session.apply(batch).unwrap();
             assert_clean_layout_alignment(
-                session.uml.syntax.document(document_id).unwrap().syntax(),
+                session
+                    .uml_analysis()
+                    .syntax
+                    .document(document_id)
+                    .unwrap()
+                    .syntax(),
             );
         }
 
@@ -610,7 +1430,7 @@ mod tests {
             .persisted_bundle()
             .shares_text_with(&baseline_persisted, "class.md"));
 
-        let final_snapshot = session.uml.syntax.document(document_id).unwrap();
+        let final_snapshot = session.uml_analysis().syntax.document(document_id).unwrap();
         let final_tree = final_snapshot.syntax();
         let final_attribute = first_attribute(final_tree.root());
         let mapped_annotations = find_annotation(final_tree, annotation_id);
@@ -755,8 +1575,11 @@ mod tests {
             &snapshot.okf_analysis.catalog,
             snapshot.uml_analysis.syntax.catalog(),
         ));
-        assert_eq!(snapshot.source, session.source());
-        assert_eq!(snapshot.persisted_source, session.persisted_bundle());
+        assert_eq!(snapshot.source.as_ref(), session.source());
+        assert_eq!(
+            snapshot.persisted_source.as_ref(),
+            session.persisted_bundle()
+        );
         assert_eq!(snapshot.dirty_revision, None);
     }
 
@@ -1647,38 +2470,34 @@ mod tests {
                 "Retitle diagram",
             ))
             .unwrap();
-        let applied_source = session.source.clone();
+        let applied_source = session.source().clone();
 
-        session.source = diagram_bundle("tampered");
-        let failed_undo_source = session.source.clone();
+        set_current_source(&mut session, diagram_bundle("tampered"));
+        let failed_undo_source = session.source().clone();
         let failed_undo_revision = session.revision();
         assert!(session.undo().is_err());
         assert!(session.can_undo());
-        assert_eq!(session.source, failed_undo_source);
+        assert_eq!(session.source(), &failed_undo_source);
         assert_eq!(session.revision(), failed_undo_revision);
 
-        session.source = applied_source.clone();
         let prepared = prepare_candidate(applied_source, None, session.revision()).unwrap();
-        let (source, okf_analysis, uml, _) = prepared.into_parts();
-        session.source = source;
-        session.okf_analysis = okf_analysis;
-        session.uml = uml;
+        install_prepared_for_test(&mut session, prepared);
         session.undo().unwrap().unwrap();
         assert!(session.can_redo());
 
         let tampered = SourceBundle::try_from_pairs([(
             "dia.md",
-            session.source.documents()[0]
+            session.source().documents()[0]
                 .text()
                 .replace("title: D", "title: Other"),
         )])
         .unwrap();
-        session.source = tampered;
-        let failed_redo_source = session.source.clone();
+        set_current_source(&mut session, tampered);
+        let failed_redo_source = session.source().clone();
         let failed_redo_revision = session.revision();
         assert!(session.redo().is_err());
         assert!(session.can_redo());
-        assert_eq!(session.source, failed_redo_source);
+        assert_eq!(session.source(), &failed_redo_source);
         assert_eq!(session.revision(), failed_redo_revision);
     }
 

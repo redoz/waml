@@ -39,4 +39,3 @@ winresource = "0.1"
 
 [dev-dependencies]
 waml = { path = "../waml", features = ["serde", "test-support"] }
-waml-syntax = { path = "../waml-syntax" }

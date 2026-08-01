@@ -1,10 +1,10 @@
 use reversible::{DeltaBatch, SourceDelta};
 use std::sync::Arc;
 
-use crate::source::{SourceBundle, SourceDocument};
+use crate::source::{BundlePath, SourceBundle, SourceDocument};
 use crate::{analysis::OkfAnalysis, host, uml};
 use std::fmt;
-use waml_syntax::{ChangeMap, DocumentRevision, SourceText, TextChange};
+use waml_syntax::{ChangeMap, DocumentRevision, FullReparseReason, SourceText, TextChange};
 
 mod reversible;
 
@@ -39,6 +39,30 @@ pub struct AppliedEdit {
     pub inverse: PendingEdit,
 }
 
+#[derive(Debug)]
+pub enum ExactSourceEditError {
+    DocumentNotFound { path: BundlePath },
+    BaseIdentityMismatch { path: BundlePath },
+    InvalidChanges { reason: FullReparseReason },
+    ResultTextMismatch { path: BundlePath },
+    Transaction(EditError),
+}
+
+impl fmt::Display for ExactSourceEditError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "exact source edit failed: {self:?}")
+    }
+}
+
+impl std::error::Error for ExactSourceEditError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Transaction(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 pub trait EditBatch: sealed::Sealed {
     fn lower(&self, context: EditContext<'_>) -> Result<SourceBundle, EditError>;
 
@@ -49,12 +73,24 @@ pub trait EditBatch: sealed::Sealed {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ExactSourceEdit {
     pub document: crate::analysis::DocumentId,
     pub base_revision: DocumentRevision,
     pub changes: Arc<[TextChange]>,
     pub expected_text: SourceText,
+}
+
+impl fmt::Debug for ExactSourceEdit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExactSourceEdit")
+            .field("document", &self.document)
+            .field("base_revision", &self.base_revision)
+            .field("changes", &self.changes)
+            .field("expected_text_len", &self.expected_text.len())
+            .finish()
+    }
 }
 
 impl sealed::Sealed for ExactSourceEdit {}
@@ -72,33 +108,84 @@ impl EditBatch for ExactSourceEdit {
                 "document revision does not match the edit base",
             ));
         }
+        lower_exact_source_edit(
+            context.source,
+            document.path(),
+            document.text(),
+            &self.changes,
+            self.expected_text.clone(),
+        )
+        .map_err(EditError::from)
+    }
+}
 
-        let change_map = ChangeMap::checked(document.text(), &self.changes)
-            .map_err(|reason| edit_error("source.change_map", format!("{reason:?}")))?;
-        let mut result = String::with_capacity(change_map.new_len().to_usize());
-        let source = document.text().shared().as_str();
-        let mut copied_through = 0;
-        for change in self.changes.iter() {
-            let start = change.old_range.start().to_usize();
-            let end = change.old_range.end().to_usize();
-            result.push_str(&source[copied_through..start]);
-            result.push_str(&change.replacement);
-            copied_through = end;
-        }
-        result.push_str(&source[copied_through..]);
-        if result.as_bytes() != self.expected_text.shared().as_bytes() {
-            return Err(edit_error(
-                "source.expected_text",
-                "changes do not produce the expected text",
-            ));
-        }
+pub fn apply_exact_source_edit(
+    source: &SourceBundle,
+    path: &BundlePath,
+    accepted_base: &SourceText,
+    changes: &[TextChange],
+    replacement: SourceText,
+) -> Result<AppliedEdit, ExactSourceEditError> {
+    let updated = lower_exact_source_edit(source, path, accepted_base, changes, replacement)?;
+    let inverse = PendingEdit::from_delta(SourceDelta::between(&updated, source));
+    Ok(AppliedEdit {
+        source: updated,
+        inverse,
+    })
+}
 
-        let replacement = SourceDocument::from_shared(
-            document.path().clone(),
-            self.expected_text.shared().clone(),
-        );
-        host::replace_document(context.source, replacement)
-            .map_err(|reason| edit_error("source.document", reason.to_string()))
+fn lower_exact_source_edit(
+    source_bundle: &SourceBundle,
+    path: &BundlePath,
+    accepted_base: &SourceText,
+    changes: &[TextChange],
+    replacement_text: SourceText,
+) -> Result<SourceBundle, ExactSourceEditError> {
+    let source_document = source_bundle
+        .document(path)
+        .ok_or_else(|| ExactSourceEditError::DocumentNotFound { path: path.clone() })?;
+    if !Arc::ptr_eq(source_document.text_shared(), accepted_base.shared()) {
+        return Err(ExactSourceEditError::BaseIdentityMismatch { path: path.clone() });
+    }
+    let change_map = ChangeMap::checked(accepted_base, changes)
+        .map_err(|reason| ExactSourceEditError::InvalidChanges { reason })?;
+    let mut result = String::with_capacity(change_map.new_len().to_usize());
+    let source = accepted_base.shared().as_str();
+    let mut copied_through = 0;
+    for change in changes {
+        let start = change.old_range.start().to_usize();
+        let end = change.old_range.end().to_usize();
+        result.push_str(&source[copied_through..start]);
+        result.push_str(&change.replacement);
+        copied_through = end;
+    }
+    result.push_str(&source[copied_through..]);
+    if result.as_bytes() != replacement_text.shared().as_bytes() {
+        return Err(ExactSourceEditError::ResultTextMismatch { path: path.clone() });
+    }
+    let replacement = SourceDocument::from_shared(path.clone(), replacement_text.shared().clone());
+    host::replace_document(source_bundle, replacement).map_err(|reason| {
+        ExactSourceEditError::Transaction(edit_error("source.document", reason.to_string()))
+    })
+}
+
+impl From<ExactSourceEditError> for EditError {
+    fn from(error: ExactSourceEditError) -> Self {
+        match error {
+            other @ ExactSourceEditError::DocumentNotFound { .. } => {
+                edit_error("source.document", other.to_string())
+            }
+            other @ ExactSourceEditError::BaseIdentityMismatch { .. } => {
+                edit_error("source.base_identity", other.to_string())
+            }
+            other @ ExactSourceEditError::InvalidChanges { .. } => {
+                edit_error("source.change_map", other.to_string())
+            }
+            other @ ExactSourceEditError::ResultTextMismatch { .. } => {
+                edit_error("source.expected_text", other.to_string())
+            }
+            ExactSourceEditError::Transaction(error) => error,
+        }
     }
 }
 
