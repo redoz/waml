@@ -20,7 +20,7 @@ waml = { path = "../waml", features = ["serde"] }
 # folder toggles, plus app-owned Markdown vertical scroll snapshot/restore from
 # waml-history-scroll-anchors-current. rev is the reproducible pin; survives upstream
 # force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "c38f529984eda61e258ca69fb50c6712d85c74c1" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "e82da432" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
