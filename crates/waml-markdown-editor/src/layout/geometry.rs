@@ -401,6 +401,99 @@ impl LayoutSnapshot {
         self.dirty_block_range.clone()
     }
 
+    /// Largest scroll offset that still shows content in `viewport_height`.
+    pub fn max_scroll_y(&self, viewport_height: f64) -> f64 {
+        (self.content_size.y - viewport_height).max(0.0)
+    }
+
+    /// Interpolates from `previous` toward `target` by an already-eased scalar.
+    ///
+    /// The result starts from the complete target snapshot and replaces only
+    /// the geometry of elements that survive under a stable identity. New
+    /// target elements stay at target geometry and deleted elements are absent,
+    /// so nothing is ever invented or resurrected mid-transition.
+    pub fn interpolate(previous: &Self, target: &Self, eased: f64) -> Self {
+        let eased = eased.clamp(0.0, 1.0);
+        let previous_clusters = previous
+            .clusters
+            .iter()
+            .map(|cluster| (cluster.id, cluster))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let previous_blocks = previous
+            .blocks
+            .iter()
+            .map(|block| (block.id, block))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        let clusters = target
+            .clusters
+            .iter()
+            .map(|cluster| {
+                let Some(from) = previous_clusters.get(&cluster.id) else {
+                    return cluster.clone();
+                };
+                let mut moved = cluster.clone();
+                moved.rect = lerp_rect(from.rect, cluster.rect, eased);
+                moved.caret_stops =
+                    interpolate_stops(&from.caret_stops, &cluster.caret_stops, eased);
+                moved.glyphs = interpolate_glyphs(&from.glyphs, &cluster.glyphs, eased);
+                moved
+            })
+            .collect::<Vec<_>>();
+        let blocks = target
+            .blocks
+            .iter()
+            .map(|block| {
+                let mut moved = *block;
+                if let Some(from) = previous_blocks.get(&block.id) {
+                    moved.rect = lerp_rect(from.rect, block.rect, eased);
+                }
+                moved
+            })
+            .collect::<Vec<_>>();
+        let lanes = target
+            .lanes
+            .iter()
+            .cloned()
+            .map(|mut lane| {
+                if let Some(rect) = clusters
+                    .get(lane.cluster_range.clone())
+                    .and_then(|slice| slice.first().map(|cluster| cluster.rect))
+                {
+                    lane.rect.pos.y = rect.pos.y;
+                }
+                lane
+            })
+            .collect::<Vec<_>>();
+        let rows = target
+            .rows
+            .iter()
+            .cloned()
+            .map(|mut row| {
+                if let Some(lane) = lanes.get(row.lanes.start) {
+                    row.rect.pos.y = lane.rect.pos.y;
+                }
+                row
+            })
+            .collect::<Vec<_>>();
+
+        Self {
+            revision: target.revision,
+            viewport_width: target.viewport_width,
+            content_size: target.content_size,
+            visual_lines: target.visual_lines.clone(),
+            rows: rows.into(),
+            lanes: lanes.into(),
+            blocks: blocks.into(),
+            clusters: clusters.into(),
+            visible_source_range: target.visible_source_range,
+            visible_block_range: target.visible_block_range.clone(),
+            block_summaries: target.block_summaries.clone(),
+            block_layouts: target.block_layouts.clone(),
+            dirty_block_range: target.dirty_block_range.clone(),
+        }
+    }
+
     pub fn source_to_point(&self, position: TextPosition) -> Option<CaretGeometry> {
         let (stop, row) = self.find_owned_stop(position)?;
         let height = row.map_or(0.0, |index| self.rows[index].rect.size.y);
@@ -682,6 +775,66 @@ impl LayoutSnapshot {
             Vec::new(),
         )
     }
+}
+
+fn lerp(from: f64, to: f64, eased: f64) -> f64 {
+    from + (to - from) * eased
+}
+
+fn lerp_rect(from: Rect, to: Rect, eased: f64) -> Rect {
+    Rect {
+        pos: dvec2(
+            lerp(from.pos.x, to.pos.x, eased),
+            lerp(from.pos.y, to.pos.y, eased),
+        ),
+        size: dvec2(
+            lerp(from.size.x, to.size.x, eased),
+            lerp(from.size.y, to.size.y, eased),
+        ),
+    }
+}
+
+/// Caret stops interpolate only when the two sides agree on their positions;
+/// otherwise the target stops are authoritative.
+fn interpolate_stops(from: &[CaretStop], to: &[CaretStop], eased: f64) -> Arc<[CaretStop]> {
+    if from.len() != to.len() {
+        return to.into();
+    }
+    from.iter()
+        .zip(to)
+        .map(|(from, to)| {
+            if from.position != to.position {
+                return *to;
+            }
+            CaretStop::new(
+                to.position,
+                dvec2(
+                    lerp(from.point.x, to.point.x, eased),
+                    lerp(from.point.y, to.point.y, eased),
+                ),
+            )
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+fn interpolate_glyphs(from: &[ShapedGlyph], to: &[ShapedGlyph], eased: f64) -> Arc<[ShapedGlyph]> {
+    if from.len() != to.len() {
+        return to.into();
+    }
+    from.iter()
+        .zip(to)
+        .map(|(from, to)| {
+            let mut glyph = to.clone();
+            glyph.origin = dvec2(
+                lerp(from.origin.x, to.origin.x, eased),
+                lerp(from.origin.y, to.origin.y, eased),
+            );
+            glyph.baseline = lerp(from.baseline, to.baseline, eased);
+            glyph
+        })
+        .collect::<Vec<_>>()
+        .into()
 }
 
 fn default_text_metrics() -> TextMetrics {

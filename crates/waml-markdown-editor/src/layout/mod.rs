@@ -22,13 +22,13 @@ pub use geometry::{
 };
 pub use makepad::{FontResolver, MakepadTextShaper};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct LayoutElementId {
     pub owner: SyntaxIdentity,
     pub fragment_ordinal: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GeometryElementId {
     pub layout: LayoutElementId,
     pub cluster_ordinal: u32,
