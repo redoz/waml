@@ -610,6 +610,10 @@ mod tests {
     use waml_markdown_editor::syntax::TextSize;
     use waml_markdown_editor::{
         input::{EditorInput, ScrollState},
+        presentation::{
+            build_draw_commands, DrawCommand, EmbeddedAssetFrame, EmbeddedState, PresentationFrame,
+            PresentationItem,
+        },
         selection::{Affinity, Selection, SelectionSet, TextPosition},
     };
 
@@ -634,6 +638,23 @@ mod tests {
     }
 
     fn draw_markdown_widget(cx: &mut Cx, ui: &WidgetRef, session: &mut MarkdownDocumentSession) {
+        draw_markdown_widget_at(
+            cx,
+            ui,
+            session,
+            Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(640.0, 480.0),
+            },
+        );
+    }
+
+    fn draw_markdown_widget_at(
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        session: &mut MarkdownDocumentSession,
+        rect: Rect,
+    ) {
         let draw_event = DrawEvent {
             redraw_all: true,
             ..DrawEvent::default()
@@ -645,9 +666,13 @@ mod tests {
         draw_list.begin_always(&mut draw_cx);
         {
             let mut cx_2d = Cx2d::new(&mut draw_cx);
-            cx_2d.begin_root_turtle(dvec2(640.0, 480.0), Layout::default());
+            cx_2d.begin_root_turtle(dvec2(1200.0, 1200.0), Layout::default());
             ui.widget(&cx_2d, ids!(markdown_surface.editor))
-                .draw_walk_all(&mut cx_2d, &mut Scope::with_data(session), Walk::fill());
+                .draw_walk_all(
+                    &mut cx_2d,
+                    &mut Scope::with_data(session),
+                    Walk::abs_rect(rect),
+                );
             cx_2d.end_turtle();
             draw_list.end(&mut cx_2d);
         }
@@ -1014,6 +1039,177 @@ mod tests {
         let text = missing.session.snapshot().text().shared().as_str();
         assert!(text.contains("No source for 'shop/order'"));
         assert!(!text.contains("# Order"));
+    }
+
+    #[test]
+    fn mounted_widget_draw_translates_every_painted_layer_and_embedded_state_once() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let editor = body.markdown_editor();
+        editor.set_paint_evidence_enabled(true);
+        let authored = concat!(
+            "---\ntype: Runbook\n---\n",
+            "# [Runbook](target)\n\n",
+            "`code`\n\n",
+            "> quote\n\n",
+            "![ready](ready.svg)\n\n",
+            "![loading](loading.svg)\n\n",
+            "![failed](failed.svg)\n",
+        );
+        let mut host = crate::editor_session::EditorSession::default();
+        host.replace(SourceBundle::try_from_pairs([("runbook.md", authored)]).unwrap())
+            .unwrap();
+        let snapshot = host.snapshot();
+        let mut view = source_view("runbook");
+        view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            panic!("the source view must retain its ready presentation");
+        };
+        let image_ids = ready
+            .plan
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                PresentationItem::EmbeddedBlock { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(image_ids.len(), 3);
+        let assets = Arc::new(EmbeddedAssetFrame {
+            revision: ready.plan.revision,
+            items: Arc::from([
+                (
+                    image_ids[0],
+                    EmbeddedState::Ready {
+                        source: waml_markdown_editor::presentation::ApprovedImageSource::Bytes {
+                            cache_key: Arc::from("mounted-ready"),
+                            media_type: waml_markdown_editor::presentation::ImageMediaType::Svg,
+                            data: Arc::from(
+                                br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>"#
+                                    .as_slice(),
+                            ),
+                            pixel_size: (8, 8),
+                        },
+                    },
+                ),
+                (image_ids[1], EmbeddedState::Loading),
+                (
+                    image_ids[2],
+                    EmbeddedState::Failed {
+                        message: Arc::from("fixture failure"),
+                    },
+                ),
+            ]),
+        });
+        let layout_document = Arc::new(
+            build_layout_document(
+                &ready.plan,
+                &ready.styles,
+                &waml_markdown_editor::presentation::EmbeddedMeasurements::default(),
+            )
+            .unwrap(),
+        );
+        let installed = InstalledPresentation::new(
+            ready.plan.clone(),
+            ready.styles.clone(),
+            layout_document,
+            ready.diagnostics.clone(),
+            assets.clone(),
+        )
+        .unwrap();
+        editor.install_presentation(&mut cx, installed, LayoutChangeCause::InitialLoad);
+
+        let source = ready.session.snapshot().text().shared().as_str().to_owned();
+        let selection_start = source.find("Runbook").unwrap();
+        let caret = source.find("code").unwrap();
+        let position =
+            |offset| TextPosition::new(TextSize::try_from_usize(offset).unwrap(), Affinity::Before);
+        let selections = SelectionSet::from_source(
+            ready.session.local_revision(),
+            ready.session.snapshot().text(),
+            vec![
+                Selection::caret(position(caret)),
+                Selection::new(position(selection_start), position(selection_start + 7)),
+            ],
+            0,
+        )
+        .unwrap();
+        ready.session.set_selections(selections).unwrap();
+        let mounted = Rect {
+            pos: dvec2(280.0, 40.0),
+            size: dvec2(600.0, 1000.0),
+        };
+        draw_markdown_widget_at(&mut cx, &ui, &mut ready.session, mounted);
+
+        let layout = editor
+            .frame_layout()
+            .expect("the mounted draw installs a frame");
+        let frame = PresentationFrame {
+            revision: ready.plan.revision,
+            layout: layout.clone(),
+            active_owners: ready
+                .plan
+                .active_owners(ready.session.selections().primary().cursor.offset),
+            diagnostics: ready.diagnostics.clone(),
+            assets,
+        };
+        let local_commands = build_draw_commands(
+            &frame,
+            &ready.plan,
+            &ready.styles,
+            ready.session.selections(),
+            ready.session.ime(),
+        )
+        .unwrap();
+        let expected_commands = local_commands
+            .iter()
+            .map(|command| command.translated(mounted.pos))
+            .collect::<Vec<_>>();
+        let painted_commands = editor.test_painted_commands();
+        assert_eq!(painted_commands, expected_commands);
+        let painted_layers = painted_commands
+            .iter()
+            .map(DrawCommand::layer)
+            .collect::<Vec<_>>();
+        for expected in [
+            waml_markdown_editor::widget::DrawLayer::BlockBackground,
+            waml_markdown_editor::widget::DrawLayer::Selection,
+            waml_markdown_editor::widget::DrawLayer::Text,
+            waml_markdown_editor::widget::DrawLayer::Decoration,
+            waml_markdown_editor::widget::DrawLayer::EmbeddedBlock,
+            waml_markdown_editor::widget::DrawLayer::CaretAndIme,
+        ] {
+            assert!(
+                painted_layers.contains(&expected),
+                "missing {expected:?} from {painted_layers:?}"
+            );
+        }
+        let embedded_states = editor.test_painted_embedded_states();
+        assert!(embedded_states
+            .iter()
+            .any(|state| matches!(state, EmbeddedState::Ready { .. })));
+        assert!(embedded_states
+            .iter()
+            .any(|state| matches!(state, EmbeddedState::Loading)));
+        assert!(embedded_states
+            .iter()
+            .any(|state| matches!(state, EmbeddedState::Failed { .. })));
+
+        let local_glyph_origins = layout
+            .glyph_clusters()
+            .iter()
+            .flat_map(|cluster| cluster.glyphs.iter().map(|glyph| glyph.origin))
+            .collect::<Vec<_>>();
+        let painted_glyph_origins = editor.test_painted_glyph_origins();
+        assert!(!painted_glyph_origins.is_empty());
+        assert!(painted_glyph_origins.iter().all(|painted| {
+            local_glyph_origins.iter().any(|local| {
+                (painted.x - (local.x + mounted.pos.x)).abs() < 1.0e-4
+                    && (painted.y - (local.y + mounted.pos.y)).abs() < 1.0e-4
+            })
+        }));
     }
 
     #[test]

@@ -41,6 +41,19 @@ fn position(offset: usize) -> TextPosition {
     TextPosition::new(t(offset), Affinity::Before)
 }
 
+fn command_rect_positions(command: &DrawCommand) -> Vec<makepad_widgets::DVec2> {
+    match command {
+        DrawCommand::BlockBackground { rect, .. }
+        | DrawCommand::Selection { rect }
+        | DrawCommand::Text { rect, .. }
+        | DrawCommand::EmbeddedBlock { rect, .. } => vec![rect.pos],
+        DrawCommand::Decoration { rects, .. } => rects.iter().map(|rect| rect.pos).collect(),
+        DrawCommand::CaretAndIme { caret, composition } => std::iter::once(caret.pos)
+            .chain(composition.iter().map(|rect| rect.pos))
+            .collect(),
+    }
+}
+
 fn owner(value: u64) -> SyntaxIdentity {
     SyntaxIdentity::from_raw_for_test(value)
 }
@@ -236,6 +249,110 @@ fn commands_follow_the_six_foundation_layers_exactly() {
             DrawLayer::CaretAndIme,
         ],
     );
+}
+
+#[test]
+fn mounted_draw_origin_translates_each_foundation_layer_once() {
+    let origin = dvec2(280.0, 40.0);
+    let metrics = PresentationStyles::balanced().metrics(TextRole::Body);
+    let style = waml_markdown_editor::presentation::ResolvedTextStyle {
+        metrics,
+        color: ColorRole::Text,
+        background: None,
+        underline: false,
+        strikethrough: false,
+    };
+    let commands = [
+        DrawCommand::BlockBackground {
+            id: layout_id(1, 0),
+            rect: Rect {
+                pos: dvec2(1.0, 2.0),
+                size: dvec2(30.0, 10.0),
+            },
+            role: BlockDecorationRole::InlineCodeFill,
+        },
+        DrawCommand::Selection {
+            rect: Rect {
+                pos: dvec2(3.0, 4.0),
+                size: dvec2(20.0, 10.0),
+            },
+        },
+        DrawCommand::Text {
+            id: GeometryElementId {
+                layout: layout_id(2, 0),
+                cluster_ordinal: 0,
+            },
+            range: range(0, 4),
+            rect: Rect {
+                pos: dvec2(5.0, 6.0),
+                size: dvec2(40.0, 18.0),
+            },
+            style,
+        },
+        DrawCommand::Decoration {
+            range: range(0, 4),
+            rects: Arc::from([
+                Rect {
+                    pos: dvec2(7.0, 8.0),
+                    size: dvec2(10.0, 18.0),
+                },
+                Rect {
+                    pos: dvec2(17.0, 8.0),
+                    size: dvec2(10.0, 18.0),
+                },
+            ]),
+            role: DecorationRole::LinkUnderline,
+        },
+        DrawCommand::EmbeddedBlock {
+            id: layout_id(3, 0),
+            rect: Rect {
+                pos: dvec2(9.0, 10.0),
+                size: dvec2(50.0, 30.0),
+            },
+            state: EmbeddedState::Loading,
+        },
+        DrawCommand::CaretAndIme {
+            caret: Rect {
+                pos: dvec2(11.0, 12.0),
+                size: dvec2(2.0, 18.0),
+            },
+            composition: Arc::from([Rect {
+                pos: dvec2(13.0, 14.0),
+                size: dvec2(25.0, 18.0),
+            }]),
+        },
+    ];
+
+    let translated = commands
+        .iter()
+        .map(|command| command.translated(origin))
+        .collect::<Vec<_>>();
+
+    let expected_positions = [
+        vec![dvec2(281.0, 42.0)],
+        vec![dvec2(283.0, 44.0)],
+        vec![dvec2(285.0, 46.0)],
+        vec![dvec2(287.0, 48.0), dvec2(297.0, 48.0)],
+        vec![dvec2(289.0, 50.0)],
+        vec![dvec2(291.0, 52.0), dvec2(293.0, 54.0)],
+    ];
+    let actual_positions = translated
+        .iter()
+        .map(command_rect_positions)
+        .collect::<Vec<_>>();
+    assert_eq!(actual_positions, expected_positions);
+}
+
+#[test]
+fn zero_draw_origin_preserves_harness_coordinates() {
+    let command = DrawCommand::Selection {
+        rect: Rect {
+            pos: dvec2(3.0, 4.0),
+            size: dvec2(20.0, 10.0),
+        },
+    };
+
+    assert_eq!(command.translated(dvec2(0.0, 0.0)), command);
 }
 
 #[test]

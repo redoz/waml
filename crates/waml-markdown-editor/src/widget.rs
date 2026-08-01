@@ -335,9 +335,17 @@ pub fn navigation_position(
 struct TextGlyphPaint {
     id: crate::layout::GeometryElementId,
     range: waml_syntax::TextRange,
+    rect: Rect,
     face: TextFace,
     metrics: TextMetrics,
     color: ColorRole,
+}
+
+#[derive(Clone, Copy)]
+struct TextPaintTarget {
+    id: crate::layout::GeometryElementId,
+    range: waml_syntax::TextRange,
+    rect: Rect,
 }
 
 #[derive(Default)]
@@ -345,6 +353,9 @@ struct PaintEvidence {
     enabled: bool,
     generation: u64,
     ranges: Vec<waml_syntax::TextRange>,
+    commands: Vec<DrawCommand>,
+    glyph_origins: Vec<DVec2>,
+    embedded_states: Vec<EmbeddedState>,
 }
 
 impl PaintEvidence {
@@ -352,6 +363,9 @@ impl PaintEvidence {
         self.enabled = enabled;
         if !enabled {
             self.ranges = Vec::new();
+            self.commands = Vec::new();
+            self.glyph_origins = Vec::new();
+            self.embedded_states = Vec::new();
         }
     }
 
@@ -364,6 +378,9 @@ impl PaintEvidence {
         if self.enabled {
             self.generation = self.generation.saturating_add(1);
             self.ranges.clear();
+            self.commands.clear();
+            self.glyph_origins.clear();
+            self.embedded_states.clear();
         }
     }
 
@@ -381,9 +398,42 @@ impl PaintEvidence {
         &self.ranges
     }
 
+    fn record_command(&mut self, command: &DrawCommand) {
+        if self.enabled {
+            self.commands.push(command.clone());
+        }
+    }
+
+    fn commands(&self) -> &[DrawCommand] {
+        &self.commands
+    }
+
+    fn record_glyph_origin(&mut self, origin: DVec2) {
+        if self.enabled {
+            self.glyph_origins.push(origin);
+        }
+    }
+
+    fn glyph_origins(&self) -> &[DVec2] {
+        &self.glyph_origins
+    }
+
+    fn record_embedded_state(&mut self, state: EmbeddedState) {
+        if self.enabled {
+            self.embedded_states.push(state);
+        }
+    }
+
+    fn embedded_states(&self) -> &[EmbeddedState] {
+        &self.embedded_states
+    }
+
     #[cfg(test)]
     fn capacity(&self) -> usize {
         self.ranges.capacity()
+            + self.commands.capacity()
+            + self.glyph_origins.capacity()
+            + self.embedded_states.capacity()
     }
 }
 
@@ -651,7 +701,8 @@ impl MarkdownEditor {
         scope: &mut Scope,
         walk: Walk,
     ) -> Result<DrawStep, MarkdownEditorError> {
-        let viewport_size = cx.peek_walk_turtle(walk).size;
+        let viewport = cx.peek_walk_turtle(walk);
+        let viewport_size = viewport.size;
         let layout = self.install_layout(cx, session, Some(viewport_size))?;
         let installed = self
             .installed
@@ -675,6 +726,10 @@ impl MarkdownEditor {
             session.ime(),
         )
         .map_err(MarkdownEditorError::Presentation)?;
+        let commands = commands
+            .iter()
+            .map(|command| command.translated(viewport.pos))
+            .collect::<Arc<[_]>>();
         self.last_draw = DrawRecorder::default();
         self.paint_evidence.begin_frame();
         for layer in [
@@ -688,6 +743,9 @@ impl MarkdownEditor {
             self.last_draw.record(layer, &layout);
             let mut primitive_count = 0;
             for command in commands.iter() {
+                if command.layer() == layer {
+                    self.paint_evidence.record_command(command);
+                }
                 if let DrawCommand::Text {
                     id,
                     range,
@@ -699,7 +757,17 @@ impl MarkdownEditor {
                         .into_iter()
                         .filter(|operation| operation.layer() == layer)
                     {
-                        self.paint_text_operation(cx, &installed, &layout, *id, *range, operation);
+                        self.paint_text_operation(
+                            cx,
+                            &installed,
+                            &layout,
+                            TextPaintTarget {
+                                id: *id,
+                                range: *range,
+                                rect: *rect,
+                            },
+                            operation,
+                        );
                         primitive_count += 1;
                     }
                 } else if command.layer() == layer {
@@ -747,6 +815,10 @@ impl MarkdownEditor {
             }
             DrawCommand::EmbeddedBlock { rect, state, .. } => match state {
                 EmbeddedState::Ready { source } => {
+                    self.paint_evidence
+                        .record_embedded_state(EmbeddedState::Ready {
+                            source: source.clone(),
+                        });
                     if let Some(image) = self.image_for_source(cx, source) {
                         let walk = Walk::abs_rect(*rect);
                         debug_assert_eq!(
@@ -761,6 +833,8 @@ impl MarkdownEditor {
                     }
                 }
                 EmbeddedState::Loading => {
+                    self.paint_evidence
+                        .record_embedded_state(EmbeddedState::Loading);
                     self.draw_embedded.color = self.quote_fill;
                     self.draw_embedded.draw_abs(cx, *rect);
                     self.draw_text_sans.color = self.marker_color;
@@ -768,6 +842,10 @@ impl MarkdownEditor {
                         .draw_abs(cx, rect.pos + dvec2(8.0, 8.0), "Loading image…");
                 }
                 EmbeddedState::Failed { message } => {
+                    self.paint_evidence
+                        .record_embedded_state(EmbeddedState::Failed {
+                            message: message.clone(),
+                        });
                     self.draw_embedded.color = self.diagnostic_color;
                     self.draw_embedded.draw_abs(cx, *rect);
                     self.draw_text_sans.color = self.body_color;
@@ -790,8 +868,7 @@ impl MarkdownEditor {
         cx: &mut Cx2d,
         installed: &InstalledPresentation,
         layout: &LayoutSnapshot,
-        id: crate::layout::GeometryElementId,
-        range: waml_syntax::TextRange,
+        target: TextPaintTarget,
         operation: TextPaintOperation,
     ) {
         match operation {
@@ -808,8 +885,9 @@ impl MarkdownEditor {
                 installed,
                 layout,
                 TextGlyphPaint {
-                    id,
-                    range,
+                    id: target.id,
+                    range: target.range,
+                    rect: target.rect,
                     face,
                     metrics,
                     color,
@@ -837,6 +915,7 @@ impl MarkdownEditor {
         else {
             return;
         };
+        let origin = paint.rect.pos - cluster.rect.pos;
         let Some((shaped_range, laid_out)) = self.text_layout_cache.laid_out(
             installed.revision,
             paint.id.layout,
@@ -870,8 +949,8 @@ impl MarkdownEditor {
                 let rasterized = laid.rasterize(laid.font_size_in_lpxs * dpi)?;
                 Some((
                     Point {
-                        x: positioned.origin.x as f32,
-                        y: positioned.origin.y as f32,
+                        x: (positioned.origin.x + origin.x) as f32,
+                        y: (positioned.origin.y + origin.y) as f32,
                     },
                     positioned.font_size,
                     rasterized,
@@ -883,6 +962,10 @@ impl MarkdownEditor {
             &glyphs,
             self.color_for_role(paint.color),
         );
+        for (origin, _, _) in &glyphs {
+            self.paint_evidence
+                .record_glyph_origin(dvec2(origin.x as f64, origin.y as f64));
+        }
         if !glyphs.is_empty() {
             self.paint_evidence.record(paint.range);
         }
@@ -1354,6 +1437,26 @@ impl MarkdownEditorRef {
     pub fn test_painted_text_ranges(&self) -> Vec<waml_syntax::TextRange> {
         self.borrow()
             .map_or_else(Vec::new, |inner| inner.paint_evidence.ranges().to_vec())
+    }
+
+    #[doc(hidden)]
+    pub fn test_painted_commands(&self) -> Vec<DrawCommand> {
+        self.borrow()
+            .map_or_else(Vec::new, |inner| inner.paint_evidence.commands().to_vec())
+    }
+
+    #[doc(hidden)]
+    pub fn test_painted_glyph_origins(&self) -> Vec<DVec2> {
+        self.borrow().map_or_else(Vec::new, |inner| {
+            inner.paint_evidence.glyph_origins().to_vec()
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn test_painted_embedded_states(&self) -> Vec<EmbeddedState> {
+        self.borrow().map_or_else(Vec::new, |inner| {
+            inner.paint_evidence.embedded_states().to_vec()
+        })
     }
 
     #[doc(hidden)]

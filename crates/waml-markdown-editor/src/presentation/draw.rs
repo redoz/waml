@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use makepad_widgets::Rect;
+use makepad_widgets::{DVec2, Rect};
 use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 
 use crate::{
@@ -141,6 +141,48 @@ impl DrawCommand {
             Self::Decoration { .. } => DrawLayer::Decoration,
             Self::EmbeddedBlock { .. } => DrawLayer::EmbeddedBlock,
             Self::CaretAndIme { .. } => DrawLayer::CaretAndIme,
+        }
+    }
+
+    pub fn translated(&self, origin: DVec2) -> Self {
+        let translate = |rect: Rect| Rect {
+            pos: rect.pos + origin,
+            ..rect
+        };
+        match self {
+            Self::BlockBackground { id, rect, role } => Self::BlockBackground {
+                id: *id,
+                rect: translate(*rect),
+                role: *role,
+            },
+            Self::Selection { rect } => Self::Selection {
+                rect: translate(*rect),
+            },
+            Self::Text {
+                id,
+                range,
+                rect,
+                style,
+            } => Self::Text {
+                id: *id,
+                range: *range,
+                rect: translate(*rect),
+                style: *style,
+            },
+            Self::Decoration { range, rects, role } => Self::Decoration {
+                range: *range,
+                rects: rects.iter().copied().map(translate).collect(),
+                role: *role,
+            },
+            Self::EmbeddedBlock { id, rect, state } => Self::EmbeddedBlock {
+                id: *id,
+                rect: translate(*rect),
+                state: state.clone(),
+            },
+            Self::CaretAndIme { caret, composition } => Self::CaretAndIme {
+                caret: translate(*caret),
+                composition: composition.iter().copied().map(translate).collect(),
+            },
         }
     }
 }
