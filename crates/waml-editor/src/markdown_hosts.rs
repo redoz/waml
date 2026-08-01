@@ -724,7 +724,7 @@ mod tests {
         let markdown = snapshot.markdown_snapshots.values().next().unwrap();
         let plan = compile_presentation(
             markdown,
-            &PresentationStyles::default(),
+            &PresentationStyles,
             &HighlighterRegistry::default(),
         )
         .unwrap();
@@ -824,7 +824,7 @@ mod tests {
         let markdown = snapshot.markdown_snapshots.values().next().unwrap();
         let plan = compile_presentation(
             markdown,
-            &PresentationStyles::default(),
+            &PresentationStyles,
             &WamlCodeHighlightHost::registry(snapshot.clone()),
         )
         .unwrap();
