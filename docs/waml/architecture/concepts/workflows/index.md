@@ -5,5 +5,7 @@
 - [Model Projection](./model-projection.md): A responsibility that derives a model and view representation from the current OKF Bundle.
 - [Validation and Diagnostics](./validation-and-diagnostics.md): A responsibility that evaluates an OKF Bundle, reports errors and warnings, and retains unknown content.
 - [Editing and Round Trip](./editing-and-round-trip.md): A responsibility that keeps authored documents authoritative while rebuilding derived views after canonical serialization.
+- [Edit History](./edit-history.md): A responsibility that makes each applied edit reversible and replayable in order.
 - [Canonical Serialization](./canonical-serialization.md): A responsibility that produces a stable supported document form from authored content.
+- [Bundle Query](./bundle-query.md): A responsibility that answers questions about the resolved model without a change to the bundle.
 - [Layout Solving](./layout-solving.md): A responsibility that turns diagram inputs and declarative constraints into view geometry without changing domain semantics.

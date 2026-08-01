@@ -10,5 +10,6 @@ description: A publication responsibility that makes the static web artifact ava
 - depends [WASM Web Artifact](./wasm-web-artifact.md)
 
 ## Notes
-- Makes the static web artifact available to the Browser.
-- [Native Web Delivery](./native-web-delivery.md) owns the publication pipeline.
+- This host makes the static artifact available to the browser. [Native Web Delivery](./native-web-delivery.md) controls the publication.
+- The host serves files only. It runs no program of the product.
+- The host cannot add response headers. For this reason the editor cannot use shared memory and cannot use threads.

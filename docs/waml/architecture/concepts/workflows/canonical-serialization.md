@@ -10,4 +10,7 @@ description: A responsibility that produces a stable supported document form fro
 - depends [Authored Document](../model/authored-document.md)
 
 ## Notes
-- Produces a stable supported document form without regenerating source from the WAML Model.
+- This responsibility produces a stable document form. It does not regenerate the documents from the WAML Model.
+- The operation is idempotent. A second run on a canonical document makes no change.
+- The operation changes only the supported sections. It keeps other text, unknown frontmatter fields, and unrelated documents as the author wrote them.
+- The operation can also report the documents that are not in canonical form. In this mode it writes no file.
