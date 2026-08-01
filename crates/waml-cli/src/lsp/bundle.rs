@@ -361,6 +361,213 @@ pub fn read_disk_documents(root: &Path) -> Vec<(PathBuf, String)> {
 mod tests {
     use super::*;
 
+    fn query_fixture() -> (LspAnalysisState, PathBuf, PathBuf) {
+        let root = PathBuf::from("C:/workspace");
+        let order = root.join("order.md");
+        let next = root.join("next.md");
+        let order_text = "---\ntype: uml.Class\n---\n# 😀 Order\n\nSee [Next](./next.md).\n\n## Attributes\n- count: Number {0..42}\n";
+        let next_text = "---\ntype: uml.Class\n---\n# Next\n";
+        let state = LspAnalysisState::from_documents(
+            Some(root),
+            [
+                (order.clone(), order_text.into()),
+                (next.clone(), next_text.into()),
+            ],
+        )
+        .unwrap();
+        (state, order, next)
+    }
+
+    fn absolute_tokens(tokens: &lsp::SemanticTokens) -> Vec<(u32, u32, u32, u32)> {
+        let mut line = 0;
+        let mut character = 0;
+        tokens
+            .data
+            .iter()
+            .map(|token| {
+                line += token.delta_line;
+                character = if token.delta_line == 0 {
+                    character + token.delta_start
+                } else {
+                    token.delta_start
+                };
+                (line, character, token.length, token.token_type)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn snapshot_queries_publish_headings_links_and_definitions() {
+        let (state, order, next) = query_fixture();
+
+        let symbols = state.document_symbols(&order).unwrap();
+        assert_eq!(
+            symbols
+                .iter()
+                .map(|symbol| symbol.name.as_str())
+                .collect::<Vec<_>>(),
+            ["😀 Order", "Attributes"]
+        );
+        assert_eq!(
+            symbols[0].selection_range,
+            lsp::Range::new(lsp::Position::new(3, 2), lsp::Position::new(3, 10))
+        );
+
+        let links = state.document_links(&order).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, lsp::Url::from_file_path(&next).ok());
+        assert_eq!(links[0].range.start, lsp::Position::new(5, 4));
+
+        let definition = state.definition(&order, lsp::Position::new(5, 6)).unwrap();
+        assert_eq!(definition.uri, lsp::Url::from_file_path(&next).unwrap());
+        assert_eq!(definition.range.start, lsp::Position::new(3, 0));
+        assert!(state
+            .definition(&order, lsp::Position::new(5, 21))
+            .is_none());
+    }
+
+    #[test]
+    fn semantic_tokens_use_fixed_roles_and_exact_astral_utf16_columns() {
+        let (state, order, _) = query_fixture();
+
+        let tokens = state.semantic_tokens(&order).unwrap();
+        let absolute = absolute_tokens(&tokens);
+        assert!(
+            absolute.contains(&(3, 0, 1, 0)),
+            "heading marker: {absolute:?}"
+        );
+        assert!(
+            absolute.contains(&(3, 2, 8, 1)),
+            "astral heading: {absolute:?}"
+        );
+        assert!(
+            absolute.contains(&(5, 4, 17, 2)),
+            "Markdown link: {absolute:?}"
+        );
+        assert!(
+            absolute.iter().any(|token| token.3 == 8),
+            "embedded WAML property: {absolute:?}"
+        );
+        assert!(
+            absolute.iter().any(|token| token.3 == 7),
+            "embedded WAML type: {absolute:?}"
+        );
+        assert!(
+            absolute.windows(2).all(|pair| {
+                pair[0].0 < pair[1].0 || (pair[0].0 == pair[1].0 && pair[0].1 <= pair[1].1)
+            }),
+            "semantic tokens must be sorted: {absolute:?}"
+        );
+    }
+
+    #[test]
+    fn semantic_tokens_project_waml_roles_from_fenced_blocks() {
+        let physical = PathBuf::from("C:/workspace/fenced.md");
+        let state = LspAnalysisState::empty()
+            .unwrap()
+            .open(
+                physical.clone(),
+                1,
+                "# Example\n\n```waml\n## Attributes\n- unknown: Number {0..42}\n```\n".into(),
+            )
+            .unwrap();
+
+        let absolute = absolute_tokens(&state.semantic_tokens(&physical).unwrap());
+        for expected in [(4, 2, 7, 8), (4, 11, 6, 7), (4, 19, 5, 9)] {
+            assert!(
+                absolute.contains(&expected),
+                "fenced WAML token {expected:?}: {absolute:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_link_role_wins_when_a_link_is_the_heading_content() {
+        let root = PathBuf::from("C:/workspace");
+        let source = root.join("source.md");
+        let target = root.join("target.md");
+        let state = LspAnalysisState::from_documents(
+            Some(root),
+            [
+                (source.clone(), "# [Target](./target.md)\n".into()),
+                (target, "# Target\n".into()),
+            ],
+        )
+        .unwrap();
+
+        let absolute = absolute_tokens(&state.semantic_tokens(&source).unwrap());
+        assert!(
+            absolute.contains(&(0, 2, 21, 2)),
+            "link token: {absolute:?}"
+        );
+        assert!(
+            !absolute.iter().any(|token| token.0 == 0 && token.3 == 1),
+            "overlapping heading token: {absolute:?}"
+        );
+    }
+
+    #[test]
+    fn semantic_tokens_keep_markdown_roles_when_an_island_has_no_code_projection() {
+        let physical = PathBuf::from("C:/outside/notes.md");
+        let state = LspAnalysisState::empty()
+            .unwrap()
+            .open(
+                physical.clone(),
+                1,
+                "---\ntype: Notes\n---\n# Notes\n\n## Attributes\nplain text\n".into(),
+            )
+            .unwrap();
+
+        let absolute = absolute_tokens(&state.semantic_tokens(&physical).unwrap());
+        assert!(
+            absolute.iter().any(|token| token.3 == 1),
+            "Markdown headings remain available: {absolute:?}"
+        );
+    }
+
+    #[test]
+    fn definition_does_not_fall_back_when_the_authored_fragment_is_missing() {
+        let root = PathBuf::from("C:/workspace");
+        let source = root.join("source.md");
+        let target = root.join("target.md");
+        let state = LspAnalysisState::from_documents(
+            Some(root),
+            [
+                (
+                    source.clone(),
+                    "# Source\n\n[Missing](./target.md#missing)\n".into(),
+                ),
+                (target, "# Target\n".into()),
+            ],
+        )
+        .unwrap();
+
+        assert!(state
+            .definition(&source, lsp::Position::new(2, 2))
+            .is_none());
+    }
+
+    #[test]
+    fn queries_read_only_the_current_replacement_snapshot() {
+        let physical = PathBuf::from("C:/outside/current.md");
+        let opened = LspAnalysisState::empty()
+            .unwrap()
+            .open(physical.clone(), 1, "# Old\n".into())
+            .unwrap();
+        let generation = opened.open_generation(&physical).unwrap();
+        let changed = opened
+            .change(&physical, generation, 2, "# Current 😀\n".into())
+            .unwrap();
+
+        let names = changed
+            .document_symbols(&physical)
+            .unwrap()
+            .into_iter()
+            .map(|symbol| symbol.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Current 😀"]);
+    }
+
     #[test]
     fn atomic_snapshot_open_change_close_restores_disk_and_revision_alignment() {
         let physical = PathBuf::from("C:/workspace/order.md");

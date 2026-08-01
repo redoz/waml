@@ -3,6 +3,7 @@
 
 pub mod bundle;
 pub mod map;
+mod query;
 mod server;
 
 /// Entry point for `waml lsp --stdio`. Implemented in Task 11.

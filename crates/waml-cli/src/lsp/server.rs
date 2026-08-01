@@ -5,7 +5,10 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use crate::lsp::bundle::{read_disk_documents, LspAnalysisState};
+use crate::lsp::{
+    bundle::{read_disk_documents, LspAnalysisState},
+    query::semantic_token_legend,
+};
 
 struct Backend {
     client: Client,
@@ -26,9 +29,74 @@ async fn ordered_publish<F, Fut>(
     publish(snapshot).await;
 }
 
+async fn retain_if_current<T>(
+    current: &RwLock<Arc<LspAnalysisState>>,
+    captured: &Arc<LspAnalysisState>,
+    result: Option<T>,
+) -> Option<T> {
+    let installed = current.read().await;
+    Arc::ptr_eq(&installed, captured)
+        .then_some(result)
+        .flatten()
+}
+
+async fn publish_if_current<F, Fut>(
+    current: &RwLock<Arc<LspAnalysisState>>,
+    captured: &Arc<LspAnalysisState>,
+    publish: F,
+) -> bool
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let installed = current.read().await;
+    if !Arc::ptr_eq(&installed, captured) {
+        return false;
+    }
+    publish().await;
+    drop(installed);
+    true
+}
+
+fn server_capabilities() -> ServerCapabilities {
+    ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                ..Default::default()
+            },
+        )),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        definition_provider: Some(OneOf::Left(true)),
+        document_link_provider: Some(DocumentLinkOptions {
+            resolve_provider: Some(false),
+            work_done_progress_options: Default::default(),
+        }),
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                work_done_progress_options: Default::default(),
+                legend: semantic_token_legend(),
+                range: None,
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+            },
+        )),
+        ..Default::default()
+    }
+}
+
 impl Backend {
     async fn snapshot(&self) -> Arc<LspAnalysisState> {
         self.current.read().await.clone()
+    }
+
+    async fn current_query<T>(
+        &self,
+        query: impl FnOnce(&LspAnalysisState) -> Option<T>,
+    ) -> Option<T> {
+        let captured = self.snapshot().await;
+        let result = query(&captured);
+        retain_if_current(&self.current, &captured, result).await
     }
 
     async fn install_initial(&self, root: PathBuf) {
@@ -69,19 +137,27 @@ impl Backend {
 
     async fn publish_all(&self) {
         let client = self.client.clone();
+        let current = self.current.clone();
         ordered_publish(
             self.publication_gate.clone(),
             self.current.clone(),
             move |snapshot| async move {
                 for publication in snapshot.diagnostics() {
                     if let Ok(uri) = Url::from_file_path(&publication.physical) {
-                        client
-                            .publish_diagnostics(
-                                uri,
-                                publication.diagnostics,
-                                publication.client_version,
-                            )
-                            .await;
+                        let client = client.clone();
+                        if !publish_if_current(&current, &snapshot, move || async move {
+                            client
+                                .publish_diagnostics(
+                                    uri,
+                                    publication.diagnostics,
+                                    publication.client_version,
+                                )
+                                .await;
+                        })
+                        .await
+                        {
+                            return;
+                        }
                     }
                 }
             },
@@ -102,16 +178,7 @@ impl LanguageServer for Backend {
             self.install_initial(root).await;
         }
         Ok(InitializeResult {
-            capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Options(
-                    TextDocumentSyncOptions {
-                        open_close: Some(true),
-                        change: Some(TextDocumentSyncKind::FULL),
-                        ..Default::default()
-                    },
-                )),
-                ..Default::default()
-            },
+            capabilities: server_capabilities(),
             ..Default::default()
         })
     }
@@ -192,6 +259,60 @@ impl LanguageServer for Backend {
             self.publish_all().await;
         }
     }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let Ok(physical) = params.text_document.uri.to_file_path() else {
+            return Ok(None);
+        };
+        Ok(self
+            .current_query(|snapshot| snapshot.document_symbols(&physical))
+            .await
+            .map(DocumentSymbolResponse::Nested))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let Ok(physical) = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .to_file_path()
+        else {
+            return Ok(None);
+        };
+        let position = params.text_document_position_params.position;
+        Ok(self
+            .current_query(|snapshot| snapshot.definition(&physical, position))
+            .await
+            .map(GotoDefinitionResponse::Scalar))
+    }
+
+    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
+        let Ok(physical) = params.text_document.uri.to_file_path() else {
+            return Ok(None);
+        };
+        Ok(self
+            .current_query(|snapshot| snapshot.document_links(&physical))
+            .await)
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let Ok(physical) = params.text_document.uri.to_file_path() else {
+            return Ok(None);
+        };
+        Ok(self
+            .current_query(|snapshot| snapshot.semantic_tokens(&physical))
+            .await
+            .map(SemanticTokensResult::Tokens))
+    }
 }
 
 pub fn serve_stdio() {
@@ -215,6 +336,49 @@ mod tests {
     use std::{collections::BTreeMap, path::Path, sync::Mutex as StdMutex};
     use tokio::sync::Notify;
 
+    #[test]
+    fn capabilities_advertise_snapshot_queries_and_keep_full_sync() {
+        let capabilities = server_capabilities();
+        assert!(capabilities.document_symbol_provider.is_some());
+        assert!(capabilities.definition_provider.is_some());
+        assert!(capabilities.document_link_provider.is_some());
+        let Some(SemanticTokensServerCapabilities::SemanticTokensOptions(options)) =
+            capabilities.semantic_tokens_provider
+        else {
+            panic!("semantic token options");
+        };
+        assert_eq!(options.legend.token_types.len(), 11);
+        assert_eq!(options.full, Some(SemanticTokensFullOptions::Bool(true)));
+        assert!(capabilities.completion_provider.is_none());
+        let Some(TextDocumentSyncCapability::Options(sync)) = capabilities.text_document_sync
+        else {
+            panic!("full text sync options");
+        };
+        assert_eq!(sync.change, Some(TextDocumentSyncKind::FULL));
+    }
+
+    #[tokio::test]
+    async fn captured_query_result_is_discarded_after_state_replacement() {
+        let physical = PathBuf::from("C:/outside/current.md");
+        let opened = Arc::new(
+            LspAnalysisState::empty()
+                .unwrap()
+                .open(physical.clone(), 1, "# Old\n".into())
+                .unwrap(),
+        );
+        let generation = opened.open_generation(&physical).unwrap();
+        let current = Arc::new(RwLock::new(opened.clone()));
+        let changed = opened
+            .change(&physical, generation, 2, "# Current\n".into())
+            .unwrap();
+        *current.write().await = Arc::new(changed);
+
+        assert_eq!(
+            retain_if_current(&current, &opened, Some("old result")).await,
+            None
+        );
+    }
+
     #[tokio::test]
     async fn delayed_old_publication_cannot_arrive_after_newer_publication() {
         let physical = PathBuf::from("C:/outside/order.md");
@@ -233,12 +397,18 @@ mod tests {
             let old_started = old_started.clone();
             let release_old = release_old.clone();
             let sent = sent.clone();
+            let current = current.clone();
             move |snapshot| async move {
                 old_started.notify_one();
                 release_old.notified().await;
-                sent.lock()
-                    .unwrap()
-                    .push(snapshot.client_version(&physical));
+                if retain_if_current(&current, &snapshot, Some(()))
+                    .await
+                    .is_some()
+                {
+                    sent.lock()
+                        .unwrap()
+                        .push(snapshot.client_version(&physical));
+                }
             }
         }));
         old_started.notified().await;
@@ -256,17 +426,89 @@ mod tests {
         *current.write().await = Arc::new(newer);
         let new = tokio::spawn(ordered_publish(gate.clone(), current.clone(), {
             let sent = sent.clone();
+            let current = current.clone();
             move |snapshot| async move {
-                sent.lock()
-                    .unwrap()
-                    .push(snapshot.client_version(Path::new("C:/outside/order.md")));
+                if retain_if_current(&current, &snapshot, Some(()))
+                    .await
+                    .is_some()
+                {
+                    sent.lock()
+                        .unwrap()
+                        .push(snapshot.client_version(Path::new("C:/outside/order.md")));
+                }
             }
         }));
 
         release_old.notify_one();
         old.await.unwrap();
         new.await.unwrap();
-        assert_eq!(*sent.lock().unwrap(), [Some(1), Some(2)]);
+        assert_eq!(*sent.lock().unwrap(), [Some(2)]);
+    }
+
+    #[tokio::test]
+    async fn validated_publication_finishes_before_replacement_is_installed() {
+        let physical = PathBuf::from("C:/outside/order.md");
+        let opened = Arc::new(
+            LspAnalysisState::empty()
+                .unwrap()
+                .open(physical.clone(), 1, "# One\n".into())
+                .unwrap(),
+        );
+        let generation = opened.open_generation(&physical).unwrap();
+        let replacement = Arc::new(
+            opened
+                .change(&physical, generation, 2, "# Two\n".into())
+                .unwrap(),
+        );
+        let current = Arc::new(RwLock::new(opened.clone()));
+        let validated = Arc::new(Notify::new());
+        let replacement_waiting = Arc::new(Notify::new());
+        let release_publication = Arc::new(Notify::new());
+        let events = Arc::new(StdMutex::new(Vec::new()));
+
+        let publication = tokio::spawn({
+            let current = current.clone();
+            let opened = opened.clone();
+            let validated = validated.clone();
+            let release_publication = release_publication.clone();
+            let events = events.clone();
+            async move {
+                publish_if_current(&current, &opened, move || async move {
+                    events.lock().unwrap().push("validated");
+                    validated.notify_one();
+                    release_publication.notified().await;
+                    events.lock().unwrap().push("published");
+                })
+                .await
+            }
+        });
+        validated.notified().await;
+
+        let install = tokio::spawn({
+            let current = current.clone();
+            let replacement_waiting = replacement_waiting.clone();
+            let events = events.clone();
+            async move {
+                events.lock().unwrap().push("replacement waiting");
+                replacement_waiting.notify_one();
+                *current.write().await = replacement;
+                events.lock().unwrap().push("replacement installed");
+            }
+        });
+        replacement_waiting.notified().await;
+
+        release_publication.notify_one();
+        assert!(publication.await.unwrap());
+        install.await.unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "validated",
+                "replacement waiting",
+                "published",
+                "replacement installed"
+            ]
+        );
     }
 
     #[tokio::test]
