@@ -284,6 +284,29 @@ impl DocumentHost {
         change: SessionChange,
         prepared: Vec<Option<OpenDocument>>,
     ) {
+        self.after_session_change_with_cause(cx, ui, session, change, prepared, false);
+    }
+
+    pub fn after_external_replacement(
+        &mut self,
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        session: &EditorSession,
+        change: SessionChange,
+        prepared: Vec<Option<OpenDocument>>,
+    ) {
+        self.after_session_change_with_cause(cx, ui, session, change, prepared, true);
+    }
+
+    fn after_session_change_with_cause(
+        &mut self,
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        session: &EditorSession,
+        change: SessionChange,
+        prepared: Vec<Option<OpenDocument>>,
+        external_replacement: bool,
+    ) {
         let reconciliation = if change.okf_changed || change.uml_changed {
             self.reconcile_documents(prepared)
         } else {
@@ -294,7 +317,11 @@ impl DocumentHost {
             ActiveReconciliation::Retained => {
                 if let Some(view) = self.views.get_mut(&self.tabs.active) {
                     let snapshot = session.snapshot();
-                    view.after_session_snapshot(cx, &body, &snapshot, change);
+                    if external_replacement {
+                        view.sync_external_replacement(cx, &body, &snapshot);
+                    } else {
+                        view.after_session_snapshot(cx, &body, &snapshot, change);
+                    }
                 }
             }
             ActiveReconciliation::Replaced { mut old_view } => {
@@ -304,7 +331,11 @@ impl DocumentHost {
                 if let Some(view) = self.views.get_mut(&self.tabs.active) {
                     view.on_activate(cx, &body);
                     let snapshot = session.snapshot();
-                    view.sync_from_session(cx, &body, &snapshot);
+                    if external_replacement {
+                        view.sync_external_replacement(cx, &body, &snapshot);
+                    } else {
+                        view.sync_from_session(cx, &body, &snapshot);
+                    }
                 }
             }
         }

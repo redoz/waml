@@ -3,14 +3,15 @@ use std::sync::Arc;
 use makepad_widgets::{dvec2, Cx, Rect, ScriptNew, WidgetRef};
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
-    input::EditorInput,
+    input::{EditorInput, ScrollState},
     layout::{CaretStop, GlyphCluster, LayoutSnapshot, VisualLine},
+    motion::{LayoutChangeCause, MotionConfig, MotionController, MotionCutReason},
     selection::{Affinity, TextPosition},
-    session::MarkdownDocumentSession,
+    session::{HostSnapshotCause, HostSyncOutcome, MarkdownDocumentSession},
     widget::{MarkdownEditor, MarkdownEditorRef, MarkdownEditorWidgetRefExt},
 };
 use waml_syntax::{
-    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange, TextSize,
+    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextChange, TextRange, TextSize,
 };
 
 fn size(value: usize) -> TextSize {
@@ -101,4 +102,57 @@ fn read_only_mount_never_emits_a_source_proposal() {
 
     assert!(MarkdownEditorRef::proposed_edit(&actions).is_none());
     assert_eq!(session.snapshot().text().shared().as_str(), "# Order\n");
+}
+
+#[test]
+fn external_replacement_maps_selection_and_scroll_and_cuts_motion() {
+    let (_, _, mut session) = mounted("abcdef");
+    session.set_primary_offset(size(5)).unwrap();
+    session.set_scroll_state(ScrollState { x: 3.0, y: 48.0 });
+    let incoming_text = SourceText::new("aXYZdef".to_string()).unwrap();
+    let incoming_syntax = parse_markdown(
+        DocumentRevision::new(1),
+        incoming_text,
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let incoming = Arc::new(MarkdownDocumentSnapshot::new(incoming_syntax));
+    let change = TextChange {
+        old_range: range(1, 3),
+        replacement: Arc::from("XYZ"),
+    };
+
+    let outcome = session
+        .synchronize_from_host(
+            incoming,
+            Some(std::slice::from_ref(&change)),
+            HostSnapshotCause::ExternalReplacement,
+        )
+        .unwrap();
+
+    assert_eq!(outcome, HostSyncOutcome::Installed);
+    assert_eq!(session.selections().primary().cursor.offset, size(6));
+    assert_eq!(*session.scroll_state(), ScrollState { x: 3.0, y: 48.0 });
+
+    let mut motion = MotionController::new(200.0);
+    motion.commit(
+        0.0,
+        None,
+        Arc::new(layout("abcdef")),
+        LayoutChangeCause::InitialLoad,
+        false,
+        None,
+        MotionConfig::default(),
+    );
+    let frame = motion.commit(
+        1.0,
+        None,
+        Arc::new(layout("aXYZdef")),
+        LayoutChangeCause::ExternalReplacement,
+        false,
+        None,
+        MotionConfig::default(),
+    );
+    assert!(!frame.active);
+    assert_eq!(frame.cut_reason, Some(MotionCutReason::ExternalReplacement));
 }

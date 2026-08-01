@@ -5,6 +5,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use waml::source::SourceBundle;
 
+use crate::editor_session::{SaveCompletion, SaveTicket};
+
 pub(crate) fn save_bundle_atomic(
     root: &Path,
     baseline: &SourceBundle,
@@ -106,17 +108,26 @@ pub(crate) fn save_bundle_atomic(
     Ok(())
 }
 
-pub(crate) fn save_snapshot_atomic(
-    root: &Path,
-    snapshot: crate::editor_session::EditorSnapshot<'_>,
-) -> io::Result<()> {
-    if snapshot.dirty_revision != Some(snapshot.revision) {
+pub(crate) fn save_ticket_atomic(root: &Path, ticket: &SaveTicket) -> io::Result<SaveCompletion> {
+    if ticket.snapshot.dirty_revision != Some(ticket.revision)
+        || ticket.snapshot.revision != ticket.revision
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "refusing to save a clean or stale editor snapshot",
+            "refusing to save a clean or mismatched editor ticket",
         ));
     }
-    save_bundle_atomic(root, snapshot.persisted_source, snapshot.source)
+    let result = save_bundle_atomic(
+        root,
+        &ticket.snapshot.persisted_source,
+        &ticket.snapshot.source,
+    )
+    .map_err(|error| error.to_string());
+    Ok(SaveCompletion {
+        revision: ticket.revision,
+        history_state: ticket.history_state,
+        result,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -350,11 +361,15 @@ fn replace_file(temp: &Path, target: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{save_bundle_atomic as save_source_bundle_atomic, save_snapshot_atomic};
+    use super::{save_bundle_atomic as save_source_bundle_atomic, save_ticket_atomic};
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
     use waml::source::SourceBundle;
+    use waml_syntax::{SourceText, TextChange, TextRange, TextSize};
 
     fn save_bundle_atomic(
         root: &Path,
@@ -557,15 +572,50 @@ mod tests {
     }
 
     #[test]
-    fn clean_snapshot_is_rejected_before_touching_disk() {
+    fn clean_session_has_no_save_ticket() {
         let temp = TempDir::new();
         let session = crate::editor_session::EditorSession::default();
 
-        let snapshot = session.snapshot();
-        let error = save_snapshot_atomic(temp.path(), snapshot.borrowed()).unwrap_err();
-
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(session.save_ticket().is_none());
         assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn invalid_source_ticket_is_saved_byte_exactly() {
+        let temp = TempDir::new();
+        let path = waml::source::BundlePath::parse("order.md").unwrap();
+        let original = "# Order\r\n";
+        let invalid = "# Order\r\n[unterminated **\u{2028}";
+        std::fs::write(temp.path().join("order.md"), original.as_bytes()).unwrap();
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(SourceBundle::try_from_pairs([("order.md", original)]).unwrap())
+            .unwrap();
+        let before = session.snapshot();
+        let document = before.okf_analysis.catalog.id_for_path(&path).unwrap();
+        let syntax = before.markdown_snapshot(document).unwrap();
+        session
+            .apply(waml::edit::ExactSourceEdit {
+                document,
+                base_revision: syntax.revision(),
+                changes: Arc::from([TextChange {
+                    old_range: TextRange::new(TextSize::new(0), syntax.text().len()).unwrap(),
+                    replacement: Arc::from(invalid),
+                }]),
+                expected_text: SourceText::new(invalid.to_string()).unwrap(),
+            })
+            .unwrap();
+
+        let ticket = session.save_ticket().unwrap();
+        let completion = save_ticket_atomic(temp.path(), &ticket).unwrap();
+
+        assert_eq!(completion.revision, ticket.revision);
+        assert_eq!(completion.history_state, ticket.history_state);
+        assert_eq!(completion.result, Ok(()));
+        assert_eq!(
+            std::fs::read(temp.path().join("order.md")).unwrap(),
+            invalid.as_bytes()
+        );
     }
 
     #[test]

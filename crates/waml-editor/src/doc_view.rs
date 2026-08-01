@@ -387,6 +387,15 @@ pub trait DocView {
         self.sync(cx, body, snapshot.borrowed().into());
     }
 
+    fn sync_external_replacement(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &crate::editor_session::EditorSessionSnapshot,
+    ) {
+        self.sync_from_session(cx, body, snapshot);
+    }
+
     fn route_ui_event(&mut self, cx: &mut Cx, ui: &WidgetRef, event: &Event) {
         ui.handle_event(cx, event, &mut Scope::empty());
     }

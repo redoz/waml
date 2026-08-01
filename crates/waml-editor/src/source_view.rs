@@ -19,7 +19,9 @@ use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
     ViewReconcilePolicy,
 };
-use crate::editor_session::{EditorSessionSnapshot, ProposedSourceEdit, SessionChange};
+use crate::editor_session::{
+    exact_replacement_change, EditorSessionSnapshot, ProposedSourceEdit, SessionChange,
+};
 use crate::icons::Icon;
 use crate::inspector::Subject;
 use crate::navigation::NavigationIntent;
@@ -218,8 +220,10 @@ impl SourceView {
                     log!("source host synchronization failed: {error:?}");
                     return;
                 }
-                if let Some(changes) = changes {
-                    layout_cause = LayoutChangeCause::LocalEdit { changes };
+                if cause != HostSnapshotCause::ExternalReplacement {
+                    if let Some(changes) = changes {
+                        layout_cause = LayoutChangeCause::LocalEdit { changes };
+                    }
                 }
             }
         }
@@ -323,6 +327,26 @@ impl DocView for SourceView {
     ) {
         self.sync(cx, body, snapshot.borrowed().into());
         self.install_snapshot(cx, body, snapshot, HostSnapshotCause::InitialLoad);
+    }
+
+    fn sync_external_replacement(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        snapshot: &EditorSessionSnapshot,
+    ) {
+        self.sync(cx, body, snapshot.borrowed().into());
+        if let Some((document, incoming)) = Self::resolve_document(snapshot, &self.key) {
+            if let SourceViewState::Ready(ready) = &mut self.state {
+                if ready.document == document {
+                    ready.pending_changes = Some(Arc::from([exact_replacement_change(
+                        ready.session.snapshot().text().shared().as_str(),
+                        incoming.text().shared().as_str(),
+                    )]));
+                }
+            }
+        }
+        self.install_snapshot(cx, body, snapshot, HostSnapshotCause::ExternalReplacement);
     }
 
     fn after_session_snapshot(

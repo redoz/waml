@@ -5,7 +5,7 @@ use crate::dock::DockState;
 use crate::dock::ResponsiveDockLayout;
 use crate::document::NavCategory;
 use crate::document_host::{DocumentCommand, DocumentHost};
-use crate::editor_session::EditorSession;
+use crate::editor_session::{EditorSession, ExternalReplacement, SaveCompletion, SaveTicket};
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::load;
@@ -637,6 +637,18 @@ fn prevent_quit_after_failed_save(event: &Event, result: &Result<(), String>) ->
         }
     }
     false
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn browser_save_fragment(ticket: &SaveTicket) -> (String, SaveCompletion) {
+    (
+        format!("#{}", waml::share::encode_source(&ticket.snapshot.source)),
+        SaveCompletion {
+            revision: ticket.revision,
+            history_state: ticket.history_state,
+            result: Ok(()),
+        },
+    )
 }
 
 #[derive(Script, ScriptHook)]
@@ -1792,18 +1804,16 @@ impl App {
     /// this is the seam where that difference lives; callers only ever say the
     /// document changed (`mark_dirty`), never how to store it.
     fn save(&mut self, cx: &mut Cx) -> Result<(), String> {
-        let revision = self.session.revision();
-        let state = self.session.history_state();
-        let snapshot = self.session.snapshot();
-        if snapshot.dirty_revision.is_none() {
+        let Some(ticket) = self.session.save_ticket() else {
             return Ok(());
-        }
-        if snapshot.source.is_empty() {
+        };
+        if ticket.snapshot.source.is_empty() {
             return Err("cannot save an empty bundle".to_string());
         }
-        self.save_backend(cx, snapshot.borrowed())?;
-        self.session.mark_saved(revision, state);
-        Ok(())
+        let completion = self.save_backend(cx, &ticket)?;
+        let result = completion.result.clone();
+        self.session.finish_save(completion);
+        result
     }
 
     fn sync_save_error(&mut self, cx: &mut Cx) {
@@ -1830,6 +1840,69 @@ impl App {
         result
     }
 
+    #[allow(dead_code)] // Native file watching calls this ingress when enabled.
+    fn replace_external_document(
+        &mut self,
+        cx: &mut Cx,
+        document: waml::analysis::DocumentId,
+        base_revision: waml_syntax::DocumentRevision,
+        text: String,
+    ) -> Result<ExternalReplacement, String> {
+        let mut replacement = self
+            .session
+            .replace_external(document, base_revision, text.clone())
+            .map_err(|error| error.to_string())?;
+        if let ExternalReplacement::Conflict { dirty_revision } = &replacement {
+            debug_assert_eq!(
+                self.session.snapshot().dirty_revision,
+                Some(*dirty_revision)
+            );
+            self.save_or_retry(cx, false)?;
+            replacement = self
+                .session
+                .replace_external(document, base_revision, text)
+                .map_err(|error| error.to_string())?;
+        }
+        let ExternalReplacement::Installed(change) = &replacement else {
+            return Ok(replacement);
+        };
+
+        let prepared = self
+            .documents
+            .tabs()
+            .iter()
+            .map(|tab| {
+                crate::documents::reopen(
+                    self.session.okf_analysis(),
+                    self.session.uml_analysis(),
+                    tab,
+                )
+            })
+            .collect();
+        self.documents.after_external_replacement(
+            cx,
+            &self.ui,
+            &self.session,
+            change.clone(),
+            prepared,
+        );
+        if change.uml_changed {
+            self.sync_document_shell(cx);
+        }
+        if change.navigation_changed {
+            self.nav_kinds = crate::nav::kinds_in_model(
+                self.session.okf_analysis(),
+                self.session.uml_analysis(),
+            );
+            self.refresh_nav(cx, false);
+        }
+        if change.conflicts_changed {
+            self.sync_conflict_badge(cx);
+        }
+        self.sync_history_controls(cx);
+        Ok(replacement)
+    }
+
     /// Browser backing: the URL fragment is the whole filesystem.
     ///
     /// Two things ride on this. A refresh restores the document, because
@@ -1841,31 +1914,25 @@ impl App {
     /// `replace`, not push: an edit is not a navigation, and one history entry
     /// per save would make Back mean "undo some edits, sometimes".
     #[cfg(target_arch = "wasm32")]
-    fn save_backend(
-        &self,
-        cx: &mut Cx,
-        snapshot: crate::editor_session::EditorSnapshot<'_>,
-    ) -> Result<(), String> {
-        cx.browser_update_url(
-            &format!("#{}", waml::share::encode_source(snapshot.source)),
-            true,
-        );
-        Ok(())
+    fn save_backend(&self, cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveCompletion, String> {
+        let (fragment, completion) = browser_save_fragment(ticket);
+        cx.browser_update_url(&fragment, true);
+        Ok(completion)
     }
 
     /// Native backing: atomically replace each authored file in the opened OKF
     /// directory. The helper validates bundle paths before performing writes.
     #[cfg(not(target_arch = "wasm32"))]
-    fn save_backend(
-        &self,
-        _cx: &mut Cx,
-        snapshot: crate::editor_session::EditorSnapshot<'_>,
-    ) -> Result<(), String> {
+    fn save_backend(&self, _cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveCompletion, String> {
         let Some(root) = self.open_dir.as_deref() else {
             return Err("native bundle has no opened directory".to_string());
         };
-        crate::native_save::save_snapshot_atomic(root, snapshot)
-            .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
+        let mut completion = crate::native_save::save_ticket_atomic(root, ticket)
+            .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))?;
+        completion.result = completion
+            .result
+            .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"));
+        Ok(completion)
     }
 
     /// Push the canvas's current conflict count onto the toolbar badge.
@@ -2159,22 +2226,23 @@ impl App {
         let result = {
             let root = self.open_dir.as_deref();
             close_after_save(&mut self.session, |session| {
-                let snapshot = session.snapshot();
-                if snapshot.dirty_revision.is_none() {
+                let Some(ticket) = session.save_ticket() else {
                     return Ok(());
-                }
+                };
                 let root =
                     root.ok_or_else(|| "native bundle has no opened directory".to_string())?;
-                crate::native_save::save_snapshot_atomic(root, snapshot.borrowed())
+                crate::native_save::save_ticket_atomic(root, &ticket)
+                    .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))?
+                    .result
                     .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
             })
         };
 
         #[cfg(target_arch = "wasm32")]
         let result = close_after_save(&mut self.session, |session| {
-            if session.is_dirty() {
+            if let Some(ticket) = session.save_ticket() {
                 cx.browser_update_url(
-                    &format!("#{}", waml::share::encode_source(session.source())),
+                    &format!("#{}", waml::share::encode_source(&ticket.snapshot.source)),
                     true,
                 );
             }
@@ -2898,10 +2966,10 @@ impl AppMain for App {
 #[cfg(test)]
 mod tests {
     use super::{
-        close_after_save, doc_switcher_items, logo_command_for, next_narrow, open_overlay_contains,
-        place_rm_for, prevent_quit_after_failed_save, project_document_header, replace_after_save,
-        should_dismiss_narrow_dock, should_flush_save, App, BackingTransitionError, LogoCommand,
-        PendingFragment, SaveFeedback, TransitionCause,
+        browser_save_fragment, close_after_save, doc_switcher_items, logo_command_for, next_narrow,
+        open_overlay_contains, place_rm_for, prevent_quit_after_failed_save,
+        project_document_header, replace_after_save, should_dismiss_narrow_dock, should_flush_save,
+        App, BackingTransitionError, LogoCommand, PendingFragment, SaveFeedback, TransitionCause,
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
     use crate::doc_view::{BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData};
@@ -2923,7 +2991,7 @@ mod tests {
     use std::sync::Arc;
     use waml_markdown_editor::layout::LayoutSnapshot;
     use waml_markdown_editor::widget::MarkdownEditorWidgetRefExt;
-    use waml_syntax::{TextRange, TextSize};
+    use waml_syntax::{SourceText, TextChange, TextRange, TextSize};
 
     #[derive(Default)]
     struct FakeBrowser {
@@ -2936,6 +3004,43 @@ mod tests {
             self.opened.push(url.into());
             self.error.clone().map_or(Ok(()), Err)
         }
+    }
+
+    #[test]
+    fn browser_save_ticket_encodes_invalid_source_bytes_exactly() {
+        let original = "# Order\r\n";
+        let invalid = "# Order\r\n[unterminated **\u{2028}";
+        let path = waml::source::BundlePath::parse("order.md").unwrap();
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(waml::source::SourceBundle::try_from_pairs([("order.md", original)]).unwrap())
+            .unwrap();
+        let before = session.snapshot();
+        let document = before.okf_analysis.catalog.id_for_path(&path).unwrap();
+        let syntax = before.markdown_snapshot(document).unwrap();
+        session
+            .apply(waml::edit::ExactSourceEdit {
+                document,
+                base_revision: syntax.revision(),
+                changes: Arc::from([TextChange {
+                    old_range: TextRange::new(TextSize::new(0), syntax.text().len()).unwrap(),
+                    replacement: Arc::from(invalid),
+                }]),
+                expected_text: SourceText::new(invalid.to_string()).unwrap(),
+            })
+            .unwrap();
+        let ticket = session.save_ticket().unwrap();
+
+        let (fragment, completion) = browser_save_fragment(&ticket);
+        let decoded = waml::share::decode_source(fragment.trim_start_matches('#')).unwrap();
+
+        assert_eq!(completion.revision, ticket.revision);
+        assert_eq!(completion.history_state, ticket.history_state);
+        assert_eq!(completion.result, Ok(()));
+        assert_eq!(
+            decoded.document(&path).unwrap().text().as_bytes(),
+            invalid.as_bytes()
+        );
     }
 
     struct ResettingAnchorView(Rc<RefCell<ViewAnchor>>);

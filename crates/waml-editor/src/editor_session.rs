@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, error::Error, fmt, sync::Arc};
 
 use waml::analysis::{
-    prepare_candidate, AnalysisError, DocumentId, OkfAnalysis, PreparedCandidate, PreviousAnalyses,
-    PromotedMarkdownUpdate,
+    prepare_candidate, prepare_candidate_with_markdown_updates, AnalysisError, DocumentId,
+    OkfAnalysis, PreparedCandidate, PreviousAnalyses, PromotedMarkdownUpdate,
 };
 use waml::edit::{
     apply_exact_source_edit, EditBatch, EditContext, EditError, ExactSourceEditError, PendingEdit,
@@ -10,8 +10,8 @@ use waml::edit::{
 use waml::source::{BundlePath, SourceBundle};
 use waml_markdown_editor::edit::ProposedMarkdownEdit;
 use waml_syntax::{
-    ChangeMap, DocumentRevision, FullReparseReason, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate,
-    TextChange, TextRange,
+    reparse_markdown, ChangeMap, DocumentRevision, FullReparseReason, MarkdownSyntaxSnapshot,
+    MarkdownSyntaxUpdate, SourceText, TextChange, TextRange, TextSize,
 };
 
 use crate::document::EditIntent;
@@ -47,6 +47,57 @@ pub struct EditorSessionSnapshot {
     pending_semantic_steps: Arc<[SemanticRevisionStep]>,
 }
 
+#[derive(Clone)]
+pub struct SaveTicket {
+    pub snapshot: Arc<EditorSessionSnapshot>,
+    pub revision: u64,
+    pub history_state: HistoryStateId,
+}
+
+pub struct SaveCompletion {
+    pub revision: u64,
+    pub history_state: HistoryStateId,
+    pub result: Result<(), String>,
+}
+
+pub enum ExternalReplacement {
+    Installed(SessionChange),
+    Conflict { dirty_revision: u64 },
+    IgnoredStale,
+}
+
+pub(crate) fn exact_replacement_change(before: &str, after: &str) -> TextChange {
+    let mut prefix = 0;
+    for (left, right) in before.chars().zip(after.chars()) {
+        if left != right {
+            break;
+        }
+        prefix += left.len_utf8();
+    }
+
+    let mut suffix = 0;
+    for (left, right) in before[prefix..]
+        .chars()
+        .rev()
+        .zip(after[prefix..].chars().rev())
+    {
+        if left != right {
+            break;
+        }
+        suffix += left.len_utf8();
+    }
+    let before_end = before.len() - suffix;
+    let after_end = after.len() - suffix;
+    TextChange {
+        old_range: TextRange::new(
+            TextSize::try_from_usize(prefix).expect("source text length was already validated"),
+            TextSize::try_from_usize(before_end).expect("source text length was already validated"),
+        )
+        .expect("ordered UTF-8 replacement bounds form a valid range"),
+        replacement: Arc::from(&after[prefix..after_end]),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceRangeMapError {
     DocumentNotFound,
@@ -57,11 +108,9 @@ pub enum SourceRangeMapError {
 #[derive(Clone, Copy)]
 pub struct EditorSnapshot<'a> {
     pub source: &'a SourceBundle,
-    pub persisted_source: &'a SourceBundle,
     pub okf_analysis: &'a OkfAnalysis,
     pub uml_analysis: &'a waml::uml::Analysis,
     pub revision: u64,
-    pub dirty_revision: Option<u64>,
 }
 
 #[allow(dead_code)]
@@ -69,11 +118,9 @@ impl EditorSessionSnapshot {
     pub fn borrowed(&self) -> EditorSnapshot<'_> {
         EditorSnapshot {
             source: &self.source,
-            persisted_source: &self.persisted_source,
             okf_analysis: &self.okf_analysis,
             uml_analysis: &self.uml_analysis,
             revision: self.revision,
-            dirty_revision: self.dirty_revision,
         }
     }
 
@@ -321,6 +368,104 @@ impl EditorSession {
         ))
     }
 
+    pub fn replace_external(
+        &mut self,
+        document: DocumentId,
+        base_revision: DocumentRevision,
+        text: String,
+    ) -> Result<ExternalReplacement, AnalysisError> {
+        self.replace_external_with_preparer(
+            document,
+            base_revision,
+            text,
+            prepare_candidate_with_markdown_updates,
+        )
+    }
+
+    fn replace_external_with_preparer<F>(
+        &mut self,
+        document: DocumentId,
+        base_revision: DocumentRevision,
+        text: String,
+        prepare: F,
+    ) -> Result<ExternalReplacement, AnalysisError>
+    where
+        F: for<'a> FnOnce(
+            SourceBundle,
+            PreviousAnalyses<'a>,
+            u64,
+            Arc<[PromotedMarkdownUpdate]>,
+        ) -> Result<PreparedCandidate, AnalysisError>,
+    {
+        let Some(current_document) = self.current.markdown_snapshot(document) else {
+            return Ok(ExternalReplacement::IgnoredStale);
+        };
+        if current_document.revision() != base_revision {
+            return Ok(ExternalReplacement::IgnoredStale);
+        }
+        if let Some(dirty_revision) = self.current.dirty_revision {
+            return Ok(ExternalReplacement::Conflict { dirty_revision });
+        }
+        let Some(path) = self.current.document_paths.get(&document).cloned() else {
+            return Ok(ExternalReplacement::IgnoredStale);
+        };
+        let bytes = text.len();
+        let source_text =
+            SourceText::new(text.clone()).map_err(|_| AnalysisError::SourceTooLarge {
+                path: path.clone(),
+                bytes,
+            })?;
+        let document_revision =
+            base_revision
+                .checked_next()
+                .ok_or_else(|| AnalysisError::StructuralInvariant {
+                    stage: waml::analysis::AnalysisStage::Shell,
+                    reason: "external replacement document revision overflow".into(),
+                })?;
+        let changes: Arc<[TextChange]> = Arc::from([exact_replacement_change(
+            current_document.text().shared().as_str(),
+            &text,
+        )]);
+        let candidate = apply_exact_source_edit(
+            &self.current.source,
+            &path,
+            current_document.text(),
+            &changes,
+            source_text.clone(),
+        )
+        .map_err(|error| AnalysisError::StructuralInvariant {
+            stage: waml::analysis::AnalysisStage::Shell,
+            reason: format!("external replacement source ingress failed: {error:?}").into(),
+        })?;
+        let update = reparse_markdown(current_document, document_revision, source_text, &changes)
+            .map_err(|source| AnalysisError::Shell {
+            path: path.clone(),
+            source,
+        })?;
+        let next_revision = self.current.revision.wrapping_add(1);
+        let prepared = prepare(
+            candidate.source,
+            PreviousAnalyses {
+                okf: &self.current.okf_analysis,
+                uml: &self.current.uml_analysis,
+            },
+            next_revision,
+            Arc::from([PromotedMarkdownUpdate {
+                document,
+                base_revision,
+                update,
+            }]),
+        )?;
+        let affected = affected_documents(prepared.source(), prepared.okf());
+        self.current = snapshot_from_prepared(prepared, None, affected);
+        self.history.reset();
+        Ok(ExternalReplacement::Installed(SessionChange::full(
+            self.current.revision,
+            self.current.affected_documents.clone(),
+            self.current.affected_diagrams.clone(),
+        )))
+    }
+
     #[cfg(test)]
     pub fn apply<B: EditBatch + 'static>(&mut self, batch: B) -> Result<SessionChange, EditError> {
         self.apply_with_preparer(batch, prepare_candidate)
@@ -536,8 +681,19 @@ impl EditorSession {
         self.current.dirty_revision.is_some()
     }
 
-    pub fn mark_saved(&mut self, revision: u64, state: HistoryStateId) -> bool {
-        if revision == self.current.revision && state == self.history.current_state() {
+    pub fn save_ticket(&self) -> Option<SaveTicket> {
+        self.current.dirty_revision.map(|_| SaveTicket {
+            snapshot: self.current.clone(),
+            revision: self.current.revision,
+            history_state: self.history.current_state(),
+        })
+    }
+
+    pub fn finish_save(&mut self, completion: SaveCompletion) -> bool {
+        if completion.result.is_ok()
+            && completion.revision == self.current.revision
+            && completion.history_state == self.history.current_state()
+        {
             self.history.mark_saved();
             let mut next = (*self.current).clone();
             next.persisted_source = self.current.source.clone();
@@ -559,6 +715,7 @@ impl EditorSession {
         self.history.can_redo()
     }
 
+    #[cfg(test)]
     pub fn history_state(&self) -> HistoryStateId {
         self.history.current_state()
     }
@@ -2027,7 +2184,11 @@ mod tests {
 
         let revision = session.revision();
         let state = session.history_state();
-        session.mark_saved(revision, state);
+        session.finish_save(SaveCompletion {
+            revision,
+            history_state: state,
+            result: Ok(()),
+        });
         assert!(!session.is_dirty());
         assert!(session
             .source()
@@ -2761,23 +2922,124 @@ mod tests {
     }
 
     #[test]
-    fn saving_an_old_revision_cannot_clear_a_newer_dirty_revision() {
-        let bundle = diagram_bundle("");
-        let mut session = EditorSession::default();
-        session.replace(bundle).unwrap();
-        let old = session.revision();
-        let old_state = session.history_state();
-        session.apply(waml::uml::Batch(vec![place_set()])).unwrap();
+    fn old_save_completion_cannot_clear_new_literal_source() {
+        let mut session = source_session("# Order\n[");
+        let before = session.snapshot();
+        let document = document_id(&before, "order.md");
+        let first = local_insert(
+            before.markdown_snapshot(document).unwrap().clone(),
+            before.source.documents()[0].text().len(),
+            "x",
+        );
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(document, first),
+                source_location("order"),
+            )
+            .unwrap();
+        let old = session.save_ticket().unwrap();
 
-        session.mark_saved(old, old_state);
-        assert!(session.is_dirty());
+        let pending = session.snapshot();
+        let second = local_insert(
+            pending.markdown_snapshot(document).unwrap().clone(),
+            pending.source.documents()[0].text().len(),
+            "[",
+        );
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(document, second),
+                source_location("order"),
+            )
+            .unwrap();
+        let current = session.snapshot();
 
-        session.mark_saved(session.revision(), session.history_state());
-        assert!(!session.is_dirty());
-        assert_eq!(session.persisted_bundle(), session.bundle());
-        assert!(session
-            .persisted_bundle()
-            .shares_text_with(session.bundle(), "dia.md"));
+        assert!(!session.finish_save(SaveCompletion {
+            revision: old.revision,
+            history_state: old.history_state,
+            result: Ok(()),
+        }));
+        assert_eq!(session.snapshot().dirty_revision, Some(current.revision));
+        assert_eq!(session.snapshot().source, current.source);
+        assert!(session.snapshot().source.documents()[0]
+            .text()
+            .contains("["));
+    }
+
+    #[test]
+    fn dirty_external_replacement_reports_conflict_without_overwriting_source() {
+        let mut session = source_session("# Order\n");
+        let before = session.snapshot();
+        let document = document_id(&before, "order.md");
+        let local = local_insert(
+            before.markdown_snapshot(document).unwrap().clone(),
+            before.source.documents()[0].text().len(),
+            "local",
+        );
+        session
+            .promote_source_edit(
+                ProposedSourceEdit::from_local(document, local),
+                source_location("order"),
+            )
+            .unwrap();
+        let dirty = session.snapshot();
+        let base = dirty.markdown_snapshot(document).unwrap().revision();
+
+        let result = session
+            .replace_external(document, base, "# External\n".to_string())
+            .unwrap();
+
+        assert!(matches!(
+            result,
+            ExternalReplacement::Conflict { dirty_revision }
+                if dirty_revision == dirty.revision
+        ));
+        assert_eq!(session.snapshot().source, dirty.source);
+    }
+
+    #[test]
+    fn stale_external_replacement_is_ignored_without_parsing() {
+        let mut session = source_session("# Order\n");
+        let current = session.snapshot();
+        let document = document_id(&current, "order.md");
+        let stale = DocumentRevision::INITIAL;
+
+        let result = session
+            .replace_external(document, stale, "# Stale\n".to_string())
+            .unwrap();
+
+        assert!(matches!(result, ExternalReplacement::IgnoredStale));
+        assert!(Arc::ptr_eq(&session.snapshot(), &current));
+    }
+
+    #[test]
+    fn clean_external_replacement_parses_once_at_ingress_and_installs_clean() {
+        let mut session = source_session("# Order\n");
+        let before = session.snapshot();
+        let document = document_id(&before, "order.md");
+        let base = before.markdown_snapshot(document).unwrap().revision();
+        let mut probe = waml::analysis::test_support::PreparationProbe::succeed();
+
+        let result = session
+            .replace_external_with_preparer(
+                document,
+                base,
+                "# External\n[".to_string(),
+                |source, previous, revision, promoted| {
+                    waml::analysis::test_support::prepare_candidate_with_promoted_probe(
+                        source, previous, revision, promoted, &mut probe,
+                    )
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(result, ExternalReplacement::Installed(_)));
+        assert_eq!(probe.markdown_parse_calls(document), 0);
+        assert_eq!(probe.markdown_reparse_calls(document), 0);
+        assert_eq!(probe.markdown_promotions(document), 1);
+        let installed = session.snapshot();
+        assert_eq!(installed.source.documents()[0].text(), "# External\n[");
+        assert_eq!(installed.persisted_source, installed.source);
+        assert_eq!(installed.dirty_revision, None);
     }
 
     #[test]
@@ -3110,9 +3372,17 @@ mod tests {
         let edited_revision = session.revision();
         let edited_state = session.history_state();
 
-        assert!(!session.mark_saved(edited_revision, clean_state));
+        assert!(!session.finish_save(SaveCompletion {
+            revision: edited_revision,
+            history_state: clean_state,
+            result: Ok(()),
+        }));
         assert!(session.is_dirty());
-        assert!(session.mark_saved(edited_revision, edited_state));
+        assert!(session.finish_save(SaveCompletion {
+            revision: edited_revision,
+            history_state: edited_state,
+            result: Ok(()),
+        }));
         assert!(!session.is_dirty());
 
         session.undo().unwrap().unwrap();
