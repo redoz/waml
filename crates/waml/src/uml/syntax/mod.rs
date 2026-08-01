@@ -11,7 +11,7 @@ mod kind;
 mod parser;
 
 #[allow(dead_code)]
-pub(in crate::uml) fn parse_full(
+pub(crate) fn parse_full(
     text: SourceText,
     structure: &MarkdownStructureMap,
 ) -> Arc<SyntaxTree<UmlLanguage>> {

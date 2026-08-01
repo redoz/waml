@@ -6,9 +6,10 @@ use std::{
 
 pub use waml_syntax::DocumentRevision;
 use waml_syntax::{
-    parse_markdown, reparse_markdown, LineIndex, MarkdownDialect, MarkdownSyntaxSnapshot,
-    MarkdownSyntaxUpdate, ParseError, SourceText, SyntaxElement, SyntaxIdentity, SyntaxLanguage,
-    SyntaxNode, SyntaxToken, SyntaxTree, TextChange, TextRange, TextSize,
+    parse_markdown, reparse_markdown, LineIndex, MarkdownDialect, MarkdownSemanticRole,
+    MarkdownSourceRole, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, ParseError, SourceText,
+    SyntaxElement, SyntaxIdentity, SyntaxLanguage, SyntaxNode, SyntaxToken, SyntaxTree, TextChange,
+    TextRange, TextSize,
 };
 
 use crate::{
@@ -138,26 +139,91 @@ impl OkfAnalysis {
         content_range: TextRange,
     ) -> Option<Arc<[WamlCodeSpan]>> {
         let markdown = self.markdown.documents().values().find(|snapshot| {
-            snapshot
-                .queries()
-                .island(owner)
-                .is_some_and(|island| island.content_range == content_range)
+            snapshot.queries().island(owner).map_or_else(
+                || {
+                    snapshot.queries().fenced_code(owner).is_some_and(|fence| {
+                        fence.content_range == content_range
+                            && fence
+                                .language
+                                .as_deref()
+                                .is_some_and(|language| language.eq_ignore_ascii_case("waml"))
+                    })
+                },
+                |island| island.content_range == content_range,
+            )
         })?;
         let syntax = self.code_syntax.get(&owner)?;
         if syntax.content_range != content_range || syntax.revision != markdown.revision() {
             return None;
         }
+        syntax.code_spans()
+    }
 
+    pub fn document_code_spans(&self, document: DocumentId) -> Option<Arc<[WamlCodeSpan]>> {
+        self.markdown_snapshot(document)?;
+        let snapshots = self
+            .code_syntax
+            .values()
+            .filter(|snapshot| snapshot.document == document)
+            .collect::<Vec<_>>();
+        let fenced_ranges = snapshots
+            .iter()
+            .filter(|snapshot| snapshot.fenced)
+            .map(|snapshot| snapshot.content_range)
+            .collect::<Vec<_>>();
         let mut spans = Vec::new();
-        collect_waml_code_spans(
-            syntax.syntax.root(),
-            syntax.source_range.start(),
-            content_range,
-            &mut spans,
-        )?;
+        for snapshot in snapshots {
+            let code_spans = snapshot.code_spans()?;
+            spans.extend(code_spans.iter().copied().filter(|span| {
+                snapshot.fenced
+                    || !fenced_ranges.iter().any(|range| {
+                        span.range.start() < range.end() && range.start() < span.range.end()
+                    })
+            }));
+        }
         spans.sort_by_key(|span| (span.range.start(), span.range.end()));
         spans.dedup_by_key(|span| span.range);
-        Some(Arc::from(spans))
+        spans
+            .windows(2)
+            .all(|pair| pair[0].range.end() <= pair[1].range.start())
+            .then(|| Arc::from(spans))
+    }
+
+    pub fn markdown_token_spans(&self, document: DocumentId) -> Option<Arc<[MarkdownTokenSpan]>> {
+        let markdown = self.markdown_snapshot(document)?;
+        let full_range = TextRange::new(TextSize::new(0), markdown.text().len()).ok()?;
+        let mut spans = markdown
+            .queries()
+            .spans(full_range)
+            .filter_map(|span| {
+                let role = if span.semantic_role == MarkdownSemanticRole::Recovery {
+                    MarkdownTokenRole::Invalid
+                } else if span.source_role == MarkdownSourceRole::SyntaxMarker {
+                    MarkdownTokenRole::Marker
+                } else {
+                    match span.semantic_role {
+                        MarkdownSemanticRole::Heading => MarkdownTokenRole::Heading,
+                        MarkdownSemanticRole::Link
+                        | MarkdownSemanticRole::Image
+                        | MarkdownSemanticRole::Autolink => MarkdownTokenRole::Link,
+                        MarkdownSemanticRole::IndentedCode
+                        | MarkdownSemanticRole::FencedCode
+                        | MarkdownSemanticRole::CodeSpan => MarkdownTokenRole::Code,
+                        _ => return None,
+                    }
+                };
+                Some(MarkdownTokenSpan {
+                    range: span.range,
+                    role,
+                })
+            })
+            .collect::<Vec<_>>();
+        spans.sort_by_key(|span| (span.range.start(), span.range.end()));
+        spans.dedup_by_key(|span| span.range);
+        spans
+            .windows(2)
+            .all(|pair| pair[0].range.end() <= pair[1].range.start())
+            .then(|| Arc::from(spans))
     }
 
     fn attach_code_syntax(&mut self, uml: &crate::uml::Analysis) {
@@ -173,16 +239,70 @@ impl OkfAnalysis {
                 snapshots.insert(
                     island.owner,
                     WamlCodeSyntaxSnapshot {
+                        document: *document,
                         revision: markdown.revision(),
+                        fenced: false,
                         source_range: snapshot.source_range(),
                         content_range: snapshot.content_range(),
                         syntax: snapshot.syntax().clone(),
                     },
                 );
             }
+
+            let full_range = match TextRange::new(TextSize::new(0), markdown.text().len()) {
+                Ok(range) => range,
+                Err(_) => continue,
+            };
+            let fenced_owners = markdown
+                .queries()
+                .spans(full_range)
+                .filter(|span| span.semantic_role == MarkdownSemanticRole::FencedCode)
+                .map(|span| span.owner)
+                .collect::<BTreeSet<_>>();
+            for owner in fenced_owners {
+                let Some(fence) = markdown.queries().fenced_code(owner) else {
+                    continue;
+                };
+                if !fence
+                    .language
+                    .as_deref()
+                    .is_some_and(|language| language.eq_ignore_ascii_case("waml"))
+                {
+                    continue;
+                }
+                let Some(syntax) = parse_fenced_waml_syntax(markdown, fence.content_range) else {
+                    continue;
+                };
+                snapshots.insert(
+                    fence.owner,
+                    WamlCodeSyntaxSnapshot {
+                        document: *document,
+                        revision: markdown.revision(),
+                        fenced: true,
+                        source_range: fence.content_range,
+                        content_range: fence.content_range,
+                        syntax,
+                    },
+                );
+            }
         }
         self.code_syntax = Arc::new(snapshots);
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkdownTokenRole {
+    Marker,
+    Heading,
+    Link,
+    Code,
+    Invalid,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MarkdownTokenSpan {
+    pub range: TextRange,
+    pub role: MarkdownTokenRole,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -204,10 +324,43 @@ pub struct WamlCodeSpan {
 }
 
 struct WamlCodeSyntaxSnapshot {
+    document: DocumentId,
     revision: DocumentRevision,
+    fenced: bool,
     source_range: TextRange,
     content_range: TextRange,
     syntax: Arc<SyntaxTree<crate::uml::syntax::UmlLanguage>>,
+}
+
+impl WamlCodeSyntaxSnapshot {
+    fn code_spans(&self) -> Option<Arc<[WamlCodeSpan]>> {
+        let mut spans = Vec::new();
+        collect_waml_code_spans(
+            self.syntax.root(),
+            self.source_range.start(),
+            self.content_range,
+            &mut spans,
+        )?;
+        spans.sort_by_key(|span| (span.range.start(), span.range.end()));
+        spans.dedup_by_key(|span| span.range);
+        Some(Arc::from(spans))
+    }
+}
+
+fn parse_fenced_waml_syntax(
+    markdown: &MarkdownSyntaxSnapshot,
+    content_range: TextRange,
+) -> Option<Arc<SyntaxTree<crate::uml::syntax::UmlLanguage>>> {
+    let source = markdown
+        .text()
+        .shared()
+        .get(content_range.start().to_usize()..content_range.end().to_usize())?;
+    let source = SourceText::new(source.to_owned()).ok()?;
+    let parsed = parse_markdown(markdown.revision(), source, MarkdownDialect::WAML_DEFAULT).ok()?;
+    Some(crate::uml::syntax::parse_full(
+        parsed.text().clone(),
+        parsed.structure(),
+    ))
 }
 
 fn collect_waml_code_spans(

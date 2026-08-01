@@ -16,9 +16,9 @@ use waml::{
 };
 use waml_syntax::{
     reparse_markdown, AstNode, DocumentRevision, GreenElement, GreenFactory, GreenText,
-    MarkdownDialect, MarkdownSyntaxUpdate, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SourceText,
-    SyntaxAnnotation, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextChange, TextRange,
-    TextSize, TriviaKind, WamlSectionKind,
+    MarkdownDialect, MarkdownSemanticRole, MarkdownSyntaxUpdate, OkfMarkdownLanguage,
+    OkfMarkdownSyntaxKind, SourceText, SyntaxAnnotation, SyntaxElement, SyntaxNode, SyntaxToken,
+    SyntaxTree, TextChange, TextRange, TextSize, TriviaKind, WamlSectionKind,
 };
 
 fn prepared(
@@ -300,6 +300,110 @@ fn shared_waml_code_spans_follow_the_installed_document_revision() {
     assert!(classified.contains(&("Text", WamlCodeRole::Type)));
     assert!(classified.contains(&("1..8", WamlCodeRole::Number)));
     assert!(!classified.iter().any(|(text, _)| *text == "count"));
+}
+
+#[test]
+fn shared_waml_code_spans_include_exact_fenced_waml_and_document_parity() {
+    let authored = "---\ntype: uml.Class\n---\n# Example\n\n## Attributes\n- unknown: Number {0..42}\n\n```waml\n## Attributes\n- unknown: Number {0..42}\n```\n";
+    let candidate = prepared(
+        SourceBundle::try_from_pairs([("example.md", authored)]).unwrap(),
+        None,
+        46,
+    );
+    let document = document_id(&candidate, "example.md");
+    let markdown = candidate.okf().markdown_snapshot(document).unwrap();
+    let full_range = TextRange::new(TextSize::new(0), markdown.text().len()).unwrap();
+    let owner = markdown
+        .queries()
+        .spans(full_range)
+        .find(|span| span.semantic_role == MarkdownSemanticRole::FencedCode)
+        .expect("the fenced code must have a semantic owner")
+        .owner;
+    let fence = markdown
+        .queries()
+        .fenced_code(owner)
+        .expect("the semantic owner must resolve to fenced-code metadata");
+    let island = markdown
+        .structure()
+        .islands
+        .iter()
+        .find(|island| island.kind == WamlSectionKind::Attributes)
+        .expect("the document must retain the matching section syntax");
+
+    let spans = candidate
+        .okf()
+        .code_spans(fence.owner, fence.content_range)
+        .expect("an exact fenced waml block must have shared code roles");
+    assert!(spans.windows(2).all(|pair| {
+        fence.content_range.start() <= pair[0].range.start()
+            && pair[0].range.end() <= pair[1].range.start()
+            && pair[1].range.end() <= fence.content_range.end()
+    }));
+    let classified = spans
+        .iter()
+        .map(|span| {
+            (
+                &authored[span.range.start().to_usize()..span.range.end().to_usize()],
+                span.role,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(classified.contains(&("unknown", WamlCodeRole::Property)));
+    assert!(classified.contains(&("Number", WamlCodeRole::Type)));
+    assert!(classified.contains(&("0..42", WamlCodeRole::Number)));
+    assert!(classified.contains(&(":", WamlCodeRole::Punctuation)));
+    assert!(classified.contains(&("{", WamlCodeRole::Punctuation)));
+    assert!(classified.contains(&("}", WamlCodeRole::Punctuation)));
+
+    let section_spans = candidate
+        .okf()
+        .code_spans(island.owner, island.content_range)
+        .expect("the matching WAML section must have shared code roles");
+    let section_classified = section_spans
+        .iter()
+        .map(|span| {
+            (
+                &authored[span.range.start().to_usize()..span.range.end().to_usize()],
+                span.role,
+            )
+        })
+        .collect::<Vec<_>>();
+    let classified_syntax = classified
+        .iter()
+        .copied()
+        .filter(|(_, role)| *role != WamlCodeRole::Comment)
+        .collect::<Vec<_>>();
+    let section_syntax = section_classified
+        .iter()
+        .copied()
+        .filter(|(_, role)| *role != WamlCodeRole::Comment)
+        .collect::<Vec<_>>();
+    assert_eq!(classified_syntax, section_syntax);
+
+    let document_spans = candidate
+        .okf()
+        .document_code_spans(document)
+        .expect("the document must expose its retained WAML code roles");
+    let fenced_document_spans = document_spans
+        .iter()
+        .copied()
+        .filter(|span| {
+            fence.content_range.start() <= span.range.start()
+                && span.range.end() <= fence.content_range.end()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(fenced_document_spans.as_slice(), spans.as_ref());
+
+    let clipped = TextRange::new(
+        fence
+            .content_range
+            .start()
+            .checked_add(TextSize::new(1))
+            .unwrap(),
+        fence.content_range.end(),
+    )
+    .unwrap();
+    assert!(candidate.okf().code_spans(fence.owner, clipped).is_none());
 }
 
 #[test]
