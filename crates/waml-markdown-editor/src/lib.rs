@@ -11,7 +11,11 @@ pub mod session;
 pub mod unicode;
 pub mod widget;
 
+pub fn script_mod(vm: &mut makepad_widgets::ScriptVm) -> makepad_widgets::ScriptValue {
+    widget::register_script_mod(vm)
+}
+
 pub fn live_design(cx: &mut makepad_widgets::Cx) {
     cx.with_vm(makepad_widgets::script_mod);
-    widget::live_design(cx);
+    cx.with_vm(script_mod);
 }

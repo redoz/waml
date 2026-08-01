@@ -1,16 +1,23 @@
-use std::sync::Arc;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use makepad_widgets::*;
+use makepad_widgets::{animator::Ease, shader::draw_text::FontFamily, text::geom::Point};
 
 use crate::{
     edit::ProposedMarkdownEdit,
     input::{
         ControllerError, EditorInput, EditorKey, MarkdownEditorController, PointerGesture,
-        SelectionModifier,
+        ScrollState, SelectionModifier,
     },
     layout::{
-        FontKey, FontResolver, LayoutDocument, LayoutElementId, LayoutEngine, LayoutError,
-        LayoutInvalidation, LayoutSnapshot, LayoutViewport, MakepadTextShaper, TextMetrics,
+        FontKey, FontResolver, LayoutElementId, LayoutEngine, LayoutError, LayoutInvalidation,
+        LayoutSnapshot, LayoutViewport, MakepadTextLayoutCache, MakepadTextShaper, TextMetrics,
+    },
+    motion::{LayoutChangeCause, MotionConfig, MotionController},
+    presentation::style::FONT_MONO,
+    presentation::{
+        build_draw_commands, ApprovedImageSource, ColorRole, DecorationRole, DrawCommand,
+        EmbeddedState, ImageMediaType, InstalledPresentation, PresentationError, PresentationFrame,
     },
     selection::TextPosition,
     session::MarkdownDocumentSession,
@@ -25,11 +32,29 @@ script_mod! {
     mod.widgets.MarkdownEditor = set_type_default() do mod.widgets.MarkdownEditorBase {
         width: Fill
         height: Fill
+        motion_duration: 0.100
+        motion_ease: OutCubic
+        body_color: #202124
+        marker_color: #7a7f87
+        marker_active_color: #3f73d8
+        link_color: #2869c7
+        diagnostic_color: #d64545
+        quote_fill: #f5f6f7
+        code_fill: #f2f3f5
+        table_fill: #f7f8f9
+        inline_code_fill: #eceef1
+        block_rule_color: #c7cbd1
+        selection_color: #598ce647
+        caret_color: #202124
     }
 }
 
 pub fn live_design(cx: &mut Cx) {
-    cx.with_vm(script_mod);
+    cx.with_vm(register_script_mod);
+}
+
+pub(crate) fn register_script_mod(vm: &mut ScriptVm) -> ScriptValue {
+    script_mod(vm)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -58,9 +83,14 @@ pub enum MarkdownEditorAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MarkdownEditorError {
     Layout(LayoutError),
+    Presentation(PresentationError),
     ControllerLayout(LayoutError),
     ControllerEdit,
     MissingLayoutDocument,
+    StalePresentation {
+        installed: waml_syntax::DocumentRevision,
+        session: waml_syntax::DocumentRevision,
+    },
 }
 
 impl From<ControllerError> for MarkdownEditorError {
@@ -73,12 +103,34 @@ impl From<ControllerError> for MarkdownEditorError {
 }
 
 #[derive(Default)]
-struct WidgetFonts;
+struct WidgetFonts {
+    sans: Option<FontFamily>,
+    mono: Option<FontFamily>,
+}
 
 impl FontResolver for WidgetFonts {
     fn configure_draw_text(&mut self, _key: FontKey, metrics: TextMetrics, draw: &mut DrawText) {
+        if let Some(font) = if _key == FONT_MONO {
+            self.mono.as_ref()
+        } else {
+            self.sans.as_ref()
+        } {
+            draw.text_style.font_family = font.clone();
+        }
         draw.text_style.font_size = metrics.font_size;
+        draw.text_style.line_spacing = metrics.line_spacing;
     }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum AssetIdentity {
+    Bytes { cache_key: Arc<str>, media_type: u8 },
+    CanonicalFile(Arc<PathBuf>),
+}
+
+#[derive(Default)]
+struct DecodedImageCache {
+    images: HashMap<AssetIdentity, Option<ImageRef>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,9 +198,19 @@ pub struct MarkdownEditor {
     #[rust]
     layout_engine: LayoutEngine,
     #[rust]
-    layout: Option<Arc<LayoutSnapshot>>,
+    installed: Option<Arc<InstalledPresentation>>,
     #[rust]
-    presentation: Option<Arc<LayoutDocument>>,
+    target_layout: Option<Arc<LayoutSnapshot>>,
+    #[rust]
+    previous_layout: Option<Arc<LayoutSnapshot>>,
+    #[rust]
+    frame_layout: Option<Arc<LayoutSnapshot>>,
+    #[rust]
+    motion: MotionController,
+    #[rust]
+    pending_cause: Option<LayoutChangeCause>,
+    #[rust]
+    next_frame: NextFrame,
     #[rust]
     pointer_drag_active: bool,
     #[rust]
@@ -162,7 +224,9 @@ pub struct MarkdownEditor {
     #[rust]
     has_focus: bool,
     #[live]
-    draw_text: DrawText,
+    draw_text_sans: DrawText,
+    #[live]
+    draw_text_mono: DrawText,
     #[live]
     draw_background: DrawColor,
     #[live]
@@ -173,8 +237,40 @@ pub struct MarkdownEditor {
     draw_embedded: DrawColor,
     #[live]
     draw_caret: DrawColor,
+    #[live]
+    motion_duration: f64,
+    #[live]
+    motion_ease: Ease,
+    #[live]
+    body_color: Vec4,
+    #[live]
+    marker_color: Vec4,
+    #[live]
+    marker_active_color: Vec4,
+    #[live]
+    link_color: Vec4,
+    #[live]
+    diagnostic_color: Vec4,
+    #[live]
+    quote_fill: Vec4,
+    #[live]
+    code_fill: Vec4,
+    #[live]
+    table_fill: Vec4,
+    #[live]
+    inline_code_fill: Vec4,
+    #[live]
+    block_rule_color: Vec4,
+    #[live]
+    selection_color: Vec4,
+    #[live]
+    caret_color: Vec4,
     #[rust]
     fonts: WidgetFonts,
+    #[rust]
+    text_layout_cache: MakepadTextLayoutCache,
+    #[rust]
+    image_cache: DecodedImageCache,
     #[rust]
     last_draw: DrawRecorder,
 }
@@ -184,7 +280,7 @@ impl Widget for MarkdownEditor {
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         let _ = (&mut self.layout_engine, self.pointer_drag_active);
-        if let Some(layout) = &self.layout {
+        if let Some(layout) = &self.frame_layout {
             self.last_draw = DrawRecorder::default();
             draw_visible_layers_for_test(layout, &mut self.last_draw);
         }
@@ -199,6 +295,19 @@ impl MarkdownEditor {
         event: &Event,
         session: &mut MarkdownDocumentSession,
     ) -> Result<Vec<Action>, MarkdownEditorError> {
+        if let Some(frame_event) = self.next_frame.is_event(event) {
+            let frame = self.motion.sample(frame_event.time);
+            self.frame_layout = Some(frame.layout.clone());
+            self.scroll_y = frame.scroll_y;
+            session.set_scroll(ScrollState {
+                x: session.scroll().x,
+                y: frame.scroll_y,
+            });
+            self.view.redraw(cx);
+            if frame.active {
+                self.next_frame = cx.new_next_frame();
+            }
+        }
         if self.has_focus {
             if let Event::TextInput(event) = event {
                 let input = if event.was_paste {
@@ -216,7 +325,7 @@ impl MarkdownEditor {
                 EditorInput::Text(Arc::from(event.input.as_str()))
             }),
             Hit::TextCopy(event) => {
-                let layout = match self.layout.as_ref() {
+                let layout = match self.frame_layout.as_ref() {
                     Some(layout) => layout.clone(),
                     None => self.install_layout(cx, session)?,
                 };
@@ -228,7 +337,7 @@ impl MarkdownEditor {
                 return Ok(Vec::new());
             }
             Hit::TextCut(event) => {
-                let layout = match self.layout.as_ref() {
+                let layout = match self.frame_layout.as_ref() {
                     Some(layout) => layout.clone(),
                     None => self.install_layout(cx, session)?,
                 };
@@ -264,6 +373,21 @@ impl MarkdownEditor {
                 if event.was_tap() {
                     let point =
                         event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y);
+                    if event.modifiers.is_primary() {
+                        if let (Some(installed), Some(layout)) =
+                            (self.installed.as_ref(), self.frame_layout.as_ref())
+                        {
+                            let position = layout.point_to_source(point);
+                            if installed.plan.links.iter().any(|link| {
+                                link.source_range.start() <= position.offset
+                                    && position.offset <= link.source_range.end()
+                            }) {
+                                return Ok(vec![self.make_action(
+                                    MarkdownEditorAction::NavigationRequested { position },
+                                )]);
+                            }
+                        }
+                    }
                     if let Some((id, _)) = self.embedded_at(point) {
                         return Ok(vec![self.make_action(
                             MarkdownEditorAction::EmbeddedBlockEvent {
@@ -285,7 +409,8 @@ impl MarkdownEditor {
         if let Event::Scroll(event) = event {
             if self.view.area().rect(cx).contains(event.abs) && !event.handled_y.get() {
                 self.scroll_y = (self.scroll_y + event.scroll.y).max(0.0);
-                self.layout = None;
+                self.target_layout = None;
+                self.pending_cause = Some(LayoutChangeCause::ViewportResize);
                 self.view.redraw(cx);
                 event.handled_y.set(true);
             }
@@ -303,8 +428,29 @@ impl MarkdownEditor {
         walk: Walk,
     ) -> Result<DrawStep, MarkdownEditorError> {
         let layout = self.install_layout(cx, session)?;
+        let installed = self
+            .installed
+            .as_ref()
+            .ok_or(MarkdownEditorError::MissingLayoutDocument)?
+            .clone();
+        let frame = PresentationFrame {
+            revision: installed.revision,
+            layout: layout.clone(),
+            active_owners: installed
+                .plan
+                .active_owners(session.selections().primary().cursor.offset),
+            diagnostics: installed.diagnostics.clone(),
+            assets: installed.assets.clone(),
+        };
+        let commands = build_draw_commands(
+            &frame,
+            &installed.plan,
+            &installed.styles,
+            session.selections(),
+            session.ime(),
+        )
+        .map_err(MarkdownEditorError::Presentation)?;
         self.last_draw = DrawRecorder::default();
-        let document = self.presentation.as_ref().unwrap().clone();
         for layer in [
             DrawLayer::BlockBackground,
             DrawLayer::Selection,
@@ -314,87 +460,11 @@ impl MarkdownEditor {
             DrawLayer::CaretAndIme,
         ] {
             self.last_draw.record(layer, &layout);
-            let primitive_count = match layer {
-                DrawLayer::BlockBackground => {
-                    let mut count = 0;
-                    for block in &layout.blocks()[layout.visible_block_range()] {
-                        self.draw_background.color = vec4(0.97, 0.97, 0.97, 1.0);
-                        self.draw_background.draw_abs(cx, block.rect);
-                        count += 1;
-                    }
-                    count
-                }
-                DrawLayer::Selection => {
-                    let mut count = 0;
-                    for selection in session.selections().as_slice() {
-                        for rect in layout.selection_rects(*selection).unwrap_or_default() {
-                            self.draw_selection.color = vec4(0.35, 0.55, 0.95, 0.28);
-                            self.draw_selection.draw_abs(cx, rect);
-                            count += 1;
-                        }
-                    }
-                    count
-                }
-                DrawLayer::Text => {
-                    let visible = layout.visible_source_range();
-                    let mut count = 0;
-                    for run in document.text_runs.iter() {
-                        if run.range.end() <= visible.start() || visible.end() <= run.range.start()
-                        {
-                            continue;
-                        }
-                        if let (Ok(text), Some(caret)) = (
-                            session.snapshot().text().slice(run.range),
-                            layout.source_to_point(TextPosition::new(
-                                run.range.start(),
-                                crate::selection::Affinity::Before,
-                            )),
-                        ) {
-                            self.fonts.configure_draw_text(
-                                run.metrics.font,
-                                run.metrics,
-                                &mut self.draw_text,
-                            );
-                            self.draw_text.draw_abs(cx, caret.rect.pos, text);
-                            count += 1;
-                        }
-                    }
-                    count
-                }
-                DrawLayer::Decoration => {
-                    // The neutral layout contract currently has no decoration geometry.
-                    let _ = &mut self.draw_decoration;
-                    0
-                }
-                DrawLayer::EmbeddedBlock => {
-                    let mut count = 0;
-                    for block in &layout.blocks()[layout.visible_block_range()] {
-                        if document
-                            .embedded_blocks
-                            .iter()
-                            .any(|item| item.id == block.id)
-                        {
-                            self.draw_embedded.color = vec4(0.88, 0.89, 0.91, 1.0);
-                            self.draw_embedded.draw_abs(cx, block.rect);
-                            count += 1;
-                        }
-                    }
-                    count
-                }
-                DrawLayer::CaretAndIme => {
-                    let mut count = 0;
-                    for selection in session.selections().as_slice() {
-                        if selection.anchor == selection.cursor {
-                            if let Some(caret) = layout.source_to_point(selection.cursor) {
-                                self.draw_caret.color = vec4(0.1, 0.1, 0.1, 1.0);
-                                self.draw_caret.draw_abs(cx, caret.rect);
-                                count += 1;
-                            }
-                        }
-                    }
-                    count
-                }
-            };
+            let mut primitive_count = 0;
+            for command in commands.iter().filter(|command| command.layer() == layer) {
+                self.paint_command(cx, scope, &installed, &layout, command);
+                primitive_count += 1;
+            }
             self.last_draw.set_last_primitive_count(primitive_count);
         }
         if cx.has_key_focus(self.view.area()) && !self.read_only {
@@ -403,9 +473,219 @@ impl MarkdownEditor {
         Ok(self.view.draw_walk(cx, scope, walk))
     }
 
+    fn paint_command(
+        &mut self,
+        cx: &mut Cx2d,
+        scope: &mut Scope,
+        installed: &InstalledPresentation,
+        layout: &LayoutSnapshot,
+        command: &DrawCommand,
+    ) {
+        match command {
+            DrawCommand::BlockBackground { rect, role, .. } => {
+                self.draw_background.color = match role {
+                    crate::presentation::BlockDecorationRole::QuoteRule => self.block_rule_color,
+                    crate::presentation::BlockDecorationRole::InlineCodeFill => {
+                        self.inline_code_fill
+                    }
+                    crate::presentation::BlockDecorationRole::FencedCodeSurface => self.code_fill,
+                    crate::presentation::BlockDecorationRole::TableGrid => self.block_rule_color,
+                    crate::presentation::BlockDecorationRole::TableHeaderFill => self.table_fill,
+                    crate::presentation::BlockDecorationRole::TaskCheckbox => self.quote_fill,
+                    crate::presentation::BlockDecorationRole::ThematicRule => self.block_rule_color,
+                };
+                self.draw_background.draw_abs(cx, *rect);
+            }
+            DrawCommand::Selection { rect } => {
+                self.draw_selection.color = self.selection_color;
+                self.draw_selection.draw_abs(cx, *rect);
+            }
+            DrawCommand::Text {
+                id, range, style, ..
+            } => {
+                self.paint_text(cx, installed, layout, *id, *range, *style);
+            }
+            DrawCommand::Decoration { rects, role, .. } => {
+                self.draw_decoration.color = match role {
+                    DecorationRole::LinkUnderline => self.link_color,
+                    DecorationRole::DiagnosticUnderline(_) => self.diagnostic_color,
+                };
+                for rect in rects.iter() {
+                    self.draw_decoration.draw_abs(cx, underline_rect(*rect));
+                }
+            }
+            DrawCommand::EmbeddedBlock { rect, state, .. } => match state {
+                EmbeddedState::Ready { source } => {
+                    if let Some(image) = self.image_for_source(cx, source) {
+                        let _ = image.draw_walk(cx, scope, Walk::abs_rect(*rect));
+                    } else {
+                        self.draw_embedded.color = self.code_fill;
+                        self.draw_embedded.draw_abs(cx, *rect);
+                    }
+                }
+                EmbeddedState::Loading => {
+                    self.draw_embedded.color = self.quote_fill;
+                    self.draw_embedded.draw_abs(cx, *rect);
+                    self.draw_text_sans.color = self.marker_color;
+                    self.draw_text_sans
+                        .draw_abs(cx, rect.pos + dvec2(8.0, 8.0), "Loading image…");
+                }
+                EmbeddedState::Failed { message } => {
+                    self.draw_embedded.color = self.diagnostic_color;
+                    self.draw_embedded.draw_abs(cx, *rect);
+                    self.draw_text_sans.color = self.body_color;
+                    self.draw_text_sans
+                        .draw_abs(cx, rect.pos + dvec2(8.0, 8.0), message);
+                }
+            },
+            DrawCommand::CaretAndIme { caret, composition } => {
+                self.draw_caret.color = self.caret_color;
+                self.draw_caret.draw_abs(cx, *caret);
+                for rect in composition.iter() {
+                    self.draw_caret.draw_abs(cx, underline_rect(*rect));
+                }
+            }
+        }
+    }
+
+    fn paint_text(
+        &mut self,
+        cx: &mut Cx2d,
+        installed: &InstalledPresentation,
+        layout: &LayoutSnapshot,
+        id: crate::layout::GeometryElementId,
+        range: waml_syntax::TextRange,
+        style: crate::presentation::ResolvedTextStyle,
+    ) {
+        let Some(cluster) = layout
+            .glyph_clusters()
+            .iter()
+            .find(|cluster| cluster.id == id)
+        else {
+            return;
+        };
+        let Some((run_id, run_range)) = installed.plan.items.iter().find_map(|item| match item {
+            crate::presentation::PresentationItem::TextRun {
+                id,
+                range: run_range,
+                ..
+            } if run_range.start() <= range.start() && range.end() <= run_range.end() => Some((
+                LayoutElementId {
+                    owner: id.owner,
+                    fragment_ordinal: id.fragment_ordinal,
+                },
+                *run_range,
+            )),
+            _ => None,
+        }) else {
+            return;
+        };
+        let Some(laid_out) =
+            self.text_layout_cache
+                .laid_out(installed.revision, run_id, style.metrics)
+        else {
+            return;
+        };
+        self.fonts
+            .configure_draw_text(style.metrics.font, style.metrics, &mut self.draw_text_sans);
+        let cluster_offset = range
+            .start()
+            .to_usize()
+            .saturating_sub(run_range.start().to_usize());
+        let laid_glyphs = laid_out
+            .rows
+            .iter()
+            .flat_map(|row| {
+                let row_offset = row.text.start_in_parent();
+                row.glyphs
+                    .iter()
+                    .filter(move |glyph| row_offset + glyph.cluster == cluster_offset)
+            })
+            .collect::<Vec<_>>();
+        let dpi = cx.current_dpi_factor() as f32;
+        let glyphs = laid_glyphs
+            .into_iter()
+            .zip(cluster.glyphs.iter())
+            .filter_map(|(laid, positioned)| {
+                let rasterized = laid.rasterize(laid.font_size_in_lpxs * dpi)?;
+                Some((
+                    Point {
+                        x: positioned.origin.x as f32,
+                        y: positioned.origin.y as f32,
+                    },
+                    positioned.font_size,
+                    rasterized,
+                ))
+            })
+            .collect::<Vec<_>>();
+        self.draw_text_sans.draw_rasterized_glyphs_abs(
+            cx,
+            &glyphs,
+            self.color_for_role(style.color),
+        );
+    }
+
+    fn color_for_role(&self, role: ColorRole) -> Vec4 {
+        match role {
+            ColorRole::Text | ColorRole::Code => self.body_color,
+            ColorRole::Marker | ColorRole::Muted | ColorRole::TableRule => self.marker_color,
+            ColorRole::ActiveMarker => self.marker_active_color,
+            ColorRole::Link => self.link_color,
+            ColorRole::Recovery => self.diagnostic_color,
+            ColorRole::CodeSurface => self.code_fill,
+            ColorRole::Quote => self.quote_fill,
+        }
+    }
+
+    fn image_for_source(&mut self, cx: &mut Cx, source: &ApprovedImageSource) -> Option<ImageRef> {
+        let identity = match source {
+            ApprovedImageSource::Bytes {
+                cache_key,
+                media_type,
+                ..
+            } => AssetIdentity::Bytes {
+                cache_key: cache_key.clone(),
+                media_type: match media_type {
+                    ImageMediaType::Svg => 0,
+                    ImageMediaType::Png => 1,
+                    ImageMediaType::Jpeg => 2,
+                },
+            },
+            ApprovedImageSource::CanonicalFile { path, .. } => {
+                AssetIdentity::CanonicalFile(path.clone())
+            }
+        };
+        if let Some(image) = self.image_cache.images.get(&identity) {
+            return image.clone();
+        }
+        let widget =
+            WidgetRef::new_with_inner(Box::new(cx.with_vm(Image::script_new_with_default)));
+        let image = widget.as_image();
+        let decoded = match source {
+            ApprovedImageSource::Bytes {
+                media_type, data, ..
+            } => match media_type {
+                ImageMediaType::Svg => image.load_svg_from_shared_data(cx, data.clone()),
+                ImageMediaType::Png => image.load_png_from_data(cx, data),
+                ImageMediaType::Jpeg => image.load_jpg_from_data(cx, data),
+            },
+            ApprovedImageSource::CanonicalFile { path, .. } => {
+                image.load_image_file_by_path(cx, path.as_path())
+            }
+        };
+        if decoded.is_err() {
+            self.image_cache.images.insert(identity, None);
+            return None;
+        }
+        self.image_cache
+            .images
+            .insert(identity, Some(image.clone()));
+        Some(image)
+    }
+
     fn embedded_at(&self, point: DVec2) -> Option<(LayoutElementId, Rect)> {
-        let layout = self.layout.as_ref()?;
-        let document = self.presentation.as_ref()?;
+        let layout = self.frame_layout.as_ref()?;
+        let document = &self.installed.as_ref()?.layout_document;
         layout.blocks()[layout.visible_block_range()]
             .iter()
             .find(|block| {
@@ -423,20 +703,37 @@ impl MarkdownEditor {
         cx: &mut Cx,
         session: &MarkdownDocumentSession,
     ) -> Result<Arc<LayoutSnapshot>, MarkdownEditorError> {
-        let document = self
-            .presentation
+        let installed = self
+            .installed
             .as_ref()
-            .ok_or(MarkdownEditorError::MissingLayoutDocument)?;
+            .ok_or(MarkdownEditorError::MissingLayoutDocument)?
+            .clone();
+        if installed.revision != session.local_revision() {
+            return Err(MarkdownEditorError::StalePresentation {
+                installed: installed.revision,
+                session: session.local_revision(),
+            });
+        }
+        if self.pending_cause.is_none() {
+            if let Some(layout) = self.frame_layout.as_ref() {
+                return Ok(layout.clone());
+            }
+        }
         let viewport_rect = self.view.area().rect(cx);
+        self.fonts.sans = Some(self.draw_text_sans.text_style.font_family.clone());
+        self.fonts.mono = Some(self.draw_text_mono.text_style.font_family.clone());
+        self.text_layout_cache.retain_revision(installed.revision);
         let mut shaper = MakepadTextShaper {
             cx,
-            draw_text: &mut self.draw_text,
+            draw_text: &mut self.draw_text_sans,
             fonts: &mut self.fonts,
+            revision: installed.revision,
+            cache: Some(&mut self.text_layout_cache),
         };
         let layout = self
             .layout_engine
             .layout(
-                document,
+                &installed.layout_document,
                 session.snapshot(),
                 LayoutViewport::new(
                     viewport_rect.size.x.max(1.0),
@@ -449,8 +746,36 @@ impl MarkdownEditor {
             )
             .map_err(MarkdownEditorError::Layout)?;
         let layout = Arc::new(layout);
-        self.layout = Some(layout.clone());
-        Ok(layout)
+        self.previous_layout = self.target_layout.replace(layout.clone());
+        self.motion
+            .set_viewport_height(viewport_rect.size.y.max(1.0));
+        let cause = self.pending_cause.take().unwrap_or_else(|| {
+            if self.frame_layout.is_some() {
+                LayoutChangeCause::ViewportResize
+            } else {
+                LayoutChangeCause::InitialLoad
+            }
+        });
+        let frame = self.motion.commit(
+            cx.seconds_since_app_start(),
+            self.frame_layout
+                .clone()
+                .or_else(|| self.previous_layout.clone()),
+            layout,
+            cause,
+            self.reduced_motion,
+            None,
+            MotionConfig {
+                duration_seconds: self.motion_duration,
+                ease: self.motion_ease,
+                ..MotionConfig::default()
+            },
+        );
+        self.frame_layout = Some(frame.layout.clone());
+        if frame.active {
+            self.next_frame = cx.new_next_frame();
+        }
+        Ok(frame.layout)
     }
 
     pub fn handle_input_with_session(
@@ -467,7 +792,7 @@ impl MarkdownEditor {
         {
             return Ok(Vec::new());
         }
-        let layout = match self.layout.as_ref() {
+        let layout = match self.frame_layout.as_ref() {
             Some(layout) => layout.clone(),
             None => self.install_layout(cx, session)?,
         };
@@ -511,7 +836,7 @@ impl MarkdownEditor {
     }
 
     fn show_ime(&mut self, cx: &mut Cx, session: &MarkdownDocumentSession) {
-        let Some(point) = self.layout.as_ref().and_then(|layout| {
+        let Some(point) = self.frame_layout.as_ref().and_then(|layout| {
             layout
                 .source_to_point(session.selections().primary().cursor)
                 .map(|caret| caret.rect.pos)
@@ -520,6 +845,13 @@ impl MarkdownEditor {
         };
         self.last_ime_point = point;
         cx.show_text_ime(self.view.area(), point);
+    }
+}
+
+fn underline_rect(rect: Rect) -> Rect {
+    Rect {
+        pos: dvec2(rect.pos.x, rect.pos.y + (rect.size.y - 2.0).max(0.0)),
+        size: dvec2(rect.size.x, rect.size.y.min(2.0)),
     }
 }
 
@@ -576,22 +908,64 @@ impl MarkdownEditorRef {
         }
     }
 
-    pub fn set_reduced_motion(&self, reduced_motion: bool) {
+    pub fn set_reduced_motion(&self, cx: &mut Cx, reduced_motion: bool) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.reduced_motion = reduced_motion;
+            if reduced_motion {
+                if let Some(target) = inner.target_layout.clone() {
+                    let previous = inner.frame_layout.clone();
+                    let frame = inner.motion.commit(
+                        cx.seconds_since_app_start(),
+                        previous,
+                        target,
+                        LayoutChangeCause::ViewportResize,
+                        true,
+                        None,
+                        MotionConfig::default(),
+                    );
+                    inner.frame_layout = Some(frame.layout);
+                    inner.next_frame = NextFrame::default();
+                }
+            }
+            inner.view.redraw(cx);
         }
     }
 
-    pub fn set_layout_document(&self, cx: &mut Cx, document: Arc<LayoutDocument>) {
+    pub fn install_presentation(
+        &self,
+        cx: &mut Cx,
+        presentation: Arc<InstalledPresentation>,
+        cause: LayoutChangeCause,
+    ) {
+        if presentation.validate().is_err() {
+            return;
+        }
         if let Some(mut inner) = self.borrow_mut() {
-            inner.presentation = Some(document);
-            inner.layout = None;
+            inner.installed = Some(presentation);
+            inner.pending_cause = Some(cause);
+            inner.target_layout = None;
+            inner.view.redraw(cx);
+        }
+    }
+
+    pub fn clear_presentation(&self, cx: &mut Cx) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.installed = None;
+            inner.target_layout = None;
+            inner.previous_layout = None;
+            inner.frame_layout = None;
+            inner.pending_cause = None;
+            inner.next_frame = NextFrame::default();
             inner.view.redraw(cx);
         }
     }
 
     pub fn target_layout(&self) -> Option<Arc<LayoutSnapshot>> {
-        self.borrow().and_then(|inner| inner.layout.clone())
+        self.borrow().and_then(|inner| inner.target_layout.clone())
+    }
+
+    pub fn frame_layout(&self) -> Option<Arc<LayoutSnapshot>> {
+        self.borrow().and_then(|inner| inner.frame_layout.clone())
     }
 
     pub fn proposed_edit(actions: &Actions) -> Option<ProposedMarkdownEdit> {
@@ -643,7 +1017,8 @@ impl MarkdownEditorRef {
     #[doc(hidden)]
     pub fn test_set_layout(&self, layout: Arc<LayoutSnapshot>) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.layout = Some(layout);
+            inner.target_layout = Some(layout.clone());
+            inner.frame_layout = Some(layout);
         }
     }
 

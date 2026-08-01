@@ -6,6 +6,7 @@
 
 pub mod assets;
 pub mod compile;
+pub mod draw;
 pub mod highlight;
 pub mod layout;
 pub mod style;
@@ -15,6 +16,10 @@ pub use assets::{
     EmbeddedState, ImageAssetEvent, ImageAssetRequest, ImageMediaType, MarkdownAssetHost,
 };
 pub use compile::{compile_presentation, render_plan_golden};
+pub use draw::{
+    build_draw_commands, DecorationRole, DrawCommand, InstalledPresentation, PresentationFrame,
+    PresentedDiagnostic, PresentedDiagnosticSeverity, ResolvedTextStyle,
+};
 pub use highlight::{
     CodeHighlightError, CodeHighlightHost, CodeHighlightRequest, CodeHighlightResult,
     CodeHighlightSpan, CodeTokenRole, HighlightOutcome, HighlighterRegistry,

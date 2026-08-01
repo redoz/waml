@@ -1,23 +1,61 @@
-use std::sync::Arc;
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use makepad_widgets::{dvec2, text::layouter::LaidoutText, Align, Cx, DrawText};
 use unicode_bidi::BidiInfo;
-use waml_syntax::{SourceText, TextRange, TextSize};
+use waml_syntax::{DocumentRevision, SourceText, TextRange, TextSize};
 
 use super::{
-    BaseDirection, FontKey, GeometryElementId, LayoutError, ParagraphIntrinsic,
-    ParagraphIntrinsicRequest, ParagraphShapeRequest, ShapeSpan, ShapedCluster, ShapedFragment,
-    ShapedGlyph, ShapedParagraph, ShapedRow, TextMetrics, TextShaper,
+    BaseDirection, FontKey, FontWeight, GeometryElementId, LayoutElementId, LayoutError,
+    ParagraphIntrinsic, ParagraphIntrinsicRequest, ParagraphShapeRequest, ShapeSpan, ShapedCluster,
+    ShapedFragment, ShapedGlyph, ShapedParagraph, ShapedRow, TextMetrics, TextShaper,
 };
 
 pub trait FontResolver {
     fn configure_draw_text(&mut self, key: FontKey, metrics: TextMetrics, draw: &mut DrawText);
 }
 
+const FULL_SHAPE_WIDTH: f64 = 1_000_000.0;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct TextLayoutKey {
+    revision: DocumentRevision,
+    id: LayoutElementId,
+    font: FontKey,
+    font_size_bits: u32,
+    line_spacing_bits: u32,
+    weight: FontWeight,
+    italic: bool,
+    width_bits: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct MakepadTextLayoutCache {
+    entries: HashMap<TextLayoutKey, Rc<LaidoutText>>,
+}
+
+impl MakepadTextLayoutCache {
+    pub(crate) fn laid_out(
+        &self,
+        revision: DocumentRevision,
+        id: LayoutElementId,
+        metrics: TextMetrics,
+    ) -> Option<Rc<LaidoutText>> {
+        self.entries
+            .get(&text_layout_key(revision, id, metrics, FULL_SHAPE_WIDTH).ok()?)
+            .cloned()
+    }
+
+    pub(crate) fn retain_revision(&mut self, revision: DocumentRevision) {
+        self.entries.retain(|key, _| key.revision == revision);
+    }
+}
+
 pub struct MakepadTextShaper<'a, R> {
     pub cx: &'a mut Cx,
     pub draw_text: &'a mut DrawText,
     pub fonts: &'a mut R,
+    pub(crate) revision: DocumentRevision,
+    pub(crate) cache: Option<&'a mut MakepadTextLayoutCache>,
 }
 
 impl<R: FontResolver> TextShaper for MakepadTextShaper<'_, R> {
@@ -64,15 +102,36 @@ fn shape_makepad_paragraph<R: FontResolver>(
             .map_err(|_| LayoutError::ShapingFailed { run: span.run_id })?;
         let paint_scale = shaper.draw_text.font_scale as f64;
         let layout_scale = shaper.draw_text.font_scale.max(0.0001);
-        let laid_out = shaper.draw_text.layout(
-            shaper.cx,
-            0.0,
-            0.0,
-            Some(1_000_000.0 / layout_scale),
-            true,
-            Align::default(),
-            text,
-        );
+        let max_width = FULL_SHAPE_WIDTH / layout_scale as f64;
+        let key = text_layout_key(shaper.revision, span.run_id, span.metrics, FULL_SHAPE_WIDTH)
+            .map_err(|_| LayoutError::ShapingFailed { run: span.run_id })?;
+        let laid_out = if let Some(cache) = shaper.cache.as_deref_mut() {
+            if let Some(cached) = cache.entries.get(&key) {
+                cached.clone()
+            } else {
+                let laid_out = shaper.draw_text.layout(
+                    shaper.cx,
+                    0.0,
+                    0.0,
+                    Some(max_width as f32),
+                    true,
+                    Align::default(),
+                    text,
+                );
+                cache.entries.insert(key, laid_out.clone());
+                laid_out
+            }
+        } else {
+            shaper.draw_text.layout(
+                shaper.cx,
+                0.0,
+                0.0,
+                Some(max_width as f32),
+                true,
+                Align::default(),
+                text,
+            )
+        };
         if let Some(row) = laid_out.rows.first() {
             line_spacing_scale = row.line_spacing_scale as f64;
         }
@@ -125,6 +184,33 @@ fn shape_makepad_paragraph<R: FontResolver>(
             .collect::<Vec<_>>()
             .into(),
         legal_breaks: legal_breaks.into(),
+    })
+}
+
+fn text_layout_key(
+    revision: DocumentRevision,
+    id: LayoutElementId,
+    metrics: TextMetrics,
+    width: f64,
+) -> Result<TextLayoutKey, ()> {
+    if !metrics.font_size.is_finite()
+        || metrics.font_size < 0.0
+        || !metrics.line_spacing.is_finite()
+        || metrics.line_spacing < 0.0
+        || !width.is_finite()
+        || width < 0.0
+    {
+        return Err(());
+    }
+    Ok(TextLayoutKey {
+        revision,
+        id,
+        font: metrics.font,
+        font_size_bits: metrics.font_size.to_bits(),
+        line_spacing_bits: metrics.line_spacing.to_bits(),
+        weight: metrics.weight,
+        italic: metrics.italic,
+        width_bits: width.to_bits(),
     })
 }
 
@@ -727,6 +813,8 @@ mod tests {
                     cx,
                     draw_text: &mut draw_text,
                     fonts: &mut fonts,
+                    revision: DocumentRevision::INITIAL,
+                    cache: None,
                 };
                 geometry = Some(
                     LayoutEngine::default()
@@ -803,6 +891,8 @@ mod tests {
                         cx,
                         draw_text: &mut draw_text,
                         fonts: &mut fonts,
+                        revision: DocumentRevision::INITIAL,
+                        cache: None,
                     };
                     let shaped = shape_run(&mut shaper, syntax.text(), &run, 400.0, 400.0);
                     let shaped_glyphs = shaped
@@ -899,6 +989,8 @@ mod tests {
                     cx,
                     draw_text: &mut draw_text,
                     fonts: &mut fonts,
+                    revision: DocumentRevision::INITIAL,
+                    cache: None,
                 };
                 let full = shape_run(&mut shaper, syntax.text(), &run, 180.0, 180.0);
                 let inline = shape_run(&mut shaper, syntax.text(), &run, 180.0, 40.0);
@@ -981,6 +1073,8 @@ mod tests {
                         cx,
                         draw_text: &mut draw_text,
                         fonts: &mut fonts,
+                        revision: DocumentRevision::INITIAL,
+                        cache: None,
                     };
                     for _ in 0..10_000 {
                         let intrinsic = shaper
@@ -1057,6 +1151,8 @@ mod tests {
                     cx,
                     draw_text: &mut draw_text,
                     fonts: &mut fonts,
+                    revision: DocumentRevision::INITIAL,
+                    cache: None,
                 };
                 let shaped = shape_run(&mut shaper, syntax.text(), &run, 90.0, 90.0);
                 assert!(shaped

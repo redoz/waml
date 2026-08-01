@@ -20,6 +20,7 @@ pub use geometry::{
     LayoutGeometryParts, LayoutSnapshot, LayoutSnapshotMetadata, VisualLane, VisualLaneId,
     VisualLaneKind, VisualLine, VisualRow, VisualRowId,
 };
+pub(crate) use makepad::MakepadTextLayoutCache;
 pub use makepad::{FontResolver, MakepadTextShaper};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
