@@ -405,6 +405,9 @@ script_mod! {
                                 // Markdown default inks text with `theme.color_label_inner`
                                 // (near-white) -- unreadable on a light slot -- so `font_color` is
                                 // repointed at the Atlas `text` ink for dark-on-light contrast.
+                                // The `surface` (paper white) bg reads as a document page, and the
+                                // canvas beneath is hidden outright on a Source tab (see above), so
+                                // this slot no longer relies on opaque occlusion.
                                 markdown_surface := View{
                                     width: Fill
                                     height: Fill

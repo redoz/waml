@@ -3,14 +3,17 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use unicode_bidi::BidiInfo;
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     layout::{
         Affinity, BlockFlow, BlockGeometry, BlockLayoutData, BlockLayoutSpec, CaretStop,
-        ColumnAlignment, ColumnConstraint, EdgeInsets, FontKey, FontWeight, GlyphCluster,
-        IntrinsicCluster, IntrinsicRun, LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine,
-        LayoutError, LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport,
-        MeasuredBlock, ShapedCluster, ShapedGlyph, ShapedRun, TextMetrics, TextShaper, VisualLine,
+        ColumnAlignment, ColumnConstraint, EdgeInsets, FontKey, FontWeight, GeometryElementId,
+        GlyphCluster, LayoutBlock, LayoutDocument, LayoutElementId, LayoutEngine, LayoutError,
+        LayoutInvalidation, LayoutSnapshot, LayoutTextRun, LayoutViewport, MeasuredBlock,
+        ParagraphIntrinsic, ParagraphIntrinsicRequest, ParagraphShapeRequest, ShapeSpan,
+        ShapedCluster, ShapedFragment, ShapedGlyph, ShapedParagraph, ShapedRow, ShapedRun,
+        TextMetrics, TextShaper, VisualLine,
     },
     selection::{Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
@@ -209,7 +212,16 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
     let mut shaper = FixedShaper(ShapedRun {
         clusters: Arc::from([
             ShapedCluster {
+                id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
+                span_id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
                 source_range: range(start, start + 3),
+                metrics: run.metrics,
                 advance: 17.0,
                 bidi_level: 0,
                 row_ordinal: 0,
@@ -218,7 +230,16 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
                 glyphs: Arc::from([glyph(501, 0.0, 17.0, 14.0)]),
             },
             ShapedCluster {
+                id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
+                span_id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
                 source_range: range(start + 3, start + 6),
+                metrics: run.metrics,
                 advance: 12.0,
                 bidi_level: 0,
                 row_ordinal: 0,
@@ -227,7 +248,16 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
                 glyphs: Arc::from([glyph(601, 0.0, 12.0, 14.0), glyph(602, 4.0, 0.0, 14.0)]),
             },
             ShapedCluster {
+                id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
+                span_id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
                 source_range: range(start + 6, start + 14),
+                metrics: run.metrics,
                 advance: 24.0,
                 bidi_level: 1,
                 row_ordinal: 0,
@@ -640,9 +670,9 @@ fn bidi_levels_reorder_clusters_and_keep_boundary_affinities_distinct() {
     let start = run.range.start().to_usize();
     let mut shaper = FixedShaper(ShapedRun {
         clusters: Arc::from([
-            shaped_cluster(start, start + 1, 0),
-            shaped_cluster(start + 1, start + 2, 1),
-            shaped_cluster(start + 2, start + 3, 1),
+            shaped_cluster(run.id, start, start + 1, 0),
+            shaped_cluster(run.id, start + 1, start + 2, 1),
+            shaped_cluster(run.id, start + 2, start + 3, 1),
         ]),
         ascender: 12.0,
         descender: 4.0,
@@ -1651,6 +1681,93 @@ fn adjacent_styled_paragraph_runs_share_one_inline_line() {
 }
 
 #[test]
+fn styled_unbreakable_word_does_not_break_at_span_boundary() {
+    let (document, presentation, mut shaper) = fixtures::styled_paragraph("international", 5);
+
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(72.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    assert_eq!(shaper.paragraph_requests.len(), 1);
+    assert_eq!(shaper.paragraph_requests[0].spans, 2);
+    assert_eq!(layout.visual_lines().len(), 1);
+    assert!(layout.visual_lines()[0].rect.size.x > 72.0);
+}
+
+#[test]
+fn styled_bidi_uses_one_paragraph_context_and_exact_span_payloads() {
+    let (document, presentation, mut shaper) = fixtures::styled_paragraph("abc אבג", 4);
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(300.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    assert_eq!(shaper.paragraph_requests.len(), 1);
+    assert_eq!(shaper.paragraph_requests[0].spans, 2);
+    let mut logical = layout.glyph_clusters().iter().collect::<Vec<_>>();
+    logical.sort_by_key(|cluster| cluster.source_range.start());
+    let split = document.text_runs[0].range.end();
+    assert!(logical
+        .iter()
+        .filter(|cluster| cluster.source_range.end() <= split)
+        .all(|cluster| cluster.metrics == document.text_runs[0].metrics));
+    assert!(logical
+        .iter()
+        .filter(|cluster| cluster.source_range.start() >= split)
+        .all(|cluster| cluster.metrics == document.text_runs[1].metrics));
+    assert_eq!(
+        logical
+            .iter()
+            .flat_map(|cluster| cluster.glyphs.iter().map(|glyph| glyph.glyph_id))
+            .collect::<Vec<_>>(),
+        "abc אבג"
+            .chars()
+            .map(|character| character as u16)
+            .collect::<Vec<_>>()
+    );
+    let rtl = logical
+        .iter()
+        .filter(|cluster| cluster.source_range.start() >= split)
+        .collect::<Vec<_>>();
+    assert!(rtl
+        .windows(2)
+        .all(|pair| pair[0].rect.pos.x > pair[1].rect.pos.x));
+}
+
+#[test]
+fn empty_continuation_row_and_caret_boundary_survive_shaping() {
+    let (document, presentation, mut shaper) = fixtures::styled_paragraph("line\n", 5);
+    let layout = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(200.0, 100.0, 0.0, 0.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap();
+
+    assert_eq!(layout.visual_lines().len(), 2);
+    let empty = &layout.visual_lines()[1];
+    assert_eq!(empty.source_range.start(), empty.source_range.end());
+    assert_eq!(
+        empty.source_range.start(),
+        document.text_runs[0].range.end()
+    );
+}
+
+#[test]
 fn hanging_runs_stay_clamped_and_content_advances_across_styles() {
     let (mut document, presentation, mut shaper) = fixtures::paragraph();
     let original = document.text_runs[0].clone();
@@ -1727,10 +1844,10 @@ fn logical_cluster_ids_survive_bidi_reorder_and_width_changes() {
     let start = document.text_runs[0].range.start().to_usize();
     let shaped = ShapedRun {
         clusters: Arc::from([
-            shaped_cluster(start, start + 1, 0),
-            shaped_cluster(start + 1, start + 2, 1),
-            shaped_cluster(start + 2, start + 3, 1),
-            shaped_cluster(start + 3, start + 4, 0),
+            shaped_cluster(document.text_runs[0].id, start, start + 1, 0),
+            shaped_cluster(document.text_runs[0].id, start + 1, start + 2, 1),
+            shaped_cluster(document.text_runs[0].id, start + 2, start + 3, 1),
+            shaped_cluster(document.text_runs[0].id, start + 3, start + 4, 0),
         ]),
         ascender: 12.0,
         descender: 4.0,
@@ -1761,9 +1878,205 @@ fn logical_cluster_ids_survive_bidi_reorder_and_width_changes() {
     assert_eq!(ids_by_source(&wide), ids_by_source(&narrow));
 }
 
+fn test_paragraph(
+    request: ParagraphShapeRequest<'_>,
+    shaped_runs: Vec<(ShapeSpan, ShapedRun)>,
+) -> ShapedParagraph {
+    let mut clusters = Vec::new();
+    for (span, shaped) in &shaped_runs {
+        for cluster in shaped.clusters.iter() {
+            let mut cluster = cluster.clone();
+            cluster.span_id = span.id;
+            cluster.metrics = span.metrics;
+            clusters.push(cluster);
+        }
+    }
+    clusters.sort_by_key(|cluster| cluster.source_range.start());
+    let paragraph_text = request.source.slice(request.paragraph_range).unwrap();
+    let bidi = BidiInfo::new(paragraph_text, None);
+    for (ordinal, cluster) in clusters.iter_mut().enumerate() {
+        cluster.id = GeometryElementId {
+            layout: request.paragraph_id.layout,
+            cluster_ordinal: 0x8000_0000
+                | ((request.paragraph_id.cluster_ordinal & 0x0f) << 24)
+                | ordinal as u32,
+        };
+        let relative =
+            cluster.source_range.start().to_usize() - request.paragraph_range.start().to_usize();
+        cluster.bidi_level = bidi.levels.get(relative).map_or(0, |level| level.number());
+    }
+
+    let mut legal_breaks = paragraph_text
+        .char_indices()
+        .filter(|(_, character)| character.is_whitespace() || request.spans.len() == 1)
+        .map(|(relative, character)| {
+            t(request.paragraph_range.start().to_usize() + relative + character.len_utf8())
+        })
+        .collect::<Vec<_>>();
+    legal_breaks.push(request.paragraph_range.end());
+    legal_breaks.sort_unstable();
+    legal_breaks.dedup();
+
+    let mut rows = Vec::new();
+    let mut row_start = 0;
+    let mut segment_start = 0;
+    let mut row_width = 0.0;
+    let mut row_top = 0.0;
+    for index in 0..clusters.len() {
+        let boundary = clusters[index].source_range.end();
+        if !legal_breaks.contains(&boundary) && index + 1 < clusters.len() {
+            continue;
+        }
+        let segment_end = index + 1;
+        let segment_width = clusters[segment_start..segment_end]
+            .iter()
+            .map(|cluster| cluster.advance)
+            .sum::<f64>();
+        let available = if rows.is_empty() {
+            request.first_row_width
+        } else {
+            request.full_width
+        };
+        if segment_start > row_start && row_width + segment_width > available.max(1.0) {
+            let row = test_row(
+                request.paragraph_id,
+                &clusters,
+                row_start,
+                segment_start,
+                row_top,
+            );
+            row_top += row.ascender + row.descender + row.line_gap;
+            rows.push(row);
+            row_start = segment_start;
+            row_width = 0.0;
+        }
+        row_width += segment_width;
+        segment_start = segment_end;
+    }
+    if row_start < clusters.len() || rows.is_empty() {
+        let row = test_row(
+            request.paragraph_id,
+            &clusters,
+            row_start,
+            clusters.len(),
+            row_top,
+        );
+        row_top += row.ascender + row.descender + row.line_gap;
+        rows.push(row);
+    }
+    if paragraph_text.ends_with('\n') {
+        let boundary = request.paragraph_range.end();
+        let metrics = request.spans.last().unwrap().metrics;
+        rows.push(ShapedRow {
+            id: GeometryElementId {
+                layout: request.paragraph_id.layout,
+                cluster_ordinal: 0xd000_0000
+                    | ((request.paragraph_id.cluster_ordinal & 0x0f) << 24),
+            },
+            source_range: range(boundary.to_usize(), boundary.to_usize()),
+            cluster_range: clusters.len()..clusters.len(),
+            caret_offsets: Arc::from([boundary]),
+            ascender: metrics.font_size as f64 * 0.8,
+            descender: metrics.font_size as f64 * 0.2,
+            line_gap: 0.0,
+            line_spacing_scale: 1.0,
+            row_top,
+        });
+    }
+    ShapedParagraph {
+        rows: rows.into(),
+        fragments: request
+            .spans
+            .iter()
+            .map(|span| ShapedFragment {
+                id: GeometryElementId {
+                    layout: request.paragraph_id.layout,
+                    cluster_ordinal: 0x6000_0000
+                        | ((request.paragraph_id.cluster_ordinal & 0x0f) << 24)
+                        | span.stable_ordinal,
+                },
+                span_id: span.id,
+                stable_ordinal: span.stable_ordinal,
+                source_range: span.source_range,
+                metrics: span.metrics,
+            })
+            .collect::<Vec<_>>()
+            .into(),
+        clusters: clusters.into(),
+        bidi_levels: bidi
+            .levels
+            .iter()
+            .map(|level| level.number())
+            .collect::<Vec<_>>()
+            .into(),
+        legal_breaks: legal_breaks.into(),
+    }
+}
+
+fn test_row(
+    paragraph_id: GeometryElementId,
+    clusters: &[ShapedCluster],
+    start: usize,
+    end: usize,
+    row_top: f64,
+) -> ShapedRow {
+    let source_start = clusters[start].source_range.start();
+    let source_end = clusters[end - 1].source_range.end();
+    let ascender = clusters[start..end]
+        .iter()
+        .map(|cluster| cluster.metrics.font_size as f64 * 0.8)
+        .fold(0.0, f64::max);
+    let descender = clusters[start..end]
+        .iter()
+        .map(|cluster| cluster.metrics.font_size as f64 * 0.2)
+        .fold(0.0, f64::max);
+    ShapedRow {
+        id: GeometryElementId {
+            layout: paragraph_id.layout,
+            cluster_ordinal: 0xc000_0000
+                | ((paragraph_id.cluster_ordinal & 0x0f) << 24)
+                | (source_start.to_usize() as u32 & 0x00ff_ffff),
+        },
+        source_range: TextRange::new(source_start, source_end).unwrap(),
+        cluster_range: start..end,
+        caret_offsets: Arc::from([source_start, source_end]),
+        ascender,
+        descender,
+        line_gap: 0.0,
+        line_spacing_scale: 1.0,
+        row_top,
+    }
+}
+
+fn test_intrinsic(
+    request: ParagraphIntrinsicRequest<'_>,
+    advance: impl Fn(&ShapeSpan) -> f64,
+) -> ParagraphIntrinsic {
+    let mut min_content = 0.0_f64;
+    let mut max_content = 0.0_f64;
+    let mut word = 0.0_f64;
+    for span in request.spans {
+        let text = request.source.slice(span.source_range).unwrap();
+        for character in text.chars() {
+            let width = advance(span);
+            max_content += width;
+            if character.is_whitespace() {
+                min_content = min_content.max(word);
+                word = 0.0;
+            } else {
+                word += width;
+            }
+        }
+    }
+    ParagraphIntrinsic {
+        min_content: min_content.max(word),
+        max_content,
+    }
+}
+
 struct GlyphCharacterShaper;
 
-impl TextShaper for GlyphCharacterShaper {
+impl GlyphCharacterShaper {
     fn shape(
         &mut self,
         source: &SourceText,
@@ -1777,7 +2090,16 @@ impl TextShaper for GlyphCharacterShaper {
                 let start = run.range.start().to_usize() + relative;
                 let end = start + character.len_utf8();
                 ShapedCluster {
+                    id: GeometryElementId {
+                        layout: run.id,
+                        cluster_ordinal: 0,
+                    },
+                    span_id: GeometryElementId {
+                        layout: run.id,
+                        cluster_ordinal: 0,
+                    },
                     source_range: range(start, end),
+                    metrics: run.metrics,
                     advance: 10.0,
                     bidi_level: 0,
                     row_ordinal: 0,
@@ -1810,22 +2132,70 @@ impl TextShaper for GlyphCharacterShaper {
     }
 }
 
+impl TextShaper for GlyphCharacterShaper {
+    fn shape_paragraph(
+        &mut self,
+        request: ParagraphShapeRequest<'_>,
+    ) -> Result<ShapedParagraph, LayoutError> {
+        let runs = request
+            .spans
+            .iter()
+            .map(|span| {
+                let run = LayoutTextRun {
+                    id: span.run_id,
+                    range: span.source_range,
+                    metrics: span.metrics,
+                };
+                self.shape(request.source, &run, request.full_width)
+                    .map(|shaped| (span.clone(), shaped))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(test_paragraph(request, runs))
+    }
+
+    fn measure_paragraph_intrinsic(
+        &mut self,
+        request: ParagraphIntrinsicRequest<'_>,
+    ) -> Result<ParagraphIntrinsic, LayoutError> {
+        Ok(test_intrinsic(request, |_| 10.0))
+    }
+}
+
 struct FixedShaper(ShapedRun);
 
 impl TextShaper for FixedShaper {
-    fn shape(
+    fn shape_paragraph(
         &mut self,
-        _source: &SourceText,
-        _run: &LayoutTextRun,
-        _max_width: f64,
-    ) -> Result<ShapedRun, LayoutError> {
-        Ok(self.0.clone())
+        request: ParagraphShapeRequest<'_>,
+    ) -> Result<ShapedParagraph, LayoutError> {
+        let mut paragraph =
+            test_paragraph(request, vec![(request.spans[0].clone(), self.0.clone())]);
+        let mut clusters = paragraph.clusters.to_vec();
+        for cluster in &mut clusters {
+            if let Some(original) = self
+                .0
+                .clusters
+                .iter()
+                .find(|item| item.source_range == cluster.source_range)
+            {
+                cluster.bidi_level = original.bidi_level;
+            }
+        }
+        paragraph.clusters = clusters.into();
+        Ok(paragraph)
+    }
+
+    fn measure_paragraph_intrinsic(
+        &mut self,
+        request: ParagraphIntrinsicRequest<'_>,
+    ) -> Result<ParagraphIntrinsic, LayoutError> {
+        Ok(test_intrinsic(request, |_| 10.0))
     }
 }
 
 struct MetricGlyphShaper;
 
-impl TextShaper for MetricGlyphShaper {
+impl MetricGlyphShaper {
     fn shape(
         &mut self,
         _source: &SourceText,
@@ -1836,7 +2206,16 @@ impl TextShaper for MetricGlyphShaper {
         let descender = -(run.metrics.font_size as f64 * 0.2);
         Ok(ShapedRun {
             clusters: Arc::from([ShapedCluster {
+                id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
+                span_id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
                 source_range: run.range,
+                metrics: run.metrics,
                 advance: 10.0,
                 bidi_level: 0,
                 row_ordinal: 0,
@@ -1865,9 +2244,58 @@ impl TextShaper for MetricGlyphShaper {
     }
 }
 
-fn shaped_cluster(start: usize, end: usize, bidi_level: u8) -> ShapedCluster {
+impl TextShaper for MetricGlyphShaper {
+    fn shape_paragraph(
+        &mut self,
+        request: ParagraphShapeRequest<'_>,
+    ) -> Result<ShapedParagraph, LayoutError> {
+        let runs = request
+            .spans
+            .iter()
+            .map(|span| {
+                let run = LayoutTextRun {
+                    id: span.run_id,
+                    range: span.source_range,
+                    metrics: span.metrics,
+                };
+                self.shape(request.source, &run, request.full_width)
+                    .map(|shaped| (span.clone(), shaped))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(test_paragraph(request, runs))
+    }
+
+    fn measure_paragraph_intrinsic(
+        &mut self,
+        request: ParagraphIntrinsicRequest<'_>,
+    ) -> Result<ParagraphIntrinsic, LayoutError> {
+        Ok(test_intrinsic(request, |_| 10.0))
+    }
+}
+
+fn shaped_cluster(
+    layout_id: LayoutElementId,
+    start: usize,
+    end: usize,
+    bidi_level: u8,
+) -> ShapedCluster {
     ShapedCluster {
+        id: GeometryElementId {
+            layout: layout_id,
+            cluster_ordinal: 0,
+        },
+        span_id: GeometryElementId {
+            layout: layout_id,
+            cluster_ordinal: 0,
+        },
         source_range: range(start, end),
+        metrics: TextMetrics {
+            font: FontKey(1),
+            font_size: 16.0,
+            line_spacing: 0.0,
+            weight: FontWeight(400),
+            italic: false,
+        },
         advance: 10.0,
         bidi_level,
         row_ordinal: 0,
@@ -1883,9 +2311,17 @@ struct FakeShaper {
     fail_fragment: Option<u32>,
     advance_override: HashMap<u32, f64>,
     intrinsic_measured: usize,
+    paragraph_requests: Vec<RecordedParagraphRequest>,
 }
 
-impl TextShaper for FakeShaper {
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RecordedParagraphRequest {
+    full_width: f64,
+    first_row_width: f64,
+    spans: usize,
+}
+
+impl FakeShaper {
     fn shape(
         &mut self,
         source: &SourceText,
@@ -1902,7 +2338,16 @@ impl TextShaper for FakeShaper {
             let start = run.range.start().to_usize() + relative;
             let end = start + character.len_utf8();
             clusters.push(ShapedCluster {
+                id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
+                span_id: GeometryElementId {
+                    layout: run.id,
+                    cluster_ordinal: 0,
+                },
                 source_range: range(start, end),
+                metrics: run.metrics,
                 advance: self
                     .advance_override
                     .get(&run.id.fragment_ordinal)
@@ -1912,7 +2357,25 @@ impl TextShaper for FakeShaper {
                 row_ordinal: 0,
                 row_top: 0.0,
                 caret_offsets: Arc::from([t(start), t(end)]),
-                glyphs: Arc::from([]),
+                glyphs: Arc::from([ShapedGlyph {
+                    glyph_id: u16::try_from(character as u32).unwrap_or(0),
+                    origin: dvec2(0.0, 0.0),
+                    advance: self
+                        .advance_override
+                        .get(&run.id.fragment_ordinal)
+                        .copied()
+                        .unwrap_or(run.metrics.font.0 as f64),
+                    paint_scale: 1.0,
+                    font: None,
+                    font_key: run.metrics.font,
+                    font_size: run.metrics.font_size,
+                    ascender: run.metrics.font_size as f64 * 0.8,
+                    descender: -(run.metrics.font_size as f64 * 0.2),
+                    line_gap: 0.0,
+                    baseline: run.metrics.font_size as f64 * 0.8,
+                    offset: 0.0,
+                    color: None,
+                }]),
             });
         }
         Ok(ShapedRun {
@@ -1922,32 +2385,45 @@ impl TextShaper for FakeShaper {
             line_gap: 0.0,
         })
     }
+}
 
-    fn measure_intrinsic(
+impl TextShaper for FakeShaper {
+    fn shape_paragraph(
         &mut self,
-        source: &SourceText,
-        run: &LayoutTextRun,
-    ) -> Result<IntrinsicRun, LayoutError> {
+        request: ParagraphShapeRequest<'_>,
+    ) -> Result<ShapedParagraph, LayoutError> {
+        self.paragraph_requests.push(RecordedParagraphRequest {
+            full_width: request.full_width,
+            first_row_width: request.first_row_width,
+            spans: request.spans.len(),
+        });
+        let runs = request
+            .spans
+            .iter()
+            .map(|span| {
+                let run = LayoutTextRun {
+                    id: span.run_id,
+                    range: span.source_range,
+                    metrics: span.metrics,
+                };
+                self.shape(request.source, &run, request.full_width)
+                    .map(|shaped| (span.clone(), shaped))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(test_paragraph(request, runs))
+    }
+
+    fn measure_paragraph_intrinsic(
+        &mut self,
+        request: ParagraphIntrinsicRequest<'_>,
+    ) -> Result<ParagraphIntrinsic, LayoutError> {
         self.intrinsic_measured += 1;
-        let text = source.slice(run.range).unwrap();
-        Ok(IntrinsicRun {
-            clusters: text
-                .char_indices()
-                .map(|(relative, character)| {
-                    let start = run.range.start().to_usize() + relative;
-                    let end = start + character.len_utf8();
-                    IntrinsicCluster {
-                        source_range: range(start, end),
-                        advance: self
-                            .advance_override
-                            .get(&run.id.fragment_ordinal)
-                            .copied()
-                            .unwrap_or(run.metrics.font.0 as f64),
-                    }
-                })
-                .collect::<Vec<_>>()
-                .into(),
-        })
+        Ok(test_intrinsic(request, |span| {
+            self.advance_override
+                .get(&span.run_id.fragment_ordinal)
+                .copied()
+                .unwrap_or(span.metrics.font.0 as f64)
+        }))
     }
 }
 
@@ -2011,6 +2487,72 @@ mod fixtures {
 
     pub fn paragraph() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
         fixture(&[16.0], &[60], None)
+    }
+
+    pub fn styled_paragraph(
+        text: &str,
+        split: usize,
+    ) -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
+        let source = SourceText::new(format!("# {text}")).unwrap();
+        let syntax = parse_markdown(
+            DocumentRevision::new(18),
+            source,
+            MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        let heading = syntax.queries().headings().next().unwrap().clone();
+        let id = LayoutElementId {
+            owner: heading.owner,
+            fragment_ordinal: 0,
+        };
+        let content_start = heading.content_range.start().to_usize();
+        let content_end = content_start + text.len();
+        let base_metrics = TextMetrics {
+            font: FontKey(8),
+            font_size: 16.0,
+            line_spacing: 0.0,
+            weight: FontWeight(400),
+            italic: false,
+        };
+        let mut runs = vec![LayoutTextRun {
+            id,
+            range: range(content_start, content_start + split),
+            metrics: base_metrics,
+        }];
+        if split < text.len() {
+            runs.push(LayoutTextRun {
+                id,
+                range: range(content_start + split, content_end),
+                metrics: TextMetrics {
+                    font: FontKey(13),
+                    italic: true,
+                    ..base_metrics
+                },
+            });
+        }
+        let presentation = Arc::new(MarkdownDocumentSnapshot::new(syntax));
+        (
+            LayoutDocument {
+                revision: presentation.revision(),
+                content_insets: EdgeInsets::default(),
+                blocks: Arc::from([LayoutBlock {
+                    id,
+                    source_range: range(0, content_end),
+                    parent: None,
+                    spec: BlockLayoutSpec {
+                        flow: BlockFlow::Paragraph,
+                        insets: EdgeInsets::default(),
+                        space_before: 0.0,
+                        space_after: 0.0,
+                        columns: Arc::from([]),
+                    },
+                }]),
+                text_runs: runs.into(),
+                embedded_blocks: Arc::from([]),
+            },
+            presentation,
+            FakeShaper::default(),
+        )
     }
 
     pub fn failing_second_block() -> (LayoutDocument, Arc<MarkdownDocumentSnapshot>, FakeShaper) {
@@ -2082,6 +2624,7 @@ mod fixtures {
                 fail_fragment,
                 advance_override: HashMap::new(),
                 intrinsic_measured: 0,
+                paragraph_requests: Vec::new(),
             },
         )
     }

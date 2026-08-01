@@ -9,8 +9,10 @@ use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 
 pub use crate::selection::Affinity;
 pub use engine::{
-    BlockSummary, IndexBuildStats, IntrinsicCluster, IntrinsicRun, LayoutEngine,
-    LayoutInvalidation, LayoutViewport, ShapedCluster, ShapedGlyph, ShapedRun, TextShaper,
+    BaseDirection, BlockSummary, IndexBuildStats, IntrinsicCluster, IntrinsicRun, LayoutEngine,
+    LayoutInvalidation, LayoutViewport, ParagraphIntrinsic, ParagraphIntrinsicRequest,
+    ParagraphShapeRequest, ShapeSpan, ShapedCluster, ShapedFragment, ShapedGlyph, ShapedParagraph,
+    ShapedRow, ShapedRun, TextShaper,
 };
 pub use geometry::{
     BlockGeometry, BlockLayoutData, CaretGeometry, CaretStop, GlyphCluster, LayoutSnapshot,
@@ -149,5 +151,11 @@ pub enum LayoutError {
     OverlappingTextRuns {
         first: TextRange,
         second: TextRange,
+    },
+    DuplicateShapedId {
+        id: GeometryElementId,
+    },
+    MissingShapeSpan {
+        id: GeometryElementId,
     },
 }

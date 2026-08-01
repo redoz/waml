@@ -2,6 +2,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     fmt,
     hash::{Hash, Hasher},
+    ops::Range,
     sync::Arc,
 };
 
@@ -22,63 +23,98 @@ use super::{
 use crate::layout::geometry::CaretStop;
 
 pub trait TextShaper {
-    fn shape(
+    fn shape_paragraph(
         &mut self,
-        source: &SourceText,
-        run: &LayoutTextRun,
-        max_width: f64,
-    ) -> Result<ShapedRun, LayoutError>;
+        request: ParagraphShapeRequest<'_>,
+    ) -> Result<ShapedParagraph, LayoutError>;
 
-    fn shape_inline(
+    fn measure_paragraph_intrinsic(
         &mut self,
-        source: &SourceText,
-        run: &LayoutTextRun,
-        full_width: f64,
-        _first_row_width: f64,
-    ) -> Result<ShapedRun, LayoutError> {
-        self.shape(source, run, full_width)
-    }
+        request: ParagraphIntrinsicRequest<'_>,
+    ) -> Result<ParagraphIntrinsic, LayoutError>;
+}
 
-    fn measure_intrinsic(
-        &mut self,
-        source: &SourceText,
-        run: &LayoutTextRun,
-    ) -> Result<IntrinsicRun, LayoutError> {
-        let shaped = self.shape(source, run, 1_000_000.0)?;
-        Ok(IntrinsicRun {
-            clusters: shaped
-                .clusters
-                .iter()
-                .map(|cluster| IntrinsicCluster {
-                    source_range: cluster.source_range,
-                    advance: cluster.advance,
-                })
-                .collect::<Vec<_>>()
-                .into(),
-        })
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BaseDirection {
+    Auto,
+    LeftToRight,
+    RightToLeft,
+}
 
-    fn min_content_width(
-        &mut self,
-        source: &SourceText,
-        run: &LayoutTextRun,
-    ) -> Result<f64, LayoutError> {
-        let shaped = self.shape(source, run, 1_000_000.0)?;
-        let mut width = 0.0_f64;
-        let mut word_width = 0.0_f64;
-        for cluster in shaped.clusters.iter() {
-            let whitespace = source
-                .slice(cluster.source_range)
-                .map_or(true, |text| text.chars().all(char::is_whitespace));
-            if whitespace {
-                word_width = 0.0;
-            } else {
-                word_width += cluster.advance;
-                width = width.max(word_width);
-            }
-        }
-        Ok(width)
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeSpan {
+    pub id: GeometryElementId,
+    pub run_id: LayoutElementId,
+    pub stable_ordinal: u32,
+    pub source_range: TextRange,
+    pub metrics: TextMetrics,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ParagraphShapeRequest<'a> {
+    pub source: &'a SourceText,
+    pub paragraph_id: GeometryElementId,
+    pub paragraph_range: TextRange,
+    pub spans: &'a [ShapeSpan],
+    pub full_width: f64,
+    pub first_row_width: f64,
+    pub base_direction: BaseDirection,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ParagraphIntrinsicRequest<'a> {
+    pub source: &'a SourceText,
+    pub paragraph_id: GeometryElementId,
+    pub paragraph_range: TextRange,
+    pub spans: &'a [ShapeSpan],
+    pub base_direction: BaseDirection,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ParagraphIntrinsic {
+    pub min_content: f64,
+    pub max_content: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapedParagraph {
+    pub rows: Arc<[ShapedRow]>,
+    pub fragments: Arc<[ShapedFragment]>,
+    pub clusters: Arc<[ShapedCluster]>,
+    pub bidi_levels: Arc<[u8]>,
+    pub legal_breaks: Arc<[TextSize]>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapedRow {
+    pub id: GeometryElementId,
+    pub source_range: TextRange,
+    pub cluster_range: Range<usize>,
+    pub caret_offsets: Arc<[TextSize]>,
+    pub ascender: f64,
+    pub descender: f64,
+    pub line_gap: f64,
+    /// Makepad's `line_spacing_scale`: the multiplier it applies to the pitch
+    /// between consecutive baselines. It does NOT affect the first baseline.
+    pub line_spacing_scale: f64,
+    pub row_top: f64,
+}
+
+impl ShapedRow {
+    /// Distance from this row's baseline to the next row's baseline, matching
+    /// Makepad's `LaidoutRow::line_spacing_in_lpxs`.
+    pub fn line_advance(&self) -> f64 {
+        (self.ascender + self.descender.abs() + self.line_gap) * self.line_spacing_scale
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapedFragment {
+    pub id: GeometryElementId,
+    pub span_id: GeometryElementId,
+    pub stable_ordinal: u32,
+    pub source_range: TextRange,
+    pub metrics: TextMetrics,
 }
 
 #[derive(Clone, Debug)]
@@ -102,7 +138,10 @@ pub struct IntrinsicRun {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShapedCluster {
+    pub id: GeometryElementId,
+    pub span_id: GeometryElementId,
     pub source_range: TextRange,
+    pub metrics: TextMetrics,
     pub advance: f64,
     pub bidi_level: u8,
     /// Row assigned by the shaping authority before block placement.
@@ -249,8 +288,10 @@ impl DocumentLayoutIndex {
         let mut block_hashers = (0..document.blocks.len())
             .map(|_| DefaultHasher::new())
             .collect::<Vec<_>>();
-        let mut build_stats = IndexBuildStats::default();
-        build_stats.hierarchy_node_visits = hierarchy.node_visits;
+        let mut build_stats = IndexBuildStats {
+            hierarchy_node_visits: hierarchy.node_visits,
+            ..IndexBuildStats::default()
+        };
         for (index, block) in document.blocks.iter().enumerate() {
             block_indices.insert(block.id, index);
             block.source_range.hash(&mut block_hashers[index]);
@@ -1113,16 +1154,13 @@ struct InlinePiece {
 
 #[derive(Clone)]
 struct PendingCluster {
-    ordinal: u32,
     shaped: ShapedCluster,
-    metrics: TextMetrics,
     ascender: f64,
     descender: f64,
     line_gap: f64,
 }
 
 struct InlineComposer {
-    layout_id: LayoutElementId,
     start_x: f64,
     start_y: f64,
     max_width: f64,
@@ -1198,21 +1236,21 @@ fn measure_block_intrinsic<S: TextShaper>(
         .iter()
         .map(|index| document.embedded_blocks[*index].size.x)
         .fold(0.0, f64::max);
-    let mut word_width = 0.0;
-    for run_index in &layout_index.run_indices[block_index] {
-        let run = &document.text_runs[*run_index];
-        let intrinsic = shaper.measure_intrinsic(source, run)?;
-        for cluster in intrinsic.clusters.iter() {
-            let whitespace = source
-                .slice(cluster.source_range)
-                .map_or(true, |text| text.chars().all(char::is_whitespace));
-            if whitespace {
-                word_width = 0.0;
-            } else {
-                word_width += cluster.advance;
-                width = width.max(word_width);
-            }
-        }
+    let runs = layout_index.run_indices[block_index]
+        .iter()
+        .map(|index| document.text_runs[*index].clone())
+        .collect::<Vec<_>>();
+    if !runs.is_empty() {
+        let spans = shape_spans(&runs);
+        let paragraph_range = span_range(&spans, document.blocks[block_index].source_range);
+        let intrinsic = shaper.measure_paragraph_intrinsic(ParagraphIntrinsicRequest {
+            source,
+            paragraph_id: paragraph_geometry_id(document.blocks[block_index].id, 0),
+            paragraph_range,
+            spans: &spans,
+            base_direction: BaseDirection::Auto,
+        })?;
+        width = width.max(intrinsic.min_content);
     }
     for child in &hierarchy.children[block_index] {
         width = width.max(measure_block_intrinsic(
@@ -1433,20 +1471,35 @@ fn layout_block<S: TextShaper>(
         let content_width = (max_width - content_indent).max(1.0);
         let mut marker = InlineComposer::new(block.id, x, y, marker_width);
         let mut content = InlineComposer::new(block.id, x + content_indent, y, content_width);
-        let mut next_ordinal = 0;
-        for piece in pieces {
-            let composer = if piece.is_marker {
-                &mut marker
-            } else {
-                &mut content
-            };
-            let shaped = shaper.shape_inline(
+        let marker_runs = pieces
+            .iter()
+            .filter(|piece| piece.is_marker)
+            .map(|piece| piece.run.clone())
+            .collect::<Vec<_>>();
+        let content_runs = pieces
+            .iter()
+            .filter(|piece| !piece.is_marker)
+            .map(|piece| piece.run.clone())
+            .collect::<Vec<_>>();
+        if !marker_runs.is_empty() {
+            shape_into_composer(
+                shaper,
                 presentation.text(),
-                &piece.run,
-                composer.max_width,
-                composer.remaining_width(),
+                &marker_runs,
+                block.source_range,
+                paragraph_geometry_id(block.id, 1),
+                &mut marker,
             )?;
-            composer.push_run(piece.run.metrics, shaped, &mut next_ordinal);
+        }
+        if !content_runs.is_empty() {
+            shape_into_composer(
+                shaper,
+                presentation.text(),
+                &content_runs,
+                block.source_range,
+                paragraph_geometry_id(block.id, 2),
+                &mut content,
+            )?;
         }
         let (mut marker_output, marker_baseline) = marker.finish();
         let (mut content_output, content_baseline) = content.finish();
@@ -1476,15 +1529,15 @@ fn layout_block<S: TextShaper>(
         push_coalesced_run(&mut coalesced, run);
     }
     let mut composer = InlineComposer::new(block.id, x, y, max_width);
-    let mut next_ordinal = 0;
-    for run in coalesced {
-        let shaped = shaper.shape_inline(
+    if !coalesced.is_empty() {
+        shape_into_composer(
+            shaper,
             presentation.text(),
-            &run,
-            composer.max_width,
-            composer.remaining_width(),
+            &coalesced,
+            block.source_range,
+            paragraph_geometry_id(block.id, 0),
+            &mut composer,
         )?;
-        composer.push_run(run.metrics, shaped, &mut next_ordinal);
     }
     let (mut output, _) = composer.finish();
     if output.lines.is_empty() {
@@ -1494,6 +1547,112 @@ fn layout_block<S: TextShaper>(
             .fold(0.0, f64::max);
     }
     Ok(output)
+}
+
+fn paragraph_geometry_id(layout: LayoutElementId, lane_ordinal: u32) -> GeometryElementId {
+    GeometryElementId {
+        layout,
+        cluster_ordinal: lane_ordinal,
+    }
+}
+
+fn shape_spans(runs: &[LayoutTextRun]) -> Vec<ShapeSpan> {
+    runs.iter()
+        .enumerate()
+        .map(|(ordinal, run)| ShapeSpan {
+            id: GeometryElementId {
+                layout: run.id,
+                cluster_ordinal: 0x4000_0000 | ordinal as u32,
+            },
+            run_id: run.id,
+            stable_ordinal: ordinal as u32,
+            source_range: run.range,
+            metrics: run.metrics,
+        })
+        .collect()
+}
+
+fn span_range(spans: &[ShapeSpan], fallback: TextRange) -> TextRange {
+    let Some(first) = spans.first() else {
+        return fallback;
+    };
+    let start = spans
+        .iter()
+        .map(|span| span.source_range.start())
+        .min()
+        .unwrap_or(first.source_range.start());
+    let end = spans
+        .iter()
+        .map(|span| span.source_range.end())
+        .max()
+        .unwrap_or(first.source_range.end());
+    TextRange::new(start, end).expect("paragraph spans stay ordered")
+}
+
+fn shape_into_composer<S: TextShaper>(
+    shaper: &mut S,
+    source: &SourceText,
+    runs: &[LayoutTextRun],
+    fallback_range: TextRange,
+    paragraph_id: GeometryElementId,
+    composer: &mut InlineComposer,
+) -> Result<(), LayoutError> {
+    let spans = shape_spans(runs);
+    let shaped = shaper.shape_paragraph(ParagraphShapeRequest {
+        source,
+        paragraph_id,
+        paragraph_range: span_range(&spans, fallback_range),
+        spans: &spans,
+        full_width: composer.max_width,
+        first_row_width: composer.remaining_width(),
+        base_direction: BaseDirection::Auto,
+    })?;
+    validate_shaped_paragraph(&spans, &shaped)?;
+    composer.push_paragraph(shaped);
+    Ok(())
+}
+
+fn validate_shaped_paragraph(
+    spans: &[ShapeSpan],
+    shaped: &ShapedParagraph,
+) -> Result<(), LayoutError> {
+    let mut ids = std::collections::HashSet::new();
+    for id in shaped
+        .rows
+        .iter()
+        .map(|row| row.id)
+        .chain(shaped.fragments.iter().map(|fragment| fragment.id))
+        .chain(shaped.clusters.iter().map(|cluster| cluster.id))
+    {
+        if !ids.insert(id) {
+            return Err(LayoutError::DuplicateShapedId { id });
+        }
+    }
+    let input = spans
+        .iter()
+        .map(|span| span.id)
+        .collect::<std::collections::HashSet<_>>();
+    for span_id in shaped
+        .fragments
+        .iter()
+        .map(|fragment| fragment.span_id)
+        .chain(shaped.clusters.iter().map(|cluster| cluster.span_id))
+    {
+        if !input.contains(&span_id) {
+            return Err(LayoutError::MissingShapeSpan { id: span_id });
+        }
+    }
+    let mapped = shaped
+        .fragments
+        .iter()
+        .map(|fragment| fragment.span_id)
+        .collect::<std::collections::HashSet<_>>();
+    for span in spans {
+        if !mapped.contains(&span.id) {
+            return Err(LayoutError::MissingShapeSpan { id: span.id });
+        }
+    }
+    Ok(())
 }
 
 fn push_coalesced_run(runs: &mut Vec<LayoutTextRun>, run: LayoutTextRun) {
@@ -1569,13 +1728,23 @@ fn fallback_block(
     let x = 0.0;
     let y = 0.0;
     let block = &document.blocks[block_index];
+    let metrics = document_metrics(block_index, document, layout_index);
     let text = presentation.text().slice(block.source_range).unwrap_or("");
     let mut shaped = Vec::new();
     for (relative, character) in text.char_indices() {
         let start = block.source_range.start().to_usize() + relative;
         let end = start + character.len_utf8();
         shaped.push(ShapedCluster {
+            id: GeometryElementId {
+                layout: block.id,
+                cluster_ordinal: 0,
+            },
+            span_id: GeometryElementId {
+                layout: block.id,
+                cluster_ordinal: 0x4000_0000,
+            },
             source_range: text_range(start, end),
+            metrics,
             advance: 8.0,
             bidi_level: 0,
             row_ordinal: 0,
@@ -1587,7 +1756,7 @@ fn fallback_block(
                 advance: 8.0,
                 paint_scale: 1.0,
                 font: None,
-                font_key: document_metrics(block_index, document, layout_index).font,
+                font_key: metrics.font,
                 font_size: 16.0,
                 ascender: 12.8,
                 descender: -3.2,
@@ -1598,23 +1767,59 @@ fn fallback_block(
             }]),
         });
     }
-    let run = ShapedRun {
-        clusters: shaped.into(),
+    let paragraph_id = paragraph_geometry_id(block.id, 0);
+    for (ordinal, cluster) in shaped.iter_mut().enumerate() {
+        cluster.id = GeometryElementId {
+            layout: paragraph_id.layout,
+            cluster_ordinal: 0x8000_0000 | ordinal as u32,
+        };
+        cluster.span_id = GeometryElementId {
+            layout: block.id,
+            cluster_ordinal: 0x4000_0000,
+        };
+        cluster.metrics = metrics;
+    }
+    let row = ShapedRow {
+        id: GeometryElementId {
+            layout: paragraph_id.layout,
+            cluster_ordinal: 0xc000_0000,
+        },
+        source_range: block.source_range,
+        cluster_range: 0..shaped.len(),
+        caret_offsets: Arc::from([block.source_range.start(), block.source_range.end()]),
         ascender: 12.8,
         descender: 3.2,
         line_gap: 0.0,
+        line_spacing_scale: 1.0,
+        row_top: 0.0,
     };
-    let metrics = document_metrics(block_index, document, layout_index);
+    let paragraph = ShapedParagraph {
+        rows: Arc::from([row]),
+        fragments: Arc::from([ShapedFragment {
+            id: GeometryElementId {
+                layout: paragraph_id.layout,
+                cluster_ordinal: 0x6000_0000,
+            },
+            span_id: GeometryElementId {
+                layout: block.id,
+                cluster_ordinal: 0x4000_0000,
+            },
+            stable_ordinal: 0,
+            source_range: block.source_range,
+            metrics,
+        }]),
+        clusters: shaped.into(),
+        bidi_levels: Arc::from([]),
+        legal_breaks: Arc::from([block.source_range.end()]),
+    };
     let mut composer = InlineComposer::new(block.id, x, y, max_width);
-    let mut next_ordinal = 0;
-    composer.push_run(metrics, run, &mut next_ordinal);
+    composer.push_paragraph(paragraph);
     composer.finish().0
 }
 
 impl InlineComposer {
-    fn new(layout_id: LayoutElementId, start_x: f64, start_y: f64, max_width: f64) -> Self {
+    fn new(_layout_id: LayoutElementId, start_x: f64, start_y: f64, max_width: f64) -> Self {
         Self {
-            layout_id,
             start_x,
             start_y,
             max_width: max_width.max(1.0),
@@ -1634,41 +1839,55 @@ impl InlineComposer {
         (self.max_width - self.line_width).max(1.0)
     }
 
-    fn push_run(&mut self, metrics: TextMetrics, run: ShapedRun, next_ordinal: &mut u32) {
-        let span_start_y = self.y;
-        let mut row_ordinal = None;
-        for shaped in run.clusters.iter() {
-            let starts_new_row = row_ordinal.is_some_and(|row| row != shaped.row_ordinal);
-            if !self.line.is_empty()
-                && (starts_new_row || self.line_width + shaped.advance > self.max_width)
-            {
-                self.flush_line();
-                if starts_new_row {
-                    self.y = self.y.max(span_start_y + shaped.row_top);
-                }
+    fn push_paragraph(&mut self, paragraph: ShapedParagraph) {
+        let paragraph_start_y = self.y;
+        for row in paragraph.rows.iter() {
+            self.flush_line();
+            self.y = self.y.max(paragraph_start_y + row.row_top);
+            for shaped in paragraph.clusters[row.cluster_range.clone()].iter() {
+                let ascender = shaped
+                    .glyphs
+                    .iter()
+                    .map(|glyph| glyph.ascender)
+                    .fold(shaped.metrics.font_size as f64 * 0.8, f64::max);
+                let descender = shaped
+                    .glyphs
+                    .iter()
+                    .map(|glyph| glyph.descender.abs())
+                    .fold(shaped.metrics.font_size as f64 * 0.2, f64::max);
+                let line_gap = shaped
+                    .glyphs
+                    .iter()
+                    .map(|glyph| glyph.line_gap)
+                    .fold(0.0, f64::max);
+                self.line.push(PendingCluster {
+                    shaped: shaped.clone(),
+                    ascender,
+                    descender,
+                    line_gap,
+                });
+                self.line_width += shaped.advance;
             }
-            row_ordinal = Some(shaped.row_ordinal);
-            self.line.push(PendingCluster {
-                ordinal: *next_ordinal,
-                shaped: shaped.clone(),
-                metrics,
-                ascender: run.ascender,
-                descender: run.descender,
-                line_gap: run.line_gap,
-            });
-            *next_ordinal = next_ordinal.saturating_add(1);
-            self.line_width += shaped.advance;
+            if self.line.is_empty() {
+                let height = (row.ascender + row.descender.abs() + row.line_gap).max(1.0);
+                self.output.lines.push(VisualLine::new(
+                    row.source_range,
+                    Rect {
+                        pos: dvec2(self.start_x, self.y),
+                        size: dvec2(0.0, height),
+                    },
+                ));
+                self.first_baseline.get_or_insert(self.y + row.ascender);
+                self.y += height;
+            } else {
+                self.flush_line();
+            }
         }
     }
 
     fn flush_line(&mut self) {
-        let Some(ascender) = flush_inline_line(
-            &mut self.output,
-            self.layout_id,
-            &self.line,
-            self.start_x,
-            self.y,
-        ) else {
+        let Some(ascender) = flush_inline_line(&mut self.output, &self.line, self.start_x, self.y)
+        else {
             return;
         };
         self.first_baseline.get_or_insert(self.y + ascender);
@@ -1687,7 +1906,6 @@ impl InlineComposer {
 
 fn flush_inline_line(
     output: &mut BlockOutput,
-    layout_id: LayoutElementId,
     line_clusters: &[PendingCluster],
     start_x: f64,
     y: f64,
@@ -1773,17 +1991,14 @@ fn flush_inline_line(
             })
             .collect::<Vec<_>>();
         output.clusters.push(GlyphCluster::with_glyphs(
-            GeometryElementId {
-                layout: layout_id,
-                cluster_ordinal: cluster.ordinal,
-            },
+            shaped.id,
             shaped.source_range,
             Rect {
                 pos: dvec2(x, y),
                 size: dvec2(shaped.advance, height),
             },
             stops.into(),
-            cluster.metrics,
+            shaped.metrics,
             glyphs.into(),
         ));
         x += shaped.advance;
