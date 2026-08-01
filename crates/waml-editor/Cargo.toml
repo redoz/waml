@@ -9,7 +9,9 @@ description = "Native, read-only GPU viewer for WAML/OKF diagrams."
 
 [dependencies]
 waml = { path = "../waml", features = ["serde"] }
-# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch waml-scroll-occlusion —
+# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch fix/layout-params-wasm,
+# which is the line rebased onto the newer upstream dev — NOT waml-scroll-occlusion, whose
+# remote tip is a pre-rebase leftover from 07-20 —
 # stacked on waml-fxc-opt, adds handled_x/handled_y scroll occlusion to hits() so overlays
 # and popups stop bleeding scroll into the canvas; also carries two web fixes — Startup
 # dispatched before the window pool is indexed, and separator-agnostic crate manifest paths
@@ -20,7 +22,7 @@ waml = { path = "../waml", features = ["serde"] }
 # folder toggles, plus app-owned Markdown vertical scroll snapshot/restore from
 # waml-history-scroll-anchors-current. rev is the reproducible pin; survives upstream
 # force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "e656873a" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "83a46646" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -48,7 +48,7 @@ jobs:
 
       # The build tool and the framework are pinned SEPARATELY and currently sit
       # on different revs: the framework is whatever crates/waml-editor/Cargo.toml
-      # names (e656873a at the time of writing), while this is 25d78a4d plus two
+      # names (83a46646 at the time of writing), while this is 25d78a4d plus two
       # commits, 7162231f, on the fork branch `waml-wasm-dep-dirs`.
       #
       # That commit is what makes this deploy produce a working site at all.
