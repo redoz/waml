@@ -1103,11 +1103,10 @@ impl MarkdownEditor {
             .layout(
                 &installed.layout_document,
                 session.snapshot(),
-                LayoutViewport::new(
+                LayoutViewport::default_overscan(
                     viewport_size.x.max(1.0),
                     viewport_size.y.max(1.0),
                     self.scroll_y,
-                    0.0,
                 ),
                 LayoutInvalidation::Document,
                 &mut shaper,

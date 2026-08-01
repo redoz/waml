@@ -734,6 +734,84 @@ mod tests {
     }
 
     #[test]
+    fn recoverable_semantic_error_preserves_later_fenced_waml_presentation() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let editor = body.markdown_editor();
+        editor.set_paint_evidence_enabled(true);
+        let authored = include_str!("../tests/fixtures/markdown-integration/evidence.md");
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(SourceBundle::try_from_pairs([("evidence.md", authored)]).unwrap())
+            .unwrap();
+        let snapshot = session.snapshot();
+        assert!(
+            !snapshot.uml_analysis.revisioned_diagnostics().is_empty(),
+            "the fixture must retain its recoverable semantic diagnostic"
+        );
+        let mut view = source_view("evidence");
+
+        view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
+
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            panic!("the exact evidence fixture must remain presentable");
+        };
+        assert!(
+            ready.plan.items.iter().any(|item| matches!(
+                item,
+                PresentationItem::TextRun {
+                    id: waml_markdown_editor::presentation::PresentationItemId {
+                        role: waml_markdown_editor::presentation::PresentationRole::Text(
+                            waml_markdown_editor::presentation::TextRole::CodeToken(
+                                waml_markdown_editor::presentation::CodeTokenRole::Property
+                            )
+                        ),
+                        ..
+                    },
+                    ..
+                }
+            )),
+            "the later fenced WAML block must keep semantic highlight roles"
+        );
+
+        let content_offset =
+            TextSize::try_from_usize(authored.find("title: Highlight Roles").unwrap()).unwrap();
+        let document = build_layout_document(
+            &ready.plan,
+            &ready.styles,
+            &ready.assets.measurements(f64::INFINITY),
+        )
+        .unwrap();
+        assert!(
+            document.text_runs.iter().any(|run| {
+                run.range.start() <= content_offset && content_offset < run.range.end()
+            }),
+            "the full layout document must retain the later fenced WAML content"
+        );
+
+        draw_markdown_widget(&mut cx, &ui, &mut ready.session);
+        let layout = editor
+            .frame_layout()
+            .expect("the exact fixture must install a layout frame");
+        assert!(
+            layout.glyph_clusters().iter().any(|cluster| {
+                cluster.source_range.start() <= content_offset
+                    && content_offset < cluster.source_range.end()
+            }),
+            "the later fenced WAML content must reach layout geometry"
+        );
+        assert!(
+            editor
+                .test_painted_text_ranges()
+                .iter()
+                .any(|range| { range.start() <= content_offset && content_offset < range.end() }),
+            "the later fenced WAML content must reach a painted text command"
+        );
+    }
+
+    #[test]
     fn source_view_applies_browser_asset_failure_before_installing_the_plan() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let ui = mounted_body(&mut cx);
