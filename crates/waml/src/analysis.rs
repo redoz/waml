@@ -126,6 +126,19 @@ pub struct OkfAnalysis {
     pub bundle: okf::Bundle,
 }
 
+impl OkfAnalysis {
+    pub fn markdown_snapshot(&self, document: DocumentId) -> Option<&Arc<MarkdownSyntaxSnapshot>> {
+        self.markdown.document(document)
+    }
+}
+
+#[derive(Clone)]
+pub struct PromotedMarkdownUpdate {
+    pub document: DocumentId,
+    pub base_revision: DocumentRevision,
+    pub update: MarkdownSyntaxUpdate,
+}
+
 #[derive(Clone)]
 pub struct MarkdownSyntaxSet {
     catalog: Arc<DocumentCatalog>,
@@ -193,6 +206,10 @@ pub enum AnalysisError {
     CatalogInvariant {
         reason: Arc<str>,
     },
+    InvalidPromotedMarkdownUpdate {
+        document: DocumentId,
+        reason: InvalidPromotedMarkdownUpdateReason,
+    },
     Specialization {
         name: &'static str,
         reason: Arc<str>,
@@ -205,6 +222,26 @@ pub enum AnalysisError {
     StructuralInvariant {
         stage: AnalysisStage,
         reason: Arc<str>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InvalidPromotedMarkdownUpdateReason {
+    MissingPreviousDocument,
+    MissingCandidateDocument,
+    SourcePathMismatch,
+    StaleBaseRevision {
+        expected: DocumentRevision,
+        actual: DocumentRevision,
+    },
+    NonSuccessorRevision {
+        expected: DocumentRevision,
+        actual: DocumentRevision,
+    },
+    DuplicateDocument,
+    ResultTextMismatch,
+    InvalidAffectedRange {
+        range: TextRange,
     },
 }
 impl fmt::Display for AnalysisError {
@@ -252,6 +289,12 @@ pub fn validate_disjoint_claims<'a>(
 
 trait PreparationHooks {
     fn before(&mut self, stage: AnalysisStage) -> Result<(), AnalysisError>;
+
+    fn markdown_parsed(&mut self, _document: DocumentId) {}
+
+    fn markdown_reparsed(&mut self, _document: DocumentId) {}
+
+    fn markdown_promoted(&mut self, _document: DocumentId) {}
 }
 struct NoopPreparationHooks;
 impl PreparationHooks for NoopPreparationHooks {
@@ -329,15 +372,15 @@ pub fn prepare_candidate(
 
 pub fn prepare_candidate_with_markdown_updates(
     candidate_source: SourceBundle,
-    previous: Option<PreviousAnalyses<'_>>,
+    previous: PreviousAnalyses<'_>,
     candidate_revision: u64,
-    mut markdown_updates: BTreeMap<DocumentId, MarkdownSyntaxUpdate>,
+    promoted: Arc<[PromotedMarkdownUpdate]>,
 ) -> Result<PreparedCandidate, AnalysisError> {
     prepare_candidate_inner_with_markdown_updates(
         candidate_source,
-        previous,
+        Some(previous),
         candidate_revision,
-        &mut markdown_updates,
+        &promoted,
         &mut NoopPreparationHooks,
     )
 }
@@ -352,7 +395,7 @@ fn prepare_candidate_inner(
         candidate_source,
         previous,
         candidate_revision,
-        &mut BTreeMap::new(),
+        &[],
         hooks,
     )
 }
@@ -361,14 +404,14 @@ fn prepare_candidate_inner_with_markdown_updates(
     candidate_source: SourceBundle,
     previous: Option<PreviousAnalyses<'_>>,
     candidate_revision: u64,
-    markdown_updates: &mut BTreeMap<DocumentId, MarkdownSyntaxUpdate>,
+    promoted: &[PromotedMarkdownUpdate],
     hooks: &mut impl PreparationHooks,
 ) -> Result<PreparedCandidate, AnalysisError> {
     let okf = analyze_okf_inner(
         &candidate_source,
         previous.as_ref().map(|analyses| analyses.okf),
         candidate_revision,
-        markdown_updates,
+        promoted,
         hooks,
     )?;
     hooks.before(AnalysisStage::Specialization("uml"))?;
@@ -400,6 +443,9 @@ pub mod test_support {
     pub struct PreparationProbe {
         fail_at: Option<AnalysisStage>,
         calls: Vec<AnalysisStage>,
+        markdown_parse_calls: BTreeMap<DocumentId, usize>,
+        markdown_reparse_calls: BTreeMap<DocumentId, usize>,
+        markdown_promotions: BTreeMap<DocumentId, usize>,
     }
 
     impl PreparationProbe {
@@ -407,6 +453,9 @@ pub mod test_support {
             Self {
                 fail_at: None,
                 calls: Vec::new(),
+                markdown_parse_calls: BTreeMap::new(),
+                markdown_reparse_calls: BTreeMap::new(),
+                markdown_promotions: BTreeMap::new(),
             }
         }
 
@@ -414,11 +463,35 @@ pub mod test_support {
             Self {
                 fail_at: Some(stage),
                 calls: Vec::new(),
+                markdown_parse_calls: BTreeMap::new(),
+                markdown_reparse_calls: BTreeMap::new(),
+                markdown_promotions: BTreeMap::new(),
             }
         }
 
         pub fn phase_names(&self) -> Vec<&'static str> {
             self.calls.iter().map(phase_name).collect()
+        }
+
+        pub fn markdown_parse_calls(&self, document: DocumentId) -> usize {
+            self.markdown_parse_calls
+                .get(&document)
+                .copied()
+                .unwrap_or(0)
+        }
+
+        pub fn markdown_reparse_calls(&self, document: DocumentId) -> usize {
+            self.markdown_reparse_calls
+                .get(&document)
+                .copied()
+                .unwrap_or(0)
+        }
+
+        pub fn markdown_promotions(&self, document: DocumentId) -> usize {
+            self.markdown_promotions
+                .get(&document)
+                .copied()
+                .unwrap_or(0)
         }
     }
 
@@ -436,6 +509,18 @@ pub mod test_support {
             }
             Ok(())
         }
+
+        fn markdown_parsed(&mut self, document: DocumentId) {
+            *self.markdown_parse_calls.entry(document).or_default() += 1;
+        }
+
+        fn markdown_reparsed(&mut self, document: DocumentId) {
+            *self.markdown_reparse_calls.entry(document).or_default() += 1;
+        }
+
+        fn markdown_promoted(&mut self, document: DocumentId) {
+            *self.markdown_promotions.entry(document).or_default() += 1;
+        }
     }
 
     pub fn prepare_candidate_with_probe(
@@ -445,6 +530,22 @@ pub mod test_support {
         probe: &mut PreparationProbe,
     ) -> Result<PreparedCandidate, AnalysisError> {
         prepare_candidate_inner(candidate_source, previous, candidate_revision, probe)
+    }
+
+    pub fn prepare_candidate_with_promoted_probe(
+        candidate_source: SourceBundle,
+        previous: PreviousAnalyses<'_>,
+        candidate_revision: u64,
+        promoted: Arc<[PromotedMarkdownUpdate]>,
+        probe: &mut PreparationProbe,
+    ) -> Result<PreparedCandidate, AnalysisError> {
+        prepare_candidate_inner_with_markdown_updates(
+            candidate_source,
+            Some(previous),
+            candidate_revision,
+            &promoted,
+            probe,
+        )
     }
 
     fn phase_name(stage: &AnalysisStage) -> &'static str {
@@ -480,7 +581,7 @@ pub fn analyze_okf(
         source,
         previous,
         session_revision,
-        &mut BTreeMap::new(),
+        &[],
         &mut NoopPreparationHooks,
     )
 }
@@ -489,7 +590,7 @@ fn analyze_okf_inner(
     source: &SourceBundle,
     previous: Option<&OkfAnalysis>,
     session_revision: u64,
-    markdown_updates: &mut BTreeMap<DocumentId, MarkdownSyntaxUpdate>,
+    promoted: &[PromotedMarkdownUpdate],
     hooks: &mut impl PreparationHooks,
 ) -> Result<OkfAnalysis, AnalysisError> {
     let previous_catalog = previous.map(|analysis| &analysis.catalog);
@@ -536,41 +637,41 @@ fn analyze_okf_inner(
         paths: Arc::new(paths),
         next_document_id: next_id,
     });
+    let markdown_updates = validate_promoted_markdown_updates(previous, &candidate, promoted)?;
     hooks.before(AnalysisStage::Shell)?;
     let mut markdown_documents = BTreeMap::new();
     for document in candidate.documents.values() {
-        let snapshot = match markdown_updates.remove(&document.id()) {
-            Some(update)
-                if update.snapshot.revision() == document.revision()
-                    && Arc::ptr_eq(update.snapshot.text().shared(), document.text().shared()) =>
-            {
-                update.snapshot
-            }
-            Some(_) => {
-                return Err(AnalysisError::CatalogInvariant {
-                    reason: "supplied Markdown update does not match candidate document".into(),
-                })
+        let snapshot = match markdown_updates.get(&document.id()) {
+            Some(update) => {
+                hooks.markdown_promoted(document.id());
+                update.snapshot.clone()
             }
             None => match previous.and_then(|analysis| analysis.markdown.document(document.id())) {
                 Some(previous_snapshot) if previous_snapshot.revision() == document.revision() => {
                     previous_snapshot.clone()
                 }
                 Some(previous_snapshot) => {
-                    reparse_markdown(
+                    let snapshot = reparse_markdown(
                         previous_snapshot,
                         document.revision(),
                         document.text().clone(),
                         &single_text_change(previous_snapshot.text(), document.text()),
                     )
                     .map_err(|source| shell_error(document.path().clone(), source))?
-                    .snapshot
+                    .snapshot;
+                    hooks.markdown_reparsed(document.id());
+                    snapshot
                 }
-                None => parse_markdown(
-                    document.revision(),
-                    document.text().clone(),
-                    MarkdownDialect::WAML_DEFAULT,
-                )
-                .map_err(|source| shell_error(document.path().clone(), source))?,
+                None => {
+                    let snapshot = parse_markdown(
+                        document.revision(),
+                        document.text().clone(),
+                        MarkdownDialect::WAML_DEFAULT,
+                    )
+                    .map_err(|source| shell_error(document.path().clone(), source))?;
+                    hooks.markdown_parsed(document.id());
+                    snapshot
+                }
             },
         };
         markdown_documents.insert(document.id(), snapshot);
@@ -586,6 +687,109 @@ fn analyze_okf_inner(
         markdown,
         bundle,
     })
+}
+
+fn validate_promoted_markdown_updates(
+    previous: Option<&OkfAnalysis>,
+    candidate: &DocumentCatalog,
+    promoted: &[PromotedMarkdownUpdate],
+) -> Result<BTreeMap<DocumentId, MarkdownSyntaxUpdate>, AnalysisError> {
+    let mut validated = BTreeMap::new();
+    for promoted in promoted {
+        let document = promoted.document;
+        if validated.contains_key(&document) {
+            return Err(invalid_promoted_update(
+                document,
+                InvalidPromotedMarkdownUpdateReason::DuplicateDocument,
+            ));
+        }
+        let previous_document = previous
+            .and_then(|analysis| analysis.catalog.document(document))
+            .ok_or_else(|| {
+                invalid_promoted_update(
+                    document,
+                    InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+                )
+            })?;
+        let previous_snapshot = previous
+            .and_then(|analysis| analysis.markdown_snapshot(document))
+            .ok_or_else(|| {
+                invalid_promoted_update(
+                    document,
+                    InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+                )
+            })?;
+        let candidate_document = candidate.document(document).ok_or_else(|| {
+            invalid_promoted_update(
+                document,
+                InvalidPromotedMarkdownUpdateReason::MissingCandidateDocument,
+            )
+        })?;
+        // IDs are retained only by path. This is a defensive check for an
+        // internally inconsistent catalog; public callers cannot forge it.
+        if previous_document.path() != candidate_document.path() {
+            return Err(invalid_promoted_update(
+                document,
+                InvalidPromotedMarkdownUpdateReason::SourcePathMismatch,
+            ));
+        }
+        let expected_base = previous_snapshot.revision();
+        if promoted.base_revision != expected_base {
+            return Err(invalid_promoted_update(
+                document,
+                InvalidPromotedMarkdownUpdateReason::StaleBaseRevision {
+                    expected: expected_base,
+                    actual: promoted.base_revision,
+                },
+            ));
+        }
+        let expected_revision = promoted
+            .base_revision
+            .checked_next()
+            .unwrap_or(promoted.base_revision);
+        let actual_revision = promoted.update.snapshot.revision();
+        if actual_revision != expected_revision
+            || candidate_document.revision() != expected_revision
+        {
+            return Err(invalid_promoted_update(
+                document,
+                InvalidPromotedMarkdownUpdateReason::NonSuccessorRevision {
+                    expected: expected_revision,
+                    actual: actual_revision,
+                },
+            ));
+        }
+        if !Arc::ptr_eq(
+            promoted.update.snapshot.text().shared(),
+            candidate_document.text().shared(),
+        ) {
+            return Err(invalid_promoted_update(
+                document,
+                InvalidPromotedMarkdownUpdateReason::ResultTextMismatch,
+            ));
+        }
+        if let Some(range) = promoted
+            .update
+            .affected_ranges
+            .iter()
+            .copied()
+            .find(|range| range.end() > promoted.update.snapshot.text().len())
+        {
+            return Err(invalid_promoted_update(
+                document,
+                InvalidPromotedMarkdownUpdateReason::InvalidAffectedRange { range },
+            ));
+        }
+        validated.insert(document, promoted.update.clone());
+    }
+    Ok(validated)
+}
+
+fn invalid_promoted_update(
+    document: DocumentId,
+    reason: InvalidPromotedMarkdownUpdateReason,
+) -> AnalysisError {
+    AnalysisError::InvalidPromotedMarkdownUpdate { document, reason }
 }
 
 pub(crate) fn single_text_change(old: &SourceText, new: &SourceText) -> Vec<TextChange> {
@@ -725,13 +929,7 @@ mod tests {
                 calls: Vec::new(),
             };
             assert!(matches!(
-                analyze_okf_inner(
-                    &candidate_source,
-                    Some(&committed),
-                    2,
-                    &mut BTreeMap::new(),
-                    &mut hooks,
-                ),
+                analyze_okf_inner(&candidate_source, Some(&committed), 2, &[], &mut hooks,),
                 Err(AnalysisError::StructuralInvariant { .. })
             ));
             let calls: Vec<_> = hooks

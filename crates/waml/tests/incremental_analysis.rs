@@ -1,19 +1,22 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use waml::uml::syntax::{UmlLanguage, UmlSyntaxKind};
 use waml::{
     analysis::{
-        prepare_candidate, prepare_candidate_with_markdown_updates, PreparedCandidate,
-        PreviousAnalyses,
+        prepare_candidate, prepare_candidate_with_markdown_updates, AnalysisError,
+        InvalidPromotedMarkdownUpdateReason, PreparedCandidate, PreviousAnalyses,
+        PromotedMarkdownUpdate,
     },
+    edit::{EditBatch, EditContext, ExactSourceEdit},
     host::replace_document,
     source::{BundlePath, SourceBundle, SourceDocument},
     uml::{DeclaredBundle, DeclaredField, DeclaredLayoutStatement},
 };
 use waml_syntax::{
     reparse_markdown, AstNode, DocumentRevision, GreenElement, GreenFactory, GreenText,
-    MarkdownDialect, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxAnnotation, SyntaxElement,
-    SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize, TriviaKind, WamlSectionKind,
+    MarkdownDialect, MarkdownSyntaxUpdate, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SourceText,
+    SyntaxAnnotation, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextChange, TextRange,
+    TextSize, TriviaKind, WamlSectionKind,
 };
 
 fn prepared(
@@ -24,50 +27,483 @@ fn prepared(
     prepare_candidate(source, previous, revision).unwrap()
 }
 
+fn path(value: &str) -> BundlePath {
+    BundlePath::parse(value).unwrap()
+}
+
+fn replace(start: u32, end: u32, replacement: &str) -> TextChange {
+    TextChange {
+        old_range: TextRange::new(TextSize::new(start), TextSize::new(end)).unwrap(),
+        replacement: Arc::from(replacement),
+    }
+}
+
+fn prepared_two_document_fixture(revision: u64) -> PreparedCandidate {
+    prepared(
+        SourceBundle::try_from_pairs([("order.md", "# Order\n"), ("other.md", "# Other\n")])
+            .unwrap(),
+        None,
+        revision,
+    )
+}
+
+fn edit_context(candidate: &PreparedCandidate) -> EditContext<'_> {
+    EditContext {
+        source: candidate.source(),
+        okf_analysis: candidate.okf(),
+        session_revision: candidate.revision(),
+        uml: candidate.uml(),
+    }
+}
+
+fn exact_order_edit(
+    before: &PreparedCandidate,
+    expected_text: SourceText,
+    changes: Arc<[TextChange]>,
+) -> ExactSourceEdit {
+    let document = document_id(before, "order.md");
+    ExactSourceEdit {
+        document,
+        base_revision: before.okf().markdown_snapshot(document).unwrap().revision(),
+        changes,
+        expected_text,
+    }
+}
+
+fn apply_exact_order_edit(
+    before: &PreparedCandidate,
+    expected_text: SourceText,
+    changes: Arc<[TextChange]>,
+) -> SourceBundle {
+    exact_order_edit(before, expected_text, changes)
+        .apply_reversible(edit_context(before))
+        .unwrap()
+        .source
+}
+
+fn promoted_order_update(
+    before: &PreparedCandidate,
+    revision: DocumentRevision,
+    text: SourceText,
+    changes: &[TextChange],
+) -> MarkdownSyntaxUpdate {
+    let document = document_id(before, "order.md");
+    reparse_markdown(
+        before.okf().markdown_snapshot(document).unwrap(),
+        revision,
+        text,
+        changes,
+    )
+    .unwrap()
+}
+
 #[test]
-fn changed_document_promotes_the_exact_supplied_markdown_update() {
-    let source = SourceBundle::try_from_pairs([("one.md", "# Alpha\n")]).unwrap();
-    let baseline = prepared(source.clone(), None, 1);
-    let id = document_id(&baseline, "one.md");
-    let edited = replace_document(
-        &source,
-        SourceDocument::new(BundlePath::parse("one.md").unwrap(), "# Alphi\n".into()),
-    )
-    .unwrap();
-    let new_text = waml_syntax::SourceText::from_shared(
-        edited
-            .document(&BundlePath::parse("one.md").unwrap())
-            .unwrap()
-            .text_shared()
-            .clone(),
-    )
-    .unwrap();
-    let update = reparse_markdown(
-        baseline.okf().markdown.document(id).unwrap(),
-        DocumentRevision::new(2),
-        new_text,
-        &[waml_syntax::TextChange {
-            old_range: TextRange::new(TextSize::new(6), TextSize::new(7)).unwrap(),
-            replacement: Arc::from("i"),
-        }],
-    )
-    .unwrap();
-    let expected = update.snapshot.clone();
-    let current = prepare_candidate_with_markdown_updates(
-        edited,
-        Some(PreviousAnalyses {
-            okf: baseline.okf(),
-            uml: baseline.uml(),
-        }),
-        2,
-        BTreeMap::from([(id, update)]),
+fn exact_source_edit_installs_expected_allocation_and_is_reversible() {
+    let before = prepared_two_document_fixture(41);
+    let expected_text = SourceText::new("# Purchase\n").unwrap();
+    let changes: Arc<[TextChange]> = Arc::from([replace(2, 7, "Purchase")]);
+    let applied = exact_order_edit(&before, expected_text.clone(), changes)
+        .apply_reversible(edit_context(&before))
+        .unwrap();
+    let installed = applied.source.document(&path("order.md")).unwrap();
+
+    assert_eq!(installed.text(), "# Purchase\n");
+    assert!(Arc::ptr_eq(installed.text_shared(), expected_text.shared()));
+    assert!(before
+        .source()
+        .shares_text_with(&applied.source, "other.md"));
+
+    let restored = applied
+        .inverse
+        .apply_reversible(EditContext {
+            source: &applied.source,
+            ..edit_context(&before)
+        })
+        .unwrap()
+        .source;
+    assert_eq!(restored, *before.source());
+}
+
+#[test]
+fn exact_source_edit_rejects_unknown_document_without_changing_source() {
+    let before = prepared(
+        SourceBundle::try_from_pairs([("order.md", "# Order\n")]).unwrap(),
+        None,
+        41,
+    );
+    let foreign = prepared_two_document_fixture(41);
+    let existing = document_id(&before, "order.md");
+    let first = document_id(&foreign, "order.md");
+    let second = document_id(&foreign, "other.md");
+    let unknown = if first == existing { second } else { first };
+    let original = before.source().document(&path("order.md")).unwrap();
+    let error = ExactSourceEdit {
+        document: unknown,
+        base_revision: DocumentRevision::new(1),
+        changes: Arc::from([replace(2, 7, "Purchase")]),
+        expected_text: SourceText::new("# Purchase\n").unwrap(),
+    }
+    .lower(edit_context(&before))
+    .unwrap_err();
+
+    assert_eq!(error.op, "source.document");
+    assert_eq!(original.text(), "# Order\n");
+}
+
+#[test]
+fn exact_source_edit_rejects_stale_base_revision_without_changing_source() {
+    let before = prepared_two_document_fixture(41);
+    let mut edit = exact_order_edit(
+        &before,
+        SourceText::new("# Purchase\n").unwrap(),
+        Arc::from([replace(2, 7, "Purchase")]),
+    );
+    edit.base_revision = DocumentRevision::new(0);
+
+    let error = edit.lower(edit_context(&before)).unwrap_err();
+
+    assert_eq!(error.op, "source.base_revision");
+    assert_eq!(
+        before.source().document(&path("order.md")).unwrap().text(),
+        "# Order\n"
+    );
+}
+
+#[test]
+fn exact_source_edit_rejects_overlapping_changes_without_changing_source() {
+    let before = prepared_two_document_fixture(41);
+    let edit = exact_order_edit(
+        &before,
+        SourceText::new("# Purrchase\n").unwrap(),
+        Arc::from([replace(2, 4, "Pur"), replace(3, 7, "rchase")]),
+    );
+
+    let error = edit.lower(edit_context(&before)).unwrap_err();
+
+    assert_eq!(error.op, "source.change_map");
+    assert_eq!(
+        before.source().document(&path("order.md")).unwrap().text(),
+        "# Order\n"
+    );
+}
+
+#[test]
+fn exact_source_edit_rejects_result_text_mismatch_without_changing_source() {
+    let before = prepared_two_document_fixture(41);
+    let edit = exact_order_edit(
+        &before,
+        SourceText::new("# Wrong\n").unwrap(),
+        Arc::from([replace(2, 7, "Purchase")]),
+    );
+
+    let error = edit.lower(edit_context(&before)).unwrap_err();
+
+    assert_eq!(error.op, "source.expected_text");
+    assert_eq!(
+        before.source().document(&path("order.md")).unwrap().text(),
+        "# Order\n"
+    );
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn promoted_markdown_update_is_installed_by_arc_without_a_second_parse() {
+    let before = prepared_two_document_fixture(41);
+    let document = document_id(&before, "order.md");
+    let other = document_id(&before, "other.md");
+    let old = before.okf().markdown_snapshot(document).unwrap().clone();
+    let unchanged = before.okf().markdown_snapshot(other).unwrap().clone();
+    let changes: Arc<[TextChange]> = Arc::from([replace(2, 7, "Purchase")]);
+    let next_text = SourceText::new("# Purchase\n").unwrap();
+    let update = promoted_order_update(
+        &before,
+        old.revision().checked_next().unwrap(),
+        next_text.clone(),
+        &changes,
+    );
+    let candidate = apply_exact_order_edit(&before, next_text.clone(), changes.clone());
+    let mut probe = waml::analysis::test_support::PreparationProbe::succeed();
+
+    let after = waml::analysis::test_support::prepare_candidate_with_promoted_probe(
+        candidate,
+        PreviousAnalyses {
+            okf: before.okf(),
+            uml: before.uml(),
+        },
+        42,
+        Arc::from([PromotedMarkdownUpdate {
+            document,
+            base_revision: old.revision(),
+            update: update.clone(),
+        }]),
+        &mut probe,
     )
     .unwrap();
 
     assert!(Arc::ptr_eq(
-        &expected,
-        current.okf().markdown.document(id).unwrap(),
+        after.okf().markdown_snapshot(document).unwrap(),
+        &update.snapshot,
     ));
+    assert!(Arc::ptr_eq(
+        after.okf().markdown_snapshot(other).unwrap(),
+        &unchanged,
+    ));
+    assert!(Arc::ptr_eq(
+        after
+            .source()
+            .document(&path("order.md"))
+            .unwrap()
+            .text_shared(),
+        update.snapshot.text().shared(),
+    ));
+    assert_eq!(probe.markdown_parse_calls(document), 0);
+    assert_eq!(probe.markdown_reparse_calls(document), 0);
+    assert_eq!(probe.markdown_promotions(document), 1);
+}
+
+fn assert_invalid_promoted_update(
+    result: Result<PreparedCandidate, AnalysisError>,
+    document: waml::analysis::DocumentId,
+    expected: InvalidPromotedMarkdownUpdateReason,
+) {
+    let error = match result {
+        Ok(_) => panic!("invalid promoted update was accepted"),
+        Err(error) => error,
+    };
+    match error {
+        AnalysisError::InvalidPromotedMarkdownUpdate {
+            document: actual,
+            reason,
+        } => {
+            assert_eq!(actual, document);
+            assert_eq!(reason, expected);
+        }
+        other => panic!("unexpected analysis error: {other:?}"),
+    }
+}
+
+fn promotion_fixture() -> (
+    PreparedCandidate,
+    waml::analysis::DocumentId,
+    Arc<[TextChange]>,
+    SourceText,
+    MarkdownSyntaxUpdate,
+    SourceBundle,
+) {
+    let before = prepared_two_document_fixture(41);
+    let document = document_id(&before, "order.md");
+    let old = before.okf().markdown_snapshot(document).unwrap();
+    let changes: Arc<[TextChange]> = Arc::from([replace(2, 7, "Purchase")]);
+    let next_text = SourceText::new("# Purchase\n").unwrap();
+    let update = promoted_order_update(
+        &before,
+        old.revision().checked_next().unwrap(),
+        next_text.clone(),
+        &changes,
+    );
+    let candidate = apply_exact_order_edit(&before, next_text.clone(), changes.clone());
+    (before, document, changes, next_text, update, candidate)
+}
+
+#[test]
+fn promoted_markdown_update_rejects_missing_previous_document() {
+    let before = prepared(
+        SourceBundle::try_from_pairs([("other.md", "# Other\n")]).unwrap(),
+        None,
+        41,
+    );
+    let candidate_source =
+        SourceBundle::try_from_pairs([("other.md", "# Other\n"), ("order.md", "# Purchase\n")])
+            .unwrap();
+    let candidate_preview = prepared(
+        candidate_source.clone(),
+        Some(PreviousAnalyses {
+            okf: before.okf(),
+            uml: before.uml(),
+        }),
+        42,
+    );
+    let document = document_id(&candidate_preview, "order.md");
+    let update = candidate_preview
+        .okf()
+        .markdown_snapshot(document)
+        .unwrap()
+        .clone();
+
+    assert_invalid_promoted_update(
+        prepare_candidate_with_markdown_updates(
+            candidate_source,
+            PreviousAnalyses {
+                okf: before.okf(),
+                uml: before.uml(),
+            },
+            42,
+            Arc::from([PromotedMarkdownUpdate {
+                document,
+                base_revision: DocumentRevision::new(0),
+                update: MarkdownSyntaxUpdate {
+                    snapshot: update,
+                    affected_ranges: Arc::from([]),
+                    outcome: waml_syntax::MarkdownReparseOutcome::Full {
+                        reason: waml_syntax::FullReparseReason::UnsafeSynchronization,
+                    },
+                },
+            }]),
+        ),
+        document,
+        InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+    );
+}
+
+#[test]
+fn promoted_markdown_update_rejects_missing_candidate_document() {
+    let (before, document, _, _, update, _) = promotion_fixture();
+    let candidate = SourceBundle::try_from_pairs([("other.md", "# Other\n")]).unwrap();
+
+    assert_invalid_promoted_update(
+        prepare_candidate_with_markdown_updates(
+            candidate,
+            PreviousAnalyses {
+                okf: before.okf(),
+                uml: before.uml(),
+            },
+            42,
+            Arc::from([PromotedMarkdownUpdate {
+                document,
+                base_revision: before.okf().markdown_snapshot(document).unwrap().revision(),
+                update,
+            }]),
+        ),
+        document,
+        InvalidPromotedMarkdownUpdateReason::MissingCandidateDocument,
+    );
+}
+
+#[test]
+fn promoted_markdown_update_rejects_stale_base_revision() {
+    let (before, document, _, _, update, candidate) = promotion_fixture();
+    let expected = before.okf().markdown_snapshot(document).unwrap().revision();
+    let actual = DocumentRevision::new(expected.get() - 1);
+
+    assert_invalid_promoted_update(
+        prepare_candidate_with_markdown_updates(
+            candidate,
+            PreviousAnalyses {
+                okf: before.okf(),
+                uml: before.uml(),
+            },
+            42,
+            Arc::from([PromotedMarkdownUpdate {
+                document,
+                base_revision: actual,
+                update,
+            }]),
+        ),
+        document,
+        InvalidPromotedMarkdownUpdateReason::StaleBaseRevision { expected, actual },
+    );
+}
+
+#[test]
+fn promoted_markdown_update_rejects_non_successor_revision() {
+    let (before, document, changes, next_text, _, candidate) = promotion_fixture();
+    let base = before.okf().markdown_snapshot(document).unwrap().revision();
+    let expected = base.checked_next().unwrap();
+    let actual = DocumentRevision::new(expected.get() + 1);
+    let update = promoted_order_update(&before, actual, next_text, &changes);
+
+    assert_invalid_promoted_update(
+        prepare_candidate_with_markdown_updates(
+            candidate,
+            PreviousAnalyses {
+                okf: before.okf(),
+                uml: before.uml(),
+            },
+            42,
+            Arc::from([PromotedMarkdownUpdate {
+                document,
+                base_revision: base,
+                update,
+            }]),
+        ),
+        document,
+        InvalidPromotedMarkdownUpdateReason::NonSuccessorRevision { expected, actual },
+    );
+}
+
+#[test]
+fn promoted_markdown_update_rejects_duplicate_document() {
+    let (before, document, _, _, update, candidate) = promotion_fixture();
+    let promoted = PromotedMarkdownUpdate {
+        document,
+        base_revision: before.okf().markdown_snapshot(document).unwrap().revision(),
+        update,
+    };
+
+    assert_invalid_promoted_update(
+        prepare_candidate_with_markdown_updates(
+            candidate,
+            PreviousAnalyses {
+                okf: before.okf(),
+                uml: before.uml(),
+            },
+            42,
+            Arc::from([promoted.clone(), promoted]),
+        ),
+        document,
+        InvalidPromotedMarkdownUpdateReason::DuplicateDocument,
+    );
+}
+
+#[test]
+fn promoted_markdown_update_rejects_result_text_mismatch() {
+    let (before, document, _, _, update, _) = promotion_fixture();
+    let candidate =
+        SourceBundle::try_from_pairs([("order.md", "# Different\n"), ("other.md", "# Other\n")])
+            .unwrap();
+
+    assert_invalid_promoted_update(
+        prepare_candidate_with_markdown_updates(
+            candidate,
+            PreviousAnalyses {
+                okf: before.okf(),
+                uml: before.uml(),
+            },
+            42,
+            Arc::from([PromotedMarkdownUpdate {
+                document,
+                base_revision: before.okf().markdown_snapshot(document).unwrap().revision(),
+                update,
+            }]),
+        ),
+        document,
+        InvalidPromotedMarkdownUpdateReason::ResultTextMismatch,
+    );
+}
+
+#[test]
+fn promoted_markdown_update_rejects_invalid_affected_range() {
+    let (before, document, _, _, mut update, candidate) = promotion_fixture();
+    let invalid = TextRange::new(TextSize::new(0), TextSize::new(100)).unwrap();
+    update.affected_ranges = Arc::from([invalid]);
+
+    assert_invalid_promoted_update(
+        prepare_candidate_with_markdown_updates(
+            candidate,
+            PreviousAnalyses {
+                okf: before.okf(),
+                uml: before.uml(),
+            },
+            42,
+            Arc::from([PromotedMarkdownUpdate {
+                document,
+                base_revision: before.okf().markdown_snapshot(document).unwrap().revision(),
+                update,
+            }]),
+        ),
+        document,
+        InvalidPromotedMarkdownUpdateReason::InvalidAffectedRange { range: invalid },
+    );
 }
 
 fn document_id(candidate: &PreparedCandidate, path: &str) -> waml::analysis::DocumentId {

@@ -1,9 +1,10 @@
 use reversible::{DeltaBatch, SourceDelta};
 use std::sync::Arc;
 
-use crate::source::SourceBundle;
-use crate::{analysis::OkfAnalysis, uml};
+use crate::source::{SourceBundle, SourceDocument};
+use crate::{analysis::OkfAnalysis, host, uml};
 use std::fmt;
+use waml_syntax::{ChangeMap, DocumentRevision, SourceText, TextChange};
 
 mod reversible;
 
@@ -45,6 +46,68 @@ pub trait EditBatch: sealed::Sealed {
         let source = self.lower(context)?;
         let inverse = PendingEdit::from_delta(SourceDelta::between(&source, context.source));
         Ok(AppliedEdit { source, inverse })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ExactSourceEdit {
+    pub document: crate::analysis::DocumentId,
+    pub base_revision: DocumentRevision,
+    pub changes: Arc<[TextChange]>,
+    pub expected_text: SourceText,
+}
+
+impl sealed::Sealed for ExactSourceEdit {}
+
+impl EditBatch for ExactSourceEdit {
+    fn lower(&self, context: EditContext<'_>) -> Result<SourceBundle, EditError> {
+        let document = context
+            .okf_analysis
+            .catalog
+            .document(self.document)
+            .ok_or_else(|| edit_error("source.document", "document is not in the catalog"))?;
+        if document.revision() != self.base_revision {
+            return Err(edit_error(
+                "source.base_revision",
+                "document revision does not match the edit base",
+            ));
+        }
+
+        let change_map = ChangeMap::checked(document.text(), &self.changes)
+            .map_err(|reason| edit_error("source.change_map", format!("{reason:?}")))?;
+        let mut result = String::with_capacity(change_map.new_len().to_usize());
+        let source = document.text().shared().as_str();
+        let mut copied_through = 0;
+        for change in self.changes.iter() {
+            let start = change.old_range.start().to_usize();
+            let end = change.old_range.end().to_usize();
+            result.push_str(&source[copied_through..start]);
+            result.push_str(&change.replacement);
+            copied_through = end;
+        }
+        result.push_str(&source[copied_through..]);
+        if result.as_bytes() != self.expected_text.shared().as_bytes() {
+            return Err(edit_error(
+                "source.expected_text",
+                "changes do not produce the expected text",
+            ));
+        }
+
+        let replacement = SourceDocument::from_shared(
+            document.path().clone(),
+            self.expected_text.shared().clone(),
+        );
+        host::replace_document(context.source, replacement)
+            .map_err(|reason| edit_error("source.document", reason.to_string()))
+    }
+}
+
+fn edit_error(op: &str, reason: impl Into<String>) -> EditError {
+    EditError {
+        index: 0,
+        op: op.into(),
+        selector: None,
+        reason: reason.into(),
     }
 }
 

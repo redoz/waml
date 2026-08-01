@@ -117,6 +117,10 @@ impl SourceDocument {
         }
     }
 
+    pub(crate) fn from_shared(path: BundlePath, text: Arc<String>) -> Self {
+        SourceDocument { path, text }
+    }
+
     pub fn path(&self) -> &BundlePath {
         &self.path
     }
