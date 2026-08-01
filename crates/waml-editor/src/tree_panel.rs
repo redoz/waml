@@ -178,7 +178,7 @@ script_mod! {
 
             file_node +: {
                 padding: Inset{left: 24.0}
-                indent_width: 18.0
+                indent_width: 10.0
                 // We render no git-status dots, but draw_file() still reserves
                 // the 6px dot slot (+3px margin) before every label -- a phantom
                 // gap between our glyph and the text. Zero it.
@@ -204,7 +204,7 @@ script_mod! {
 
             folder_node +: {
                 padding: Inset{left: 24.0}
-                indent_width: 18.0
+                indent_width: 10.0
                 // Same phantom-gap zeroing as file_node; folders also reserve a
                 // ~16px slot for the (transparent) built-in folder box via
                 // icon_walk -- our Package glyph overlay replaces it, so zero it.
@@ -298,11 +298,11 @@ const ROW_HEIGHT: f64 = 27.0;
 const ICON_SIZE: f64 = 14.0;
 const ICON_LEFT_MARGIN: f64 = 6.0;
 /// Per-depth x step for the overlay glyph. Must match the FileTree label's
-/// EFFECTIVE step, which is `indent_width` (18.0 in the DSL) plus the per-depth
-/// margins `indent_walk` tacks on (`left: depth*1.0`, `right: depth*4.0`) --
-/// 23px, not 18. Using the bare `indent_width` here made the icon/label gap grow
-/// 5px per level.
-const ICON_DEPTH_INDENT: f64 = 23.0;
+/// EFFECTIVE step, which is `indent_width` (10.0 in the DSL) plus the per-depth
+/// margins `indent_walk` tacks on (`left: depth*1.0`, `right: depth*4.0`) -- so
+/// the visible step is 15px, not `indent_width`. Any mismatch here makes the
+/// icon/label gap grow per level.
+const ICON_DEPTH_INDENT: f64 = 15.0;
 
 // Header band geometry (px), matching the inspector's own bar-strip constants.
 const HEADER_H: f64 = 30.0;
