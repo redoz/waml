@@ -4,7 +4,7 @@ Branch `title-tab-two-row` (worktree only, **not merged, not pushed**).
 Rebased on `main`. Run it:
 
 ```
-./scripts/run-native.ps1              # mini fixture
+./run.ps1                             # mini fixture
 ```
 
 ## What changed
