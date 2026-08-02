@@ -22,8 +22,10 @@ use crate::web_artifact::EmbeddedAsset;
 /// It holds a query string (`?bundle=…` or `?api=…`) because that is the
 /// grammar the editor already parses for URLs. Writing it beside the editor,
 /// rather than pushing it into the address bar, keeps a visitor's URL clean.
-/// Must match `BOOT_CONFIG_FILE` in `crates/waml-editor/src/browser_boot.rs`.
-pub(crate) const BOOT_CONFIG_FILE: &str = "waml-boot.txt";
+///
+/// The name itself lives in `waml::site_boot`, shared with
+/// `crates/waml-editor/src/browser_boot.rs`, so the two sides cannot drift.
+pub(crate) use waml::site_boot::SITE_BOOT_CONFIG_FILE as BOOT_CONFIG_FILE;
 
 /// Where an assembled site gets its model from.
 #[derive(Debug, Clone, PartialEq, Eq)]

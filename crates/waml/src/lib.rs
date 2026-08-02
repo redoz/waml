@@ -16,6 +16,7 @@ pub mod okf;
 pub mod ops;
 pub mod seed;
 pub mod share;
+pub mod site_boot;
 pub mod slug;
 pub mod solve;
 pub mod source;

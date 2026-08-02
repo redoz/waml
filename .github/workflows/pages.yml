@@ -212,7 +212,8 @@ jobs:
 
       # `waml export site` output: the cargo-makepad layout (index.html,
       # waml-editor.wasm, the makepad_platform/* JS glue, one resources/ tree
-      # per crate) plus the bundle.waml its index.html boots from.
+      # per crate) plus bundle.waml and waml-boot.txt, the file that names it,
+      # which the editor fetches at startup.
       - uses: actions/upload-pages-artifact@v5
         with:
           path: target/pages

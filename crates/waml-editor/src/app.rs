@@ -780,6 +780,14 @@ impl MatchEvent for App {
             if !ok {
                 return;
             }
+            // The start screen is live during this round trip: the visitor can
+            // open a project by hand while the config (and, after it, the
+            // bundle) is still in flight. A model already open by the time the
+            // answer lands must win -- opening the boot bundle over it would
+            // silently discard what the visitor chose.
+            if self.editor_shown {
+                return;
+            }
             let Ok(config) = std::str::from_utf8(body) else {
                 return;
             };
@@ -803,6 +811,12 @@ impl MatchEvent for App {
                 "{}",
                 crate::browser_boot::boot_fetch_error(&url, Some(response.status_code))
             );
+            return;
+        }
+        // Same guard as the config response above: a model opened by hand
+        // during the fetch must not be discarded by a boot bundle that only
+        // now finished loading.
+        if self.editor_shown {
             return;
         }
         match crate::browser_boot::decode_boot_bundle(body) {

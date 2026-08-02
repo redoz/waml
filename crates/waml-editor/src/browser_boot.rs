@@ -67,7 +67,11 @@ pub(crate) fn select_browser_boot(search: &str, hash: &str) -> Result<BrowserBoo
 /// `?bundle=bundle.waml` in the address bar for a choice they did not make. A
 /// sibling file carries the same string out of sight. It holds a query string,
 /// not a new format, so one grammar and one parser serve both channels.
-pub(crate) const BOOT_CONFIG_FILE: &str = "waml-boot.txt";
+///
+/// The name itself lives in `waml::site_boot`, not here: `waml-cli` writes
+/// this file and this crate reads it, and the two share no other dependency
+/// edge for the literal.
+pub(crate) use waml::site_boot::SITE_BOOT_CONFIG_FILE as BOOT_CONFIG_FILE;
 
 /// Pick the boot source a site declares for itself.
 ///
@@ -90,7 +94,7 @@ pub(crate) fn select_site_boot(config: &str) -> Result<BrowserBootSource, String
             "{BOOT_CONFIG_FILE} must hold a query string that starts with '?'"
         ));
     }
-    let query = query.split('#').next().unwrap_or(query);
+    let query = query.split_once('#').map_or(query, |(head, _)| head);
     select_browser_boot(query, "")
 }
 
