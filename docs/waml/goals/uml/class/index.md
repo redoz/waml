@@ -1,5 +1,5 @@
 # Class
 
-Structural diagrams: classifiers, members, and the eleven relationship kinds.
+Structure: classifiers, members, and the eleven relationship kinds.
 
-* [Class Feature Cut](./feature-cut.md) - Every feature a class diagram should have, with status and MVP flag.
+* [Class Feature Cut](./feature-cut.md) - Each feature of a class diagram, with a status and an MVP flag.

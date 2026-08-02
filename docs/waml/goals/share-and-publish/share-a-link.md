@@ -1,32 +1,32 @@
 # Share a Link
 
-**Goal:** A bundle packs into a link, and that link rebuilds the same bundle in
-a reader's browser.
+**Goal:** A bundle becomes a link. That link makes the same bundle again in the
+browser of a reader.
 
-**Why:** This is the second half of the dogfood bar. Without it the tool is
+**Why:** This is the second half of the MVP bar. Without it, the tool is
 private.
 
-**Done when:** A link produced from this bundle reopens it with identical
-content, a link that is truncated or corrupt says so, and no installation or
-account is needed to read one.
+**Done when:** A link from this bundle opens it again with the same content. A
+link that is incomplete or damaged causes a message. The reader installs no
+software and makes no account.
 
 **Status:** done — unverified
 **MVP:** yes
 
 ## Notes
 
-- Share packing and the bundle envelope exist in the library, with a share
-  round-trip documented as a workflow.
-- A bundle packs into one versioned, nonce-delimited envelope. Splitting a
-  packed bundle is unambiguous by construction: the delimiter cannot occur in
-  content, and the version says how to read what follows. The older headerless
-  form guessed at boundaries, which meant a document containing the wrong
-  characters could split itself.
-- Every surface that packs or unpacks a bundle uses that one codec —
-  [Export a Bundle](./export-a-bundle.md) and
-  [Serve Locally](./serve-locally.md) included. A second packing path is a
-  second set of corruption bugs.
-- Link length is the practical ceiling, and this bundle is growing. If a
-  full-bundle link exceeds what a browser or a chat client accepts, the goal
-  needs a leaf for a hosted or chunked form.
-- Corruption reporting is the unverified half.
+- The library packs a bundle and the architecture documents the round trip.
+- A bundle becomes one envelope with a version and a delimiter that uses a
+  nonce. To split a packed bundle is unambiguous: the delimiter cannot occur in
+  the content, and the version gives the format of the remainder. The previous
+  form had no header and calculated the boundaries. Thus a document with
+  specific characters could split itself.
+- Each surface that packs or unpacks a bundle uses that one codec. The surfaces
+  include [Export a Bundle](./export-a-bundle.md) and [Serve
+  Locally](./serve-locally.md). A second packing path gives a second set of
+  defects.
+- The length of a link is the practical limit, and this bundle becomes larger.
+  If a full bundle makes a link that a browser or a message tool does not
+  accept, this goal needs a separate goal for a hosted form or a form with
+  parts.
+- The message for a damaged link is not verified.

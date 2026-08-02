@@ -1,27 +1,27 @@
 # Beyond UML
 
-**Goal:** WAML becomes a general documentation tool — an internal wiki whose
-source is a reviewable repository — with UML as one projection among several.
+**Goal:** WAML becomes a general documentation tool. It becomes an internal
+wiki with a source that a team can review. UML is one projection of several.
 
-**Why:** UML is the first big feature, not the product. Most documentation a
-team writes is not a diagram, and a tool that only handles diagrams gets opened
-rarely.
+**Why:** UML is the first large feature. It is not the product. Most
+documentation that a team writes is not a diagram. A tool for diagrams only
+gets little use.
 
-**Done when:** Deliberately unspecified. This is a direction, not a
-deliverable.
+**Done when:** This goal has no completion condition. It is a direction. It is
+not a deliverable.
 
 **Status:** horizon
 **MVP:** no
 
 ## Notes
 
-- The constraint this horizon places on today's work is a boundary rule, not a
-  feature: nothing in the core — bundle, syntax, model, editor shell,
-  navigation, search, sharing — may assume UML. UML lives in its own layer
-  above them.
-- Things this direction would eventually want, none of them scheduled:
-  full-text search across a bundle, cross-bundle links, a non-UML typed
-  projection such as an architecture decision record or a runbook, multi-author
-  presence, and comments.
-- Anything here that turns out to be needed for the dogfood bar should be
-  pulled out into a real goal rather than built from this page.
+- This direction gives one rule to the current work: no part of the core can
+  assume UML. The core includes the bundle, the syntax, the model, the editor
+  shell, the navigation, the search, and the sharing. UML is a layer above
+  them.
+- This direction can need these functions later. None of them is scheduled:
+  full-text search in a bundle, links between bundles, a typed projection that
+  is not UML such as a decision record or a procedure, more than one author at
+  the same time, and comments.
+- If the MVP bar needs one of these functions, make it a separate goal. Do not
+  start work from this page.

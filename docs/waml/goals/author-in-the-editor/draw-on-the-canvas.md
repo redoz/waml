@@ -1,36 +1,37 @@
 # Draw on the Canvas
 
-**Goal:** An author builds and changes a diagram by direct manipulation, not by
-round-tripping through the inspector.
+**Goal:** An author makes and changes a diagram with direct manipulation. The
+author does not go to the inspector and back for each change.
 
-**Why:** The canvas is where the author is looking. Every edit that forces them
-to look somewhere else costs attention, and the cost compounds across the
-hundreds of small edits a real diagram takes.
+**Why:** The author looks at the canvas. Each edit that moves the attention of
+the author to another position has a cost. A diagram needs many small edits,
+thus the total cost is large.
 
-**Done when:** Adding a node, connecting two nodes, re-targeting an edge
-endpoint, moving, multi-selecting, and deleting all work on the canvas with the
-pointer alone; each shows what it will do before the button is released; and
-each lands as one undoable transaction.
+**Done when:** The author can add a node, connect two nodes, move an edge
+endpoint to a different target, move a node, select more than one node, and
+delete, with the pointer only. Each operation shows its result before the
+author releases the button. Each operation is one transaction that the author
+can undo.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- Drag-to-place with constraints, a node context menu, a selection toolbar, and
-  a hover-preview radial dial all exist. Edge manipulation is the gap: dragging
-  an endpoint onto a different target is the single most-used gesture in every
-  diagram tool and is not known to work here.
-- Rubber-band selection and multi-select editing are unbuilt.
-- Copy and paste of a subgraph is unbuilt and deserves its own leaf once the
-  single-element gestures are solid.
-- Placement feedback has known unfinished pieces, all of them about telling the
-  author *why* a drop is refused: highlighting the relations that constrain the
-  dragged node, showing the whole contradiction cycle rather than one edge of
-  it, distinguishing an override the author may make from a conflict they may
-  not, and constraining drop targets to the dragged node's group.
-- Preview-before-commit matters more than it sounds: a drag whose result is
-  only visible after release forces the author to undo to explore.
-- Related: [Select and Inspect](../uml/shared/select-and-inspect.md) owns what
-  happens *after* a selection; this goal owns making the selection and the
-  change.
+- Drag to place with constraints, a context menu on a node, a selection
+  toolbar, and a radial dial with a preview operate. Edge manipulation is the
+  defect. To drag an endpoint onto a different target is the most frequent
+  operation in a diagram tool. It is not known to operate here.
+- Selection with a rubber band and edits to more than one element do not exist.
+- Copy and paste of a subgraph does not exist. Give it a separate goal after
+  the operations for one element operate correctly.
+- The feedback for placement has incomplete parts. Each part tells the author
+  why the tool refuses a drop: which relations hold the node, the full cycle of
+  a contradiction and not one edge of it, the difference between an override
+  that the author can make and a conflict that the author cannot make, and a
+  limit of drop targets to the group of the node.
+- A preview before the commit is necessary. If the author sees the result after
+  the release only, the author must use undo to examine each option.
+- [Select and Inspect](../uml/shared/select-and-inspect.md) controls what
+  occurs after a selection. This goal controls how the author makes the
+  selection and the change.

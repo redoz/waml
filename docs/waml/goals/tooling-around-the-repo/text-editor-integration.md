@@ -1,23 +1,23 @@
 # Text Editor Integration
 
-**Goal:** VS Code speaks to the language server without the author configuring
-anything.
+**Goal:** VS Code connects to the language server. The author sets no
+configuration.
 
-**Why:** An integration that needs setup instructions is an integration nobody
-installs.
+**Why:** An integration that needs instructions is an integration that few
+persons install.
 
-**Done when:** Installing the extension gives diagnostics on a WAML document
-with no configuration, and a missing or mismatched server binary is reported
-clearly.
+**Done when:** After the installation of the extension, a WAML document shows
+diagnostics with no configuration. A missing server program or a server program
+with an incorrect version causes a clear message.
 
 **Status:** partial — unverified
 **MVP:** no
 
 ## Notes
 
-- The extension is a standalone Node project under `editors/vscode` and
-  launches `waml lsp --stdio` through `vscode-languageclient`.
-- It is not published to a marketplace, so "installing" today means building
-  it. Publishing is the gap between `partial` and `done`.
-- Its test, lint, and build steps are part of the repository gate alongside the
-  Rust workspace tests.
+- The extension is a separate Node project. It starts the WAML language server
+  through the standard language client.
+- The extension is not in a marketplace. Thus to install it is to build it. The
+  publication of the extension is the difference between `partial` and `done`.
+- The test, lint, and build steps of the extension are part of the repository
+  gate with the Rust tests.

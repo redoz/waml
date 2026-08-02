@@ -1,24 +1,26 @@
 # Select and Inspect
 
-**Goal:** Clicking anything in a diagram shows what it is and lets an author
-change it.
+**Goal:** A click on an element in a diagram shows what that element is and
+lets the author change it.
 
-**Why:** The diagram is the most direct handle on the model. An inspector
-reachable only from the tree wastes it.
+**Why:** The diagram is the most direct control of the model. An inspector that
+the author can reach from the tree only wastes that control.
 
-**Done when:** Every drawn thing — node, member, edge, end, label, note — can
-be selected, is shown in the inspector with its full property set, and is
-editable there, with the edit landing as one transaction.
+**Done when:** The author can select each drawn element: a node, a member, an
+edge, an end, a label, and a note. The inspector shows the full property set of
+the selected element. The author can change each property there. Each change is
+one transaction.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- The inspector, property controls, a selection toolbar, and a node context
-  menu all exist.
-- Edges and edge ends are the likely gap: selecting a node is easy, selecting a
-  multiplicity is not.
-- Hit-testing has a standing trap in this codebase: draw rectangles are
-  pre-alignment while events are post-alignment, so an aligned parent offsets
-  every child's hit rectangle unless the difference is applied.
+- The inspector, the property controls, a selection toolbar, and a context menu
+  on a node operate.
+- Edges and edge ends are the probable defect. To select a node is easy. To
+  select a multiplicity is not easy.
+- Hit tests have a known defect in this code. The tool calculates the draw
+  rectangle before alignment. The tool receives events after alignment. Thus an
+  aligned parent moves the hit rectangle of each child. Apply the difference
+  between the two positions.

@@ -1,31 +1,33 @@
 # Route the Edges
 
-**Goal:** Edges connect their endpoints without crossing or overlapping
-anything they could have avoided.
+**Goal:** Each edge connects its two endpoints. An edge does not cross or cover
+an element that the router can avoid.
 
-**Why:** Edge quality is what separates a diagram a reader trusts from one they
-squint at.
+**Why:** The quality of the edges is the difference between a diagram that a
+reader trusts and a diagram that a reader must examine closely.
 
-**Done when:** Every edge in this bundle lands on its target's border, avoids
-passing through unrelated nodes, minimises crossings, and separates parallel
-runs.
+**Done when:** Each edge in this bundle stops on the border of its target, does
+not go through an unrelated node, has the minimum number of crossings, and
+keeps a distance from a parallel edge.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- Routing is orthogonal only. No splines — that is a settled decision, not an
-  open question. The target quality tier is a libavoid-class router, written in
-  Rust.
-- The endpoint-on-border invariant is enforced by a two-pass connect step.
-- Crossing minimisation and parallel-run separation are the unbuilt parts.
-- The solver returns routes as polylines alongside the rectangles. The renderer
-  draws what it is given and decides nothing about the path.
-- A jog that a straight line could have avoided is a defect. When both nodes'
-  facing border strips can be hit head-on by one straight segment, that is the
-  route; it reverts to a stepped path only when the nodes slide out of that
-  shared band.
-- Routing and labelling are one problem. The router prefers paths that leave
-  room for the label the edge will carry, so route quality and
-  [label quality](./place-the-labels.md) cannot be finished independently.
+- The routes are orthogonal. The product does not use curves. This is a
+  decision and not an open question. The target quality is equal to a
+  best-in-class orthogonal router, written in Rust.
+- A connection step with two passes keeps each endpoint on the border of its
+  target.
+- The solver gives the routes as polylines with the rectangles. The renderer
+  draws the given path and makes no decision about it.
+- A step in a route that a straight line can replace is a defect. If one
+  straight segment can meet the facing borders of both nodes at a right angle,
+  that segment is the route. The route becomes a stepped path only when the
+  nodes move out of that shared band.
+- The router prefers a path that has space for the label of its edge. Thus the
+  quality of a route and the quality of a [label](./place-the-labels.md) are
+  one problem.
+- The minimum number of crossings and the distance between parallel edges do
+  not operate.

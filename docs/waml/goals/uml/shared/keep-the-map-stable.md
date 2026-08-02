@@ -1,32 +1,30 @@
 # Keep the Map Stable
 
-**Goal:** An edit perturbs only the neighbourhood it touches. The rest of the
-diagram holds its position.
+**Goal:** An edit moves the elements near the edit. The other elements keep
+their positions.
 
-**Why:** This is the goal that decides whether editing a laid-out diagram feels
-possible at all. An author builds a mental map of where things are; a solver
-that reflows the whole drawing because one node was added destroys that map on
-every edit, and no amount of good click targets compensates.
+**Why:** This goal decides whether an author can edit a solved diagram. An
+author makes a mental map of the positions. A solver that moves the full
+diagram after one new node removes that map at each edit. Good pointer targets
+give no help against this problem.
 
-**Done when:** Adding, removing, renaming, or reconnecting one element leaves
-every unaffected node within a small bounded distance of where it was, and the
-change animates or is otherwise legible rather than appearing as a new drawing.
+**Done when:** To add, remove, rename, or reconnect one element keeps each
+other node within a small distance of its previous position. The change is
+visible as a movement and not as a new diagram.
 
 **Status:** planned — unverified
 **MVP:** yes
 
 ## Notes
 
-- The current solvers lay out from scratch. Nothing carries the previous
-  solution forward as a bias, so an edit is free to produce a wholly different
-  arrangement.
-- The usual remedy is to seed the solve with the previous positions and
-  penalise displacement, which is a smaller change than it sounds and does not
-  require a different algorithm.
-- This interacts with [Arrange a
-  Diagram](../../author-in-the-editor/arrange-a-diagram.md): explicit
-  constraints are the author's hard override, stability is the solver's soft
-  courtesy. Both are needed; neither replaces the other.
-- `MVP: yes` — the dogfood bar requires authoring `docs/waml` in the editor,
-  and its diagrams are large enough that whole-diagram reflow on each edit
-  would make that impractical.
+- The solvers calculate a layout from the start each time. No solver uses the
+  previous solution. Thus an edit can give a fully different arrangement.
+- The usual method is to start the solve from the previous positions and to
+  give a penalty to movement. This method does not need a different algorithm.
+- [Arrange a Diagram](../../author-in-the-editor/arrange-a-diagram.md) is
+  different. A constraint is a hard override from the author. Stability is a
+  soft rule for the solver. The product needs both. One does not replace the
+  other.
+- `MVP: yes`. The bar needs an author to write `docs/waml` in the editor. The
+  diagrams here are sufficiently large that a full movement at each edit
+  prevents that work.

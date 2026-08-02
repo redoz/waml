@@ -1,34 +1,33 @@
 # Place the Labels
 
-**Goal:** Every label — node title, member, edge name, multiplicity, role,
-stereotype, guard — is legible, positioned, and unclipped.
+**Goal:** Each label is legible, is in a position, and is not clipped. The
+labels include node titles, members, edge names, multiplicities, roles,
+stereotypes, and guards.
 
-**Why:** An unreadable label is a wrong diagram. Labels are where layout
-failures become visible first.
+**Why:** A label that a reader cannot read makes the diagram incorrect. A
+failure in the layout becomes visible first at the labels.
 
-**Done when:** No label in this bundle is clipped, overlapped, or placed
-ambiguously between two edges, at the default zoom and at every zoom a reader
-can reach.
+**Done when:** No label in this bundle is clipped, is below another element, or
+is between two edges in a position that gives no owner. This is true at the
+default zoom and at each zoom that the reader can select.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- Edge labels have their own placement pass; the solver sizes connected gaps to
-  hold terminal labels.
-- Label placement is a solver stage in world space, not a renderer concern. A
-  renderer that places labels cannot know what else is on the canvas, which is
-  why labels overlap each other and vanish under node cards.
-- Placement never fails silently. A label that cannot be placed cleanly gets a
-  leader line to its owner instead. Drawing a label on top of something else is
-  not an acceptable outcome of any input.
-- A lifeline head shows the authored title and is measured on that title. The
-  resolved reference key is what the model uses to correlate messages, and it
-  is never what the reader sees.
-- Text measurement is shared with [Solve the
-  Layout](./solve-the-layout.md) — a label the solver measured differently from
-  the renderer is the classic source of clipping.
-- Font sizes in text styles are points, and the canvas has previously
-  double-applied the 96/72 conversion. Any measurement bug should check that
-  first.
+- The solver places labels in world space. The renderer does not place them. A
+  renderer does not know the other content of the canvas, thus labels overlap
+  each other and go below node cards.
+- Placement does not fail silently. If the solver cannot place a label
+  correctly, the label gets a leader line to its owner. To draw a label above
+  another element is not an acceptable result for any input.
+- [Solve the Layout](./solve-the-layout.md) and this goal use the same text
+  measurement. If the solver and the renderer measure a label differently, the
+  renderer clips the label.
+- The font size in a text style is in points. The canvas applied the conversion
+  from points to pixels two times in the past. Examine that conversion first
+  when a measurement is incorrect.
+- A lifeline head shows the authored title, and the tool measures that title.
+  The model uses the resolved reference key to correlate messages. The reader
+  does not see that key.

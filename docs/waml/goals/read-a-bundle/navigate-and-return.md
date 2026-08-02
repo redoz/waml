@@ -1,31 +1,31 @@
 # Navigate and Return
 
-**Goal:** A reader follows a link and comes back.
+**Goal:** A reader follows a link and then returns.
 
-**Why:** A bundle is a graph. Reading one is a walk, and a walk without a way
-back is a maze.
+**Why:** A bundle is a graph. To read a graph is to walk in it. A walk with no
+return path stops the reader.
 
-**Done when:** Clicking a link in prose or a node in a diagram opens the target,
-back returns to the exact previous position including scroll and selection, and
-forward returns again.
+**Done when:** A click on a link in text or on a node in a diagram opens the
+target. Back returns to the previous position, with the same scroll position
+and the same selection. Forward moves to the position again.
 
 **Status:** done — unverified
 **MVP:** yes
 
 ## Notes
 
-- Navigation history is bounded, so a long session cannot grow it without
-  limit.
-- Tree rows, breadcrumb segments, and rendered Markdown links all resolve
-  through one navigation policy, covering documents, directories, and fragments
-  within a document. Three call sites with three behaviors is how "click a
-  link" becomes untestable; one policy is what makes this goal finishable.
-- Revealing is not navigating. A breadcrumb click shows where the current
-  document sits in the tree. It does not open anything and does not toggle a
-  folder open or closed.
-- A live view survives a model revision when the revision is compatible with
-  it. When it is not, the view is torn down and rebuilt through the full
-  lifecycle rather than patched — a half-reconciled view is how navigation
-  lands on stale content.
-- The unverified part is position fidelity: returning to the *document* is
-  known to work, returning to the *position* is not confirmed.
+- Tree rows, breadcrumb segments, and links in text use one navigation policy.
+  The policy covers documents, directories, and fragments in a document. Three
+  call sites with three behaviors make the function impossible to test. One
+  policy makes this goal possible to complete.
+- To reveal is not to navigate. A click on a breadcrumb shows the position of
+  the current document in the tree. It opens no document and it does not change
+  a folder.
+- The navigation history has a limit. A long session cannot increase it without
+  end.
+- A live view stays after a model revision if the revision is compatible with
+  it. If the revision is not compatible, the tool removes the view and makes it
+  again with the full lifecycle. The tool does not repair a view in part,
+  because a partially repaired view shows incorrect content.
+- Verify the accuracy of the position. Return to the correct document operates.
+  Return to the correct position in that document is not verified.

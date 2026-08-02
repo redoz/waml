@@ -9,8 +9,9 @@ needs to say about structure.
 **Status:** partial — unverified
 **MVP:** yes
 
-Every status in this table is a first-pass guess. `Evidence` reads
-`unverified` until an audit replaces it with a `file:line` or a test name.
+Every status in this table is a first reading of the code. `Evidence` shows
+`unverified` until an audit replaces it with a `file:line` reference or the
+name of a test.
 
 ## Classifiers
 
@@ -75,12 +76,12 @@ Every status in this table is a first-pass guess. `Evidence` reads
 
 ## Notes
 
-- The eleven relationship kinds are model-level and shared with every other
-  kind. A row marked `done` here means it parses, resolves, and draws in a
-  class diagram — not that it is meaningful in a sequence diagram.
-- `includes` and `extends` are `MVP: no` here because they belong to [Use
-  Case](../use-case/feature-cut.md); they appear in this table only because
-  they are structural relationships in the same model.
-- Operations are marked `partial` rather than `done` deliberately: parameter
-  lists and return types are the part most likely to be thin, and this bundle
-  will exercise them.
+- The eleven relationship kinds are in the model and each kind uses them. A row
+  with the status `done` here means that the relationship parses, resolves, and
+  draws in a class diagram. It does not mean that the relationship has a
+  meaning in a sequence diagram.
+- `includes` and `extends` have the flag `MVP: no` here because they belong to
+  [Use Case](../use-case/feature-cut.md). They are in this table because they
+  are structural relationships in the same model.
+- Operations have the status `partial` and not `done` on purpose. Parameter
+  lists and return types are the probable defect, and this bundle uses them.

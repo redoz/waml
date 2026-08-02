@@ -9,8 +9,9 @@ document needs to say about an interaction over time.
 **Status:** partial — unverified
 **MVP:** yes
 
-Every status in this table is a first-pass guess. `Evidence` reads
-`unverified` until an audit replaces it with a `file:line` or a test name.
+Every status in this table is a first reading of the code. `Evidence` shows
+`unverified` until an audit replaces it with a `file:line` reference or the
+name of a test.
 
 ## Participants
 
@@ -65,19 +66,21 @@ Every status in this table is a first-pass guess. `Evidence` reads
 
 ## Notes
 
-- The [Sequence Language](./language.md) states what each row above means in
-  authored source. A row here says whether it works; that document says what
-  "works" is. Rows marked `excluded` are constructs the language refuses on
-  purpose — adding one means changing that document first.
-- Combined fragments are the largest single gap, and the reason most real
-  sequence diagrams cannot yet be drawn. `alt`, `opt`, and `loop` are the three
-  that matter for the dogfood bar.
-- Fragments are as much a layout problem as a model problem — a fragment is a
-  box that must enclose a vertical span across a horizontal set of lifelines.
-  Expect work to land in [Shared](../shared/) as much as here.
+- The [Sequence Language](./language.md) states the meaning of each row above
+  in authored source. A row here shows whether the product obeys the language.
+  The language document shows what the product must do. Rows with the word
+  `excluded` are constructs that the language refuses. To add one, change that
+  document first.
+- Fragments are the largest defect. They are the reason that the product cannot
+  draw most real sequence diagrams. `alt`, `opt`, and `loop` are the three that
+  the bar needs.
+- A fragment is a layout problem and a model problem. A fragment is a box that
+  must hold a vertical range across a horizontal set of lifelines. Expect work
+  in [Shared](../shared/) and here.
 - The interaction substrate is separate from the flow substrate that Activity
-  and State Machine share, so nothing here comes free from those kinds.
-- Reading and authoring are separate. A construct can be `done` here — parsed,
-  resolved, drawn — while still being unauthorable on the canvas. Canvas
-  authoring is owned by [Draw on the
-  Canvas](../../author-in-the-editor/draw-on-the-canvas.md).
+  and State Machine use. Work on those kinds gives no help here.
+- To read is not to author. A construct can have the status `done` here, thus
+  the parser, the model, and the renderer accept it, while an author cannot
+  make it on the canvas. [Draw on the
+  Canvas](../../author-in-the-editor/draw-on-the-canvas.md) controls canvas
+  authoring.

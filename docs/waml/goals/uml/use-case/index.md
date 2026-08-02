@@ -1,5 +1,5 @@
 # Use Case
 
-Scope diagrams: actors, use cases, and the system boundary.
+Scope: actors, use cases, and the system boundary.
 
-* [Use Case Feature Cut](./feature-cut.md) - Every feature a use case diagram should have, with status and MVP flag.
+* [Use Case Feature Cut](./feature-cut.md) - Each feature of a use case diagram, with a status and an MVP flag.

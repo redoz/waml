@@ -1,22 +1,24 @@
 # Open a Bundle
 
-**Goal:** A reader gets a bundle on screen from a folder, a recent entry, or a
+**Goal:** A reader opens a bundle from a folder, from a recent entry, or from a
 share link.
 
-**Why:** Everything else in the product is downstream of a bundle being open.
+**Why:** All other functions need an open bundle.
 
-**Done when:** All three entry paths land on the same loaded state, a bundle
-that fails to load says why instead of showing an empty window, and the recent
-list survives a restart.
+**Done when:** The three entry paths give the same loaded state. A bundle that
+does not load causes a message that gives the reason. The window is not empty.
+The list of recent bundles stays after a restart.
 
 **Status:** done — unverified
 **MVP:** yes
 
 ## Notes
 
-- A start screen lists recent bundles. A reader can pin an entry to hold it in
-  first position.
-- The web form loads a bundle from a share link with no installation and no
-  account. See [Share a Link](../share-and-publish/share-a-link.md).
-- Failure reporting on load is the thin part: a malformed bundle should name
-  the file and the reason. Audit before trusting the `done` above.
+- A start screen shows the recent bundles. A reader can pin an entry. A pinned
+  entry stays in the first position.
+- The web form loads a bundle from a share link. The reader does not install
+  software and does not make an account. Refer to [Share a
+  Link](../share-and-publish/share-a-link.md).
+- Failure messages are weak. A bundle with incorrect content must cause a
+  message that gives the name of the file and the reason. Verify this before
+  you accept the status above.

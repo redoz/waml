@@ -1,21 +1,22 @@
 # Publish a Site
 
-**Goal:** Every push to main republishes the web artifact without a human step.
+**Goal:** Each push to the main branch publishes the web artifact again. A
+person does no step.
 
-**Why:** A publish that needs remembering does not happen.
+**Why:** A publication step that a person must remember does not occur.
 
-**Done when:** A push to main produces a working published artifact or fails
-the workflow loudly, and no defect that the local gate would catch reaches the
-published build.
+**Done when:** A push to the main branch makes an artifact that operates, or
+the workflow fails and reports the failure. No defect that the local gate finds
+comes to the published build.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- The Pages workflow builds the artifact and post-processes it: font pruning,
-  branding, and a runtime shell injection.
-- `issues.md` records that delivery automation does not stop defects reaching
-  the web build. That is what keeps this `partial`.
-- `cargo-makepad` must be installed at the same makepad revision the editor
-  pins. Pin the revision, never a branch tip.
+- The workflow builds the artifact and then processes it. The steps remove
+  unused fonts, add the brand, and add the runtime shell.
+- The delivery automation does not stop defects before the web build. This is
+  the reason for the status `partial`.
+- The build tool must have the same revision of the graphics library as the
+  editor. Use an exact revision. Do not use the most recent commit of a branch.

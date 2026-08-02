@@ -9,8 +9,9 @@ document needs to say about an object's lifecycle.
 **Status:** partial — unverified
 **MVP:** no
 
-Every status in this table is a first-pass guess. `Evidence` reads
-`unverified` until an audit replaces it with a `file:line` or a test name.
+Every status in this table is a first reading of the code. `Evidence` shows
+`unverified` until an audit replaces it with a `file:line` reference or the
+name of a test.
 
 ## States
 
@@ -50,13 +51,12 @@ Every status in this table is a first-pass guess. `Evidence` reads
 
 ## Notes
 
-- This kind is further along than it looks. `uml.StateMachine` parses states
-  and `on TRIGGER when GUARD transitions to TARGET: EFFECT`, solves through the
-  flow solver under `FlowFlavor::StateMachine`, renders in the behavior view,
-  and has golden and property coverage. Most of it came free from the shared
-  flow substrate.
-- The whole kind is `MVP: no`. The dogfood bar does not need a lifecycle
-  diagram. Nothing here should be built before the class and sequence gaps
-  close.
-- Composite and submachine states are the real ceiling: they need a nested flow
-  layout that the current solver does not attempt.
+- This kind operates more than the row statuses show. The parser accepts states
+  and the form `on TRIGGER when GUARD transitions to TARGET: EFFECT`. The flow
+  solver solves it. The behavior view draws it. Golden tests and property tests
+  cover it. The shared flow substrate gives most of this behavior.
+- The full kind has the flag `MVP: no`. The bar does not need a lifecycle
+  diagram. Do not build work here before the class defects and the sequence
+  defects are complete.
+- Composite states and submachine states are the limit of this kind. They need
+  a nested flow layout. The current solver does not make one.

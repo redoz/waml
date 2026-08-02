@@ -1,27 +1,29 @@
 # Round-Trip Losslessly
 
-**Goal:** Bytes the author wrote and did not touch come back unchanged.
+**Goal:** The bytes that the author wrote and did not change come back without
+a change.
 
-**Why:** A tool that reformats a file it merely opened poisons every diff and
-makes itself unusable in a reviewed repository.
+**Why:** A tool that reformats a file that it only opened makes each diff
+incorrect. Then the tool is not usable in a repository with reviews.
 
-**Done when:** Parsing and reserializing any document in this bundle is a
-byte-identical no-op, an edit changes only the region it touches, and no input
-format discards authored bytes.
+**Done when:** To parse and then write a document in this bundle changes no
+byte. An edit changes the region of the edit only. No input format removes
+bytes that the author wrote.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- The syntax layer preserves losslessly and reparses incrementally, with
-  property and fuzz coverage. This is the strongest part of the codebase.
-- There is exactly one parse authority. Every derived view — OKF structure, UML
-  analysis, diagnostics, the editor's model — is computed from that one
-  revisioned tree. A second parser is the failure mode this design exists to
-  prevent: two readings of the same bytes that disagree only sometimes.
-- That boundary is enforced by the compiler and by Cargo, not by convention. A
-  boundary that depends on reviewers remembering it is not a boundary.
-- `issues.md` records that one input format can discard authored bytes. That
-  single hole is what keeps this `partial`.
-- Line endings and trailing whitespace count as authored bytes.
+- The syntax layer keeps all bytes and parses incrementally. It has property
+  tests and fuzz tests. It is the strongest part of the code.
+- One input format removes bytes that the author wrote. This one defect is the
+  reason for the status `partial`.
+- Line ends and space characters at the end of a line are bytes that the author
+  wrote.
+- There is one parse authority. Each derived view uses that one tree with
+  revisions. The derived views are the OKF structure, the UML analysis, the
+  diagnostics, and the model in the editor. A second parser causes two readings
+  of the same bytes that do not agree in all conditions.
+- The compiler and Cargo hold that boundary. Reviewers do not hold it. A
+  boundary that needs a person to remember it is not a boundary.

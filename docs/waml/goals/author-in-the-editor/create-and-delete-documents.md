@@ -1,26 +1,26 @@
 # Create and Delete Documents
 
-**Goal:** An author adds, renames, moves, and removes documents and packages
-inside the editor.
+**Goal:** An author adds, renames, moves, and removes documents and packages in
+the editor.
 
-**Why:** The dogfood bar fails at the first new file if this needs a file
+**Why:** The MVP bar fails at the first new file if the author must use a file
 manager.
 
-**Done when:** All four operations work from the tree, every index that names
-the affected document is regenerated, every link that pointed at it is either
-updated or reported as broken, and the operation is undoable.
+**Done when:** The four operations start from the tree. Each index that names
+the document becomes correct again. Each link to the document is corrected or
+is reported as broken. The author can undo the operation.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- A new-package flow exists. Whether rename and move exist at all is the
-  unverified part.
-- Index regeneration is the sharp edge: `reindex_source` exists in the library
-  but has no product caller, so the editor is not currently rebuilding indexes
-  after a structural change. See [Keep Indexes
-  Correct](../trust-the-content/keep-indexes-correct.md).
-- Link rewriting on rename is a real design question, not a detail: silently
-  rewriting an author's links and leaving them broken are both defensible, and
-  the tree must pick one.
+- A flow to make a new package operates. Verify whether rename and move
+  operate.
+- Index correction is the weak point. The library has a function that makes
+  each index again from the model, but no product code calls it. Thus the
+  editor does not correct an index after a change to structure. Refer to [Keep
+  Indexes Correct](../trust-the-content/keep-indexes-correct.md).
+- The behavior of a link after a rename is a decision, not a detail. To correct
+  the link automatically is acceptable. To report the link as broken is also
+  acceptable. This tree must select one behavior.

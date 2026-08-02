@@ -1,7 +1,7 @@
 # Use Case Feature Cut
 
-**Goal:** A use case diagram in WAML expresses who the system serves and where
-its boundary lies.
+**Goal:** A use case diagram in WAML shows the users of the system and the
+boundary of the system.
 
 **Done when:** Every row below is `done` or `horizon`, and no `planned` row is
 `MVP: yes`.
@@ -9,8 +9,9 @@ its boundary lies.
 **Status:** partial — unverified
 **MVP:** no
 
-Every status in this table is a first-pass guess. `Evidence` reads
-`unverified` until an audit replaces it with a `file:line` or a test name.
+Every status in this table is a first reading of the code. `Evidence` shows
+`unverified` until an audit replaces it with a `file:line` reference or the
+name of a test.
 
 ## Elements
 
@@ -43,12 +44,12 @@ Every status in this table is a first-pass guess. `Evidence` reads
 
 ## Notes
 
-- The model side of this kind already exists: `uml.Actor` and `uml.UseCase` are
-  metaclasses, and `includes`, `extends`, `associates`, and `specializes` are
-  relationship kinds. What is missing is the *view* — today these render
+- The model part of this kind exists. `uml.Actor` and `uml.UseCase` are
+  metaclasses. `includes`, `extends`, `associates`, and `specializes` are
+  relationship kinds. The view does not exist. At this time these elements draw
   through the structural view as boxes.
-- That is why this is its own kind rather than rows under
-  [Class](../class/feature-cut.md): the remaining work is entirely presentation
-  and layout, and it belongs somewhere a reader can see it as one job.
-- `MVP: no` throughout. `docs/waml` documents its actors as prose today and the
-  dogfood bar does not ask for more.
+- Thus this kind is separate from [Class](../class/feature-cut.md). The
+  remaining work is presentation and layout only. A reader must see that work
+  as one task.
+- Each row has the flag `MVP: no`. `docs/waml` describes its actors in text at
+  this time. The bar does not ask for more.

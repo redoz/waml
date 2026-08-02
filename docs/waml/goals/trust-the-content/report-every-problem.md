@@ -1,24 +1,24 @@
 # Report Every Problem
 
-**Goal:** Diagnostics from every layer — shell, frontmatter, syntax, model,
-layout — reach the reader at every surface.
+**Goal:** Diagnostics from each layer come to the reader at each surface. The
+layers are the shell, the frontmatter, the syntax, the model, and the layout.
 
-**Why:** A problem that is detected and then dropped at a layer boundary is
-worse than one never detected: the tool looks confident and is wrong.
+**Why:** A problem that the tool finds and then discards is worse than a
+problem that the tool does not find. The tool looks correct and is not correct.
 
 **Done when:** A document with a problem at any layer shows that problem in the
-editor, in the command-line output, and in the language server, each with a
-position, and no layer's diagnostics are discarded on the way out.
+editor, in the command-line output, and in the language server. Each report has
+a position. No layer discards its diagnostics before the output.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- This is the standing P1 in `issues.md`: shell and frontmatter diagnostics
-  disappear at public boundaries because diagnostics are not aggregated across
-  parsing layers.
-- Aggregation is one change that fixes all three surfaces. It is the highest-
-  value single item in this tree.
-- Diagnostic *quality* — wording, suggested fix — is a separate concern and not
-  part of this goal's bar.
+- Diagnostics from the shell layer and the frontmatter layer disappear at the
+  public boundaries, because the tool does not collect diagnostics across the
+  parse layers. This is the highest-priority defect in the product.
+- One change corrects all three surfaces. Thus this item has the highest value
+  in the tree.
+- The quality of the text of a diagnostic is a different subject. It is not
+  part of this goal.

@@ -1,88 +1,86 @@
 # Root Goal
 
-**Goal:** WAML is a native documentation tool. UML support is its first big
+**Goal:** WAML is a native documentation tool. UML support is its first large
 feature.
 
-**Why:** Documentation that lives outside the repository rots. Documentation
-that lives inside the repository is unreadable without a tool. WAML is that
-tool: it reads and writes plain Markdown a reviewer can diff, and it draws that
-Markdown as documents and diagrams a reader can navigate.
+**Why:** Documentation that is not in the repository becomes incorrect.
+Documentation that is in the repository needs a tool to read it. WAML is that
+tool. It reads and writes plain Markdown that a reviewer can diff. It draws
+that Markdown as documents and diagrams that a reader can navigate.
 
-**Done when:** The MVP bar below holds, and the five UML kinds have a complete
-feature cut with no `planned` row marked `MVP: yes`.
+**Done when:** The MVP bar below is true. Also, the five UML kinds have a
+complete feature cut, and no `planned` row in those cuts is `MVP: yes`.
 
 **Status:** partial
 **MVP:** yes
 
 ## The MVP bar
 
-MVP is reached when `docs/waml` itself can be authored and read entirely in the
-native editor — no text editor in the loop — and shared as a link that a reader
-opens without installing anything.
+The MVP is complete when an author can write and read `docs/waml` fully in the
+native editor, with no text editor, and can send it as a link that a reader
+opens with no installation.
 
-Every goal below carries `MVP: yes` or `MVP: no` measured against that
-sentence, and nothing else. The bar is deliberately small and deliberately
-self-referential: the first real user of WAML is WAML's own documentation.
+Each goal has the flag `MVP: yes` or `MVP: no`. The flag records one thing
+only: whether the goal is necessary for the sentence above. The bar is small
+and self-referential on purpose. The first user of WAML is the documentation of
+WAML.
 
 ## Status legend
 
 | Status | Meaning |
 | --- | --- |
-| `done` | The "Done when" condition holds and a test or reproducible manual check covers it. |
-| `partial` | Some of it works. The "Done when" condition does not hold. |
-| `planned` | Wanted, not started. |
-| `horizon` | Wanted eventually, deliberately unscheduled. Never `MVP: yes`. |
+| `done` | The "Done when" condition is true. A test or a manual check shows this. |
+| `partial` | Part of the goal operates. The "Done when" condition is not true. |
+| `planned` | The team wants the goal. Work has not started. |
+| `horizon` | The team wants the goal later. It is not scheduled. It is never `MVP: yes`. |
 
 `Status` and `MVP` are independent. A goal can be `done` and `MVP: no`. A goal
-can be `planned` and `MVP: yes` — those are the ones that block the bar.
+can be `planned` and `MVP: yes`. The second combination shows the work that
+blocks the bar.
 
-Rows and goals written in the first pass carry `unverified` beside their
-status. That marker means the status is a reading of the code from memory, not
-an audit. A later pass replaces each guess with an evidence-backed status and a
-`file:line` citation. The set of remaining `unverified` markers is that pass's
-to-do list.
+Each goal and each feature row that has the word `unverified` has a status from
+a first reading of the code. The word is not a measurement. A later pass must
+replace each guess with a status that has evidence, such as a `file:line`
+reference or the name of a test. The remaining `unverified` marks are the task
+list for that pass.
 
 ## Level-1 roadmap
 
 | Goal | Status | MVP | Note |
 | --- | --- | --- | --- |
-| [Read a Bundle](read-a-bundle/) | partial | yes | Tree, preview tabs, document and diagram views, navigation history all exist. |
-| [Author in the Editor](author-in-the-editor/) | partial | yes | Model edits, save, undo, savepoints exist. Prose authoring and canvas ergonomics are the weak side. |
-| [Trust the Content](trust-the-content/) | partial | yes | Lossless syntax and broad tests exist. Diagnostics are not aggregated across layers. |
-| [UML](uml/) | partial | yes | Class and the behavior kinds render. The cut is incomplete in every kind. |
-| [Share and Publish](share-and-publish/) | partial | yes | Share link, wasm build, and Pages publish exist. |
-| [Tooling Around the Repo](tooling-around-the-repo/) | partial | no | Command-line tool, language server, and VS Code extension exist. None is needed for the bar. |
-| [Beyond UML](./beyond-uml.md) | horizon | no | A general documentation and wiki tool. |
+| [Read a Bundle](read-a-bundle/) | partial | yes | The tree, the preview tabs, the document views, the diagram views, and the navigation history operate. |
+| [Author in the Editor](author-in-the-editor/) | partial | yes | Model edits, save, undo, and savepoints operate. Prose authoring and canvas control are weak. |
+| [Trust the Content](trust-the-content/) | partial | yes | The syntax layer is lossless and has many tests. Diagnostics do not go through all layers. |
+| [UML](uml/) | partial | yes | Class diagrams and behavior diagrams draw. Each kind has an incomplete cut. |
+| [Share and Publish](share-and-publish/) | partial | yes | The share link, the web build, and the site publication operate. |
+| [Tooling Around the Repo](tooling-around-the-repo/) | partial | no | The command-line tool, the language server, and the VS Code extension operate. The bar does not need them. |
+| [Beyond UML](./beyond-uml.md) | horizon | no | A general documentation tool and wiki. |
 
 ## Notes
 
-- Layout solving, edge routing, and diagram chrome are not a level-1 goal. They
-  serve the five UML kinds and have no independent user-facing "done", so they
-  live under [UML shared](uml/shared/).
-- The wiki horizon shapes boundaries rather than work: nothing in the core may
-  assume UML. It is not a goal to be delivered.
-- These documents are the source of truth. Implementation plans and design
-  specs under `docs/superpowers/` are artifacts of how work got done — a record
-  of a decision at a moment, not a standing statement of intent. When a plan
-  and this tree disagree, this tree is what a test is written against, and the
-  disagreement is either a defect in the product or an error here.
-- That places an obligation on every goal: state the intent and the behavior
-  precisely enough that a test can be written from the text alone. "Done when"
-  is not a mood. Where a behavior needs more than a sentence, it belongs in a
-  document beside the goal — as the [Sequence
-  Language](uml/sequence/language.md) does for its cut — and the goal points at
-  it.
-- A behavior stated here without a test behind it is an intention, not a
-  guarantee, and should read as one.
-- The strongest form of that obligation is a scenario: `Given`, `When`, `Then`,
-  with a stable identifier that a test names. The [Sequence
-  Language](uml/sequence/language.md) carries the first set. Other goals get
-  scenarios as their behavior settles; a goal whose behavior is still a
-  question does not benefit from a scenario written early.
-- Scenario documents use ASD-STE100 Simplified Technical English: one idea for
-  each sentence, an active verb, the present tense, and the same word for the
-  same thing every time. Prose goals do not yet follow it. Converting them is
-  worth doing and is not done.
-- Every `index.md` in this tree is generated content — an H1, a description,
-  and a member list. Authored payload belongs in a document beside the index,
-  never in the index itself.
+- Layout, edge routing, and diagram chrome are not a level-1 goal. They give
+  service to the five UML kinds. They have no "done" that a user can see. Thus
+  they are in [UML shared](uml/shared/).
+- These documents are the source of truth. The implementation plans and the
+  design specifications in `docs/superpowers/` are records of past work. They
+  show a decision at one time. They do not show current intent. If a plan and
+  this tree do not agree, use this tree. Then correct the product or correct
+  this tree.
+- Each goal must state its intent and its behavior with sufficient accuracy for
+  a person to write a test from the text alone. "Done when" is not an opinion.
+  If a behavior needs more than one sentence, put it in a document adjacent to
+  the goal, as the [Sequence Language](uml/sequence/language.md) does for its
+  cut. Then the goal points to that document.
+- A behavior in this tree that has no test is an intention. It is not a
+  guarantee. Write it as an intention.
+- The best form of that rule is a scenario: `Given`, `When`, `Then`, with an
+  identifier that a test names. The [Sequence
+  Language](uml/sequence/language.md) has the first set. Other goals get
+  scenarios when their behavior becomes stable. A scenario for an unstable
+  behavior gives no help.
+- All documents in this tree use ASD-STE100 Simplified Technical English: one
+  idea in each sentence, an active verb, the present tense, and the same word
+  for the same thing.
+- Each `index.md` in this tree is generated content. It has an H1, one
+  description paragraph, and a list of members. Put all other content in a
+  document adjacent to the index. Do not put it in the index.

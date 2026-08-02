@@ -1,5 +1,5 @@
 # Activity
 
-Flow diagrams: actions, control nodes, and partitions.
+Flow: actions, control nodes, and partitions.
 
-* [Activity Feature Cut](./feature-cut.md) - Every feature an activity diagram should have, with status and MVP flag.
+* [Activity Feature Cut](./feature-cut.md) - Each feature of an activity diagram, with a status and an MVP flag.

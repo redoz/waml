@@ -1,26 +1,26 @@
 # Run in a Browser
 
-**Goal:** The same editor runs as a web artifact and shows the same views as
-the desktop form.
+**Goal:** The same editor operates as a web artifact and shows the same views
+as the desktop form.
 
-**Why:** One application, two delivery forms. A separate web viewer would be a
-second product to keep correct.
+**Why:** There is one application with two delivery forms. A separate web
+viewer is a second product to keep correct.
 
-**Done when:** The web form renders every view the native form does, boots in a
-time a reader will wait through, and reports a failure instead of showing a
-blank canvas.
+**Done when:** The web form draws each view that the native form draws. The web
+form starts in a time that a reader accepts. A failure causes a message. The
+canvas is not empty.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- The artifact is built with `cargo makepad wasm build -p waml-editor --release
-  --no-threads`. `--no-threads` is required: the threaded build needs
-  cross-origin isolation headers that GitHub Pages cannot set.
-- Boot time was the headline problem and is largely fixed: batched shader
-  linking took boot from roughly nine seconds to under two.
-- The web renderer has known gaps against the native one — diagonal-blindness
-  in some drawing paths among them — so "same views" is not yet literally true.
-- A web artifact verification script guards against the build silently shipping
-  without its JavaScript glue.
+- The build command must not use threads. The threaded build needs
+  cross-origin isolation headers. The publication service cannot set headers.
+- The start time was the primary defect and is now much better. A change to
+  make the shader links in one batch decreased the start time from
+  approximately nine seconds to less than two seconds.
+- The web renderer has known differences from the native renderer. One
+  renderer does not draw some diagonal content. Thus "the same views" is not
+  fully true at this time.
+- A verification script prevents a build that has no JavaScript glue code.

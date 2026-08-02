@@ -1,26 +1,26 @@
 # Edit the Model
 
-**Goal:** An author changes typed structure — elements, members, relationships,
-properties — through the inspector and the diagram rather than through text.
+**Goal:** An author changes typed structure with the inspector and the diagram.
+The typed structure includes elements, members, relationships, and properties.
+The author does not edit text to make these changes.
 
-**Why:** Typed structure is what distinguishes WAML from a Markdown viewer. An
-author who must hand-write frontmatter and relationship lines is using the
+**Why:** Typed structure is the difference between WAML and a Markdown viewer.
+An author who must write frontmatter and relationship lines by hand uses the
 parser, not the editor.
 
-**Done when:** Every element kind and relationship kind in the model can be
-created, retyped, renamed, connected, and deleted from the inspector or the
-diagram, and each such edit serializes back to canonical Markdown in one
-transaction.
+**Done when:** The author can make, retype, rename, connect, and delete each
+element kind and each relationship kind from the inspector or from the diagram.
+Each such edit writes canonical Markdown in one transaction.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- The edit path is real: typed operations, in-memory transactions, prepared and
-  committed undo, and a save path all exist.
-- Coverage per element kind is the unknown. The per-kind feature cuts under
-  [UML](../uml/) carry the authoritative row-by-row status; this goal is done
-  when those rows are.
-- Drag-to-place with constraints, a node context menu, and a conflict list
-  exist for structural editing on the canvas.
+- The edit path operates. It has typed operations, transactions in memory, undo
+  with prepare and commit steps, and a save path.
+- The coverage for each element kind is not known. The feature cuts in
+  [UML](../uml/) have the status of each row. This goal is complete when those
+  rows are complete.
+- Drag to place with constraints, a context menu on a node, and a list of
+  conflicts operate for changes to structure on the canvas.

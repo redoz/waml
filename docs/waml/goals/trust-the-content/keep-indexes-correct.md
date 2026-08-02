@@ -1,23 +1,23 @@
 # Keep Indexes Correct
 
-**Goal:** Every directory index matches the package it describes.
+**Goal:** Each directory index agrees with the package that it describes.
 
-**Why:** The index is the reader's map. A stale index hides documents that
-exist and promises documents that do not.
+**Why:** The index is the map for the reader. An index that is not current
+hides documents that exist and shows documents that do not exist.
 
-**Done when:** Adding, removing, renaming, or moving a document updates every
-affected index in the same transaction, and a check can prove that no index in
-the bundle is stale.
+**Done when:** To add, remove, rename, or move a document corrects each index
+that the change touches, in the same transaction. A check can show that no
+index in the bundle is out of date.
 
 **Status:** partial — unverified
 **MVP:** yes
 
 ## Notes
 
-- `waml::index_md::reindex_source` rebuilds every directory index from the
-  model and is exercised by golden tests, but no product code calls it. Indexes
-  in this bundle are therefore hand-maintained today.
-- An index carries exactly an H1, an optional description paragraph, and a flat
-  member list. Anything else is drift that reindexing will discard.
-- `docs/waml/architecture/index.md` is currently drifted — it carries
-  hand-written prose sections. Repairing it is part of this goal.
+- The library has a function that makes each directory index again from the
+  model, and golden tests use it. No product code calls it. Thus a person
+  maintains the indexes in this bundle by hand.
+- An index has one H1, one optional description paragraph, and one flat list of
+  members. The regeneration removes all other content.
+- The index of the architecture package has hand-written sections at this time.
+  A regeneration removes them. To correct that index is part of this goal.

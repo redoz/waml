@@ -1,14 +1,14 @@
 # Read a Document
 
-**Goal:** A reader reads an OKF document as formatted prose, not as source.
+**Goal:** A reader reads an OKF document as formatted text, not as source.
 
-**Why:** The bundle is Markdown. A documentation tool that shows Markdown
-source is a text editor.
+**Why:** The bundle contains Markdown. A documentation tool that shows Markdown
+source gives no more help than a text editor.
 
-**Done when:** Every construct this bundle uses — headings, paragraphs, lists,
-links, inline code, code blocks, tables, emphasis — renders correctly in the
-native and web forms, and a document with no recognised type still renders as
-prose.
+**Done when:** Each construct that this bundle uses draws correctly in the
+native form and in the web form. The constructs are headings, paragraphs,
+lists, links, inline code, code blocks, tables, and emphasis. A document with
+an unknown type draws as formatted text.
 
 **Status:** partial — unverified
 **MVP:** yes
@@ -16,10 +16,10 @@ prose.
 ## Notes
 
 - The OKF bundle on disk is the semantic root. UML is a selective projection
-  over it, not the other way around. That ordering is why an unrecognised type
-  degrades to prose rather than to nothing, and it is the structural reason
-  this tool can grow past UML at all.
-- Tables are the likely gap. This goal tree uses them heavily, which makes them
-  MVP-blocking by the dogfood bar.
-- A source view exists for reading the underlying text on demand. That is a
-  convenience, not the reading path.
+  above it. This order is the reason that a document with an unknown type draws
+  as text and not as an error. It is also the reason that this tool can operate
+  on content that is not UML.
+- Tables are the probable defect. This goal tree uses many tables. Thus the bar
+  needs correct tables.
+- A source view shows the text of the document when the reader asks for it.
+  That view is an option. It is not the usual path to read a document.

@@ -9,8 +9,9 @@ document needs to say about a procedure.
 **Status:** partial — unverified
 **MVP:** yes
 
-Every status in this table is a first-pass guess. `Evidence` reads
-`unverified` until an audit replaces it with a `file:line` or a test name.
+Every status in this table is a first reading of the code. `Evidence` shows
+`unverified` until an audit replaces it with a `file:line` reference or the
+name of a test.
 
 ## Nodes
 
@@ -54,12 +55,12 @@ Every status in this table is a first-pass guess. `Evidence` reads
 
 ## Notes
 
-- Activity shares the flow substrate and the flow solver with [State
-  Machine](../state-machine/feature-cut.md). Anything landed in the substrate
-  benefits both, and a row here that is `done` is often `done` there too.
-- Swimlanes are the one structural gap that a real process document reaches for
-  first. They are `MVP: no` only because `docs/waml` has no multi-role process
-  documented yet.
-- The exotic regions — expansion, interruptible, exception — are marked
-  `horizon` on purpose. Listing them is what makes this a complete cut; nobody
-  should build them for the bar.
+- Activity and [State Machine](../state-machine/feature-cut.md) use the same
+  flow substrate and the same flow solver. Work in the substrate gives help to
+  both kinds. A row with the status `done` here is frequently `done` there too.
+- Partitions are the structural function that a real process document needs
+  first. They have the flag `MVP: no` only because `docs/waml` has no process
+  with more than one role.
+- The regions for expansion, interruption, and exceptions have the status
+  `horizon` on purpose. The list makes this cut complete. Do not build them for
+  the bar.

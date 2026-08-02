@@ -3,21 +3,21 @@
 **Goal:** A text editor gets diagnostics, navigation, and completion for WAML
 documents.
 
-**Why:** Authors who prefer their own editor should not be locked out, and the
-language server is how WAML reaches them.
+**Why:** An author who prefers a different editor must not lose access to WAML.
+The language server gives that access.
 
-**Done when:** Diagnostics, go-to-definition across documents, and completion
-of element and relationship names work over a live buffer, and the server never
-answers from stale disk content.
+**Done when:** Diagnostics, movement to a definition in another document, and
+completion of element names and relationship names operate against a live
+buffer. The server never answers from content on disk when the editor holds
+newer content.
 
 **Status:** partial — unverified
 **MVP:** no
 
 ## Notes
 
-- `waml lsp --stdio` exists and is what the VS Code extension launches.
-- `issues.md` records that the language server's disk authority becomes stale —
-  it can answer from a file on disk while the editor holds newer text. That is
-  the defect to fix first here.
-- Completion of relationship kinds and link targets is the highest-value
-  feature not yet built.
+- The server operates and the VS Code extension starts it.
+- The server can answer from a file on disk while the editor holds newer text.
+  Correct this defect first.
+- Completion of relationship kinds and link targets is the function with the
+  highest value that does not exist.

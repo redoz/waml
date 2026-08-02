@@ -1,10 +1,10 @@
 # Shared
 
-Layout, routing, labels, selection, and theming, common to every kind.
+Layout, routing, labels, selection, and themes, for each kind.
 
-* [Solve the Layout](./solve-the-layout.md) - Nodes get positions and sizes a reader would not argue with.
-* [Keep the Map Stable](./keep-the-map-stable.md) - An edit moves only what it must; the rest of the diagram holds position.
-* [Route the Edges](./route-the-edges.md) - Edges connect without crossing or overlapping what they can avoid.
-* [Place the Labels](./place-the-labels.md) - Every label is legible, positioned, and unclipped.
-* [Select and Inspect](./select-and-inspect.md) - Clicking anything in a diagram shows and edits what it is.
-* [Theme the Diagram](./theme-the-diagram.md) - Diagrams are legible in light and dark, at every zoom.
+* [Solve the Layout](./solve-the-layout.md) - Each node gets a position and a size that a reader accepts.
+* [Keep the Map Stable](./keep-the-map-stable.md) - An edit moves the elements near it. The others keep their positions.
+* [Route the Edges](./route-the-edges.md) - Each edge connects without an avoidable crossing.
+* [Place the Labels](./place-the-labels.md) - Each label is legible, is in a position, and is not clipped.
+* [Select and Inspect](./select-and-inspect.md) - A click on an element shows it and lets the author change it.
+* [Theme the Diagram](./theme-the-diagram.md) - Each diagram is legible in the light theme and the dark theme.

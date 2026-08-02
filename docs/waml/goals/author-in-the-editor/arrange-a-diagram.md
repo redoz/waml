@@ -1,25 +1,27 @@
 # Arrange a Diagram
 
-**Goal:** An author overrides the solver where the solver is wrong, and the
-override survives.
+**Goal:** An author overrides the solver where the solver gives an incorrect
+result. The override stays after a reload.
 
-**Why:** No solver is right every time. Without an override an author's only
-recourse is to accept a bad drawing.
+**Why:** No solver is correct in all conditions. Without an override, an author
+must accept a bad diagram.
 
-**Done when:** An author can pin a position, an order, or a side; the
-constraint is written into the document as text a reviewer can diff; the solver
-honours it on reload; and a constraint that has become unsatisfiable is
-reported rather than silently dropped.
+**Done when:** The author can hold a position, an order, or a side. The tool
+writes the constraint into the document as text that a reviewer can diff. The
+solver obeys the constraint after a reload. If a constraint becomes impossible,
+the tool reports it. The tool does not remove it silently.
 
 **Status:** partial — unverified
 **MVP:** no
 
 ## Notes
 
-- Layout constraints exist as a model concept and the solver consumes them.
-  Authoring them from the canvas is the part to audit.
-- `MVP: no` is a judgment call: the dogfood bar asks that `docs/waml` be
-  readable, and the solver's default output may well be good enough for this
-  bundle. Promote to `yes` the first time a diagram here cannot be made
-  acceptable without an override.
-- Constraint conflicts have a badge and a grouped conflict list already.
+- Layout constraints exist in the model and the solver reads them. Verify
+  whether the author can make them from the canvas.
+- `MVP: no` is a judgement. The bar needs `docs/waml` to be readable. The
+  default output of the solver can be sufficient for this bundle. Change the
+  flag to `yes` when a diagram here is not acceptable without an override.
+- A badge and a list of conflicts show constraint conflicts.
+- [Keep the Map Stable](../uml/shared/keep-the-map-stable.md) is different from
+  this goal. A constraint is a hard override from the author. Stability is a
+  soft rule for the solver. The product needs both.

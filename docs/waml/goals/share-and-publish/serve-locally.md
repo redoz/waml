@@ -1,30 +1,28 @@
 # Serve Locally
 
-**Goal:** A single command serves the editor over loopback against a local
-directory, so a reader can open a bundle in a browser without a build step and
-without a hosted site.
+**Goal:** One command serves the editor on the loopback interface against a
+local directory. A reader opens a bundle in a browser with no build step and
+with no published site.
 
-**Why:** It closes the gap between the desktop form and the published form: the
-same web artifact, the same views, but reading and writing the author's own
-files. It is also the honest backend for saving from the web form, which is a
-stub today.
+**Why:** This command removes the difference between the desktop form and the
+published form. It uses the same web artifact and the same views, but it reads
+and writes the files of the author.
 
-**Done when:** `waml serve` serves the embedded web editor over loopback and
-exposes an operations API over a chosen directory, edits made in the browser
-land on disk through that API, and the command refuses to bind anywhere but
-loopback.
+**Done when:** The command serves the embedded web editor on the loopback
+interface. The command gives an operations interface for a selected directory.
+An edit in the browser writes to disk through that interface. The command binds
+to the loopback interface only.
 
 **Status:** planned — unverified
 **MVP:** no
 
 ## Notes
 
-- The web form has no way to write to disk today; its save backend is a stub.
-  This command is that backend. Until it exists, authoring in a browser is
-  reading with extra steps, which makes this a dependency of web-form
-  authoring rather than a convenience.
+- The web form cannot write to disk at this time. Its save function is
+  incomplete. This command is that function. Until this command exists,
+  authoring in a browser is not possible. Thus web authoring needs this goal.
 - The served editor and the published editor are the same artifact. A serve
-  command that shipped its own build would be a second product to keep
-  correct.
-- Loopback only. A serve command that binds a public interface is a different
-  product with a security model this project has not designed.
+  command with its own build is a second product to keep correct.
+- The command uses the loopback interface only. A serve command on a public
+  interface is a different product and needs a security design that this
+  project does not have.
