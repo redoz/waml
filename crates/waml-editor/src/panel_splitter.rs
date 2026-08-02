@@ -94,7 +94,13 @@ script_mod! {
                 let x = mix(0.0, self.rect_size.x - 1.0, self.edge)
                 let on = step(x, px) * step(px, x + 1.0)
                 let hue = mix(self.border, self.accent, self.lit)
-                let rule = vec4(hue.rgb * hue.a, hue.a)
+                // Source-over, NOT a mix onto the premultiplied rule colour:
+                // `surface_border` is a translucent accent tint (alpha ~0.35),
+                // so premultiplying it and lerping the opaque fill toward the
+                // result just scales the fill down -- the accent rule reads as
+                // a grey/black hairline. Composite it over the fill instead so
+                // the seam is the same accent line the rest of the chrome uses.
+                let rule = vec4(base.rgb * (1.0 - hue.a) + hue.rgb * hue.a, 1.0)
                 return mix(base, rule, on)
             }
         }
