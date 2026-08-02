@@ -6,6 +6,13 @@
 // ~1.9s because Chrome caches linked programs on disk. Both read green while
 // real first-time visitors freeze for 35 seconds.
 //
+// Playwright is deliberately not a repo dependency. Install it somewhere
+// scratch and link it in; NODE_PATH does NOT work here, because ESM resolution
+// ignores it and walks up from the script's own directory instead:
+//
+//   npm install --no-save playwright        # in a scratch dir
+//   mklink /J <repo>\node_modules <scratch>\node_modules
+//
 // Usage: node scripts/measure-web-boot.mjs <dist-dir>
 import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
