@@ -76,6 +76,11 @@ script_mod! {
         flow: Down
         // Row-glyph tint; matches the label ink so icons read at full contrast.
         icon_color: atlas.text
+        // Diagram rows are the exception: their glyph carries the theme accent,
+        // tinted toward `icon_color` by `accent::icon_tint`. A diagram's tab
+        // flag is this same accent, and the tab's glyph takes the same tint, so
+        // one document reads the same in the tree and on the strip.
+        diagram_icon_color: atlas.accent
 
         // Active-row highlight, drawn in immediate mode over the selected row
         // (see `draw_row_highlight`). We drive selection from the app's
@@ -397,6 +402,10 @@ pub struct ProjectTree {
     // tracks light/dark and live-reload.
     #[live]
     icon_color: Vec4,
+    // Untinted accent for a diagram row's glyph; `draw_nodes` runs it through
+    // `accent::icon_tint` against `icon_color` (see the DSL).
+    #[live]
+    diagram_icon_color: Vec4,
     // Translucent accent fill painted over the active row (see the DSL).
     #[live]
     draw_selection: DrawColor,
@@ -690,6 +699,7 @@ fn draw_nodes(
     draw_chevron: &mut DrawChevron,
     depth: usize,
     color: Vec4,
+    diagram_color: Vec4,
     selected: Option<&str>,
     draw_reveal: &mut DrawColor,
     reveal_color: Vec4,
@@ -700,6 +710,14 @@ fn draw_nodes(
     let mut reveal_was_drawn = false;
     for node in nodes {
         let id = LiveId::from_str(&node.key);
+        // Diagram rows carry the theme accent, tinted toward the label ink the
+        // other kinds use -- the same treatment the active doc tab gives the
+        // same glyph, so one document reads alike in both surfaces.
+        let icon_color = if node.kind == TreeKind::Diagram {
+            crate::accent::icon_tint(diagram_color, color)
+        } else {
+            color
+        };
         let row_top = cx.turtle().pos();
         let is_selected = selected == Some(node.key.as_str());
         let is_reveal = reveal_key == Some(node.key.as_str());
@@ -724,7 +742,7 @@ fn draw_nodes(
                 node.presentation.icon,
                 row_top,
                 depth,
-                color,
+                icon_color,
                 scale,
             );
             // Rotation comes from the fork's own animated fold amount, so the
@@ -741,6 +759,7 @@ fn draw_nodes(
                     draw_chevron,
                     depth + 1,
                     color,
+                    diagram_color,
                     selected,
                     draw_reveal,
                     reveal_color,
@@ -771,7 +790,7 @@ fn draw_nodes(
                 node.presentation.icon,
                 row_top,
                 depth,
-                color,
+                icon_color,
                 scale,
             );
         }
@@ -888,6 +907,7 @@ impl Widget for ProjectTree {
                     &mut self.draw_chevron,
                     0,
                     self.icon_color,
+                    self.diagram_icon_color,
                     self.selected_key.as_deref(),
                     &mut self.draw_reveal,
                     self.reveal_color,

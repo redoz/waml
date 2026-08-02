@@ -37,6 +37,28 @@ pub fn bucket_color(b: AccentBucket) -> Vec4 {
     }
 }
 
+/// How far a glyph drawn in an accent is pulled toward the surrounding text ink.
+/// A bucket swatch is sized for a solid run of colour -- a tab's flag, a node's
+/// accent bar; a 15px SDF glyph is a fraction of that ink on a light ground, and
+/// at full strength it goes thin. Half way keeps the hue reading while giving
+/// the mark weight.
+const ICON_INK: f32 = 0.5;
+
+/// An accent as a row/tab GLYPH tint: the swatch pulled `ICON_INK` toward `ink`,
+/// the colour the untinted glyphs in the same surface use. Alpha comes from the
+/// accent, so a faded caller (the tree's fold animation) still governs it.
+///
+/// Shared by the doc-tab strip and the project tree so the same document's glyph
+/// is the same colour in both.
+pub fn icon_tint(accent: Vec4, ink: Vec4) -> Vec4 {
+    Vec4 {
+        x: accent.x + (ink.x - accent.x) * ICON_INK,
+        y: accent.y + (ink.y - accent.y) * ICON_INK,
+        z: accent.z + (ink.z - accent.z) * ICON_INK,
+        w: accent.w,
+    }
+}
+
 /// Which accent bucket a *tree* kind renders with -- the same decision as
 /// `node_style::accent_bucket`, taken one step downstream. The project tree and
 /// the doc-tab strip carry a `TreeKind` rather than the `ElementType` it was

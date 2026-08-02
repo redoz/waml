@@ -294,23 +294,6 @@ const ICON_GAP: f64 = 6.0;
 /// where the card met it -- but the seam is the caption's BOTTOM edge, which
 /// the card's bottom meets, so that half landed under the tab, not over it.)
 const ACCENT_H: f64 = 3.0;
-/// How far the active tab's glyph is pulled from its accent toward the text ink
-/// the inactive tabs use. Enough to give the mark some weight against the card;
-/// not so much that it stops reading as the flag's colour.
-const ACTIVE_ICON_INK: f32 = 0.5;
-
-/// Linear blend of `from` toward `to`, alpha carried from `from`. The tab colours
-/// are theme tokens, so this mixes what the atlas hands over rather than baking a
-/// second literal that a theme change would not reach.
-fn mix_toward(from: Vec4, to: Vec4, t: f32) -> Vec4 {
-    Vec4 {
-        x: from.x + (to.x - from.x) * t,
-        y: from.y + (to.y - from.y) * t,
-        z: from.z + (to.z - from.z) * t,
-        w: from.w,
-    }
-}
-
 /// Fraction of the row height a between-tabs divider spans, centred vertically.
 /// A short hairline reads as a separator; a full-bleed one reads as a grid and
 /// re-boxes the tabs the flat treatment just un-boxed.
@@ -723,10 +706,9 @@ impl Widget for DocTabs {
                 // thin. Inactive tabs keep the ink itself (see `icon_color` in
                 // the DSL: accent on the strip's own ground read too faint).
                 if is_active {
-                    mix_toward(
+                    crate::accent::icon_tint(
                         self.active_accent.unwrap_or(self.draw_accent.color),
                         self.icon_color,
-                        ACTIVE_ICON_INK,
                     )
                 } else {
                     self.icon_color

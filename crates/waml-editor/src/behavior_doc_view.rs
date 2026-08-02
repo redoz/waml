@@ -1027,6 +1027,14 @@ impl DocView for BehaviorDocView {
         }
     }
 
+    /// The `Behavior` bucket swatch, the same red the canvas gives a behavior or
+    /// sequence element. This view was falling through to the base `None` and
+    /// flagging its tab in the theme accent -- the diagram blue -- so a sequence
+    /// read as a class diagram everywhere except the surface itself.
+    fn tab_accent(&self) -> Option<Vec4> {
+        crate::accent::tree_kind_color(crate::tree::TreeKind::Sequence)
+    }
+
     fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         body.set_behavior_canvas_visible(cx, true);
     }
