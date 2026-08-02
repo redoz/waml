@@ -11,23 +11,24 @@ icons used by the editor.
 Use a compact vertical activity flow on Lucide's 24 by 24 grid:
 
 1. A small filled start circle at the top.
-2. A rounded action node below it.
-3. A decision diamond below the action.
-4. A small end ring at the bottom.
-5. A centered transition line that connects all four nodes.
+2. A large decision diamond in the center.
+3. A small end ring at the bottom.
+4. A centered transition line that connects all three nodes.
 
 Use Lucide's two-unit stroke, round caps, and round joins. Keep the outer
-geometry inside the standard two-unit margin. Do not add text, color, a
-container, or extra branches. The simple vertical silhouette must remain
-clear at the editor's small icon sizes.
+geometry inside the standard two-unit margin. Do not add an action box, text,
+color, a container, or extra branches. The large diamond and simple vertical
+silhouette must remain clear at the editor's small icon sizes.
 
 ## Alternatives Considered
 
 - A branching flow shows activity semantics, but it becomes crowded at 16 px.
-- An action node with one arrow is clearer, but it looks like a generic flow
-  or navigation command.
-- The selected start-action-decision-end stack uses UML-specific shapes and
-  has the strongest activity-diagram identity.
+- A start-action-decision-end stack has stronger UML detail, but its action box
+  makes every node too small at 16 px.
+- A start node and decision diamond alone are very clear, but they omit the
+  activity final node.
+- The selected start-decision-end stack preserves the original flow while it
+  gives the decision diamond enough space to remain distinct.
 
 ## Integration
 
