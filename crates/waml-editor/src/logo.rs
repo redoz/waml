@@ -750,13 +750,20 @@ impl LogoMark {
         };
         self.draw_bg.set_uniform(cx, live_id!(pulse), &[1.0]);
         self.draw_bg.set_uniform(cx, live_id!(family), &[v.family]);
-        self.draw_bg.set_uniform(cx, live_id!(flicker), &[v.flicker]);
-        self.draw_bg.set_uniform(cx, live_id!(seg_c1), &rgba(v.seg[0]));
-        self.draw_bg.set_uniform(cx, live_id!(seg_c2), &rgba(v.seg[1]));
-        self.draw_bg.set_uniform(cx, live_id!(seg_c3), &rgba(v.seg[2]));
-        self.draw_bg.set_uniform(cx, live_id!(seg_c4), &rgba(v.seg[3]));
-        self.draw_bg.set_uniform(cx, live_id!(seg_c5), &rgba(v.seg[4]));
-        self.draw_bg.set_uniform(cx, live_id!(seg_c6), &rgba(v.seg[5]));
+        self.draw_bg
+            .set_uniform(cx, live_id!(flicker), &[v.flicker]);
+        self.draw_bg
+            .set_uniform(cx, live_id!(seg_c1), &rgba(v.seg[0]));
+        self.draw_bg
+            .set_uniform(cx, live_id!(seg_c2), &rgba(v.seg[1]));
+        self.draw_bg
+            .set_uniform(cx, live_id!(seg_c3), &rgba(v.seg[2]));
+        self.draw_bg
+            .set_uniform(cx, live_id!(seg_c4), &rgba(v.seg[3]));
+        self.draw_bg
+            .set_uniform(cx, live_id!(seg_c5), &rgba(v.seg[4]));
+        self.draw_bg
+            .set_uniform(cx, live_id!(seg_c6), &rgba(v.seg[5]));
     }
 
     /// Push the latest FPS-heat colour + strength from `App`'s `FpsMeter`. No-op
