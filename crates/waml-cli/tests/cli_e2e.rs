@@ -443,3 +443,84 @@ fn diagnostic_paths_render_stdin_exactly() {
 
     assert_eq!(diagnostic_file(&output), "stdin");
 }
+
+#[test]
+fn check_rejects_a_malformed_byte_zero_envelope() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = bin()
+        .args(["check", "--stdin", "--format", "json"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"<!-- waml/9 part 0000000000000000000000000000000a x.md -->\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("stdin.md"), "{stderr}");
+    assert!(
+        stderr.contains("unsupported WAML bundle envelope version 9"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn mutation_stdout_is_an_authoritative_v1_envelope() {
+    let dir = tmp();
+    std::fs::write(
+        dir.join("order.md"),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+    )
+    .unwrap();
+    let output = bin()
+        .args([
+            "attr", "add", "order", "total", "Money", "--stdout", "--dir",
+        ])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with("<!-- waml/1 part "), "{stdout}");
+    let decoded = waml::bundle_envelope::split_bundle(&stdout)
+        .unwrap()
+        .expect("stdout is a bundle envelope");
+    assert_eq!(decoded.len(), 1);
+    assert_eq!(decoded[0].0, "order.md");
+    assert!(decoded[0].1.contains("- total: Money"));
+}
+
+#[test]
+fn multi_document_fmt_stdout_is_a_v1_envelope() {
+    let dir = tmp();
+    std::fs::write(dir.join("a.md"), "# A\n").unwrap();
+    std::fs::write(dir.join("b.md"), "# B\n").unwrap();
+    let output = bin().arg("fmt").arg(&dir).arg("--stdout").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let decoded = waml::bundle_envelope::split_bundle(&stdout)
+        .unwrap()
+        .expect("multi-document fmt output is a bundle envelope");
+    assert_eq!(
+        decoded,
+        vec![
+            ("a.md".into(), "# A\n".into()),
+            ("b.md".into(), "# B\n".into())
+        ]
+    );
+}

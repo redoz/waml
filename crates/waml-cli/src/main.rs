@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use waml::analysis::{prepare_candidate, PreviousAnalyses};
+use waml::bundle_envelope::encode_bundle_envelope;
 use waml::edit::{EditBatch, EditContext};
 use waml::multiplicity::Multiplicity;
 use waml::ops::FieldEdit;
@@ -380,9 +381,7 @@ fn main() {
                     exit = 1;
                     continue;
                 }
-                if stdout {
-                    print!("{}", r.formatted);
-                } else if check && r.changed {
+                if !stdout && check && r.changed {
                     let display = bundle
                         .display_paths
                         .get(&r.path)
@@ -390,6 +389,24 @@ fn main() {
                         .unwrap_or(&r.path);
                     eprintln!("waml: {display} is not formatted");
                     exit = 1;
+                }
+            }
+            let stdout_files: Vec<_> = plan
+                .iter()
+                .filter(|result| !result.skipped)
+                .map(|result| (result.path.clone(), result.formatted.clone()))
+                .collect();
+            if stdout {
+                match stdout_files.as_slice() {
+                    [] => {}
+                    [(_, text)] => print!("{text}"),
+                    files => match encode_bundle_envelope(files) {
+                        Ok(blob) => print!("{blob}"),
+                        Err(error) => {
+                            eprintln!("waml: {error}");
+                            exit = 2;
+                        }
+                    },
                 }
             }
             if !stdout && !check {
@@ -582,14 +599,6 @@ fn rel_dto(a: RelCmd) -> OpDto {
     }
 }
 
-fn to_blob(bundle: &[(String, String)]) -> String {
-    bundle
-        .iter()
-        .map(|(p, c)| format!("<!-- {p} -->\n{c}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn run_mutation(common: &Common, dto: OpDto) -> i32 {
     if [common.emit, common.stdout, common.dry_run]
         .iter()
@@ -668,8 +677,16 @@ fn run_batch(common: &Common, batch: waml::compat::Batch) -> i32 {
             let old = prepared.source().to_pairs();
             let new = validated.source().to_pairs();
             if common.stdout {
-                print!("{}", to_blob(&new));
-                0
+                match encode_bundle_envelope(&new) {
+                    Ok(blob) => {
+                        print!("{blob}");
+                        0
+                    }
+                    Err(error) => {
+                        eprintln!("waml: {error}");
+                        2
+                    }
+                }
             } else if common.dry_run {
                 print!("{}", commands::render_diff(&old, &new));
                 0

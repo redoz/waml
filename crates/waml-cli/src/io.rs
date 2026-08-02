@@ -5,24 +5,19 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use waml::source::split_bundle;
+use waml::bundle_envelope::split_bundle;
 
-/// Turn one file's text into `(path, content)` docs: split on `<!-- path -->`
-/// markers if present, otherwise a single doc keyed by `display_path`.
-pub fn expand_text(display_path: &str, text: &str) -> Vec<(String, String)> {
-    if text.contains("<!--") {
-        let parts = split_bundle(text);
-        // split_bundle returns "pasted/doc.md" for unmarked text; only trust it if markers existed.
-        if parts.len() > 1
-            || parts
-                .first()
-                .map(|(p, _)| p != "pasted/doc.md")
-                .unwrap_or(false)
-        {
-            return parts;
-        }
+/// Expand a valid Bundle Envelope v1 or retain the input as one plain document.
+pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(String, String)>> {
+    match split_bundle(text).map_err(|source| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{display_path}: {source}"),
+        )
+    })? {
+        Some(parts) => Ok(parts),
+        None => Ok(vec![(display_path.to_owned(), text.to_owned())]),
     }
-    vec![(display_path.to_string(), text.to_string())]
 }
 
 /// Recursively collect `.md` files under the given files/directories.
@@ -72,7 +67,7 @@ pub fn read_analysis_bundle(paths: &[PathBuf], stdin: bool) -> std::io::Result<I
     if stdin {
         let mut buf = String::new();
         std::io::stdin().read_to_string(&mut buf)?;
-        let files = expand_text("stdin.md", &buf);
+        let files = expand_text("stdin.md", &buf)?;
         let display_paths = files
             .iter()
             .map(|(path, _)| (path.clone(), "stdin".to_owned()))
@@ -92,7 +87,7 @@ pub fn read_analysis_bundle(paths: &[PathBuf], stdin: bool) -> std::io::Result<I
             .as_ref()
             .and_then(|r| file.strip_prefix(r).ok())
             .unwrap_or(file);
-        let expanded = expand_text(&path_key(rel), &text);
+        let expanded = expand_text(&path_key(rel), &text)?;
         let display = file.to_string_lossy().into_owned();
         for (path, _) in &expanded {
             display_paths.insert(path.clone(), display.clone());
@@ -780,18 +775,41 @@ mod tests {
     }
 
     #[test]
-    fn expands_blob_text_into_docs() {
-        let blob = "<!-- a/one.md -->\n# One\n\n<!-- a/two.md -->\n# Two\n";
-        let docs = expand_text("stdin", blob);
+    fn expands_v1_envelope_into_docs() {
+        let nonce = "0000000000000000000000000000000a";
+        let blob = format!(
+            "<!-- waml/1 part {nonce} a/one.md -->\n# One\n<!-- waml/1 part {nonce} a/two.md -->\n# Two\n"
+        );
+        let docs = expand_text("stdin", &blob).unwrap();
         assert_eq!(docs.len(), 2);
-        assert_eq!(docs[0].0, "a/one.md");
+        assert_eq!(docs[0], ("a/one.md".into(), "# One\n".into()));
+        assert_eq!(docs[1], ("a/two.md".into(), "# Two\n".into()));
     }
 
     #[test]
-    fn plain_text_uses_its_own_path() {
-        let docs = expand_text("shop/order.md", "# Order\n");
-        assert_eq!(docs.len(), 1);
-        assert_eq!(docs[0].0, "shop/order.md");
+    fn plain_and_legacy_text_use_the_physical_display_path() {
+        for text in ["# Order\n", "before\n<!-- a/one.md -->\nafter\n"] {
+            assert_eq!(
+                expand_text("shop/order.md", text).unwrap(),
+                vec![("shop/order.md".into(), text.into())]
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_envelope_includes_the_physical_input_name() {
+        let error = expand_text(
+            "imports/orders.bundle.md",
+            "<!-- waml/2 part 0000000000000000000000000000000a x.md -->\n",
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let message = error.to_string();
+        assert!(message.contains("imports/orders.bundle.md"), "{message}");
+        assert!(
+            message.contains("unsupported WAML bundle envelope version 2"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -802,7 +820,7 @@ mod tests {
         // with the full content — including the unresolved relationship
         // section that follows the stray comment — intact.
         let text = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n<!-- reviewed: needs follow-up -->\n\n## Relationships\n- depends [Ghost](./ghost.md)\n";
-        let docs = expand_text("shop/order.md", text);
+        let docs = expand_text("shop/order.md", text).unwrap();
         assert_eq!(
             docs.len(),
             1,
