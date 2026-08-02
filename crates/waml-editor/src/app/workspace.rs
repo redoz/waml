@@ -455,9 +455,9 @@ impl App {
         // glyph. The `PanelLeft` written here is only the first-frame reading,
         // before any dock state has been sampled.
         self.tree_toggle_mounted = true;
-        for id in [ids!(tree_btn), ids!(tree_btn_dock)] {
+        {
             self.ui
-                .widget(cx, id)
+                .widget(cx, ids!(tree_btn))
                 .as_icon_button()
                 .set_icon(cx, crate::icons::Icon::PanelLeft);
         }
@@ -617,9 +617,7 @@ impl App {
         // rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
         self.tree_toggle_mounted = false;
-        for id in [ids!(tree_btn), ids!(tree_btn_dock)] {
-            self.ui.widget(cx, id).set_visible(cx, false);
-        }
+        self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, false);
         // Replacing the host with no tabs applies hidden chrome through the
         // same transition path used when the final document closes.
         self.documents

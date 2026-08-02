@@ -9,43 +9,46 @@ const TREE_W: f64 = crate::tree_panel::PROJECT_TREE_W;
 /// where the row's first control lands.
 const LEAD: f64 = DEFAULT_TAB_ROW_LEAD_W;
 
-/// With no model open neither seat of the tree-column toggle shows, and the
-/// tab-row slot costs the strip nothing.
+/// With no model open the toggle does not show, and its slot costs the row
+/// nothing.
 #[test]
-fn unmounted_tree_toggle_shows_neither_seat() {
+fn unmounted_tree_toggle_is_absent() {
     assert_eq!(
         tree_toggle_layout(false, false, TREE_W, TREE_W, LEAD),
-        (false, 0.0, 0.0)
+        (false, 0.0)
     );
     assert_eq!(
         tree_toggle_layout(false, false, 0.0, TREE_W, LEAD),
-        (false, 0.0, 0.0)
+        (false, 0.0)
     );
 }
 
-/// At rest the seats are exclusive, and the OPEN seat is what lines the row's
-/// first control up with the tree column's right edge: `LEAD + slot == TREE_W`.
-/// Collapsed hands the toggle to the row, which leads it at full width.
+/// The two ends of the slot. Open, `LEAD + slot + TREE_BTN_W == TREE_W`: the
+/// button's right edge is the tree column's right edge, so the history pair
+/// after it starts there. Collapsed, the slot closes and the button leads the
+/// row. It is the same button in both.
 #[test]
-fn tree_toggle_seats_are_exclusive_at_rest() {
+fn the_toggle_rides_the_column_edge_and_falls_back_to_the_row_head() {
     assert_eq!(
         tree_toggle_layout(true, false, TREE_W, TREE_W, LEAD),
-        (true, TREE_W - LEAD, 0.0)
+        (true, TREE_W - LEAD - TREE_BTN_W)
     );
     assert_eq!(
         tree_toggle_layout(true, false, 0.0, TREE_W, LEAD),
-        (false, TREE_BTN_W, 1.0)
+        (true, 0.0)
     );
 }
 
-/// The jerk this replaced: the row's first control sits at `LEAD + row_slot_w`,
-/// and that sum has to be continuous across the whole collapse. It runs from
-/// `TREE_W` (open, flush with the column's right edge) to `LEAD + TREE_BTN_W`
-/// (collapsed) with no step anywhere -- in particular none at the handoff, where
-/// the old flag-based swap added `TREE_BTN_W` in a single frame.
+/// The jerk this replaced: what follows the button sits at
+/// `LEAD + row_slot_w + TREE_BTN_W`, and that sum has to be continuous across
+/// the whole collapse. It runs from `TREE_W` (open, flush with the column's
+/// right edge) to `LEAD + TREE_BTN_W` (collapsed) with no step anywhere -- in
+/// particular none at the handoff, where the old two-seat arrangement faded a
+/// second button in and added `TREE_BTN_W` in a single frame.
 #[test]
 fn tab_strip_offset_is_continuous_through_the_collapse() {
-    let offset = |body: f64| LEAD + tree_toggle_layout(true, false, body, TREE_W, LEAD).1;
+    let offset =
+        |body: f64| LEAD + tree_toggle_layout(true, false, body, TREE_W, LEAD).1 + TREE_BTN_W;
     assert_eq!(offset(TREE_W), TREE_W);
     assert_eq!(offset(0.0), LEAD + TREE_BTN_W);
 
@@ -66,18 +69,15 @@ fn tab_strip_offset_is_continuous_through_the_collapse() {
 }
 
 /// Narrow docks the panel as a floating overlay, so `left_slot` stays 0 and the
-/// strip never moves: the row slot holds the twin's seat throughout, and both
-/// seats may be live at once (the floating panel covers the row's twin).
+/// column has no edge to seat the button on: the slot closes and the button
+/// leads the row throughout, whichever state the panel is in.
 #[test]
-fn narrow_holds_the_row_slot_open() {
+fn narrow_leaves_the_toggle_leading_the_row() {
     assert_eq!(
         tree_toggle_layout(true, true, TREE_W, TREE_W, LEAD),
-        (true, TREE_BTN_W, 1.0)
+        (true, 0.0)
     );
-    assert_eq!(
-        tree_toggle_layout(true, true, 0.0, TREE_W, LEAD),
-        (false, TREE_BTN_W, 1.0)
-    );
+    assert_eq!(tree_toggle_layout(true, true, 0.0, TREE_W, LEAD), (true, 0.0));
 }
 
 #[test]
@@ -392,9 +392,9 @@ fn mounted_history_buttons_lead_the_tab_strip_past_the_tree_column() {
     ] {
         app.ui.widget(&cx, id).set_visible(&mut cx, true);
     }
-    // The slot is runtime-sized (0 in the DSL, so an open column costs the row
-    // nothing); without this the button draws clipped to zero and lands on top
-    // of the back button.
+    // The slot is an empty runtime-sized spacer AHEAD of the button (0 in the
+    // DSL, so a collapsed column costs the row nothing). Give it a column's
+    // worth here so the row is drawn in its open arrangement.
     if let Some(mut slot) = app
         .ui
         .widget(&cx, ids!(tree_btn_slot))

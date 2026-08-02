@@ -184,18 +184,22 @@ script_mod! {
                                 // being clipped by the slot; only a snap runs the
                                 // slot at all, so a resize drag leaves the twin
                                 // untouched.
+                                // An EMPTY spacer, with the button as its next
+                                // SIBLING rather than a right-aligned child.
+                                // Aligning a child inside a wide slot would put
+                                // the button's drawn rect and its event rect at
+                                // different x: makepad caches `draw_abs` rects
+                                // PRE-alignment and dispatches events POST, so
+                                // `override_caption_drag_query` would fail to
+                                // recognise the press, fall through to the tab
+                                // row's gutter rule, and answer `Caption` -- the
+                                // click would drag the window instead of toggling
+                                // the column, silently.
                                 tree_btn_slot := View{
                                     width: 0.0
                                     height: Fill
-                                    // NOT clipped: the twin cross-fades in place
-                                    // (`sync_dock_slots` drives its `fade`)
-                                    // instead of being sliced by a half-open
-                                    // slot, which read as the button popping out
-                                    // of the column edge.
-                                    clip_x: false
-                                    align: Align{x: 1.0, y: 0.5}
-                                    tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
                                 }
+                                tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
                                 // View history, on the ROW rather than inside the
                                 // document header: one pair for the whole shell,
                                 // so it does not blink in and out with the
@@ -491,37 +495,19 @@ script_mod! {
                                 // stack the splitter ON the tree instead of
                                 // beside it. `sync_dock_slots` gives this the
                                 // runtime `host - SPLITTER_W` width.
+                                // The toggle used to float over this panel's own
+                                // top-right corner, as a second seat the tab-row
+                                // twin cross-faded with. It does not any more:
+                                // `tree_btn_slot` ends exactly where this column
+                                // does (see `tree_toggle_layout`), so the caption's
+                                // `[T]` already sits at the column's right edge,
+                                // one row up. Two buttons at the same x, one above
+                                // the other, is one button too many -- the caption
+                                // keeps it, and the panel gets its corner back.
                                 tree_body := View{
                                     width: 0.0
                                     height: Fill
-                                    // Overlay, so `[T]` floats over the panel's
-                                    // top-right corner rather than taking a header
-                                    // row off the top of it: the whole point of the
-                                    // tab row moving into `center_column` was to let
-                                    // these rows start at the body's top edge, and a
-                                    // header band would hand that back. The first
-                                    // row's label runs under the button; tree labels
-                                    // are short enough that they don't collide, and
-                                    // the row is still clickable to the button's left.
-                                    //
-                                    // Declared AFTER `project_tree` so it wins the
-                                    // hit: makepad walks children in reverse for
-                                    // events, and the default `capture_overload:
-                                    // false` lets the topmost claim the press.
-                                    flow: Overlay
                                     project_tree := ProjectTree{ width: Fill height: Fill }
-                                    tree_btn_layer := View{
-                                        width: Fill
-                                        height: Fill
-                                        align: Align{x: 1.0, y: 0.0}
-                                        // Right-aligned against `tree_body`, which
-                                        // ends where the splitter begins -- so this
-                                        // tracks the column's edge through both the
-                                        // open/close animation and a splitter drag
-                                        // for free. `right: 2` mirrors the 2px the
-                                        // tab-row twin carries on its left.
-                                        tree_btn_dock := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0, top: 1.0} visible: false }
-                                    }
                                 }
                                 tree_splitter := PanelSplitter{ rule_edge: 1.0 }
                             }
