@@ -882,19 +882,7 @@ impl App {
         };
         self.documents
             .after_session_change(cx, &self.ui, &self.session, change.clone(), prepared);
-        if change.uml_changed {
-            self.sync_document_shell(cx);
-        }
-        if change.navigation_changed {
-            self.nav_kinds = crate::nav::kinds_in_model(
-                self.session.okf_analysis(),
-                self.session.uml_analysis(),
-            );
-            self.refresh_nav(cx, false);
-        }
-        if change.conflicts_changed {
-            self.sync_conflict_badge(cx);
-        }
+        self.synchronize_session_change_projections(cx, &change);
         if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
             self.transition_to_location(cx, current, TransitionCause::PassiveReconciliation);
         }

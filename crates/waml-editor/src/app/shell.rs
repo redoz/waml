@@ -626,6 +626,26 @@ impl App {
         self.sync_conflict_badge(cx);
     }
 
+    pub(super) fn synchronize_session_change_projections(
+        &mut self,
+        cx: &mut Cx,
+        change: &crate::editor_session::SessionChange,
+    ) {
+        if change.uml_changed {
+            self.sync_document_shell(cx);
+        }
+        if change.navigation_changed {
+            self.nav_kinds = crate::nav::kinds_in_model(
+                self.session.okf_analysis(),
+                self.session.uml_analysis(),
+            );
+            self.refresh_nav(cx, false);
+        }
+        if change.conflicts_changed {
+            self.sync_conflict_badge(cx);
+        }
+    }
+
     /// Push the canvas's current conflict count onto the toolbar badge.
     pub(super) fn sync_conflict_badge(&mut self, cx: &mut Cx) {
         let n = self
