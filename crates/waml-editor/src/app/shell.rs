@@ -537,14 +537,8 @@ impl App {
             ),
         };
         let collapsed = state != DockState::Pinned;
-        let outcome = crate::splitter::drag(
-            edge,
-            limits,
-            pointer_x,
-            viewport_w,
-            other_slot_w,
-            collapsed,
-        );
+        let outcome =
+            crate::splitter::drag(edge, limits, pointer_x, viewport_w, other_slot_w, collapsed);
 
         let set_width = |widths: &mut crate::project_settings::DockWidths, w: f64| match edge {
             DockEdge::Left => widths.tree_w = w,

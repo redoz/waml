@@ -25,6 +25,9 @@ mod card;
 #[path = "../diagram_display.rs"]
 mod diagram_display;
 #[allow(dead_code)]
+#[path = "../edge_labels.rs"]
+mod edge_labels;
+#[allow(dead_code)]
 #[path = "../inspector.rs"]
 mod inspector;
 #[allow(dead_code)]

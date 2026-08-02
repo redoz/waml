@@ -117,6 +117,10 @@ pub struct Scene {
     pub edges: Vec<SceneEdge>,
     pub relations: Vec<SceneRelation>,
     pub conflicts: Vec<SceneConflict>,
+    /// World-space label placements the solver found for `edges`, keyed by
+    /// `PlacedLabel::edge` (an index into `edges`) and `slot`. The renderer
+    /// draws from these rects rather than deriving its own geometry.
+    pub labels: Vec<waml::solve::label::PlacedLabel>,
 }
 
 /// Render an attribute's cardinality under the diagram display policy.
@@ -525,7 +529,7 @@ pub fn build_scene(
         .into_iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
-    let (solved, diags, dropped) = if use_stress_default(diagram) {
+    let (mut solved, diags, dropped) = if use_stress_default(diagram) {
         (stress_default(model, &sizes), Vec::new(), Vec::new())
     } else {
         waml::solve::solve_diagram_reported(diagram, &edges, &sizes, &SolveConfig::default())
@@ -602,6 +606,13 @@ pub fn build_scene(
         }
     }
 
+    let requests = crate::edge_labels::label_requests(&edges, &display);
+    waml::solve::place_labels(
+        &mut solved,
+        &requests,
+        &waml::solve::label::LabelConfig::default(),
+    );
+
     let relations = project_relations(diagram);
     let conflicts = project_conflicts(&dropped);
 
@@ -609,10 +620,11 @@ pub fn build_scene(
         Scene {
             display,
             nodes,
-            groups: solved.groups.clone(),
+            groups: solved.groups,
             edges,
             relations,
             conflicts,
+            labels: solved.labels,
         },
         diags,
     )
@@ -630,6 +642,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
             edges: vec![],
             relations: Vec::new(),
             conflicts: Vec::new(),
+            labels: Vec::new(),
         };
     };
     let title = node
@@ -675,6 +688,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         edges: vec![],
         relations: Vec::new(),
         conflicts: Vec::new(),
+        labels: Vec::new(),
     }
 }
 
@@ -1486,6 +1500,7 @@ mod tests {
             edges: vec![],
             relations: vec![],
             conflicts: vec![],
+            labels: vec![],
         };
         assert!(bounding_box(&scene).is_none());
     }

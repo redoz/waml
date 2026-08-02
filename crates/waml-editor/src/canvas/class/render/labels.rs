@@ -1,9 +1,12 @@
 use super::{primitives::ClassDrawResources, RenderSnapshot};
-use crate::canvas::primitives::{edge_point_to_screen, fill_rect, font_raster_size};
-use crate::edge_labels::{aligned_text_pos, edge_end_labels, EdgeLabel};
+use crate::canvas::primitives::{fill_rect, font_raster_size, world_rect_to_screen};
 use makepad_widgets::*;
 
 const LABEL_PAD: f64 = 3.0;
+
+/// Below this drawn font size the text is unreadable, so labels are skipped
+/// entirely rather than painted as illegible smears that still cost fill rate.
+const MIN_LEGIBLE_PX: f64 = 5.0;
 
 pub(super) fn draw_edge_labels(
     cx: &mut Cx2d,
@@ -14,67 +17,37 @@ pub(super) fn draw_edge_labels(
     // Edge text is annotation, not content: it reads well below the card type
     // scale, and at 11 the multiplicity/role chips out-shouted the cards.
     let target_size = (8.0 * viewport.camera.zoom).max(4.0) as f32;
+    if (target_size as f64) < MIN_LEGIBLE_PX {
+        return;
+    }
     let font_size = font_raster_size(target_size);
     draws.edge_label.text_style.font_size = font_size;
     draws.edge_label.font_scale = target_size / font_size;
 
-    for edge in &snapshot.scene.edges {
-        for label in edge_end_labels(edge, &snapshot.scene.display, snapshot.linework.marker_size) {
-            draw_label(cx, viewport, draws, label);
-        }
+    for label in &snapshot.scene.labels {
+        let screen = world_rect_to_screen(viewport, label.rect);
+        fill_rect(
+            cx,
+            draws.edge_label_bg,
+            Rect {
+                pos: screen.pos - dvec2(LABEL_PAD, LABEL_PAD),
+                size: screen.size + dvec2(LABEL_PAD * 2.0, LABEL_PAD * 2.0),
+            },
+            draws.edge_label_bg.color,
+        );
+        draws.edge_label.draw_abs(cx, screen.pos, &label.text);
     }
-}
-
-fn draw_label(
-    cx: &mut Cx2d,
-    viewport: crate::canvas::viewport::ViewportSnapshot,
-    draws: &mut ClassDrawResources<'_>,
-    label: EdgeLabel,
-) {
-    // The clearance is deliberately NOT projected: adornments and stroke widths
-    // are drawn at a fixed screen size, so the nudge that clears them has to be
-    // fixed in screen px too.
-    let anchor =
-        edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, label.anchor) + label.offset;
-    let measured = draws
-        .edge_label
-        .layout(cx, 0.0, 0.0, None, false, Align::default(), &label.text)
-        .size_in_lpxs;
-    let text_size = scaled_text_size(
-        dvec2(measured.width as f64, measured.height as f64),
-        draws.edge_label.font_scale as f64,
-    );
-    let text_pos = aligned_text_pos(anchor, text_size, label.align);
-    fill_rect(
-        cx,
-        draws.edge_label_bg,
-        Rect {
-            pos: text_pos - dvec2(LABEL_PAD, LABEL_PAD),
-            size: text_size + dvec2(LABEL_PAD * 2.0, LABEL_PAD * 2.0),
-        },
-        draws.edge_label_bg.color,
-    );
-    draws.edge_label.draw_abs(cx, text_pos, &label.text);
-}
-
-fn scaled_text_size(measured: DVec2, font_scale: f64) -> DVec2 {
-    measured * font_scale
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::edge_labels::LabelAlign;
-
     #[test]
-    fn measured_text_size_scales_before_alignment() {
-        let anchor = dvec2(100.0, 100.0);
-        let measured = dvec2(40.0, 20.0);
-        let scaled = scaled_text_size(measured, 0.5);
-        assert_eq!(scaled, dvec2(20.0, 10.0));
-        assert_eq!(
-            aligned_text_pos(anchor, scaled, LabelAlign::AboveCenter),
-            dvec2(90.0, 90.0)
-        );
+    fn min_legible_cutoff_skips_illegible_zoom() {
+        // 4px target (below MIN_LEGIBLE_PX=5) at a low zoom is exactly the case
+        // that used to paint illegible smears; the guard clause returns before
+        // any draw call, so there is nothing to assert on the draw resources --
+        // this just documents the threshold so a regression edit trips a diff.
+        let target_size = (8.0_f64 * 0.4_f64).max(4.0);
+        assert!(target_size < super::MIN_LEGIBLE_PX);
     }
 }

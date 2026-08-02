@@ -1,15 +1,18 @@
-//! Pure relationship-label policy and terminal geometry for the native canvas.
+//! Relationship-label TEXT policy for the native canvas: composes label
+//! strings from the display toggles and reads back world-space placements the
+//! solver computed. Geometry (where a label sits, which candidates it can
+//! slide to, what it must avoid) lives in `waml::solve::label` now; this
+//! module only decides WHAT text each edge wants labeled, plus the
+//! flow-canvas mid-route helper (spec §2.6), which has not yet moved to
+//! solver placement.
 
 use crate::{diagram_display::ResolvedDiagramDisplay, scene::SceneEdge};
 use makepad_widgets::{dvec2, DVec2};
 use waml::{
-    adornment::{end_marker, End, Marker},
+    adornment::End,
     model::AssocName,
+    solve::label::{LabelRequest, LabelSlot},
 };
-
-/// How far along the route a terminal label steps, past whatever adornment sits
-/// on the endpoint. Screen px, like the marker geometry it has to clear.
-const HEAD_GAP: f64 = 4.0;
 
 /// Where a label's box sits relative to its anchor.
 ///
@@ -43,74 +46,65 @@ pub struct EdgeLabel {
     pub align: LabelAlign,
 }
 
-/// How far back along the route an endpoint adornment reaches, in screen px, so
-/// a terminal label can step past it. Mirrors `canvas::geometry::marker_geometry`:
-/// triangles and open arrows run one `marker_size` back from the tip, diamonds two.
-pub fn marker_extent(marker: Marker, marker_size: f64) -> f64 {
-    match marker {
-        Marker::None => 0.0,
-        Marker::OpenArrow | Marker::HollowTriangle => marker_size,
-        Marker::HollowDiamond | Marker::FilledDiamond => 2.0 * marker_size,
-    }
-}
-
-/// Labels each visible relationship end from the routed terminal segment, then
-/// appends the optional relationship name at the route's middle point.
-///
-/// `marker_size` is the renderer's screen-space adornment size; terminal labels
-/// step past the glyph actually drawn at their end rather than a fixed guess.
-pub fn edge_end_labels(
-    edge: &SceneEdge,
-    display: &ResolvedDiagramDisplay,
-    marker_size: f64,
-) -> Vec<EdgeLabel> {
-    let mut labels = Vec::new();
-    if edge.kind.is_ended() && edge.points.len() >= 2 {
-        for end in [End::From, End::To] {
-            let end_data = match end {
-                End::From => &edge.from_end,
-                End::To => &edge.to_end,
-            };
-            let cardinality = display
-                .show_cardinality
-                .then(|| {
-                    end_data
-                        .multiplicity
-                        .as_ref()
-                        .map(|multiplicity| format!("{{{}}}", multiplicity.as_str()))
-                })
-                .flatten();
-            let role = display
-                .show_roles
-                .then_some(end_data.role.as_deref())
-                .flatten();
-            let text = match (role, cardinality) {
-                (Some(role), Some(cardinality)) => Some(format!("{role} {cardinality}")),
-                (Some(role), None) => Some(role.to_string()),
-                (None, Some(cardinality)) => Some(cardinality),
-                (None, None) => None,
-            };
-            if let Some(text) = text {
-                let (endpoint, open) = terminal_segment(edge, end);
-                let navigable = match end {
-                    End::From => edge.from_end.navigable,
-                    End::To => edge.to_end.navigable,
+/// Composes the label text each visible edge wants (terminal role/multiplicity
+/// text at either end, plus an optional relationship name at the route's
+/// middle), under the diagram's display toggles. Geometry — where each ends up,
+/// which candidates it can slide to, what it must avoid — is the solver's job
+/// (`waml::solve::label::place`); this only decides WHAT text exists and which
+/// slot it belongs to.
+pub fn label_requests(edges: &[SceneEdge], display: &ResolvedDiagramDisplay) -> Vec<LabelRequest> {
+    let mut requests = Vec::new();
+    for (index, edge) in edges.iter().enumerate() {
+        if edge.kind.is_ended() {
+            for end in [End::From, End::To] {
+                let end_data = match end {
+                    End::From => &edge.from_end,
+                    End::To => &edge.to_end,
                 };
-                let clearance =
-                    marker_extent(end_marker(edge.kind, end, navigable), marker_size) + HEAD_GAP;
-                labels.push(terminal_label(text, endpoint, open, clearance));
+                let cardinality = display
+                    .show_cardinality
+                    .then(|| {
+                        end_data
+                            .multiplicity
+                            .as_ref()
+                            .map(|multiplicity| format!("{{{}}}", multiplicity.as_str()))
+                    })
+                    .flatten();
+                let role = display
+                    .show_roles
+                    .then_some(end_data.role.as_deref())
+                    .flatten();
+                let text = match (role, cardinality) {
+                    (Some(role), Some(cardinality)) => Some(format!("{role} {cardinality}")),
+                    (Some(role), None) => Some(role.to_string()),
+                    (None, Some(cardinality)) => Some(cardinality),
+                    (None, None) => None,
+                };
+                if let Some(text) = text {
+                    let slot = match end {
+                        End::From => LabelSlot::TerminalFrom,
+                        End::To => LabelSlot::TerminalTo,
+                    };
+                    requests.push(LabelRequest {
+                        edge: index,
+                        slot,
+                        text,
+                    });
+                }
             }
         }
-    }
 
-    if display.show_labels {
-        if let Some(name) = edge.name.as_ref().and_then(relationship_name) {
-            if let Some(label) = mid_route_label(&edge.points, name.to_string()) {
-                labels.push(label);
+        if display.show_labels {
+            if let Some(name) = edge.name.as_ref().and_then(relationship_name) {
+                requests.push(LabelRequest {
+                    edge: index,
+                    slot: LabelSlot::MidRoute,
+                    text: name.to_string(),
+                });
             }
         }
     }
-    labels
+    requests
 }
 
 /// Mid-route label anchor for a plain polyline (kind-agnostic; the class path
@@ -251,51 +245,6 @@ fn polyline_midpoint(points: &[(f64, f64)]) -> Option<(f64, f64)> {
     points.last().copied()
 }
 
-fn terminal_segment(edge: &SceneEdge, end: End) -> ((f64, f64), (f64, f64)) {
-    match end {
-        End::From => (edge.points[0], edge.points[1]),
-        End::To => {
-            let last = edge.points.len() - 1;
-            (edge.points[last], edge.points[last - 1])
-        }
-    }
-}
-
-/// Places one end's role/multiplicity text: `clearance` px inward along the
-/// route (past the adornment on this endpoint), then `LABEL_GAP` px off the
-/// stroke perpendicular to it.
-///
-/// The inward step alone is not enough — it walks the text along the line it is
-/// meant to clear — so the perpendicular gap is what actually lifts it off, and
-/// the alignment has to agree with that side or the box lands back on the line.
-fn terminal_label(
-    text: String,
-    endpoint: (f64, f64),
-    open: (f64, f64),
-    clearance: f64,
-) -> EdgeLabel {
-    let dx = open.0 - endpoint.0;
-    let dy = open.1 - endpoint.1;
-    let length = dx.hypot(dy);
-    let (dx, dy) = if length > f64::EPSILON {
-        (dx / length, dy / length)
-    } else {
-        (0.0, -1.0)
-    };
-    let orientation = if dy.abs() > dx.abs() {
-        Orientation::Vertical
-    } else {
-        Orientation::Horizontal
-    };
-    let (gap, align) = clear_of_route(orientation, Some(dx));
-    EdgeLabel {
-        text,
-        anchor: endpoint,
-        offset: dvec2(dx * clearance + gap.x, dy * clearance + gap.y),
-        align,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,77 +291,24 @@ mod tests {
         }
     }
 
-    /// Marker size used by the label tests; the class renderer passes its own.
-    const MARKER: f64 = 8.0;
-
     #[test]
-    fn terminal_geometry_uses_the_terminal_segment_open_space() {
-        let labels = edge_end_labels(
-            &edge(vec![(20.0, 10.0), (100.0, 10.0)]),
-            &display(CardinalityVisibility::All),
-            MARKER,
-        );
-        // Both ends anchor ON their endpoint and step INWARD along the route.
-        assert_eq!(labels[0].anchor, (20.0, 10.0));
-        assert!(labels[0].offset.x > 0.0);
-        assert_eq!(labels[1].anchor, (100.0, 10.0));
-        assert!(labels[1].offset.x < 0.0);
-        // A horizontal route is cleared upward, not by sliding along itself, and
-        // each box grows AWAY from its own endpoint so the small inward step is
-        // not spent burying half the text under the node it just left.
-        for label in &labels {
-            assert_eq!(label.offset.y, -LABEL_GAP);
-        }
-        assert_eq!(labels[0].align, LabelAlign::AboveStart);
-        assert_eq!(labels[1].align, LabelAlign::AboveEnd);
-    }
-
-    #[test]
-    fn a_terminal_box_never_grows_back_over_its_own_endpoint() {
-        // The regression this guards: `AboveCenter` at a terminal centres the
-        // text on an anchor only a few px in from the node border, so half the
-        // label lands on the card. Both ends must clear their own node.
-        let size = dvec2(40.0, 10.0);
-        let from = aligned_text_pos(dvec2(100.0, 50.0), size, LabelAlign::AboveStart);
-        let to = aligned_text_pos(dvec2(300.0, 50.0), size, LabelAlign::AboveEnd);
-        assert!(from.x >= 100.0, "from-end text starts at its anchor");
-        assert!(to.x + size.x <= 300.0, "to-end text ends at its anchor");
-    }
-
-    #[test]
-    fn a_terminal_label_steps_past_the_adornment_actually_drawn() {
-        // `associates` with a navigable `to` end: bare diamond-free `from`, open
-        // arrow at `to`. The adorned end has to step further in than the bare one.
+    fn requests_follow_the_display_switches_and_carry_slot_identity() {
         let mut edge = edge(vec![(20.0, 10.0), (100.0, 10.0)]);
-        edge.to_end.navigable = Some(true);
-        let labels = edge_end_labels(&edge, &display(CardinalityVisibility::All), MARKER);
+        edge.from_end.role = Some("orders".into());
+        edge.name = Some(AssocName::Label("places".into()));
+        let mut display = display(CardinalityVisibility::Off);
+        display.show_roles = false;
+        display.show_cardinality = false;
+        display.show_labels = false;
+        assert!(label_requests(&[edge.clone()], &display).is_empty());
 
-        assert_eq!(labels[0].offset.x, HEAD_GAP, "bare end clears the gap only");
-        assert_eq!(labels[1].offset.x, -(MARKER + HEAD_GAP), "past the arrow");
-    }
-
-    #[test]
-    fn a_diamond_pushes_its_label_twice_as_far_as_an_arrow() {
-        assert_eq!(marker_extent(Marker::None, MARKER), 0.0);
-        assert_eq!(marker_extent(Marker::OpenArrow, MARKER), MARKER);
-        assert_eq!(marker_extent(Marker::HollowTriangle, MARKER), MARKER);
-        assert_eq!(marker_extent(Marker::HollowDiamond, MARKER), 2.0 * MARKER);
-        assert_eq!(marker_extent(Marker::FilledDiamond, MARKER), 2.0 * MARKER);
-    }
-
-    #[test]
-    fn a_vertical_route_takes_its_terminal_label_beside_the_line() {
-        let labels = edge_end_labels(
-            &edge(vec![(10.0, 20.0), (10.0, 100.0)]),
-            &display(CardinalityVisibility::All),
-            MARKER,
-        );
-        for label in &labels {
-            assert_eq!(label.align, LabelAlign::Right);
-            assert_eq!(label.offset.x, LABEL_GAP);
-        }
-        assert!(labels[0].offset.y > 0.0, "from end steps down the route");
-        assert!(labels[1].offset.y < 0.0, "to end steps back up it");
+        display.show_roles = true;
+        display.show_labels = true;
+        let reqs = label_requests(&[edge], &display);
+        let slots: Vec<_> = reqs.iter().map(|r| r.slot).collect();
+        assert_eq!(slots, vec![LabelSlot::TerminalFrom, LabelSlot::MidRoute]);
+        assert_eq!(reqs[0].text, "orders");
+        assert_eq!(reqs[1].text, "places");
     }
 
     #[test]
@@ -424,41 +320,7 @@ mod tests {
         display.show_cardinality = false;
         display.show_labels = true;
 
-        assert!(edge_end_labels(&edge, &display, MARKER).is_empty());
-    }
-
-    #[test]
-    fn straight_relationship_name_uses_segment_midpoint() {
-        let mut edge = edge(vec![(0.0, 0.0), (100.0, 0.0)]);
-        edge.name = Some(AssocName::Label("places".into()));
-        let mut display = display(CardinalityVisibility::Off);
-        display.show_roles = false;
-        display.show_cardinality = false;
-        display.show_labels = true;
-
-        let labels = edge_end_labels(&edge, &display, MARKER);
-
-        assert_eq!(labels.len(), 1);
-        assert_eq!(labels[0].anchor, (50.0, 0.0));
-        assert_eq!(labels[0].offset, dvec2(0.0, -LABEL_GAP));
-        assert_eq!(labels[0].align, LabelAlign::AboveCenter);
-    }
-
-    #[test]
-    fn a_vertical_relationship_name_clears_the_line_sideways() {
-        // Was hardcoded `Above` regardless of orientation, which centred the
-        // name on a vertical stroke and drew the route through the glyphs.
-        let mut edge = edge(vec![(0.0, 0.0), (0.0, 100.0)]);
-        edge.name = Some(AssocName::Label("places".into()));
-        let mut display = display(CardinalityVisibility::Off);
-        display.show_roles = false;
-        display.show_cardinality = false;
-        display.show_labels = true;
-
-        let labels = edge_end_labels(&edge, &display, MARKER);
-
-        assert_eq!(labels[0].align, LabelAlign::Right);
-        assert_eq!(labels[0].offset, dvec2(LABEL_GAP, 0.0));
+        assert!(label_requests(&[edge], &display).is_empty());
     }
 
     #[test]
@@ -504,18 +366,13 @@ mod tests {
 
     #[test]
     fn bent_relationship_name_uses_polyline_arc_length_midpoint() {
-        let mut edge = edge(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 90.0)]);
-        edge.name = Some(AssocName::Label("places".into()));
-        let mut display = display(CardinalityVisibility::Off);
-        display.show_roles = false;
-        display.show_cardinality = false;
-        display.show_labels = true;
-
-        let labels = edge_end_labels(&edge, &display, MARKER);
-
-        assert_eq!(labels.len(), 1);
-        assert_eq!(labels[0].anchor, (10.0, 40.0));
+        // The mid-route geometry is now the flow canvas's helper directly;
+        // `label_requests` only emits the request, so exercise the geometry via
+        // `mid_route_label` on the same bent polyline.
+        let label =
+            mid_route_label(&[(0.0, 0.0), (10.0, 0.0), (10.0, 90.0)], "places".into()).unwrap();
+        assert_eq!(label.anchor, (10.0, 40.0));
         // The midpoint lands on the vertical leg, so the name clears sideways.
-        assert_eq!(labels[0].offset, dvec2(LABEL_GAP, 0.0));
+        assert_eq!(label.offset, dvec2(LABEL_GAP, 0.0));
     }
 }

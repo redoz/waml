@@ -23,7 +23,6 @@ mod diagram_switcher;
 mod doc_tabs;
 mod doc_view;
 mod dock;
-mod panel_splitter;
 mod document;
 mod document_header;
 mod document_host;
@@ -53,6 +52,7 @@ mod node_design_editor;
 mod node_style;
 mod okf_documents;
 mod overlay_shell;
+mod panel_splitter;
 mod platform_browser;
 mod popup;
 mod project_settings;
@@ -84,13 +84,21 @@ use app::App;
 
 app_main!(App);
 
+// Terminal/mid-route GEOMETRY (offset, align, slide, collision) moved to the
+// solver with placement itself and is covered there (`waml::solve::label`).
+// What is left here is text-composition policy, already covered by
+// `edge_labels`'s own inline tests (`requests_follow_the_display_switches_and_carry_slot_identity`,
+// `association_reference_is_not_painted_as_relationship_name`); this module's
+// former duplicate coverage (cardinality independence, non-ended relationships,
+// role/name display switches) is folded into those.
 #[cfg(test)]
 mod edge_labels_tests {
     use crate::diagram_display::ResolvedDiagramDisplay;
-    use crate::edge_labels::{edge_end_labels, LabelAlign};
+    use crate::edge_labels::label_requests;
     use crate::scene::SceneEdge;
     use waml::model::{CardinalityVisibility, RelEnd, RelationshipKind};
     use waml::multiplicity::Multiplicity;
+    use waml::solve::label::LabelSlot;
     use waml::solve::Rect;
 
     fn display(
@@ -140,34 +148,33 @@ mod edge_labels_tests {
         )
     }
 
-    fn texts(labels: Vec<crate::edge_labels::EdgeLabel>) -> Vec<String> {
-        labels.into_iter().map(|label| label.text).collect()
+    fn texts(edges: &[SceneEdge], display: &ResolvedDiagramDisplay) -> Vec<String> {
+        label_requests(edges, display)
+            .into_iter()
+            .map(|r| r.text)
+            .collect()
     }
-
-    /// Stand-in for the renderer's screen-space adornment size.
-    const MARKER: f64 = 8.0;
 
     #[test]
     fn relationship_cardinality_is_independent_and_never_synthesized() {
         let edge = ended_edge(None, Multiplicity::parse("0..*"));
         assert_eq!(
-            texts(edge_end_labels(
-                &edge,
-                &display(CardinalityVisibility::Off, true),
-                MARKER
-            )),
+            texts(
+                std::slice::from_ref(&edge),
+                &display(CardinalityVisibility::Off, true)
+            ),
             vec!["{0..*}"]
         );
         assert!(
-            edge_end_labels(&edge, &display(CardinalityVisibility::All, false), MARKER).is_empty(),
+            texts(
+                std::slice::from_ref(&edge),
+                &display(CardinalityVisibility::All, false)
+            )
+            .is_empty(),
             "the relationship toggle must be authoritative"
         );
         assert_eq!(
-            texts(edge_end_labels(
-                &edge,
-                &display(CardinalityVisibility::All, true),
-                MARKER
-            )),
+            texts(&[edge], &display(CardinalityVisibility::All, true)),
             vec!["{0..*}"],
             "enabling relationship cardinality must not synthesize an implicit one"
         );
@@ -180,9 +187,7 @@ mod edge_labels_tests {
             RelEnd::default(),
             RelEnd::default(),
         );
-        assert!(
-            edge_end_labels(&edge, &display(CardinalityVisibility::All, true), MARKER).is_empty()
-        );
+        assert!(texts(&[edge], &display(CardinalityVisibility::All, true)).is_empty());
     }
 
     #[test]
@@ -193,47 +198,23 @@ mod edge_labels_tests {
         let mut display = display(CardinalityVisibility::Off, false);
         display.show_roles = false;
         display.show_labels = false;
-        assert!(edge_end_labels(&edge, &display, MARKER).is_empty());
+        assert!(texts(std::slice::from_ref(&edge), &display).is_empty());
 
         display.show_roles = true;
-        assert_eq!(
-            texts(edge_end_labels(&edge, &display, MARKER)),
-            vec!["orders"]
-        );
+        assert_eq!(texts(std::slice::from_ref(&edge), &display), vec!["orders"]);
 
         display.show_labels = true;
         assert_eq!(
-            texts(edge_end_labels(&edge, &display, MARKER)),
+            texts(std::slice::from_ref(&edge), &display),
             vec!["orders", "places"]
         );
     }
 
     #[test]
-    fn horizontal_terminal_labels_move_into_open_space() {
-        let labels = edge_end_labels(
-            &ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*")),
-            &display(CardinalityVisibility::All, true),
-            MARKER,
-        );
-        // Each end steps INWARD along the route, and clears it upward: an offset
-        // along the line alone would leave the text sitting on the stroke.
-        assert!(labels[0].offset.x > 0.0);
-        assert!(labels[1].offset.x < 0.0);
-        assert_eq!(labels[0].align, LabelAlign::AboveStart);
-        assert_eq!(labels[1].align, LabelAlign::AboveEnd);
-        assert!(labels[0].offset.y < 0.0 && labels[1].offset.y < 0.0);
-    }
-
-    #[test]
-    fn vertical_terminal_labels_move_into_open_space() {
-        let mut edge = ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*"));
-        edge.points = vec![(10.0, 20.0), (10.0, 100.0)];
-        let labels = edge_end_labels(&edge, &display(CardinalityVisibility::All, true), MARKER);
-        assert!(labels[0].offset.y > 0.0);
-        assert!(labels[1].offset.y < 0.0);
-        // A vertical route is cleared sideways instead.
-        assert_eq!(labels[0].align, LabelAlign::Right);
-        assert_eq!(labels[1].align, LabelAlign::Right);
-        assert!(labels[0].offset.x > 0.0 && labels[1].offset.x > 0.0);
+    fn terminal_requests_carry_the_slot_each_end_belongs_to() {
+        let edge = ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*"));
+        let reqs = label_requests(&[edge], &display(CardinalityVisibility::All, true));
+        let slots: Vec<_> = reqs.iter().map(|r| r.slot).collect();
+        assert_eq!(slots, vec![LabelSlot::TerminalFrom, LabelSlot::TerminalTo]);
     }
 }

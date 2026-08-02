@@ -847,6 +847,7 @@ mod tests {
             edges: Vec::new(),
             relations: Vec::new(),
             conflicts: Vec::new(),
+            labels: Vec::new(),
         }
     }
 
