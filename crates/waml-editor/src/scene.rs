@@ -479,6 +479,7 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
         routes,
         labels: Vec::new(),
         label_reroutes: 0,
+        label_leaders: 0,
     }
 }
 

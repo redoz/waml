@@ -1,11 +1,18 @@
 use super::{primitives::ClassDrawResources, RenderSnapshot};
-use crate::canvas::primitives::{fill_rect, font_raster_size, world_rect_to_screen};
+use crate::canvas::geometry::segment_quad;
+use crate::canvas::primitives::{
+    edge_point_to_screen, fill_rect, font_raster_size, world_rect_to_screen,
+};
 use crate::edge_labels::{marker_extent, HEAD_GAP, LABEL_GAP};
 use makepad_widgets::*;
 use waml::adornment::{end_marker, End};
 use waml::solve::label::LabelSlot;
 
 const LABEL_PAD: f64 = 3.0;
+
+/// Screen-space thickness of a leader line: a hairline regardless of zoom, so
+/// it reads as a pointer rather than a route.
+const LEADER_THICKNESS: f64 = 1.0;
 
 /// Below this drawn size edge text is an unreadable smear, so it is skipped.
 ///
@@ -64,6 +71,13 @@ pub(super) fn draw_edge_labels(
             })
             .unwrap_or_default();
         let pos = screen.pos + nudge;
+        if let Some(leader) = label.leader {
+            let a = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[0]);
+            let b = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[1]);
+            draws
+                .edge
+                .draw_abs(cx, segment_quad(a, b, LEADER_THICKNESS));
+        }
         fill_rect(
             cx,
             draws.edge_label_bg,

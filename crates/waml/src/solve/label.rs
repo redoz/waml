@@ -364,6 +364,10 @@ pub struct PlacedLabel {
     pub text: String,
     pub rect: Rect,
     pub attach: (f64, f64),
+    /// Set when this label could not be placed beside its route and was
+    /// pushed out to free space instead: `[attach, nearest point on rect]`.
+    /// `None` for every label placed normally by `place`.
+    pub leader: Option<[(f64, f64); 2]>,
 }
 
 /// Result of a placement pass. `unplaced` is not an error: it is the input to
@@ -422,6 +426,7 @@ pub fn fallback(
         text: request.text.clone(),
         rect: c.rect,
         attach: c.attach,
+        leader: None,
     })
 }
 
@@ -465,11 +470,136 @@ fn try_place(
                 text: request.text.clone(),
                 rect: c.rect,
                 attach: c.attach,
+                leader: None,
             });
             true
         }
         None => false,
     }
+}
+
+/// Ring count for the leader search. Each ring steps out by two label heights,
+/// so this reaches well past any realistic diagram's bounding box -- which is
+/// what makes the search total.
+const MAX_LEADER_RINGS: usize = 64;
+/// Positions sampled per ring. Fixed count in fixed angular order, so the
+/// search is deterministic.
+const LEADER_STEPS: usize = 16;
+
+/// The un-displaced attach point a slot would have used, ignoring collisions:
+/// the first candidate's `attach`. Every candidate for a given slot shares the
+/// same attach point (the slide only moves the rect, not the anchor along the
+/// route it was measured from at the un-displaced position), so any candidate
+/// would do; the first is simplest.
+fn ideal_anchor(points: &[(f64, f64)], slot: LabelSlot) -> Option<(f64, f64)> {
+    let slides: &[f64] = match slot {
+        LabelSlot::MidRoute => &MID_SLIDES,
+        _ => &TERMINAL_SLIDES,
+    };
+    let t = match slot {
+        LabelSlot::TerminalFrom => slides[0],
+        LabelSlot::TerminalTo => 1.0 - slides[0],
+        LabelSlot::MidRoute => slides[0],
+    };
+    point_at_fraction(points, t).map(|(attach, _)| attach)
+}
+
+/// The point on `rect`'s border closest to `from`, so a leader line meets the
+/// label box rather than aiming at its centre.
+fn nearest_edge_point(rect: Rect, from: (f64, f64)) -> (f64, f64) {
+    let x = from.0.clamp(rect.x, rect.x + rect.w);
+    let y = from.1.clamp(rect.y, rect.y + rect.h);
+    // If `from` is already inside or on the rect, `x`/`y` land inside it;
+    // snap to the nearest border instead of leaving the point interior.
+    let dist_left = (x - rect.x).abs();
+    let dist_right = (rect.x + rect.w - x).abs();
+    let dist_top = (y - rect.y).abs();
+    let dist_bottom = (rect.y + rect.h - y).abs();
+    let inside = x > rect.x && x < rect.x + rect.w && y > rect.y && y < rect.y + rect.h;
+    if !inside {
+        return (x, y);
+    }
+    let min = dist_left.min(dist_right).min(dist_top).min(dist_bottom);
+    if min == dist_left {
+        (rect.x, y)
+    } else if min == dist_right {
+        (rect.x + rect.w, y)
+    } else if min == dist_top {
+        (x, rect.y)
+    } else {
+        (x, rect.y + rect.h)
+    }
+}
+
+/// Place every request, falling back to a leader line for any that will not fit
+/// beside their route.
+///
+/// This is TOTAL for any request whose route resolves: obstacles are finite,
+/// so an expanding ring always reaches empty space outside the content
+/// bounding box. That is what makes leader lines a complete strategy rather
+/// than one more thing that can fail. A request whose `edge` does not resolve
+/// to a route, or whose route is too degenerate to yield an anchor, comes back
+/// in `unplaced` -- there is no route for a leader to attach to.
+pub fn place_with_leaders(
+    routes: &[Vec<(f64, f64)>],
+    requests: &[LabelRequest],
+    obstacles: &Obstacles,
+    cfg: &LabelConfig,
+) -> Placement {
+    let mut out = place(routes, requests, obstacles, cfg);
+    let residue = std::mem::take(&mut out.unplaced);
+    let mut hard: Vec<Rect> = obstacles
+        .hard
+        .iter()
+        .copied()
+        .chain(out.placed.iter().map(|p| p.rect))
+        .collect();
+
+    for request in residue {
+        let size = measure(&request.text, cfg);
+        let Some(points) = routes.get(request.edge) else {
+            out.unplaced.push(request);
+            continue;
+        };
+        let Some(anchor) = ideal_anchor(points, request.slot) else {
+            out.unplaced.push(request);
+            continue;
+        };
+
+        let mut found = None;
+        'rings: for ring in 1..=MAX_LEADER_RINGS {
+            let radius = ring as f64 * size.h * 2.0;
+            for step in 0..LEADER_STEPS {
+                let angle = std::f64::consts::TAU * step as f64 / LEADER_STEPS as f64;
+                let rect = Rect {
+                    x: anchor.0 + radius * angle.cos() - size.w * 0.5,
+                    y: anchor.1 + radius * angle.sin() - size.h * 0.5,
+                    w: size.w,
+                    h: size.h,
+                };
+                if !collides(rect, &hard) {
+                    found = Some(rect);
+                    break 'rings;
+                }
+            }
+        }
+
+        match found {
+            Some(rect) => {
+                hard.push(rect);
+                out.placed.push(PlacedLabel {
+                    edge: request.edge,
+                    slot: request.slot,
+                    text: request.text.clone(),
+                    rect,
+                    attach: anchor,
+                    leader: Some([anchor, nearest_edge_point(rect, anchor)]),
+                });
+            }
+            None => out.unplaced.push(request),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -853,6 +983,74 @@ mod tests {
         // Open space both sides: the label must take the canonical one (above a
         // horizontal run) rather than picking arbitrarily.
         assert!(out.placed[0].rect.y < 50.0, "should sit above the route");
+    }
+
+    #[test]
+    fn a_label_with_nowhere_to_go_gets_a_leader_into_free_space() {
+        let obstacles = Obstacles {
+            hard: vec![Rect {
+                x: -200.0,
+                y: -200.0,
+                w: 800.0,
+                h: 400.0,
+            }],
+        };
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let out = place_with_leaders(&route_pair(), &reqs, &obstacles, &LabelConfig::default());
+
+        assert!(out.unplaced.is_empty(), "leader lines make placement total");
+        let placed = &out.placed[0];
+        assert!(
+            !collides(placed.rect, &obstacles.hard),
+            "leader target must be free"
+        );
+        let leader = placed.leader.expect("a displaced label carries a leader");
+        assert_eq!(leader[0], placed.attach, "leader starts on the route");
+    }
+
+    #[test]
+    fn a_label_that_fits_normally_gets_no_leader() {
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let out = place_with_leaders(
+            &route_pair(),
+            &reqs,
+            &Obstacles::default(),
+            &LabelConfig::default(),
+        );
+        assert!(out.placed[0].leader.is_none());
+    }
+
+    #[test]
+    fn the_leader_search_terminates_on_a_hostile_scene() {
+        // Obstacles cannot cover the whole plane, so an expanding ring always
+        // finds free space eventually. This pins that the search actually
+        // exploits it.
+        let obstacles = Obstacles {
+            hard: (0..50)
+                .map(|i| Rect {
+                    x: i as f64 * 40.0,
+                    y: 0.0,
+                    w: 40.0,
+                    h: 400.0,
+                })
+                .collect(),
+        };
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "x".into(),
+        }];
+        let out = place_with_leaders(&route_pair(), &reqs, &obstacles, &LabelConfig::default());
+        assert_eq!(out.placed.len(), 1);
+        assert!(out.unplaced.is_empty());
     }
 
     #[test]

@@ -109,6 +109,11 @@ mod wire {
         /// unless the caller opts into the reroute path.
         #[cfg_attr(feature = "serde", serde(default))]
         pub label_reroutes: usize,
+        /// How many labels needed a leader line into free space because
+        /// nothing beside their route was clear. `default` so a payload
+        /// serialized before this existed still deserializes.
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub label_leaders: usize,
     }
 }
 pub use geometry::DroppedPlacement;
@@ -347,20 +352,17 @@ pub fn place_labels(
     cfg: &label::LabelConfig,
 ) -> Vec<label::LabelRequest> {
     let obstacles = label_obstacles(solved);
-    let mut placement = label::place(routes, requests, &obstacles, cfg);
-    // A label that fits nowhere must NOT silently disappear from the diagram:
-    // fall back to its best-scoring position ignoring obstacles, and hand back
-    // whatever even that could not position (a degenerate route) so the caller
-    // can report it.
-    let mut unresolved = Vec::new();
-    for request in placement.unplaced {
-        match label::fallback(routes, &request, cfg) {
-            Some(placed) => placement.placed.push(placed),
-            None => unresolved.push(request),
-        }
-    }
+    // A label that fits nowhere beside its route gets a leader line into free
+    // space instead of silently disappearing; only a truly degenerate route
+    // (no candidates at all) comes back unresolved.
+    let placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
+    solved.label_leaders = placement
+        .placed
+        .iter()
+        .filter(|p| p.leader.is_some())
+        .count();
     solved.labels = placement.placed;
-    unresolved
+    placement.unplaced
 }
 
 /// The hard-obstacle set `place_labels`/`place_labels_with_reroute` place
@@ -481,15 +483,14 @@ pub fn place_labels_with_reroute(
         placement = label::place(routes, requests, &label_obstacles(solved), cfg);
     }
 
-    let mut unresolved = Vec::new();
-    for request in placement.unplaced {
-        match label::fallback(routes, &request, cfg) {
-            Some(placed) => placement.placed.push(placed),
-            None => unresolved.push(request),
-        }
-    }
+    let placement = label::place_with_leaders(routes, requests, &label_obstacles(solved), cfg);
+    solved.label_leaders = placement
+        .placed
+        .iter()
+        .filter(|p| p.leader.is_some())
+        .count();
     solved.labels = placement.placed;
-    unresolved
+    placement.unplaced
 }
 
 #[cfg(test)]
@@ -567,6 +568,7 @@ mod tests {
             routes,
             labels: vec![],
             label_reroutes: 0,
+            label_leaders: 0,
         };
         let route_points = route_points(&solved);
         Crowded {
@@ -724,6 +726,7 @@ mod tests {
             }],
             labels: vec![],
             label_reroutes: 0,
+            label_leaders: 0,
         };
         let requests = vec![label::LabelRequest {
             edge: 0,
@@ -764,6 +767,7 @@ mod tests {
             }],
             labels: vec![],
             label_reroutes: 0,
+            label_leaders: 0,
         };
         let requests = vec![label::LabelRequest {
             edge: 0,
@@ -827,6 +831,7 @@ mod tests {
             }],
             labels: vec![],
             label_reroutes: 0,
+            label_leaders: 0,
         };
         let requests = vec![label::LabelRequest {
             edge: 0,
@@ -877,6 +882,7 @@ mod tests {
             }],
             labels: vec![],
             label_reroutes: 0,
+            label_leaders: 0,
         };
         let routes = vec![vec![(0.0, 50.0), (300.0, 50.0)]];
         let requests = vec![label::LabelRequest {
@@ -928,6 +934,7 @@ mod tests {
             routes: vec![],
             labels: vec![],
             label_reroutes: 0,
+            label_leaders: 0,
         };
         // BTreeMap orders keys: a before b.
         assert_eq!(
@@ -972,6 +979,7 @@ mod tests {
             routes: vec![],
             labels: vec![],
             label_reroutes: 0,
+            label_leaders: 0,
         };
         let v: serde_json::Value = serde_json::to_value(&solved).unwrap();
         assert_eq!(v["nodes"]["a"]["x"], 1.0);
