@@ -265,7 +265,7 @@ fn interaction_use_graph(
                 continue;
             };
             let handle = value(&lifeline.alias).unwrap_or(title);
-            if handle == "outside" || handle.contains('@') || !lifelines.insert(handle.clone()) {
+            if !is_sequence_identifier(handle) || !lifelines.insert(handle.clone()) {
                 continue;
             }
             let classifier = crate::okf::resolve_href(&path, link);
@@ -280,7 +280,7 @@ fn interaction_use_graph(
             else {
                 continue;
             };
-            if !aliases.insert(alias.clone()) {
+            if !is_sequence_identifier(alias) || !aliases.insert(alias.clone()) {
                 continue;
             }
             let target = crate::okf::resolve_href(&path, link);

@@ -662,6 +662,42 @@ fn direct_interaction_use_cycle_reports_each_valid_authored_ref() {
 }
 
 #[test]
+fn invalid_interaction_use_alias_is_excluded_from_cycle_graph() {
+    let a = "---\ntype: uml.Sequence\n---\n# A\n\n## Messages\n- ref [B](./b.md) as outside\n";
+    let b = "---\ntype: uml.Sequence\n---\n# B\n\n## Messages\n- ref [A](./a.md) as a\n";
+    let analysis = analyze([("a.md", a), ("b.md", b)]);
+
+    assert_eq!(
+        analysis
+            .declared
+            .concept("a")
+            .unwrap()
+            .interaction_uses
+            .len(),
+        1
+    );
+    assert_eq!(
+        analysis
+            .declared
+            .concept("b")
+            .unwrap()
+            .interaction_uses
+            .len(),
+        1
+    );
+    assert!(interaction(&analysis, "a").interaction_uses.is_empty());
+    assert_eq!(interaction(&analysis, "b").interaction_uses.len(), 1);
+    assert_eq!(interaction(&analysis, "b").interaction_uses[0].alias, "a");
+    assert!(analysis.diagnostics.iter().any(|diagnostic| {
+        diagnostic.file == "a.md" && diagnostic.code == DiagCode::ReservedSequenceName
+    }));
+    assert!(!analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::InteractionUseCycle));
+}
+
+#[test]
 fn indirect_three_document_cycle_reports_each_valid_authored_ref() {
     let a = "---\ntype: uml.Sequence\n---\n# A\n\n## Messages\n- ref [Missing](./missing.md) as invalid\n- ref [B](./b.md) as b\n";
     let b = "---\ntype: uml.Sequence\n---\n# B\n\n## Messages\n- ref [C](./c.md) as c\n";
