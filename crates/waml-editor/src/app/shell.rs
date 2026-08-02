@@ -77,7 +77,7 @@ pub(super) const NARROW_EXIT_W: f64 = 680.0;
 /// panel host: the stored/persisted width is the whole column, and the body is
 /// `SPLITTER_W` narrower than that number.
 pub(super) fn panel_body_w(host_w: f64) -> f64 {
-    (host_w - crate::dock_splitter::SPLITTER_W).max(0.0)
+    (host_w - crate::panel_splitter::SPLITTER_W).max(0.0)
 }
 
 pub(super) fn next_narrow(narrow: bool, viewport_w: f64) -> bool {
@@ -418,7 +418,7 @@ impl App {
             if let Some(mut view) = self
                 .ui
                 .widget(cx, id)
-                .borrow_mut::<crate::dock_splitter::DockSplitter>()
+                .borrow_mut::<crate::panel_splitter::PanelSplitter>()
             {
                 if view.visible != splitters_visible {
                     view.visible = splitters_visible;
@@ -473,15 +473,15 @@ impl App {
     /// Route the two splitters' drag actions. Wide mode only -- in narrow mode
     /// the panels float over the center at a viewport-capped width and the
     /// splitters are hidden.
-    pub(super) fn observe_dock_splitters(&mut self, cx: &mut Cx, actions: &Actions) {
+    pub(super) fn observe_panel_splitters(&mut self, cx: &mut Cx, actions: &Actions) {
         if self.narrow {
             return;
         }
-        let tree = self.ui.widget(cx, ids!(tree_splitter)).as_dock_splitter();
+        let tree = self.ui.widget(cx, ids!(tree_splitter)).as_panel_splitter();
         let inspector = self
             .ui
             .widget(cx, ids!(inspector_splitter))
-            .as_dock_splitter();
+            .as_panel_splitter();
 
         if let Some(x) = tree.dragged(actions) {
             self.apply_splitter_drag(cx, crate::dock::DockEdge::Left, x);

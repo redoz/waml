@@ -1,4 +1,4 @@
-//! `DockSplitter`: the draggable inner edge of a dock column.
+//! `PanelSplitter`: the draggable inner edge of a dock column.
 //!
 //! A [`SPLITTER_W`]-wide, `height: Fill` strip mounted as the LAST child of
 //! `tree_host` and the FIRST child of `inspector_host` -- i.e. always on the
@@ -17,9 +17,19 @@
 //! after a `Fill` sibling caches a pre-shift rect and its hit test silently
 //! misses.
 //!
+//! MOUNTING THIS (or any custom widget) IN `App`'s OWN DSL: registering the
+//! module in `App::script_mod` is necessary but NOT sufficient. App's
+//! `script_mod!` block imports widgets ONE BY ONE (`use mod.widgets.Foo`) --
+//! it has no `use mod.widgets.*` glob. A widget missing from that import list
+//! resolves to nothing and the mount is silently DROPPED: no draw, no hit
+//! test, and `ids!()` cannot find the node. Nothing is logged once the type is
+//! simply absent, and the whole test gate stays green, because the widget is
+//! not there to fail. If a splitter ever goes missing again, check the `use
+//! mod.widgets.PanelSplitter` line in `app.rs` before suspecting anything else.
+//!
 //! The widget is pure input: it knows nothing about widths, limits or docks. It
 //! reports the raw pointer x in WINDOW coordinates via
-//! [`DockSplitterAction`], and `app/shell.rs` feeds that to
+//! [`PanelSplitterAction`], and `app/shell.rs` feeds that to
 //! [`crate::splitter::drag`].
 
 use makepad_widgets::*;
@@ -32,9 +42,9 @@ script_mod! {
     use mod.atlas
     use mod.widgets.*
 
-    mod.widgets.DockSplitterBase = #(DockSplitter::register_widget(vm))
+    mod.widgets.PanelSplitterBase = #(PanelSplitter::register_widget(vm))
 
-    mod.widgets.DockSplitter = set_type_default() do mod.widgets.DockSplitterBase{
+    mod.widgets.PanelSplitter = set_type_default() do mod.widgets.PanelSplitterBase{
         width: 6.0
         height: Fill
         show_bg: true
@@ -71,7 +81,7 @@ script_mod! {
 /// Splitter input, read by the shell. Both carry the raw pointer x in WINDOW
 /// coordinates -- the splitter deliberately does no width arithmetic itself.
 #[derive(Clone, Debug, Default)]
-pub enum DockSplitterAction {
+pub enum PanelSplitterAction {
     #[default]
     None,
     /// A drag frame (the initial press, and every move while captured).
@@ -81,7 +91,7 @@ pub enum DockSplitterAction {
 }
 
 #[derive(Script, ScriptHook, Widget)]
-pub struct DockSplitter {
+pub struct PanelSplitter {
     /// The hit strip; its `draw_bg` paints the rule.
     #[deref]
     view: View,
@@ -111,25 +121,25 @@ fn rule_lit(hovered: bool, dragging: bool) -> f64 {
     }
 }
 
-impl Widget for DockSplitter {
+impl Widget for PanelSplitter {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
         let uid = self.widget_uid();
         match event.hits(cx, self.view.area()) {
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
                 self.dragging = true;
                 cx.set_cursor(MouseCursor::ColResize);
-                cx.widget_action(uid, DockSplitterAction::Dragged(fe.abs.x));
+                cx.widget_action(uid, PanelSplitterAction::Dragged(fe.abs.x));
                 self.view.redraw(cx);
             }
             Hit::FingerMove(fe) => {
                 if self.dragging {
-                    cx.widget_action(uid, DockSplitterAction::Dragged(fe.abs.x));
+                    cx.widget_action(uid, PanelSplitterAction::Dragged(fe.abs.x));
                 }
             }
             Hit::FingerUp(_) => {
                 if self.dragging {
                     self.dragging = false;
-                    cx.widget_action(uid, DockSplitterAction::Released);
+                    cx.widget_action(uid, PanelSplitterAction::Released);
                     self.view.redraw(cx);
                 }
             }
@@ -158,14 +168,14 @@ impl Widget for DockSplitter {
     }
 }
 
-impl DockSplitter {
+impl PanelSplitter {
     /// The pointer x (window coordinates) of the newest drag frame this
     /// splitter emitted in `actions`, else `None`.
     pub fn dragged(&self, actions: &Actions) -> Option<f64> {
         actions
             .find_widget_action(self.widget_uid())
             .and_then(|a| match a.cast() {
-                DockSplitterAction::Dragged(x) => Some(x),
+                PanelSplitterAction::Dragged(x) => Some(x),
                 _ => None,
             })
     }
@@ -174,17 +184,17 @@ impl DockSplitter {
     pub fn released(&self, actions: &Actions) -> bool {
         actions
             .find_widget_action(self.widget_uid())
-            .is_some_and(|a| matches!(a.cast(), DockSplitterAction::Released))
+            .is_some_and(|a| matches!(a.cast(), PanelSplitterAction::Released))
     }
 }
 
-impl DockSplitterRef {
-    /// See [`DockSplitter::dragged`].
+impl PanelSplitterRef {
+    /// See [`PanelSplitter::dragged`].
     pub fn dragged(&self, actions: &Actions) -> Option<f64> {
         self.borrow().and_then(|inner| inner.dragged(actions))
     }
 
-    /// See [`DockSplitter::released`].
+    /// See [`PanelSplitter::released`].
     pub fn released(&self, actions: &Actions) -> bool {
         self.borrow().is_some_and(|inner| inner.released(actions))
     }

@@ -18,7 +18,7 @@ use crate::document::NavCategory;
 use crate::document_host::{DocumentCommand, DocumentHost};
 use crate::editor_session::{EditorSession, ExternalReplacement, SaveCompletion, SaveTicket};
 use crate::fps_meter::FpsMeter;
-use crate::dock_splitter::DockSplitterWidgetRefExt;
+use crate::panel_splitter::PanelSplitterWidgetRefExt;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::project_settings::DockWidths;
 use crate::load;
@@ -57,6 +57,7 @@ script_mod! {
     use mod.widgets.PopupRoot
     use mod.widgets.LogoMark
     use mod.widgets.IconButton
+    use mod.widgets.PanelSplitter
     use mod.widgets.AgentMark
     use mod.widgets.DocumentHeader
     use mod.widgets.MarkdownEditor
@@ -459,7 +460,7 @@ script_mod! {
                                 width: 0.0
                                 height: Fill
                                 project_tree := ProjectTree{ width: 0.0 height: Fill }
-                                tree_splitter := DockSplitter{ rule_edge: 1.0 }
+                                tree_splitter := PanelSplitter{ rule_edge: 1.0 }
                             }
                         }
                         inspector_layer := View{
@@ -472,7 +473,7 @@ script_mod! {
                             inspector_host := View{
                                 width: 0.0
                                 height: Fill
-                                inspector_splitter := DockSplitter{ rule_edge: 0.0 }
+                                inspector_splitter := PanelSplitter{ rule_edge: 0.0 }
                                 inspector := Inspector{ width: 0.0 height: Fill }
                             }
                         }
@@ -711,12 +712,12 @@ impl AppMain for App {
         // unqueryable node (invisible glyph, `set_icon`/`clicked` no-op). Its own
         // deps (`icons`, `atlas`) are already registered above.
         crate::icon_button::script_mod(vm);
-        // `DockSplitter` is mounted directly by App's own live layout (inside
+        // `PanelSplitter` is mounted directly by App's own live layout (inside
         // `tree_host` / `inspector_host`), so it must register before the App
         // DSL is evaluated by `self::script_mod` -- same eager `mod.widgets.*`
         // resolution as `IconButton` above. Unregistered, the strip silently
         // becomes a dead, invisible, unhittable node.
-        crate::dock_splitter::script_mod(vm);
+        crate::panel_splitter::script_mod(vm);
         // `DocumentHeader` mounts `IconButton`, and App's live layout mounts
         // `DocumentHeader`, so register it after its dependency and before the
         // App DSL is evaluated by `self::script_mod`.

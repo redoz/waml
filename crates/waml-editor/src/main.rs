@@ -22,7 +22,7 @@ mod diagram_switcher;
 mod doc_tabs;
 mod doc_view;
 mod dock;
-mod dock_splitter;
+mod panel_splitter;
 mod document;
 mod document_header;
 mod document_host;
