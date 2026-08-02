@@ -738,6 +738,33 @@ fn lifetime_diagnostics_pin_the_exact_authored_message() {
 }
 
 #[test]
+fn repeated_delete_reports_the_exact_second_delete() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "delete.md",
+            "---\ntype: uml.Sequence\n---\n# Delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a destroys b\n- a destroys b\n",
+        ),
+    ]);
+    let declared = analysis.declared.concept("delete").unwrap();
+    let diagnostics = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::InvalidLifelineLifetime)
+        .collect::<Vec<_>>();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].message,
+        "lifeline is created or deleted more than once"
+    );
+    assert_eq!(
+        diagnostics[0].range,
+        Some(declared.messages[1].syntax.syntax().range())
+    );
+}
+
+#[test]
 fn repairing_an_earlier_operand_does_not_renumber_later_operands() {
     let bad = analyze([(
         "operands.md",

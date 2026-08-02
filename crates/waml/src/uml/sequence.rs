@@ -1258,11 +1258,102 @@ fn validate_lifetimes(
     diagnostics: &mut Vec<Diagnostic>,
     path: &str,
 ) {
+    fn repeated_deletes(
+        items: &[SeqChild],
+        nodes: &BTreeMap<String, &SeqNode>,
+        edges: &BTreeMap<MessageId, &SeqEdge>,
+        deleted: &mut BTreeSet<String>,
+        repeated: &mut BTreeSet<MessageId>,
+        context: &DomainAnalysisContext<'_>,
+        concept: &DeclaredConcept,
+        diagnostics: &mut Vec<Diagnostic>,
+        path: &str,
+    ) {
+        for item in items {
+            match item {
+                SeqChild::Message { edge } => {
+                    let Some(SeqEdge {
+                        kind: MessageKind::Delete,
+                        to: Some(EndpointRef::Lifeline { id }),
+                        ..
+                    }) = edges.get(edge).copied()
+                    else {
+                        continue;
+                    };
+                    if !deleted.insert(id.clone()) {
+                        repeated.insert(edge.clone());
+                        report_message(
+                            context,
+                            concept,
+                            diagnostics,
+                            DiagCode::InvalidLifelineLifetime,
+                            "lifeline is created or deleted more than once",
+                            path,
+                            edge,
+                        );
+                    }
+                }
+                SeqChild::InteractionUse { .. } => {}
+                SeqChild::Fragment { node } => {
+                    let Some(SeqNode::Fragment { kind, operands, .. }) = nodes.get(node).copied()
+                    else {
+                        continue;
+                    };
+                    let incoming = deleted.clone();
+                    let mut outcomes = Vec::new();
+                    for operand in operands {
+                        let Some(SeqNode::Operand { items, .. }) = nodes.get(operand).copied()
+                        else {
+                            continue;
+                        };
+                        let mut branch = incoming.clone();
+                        repeated_deletes(
+                            items,
+                            nodes,
+                            edges,
+                            &mut branch,
+                            repeated,
+                            context,
+                            concept,
+                            diagnostics,
+                            path,
+                        );
+                        outcomes.push(branch);
+                    }
+                    let has_else = operands.iter().any(|operand| {
+                        matches!(
+                            nodes.get(operand).copied(),
+                            Some(SeqNode::Operand {
+                                spec: OperandSpec::Else,
+                                ..
+                            })
+                        )
+                    });
+                    if matches!(kind, FragmentKind::Alt) && !has_else
+                        || matches!(
+                            kind,
+                            FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
+                        )
+                    {
+                        outcomes.push(incoming);
+                    }
+                    if let Some(first) = outcomes.first().cloned() {
+                        *deleted = outcomes.iter().skip(1).fold(first, |mut joined, branch| {
+                            joined.retain(|id| branch.contains(id));
+                            joined
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     fn walk(
         items: &[SeqChild],
         nodes: &BTreeMap<String, &SeqNode>,
         edges: &BTreeMap<MessageId, &SeqEdge>,
         alive: &mut BTreeSet<String>,
+        repeated_deletes: &BTreeSet<MessageId>,
         context: &DomainAnalysisContext<'_>,
         concept: &DeclaredConcept,
         diagnostics: &mut Vec<Diagnostic>,
@@ -1316,7 +1407,9 @@ fn validate_lifetimes(
                         }
                     };
                     require_alive(&message.from);
-                    if message.kind != MessageKind::Create {
+                    if message.kind != MessageKind::Create
+                        && !(message.kind == MessageKind::Delete && repeated_deletes.contains(edge))
+                    {
                         if let Some(target) = &message.to {
                             require_alive(target);
                         }
@@ -1393,6 +1486,7 @@ fn validate_lifetimes(
                             nodes,
                             edges,
                             &mut branch,
+                            repeated_deletes,
                             context,
                             concept,
                             diagnostics,
@@ -1470,11 +1564,24 @@ fn validate_lifetimes(
         .iter()
         .map(|edge| (edge.id.clone(), edge))
         .collect::<BTreeMap<_, _>>();
+    let mut repeated_delete_messages = BTreeSet::new();
+    repeated_deletes(
+        items,
+        &node_by_id,
+        &edge_by_id,
+        &mut BTreeSet::new(),
+        &mut repeated_delete_messages,
+        context,
+        concept,
+        diagnostics,
+        path,
+    );
     walk(
         items,
         &node_by_id,
         &edge_by_id,
         &mut alive,
+        &repeated_delete_messages,
         context,
         concept,
         diagnostics,
