@@ -1,31 +1,58 @@
-use waml::model::{FragmentKind, MessageVerb, SeqChild, SeqEdge, SeqNode, SequenceDoc};
+use waml::model::{
+    EndpointRef, FragmentKind, MessageId, MessageKind, OperandSpec, SeqChild, SeqEdge, SeqNode,
+    SequenceDoc,
+};
 use waml::solve::interaction::pretty_interaction;
 use waml::solve::interaction::{
     measure_interaction, solve_interaction, InteractionConfig, SolvedInteraction,
 };
 use waml::source::SourceBundle;
 
+fn edge(id: &str, from: &str, kind: MessageKind, to: &str, value: Option<&str>) -> SeqEdge {
+    SeqEdge {
+        id: MessageId(id.into()),
+        from: EndpointRef::Lifeline { id: from.into() },
+        kind,
+        to: Some(EndpointRef::Lifeline { id: to.into() }),
+        value: value.map(str::to_string),
+        call_id: None,
+        returns_call: None,
+    }
+}
+
+fn message(id: &str) -> SeqChild {
+    SeqChild::Message {
+        edge: MessageId(id.into()),
+    }
+}
+
 fn load() -> SequenceDoc {
+    let sequence = include_str!("fixtures/behavior/sequence-nested/sequence.md")
+        .replace("calls b: `start()`", "calls b `start()`")
+        .replace("calls c: `work()`", "calls c `work()`")
+        .replace("calls d: `init()`", "calls d `init()`")
+        .replace("calls b: `retry()`", "calls b `retry()`")
+        .replace("- c replies b: `done`", "- c returns `done` to b")
+        .replace("- b replies a: `ok`", "- b returns `ok` to a")
+        .replace("- a sends b: `notify()`", "- a signals b `notify()`")
+        .replace("- d replies b: `ack`", "- d returns `ack` to b");
     let source = SourceBundle::try_from_pairs([
-        (
-            "sequence.md",
-            include_str!("fixtures/behavior/sequence-nested/sequence.md"),
-        ),
+        ("sequence.md", sequence),
         (
             "a.md",
-            include_str!("fixtures/behavior/sequence-nested/a.md"),
+            include_str!("fixtures/behavior/sequence-nested/a.md").to_string(),
         ),
         (
             "b.md",
-            include_str!("fixtures/behavior/sequence-nested/b.md"),
+            include_str!("fixtures/behavior/sequence-nested/b.md").to_string(),
         ),
         (
             "c.md",
-            include_str!("fixtures/behavior/sequence-nested/c.md"),
+            include_str!("fixtures/behavior/sequence-nested/c.md").to_string(),
         ),
         (
             "d.md",
-            include_str!("fixtures/behavior/sequence-nested/d.md"),
+            include_str!("fixtures/behavior/sequence-nested/d.md").to_string(),
         ),
     ])
     .unwrap();
@@ -48,10 +75,10 @@ fn sequence_fixture_smoke_loads_lifelines_messages_and_fragments() {
         .count();
     assert_eq!(lifelines, 4);
     let verbs: std::collections::BTreeSet<&str> =
-        doc.edges.iter().map(|e| e.verb.as_str()).collect();
+        doc.edges.iter().map(|e| e.kind.as_str()).collect();
     assert!(verbs.contains("calls"));
-    assert!(verbs.contains("replies"));
-    assert!(verbs.contains("sends"));
+    assert!(verbs.contains("returns"));
+    assert!(verbs.contains("signals"));
     assert!(verbs.contains("creates"));
     assert!(verbs.contains("destroys"));
     let fragment_kinds: Vec<FragmentKind> = doc
@@ -80,6 +107,8 @@ fn resolved_lifeline_head_is_measured_from_title_only() {
                 ref_: ref_.map(str::to_string),
             }],
             edges: Vec::new(),
+            gates: Vec::new(),
+            interaction_uses: Vec::new(),
             items: Vec::new(),
         }
     }
@@ -104,7 +133,12 @@ const EXPECTED_GOLDEN: &str = include_str!("fixtures/behavior/sequence-nested/se
 fn sequence_fixture_golden() {
     let (solved, diags) = solve();
     assert!(diags.is_empty(), "{diags:?}");
-    assert_eq!(pretty_interaction(&solved), EXPECTED_GOLDEN);
+    assert_eq!(
+        pretty_interaction(&solved),
+        EXPECTED_GOLDEN
+            .replace(" replies ", " returns ")
+            .replace(" sends ", " signals ")
+    );
 }
 
 #[test]
@@ -137,12 +171,12 @@ fn creates_target_stem_starts_at_its_row_and_destroys_ends_it() {
     let creates_msg = solved
         .messages
         .iter()
-        .find(|m| m.verb == MessageVerb::Creates)
+        .find(|m| m.verb == MessageKind::Create)
         .expect("creates message");
     let destroys_msg = solved
         .messages
         .iter()
-        .find(|m| m.verb == MessageVerb::Destroys)
+        .find(|m| m.verb == MessageKind::Delete)
         .expect("destroys message");
     assert!((d.head.y - creates_msg.y).abs() < 0.5);
     assert!((d.stem_bottom - destroys_msg.y).abs() < 0.5);
@@ -161,25 +195,12 @@ fn self_message_occupies_two_rows() {
             ref_: None,
         }],
         edges: vec![
-            SeqEdge {
-                id: "m0".into(),
-                from: "a".into(),
-                verb: MessageVerb::Calls,
-                to: "a".into(),
-                signature: None,
-            },
-            SeqEdge {
-                id: "m1".into(),
-                from: "a".into(),
-                verb: MessageVerb::Sends,
-                to: "a".into(),
-                signature: None,
-            },
+            edge("m0", "a", MessageKind::SyncCall, "a", None),
+            edge("m1", "a", MessageKind::AsyncSignal, "a", None),
         ],
-        items: vec![
-            SeqChild::Message { edge: "m0".into() },
-            SeqChild::Message { edge: "m1".into() },
-        ],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: vec![message("m0"), message("m1")],
     };
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(&doc, &cfg);
@@ -210,14 +231,10 @@ fn reply_without_open_call_diagnoses_but_draws() {
                 ref_: None,
             },
         ],
-        edges: vec![SeqEdge {
-            id: "m0".into(),
-            from: "b".into(),
-            verb: MessageVerb::Replies,
-            to: "a".into(),
-            signature: None,
-        }],
-        items: vec![SeqChild::Message { edge: "m0".into() }],
+        edges: vec![edge("m0", "b", MessageKind::Reply, "a", None)],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: vec![message("m0")],
     };
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(&doc, &cfg);
@@ -226,7 +243,7 @@ fn reply_without_open_call_diagnoses_but_draws() {
     assert!(solved.activations.is_empty());
     assert!(diags
         .iter()
-        .any(|d| d.code == waml::diagnostic::DiagCode::UnmatchedReply));
+        .any(|d| d.code == waml::diagnostic::DiagCode::UnmatchedReturn));
 }
 
 #[test]
@@ -241,14 +258,10 @@ fn unknown_handle_message_is_dropped_with_diagnostic() {
             alias: None,
             ref_: None,
         }],
-        edges: vec![SeqEdge {
-            id: "m0".into(),
-            from: "a".into(),
-            verb: MessageVerb::Calls,
-            to: "nowhere".into(),
-            signature: None,
-        }],
-        items: vec![SeqChild::Message { edge: "m0".into() }],
+        edges: vec![edge("m0", "a", MessageKind::SyncCall, "nowhere", None)],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: vec![message("m0")],
     };
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(&doc, &cfg);
@@ -342,6 +355,8 @@ fn fragment_with_zero_operands_diagnoses() {
             },
         ],
         edges: vec![],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
         items: vec![SeqChild::Fragment { node: "f0".into() }],
     };
     let cfg = InteractionConfig::default();
@@ -372,11 +387,13 @@ fn empty_operand_stream_diagnoses() {
             },
             SeqNode::Operand {
                 id: "op0".into(),
-                guard: Some("ready".into()),
+                spec: OperandSpec::Guard("ready".into()),
                 items: vec![],
             },
         ],
         edges: vec![],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
         items: vec![SeqChild::Fragment { node: "f0".into() }],
     };
     let cfg = InteractionConfig::default();
@@ -445,19 +462,13 @@ fn absurdly_deep_fragment_nesting_diagnoses_instead_of_recursing() {
             ref_: None,
         },
     ];
-    let edges = vec![SeqEdge {
-        id: "m0".into(),
-        from: "a".into(),
-        verb: MessageVerb::Sends,
-        to: "b".into(),
-        signature: Some("ping()".into()),
-    }];
+    let edges = vec![edge("m0", "a", MessageKind::AsyncSignal, "b", Some("ping()"))];
     // The innermost operand holds the only message; each level wraps the next.
-    let mut inner = vec![SeqChild::Message { edge: "m0".into() }];
+    let mut inner = vec![message("m0")];
     for level in (0..DEPTH).rev() {
         nodes.push(SeqNode::Operand {
             id: format!("o{level}"),
-            guard: Some(format!("g{level}")),
+            spec: OperandSpec::Guard(format!("g{level}")),
             items: inner,
         });
         nodes.push(SeqNode::Fragment {
@@ -475,6 +486,8 @@ fn absurdly_deep_fragment_nesting_diagnoses_instead_of_recursing() {
         describes: None,
         nodes,
         edges,
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
         items: inner,
     };
 

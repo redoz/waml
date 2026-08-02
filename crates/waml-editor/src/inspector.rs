@@ -337,7 +337,7 @@ fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView
     let (doc_key, id) = split_behavior_key(key)?;
     let doc = model.interactions.iter().find(|d| d.key == doc_key)?;
 
-    if let Some(edge) = doc.edges.iter().find(|e| e.id == id) {
+    if let Some(edge) = doc.edges.iter().find(|e| e.id.0 == id) {
         let lifeline_title = |lid: &str| -> String {
             doc.nodes
                 .iter()
@@ -358,10 +358,16 @@ fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView
         SeqNode::Fragment { id: nid, kind, .. } if nid == id => {
             Some(behavior_element_view(kind.as_str().to_string(), "Fragment"))
         }
-        SeqNode::Operand { id: nid, guard, .. } if nid == id => Some(behavior_element_view(
-            guard.clone().unwrap_or_else(|| "else".to_string()),
-            "Operand",
-        )),
+        SeqNode::Operand { id: nid, spec, .. } if nid == id => {
+            let label = match spec {
+                waml::model::OperandSpec::Guard(value) => value.clone(),
+                waml::model::OperandSpec::Else => "else".to_string(),
+                waml::model::OperandSpec::Branch { label } => {
+                    label.clone().unwrap_or_else(|| "branch".to_string())
+                }
+            };
+            Some(behavior_element_view(label, "Operand"))
+        }
         _ => None,
     })
 }
@@ -372,14 +378,22 @@ pub fn message_label(
     edge: &waml::model::SeqEdge,
     lifeline_title: &dyn Fn(&str) -> String,
 ) -> String {
+    let endpoint_title = |endpoint: &waml::model::EndpointRef| match endpoint {
+        waml::model::EndpointRef::Lifeline { id } => lifeline_title(id),
+        waml::model::EndpointRef::Outside => "outside".to_string(),
+        waml::model::EndpointRef::LocalGate { gate } => format!("@{gate}"),
+        waml::model::EndpointRef::UseGate { interaction_use, gate } => {
+            format!("{}@{gate}", interaction_use.0)
+        }
+    };
     let head = format!(
         "{} {} {}",
-        lifeline_title(&edge.from),
-        edge.verb.as_str(),
-        lifeline_title(&edge.to)
+        endpoint_title(&edge.from),
+        edge.kind.as_str(),
+        edge.to.as_ref().map(&endpoint_title).unwrap_or_default()
     );
-    match &edge.signature {
-        Some(signature) => format!("{head}: {signature}"),
+    match &edge.value {
+        Some(value) => format!("{head}: {value}"),
         None => head,
     }
 }

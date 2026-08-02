@@ -37,11 +37,26 @@ pub enum DiagCode {
     EmptyFlowDocument,
     UnknownFlowTarget,
     UnknownLifelineHandle,
-    UnmatchedReply,
     UninvolvedLifeline,
     FragmentZeroOperands,
     EmptyOperandStream,
     FragmentNestingTooDeep,
+    DuplicateSequenceName,
+    ReservedSequenceName,
+    UnknownSequenceEndpoint,
+    InvalidSequenceEndpoint,
+    InvalidLifelineLifetime,
+    DuplicateCallIdentity,
+    UnknownCallIdentity,
+    UnmatchedReturn,
+    AmbiguousReturn,
+    CompletedReturn,
+    ConflictingReturn,
+    InvalidFragmentOperands,
+    DuplicateGate,
+    InvalidInteractionUse,
+    InteractionUseCycle,
+    UnsupportedSequenceForm,
 }
 
 impl DiagCode {
@@ -70,11 +85,26 @@ impl DiagCode {
             DiagCode::EmptyFlowDocument => "empty-flow-document",
             DiagCode::UnknownFlowTarget => "unknown-flow-target",
             DiagCode::UnknownLifelineHandle => "unknown-lifeline-handle",
-            DiagCode::UnmatchedReply => "unmatched-reply",
             DiagCode::UninvolvedLifeline => "uninvolved-lifeline",
             DiagCode::FragmentZeroOperands => "fragment-zero-operands",
             DiagCode::EmptyOperandStream => "empty-operand-stream",
             DiagCode::FragmentNestingTooDeep => "fragment-nesting-too-deep",
+            DiagCode::DuplicateSequenceName => "duplicate-sequence-name",
+            DiagCode::ReservedSequenceName => "reserved-sequence-name",
+            DiagCode::UnknownSequenceEndpoint => "unknown-sequence-endpoint",
+            DiagCode::InvalidSequenceEndpoint => "invalid-sequence-endpoint",
+            DiagCode::InvalidLifelineLifetime => "invalid-lifeline-lifetime",
+            DiagCode::DuplicateCallIdentity => "duplicate-call-identity",
+            DiagCode::UnknownCallIdentity => "unknown-call-identity",
+            DiagCode::UnmatchedReturn => "unmatched-return",
+            DiagCode::AmbiguousReturn => "ambiguous-return",
+            DiagCode::CompletedReturn => "completed-return",
+            DiagCode::ConflictingReturn => "conflicting-return",
+            DiagCode::InvalidFragmentOperands => "invalid-fragment-operands",
+            DiagCode::DuplicateGate => "duplicate-gate",
+            DiagCode::InvalidInteractionUse => "invalid-interaction-use",
+            DiagCode::InteractionUseCycle => "interaction-use-cycle",
+            DiagCode::UnsupportedSequenceForm => "unsupported-sequence-form",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
@@ -87,7 +117,6 @@ impl DiagCode {
             | DiagCode::InstanceOfUnresolved
             | DiagCode::UnreachableFlowNode
             | DiagCode::UnknownLifelineHandle
-            | DiagCode::UnmatchedReply
             | DiagCode::UninvolvedLifeline
             | DiagCode::FragmentZeroOperands
             | DiagCode::EmptyOperandStream

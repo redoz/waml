@@ -355,27 +355,39 @@ fn parser_platform_corpus_full_and_retained_results_match() {
                     &mut out,
                 );
             }
-            for (index, message) in concept.messages.iter().enumerate() {
-                field(&format!("message:{index}:from"), &message.from, &mut out);
-                field(&format!("message:{index}:verb"), &message.verb, &mut out);
-                field(&format!("message:{index}:to"), &message.to, &mut out);
-                field(
-                    &format!("message:{index}:signature"),
-                    &message.signature,
-                    &mut out,
-                );
+            for (index, gate) in concept.gates.iter().enumerate() {
+                field(&format!("gate:{index}:name"), &gate.name, &mut out);
             }
-            for (index, operand) in concept.sequence_operands.iter().enumerate() {
-                field(
-                    &format!("sequence_operand:{index}:fragment"),
-                    &operand.fragment,
-                    &mut out,
-                );
-                field(
-                    &format!("sequence_operand:{index}:guard"),
-                    &operand.guard,
-                    &mut out,
-                );
+            for (index, message) in concept.messages.iter().enumerate() {
+                field(&format!("message:{index}:source"), &message.source, &mut out);
+                field(&format!("message:{index}:kind"), &message.kind, &mut out);
+                field(&format!("message:{index}:target"), &message.target, &mut out);
+                field(&format!("message:{index}:value"), &message.value, &mut out);
+                field(&format!("message:{index}:call_id"), &message.call_id, &mut out);
+                field(&format!("message:{index}:return_to"), &message.return_to, &mut out);
+                field(&format!("message:{index}:return_for"), &message.return_for, &mut out);
+            }
+            for (index, fragment) in concept.fragments.iter().enumerate() {
+                field(&format!("fragment:{index}:kind"), &fragment.kind, &mut out);
+            }
+            for (index, operand) in concept.operands.iter().enumerate() {
+                field(&format!("operand:{index}:spec"), &operand.spec, &mut out);
+            }
+            for (index, interaction_use) in concept.interaction_uses.iter().enumerate() {
+                field(&format!("use:{index}:link"), &interaction_use.link, &mut out);
+                field(&format!("use:{index}:alias"), &interaction_use.alias, &mut out);
+                for (binding_index, binding) in interaction_use.bindings.iter().enumerate() {
+                    field(
+                        &format!("use:{index}:binding:{binding_index}:local"),
+                        &binding.local,
+                        &mut out,
+                    );
+                    field(
+                        &format!("use:{index}:binding:{binding_index}:target"),
+                        &binding.target,
+                        &mut out,
+                    );
+                }
             }
         }
         out
@@ -490,7 +502,12 @@ fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
     let source = SourceBundle::try_from_pairs(
         PARSER_PLATFORM_FIXTURES
             .iter()
-            .map(|(path, text)| (*path, *text)),
+            .map(|(path, text)| {
+                (
+                    *path,
+                    text.replace("Buyer calls Order: `submit()`", "Buyer calls Order `submit()`"),
+                )
+            }),
     )
     .unwrap();
     let okf = waml::okf::Bundle::parse(&source).unwrap();
@@ -709,17 +726,17 @@ fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
     );
     assert_eq!(
         (
-            interaction.edges[0].id.as_str(),
-            interaction.edges[0].from.as_str(),
-            interaction.edges[0].verb,
-            interaction.edges[0].to.as_str(),
-            interaction.edges[0].signature.as_deref(),
+            interaction.edges[0].id.0.as_str(),
+            &interaction.edges[0].from,
+            interaction.edges[0].kind,
+            interaction.edges[0].to.as_ref(),
+            interaction.edges[0].value.as_deref(),
         ),
         (
             "m0",
-            "Buyer",
-            waml::model::MessageVerb::Calls,
-            "Order",
+            &waml::model::EndpointRef::Lifeline { id: "Buyer".into() },
+            waml::model::MessageKind::SyncCall,
+            Some(&waml::model::EndpointRef::Lifeline { id: "Order".into() }),
             Some("submit()"),
         ),
         "sequence.md message values"

@@ -356,14 +356,14 @@ fn build_interaction_scene(
         .collect();
 
     let edges_by_id: BTreeMap<&str, &waml::model::SeqEdge> =
-        doc.edges.iter().map(|e| (e.id.as_str(), e)).collect();
+        doc.edges.iter().map(|e| (e.id.0.as_str(), e)).collect();
     let messages: Vec<MessageGeo> = solved
         .messages
         .iter()
         .map(|m| {
             let label = edges_by_id
                 .get(m.id.as_str())
-                .and_then(|e| e.signature.clone());
+                .and_then(|e| e.value.clone());
             MessageGeo {
                 id: m.id.clone(),
                 verb: m.verb,
@@ -591,7 +591,7 @@ fn behavior_elements(
         };
         for edge in &doc.edges {
             rows.push(ElementRow {
-                key: behavior_element_key(doc_key, &edge.id),
+                key: behavior_element_key(doc_key, &edge.id.0),
                 label: crate::inspector::message_label(edge, &lifeline_title),
                 kind: ElementKind::BehaviorElement,
             });
@@ -644,7 +644,7 @@ fn target_for_subject(
         Subject::BehaviorElement(key) => {
             let (_, id) = crate::inspector::split_behavior_key(key)?;
             let doc = interaction?;
-            if doc.edges.iter().any(|e| e.id == id) {
+            if doc.edges.iter().any(|e| e.id.0 == id) {
                 return Some(BehaviorTarget::Message(id.to_string()));
             }
             doc.nodes
@@ -1134,6 +1134,8 @@ mod tests {
                 ref_: ref_.map(str::to_string),
             }],
             edges: Vec::new(),
+            gates: Vec::new(),
+            interaction_uses: Vec::new(),
             items: Vec::new(),
         }
     }

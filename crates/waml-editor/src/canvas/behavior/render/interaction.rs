@@ -15,7 +15,7 @@ use crate::canvas::primitives::{
 use crate::canvas::viewport::ViewportSnapshot;
 use crate::node_style::AccentBucket;
 use makepad_widgets::*;
-use waml::model::MessageVerb;
+use waml::model::MessageKind;
 
 /// Head fill: a hint of the participant's accent, not a field of it -- the
 /// gradient border carries the colour, so the wash only has to keep the box
@@ -396,7 +396,7 @@ fn draw_message(
         .linework
         .thickness(emphasis.thickness(MESSAGE_THICKNESS));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
-    let dashed = matches!(message.verb, MessageVerb::Replies | MessageVerb::Creates);
+    let dashed = matches!(message.verb, MessageKind::Reply | MessageKind::Create);
 
     let (from, to) = match message.self_loop {
         Some(rect) => {
@@ -422,7 +422,10 @@ fn draw_message(
         }
     };
 
-    let filled_head = matches!(message.verb, MessageVerb::Calls | MessageVerb::Destroys);
+    let filled_head = matches!(
+        message.verb,
+        MessageKind::SyncCall | MessageKind::AsyncCall | MessageKind::Delete
+    );
     draw_arrowhead(cx, &camera, rect_pos, from, to, filled_head, draws);
 
     if let Some(label) = &message.label {

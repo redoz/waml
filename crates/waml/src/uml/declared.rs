@@ -1,6 +1,7 @@
 use super::syntax::{
-    AttributeSyntax, InlineInstanceSyntax, MemberSyntax, RelationshipSyntax, SlotSyntax,
-    UmlLanguage, ValueSyntax,
+    AttributeSyntax, BindingSyntax, GateSyntax, InlineInstanceSyntax, InteractionUseSyntax,
+    MemberSyntax, MessageSyntax, RelationshipSyntax, SequenceFragmentSyntax,
+    SequenceOperandSyntax, SlotSyntax, UmlLanguage, ValueSyntax,
 };
 use crate::{
     model::{TypeRef, Visibility},
@@ -104,19 +105,63 @@ pub struct DeclaredLifeline {
     pub title: DeclaredField<UmlLanguage, String>,
     pub alias: DeclaredField<UmlLanguage, String>,
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeclaredEndpointRef {
+    Lifeline(String),
+    Outside,
+    LocalGate(String),
+    UseGate { use_alias: String, gate: String },
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeclaredMessageKind {
+    SyncCall,
+    AsyncCall,
+    AsyncSignal,
+    Reply,
+    Create,
+    Delete,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeclaredOperandSpec {
+    Guard(String),
+    Else,
+    Branch { label: Option<String> },
+}
 pub struct DeclaredMessage {
-    pub syntax: super::syntax::MessageSyntax,
-    pub from: DeclaredField<UmlLanguage, String>,
-    pub verb: DeclaredField<UmlLanguage, crate::model::MessageVerb>,
-    pub to: DeclaredField<UmlLanguage, String>,
-    pub signature: DeclaredField<UmlLanguage, String>,
+    pub syntax: MessageSyntax,
+    pub source: DeclaredField<UmlLanguage, DeclaredEndpointRef>,
+    pub kind: DeclaredField<UmlLanguage, DeclaredMessageKind>,
+    pub target: DeclaredField<UmlLanguage, DeclaredEndpointRef>,
+    pub value: DeclaredField<UmlLanguage, String>,
+    pub call_id: DeclaredField<UmlLanguage, String>,
+    pub return_to: DeclaredField<UmlLanguage, DeclaredEndpointRef>,
+    pub return_for: DeclaredField<UmlLanguage, String>,
     pub depth: usize,
 }
-pub struct DeclaredSequenceOperand {
-    pub syntax: super::syntax::SequenceOperandSyntax,
-    pub fragment: DeclaredField<UmlLanguage, crate::model::FragmentKind>,
-    pub guard: DeclaredField<UmlLanguage, String>,
-    pub is_else: bool,
+pub struct DeclaredGate {
+    pub syntax: GateSyntax,
+    pub name: DeclaredField<UmlLanguage, String>,
+}
+pub struct DeclaredFragment {
+    pub syntax: SequenceFragmentSyntax,
+    pub kind: DeclaredField<UmlLanguage, crate::model::FragmentKind>,
+    pub depth: usize,
+}
+pub struct DeclaredOperand {
+    pub syntax: SequenceOperandSyntax,
+    pub spec: DeclaredField<UmlLanguage, DeclaredOperandSpec>,
+    pub depth: usize,
+}
+pub struct DeclaredBinding {
+    pub syntax: BindingSyntax,
+    pub local: DeclaredField<UmlLanguage, String>,
+    pub target: DeclaredField<UmlLanguage, String>,
+}
+pub struct DeclaredInteractionUse {
+    pub syntax: InteractionUseSyntax,
+    pub link: DeclaredField<UmlLanguage, String>,
+    pub alias: DeclaredField<UmlLanguage, String>,
+    pub bindings: Arc<[DeclaredBinding]>,
     pub depth: usize,
 }
 pub enum DeclaredLayoutStatement {
@@ -142,8 +187,11 @@ pub struct DeclaredConcept {
     pub layout: Arc<[DeclaredField<UmlLanguage, DeclaredLayoutStatement>]>,
     pub flow_nodes: Arc<[DeclaredFlowNode]>,
     pub lifelines: Arc<[DeclaredLifeline]>,
+    pub gates: Arc<[DeclaredGate]>,
     pub messages: Arc<[DeclaredMessage]>,
-    pub sequence_operands: Arc<[DeclaredSequenceOperand]>,
+    pub fragments: Arc<[DeclaredFragment]>,
+    pub operands: Arc<[DeclaredOperand]>,
+    pub interaction_uses: Arc<[DeclaredInteractionUse]>,
 }
 #[derive(Default)]
 pub struct DeclaredBundle {

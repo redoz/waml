@@ -6,6 +6,7 @@ mod format;
 pub(crate) mod lower;
 pub mod ops;
 pub(crate) mod rename;
+pub(crate) mod sequence;
 mod repair;
 pub mod selector;
 pub mod syntax;
@@ -18,10 +19,11 @@ pub use selector::{RelationshipSelector, Selector};
 pub type Projection = crate::model::Model;
 pub use analysis::{analyze, Analysis};
 pub use declared::{
-    DeclaredAttribute, DeclaredBundle, DeclaredConcept, DeclaredField, DeclaredFlowNode,
-    DeclaredFlowTransition, DeclaredInlineInstance, DeclaredLayoutStatement, DeclaredLifeline,
-    DeclaredMember, DeclaredMemberGroup, DeclaredMessage, DeclaredRelationship,
-    DeclaredSequenceOperand, DeclaredSlot, DeclaredValue, ExpectedSyntax,
+    DeclaredAttribute, DeclaredBinding, DeclaredBundle, DeclaredConcept, DeclaredEndpointRef,
+    DeclaredField, DeclaredFlowNode, DeclaredFlowTransition, DeclaredFragment, DeclaredGate,
+    DeclaredInlineInstance, DeclaredInteractionUse, DeclaredLayoutStatement, DeclaredLifeline,
+    DeclaredMember, DeclaredMemberGroup, DeclaredMessage, DeclaredMessageKind, DeclaredOperand,
+    DeclaredOperandSpec, DeclaredRelationship, DeclaredSlot, DeclaredValue, ExpectedSyntax,
 };
 pub use syntax::{
     AnchoredSyntax, AxisSyntax, DiagramMembersSyntax, DirectionClauseSyntax, EdgeSyntax,

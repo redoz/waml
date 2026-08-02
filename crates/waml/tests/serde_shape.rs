@@ -1,7 +1,11 @@
 #![cfg(feature = "serde")]
 //! Pins the retained Rust JSON shape of `Model`.
 use waml::diagnostic::{DiagCode, Diagnostic, Severity};
-use waml::model::{AssocName, BehaviorKind, ElementType, Model, Node, UmlMetaclass, Visibility};
+use waml::model::{
+    AssocName, BehaviorKind, ElementType, EndpointRef, FragmentKind, InteractionUseId, MessageId,
+    MessageKind, Model, Node, OperandSpec, SeqBinding, SeqChild, SeqEdge, SeqInteractionUse,
+    SeqNode, SequenceDoc, UmlMetaclass, Visibility,
+};
 use waml::multiplicity::Multiplicity;
 fn projection(bundle: &[(String, String)]) -> Model {
     let source = waml::source::SourceBundle::try_from_pairs(bundle.iter().cloned()).unwrap();
@@ -309,45 +313,115 @@ fn sequence_doc_json_matches_ts_field_names() {
     let b = vec![
         ("s/buyer.md".to_string(), "---\ntype: uml.Class\ntitle: Buyer\n---\n# Buyer\n".to_string()),
         ("s/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
+        ("s/use.md".to_string(), "---\ntype: uml.Sequence\ntitle: Use\n---\n# Use\n".to_string()),
         ("s/seq.md".to_string(),
-         "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Buyer](./buyer.md) as buyer\n- [Order](./order.md) as order\n\n## Messages\n- buyer calls order: `tick()`\n- opt\n  - when `ready`\n    - buyer sends order: `go()`\n".to_string()),
+         "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Buyer](./buyer.md) as buyer\n- [Order](./order.md) as order\n\n## Gates\n- request\n\n## Messages\n- buyer calls order `submit()` as submission\n- order returns `accepted` for submission\n- par\n  - branch `left`\n    - buyer signals order `go`\n  - branch `right`\n    - order signals buyer `done`\n- ref [Use](./use.md) as auth\n".to_string()),
     ];
     let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
     let s = &v["interactions"][0];
-    // Lifelines are tagged nodes keyed by their handle; `ref`/`alias` preserved.
     assert_eq!(s["nodes"][0]["node"], "lifeline");
     assert_eq!(s["nodes"][0]["id"], "buyer");
     assert_eq!(s["nodes"][0]["ref"], "s/buyer");
     assert_eq!(s["nodes"][0]["alias"], "buyer");
-    // Messages become ordered edges (`m0`, `m1`, … in time order).
     assert_eq!(s["edges"][0]["id"], "m0");
-    assert_eq!(s["edges"][0]["verb"], "calls");
-    assert_eq!(s["edges"][0]["signature"], "tick()");
-    // The root item stream references the edge, then the fragment (document order).
-    assert_eq!(s["items"][0]["item"], "message");
-    assert_eq!(s["items"][0]["edge"], "m0");
-    assert_eq!(s["items"][1]["item"], "fragment");
-    assert_eq!(s["items"][1]["node"], "f0");
-    // Containment: the operand is emitted before its fragment; guard + nested edge kept.
-    let operand = s["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|node| node["id"] == "f0.o0")
-        .unwrap();
-    assert_eq!(operand["node"], "operand");
-    assert_eq!(operand["guard"], "ready");
-    assert_eq!(operand["items"][0]["edge"], "m1");
-    let fragment = s["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|node| node["id"] == "f0")
-        .unwrap();
-    assert_eq!(fragment["node"], "fragment");
-    assert_eq!(fragment["kind"], "opt");
-    assert_eq!(fragment["operands"][0], "f0.o0");
+    assert_eq!(s["edges"][0]["kind"], "syncCall");
+    assert_eq!(
+        s["edges"][0]["from"],
+        serde_json::json!({"endpoint":"lifeline","id":"buyer"})
+    );
+    assert_eq!(s["edges"][0]["callId"], "submission");
+    assert_eq!(s["edges"][1]["kind"], "reply");
+    assert_eq!(s["edges"][1]["returnsCall"], "m0");
+    assert_eq!(s["gates"], serde_json::json!(["request"]));
+    assert_eq!(s["interactionUses"][0]["alias"], "auth");
+
+    let endpoints = [
+        EndpointRef::Outside,
+        EndpointRef::LocalGate { gate: "local".into() },
+        EndpointRef::UseGate {
+            interaction_use: InteractionUseId("u0".into()),
+            gate: "remote".into(),
+        },
+    ];
+    assert_eq!(
+        serde_json::from_value::<Vec<EndpointRef>>(serde_json::to_value(&endpoints).unwrap())
+            .unwrap(),
+        endpoints
+    );
+    for kind in [
+        MessageKind::SyncCall,
+        MessageKind::AsyncCall,
+        MessageKind::AsyncSignal,
+        MessageKind::Reply,
+        MessageKind::Create,
+        MessageKind::Delete,
+    ] {
+        assert_eq!(
+            serde_json::from_value::<MessageKind>(serde_json::to_value(kind).unwrap()).unwrap(),
+            kind
+        );
+    }
+    for kind in [
+        FragmentKind::Alt,
+        FragmentKind::Opt,
+        FragmentKind::Loop,
+        FragmentKind::Par,
+        FragmentKind::Break,
+        FragmentKind::Critical,
+        FragmentKind::Assert,
+        FragmentKind::Neg,
+    ] {
+        assert_eq!(
+            serde_json::from_value::<FragmentKind>(serde_json::to_value(kind).unwrap()).unwrap(),
+            kind
+        );
+    }
+    for spec in [
+        OperandSpec::Guard("ready".into()),
+        OperandSpec::Else,
+        OperandSpec::Branch { label: Some("a".into()) },
+    ] {
+        assert_eq!(
+            serde_json::from_value::<OperandSpec>(serde_json::to_value(&spec).unwrap()).unwrap(),
+            spec
+        );
+    }
+
+    let direct = SequenceDoc {
+        key: "direct".into(),
+        title: "Direct".into(),
+        describes: None,
+        nodes: vec![SeqNode::Operand {
+            id: "o0".into(),
+            spec: OperandSpec::Branch { label: None },
+            items: vec![SeqChild::InteractionUse {
+                interaction_use: InteractionUseId("u0".into()),
+            }],
+        }],
+        edges: vec![SeqEdge {
+            id: MessageId("m0".into()),
+            from: EndpointRef::Outside,
+            kind: MessageKind::AsyncSignal,
+            to: Some(EndpointRef::LocalGate { gate: "local".into() }),
+            value: Some("payload".into()),
+            call_id: None,
+            returns_call: None,
+        }],
+        gates: vec!["local".into()],
+        interaction_uses: vec![SeqInteractionUse {
+            id: InteractionUseId("u0".into()),
+            target: "target".into(),
+            alias: "target_use".into(),
+            bindings: vec![SeqBinding { local: "a".into(), target: "b".into() }],
+            gates: vec!["remote".into()],
+        }],
+        items: vec![],
+    };
+    assert_eq!(
+        serde_json::from_value::<SequenceDoc>(serde_json::to_value(&direct).unwrap()).unwrap(),
+        direct
+    );
 }
 
 #[test]

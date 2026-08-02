@@ -5,7 +5,7 @@
 use super::sizing::{self, Font};
 use super::{Rect, Size, SizeMap};
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::model::{FragmentKind, MessageVerb, SeqChild, SeqEdge, SeqNode, SequenceDoc};
+use crate::model::{EndpointRef, FragmentKind, MessageKind, OperandSpec, SeqChild, SeqEdge, SeqNode, SequenceDoc};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Tunable layout constants for the interaction solver (design spec §1.1).
@@ -74,7 +74,7 @@ pub struct SolvedActivation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolvedMessage {
     pub id: String,
-    pub verb: MessageVerb,
+    pub verb: MessageKind,
     pub from_x: f64,
     pub to_x: f64,
     pub y: f64,
@@ -117,6 +117,13 @@ fn message_size_key(id: &str) -> String {
     format!("message:{id}")
 }
 
+fn endpoint_lifeline(endpoint: &EndpointRef) -> Option<&str> {
+    match endpoint {
+        EndpointRef::Lifeline { id } => Some(id),
+        EndpointRef::Outside | EndpointRef::LocalGate { .. } | EndpointRef::UseGate { .. } => None,
+    }
+}
+
 /// Measured size per lifeline head box and per message label, from the
 /// column/row tables (design spec §3.1-§3.2).
 pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMap {
@@ -148,10 +155,10 @@ pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMa
         }
     }
     for edge in &doc.edges {
-        if let Some(sig) = &edge.signature {
+        if let Some(sig) = &edge.value {
             let w = sizing::text_width(sig, cfg.message_font_size, Font::Sans);
             sizes.insert(
-                message_size_key(&edge.id),
+                message_size_key(&edge.id.0),
                 Size {
                     w,
                     h: cfg.message_line_height,
@@ -208,7 +215,7 @@ impl<'a> WalkState<'a> {
         for child in items {
             match child {
                 SeqChild::Message { edge } => {
-                    if let Some((lo, hi)) = self.walk_message(edge) {
+                    if let Some((lo, hi)) = self.walk_message(&edge.0) {
                         min_x = min_x.min(lo);
                         max_x = max_x.max(hi);
                     }
@@ -220,6 +227,7 @@ impl<'a> WalkState<'a> {
                         max_x = max_x.max(hi);
                     }
                 }
+                SeqChild::InteractionUse { .. } => {}
             }
         }
         (min_x, max_x)
@@ -227,28 +235,32 @@ impl<'a> WalkState<'a> {
 
     fn walk_message(&mut self, edge_id: &str) -> Option<(f64, f64)> {
         let edge = self.edges_by_id.get(edge_id).copied()?;
-        if !self.lifeline_ids.contains(edge.from.as_str())
-            || !self.lifeline_ids.contains(edge.to.as_str())
-        {
+        let (Some(from), Some(to)) = (
+            endpoint_lifeline(&edge.from),
+            edge.to.as_ref().and_then(endpoint_lifeline),
+        ) else {
+            return None;
+        };
+        if !self.lifeline_ids.contains(from) || !self.lifeline_ids.contains(to) {
             self.diagnostics.push(Diagnostic::new(
                 DiagCode::UnknownLifelineHandle,
                 format!(
                     "message '{}' references unknown lifeline handle ('{}' or '{}')",
-                    edge.id, edge.from, edge.to
+                    edge.id.0, from, to
                 ),
                 self.doc_key.to_string(),
                 0,
             ));
             return None;
         }
-        self.involved.insert(edge.from.clone());
-        self.involved.insert(edge.to.clone());
+        self.involved.insert(from.to_owned());
+        self.involved.insert(to.to_owned());
 
-        let from_x = self.lifeline_x[edge.from.as_str()];
-        let to_x = self.lifeline_x[edge.to.as_str()];
+        let from_x = self.lifeline_x[from];
+        let to_x = self.lifeline_x[to];
         let row_h = self.row_h_for_message(edge_id);
 
-        if edge.from == edge.to {
+        if from == to {
             // Self-message: a loop occupying two rows (design spec §3.4).
             let y = self.y;
             let rect = Rect {
@@ -258,8 +270,8 @@ impl<'a> WalkState<'a> {
                 h: row_h * 2.0,
             };
             self.messages.push(SolvedMessage {
-                id: edge.id.clone(),
-                verb: edge.verb,
+                id: edge.id.0.clone(),
+                verb: edge.kind,
                 from_x,
                 to_x,
                 y,
@@ -271,27 +283,27 @@ impl<'a> WalkState<'a> {
         }
 
         let y = self.y;
-        match edge.verb {
-            MessageVerb::Calls => {
-                let stack = self.stacks.entry(edge.to.clone()).or_default();
+        match edge.kind {
+            MessageKind::SyncCall | MessageKind::AsyncCall => {
+                let stack = self.stacks.entry(to.to_owned()).or_default();
                 let depth = stack.len() as u8;
                 stack.push(ActiveBar { depth, start_y: y });
             }
-            MessageVerb::Replies => {
+            MessageKind::Reply => {
                 let popped = self
                     .stacks
-                    .get_mut(edge.from.as_str())
+                    .get_mut(from)
                     .and_then(|s| s.pop());
                 match popped {
                     Some(bar) => {
                         // The bar STRADDLES the stem it belongs to (design spec
                         // §3.3): its centre, not its left edge, sits on the
                         // lifeline (offset right by the nesting step).
-                        let x = self.lifeline_x[edge.from.as_str()]
+                        let x = self.lifeline_x[from]
                             + bar.depth as f64 * self.cfg.nesting_step
                             - self.cfg.bar_width * 0.5;
                         self.activations.push(SolvedActivation {
-                            lifeline: edge.from.clone(),
+                            lifeline: from.to_owned(),
                             rect: Rect {
                                 x,
                                 y: bar.start_y,
@@ -304,26 +316,26 @@ impl<'a> WalkState<'a> {
                     }
                     None => {
                         self.diagnostics.push(Diagnostic::new(
-                            DiagCode::UnmatchedReply,
-                            format!("reply '{}' from '{}' has no open call", edge.id, edge.from),
+                            DiagCode::UnmatchedReturn,
+                            format!("return '{}' from '{}' has no open call", edge.id.0, from),
                             self.doc_key.to_string(),
                             0,
                         ));
                     }
                 }
             }
-            MessageVerb::Sends => {}
-            MessageVerb::Creates => {
-                self.created_at.insert(edge.to.clone(), y);
+            MessageKind::AsyncSignal => {}
+            MessageKind::Create => {
+                self.created_at.insert(to.to_owned(), y);
             }
-            MessageVerb::Destroys => {
-                self.destroyed_at.insert(edge.to.clone(), y);
+            MessageKind::Delete => {
+                self.destroyed_at.insert(to.to_owned(), y);
             }
         }
 
         self.messages.push(SolvedMessage {
-            id: edge.id.clone(),
-            verb: edge.verb,
+            id: edge.id.0.clone(),
+            verb: edge.kind,
             from_x,
             to_x,
             y,
@@ -397,11 +409,14 @@ impl<'a> WalkState<'a> {
             self.y += self.cfg.row_gap; // guard row
 
             let mut guard: Option<String> = None;
-            if let Some(SeqNode::Operand {
-                guard: g, items, ..
-            }) = self.nodes_by_id.get(operand_id.as_str()).copied()
+            if let Some(SeqNode::Operand { spec, items, .. }) =
+                self.nodes_by_id.get(operand_id.as_str()).copied()
             {
-                guard = g.clone();
+                guard = match spec {
+                    OperandSpec::Guard(value) => Some(value.clone()),
+                    OperandSpec::Else => None,
+                    OperandSpec::Branch { label } => label.clone(),
+                };
                 if items.is_empty() {
                     self.diagnostics.push(Diagnostic::new(
                         DiagCode::EmptyOperandStream,
@@ -516,7 +531,7 @@ pub fn solve_interaction(
     }
 
     let edges_by_id: BTreeMap<&str, &SeqEdge> =
-        doc.edges.iter().map(|e| (e.id.as_str(), e)).collect();
+        doc.edges.iter().map(|e| (e.id.0.as_str(), e)).collect();
     let nodes_by_id: BTreeMap<&str, &SeqNode> = doc
         .nodes
         .iter()

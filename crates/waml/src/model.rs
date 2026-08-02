@@ -596,36 +596,55 @@ pub struct FlowDoc {
     pub edges: Vec<String>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct MessageId(pub String);
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct InteractionUseId(pub String);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "endpoint", rename_all = "camelCase"))]
+pub enum EndpointRef {
+    Lifeline { id: String },
+    Outside,
+    LocalGate { gate: String },
+    UseGate {
+        interaction_use: InteractionUseId,
+        gate: String,
+    },
+}
+
 /// The message kind: fixes line and arrowhead (interaction substrate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-pub enum MessageVerb {
-    Calls,
-    Sends,
-    Replies,
-    Creates,
-    Destroys,
+pub enum MessageKind {
+    #[cfg_attr(feature = "serde", serde(rename = "syncCall"))]
+    SyncCall,
+    #[cfg_attr(feature = "serde", serde(rename = "asyncCall"))]
+    AsyncCall,
+    #[cfg_attr(feature = "serde", serde(rename = "asyncSignal"))]
+    AsyncSignal,
+    #[cfg_attr(feature = "serde", serde(rename = "reply"))]
+    Reply,
+    #[cfg_attr(feature = "serde", serde(rename = "create"))]
+    Create,
+    #[cfg_attr(feature = "serde", serde(rename = "delete"))]
+    Delete,
 }
 
-impl MessageVerb {
+impl MessageKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            MessageVerb::Calls => "calls",
-            MessageVerb::Sends => "sends",
-            MessageVerb::Replies => "replies",
-            MessageVerb::Creates => "creates",
-            MessageVerb::Destroys => "destroys",
-        }
-    }
-    pub fn parse(s: &str) -> Option<MessageVerb> {
-        match s {
-            "calls" => Some(MessageVerb::Calls),
-            "sends" => Some(MessageVerb::Sends),
-            "replies" => Some(MessageVerb::Replies),
-            "creates" => Some(MessageVerb::Creates),
-            "destroys" => Some(MessageVerb::Destroys),
-            _ => None,
+            MessageKind::SyncCall | MessageKind::AsyncCall => "calls",
+            MessageKind::AsyncSignal => "signals",
+            MessageKind::Reply => "returns",
+            MessageKind::Create => "creates",
+            MessageKind::Delete => "destroys",
         }
     }
 }
@@ -638,6 +657,11 @@ pub enum FragmentKind {
     Alt,
     Opt,
     Loop,
+    Par,
+    Break,
+    Critical,
+    Assert,
+    Neg,
 }
 
 impl FragmentKind {
@@ -646,6 +670,11 @@ impl FragmentKind {
             FragmentKind::Alt => "alt",
             FragmentKind::Opt => "opt",
             FragmentKind::Loop => "loop",
+            FragmentKind::Par => "par",
+            FragmentKind::Break => "break",
+            FragmentKind::Critical => "critical",
+            FragmentKind::Assert => "assert",
+            FragmentKind::Neg => "neg",
         }
     }
     pub fn parse(s: &str) -> Option<FragmentKind> {
@@ -653,6 +682,11 @@ impl FragmentKind {
             "alt" => Some(FragmentKind::Alt),
             "opt" => Some(FragmentKind::Opt),
             "loop" => Some(FragmentKind::Loop),
+            "par" => Some(FragmentKind::Par),
+            "break" => Some(FragmentKind::Break),
+            "critical" => Some(FragmentKind::Critical),
+            "assert" => Some(FragmentKind::Assert),
+            "neg" => Some(FragmentKind::Neg),
             _ => None,
         }
     }
@@ -664,10 +698,13 @@ impl FragmentKind {
 /// into `SequenceDoc.edges` / `SequenceDoc.nodes`.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "item", rename_all = "lowercase"))]
+#[cfg_attr(feature = "serde", serde(tag = "item", rename_all = "camelCase"))]
 pub enum SeqChild {
-    Message { edge: String },
+    Message { edge: MessageId },
     Fragment { node: String },
+    InteractionUse {
+        interaction_use: InteractionUseId,
+    },
 }
 
 /// A message: an interaction-LOCAL, ORDERED edge (design spec §6). It is NOT a
@@ -676,18 +713,57 @@ pub enum SeqChild {
 /// handle: its alias, else its title).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct SeqEdge {
     /// Doc-unique id (`m0`, `m1`, … in document/time order), referenced by a
     /// container's ordered `items`.
-    pub id: String,
-    pub from: String,
-    pub verb: MessageVerb,
-    pub to: String,
+    pub id: MessageId,
+    pub from: EndpointRef,
+    pub kind: MessageKind,
+    pub to: Option<EndpointRef>,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
-    pub signature: Option<String>,
+    pub value: Option<String>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub call_id: Option<String>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub returns_call: Option<MessageId>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub enum OperandSpec {
+    Guard(String),
+    Else,
+    Branch { label: Option<String> },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct SeqBinding {
+    pub local: String,
+    pub target: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct SeqInteractionUse {
+    pub id: InteractionUseId,
+    pub target: String,
+    pub alias: String,
+    pub bindings: Vec<SeqBinding>,
+    pub gates: Vec<String>,
 }
 
 /// A node of an interaction's flat model: a participant lifeline, a combined
@@ -727,11 +803,7 @@ pub enum SeqNode {
     /// `items` is the ordered message/fragment stream (time order).
     Operand {
         id: String,
-        #[cfg_attr(
-            feature = "serde",
-            serde(default, skip_serializing_if = "Option::is_none")
-        )]
-        guard: Option<String>,
+        spec: OperandSpec,
         items: Vec<SeqChild>,
     },
 }
@@ -744,6 +816,7 @@ pub enum SeqNode {
 /// shape (design spec §9 — storage/runtime need not be 1:1).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct SequenceDoc {
     pub key: String,
     pub title: String,
@@ -757,6 +830,8 @@ pub struct SequenceDoc {
     pub nodes: Vec<SeqNode>,
     /// Messages, ORDERED (document order = time order); interaction-local.
     pub edges: Vec<SeqEdge>,
+    pub gates: Vec<String>,
+    pub interaction_uses: Vec<SeqInteractionUse>,
     /// The interaction root's ordered item stream (message/fragment refs).
     pub items: Vec<SeqChild>,
 }
@@ -1282,25 +1357,29 @@ mod tests {
     }
 
     #[test]
-    fn message_verbs_and_fragment_kinds_round_trip() {
+    fn message_kinds_and_fragment_kinds_have_canonical_words() {
         for v in [
-            MessageVerb::Calls,
-            MessageVerb::Sends,
-            MessageVerb::Replies,
-            MessageVerb::Creates,
-            MessageVerb::Destroys,
+            MessageKind::SyncCall,
+            MessageKind::AsyncCall,
+            MessageKind::AsyncSignal,
+            MessageKind::Reply,
+            MessageKind::Create,
+            MessageKind::Delete,
         ] {
-            assert_eq!(MessageVerb::parse(v.as_str()), Some(v));
+            assert!(!v.as_str().is_empty());
         }
-        assert_eq!(MessageVerb::parse("shouts"), None);
-        for k in [FragmentKind::Alt, FragmentKind::Opt, FragmentKind::Loop] {
+        for k in [
+            FragmentKind::Alt,
+            FragmentKind::Opt,
+            FragmentKind::Loop,
+            FragmentKind::Par,
+            FragmentKind::Break,
+            FragmentKind::Critical,
+            FragmentKind::Assert,
+            FragmentKind::Neg,
+        ] {
             assert_eq!(FragmentKind::parse(k.as_str()), Some(k));
         }
-        assert_eq!(
-            FragmentKind::parse("par"),
-            None,
-            "par operands are deferred"
-        );
     }
 
     #[test]

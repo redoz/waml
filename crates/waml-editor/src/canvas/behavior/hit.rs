@@ -258,7 +258,7 @@ mod tests {
 
     use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
     use crate::node_style::AccentBucket;
-    use waml::model::{FragmentKind, MessageVerb};
+    use waml::model::{FragmentKind, MessageKind};
 
     fn lifeline(id: &str, stem_x: f64) -> LifelineGeo {
         LifelineGeo {
@@ -296,7 +296,7 @@ mod tests {
             activations: Vec::new(),
             messages: vec![MessageGeo {
                 id: "m0".into(),
-                verb: MessageVerb::Calls,
+                verb: MessageKind::SyncCall,
                 from_x: 0.0,
                 to_x: 100.0,
                 y: 50.0,

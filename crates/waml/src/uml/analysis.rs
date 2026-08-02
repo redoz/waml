@@ -388,9 +388,11 @@ pub fn analyze(
         let layout = items(tree.root(), syntax::UmlSyntaxKind::LayoutStatement);
         let flow_nodes = items(tree.root(), syntax::UmlSyntaxKind::FlowNode);
         let lifelines = items(tree.root(), syntax::UmlSyntaxKind::Lifeline);
+        let gates = items(tree.root(), syntax::UmlSyntaxKind::Gate);
         let messages = items(tree.root(), syntax::UmlSyntaxKind::Message);
         let sequence_operands = items(tree.root(), syntax::UmlSyntaxKind::SequenceOperand);
         let sequence_fragments = items(tree.root(), syntax::UmlSyntaxKind::SequenceFragment);
+        let interaction_uses = items(tree.root(), syntax::UmlSyntaxKind::InteractionUse);
         let mut fields = Vec::new();
         for syntax in attributes {
             let name = syntax.name_token().text().write_to_string();
@@ -574,15 +576,29 @@ pub fn analyze(
                     .map(declared_lifeline)
                     .collect::<Vec<_>>()
                     .into(),
+                gates: gates
+                    .into_iter()
+                    .map(declared_gate)
+                    .collect::<Vec<_>>()
+                    .into(),
                 messages: messages
                     .into_iter()
                     .map(declared_message)
                     .collect::<Vec<_>>()
                     .into(),
-                sequence_operands: sequence_operands
+                fragments: sequence_fragments
                     .into_iter()
-                    .chain(sequence_fragments)
-                    .map(declared_sequence_operand)
+                    .map(declared_fragment)
+                    .collect::<Vec<_>>()
+                    .into(),
+                operands: sequence_operands
+                    .into_iter()
+                    .map(declared_operand)
+                    .collect::<Vec<_>>()
+                    .into(),
+                interaction_uses: interaction_uses
+                    .into_iter()
+                    .map(declared_interaction_use)
                     .collect::<Vec<_>>()
                     .into(),
             },
@@ -1532,8 +1548,9 @@ fn declared_projection(
                 diagnostics,
             );
         } else if ty == crate::model::ElementType::Behavior(crate::model::BehaviorKind::Sequence) {
-            lower_sequence_behavior(
+            crate::uml::sequence::lower(
                 context,
+                declared,
                 concept,
                 okf,
                 &path,
@@ -2138,189 +2155,6 @@ fn lower_flow_behavior(
     });
 }
 
-fn lower_sequence_behavior(
-    context: &DomainAnalysisContext<'_>,
-    concept: &crate::uml::DeclaredConcept,
-    okf: &crate::okf::Concept,
-    path: &str,
-    claimed: &BTreeSet<&str>,
-    model: &mut crate::model::Model,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    let mut nodes = Vec::new();
-    let mut handles = BTreeSet::new();
-    for lifeline in concept.lifelines.iter() {
-        let (Some(slug), Some(title)) =
-            (field_value(&lifeline.target), field_value(&lifeline.title))
-        else {
-            continue;
-        };
-        let alias = field_value(&lifeline.alias).cloned();
-        let id = alias.clone().unwrap_or_else(|| title.clone());
-        let ref_ = resolve_slug(path, slug, claimed);
-        if ref_.is_none() {
-            behavior_diagnostic(
-                context,
-                path,
-                &lifeline.syntax.0,
-                crate::diagnostic::DiagCode::UnresolvedTarget,
-                format!("unresolved lifeline target '{slug}'"),
-                diagnostics,
-            );
-        }
-        handles.insert(id.clone());
-        handles.insert(title.clone());
-        nodes.push(crate::model::SeqNode::Lifeline {
-            id,
-            title: title.clone(),
-            alias,
-            ref_,
-        });
-    }
-    enum Ordered<'a> {
-        Message(&'a crate::uml::DeclaredMessage),
-        Operand(&'a crate::uml::DeclaredSequenceOperand),
-    }
-    let mut ordered = concept
-        .messages
-        .iter()
-        .map(|value| (value.syntax.0.range().start(), Ordered::Message(value)))
-        .chain(
-            concept
-                .sequence_operands
-                .iter()
-                .map(|value| (value.syntax.0.range().start(), Ordered::Operand(value))),
-        )
-        .collect::<Vec<_>>();
-    ordered.sort_by_key(|(start, _)| *start);
-    let mut edges = Vec::new();
-    let mut root = Vec::new();
-    let mut fragment_stack: Vec<(usize, usize)> = Vec::new();
-    let mut operand_stack: Vec<(usize, usize)> = Vec::new();
-    let mut fragment_count = 0usize;
-    for (_, item) in ordered {
-        match item {
-            Ordered::Operand(value) => {
-                if let Some(kind) = field_value(&value.fragment) {
-                    while fragment_stack
-                        .last()
-                        .is_some_and(|(depth, _)| *depth >= value.depth)
-                    {
-                        fragment_stack.pop();
-                    }
-                    while operand_stack
-                        .last()
-                        .is_some_and(|(depth, _)| *depth >= value.depth)
-                    {
-                        operand_stack.pop();
-                    }
-                    let id = format!("f{fragment_count}");
-                    fragment_count += 1;
-                    let index = nodes.len();
-                    nodes.push(crate::model::SeqNode::Fragment {
-                        id: id.clone(),
-                        kind: *kind,
-                        operands: Vec::new(),
-                    });
-                    let child = crate::model::SeqChild::Fragment { node: id };
-                    if let Some((_, operand)) = operand_stack.last() {
-                        if let crate::model::SeqNode::Operand { items, .. } = &mut nodes[*operand] {
-                            items.push(child);
-                        }
-                    } else {
-                        root.push(child);
-                    }
-                    fragment_stack.push((value.depth, index));
-                } else {
-                    while operand_stack
-                        .last()
-                        .is_some_and(|(depth, _)| *depth >= value.depth)
-                    {
-                        operand_stack.pop();
-                    }
-                    let Some((_, fragment)) = fragment_stack
-                        .iter()
-                        .rev()
-                        .find(|(depth, _)| *depth < value.depth)
-                        .copied()
-                    else {
-                        continue;
-                    };
-                    let id = match &nodes[fragment] {
-                        crate::model::SeqNode::Fragment { id, operands, .. } => {
-                            format!("{id}.o{}", operands.len())
-                        }
-                        _ => unreachable!("fragment stack points to a fragment"),
-                    };
-                    let index = nodes.len();
-                    nodes.push(crate::model::SeqNode::Operand {
-                        id: id.clone(),
-                        guard: field_value(&value.guard).cloned(),
-                        items: Vec::new(),
-                    });
-                    if let crate::model::SeqNode::Fragment { operands, .. } = &mut nodes[fragment] {
-                        operands.push(id);
-                    }
-                    operand_stack.push((value.depth, index));
-                }
-            }
-            Ordered::Message(value) => {
-                let (Some(from), Some(verb), Some(to)) = (
-                    field_value(&value.from),
-                    field_value(&value.verb),
-                    field_value(&value.to),
-                ) else {
-                    continue;
-                };
-                if !handles.contains(from) || !handles.contains(to) {
-                    behavior_diagnostic(
-                        context,
-                        path,
-                        &value.syntax.0,
-                        crate::diagnostic::DiagCode::UnresolvedTarget,
-                        format!("unresolved sequence participant '{from}' or '{to}'"),
-                        diagnostics,
-                    );
-                    continue;
-                }
-                while operand_stack
-                    .last()
-                    .is_some_and(|(depth, _)| *depth >= value.depth)
-                {
-                    operand_stack.pop();
-                }
-                let id = format!("m{}", edges.len());
-                edges.push(crate::model::SeqEdge {
-                    id: id.clone(),
-                    from: from.clone(),
-                    verb: *verb,
-                    to: to.clone(),
-                    signature: field_value(&value.signature).cloned(),
-                });
-                let child = crate::model::SeqChild::Message { edge: id };
-                if let Some((_, operand)) = operand_stack.last() {
-                    if let crate::model::SeqNode::Operand { items, .. } = &mut nodes[*operand] {
-                        items.push(child);
-                    }
-                } else {
-                    root.push(child);
-                }
-            }
-        }
-    }
-    model.interactions.push(crate::model::SequenceDoc {
-        key: concept.concept_id.clone(),
-        title: okf
-            .title
-            .clone()
-            .unwrap_or_else(|| concept.concept_id.clone()),
-        describes: resolve_describes(okf, path, claimed),
-        nodes,
-        edges,
-        items: root,
-    });
-}
-
 struct ValidInlineInstance<'a> {
     name: &'a str,
     target: String,
@@ -2916,34 +2750,57 @@ fn declared_lifeline(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredLifel
 
 fn declared_message(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMessage {
     let syntax = syntax::MessageSyntax(node.clone());
-    let from = declared_required_token(
+    let source = declared_endpoint_field(declared_required_token(
         &node,
         syntax::UmlSyntaxKind::MessageSource,
         syntax::UmlSyntaxKind::SourceToken,
         crate::uml::ExpectedSyntax::MessageTarget,
-    );
-    let to = declared_required_token(
-        &node,
-        syntax::UmlSyntaxKind::MessageTarget,
-        syntax::UmlSyntaxKind::TargetToken,
-        crate::uml::ExpectedSyntax::MessageTarget,
-    );
+    ));
     let verb_slot = direct_child(&node, syntax::UmlSyntaxKind::MessageVerb)
         .expect("message has fixed verb occurrence");
-    let verb = if has_recovery(&node) {
+    let kind = match field_from_token(&verb_slot, syntax::UmlSyntaxKind::VerbToken).as_deref() {
+        Some("calls") if syntax.async_token().is_some() => valid(
+            verb_slot.clone(),
+            crate::uml::DeclaredMessageKind::AsyncCall,
+        ),
+        Some("calls") => valid(verb_slot.clone(), crate::uml::DeclaredMessageKind::SyncCall),
+        Some("signals") => valid(
+            verb_slot.clone(),
+            crate::uml::DeclaredMessageKind::AsyncSignal,
+        ),
+        Some("returns") => valid(verb_slot.clone(), crate::uml::DeclaredMessageKind::Reply),
+        Some("creates") => valid(verb_slot.clone(), crate::uml::DeclaredMessageKind::Create),
+        Some("destroys") => valid(verb_slot.clone(), crate::uml::DeclaredMessageKind::Delete),
+        Some(_) => invalid(verb_slot.clone()),
+        None if has_recovery(&verb_slot) => invalid_recovery(verb_slot.clone()),
+        None => crate::uml::DeclaredField::Incomplete {
+            syntax: verb_slot.clone(),
+            expected: crate::uml::ExpectedSyntax::MessageTarget,
+        },
+    };
+    let target = if syntax.target_token().is_some() {
+        declared_endpoint_field(declared_required_token(
+            &node,
+            syntax::UmlSyntaxKind::MessageTarget,
+            syntax::UmlSyntaxKind::TargetToken,
+            crate::uml::ExpectedSyntax::MessageTarget,
+        ))
+    } else if has_recovery(&node)
+        && !matches!(
+            &kind,
+            crate::uml::DeclaredField::Valid {
+                value: crate::uml::DeclaredMessageKind::Reply,
+                ..
+            }
+        )
+    {
         invalid_recovery(node.clone())
     } else {
-        field_from_token(&verb_slot, syntax::UmlSyntaxKind::VerbToken)
-            .and_then(|value| crate::model::MessageVerb::parse(&value))
-            .map(|value| valid(verb_slot.clone(), value))
-            .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
-                syntax: verb_slot,
-                expected: crate::uml::ExpectedSyntax::MessageTarget,
-            })
+        crate::uml::DeclaredField::Absent
     };
     let value_slot = direct_child(&node, syntax::UmlSyntaxKind::MessageValue)
         .expect("message has fixed value occurrence");
-    let signature = if field_from_token(&value_slot, syntax::UmlSyntaxKind::ValueToken).is_some() {
+    let value = if field_from_token(&value_slot, syntax::UmlSyntaxKind::ValueToken).is_some() {
         declared_expression_slot(value_slot, syntax::UmlSyntaxKind::ValueToken)
     } else if node
         .child_at(syntax::MessageSyntax::COLON_SLOT)
@@ -2961,55 +2818,209 @@ fn declared_message(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMessag
     } else {
         crate::uml::DeclaredField::Absent
     };
+    let call_id = declared_optional_message_token(
+        &node,
+        syntax.as_token().is_some(),
+        syntax::UmlSyntaxKind::MessageCallId,
+        syntax::UmlSyntaxKind::CallIdToken,
+    );
+    let return_to = declared_endpoint_field(declared_optional_message_token(
+        &node,
+        syntax.to_token().is_some(),
+        syntax::UmlSyntaxKind::MessageReturnTarget,
+        syntax::UmlSyntaxKind::ReturnTargetToken,
+    ));
+    let return_for = declared_optional_message_token(
+        &node,
+        syntax.for_token().is_some(),
+        syntax::UmlSyntaxKind::MessageReturnCall,
+        syntax::UmlSyntaxKind::ReturnCallToken,
+    );
     crate::uml::DeclaredMessage {
         syntax,
-        from,
-        verb,
-        to,
-        signature,
+        source,
+        kind,
+        target,
+        value,
+        call_id,
+        return_to,
+        return_for,
         depth: behavior_depth(&node),
     }
 }
 
-fn declared_sequence_operand(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSequenceOperand {
+fn declared_optional_message_token(
+    node: &SyntaxNode<UmlLanguage>,
+    keyword_present: bool,
+    slot_kind: syntax::UmlSyntaxKind,
+    token_kind: syntax::UmlSyntaxKind,
+) -> crate::uml::DeclaredField<UmlLanguage, String> {
+    if !keyword_present {
+        return crate::uml::DeclaredField::Absent;
+    }
+    declared_required_token(
+        node,
+        slot_kind,
+        token_kind,
+        crate::uml::ExpectedSyntax::MessageTarget,
+    )
+}
+
+fn declared_endpoint(value: &str) -> Option<crate::uml::DeclaredEndpointRef> {
+    if value == "outside" {
+        return Some(crate::uml::DeclaredEndpointRef::Outside);
+    }
+    if let Some(gate) = value.strip_prefix('@') {
+        return (!gate.is_empty()).then(|| crate::uml::DeclaredEndpointRef::LocalGate(gate.into()));
+    }
+    if let Some((use_alias, gate)) = value.split_once('@') {
+        return (!use_alias.is_empty() && !gate.is_empty() && !gate.contains('@')).then(|| {
+            crate::uml::DeclaredEndpointRef::UseGate {
+                use_alias: use_alias.into(),
+                gate: gate.into(),
+            }
+        });
+    }
+    (!value.is_empty() && !value.contains('@'))
+        .then(|| crate::uml::DeclaredEndpointRef::Lifeline(value.into()))
+}
+
+fn declared_endpoint_field(
+    field: crate::uml::DeclaredField<UmlLanguage, String>,
+) -> crate::uml::DeclaredField<UmlLanguage, crate::uml::DeclaredEndpointRef> {
+    match field {
+        crate::uml::DeclaredField::Absent => crate::uml::DeclaredField::Absent,
+        crate::uml::DeclaredField::Valid { value, syntax } => declared_endpoint(&value)
+            .map(|value| valid(syntax.clone(), value))
+            .unwrap_or_else(|| invalid(syntax)),
+        crate::uml::DeclaredField::Incomplete { syntax, expected } => {
+            crate::uml::DeclaredField::Incomplete { syntax, expected }
+        }
+        crate::uml::DeclaredField::Invalid { syntax, diagnostics } => {
+            crate::uml::DeclaredField::Invalid { syntax, diagnostics }
+        }
+    }
+}
+
+fn declared_gate(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredGate {
+    let syntax = syntax::GateSyntax(node.clone());
+    let name = declared_required_token(
+        &node,
+        syntax::UmlSyntaxKind::GateName,
+        syntax::UmlSyntaxKind::IdentifierToken,
+        crate::uml::ExpectedSyntax::MessageTarget,
+    );
+    crate::uml::DeclaredGate { syntax, name }
+}
+
+fn declared_fragment(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFragment {
+    let syntax = syntax::SequenceFragmentSyntax(node.clone());
+    let slot = direct_child(&node, syntax::UmlSyntaxKind::FragmentKind)
+        .expect("fragment has fixed kind occurrence");
+    let kind = field_from_token(&slot, syntax::UmlSyntaxKind::FragmentKindToken)
+        .and_then(|value| crate::model::FragmentKind::parse(&value))
+        .map(|value| valid(slot.clone(), value))
+        .unwrap_or_else(|| invalid(slot));
+    crate::uml::DeclaredFragment {
+        syntax,
+        kind,
+        depth: behavior_depth(&node),
+    }
+}
+
+fn declared_operand(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredOperand {
     let syntax = syntax::SequenceOperandSyntax(node.clone());
-    let depth = behavior_depth(&node);
-    if node.kind() == syntax::UmlSyntaxKind::SequenceFragment {
-        let slot = direct_child(&node, syntax::UmlSyntaxKind::FragmentKind)
-            .expect("fragment has fixed kind occurrence");
-        let fragment = if has_recovery(&node) {
-            invalid_recovery(node.clone())
-        } else {
-            field_from_token(&slot, syntax::UmlSyntaxKind::FragmentKindToken)
-                .and_then(|value| crate::model::FragmentKind::parse(&value))
-                .map(|value| valid(slot.clone(), value))
-                .unwrap_or_else(|| invalid(slot))
-        };
-        crate::uml::DeclaredSequenceOperand {
-            syntax,
-            fragment,
-            guard: crate::uml::DeclaredField::Absent,
-            is_else: false,
-            depth,
-        }
+    let keyword = field_from_token(&node, syntax::UmlSyntaxKind::OperandKeywordToken);
+    let spec = if has_recovery(&node) {
+        invalid_recovery(node.clone())
     } else {
-        let keyword = field_from_token(&node, syntax::UmlSyntaxKind::OperandKeywordToken);
-        let guard = if has_recovery(&node) {
-            invalid_recovery(node.clone())
-        } else if keyword.as_deref() == Some("else") {
-            crate::uml::DeclaredField::Absent
-        } else {
-            direct_child(&node, syntax::UmlSyntaxKind::OperandGuard)
+        match keyword.as_deref() {
+            Some("when") => direct_child(&node, syntax::UmlSyntaxKind::OperandGuard)
                 .map(|slot| declared_expression_slot(slot, syntax::UmlSyntaxKind::GuardToken))
-                .unwrap_or(crate::uml::DeclaredField::Absent)
-        };
-        crate::uml::DeclaredSequenceOperand {
-            syntax,
-            fragment: crate::uml::DeclaredField::Absent,
-            guard,
-            is_else: keyword.as_deref() == Some("else"),
-            depth,
+                .unwrap_or_else(|| invalid(node.clone()))
+                .map(crate::uml::DeclaredOperandSpec::Guard),
+            Some("else") => valid(node.clone(), crate::uml::DeclaredOperandSpec::Else),
+            Some("branch") => valid(
+                node.clone(),
+                crate::uml::DeclaredOperandSpec::Branch {
+                    label: field_from_token(&node, syntax::UmlSyntaxKind::BranchLabelToken)
+                        .map(strip_expression),
+                },
+            ),
+            _ => invalid(node.clone()),
         }
+    };
+    crate::uml::DeclaredOperand {
+        syntax,
+        spec,
+        depth: behavior_depth(&node),
+    }
+}
+
+trait MapDeclaredField<L: waml_syntax::SyntaxLanguage, T> {
+    fn map<U>(self, f: impl FnOnce(T) -> U) -> crate::uml::DeclaredField<L, U>;
+}
+
+impl<L: waml_syntax::SyntaxLanguage, T> MapDeclaredField<L, T>
+    for crate::uml::DeclaredField<L, T>
+{
+    fn map<U>(self, f: impl FnOnce(T) -> U) -> crate::uml::DeclaredField<L, U> {
+        match self {
+            crate::uml::DeclaredField::Absent => crate::uml::DeclaredField::Absent,
+            crate::uml::DeclaredField::Valid { value, syntax } => {
+                crate::uml::DeclaredField::Valid { value: f(value), syntax }
+            }
+            crate::uml::DeclaredField::Incomplete { syntax, expected } => {
+                crate::uml::DeclaredField::Incomplete { syntax, expected }
+            }
+            crate::uml::DeclaredField::Invalid { syntax, diagnostics } => {
+                crate::uml::DeclaredField::Invalid { syntax, diagnostics }
+            }
+        }
+    }
+}
+
+fn declared_binding(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredBinding {
+    let syntax = syntax::BindingSyntax(node.clone());
+    let local = declared_required_token(
+        &node,
+        syntax::UmlSyntaxKind::BindingLocal,
+        syntax::UmlSyntaxKind::LocalToken,
+        crate::uml::ExpectedSyntax::MessageTarget,
+    );
+    let target = declared_required_token(
+        &node,
+        syntax::UmlSyntaxKind::BindingTarget,
+        syntax::UmlSyntaxKind::TargetToken,
+        crate::uml::ExpectedSyntax::MessageTarget,
+    );
+    crate::uml::DeclaredBinding { syntax, local, target }
+}
+
+fn declared_interaction_use(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredInteractionUse {
+    let syntax = syntax::InteractionUseSyntax(node.clone());
+    let link_node = direct_child(&node, syntax::UmlSyntaxKind::Link)
+        .expect("interaction use has fixed link occurrence");
+    let link = field_from_token(&link_node, syntax::UmlSyntaxKind::LinkTargetToken)
+        .map(|value| valid(link_node.clone(), value))
+        .unwrap_or_else(|| invalid(link_node));
+    let alias = declared_required_token(
+        &node,
+        syntax::UmlSyntaxKind::InteractionUseAlias,
+        syntax::UmlSyntaxKind::AliasToken,
+        crate::uml::ExpectedSyntax::MessageTarget,
+    );
+    let bindings = items(node.clone(), syntax::UmlSyntaxKind::Binding)
+        .into_iter()
+        .map(declared_binding)
+        .collect::<Vec<_>>()
+        .into();
+    crate::uml::DeclaredInteractionUse {
+        syntax,
+        link,
+        alias,
+        bindings,
+        depth: behavior_depth(&node),
     }
 }
 

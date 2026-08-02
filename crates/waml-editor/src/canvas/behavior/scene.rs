@@ -2,7 +2,7 @@
 //! Task 7; `Interaction` lands here.
 
 use crate::node_style::AccentBucket;
-use waml::model::{FlowNodeKind, FragmentKind, MessageVerb};
+use waml::model::{FlowNodeKind, FragmentKind, MessageKind};
 use waml::solve::{Rect, SolvedGroup};
 
 /// One solved flow node's drawable geometry (spec §4.1).
@@ -72,7 +72,7 @@ pub(crate) struct ActivationGeo {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MessageGeo {
     pub id: String,
-    pub verb: MessageVerb,
+    pub verb: MessageKind,
     pub from_x: f64,
     pub to_x: f64,
     pub y: f64,
@@ -292,7 +292,7 @@ mod tests {
             activations: Vec::new(),
             messages: vec![MessageGeo {
                 id: "m0".into(),
-                verb: MessageVerb::Calls,
+                verb: MessageKind::SyncCall,
                 from_x: 20.0,
                 to_x: 220.0,
                 y: 60.0,

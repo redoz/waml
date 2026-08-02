@@ -50,6 +50,33 @@ fn written(analysis: &uml::Analysis, path: &str) -> String {
         .write_to_string()
 }
 
+fn declared_value<T>(field: &uml::DeclaredField<uml::syntax::UmlLanguage, T>) -> &T {
+    match field {
+        uml::DeclaredField::Valid { value, .. } => value,
+        _ => panic!("expected a valid declared field"),
+    }
+}
+
+#[test]
+fn declared_messages_preserve_authored_fields_without_matching() {
+    let analysis = analyze([(
+        "s.md",
+        "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- customer calls order `submit()` as submission\n- order returns `accepted` to intruder for submission\n",
+    )]);
+    let message = &analysis.declared.concept("s").unwrap().messages[1];
+
+    assert_eq!(
+        declared_value(&message.source),
+        &uml::DeclaredEndpointRef::Lifeline("order".into())
+    );
+    assert_eq!(declared_value(&message.value), "accepted");
+    assert_eq!(
+        declared_value(&message.return_to),
+        &uml::DeclaredEndpointRef::Lifeline("intruder".into())
+    );
+    assert_eq!(declared_value(&message.return_for), "submission");
+}
+
 #[test]
 fn canonical_messages_have_fixed_lossless_slots() {
     let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- customer calls order `submit()` as submission\n- order calls worker async `run()` as work\n- order returns `accepted` to customer for submission\n- order signals bus `OrderPlaced`\n- order creates worker: `OrderWorker`\n- order destroys worker\n";
@@ -139,7 +166,7 @@ fn canonical_messages_have_fixed_lossless_slots() {
         "`OrderWorker`"
     );
     assert!(matches!(
-        analysis.declared.concept("s").unwrap().messages[4].signature,
+        analysis.declared.concept("s").unwrap().messages[4].value,
         uml::DeclaredField::Valid { .. }
     ));
     assert_eq!(written(&analysis, "s.md"), authored);
