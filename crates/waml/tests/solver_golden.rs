@@ -55,10 +55,10 @@ fn orders_domain_diagram_solves_to_expected_layout() {
     assert!(diags.is_empty(), "no diagnostics: {diags:?}");
     assert_eq!(
         pretty(&solved),
-        "node account @ 16,122 200x90\n\
+        "node account @ 16,146 200x90\n\
          node customer @ 16,16 200x90\n\
-         node order @ 264,69 200x90\n\
-         group Frame \"Users\" d0 @ 0,0 232x228\n\
-         group Shrink \"Orders\" d0 @ 248,53 232x122\n"
+         node order @ 288,81 200x90\n\
+         group Frame \"Users\" d0 @ 0,0 232x252\n\
+         group Shrink \"Orders\" d0 @ 272,65 232x122\n"
     );
 }

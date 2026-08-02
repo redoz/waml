@@ -13,6 +13,12 @@ use std::collections::{BTreeMap, BTreeSet};
 /// for connected pairs; unconnected neighbours keep the plain margin gap.
 const MIN_ASSOC: f64 = 72.0;
 
+/// Minimum facing-border gap between two boxes with NO edge between them.
+/// Without this, unconnected neighbours fall through to the plain margin (16)
+/// while connected pairs are floored at `MIN_ASSOC` (72), so unrelated boxes
+/// read as a tighter pair than related ones -- the opposite of the truth.
+const MIN_SEP: f64 = 40.0;
+
 /// A placement the solver could not honor, plus the constraints it contradicts.
 /// Native-only instrumentation (no wasm ABI); surfaced through
 /// `solve_diagram_reported` to the editor's conflict error list. `relation` is
@@ -191,7 +197,7 @@ pub(super) fn solve_cluster(
                 let gap = if connected.contains(&pair(a, b)) {
                     gap.max(MIN_ASSOC)
                 } else {
-                    gap
+                    gap.max(MIN_SEP)
                 };
                 let (dx, dy) = place_deltas(*dir, sa, sb, gap);
                 let okx = apply_axis(&mut px, &mut xedges, ci, ia, ib, dx, diags);
@@ -835,7 +841,7 @@ mod tests {
         assert!(diags.is_empty());
         assert_eq!(
             pretty(&solved),
-            "node a @ 0,0 200x90\nnode b @ 216,0 200x90\nnode c @ 432,0 200x90\n"
+            "node a @ 0,0 200x90\nnode b @ 240,0 200x90\nnode c @ 480,0 200x90\n"
         );
     }
 
@@ -956,8 +962,8 @@ mod tests {
         assert_eq!(
             pretty(&solved),
             "node a @ 16,16 200x90\n\
-             node b @ 16,122 200x90\n\
-             group Frame \"Users\" d0 @ 0,0 232x228\n"
+             node b @ 16,146 200x90\n\
+             group Frame \"Users\" d0 @ 0,0 232x252\n"
         );
     }
 
@@ -1013,12 +1019,12 @@ mod tests {
             &SolveConfig::default(),
         );
         assert!(diags.is_empty());
-        // a collapses to the 96x28 chip; `a left of b` gaps 96+16=112 in x,
+        // a collapses to the 96x28 chip; `a left of b` gaps 96+MIN_SEP(40)=136 in x,
         // centers align in y: (28-90)/2 = -31, normalized so the band top is 0.
         assert_eq!(
             pretty(&solved),
             "node a @ 0,31 96x28\n\
-             node b @ 112,0 200x90\n\
+             node b @ 136,0 200x90\n\
              flags a emphasized=false collapsed=true\n\
              flags b emphasized=true collapsed=false\n"
         );
@@ -1051,9 +1057,9 @@ mod tests {
         // Leaf rects present.
         assert!(rects.contains_key(&BoxId::Node("a".into())));
         assert!(rects.contains_key(&BoxId::Node("b".into())));
-        // The group frame is keyed by its BoxId and equals the "Users" frame @ 0,0 232x228.
+        // The group frame is keyed by its BoxId and equals the "Users" frame @ 0,0 232x252.
         let g = rects[&BoxId::Group(0)];
-        assert_eq!((g.x, g.y, g.w, g.h), (0.0, 0.0, 232.0, 228.0));
+        assert_eq!((g.x, g.y, g.w, g.h), (0.0, 0.0, 232.0, 252.0));
     }
 
     #[test]
@@ -1100,11 +1106,65 @@ mod tests {
             &SolveConfig::default(),
         );
         assert!(diags.is_empty());
-        // No edge: the gap stays at the Medium margin value (16).
+        // No edge: the gap is floored at MIN_SEP (40), above the plain Medium
+        // margin value (16).
         let a = rects[&BoxId::Node("a".into())];
         let b = rects[&BoxId::Node("b".into())];
         let gap = b.x - (a.x + a.w);
-        assert_eq!(gap, SolveConfig::default().margin(Margin::Medium));
+        assert_eq!(gap, MIN_SEP);
+    }
+
+    #[test]
+    fn unconnected_neighbours_are_floored_at_min_sep() {
+        // `a left of b` with NO edge between them: the facing-border gap must be
+        // floored at MIN_SEP, not left at the plain Medium margin (16), or two
+        // unrelated boxes read tighter than two related ones.
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let (_solved, rects, diags, _dropped) = solve_with_rects(
+            &scene,
+            &[],
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        assert!(diags.is_empty());
+        let a = rects[&BoxId::Node("a".into())];
+        let b = rects[&BoxId::Node("b".into())];
+        let gap = b.x - (a.x + a.w);
+        assert_eq!(
+            gap, MIN_SEP,
+            "unconnected pair should be floored at MIN_SEP"
+        );
+    }
+
+    #[test]
+    fn raising_the_spacing_floor_never_makes_boxes_overlap() {
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let (_solved, rects, _diags, _dropped) = solve_with_rects(
+            &scene,
+            &[],
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &SolveConfig::default(),
+        );
+        let a = rects[&BoxId::Node("a".into())];
+        let b = rects[&BoxId::Node("b".into())];
+        assert!(
+            a.x + a.w <= b.x,
+            "a floor must separate boxes, never overlap them"
+        );
     }
 
     #[test]
