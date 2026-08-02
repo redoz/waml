@@ -1,4 +1,9 @@
 use super::*;
+use crate::app::workspace::{
+    browser_save_fragment, close_after_save, prevent_quit_after_failed_save, replace_after_save,
+    restore_markdown_asset_host_after_open, should_flush_save, BackingTransitionError,
+    SaveFeedback,
+};
 
 #[test]
 fn failed_open_restores_the_previous_markdown_asset_root() {

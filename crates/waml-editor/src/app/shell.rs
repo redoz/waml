@@ -625,4 +625,52 @@ impl App {
         self.sync_statusbar(cx);
         self.sync_conflict_badge(cx);
     }
+
+    /// Push the canvas's current conflict count onto the toolbar badge.
+    pub(super) fn sync_conflict_badge(&mut self, cx: &mut Cx) {
+        let n = self
+            .ui
+            .widget(cx, ids!(canvas))
+            .borrow::<crate::canvas::ClassDiagramSurface>()
+            .map(|c| c.conflict_count())
+            .unwrap_or(0);
+        if let Some(mut badge) = self
+            .ui
+            .widget(cx, ids!(conflict_badge))
+            .borrow_mut::<crate::conflict_badge::ConflictBadge>()
+        {
+            badge.set_count(cx, n);
+        }
+    }
+
+    /// Open the grouped, deletable conflict-error-list card, anchored under
+    /// the toolbar badge. Shared by the badge click and the delete-refresh
+    /// path (which re-anchors the still-open list after a row is removed).
+    pub(super) fn open_conflict_list(
+        &mut self,
+        cx: &mut Cx,
+        conflicts: Vec<crate::scene::SceneConflict>,
+    ) {
+        let btn = self.ui.widget(cx, ids!(conflict_badge)).area().rect(cx);
+        let anchor = dvec2(
+            btn.pos.x,
+            btn.pos.y + btn.size.y + crate::popup::menu::MENU_GAP,
+        );
+        let bounds = self.window_bounds(cx);
+        if let Some(mut pr) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            pr.show_at(
+                cx,
+                PopupSpec::Conflict {
+                    tag: live_id!(conflict_list),
+                    anchor,
+                    bounds,
+                    conflicts,
+                },
+            );
+        }
+    }
 }

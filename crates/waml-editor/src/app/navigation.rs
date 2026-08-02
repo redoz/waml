@@ -421,21 +421,14 @@ impl App {
                 self.view_history.refresh_current(departing);
             }
         }
-        if self.markdown_assets.is_none() {
-            self.markdown_assets = Some(crate::markdown_hosts::EditorMarkdownAssetHost::shared(
-                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
-            ));
-        }
         let assets = self
-            .markdown_assets
-            .as_ref()
-            .expect("navigation initialized the Markdown asset host");
+            .ensure_markdown_asset_host(crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle);
         if !self.documents.restore_location_with_asset_host(
             cx,
             &self.ui,
             &self.session,
             &location,
-            assets,
+            &assets,
         ) {
             return false;
         }
