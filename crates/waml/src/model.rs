@@ -618,6 +618,7 @@ pub enum EndpointRef {
         gate: String,
     },
     UseGate {
+        #[cfg_attr(feature = "serde", serde(rename = "interactionUse"))]
         interaction_use: InteractionUseId,
         gate: String,
     },
@@ -653,7 +654,7 @@ impl MessageKind {
     }
 }
 
-/// Combined-fragment keyword. `par` deferred (open question in spec).
+/// Canonical combined-fragment keyword.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
@@ -704,9 +705,16 @@ impl FragmentKind {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "item", rename_all = "camelCase"))]
 pub enum SeqChild {
-    Message { edge: MessageId },
-    Fragment { node: String },
-    InteractionUse { interaction_use: InteractionUseId },
+    Message {
+        edge: MessageId,
+    },
+    Fragment {
+        node: String,
+    },
+    InteractionUse {
+        #[cfg_attr(feature = "serde", serde(rename = "interactionUse"))]
+        interaction_use: InteractionUseId,
+    },
 }
 
 /// A message: an interaction-LOCAL, ORDERED edge (design spec §6). It is NOT a
@@ -801,8 +809,8 @@ pub enum SeqNode {
         kind: FragmentKind,
         operands: Vec<String>,
     },
-    /// One operand of a combined fragment. `guard: None` = the `else` operand.
-    /// `items` is the ordered message/fragment stream (time order).
+    /// One typed operand of a combined fragment. `items` is its ordered
+    /// message, fragment, and interaction-use stream.
     Operand {
         id: String,
         spec: OperandSpec,

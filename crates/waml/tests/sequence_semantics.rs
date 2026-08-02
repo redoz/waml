@@ -25,6 +25,15 @@ fn analyze(pairs: impl IntoIterator<Item = (&'static str, &'static str)>) -> uml
     .unwrap()
 }
 
+fn interaction<'a>(analysis: &'a uml::Analysis, key: &str) -> &'a waml::model::SequenceDoc {
+    analysis
+        .projection
+        .interactions
+        .iter()
+        .find(|doc| doc.key == key)
+        .unwrap()
+}
+
 #[test]
 fn endpoint_kinds_resolve() {
     let analysis = analyze([
@@ -38,11 +47,11 @@ fn endpoint_kinds_resolve() {
         ),
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Gates\n- request\n",
+            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [B](./b.md) as b\n\n## Gates\n- request\n\n## Messages\n- @request signals b `inside`\n",
         ),
         (
             "s.md",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Gates\n- frame\n\n## Messages\n- ref [Target](./target.md) as auth\n- a calls b `one()`\n- outside signals b `two`\n- @frame signals b `three`\n- auth@request signals b `four`\n- a calls b async `five()`\n- a returns `six` to b\n- a creates b: `B`\n- a destroys b\n",
+            "---\ntype: uml.Sequence\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Gates\n- frame\n\n## Messages\n- ref [Target](./target.md) as auth\n  - bind b to b\n- a calls b `one()`\n- outside signals b `two`\n- @frame signals b `three`\n- auth@request signals b `four`\n- a calls b async `five()`\n- a returns `six` to b\n- a creates b: `B`\n- a destroys b\n",
         ),
     ]);
     let doc = analysis
@@ -388,4 +397,98 @@ fn interaction_use_cycles_and_binding_errors_are_diagnosed() {
             .count()
             >= 5
     );
+}
+
+#[test]
+fn invalid_runtime_entries_do_not_renumber_valid_siblings() {
+    let bad = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        ("target.md", "---\ntype: uml.Sequence\n---\n# Target\n"),
+        (
+            "stable.md",
+            "---\ntype: uml.Sequence\n---\n# Stable\n\n## Lifelines\n- [A](./a.md) as outside\n- [A](./a.md) as a\n- [B](./b.md) as a\n- [B](./b.md) as b\n\n## Messages\n- missing signals b `invalid`\n- a signals b `valid`\n- ref [Missing](./missing.md) as missing\n- ref [Target](./target.md) as target\n",
+        ),
+    ]);
+    let fixed = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        ("target.md", "---\ntype: uml.Sequence\n---\n# Target\n"),
+        (
+            "stable.md",
+            "---\ntype: uml.Sequence\n---\n# Stable\n\n## Lifelines\n- [A](./a.md) as repaired\n- [A](./a.md) as a\n- [B](./b.md) as duplicate-repaired\n- [B](./b.md) as b\n\n## Messages\n- repaired signals b `repaired`\n- a signals b `valid`\n- ref [Target](./target.md) as repaired-use\n- ref [Target](./target.md) as target\n",
+        ),
+    ]);
+    let bad_doc = interaction(&bad, "stable");
+    let fixed_doc = interaction(&fixed, "stable");
+    assert_eq!(
+        bad_doc
+            .nodes
+            .iter()
+            .filter(|node| matches!(node, SeqNode::Lifeline { .. }))
+            .count(),
+        2
+    );
+    assert_eq!(bad_doc.edges[0].id, MessageId("m1".into()));
+    assert_eq!(fixed_doc.edges[1].id, MessageId("m1".into()));
+    assert_eq!(
+        bad_doc.interaction_uses[0].id,
+        InteractionUseId("u1".into())
+    );
+    assert_eq!(
+        fixed_doc.interaction_uses[1].id,
+        InteractionUseId("u1".into())
+    );
+}
+
+#[test]
+fn future_duplicate_call_identity_does_not_ambiguous_match() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "future.md",
+            "---\ntype: uml.Sequence\n---\n# Future\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `first()` as duplicate\n- b returns `first` for duplicate\n- a calls b `later()` as duplicate\n",
+        ),
+    ]);
+    let doc = analysis
+        .projection
+        .interactions
+        .iter()
+        .find(|doc| doc.key == "future")
+        .unwrap();
+    assert_eq!(doc.edges[1].returns_call, Some(MessageId("m0".into())));
+    assert!(!analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::AmbiguousReturn));
+}
+
+#[test]
+fn alt_with_only_else_is_invalid() {
+    let analysis = analyze([(
+        "else-only.md",
+        "---\ntype: uml.Sequence\n---\n# Else only\n\n## Messages\n- alt\n  - else\n",
+    )]);
+    assert!(analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::InvalidFragmentOperands));
+}
+
+#[test]
+fn parallel_sibling_branches_do_not_impose_lifetime_order() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "s.md",
+            "---\ntype: uml.Sequence\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `use`\n    - a signals b `use`\n  - branch `create`\n    - a creates b: `B`\n",
+        ),
+    ]);
+
+    assert!(!analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::InvalidLifelineLifetime));
 }

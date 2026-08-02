@@ -347,6 +347,14 @@ fn sequence_doc_json_matches_ts_field_names() {
         },
     ];
     assert_eq!(
+        serde_json::to_value(&endpoints).unwrap(),
+        serde_json::json!([
+            {"endpoint": "outside"},
+            {"endpoint": "localGate", "gate": "local"},
+            {"endpoint": "useGate", "interactionUse": "u0", "gate": "remote"}
+        ])
+    );
+    assert_eq!(
         serde_json::from_value::<Vec<EndpointRef>>(serde_json::to_value(&endpoints).unwrap())
             .unwrap(),
         endpoints
@@ -427,6 +435,10 @@ fn sequence_doc_json_matches_ts_field_names() {
         }],
         items: vec![],
     };
+    assert_eq!(
+        serde_json::to_value(&direct.nodes[0]).unwrap()["items"][0],
+        serde_json::json!({"item": "interactionUse", "interactionUse": "u0"})
+    );
     assert_eq!(
         serde_json::from_value::<SequenceDoc>(serde_json::to_value(&direct).unwrap()).unwrap(),
         direct

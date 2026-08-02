@@ -1,4 +1,5 @@
 use waml::bundle_envelope::split_bundle;
+use waml_syntax::AstNode;
 
 const FIXTURE: &str = include_str!("fixtures/orders-domain.md");
 
@@ -359,6 +360,13 @@ fn parser_platform_corpus_full_and_retained_results_match() {
                 field(&format!("gate:{index}:name"), &gate.name, &mut out);
             }
             for (index, message) in concept.messages.iter().enumerate() {
+                let range = message.syntax.syntax().range();
+                out.push(format!(
+                    "message:{index}:syntax={}..{}:depth={}",
+                    range.start().to_usize(),
+                    range.end().to_usize(),
+                    message.depth
+                ));
                 field(
                     &format!("message:{index}:source"),
                     &message.source,
@@ -388,12 +396,33 @@ fn parser_platform_corpus_full_and_retained_results_match() {
                 );
             }
             for (index, fragment) in concept.fragments.iter().enumerate() {
+                let range = fragment.syntax.syntax().range();
+                out.push(format!(
+                    "fragment:{index}:syntax={}..{}:depth={}",
+                    range.start().to_usize(),
+                    range.end().to_usize(),
+                    fragment.depth
+                ));
                 field(&format!("fragment:{index}:kind"), &fragment.kind, &mut out);
             }
             for (index, operand) in concept.operands.iter().enumerate() {
+                let range = operand.syntax.syntax().range();
+                out.push(format!(
+                    "operand:{index}:syntax={}..{}:depth={}",
+                    range.start().to_usize(),
+                    range.end().to_usize(),
+                    operand.depth
+                ));
                 field(&format!("operand:{index}:spec"), &operand.spec, &mut out);
             }
             for (index, interaction_use) in concept.interaction_uses.iter().enumerate() {
+                let range = interaction_use.syntax.syntax().range();
+                out.push(format!(
+                    "use:{index}:syntax={}..{}:depth={}",
+                    range.start().to_usize(),
+                    range.end().to_usize(),
+                    interaction_use.depth
+                ));
                 field(
                     &format!("use:{index}:link"),
                     &interaction_use.link,

@@ -29,6 +29,17 @@ fn report(
     diagnostics.push(Diagnostic::new(code, message, path, 1));
 }
 
+fn report_at(
+    context: &DomainAnalysisContext<'_>,
+    diagnostics: &mut Vec<Diagnostic>,
+    code: DiagCode,
+    message: impl Into<String>,
+    path: &str,
+    syntax: &waml_syntax::SyntaxNode<super::syntax::UmlLanguage>,
+) {
+    super::analysis::behavior_diagnostic(context, path, syntax, code, message.into(), diagnostics);
+}
+
 fn message_kind(kind: DeclaredMessageKind) -> MessageKind {
     match kind {
         DeclaredMessageKind::SyncCall => MessageKind::SyncCall,
@@ -41,6 +52,7 @@ fn message_kind(kind: DeclaredMessageKind) -> MessageKind {
 }
 
 struct Endpoints<'a> {
+    context: &'a DomainAnalysisContext<'a>,
     lifelines: &'a BTreeSet<String>,
     gates: &'a BTreeSet<String>,
     uses: &'a BTreeMap<String, usize>,
@@ -52,43 +64,52 @@ struct Endpoints<'a> {
 }
 
 impl Endpoints<'_> {
-    fn resolve(&mut self, endpoint: &DeclaredEndpointRef) -> EndpointRef {
+    fn resolve(
+        &mut self,
+        endpoint: &DeclaredEndpointRef,
+        syntax: &waml_syntax::SyntaxNode<super::syntax::UmlLanguage>,
+    ) -> Option<EndpointRef> {
         match endpoint {
             DeclaredEndpointRef::Lifeline(id) => {
                 if !self.lifelines.contains(id) {
-                    report(
-                        self.diagnostics,
+                    super::analysis::behavior_diagnostic(
+                        self.context,
+                        self.path,
+                        syntax,
                         DiagCode::UnknownSequenceEndpoint,
                         format!("unknown sequence lifeline '{id}'"),
-                        self.path,
+                        self.diagnostics,
                     );
+                    return None;
                 }
-                EndpointRef::Lifeline { id: id.clone() }
+                Some(EndpointRef::Lifeline { id: id.clone() })
             }
-            DeclaredEndpointRef::Outside => EndpointRef::Outside,
+            DeclaredEndpointRef::Outside => Some(EndpointRef::Outside),
             DeclaredEndpointRef::LocalGate(gate) => {
                 if !self.gates.contains(gate) {
-                    report(
-                        self.diagnostics,
+                    super::analysis::behavior_diagnostic(
+                        self.context,
+                        self.path,
+                        syntax,
                         DiagCode::UnknownSequenceEndpoint,
                         format!("unknown local gate '{gate}'"),
-                        self.path,
+                        self.diagnostics,
                     );
+                    return None;
                 }
-                EndpointRef::LocalGate { gate: gate.clone() }
+                Some(EndpointRef::LocalGate { gate: gate.clone() })
             }
             DeclaredEndpointRef::UseGate { use_alias, gate } => {
                 let Some(&index) = self.uses.get(use_alias) else {
-                    report(
-                        self.diagnostics,
+                    super::analysis::behavior_diagnostic(
+                        self.context,
+                        self.path,
+                        syntax,
                         DiagCode::UnknownSequenceEndpoint,
                         format!("unknown interaction-use alias '{use_alias}'"),
-                        self.path,
+                        self.diagnostics,
                     );
-                    return EndpointRef::UseGate {
-                        interaction_use: InteractionUseId(use_alias.clone()),
-                        gate: gate.clone(),
-                    };
+                    return None;
                 };
                 let target = &self.interaction_uses[index].target;
                 if !self
@@ -96,32 +117,38 @@ impl Endpoints<'_> {
                     .get(target)
                     .is_some_and(|gates| gates.contains(gate))
                 {
-                    report(
-                        self.diagnostics,
+                    super::analysis::behavior_diagnostic(
+                        self.context,
+                        self.path,
+                        syntax,
                         DiagCode::InvalidInteractionUse,
                         format!("interaction use '{use_alias}' has no gate '{gate}'"),
-                        self.path,
+                        self.diagnostics,
                     );
+                    return None;
                 } else if !self
                     .target_connected_gates
                     .get(target)
                     .is_some_and(|gates| gates.contains(gate))
                 {
-                    report(
-                        self.diagnostics,
+                    super::analysis::behavior_diagnostic(
+                        self.context,
+                        self.path,
+                        syntax,
                         DiagCode::InvalidInteractionUse,
                         format!(
                             "interaction use '{use_alias}' gate '{gate}' has no inner connection"
                         ),
-                        self.path,
+                        self.diagnostics,
                     );
+                    return None;
                 } else if !self.interaction_uses[index].gates.contains(gate) {
                     self.interaction_uses[index].gates.push(gate.clone());
                 }
-                EndpointRef::UseGate {
+                Some(EndpointRef::UseGate {
                     interaction_use: self.interaction_uses[index].id.clone(),
                     gate: gate.clone(),
-                }
+                })
             }
         }
     }
@@ -252,20 +279,26 @@ pub(crate) fn lower(
         let alias = value(&lifeline.alias).cloned();
         let id = alias.clone().unwrap_or_else(|| title.clone());
         if id == "outside" || id.contains('@') {
-            report(
+            report_at(
+                context,
                 diagnostics,
                 DiagCode::ReservedSequenceName,
                 format!("reserved sequence lifeline name '{id}'"),
                 path,
+                lifeline.syntax.syntax(),
             );
+            continue;
         }
         if !lifelines.insert(id.clone()) {
-            report(
+            report_at(
+                context,
                 diagnostics,
                 DiagCode::DuplicateSequenceName,
                 format!("duplicate sequence lifeline name '{id}'"),
                 path,
+                lifeline.syntax.syntax(),
             );
+            continue;
         }
         let target = crate::okf::resolve_href(path, slug);
         let ref_ = claimed.contains(target.as_str()).then_some(target);
@@ -282,13 +315,18 @@ pub(crate) fn lower(
 
     let mut gates = Vec::new();
     let mut gate_names = BTreeSet::new();
-    for gate in concept.gates.iter().filter_map(|gate| value(&gate.name)) {
+    for declared_gate in concept.gates.iter() {
+        let Some(gate) = value(&declared_gate.name) else {
+            continue;
+        };
         if !gate_names.insert(gate.clone()) {
-            report(
+            report_at(
+                context,
                 diagnostics,
                 DiagCode::DuplicateGate,
                 format!("duplicate gate '{gate}'"),
                 path,
+                declared_gate.syntax.syntax(),
             );
         } else {
             gates.push(gate.clone());
@@ -332,7 +370,7 @@ pub(crate) fn lower(
     let mut interaction_uses = Vec::new();
     let mut use_aliases = BTreeMap::new();
     let mut authored_use_aliases = BTreeSet::new();
-    for declared_use in concept.interaction_uses.iter() {
+    for (declared_use_index, declared_use) in concept.interaction_uses.iter().enumerate() {
         let (Some(link), Some(alias)) = (value(&declared_use.link), value(&declared_use.alias))
         else {
             continue;
@@ -345,19 +383,23 @@ pub(crate) fn lower(
         });
         let mut valid_use = target_concept.is_some() && target_is_sequence;
         if !valid_use {
-            report(
+            report_at(
+                context,
                 diagnostics,
                 DiagCode::InvalidInteractionUse,
                 format!("unresolved sequence interaction use '{link}'"),
                 path,
+                declared_use.syntax.syntax(),
             );
         }
         if lifelines.contains(alias) || !authored_use_aliases.insert(alias.clone()) {
-            report(
+            report_at(
+                context,
                 diagnostics,
                 DiagCode::DuplicateSequenceName,
                 format!("duplicate sequence interaction-use alias '{alias}'"),
                 path,
+                declared_use.syntax.syntax(),
             );
             valid_use = false;
         }
@@ -429,18 +471,20 @@ pub(crate) fn lower(
         if valid_use
             && interaction_use_enters_cycle(context, declared, &concept.concept_id, &target)
         {
-            report(
+            report_at(
+                context,
                 diagnostics,
                 DiagCode::InteractionUseCycle,
                 format!("interaction use '{alias}' enters a reference cycle"),
                 path,
+                declared_use.syntax.syntax(),
             );
             valid_use = false;
         }
         if !valid_use {
             continue;
         }
-        let id = InteractionUseId(format!("u{}", interaction_uses.len()));
+        let id = InteractionUseId(format!("u{declared_use_index}"));
         use_aliases.insert(alias.clone(), interaction_uses.len());
         interaction_uses.push(SeqInteractionUse {
             id,
@@ -477,6 +521,7 @@ pub(crate) fn lower(
     ordered.sort_by_key(|(start, _)| *start);
 
     let mut endpoints = Endpoints {
+        context,
         lifelines: &lifelines,
         gates: &gate_names,
         uses: &use_aliases,
@@ -490,7 +535,18 @@ pub(crate) fn lower(
     let mut root = Vec::new();
     let mut fragment_stack: Vec<(usize, usize)> = Vec::new();
     let mut operand_stack: Vec<(usize, usize)> = Vec::new();
-    let mut fragment_count = 0usize;
+    let fragment_indices = concept
+        .fragments
+        .iter()
+        .enumerate()
+        .map(|(index, fragment)| (fragment.syntax.syntax().range().start(), index))
+        .collect::<BTreeMap<_, _>>();
+    let message_indices = concept
+        .messages
+        .iter()
+        .enumerate()
+        .map(|(index, message)| (message.syntax.syntax().range().start(), index))
+        .collect::<BTreeMap<_, _>>();
 
     for (_, item) in ordered {
         match item {
@@ -510,8 +566,8 @@ pub(crate) fn lower(
                 {
                     operand_stack.pop();
                 }
-                let id = format!("f{fragment_count}");
-                fragment_count += 1;
+                let fragment_index = fragment_indices[&fragment.syntax.syntax().range().start()];
+                let id = format!("f{fragment_index}");
                 let index = nodes.len();
                 nodes.push(SeqNode::Fragment {
                     id: id.clone(),
@@ -597,14 +653,25 @@ pub(crate) fn lower(
                 else {
                     continue;
                 };
-                let from = endpoints.resolve(source);
+                let Some(from) = endpoints.resolve(source, message.syntax.syntax()) else {
+                    continue;
+                };
                 let kind = message_kind(*kind);
                 let authored_target = if kind == MessageKind::Reply {
                     value(&message.return_to)
                 } else {
                     value(&message.target)
                 };
-                let to = authored_target.map(|target| endpoints.resolve(target));
+                let to = match authored_target {
+                    Some(target) => {
+                        let Some(target) = endpoints.resolve(target, message.syntax.syntax())
+                        else {
+                            continue;
+                        };
+                        Some(target)
+                    }
+                    None => None,
+                };
                 if matches!(from, EndpointRef::Outside) && matches!(to, Some(EndpointRef::Outside))
                 {
                     report(
@@ -614,7 +681,8 @@ pub(crate) fn lower(
                         path,
                     );
                 }
-                let id = MessageId(format!("m{}", edges.len()));
+                let message_index = message_indices[&message.syntax.syntax().range().start()];
+                let id = MessageId(format!("m{message_index}"));
                 edges.push(SeqEdge {
                     id: id.clone(),
                     from,
@@ -641,7 +709,7 @@ pub(crate) fn lower(
 
     resolve_returns(&mut edges, &nodes, &root, diagnostics, path);
     validate_fragments(context, concept, &nodes, diagnostics, path);
-    validate_lifetimes(&edges, diagnostics, path);
+    validate_lifetimes(&edges, &nodes, &root, diagnostics, path);
 
     model.interactions.push(SequenceDoc {
         key: concept.concept_id.clone(),
@@ -787,6 +855,19 @@ fn walk_return_items(
                     }
                     joined.extend(branch);
                 }
+                if *kind == FragmentKind::Alt
+                    && !operands.iter().any(|operand| {
+                        matches!(
+                            node_by_id.get(operand).copied(),
+                            Some(SeqNode::Operand {
+                                spec: OperandSpec::Else,
+                                ..
+                            })
+                        )
+                    })
+                {
+                    joined.extend(incoming);
+                }
                 *open = joined;
             }
             SeqChild::InteractionUse { .. } => {}
@@ -804,26 +885,23 @@ fn resolve_one_return(
 ) {
     let authored_to = edges[index].to.clone();
     let selected = if let Some(authored_for) = edges[index].call_id.clone() {
-        match call_ids
+        let preceding = call_ids
             .get(&authored_for)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            [candidate] if *candidate < index => Some(*candidate),
+            .map(|entries| {
+                entries
+                    .iter()
+                    .copied()
+                    .filter(|candidate| *candidate < index)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        match preceding.as_slice() {
+            [candidate] => Some(*candidate),
             [] => {
                 report(
                     diagnostics,
                     DiagCode::UnknownCallIdentity,
                     format!("unknown call identity '{authored_for}'"),
-                    path,
-                );
-                None
-            }
-            [_] => {
-                report(
-                    diagnostics,
-                    DiagCode::UnknownCallIdentity,
-                    format!("call identity '{authored_for}' does not precede the return"),
                     path,
                 );
                 None
@@ -931,6 +1009,9 @@ fn validate_fragments(
         let valid = match kind {
             FragmentKind::Alt => {
                 !specs.is_empty()
+                    && specs
+                        .iter()
+                        .any(|spec| matches!(spec, OperandSpec::Guard(_)))
                     && specs.iter().enumerate().all(|(index, spec)| match spec {
                         OperandSpec::Guard(_) => true,
                         OperandSpec::Else => index + 1 == specs.len(),
@@ -963,7 +1044,66 @@ fn validate_fragments(
     }
 }
 
-fn validate_lifetimes(edges: &[SeqEdge], diagnostics: &mut Vec<Diagnostic>, path: &str) {
+fn validate_lifetimes(
+    edges: &[SeqEdge],
+    nodes: &[SeqNode],
+    items: &[SeqChild],
+    diagnostics: &mut Vec<Diagnostic>,
+    path: &str,
+) {
+    fn walk_scopes(
+        items: &[SeqChild],
+        nodes: &BTreeMap<String, &SeqNode>,
+        scopes: &BTreeMap<String, String>,
+        out: &mut BTreeMap<MessageId, BTreeMap<String, String>>,
+    ) {
+        for item in items {
+            match item {
+                SeqChild::Message { edge } => {
+                    out.insert(edge.clone(), scopes.clone());
+                }
+                SeqChild::InteractionUse { .. } => {}
+                SeqChild::Fragment { node } => {
+                    let Some(SeqNode::Fragment { id, kind, operands }) = nodes.get(node).copied()
+                    else {
+                        continue;
+                    };
+                    for operand in operands {
+                        let Some(SeqNode::Operand { items, .. }) = nodes.get(operand).copied()
+                        else {
+                            continue;
+                        };
+                        let mut branch = scopes.clone();
+                        if *kind == FragmentKind::Par {
+                            branch.insert(id.clone(), operand.clone());
+                        }
+                        walk_scopes(items, nodes, &branch, out);
+                    }
+                }
+            }
+        }
+    }
+    fn comparable(
+        left: &MessageId,
+        right: &MessageId,
+        scopes: &BTreeMap<MessageId, BTreeMap<String, String>>,
+    ) -> bool {
+        let (Some(left), Some(right)) = (scopes.get(left), scopes.get(right)) else {
+            return true;
+        };
+        !left
+            .iter()
+            .any(|(fragment, operand)| right.get(fragment).is_some_and(|other| other != operand))
+    }
+    let node_by_id = nodes
+        .iter()
+        .filter_map(|node| match node {
+            SeqNode::Fragment { id, .. } | SeqNode::Operand { id, .. } => Some((id.clone(), node)),
+            SeqNode::Lifeline { .. } => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut scopes = BTreeMap::new();
+    walk_scopes(items, &node_by_id, &BTreeMap::new(), &mut scopes);
     let mut creates: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut deletes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, edge) in edges.iter().enumerate() {
@@ -1005,11 +1145,15 @@ fn validate_lifetimes(edges: &[SeqEdge], diagnostics: &mut Vec<Diagnostic>, path
             if creates
                 .get(id)
                 .and_then(|positions| positions.first())
-                .is_some_and(|created| index < *created)
+                .is_some_and(|created| {
+                    index < *created && comparable(&edge.id, &edges[*created].id, &scopes)
+                })
                 || deletes
                     .get(id)
                     .and_then(|positions| positions.first())
-                    .is_some_and(|deleted| index > *deleted)
+                    .is_some_and(|deleted| {
+                        index > *deleted && comparable(&edge.id, &edges[*deleted].id, &scopes)
+                    })
             {
                 report(
                     diagnostics,
