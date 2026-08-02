@@ -89,6 +89,10 @@ mod wire {
         pub flags: BTreeMap<String, FlagSet>,
         #[cfg_attr(feature = "serde", serde(default))]
         pub routes: Vec<Route>,
+        /// Labels placed in world space by `place_labels`. `default` so a
+        /// payload serialized before labels existed still deserializes.
+        #[cfg_attr(feature = "serde", serde(default))]
+        pub labels: Vec<crate::solve::label::PlacedLabel>,
     }
 }
 pub use geometry::DroppedPlacement;
@@ -240,9 +244,72 @@ pub fn solve_diagram_reported(
     (solved, diags, dropped)
 }
 
+/// Place `requests` against the already-solved geometry, filling `solved.labels`.
+///
+/// Kept separate from `solve_diagram_reported` on purpose: composing the label
+/// TEXT is display policy (which toggles are on, how a role and a multiplicity
+/// combine), and that belongs to the frontend. The solver only ever sees final
+/// strings, so the display model does not have to move into this crate.
+pub fn place_labels(
+    solved: &mut Solved,
+    requests: &[label::LabelRequest],
+    cfg: &label::LabelConfig,
+) {
+    // Group title bands are deliberately not in `hard` yet -- `SolvedGroup`
+    // carries a `title` and a `rect`, but the title band's height is a
+    // renderer concern. Add it in a follow-up once the renderer exposes that
+    // metric.
+    let obstacles = label::Obstacles {
+        hard: solved.nodes.values().copied().collect(),
+        soft: solved
+            .routes
+            .iter()
+            .flat_map(|r| r.points.windows(2).map(|w| [w[0], w[1]]))
+            .collect(),
+    };
+    let routes: Vec<Vec<(f64, f64)>> = solved.routes.iter().map(|r| r.points.clone()).collect();
+    let placement = label::place(&routes, requests, &obstacles, cfg);
+    solved.labels = placement.placed;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placed_labels_avoid_the_solved_node_rects() {
+        let mut solved = Solved {
+            nodes: BTreeMap::from([(
+                "a".to_string(),
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 120.0,
+                    h: 80.0,
+                },
+            )]),
+            groups: vec![],
+            flags: BTreeMap::new(),
+            routes: vec![Route {
+                points: vec![(120.0, 40.0), (400.0, 40.0)],
+                source: "a".into(),
+                target: "b".into(),
+                key: None,
+            }],
+            labels: vec![],
+        };
+        let requests = vec![label::LabelRequest {
+            edge: 0,
+            slot: label::LabelSlot::TerminalFrom,
+            text: "order {1}".into(),
+        }];
+
+        place_labels(&mut solved, &requests, &label::LabelConfig::default());
+
+        assert_eq!(solved.labels.len(), 1);
+        let card = solved.nodes["a"];
+        assert!(!label::collides(solved.labels[0].rect, &[card]));
+    }
 
     #[test]
     fn pretty_dumps_nodes_deterministically() {
@@ -270,6 +337,7 @@ mod tests {
             groups: vec![],
             flags: BTreeMap::new(),
             routes: vec![],
+            labels: vec![],
         };
         // BTreeMap orders keys: a before b.
         assert_eq!(
@@ -312,6 +380,7 @@ mod tests {
             groups: vec![],
             flags: BTreeMap::new(),
             routes: vec![],
+            labels: vec![],
         };
         let v: serde_json::Value = serde_json::to_value(&solved).unwrap();
         assert_eq!(v["nodes"]["a"]["x"], 1.0);

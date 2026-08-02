@@ -672,6 +672,7 @@ pub(super) fn solve_with_rects(
             groups,
             flags,
             routes: Vec::new(),
+            labels: Vec::new(),
         },
         laid.rects,
         diags,

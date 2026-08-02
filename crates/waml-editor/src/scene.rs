@@ -473,6 +473,7 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
         groups: Vec::new(),
         flags: BTreeMap::new(),
         routes,
+        labels: Vec::new(),
     }
 }
 

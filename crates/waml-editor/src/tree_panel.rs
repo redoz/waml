@@ -718,7 +718,15 @@ fn draw_nodes(
                 draw_row_highlight(cx, draw_reveal, row_top, scale);
                 reveal_was_drawn = true;
             }
-            draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color, scale);
+            draw_row_icon(
+                cx,
+                icons,
+                node.presentation.icon,
+                row_top,
+                depth,
+                color,
+                scale,
+            );
             // Rotation comes from the fork's own animated fold amount, so the
             // chevron swings exactly with the rows rather than on a second timer.
             let child_open = ft.folder_opened(id);
@@ -757,7 +765,15 @@ fn draw_nodes(
                 draw_row_highlight(cx, draw_reveal, row_top, scale);
                 reveal_was_drawn = true;
             }
-            draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color, scale);
+            draw_row_icon(
+                cx,
+                icons,
+                node.presentation.icon,
+                row_top,
+                depth,
+                color,
+                scale,
+            );
         }
     }
     reveal_was_drawn
@@ -906,7 +922,8 @@ impl Widget for ProjectTree {
                 .width as f64;
             let x = rect.pos.x + (rect.size.x - w) * 0.5;
             let y = rect.pos.y + rect.size.y * 0.5;
-            self.draw_dim.draw_abs(cx, dvec2(x.max(rect.pos.x + PAD), y), msg);
+            self.draw_dim
+                .draw_abs(cx, dvec2(x.max(rect.pos.x + PAD), y), msg);
         }
 
         DrawStep::done()
@@ -1113,7 +1130,6 @@ impl ProjectTree {
             None
         }
     }
-
 }
 
 fn tree_panel_hit(event: &Event, cx: &mut Cx, area: Area) -> Hit {

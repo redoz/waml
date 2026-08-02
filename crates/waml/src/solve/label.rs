@@ -43,6 +43,7 @@ pub fn measure(text: &str, cfg: &LabelConfig) -> Size {
 /// text and belong to one end; the mid-route label carries the relationship
 /// name and belongs to the whole route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LabelSlot {
     TerminalFrom,
     TerminalTo,
@@ -303,6 +304,7 @@ const W_CROSSING: f64 = 40.0;
 
 /// A label the solver found a home for.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PlacedLabel {
     pub edge: usize,
     pub slot: LabelSlot,
