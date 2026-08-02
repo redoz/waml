@@ -43,15 +43,7 @@ fn message(id: &str) -> SeqChild {
 }
 
 fn load() -> SequenceDoc {
-    let sequence = include_str!("fixtures/behavior/sequence-nested/sequence.md")
-        .replace("calls b: `start()`", "calls b `start()`")
-        .replace("calls c: `work()`", "calls c `work()`")
-        .replace("calls d: `init()`", "calls d `init()`")
-        .replace("calls b: `retry()`", "calls b `retry()`")
-        .replace("- c replies b: `done`", "- c returns `done` to b")
-        .replace("- b replies a: `ok`", "- b returns `ok` to a")
-        .replace("- a sends b: `notify()`", "- a signals b `notify()`")
-        .replace("- d replies b: `ack`", "- d returns `ack` to b");
+    let sequence = include_str!("fixtures/behavior/sequence-nested/sequence.md").to_string();
     let source = SourceBundle::try_from_pairs([
         ("sequence.md", sequence),
         (
@@ -149,12 +141,7 @@ const EXPECTED_GOLDEN: &str = include_str!("fixtures/behavior/sequence-nested/se
 fn sequence_fixture_golden() {
     let (solved, diags) = solve();
     assert!(diags.is_empty(), "{diags:?}");
-    assert_eq!(
-        pretty_interaction(&solved),
-        EXPECTED_GOLDEN
-            .replace(" replies ", " returns ")
-            .replace(" sends ", " signals ")
-    );
+    assert_eq!(pretty_interaction(&solved), EXPECTED_GOLDEN);
 }
 
 #[test]

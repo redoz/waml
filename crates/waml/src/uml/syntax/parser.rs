@@ -524,18 +524,18 @@ fn sequence_items(
         while fragment_indents
             .last()
             .copied()
-            .map_or(false, |indent| indent >= leading)
+            .is_some_and(|indent| indent >= leading)
         {
             fragment_indents.pop();
         }
         let nested_under_fragment = fragment_indents
             .last()
             .copied()
-            .map_or(false, |indent| leading > indent);
+            .is_some_and(|indent| leading > indent);
         let operand_owned = fragment_indents
             .last()
             .copied()
-            .map_or(false, |indent| leading == indent + 2);
+            .is_some_and(|indent| leading == indent + 2);
         let fragment_head = matches!(
             body,
             "alt" | "opt" | "loop" | "par" | "break" | "critical" | "assert" | "neg"

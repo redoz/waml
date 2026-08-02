@@ -351,6 +351,7 @@ fn add_child(
     root.push(child);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn lower(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
@@ -834,6 +835,7 @@ pub(crate) fn lower(
                         path,
                         message.syntax.syntax(),
                     );
+                    continue;
                 }
                 let mut message_use_gates = BTreeSet::new();
                 let duplicate_use_gate = std::iter::once(&from)
@@ -894,8 +896,6 @@ pub(crate) fn lower(
             }
         }
     }
-    drop(endpoints);
-
     resolve_returns(
         context,
         concept,
@@ -988,6 +988,7 @@ fn resolve_returns(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_return_items(
     items: &[SeqChild],
     open: &mut BTreeSet<usize>,
@@ -1094,6 +1095,7 @@ fn walk_return_items(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_one_return(
     index: usize,
     open: &mut BTreeSet<usize>,
@@ -1149,9 +1151,10 @@ fn resolve_one_return(
             .copied()
             .filter(|candidate| {
                 edges[*candidate].to.as_ref() == Some(&edges[index].from)
-                    && authored_to
-                        .as_ref()
-                        .is_none_or(|to| to == &edges[*candidate].from)
+                    && match authored_to.as_ref() {
+                        None => true,
+                        Some(to) => to == &edges[*candidate].from,
+                    }
             })
             .collect::<Vec<_>>();
         match candidates.as_slice() {
@@ -1196,9 +1199,10 @@ fn resolve_one_return(
         return;
     }
     let source_matches = edges[candidate].to.as_ref() == Some(&edges[index].from);
-    let to_matches = authored_to
-        .as_ref()
-        .is_none_or(|to| to == &edges[candidate].from);
+    let to_matches = match authored_to.as_ref() {
+        None => true,
+        Some(to) => to == &edges[candidate].from,
+    };
     if !source_matches || !to_matches {
         report_message(
             context,
@@ -1292,6 +1296,7 @@ fn validate_lifetimes(
     diagnostics: &mut Vec<Diagnostic>,
     path: &str,
 ) {
+    #[allow(clippy::too_many_arguments)]
     fn repeated_deletes(
         items: &[SeqChild],
         nodes: &BTreeMap<String, &SeqNode>,
@@ -1382,6 +1387,7 @@ fn validate_lifetimes(
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn walk(
         items: &[SeqChild],
         nodes: &BTreeMap<String, &SeqNode>,

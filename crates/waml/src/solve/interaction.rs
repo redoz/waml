@@ -343,9 +343,7 @@ impl<'a> WalkState<'a> {
 
     fn walk_message(&mut self, edge_id: &str) -> Option<(f64, f64)> {
         let edge = self.edges_by_id.get(edge_id).copied()?;
-        let Some(to) = edge.to.as_ref() else {
-            return None;
-        };
+        let to = edge.to.as_ref()?;
         if matches!(edge.from, EndpointRef::Outside) && matches!(to, EndpointRef::Outside) {
             self.diagnostics.push(Diagnostic::new(
                 DiagCode::InvalidSequenceEndpoint,
@@ -552,7 +550,7 @@ impl<'a> WalkState<'a> {
             latest_branch_end: self.y,
         });
         self.walk_fragment_operands(&mut work, depth);
-        self.finish_fragment(work, depth)
+        self.finish_fragment(*work, depth)
     }
 
     #[inline(never)]
@@ -631,7 +629,7 @@ impl<'a> WalkState<'a> {
     }
 
     #[inline(never)]
-    fn finish_fragment(&mut self, mut work: Box<FragmentWork>, depth: u8) -> (f64, f64, f64, f64) {
+    fn finish_fragment(&mut self, mut work: FragmentWork, depth: u8) -> (f64, f64, f64, f64) {
         self.y += self.cfg.row_gap;
         let bottom = self.y;
         if !work.min_x.is_finite() {

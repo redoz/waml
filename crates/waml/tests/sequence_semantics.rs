@@ -123,6 +123,35 @@ fn endpoint_kinds_resolve() {
 }
 
 #[test]
+fn outside_to_outside_is_diagnosed_and_excluded_from_runtime_projection() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        (
+            "s.md",
+            "---\ntype: uml.Sequence\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- outside signals outside `invalid`\n- outside signals a `valid`\n",
+        ),
+    ]);
+    let doc = analysis
+        .projection
+        .interactions
+        .iter()
+        .find(|doc| doc.key == "s")
+        .unwrap();
+
+    assert_eq!(doc.edges.len(), 1);
+    assert_eq!(doc.edges[0].id, MessageId("m1".into()));
+    assert_eq!(doc.edges[0].from, EndpointRef::Outside);
+    assert_eq!(
+        doc.edges[0].to,
+        Some(EndpointRef::Lifeline { id: "a".into() })
+    );
+    assert!(analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::InvalidSequenceEndpoint));
+}
+
+#[test]
 fn returns_follow_the_locked_candidate_algorithm() {
     let analysis = analyze([
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
