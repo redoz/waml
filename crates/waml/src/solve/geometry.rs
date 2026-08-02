@@ -101,7 +101,7 @@ fn apply_axis(
 }
 
 /// Order-independent key for an unordered box pair.
-fn pair(a: &BoxId, b: &BoxId) -> (BoxId, BoxId) {
+pub(super) fn pair(a: &BoxId, b: &BoxId) -> (BoxId, BoxId) {
     if a <= b {
         (a.clone(), b.clone())
     } else {
@@ -163,11 +163,13 @@ fn eq(p: &mut Potentials, a: usize, b: usize, delta: f64, diags: &mut Vec<Diagno
 
 /// Position a flat set of boxes (given size + margin per id) under a constraint
 /// list. Returns one absolute `Rect` per input id.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn solve_cluster(
     ids: &[BoxId],
     dims: &BTreeMap<BoxId, (Size, Margin)>,
     constraints: &[Constraint],
     connected: &BTreeSet<(BoxId, BoxId)>,
+    label_widths: &BTreeMap<(BoxId, BoxId), f64>,
     cfg: &SolveConfig,
     diags: &mut Vec<Diagnostic>,
     dropped: &mut Vec<DroppedPlacement>,
@@ -195,7 +197,13 @@ pub(super) fn solve_cluster(
                 let (sb, mb) = dims[b];
                 let gap = cfg.margin(max_margin(ma, mb));
                 let gap = if connected.contains(&pair(a, b)) {
-                    gap.max(MIN_ASSOC)
+                    // A connected pair's connector must hold its terminal labels.
+                    // Falling back to the bare MIN_ASSOC floor is what made labels
+                    // unplaceable on short edges: two ~90px labels cannot share a
+                    // 72px gap, and no placement strategy can rescue a gap that
+                    // was never wide enough.
+                    let needed = label_widths.get(&pair(a, b)).copied().unwrap_or(0.0);
+                    gap.max(MIN_ASSOC).max(needed)
                 } else {
                     gap.max(MIN_SEP)
                 };
@@ -394,6 +402,7 @@ fn assemble(
     child_margins: &BTreeMap<BoxId, Margin>,
     cons: &[Constraint],
     connected: &BTreeSet<(BoxId, BoxId)>,
+    label_widths: &BTreeMap<(BoxId, BoxId), f64>,
     inset: f64,
     hull: Option<(Shape, Option<String>, u8)>,
     cfg: &SolveConfig,
@@ -404,7 +413,16 @@ fn assemble(
     for c in children {
         dims.insert(c.clone(), (child_laid[c].size, child_margins[c]));
     }
-    let placed = solve_cluster(children, &dims, cons, connected, cfg, diags, dropped);
+    let placed = solve_cluster(
+        children,
+        &dims,
+        cons,
+        connected,
+        label_widths,
+        cfg,
+        diags,
+        dropped,
+    );
     let (min_x, min_y, max_x, max_y) = bounds(&placed, children);
     let dx = inset - min_x;
     let dy = inset - min_y;
@@ -474,6 +492,7 @@ fn solve_box(
     cfg: &SolveConfig,
     cfor: &BTreeMap<Option<BoxId>, Vec<Constraint>>,
     connected: &BTreeSet<(BoxId, BoxId)>,
+    label_widths: &BTreeMap<(BoxId, BoxId), f64>,
     diags: &mut Vec<Diagnostic>,
     dropped: &mut Vec<DroppedPlacement>,
 ) -> Laid {
@@ -513,7 +532,17 @@ fn solve_box(
     for c in &b.children {
         child_laid.insert(
             c.clone(),
-            solve_box(c, boxes, sizes, cfg, cfor, connected, diags, dropped),
+            solve_box(
+                c,
+                boxes,
+                sizes,
+                cfg,
+                cfor,
+                connected,
+                label_widths,
+                diags,
+                dropped,
+            ),
         );
         child_margins.insert(c.clone(), boxes[c].margin);
     }
@@ -528,6 +557,7 @@ fn solve_box(
         &child_margins,
         &cons,
         connected,
+        label_widths,
         inset,
         Some((b.shape, b.title.clone(), b.depth)),
         cfg,
@@ -554,10 +584,27 @@ pub fn solve(scene: &Scene, sizes: &SizeMap, cfg: &SolveConfig) -> (Solved, Vec<
     (solved, diags)
 }
 
+/// Thin wrapper over `solve_with_rects_labeled` for callers that have no
+/// terminal-label widths to factor into the connected-gap floor.
 pub(super) fn solve_with_rects(
     scene: &Scene,
     edges: &[(BoxId, BoxId)],
     sizes: &SizeMap,
+    cfg: &SolveConfig,
+) -> (
+    Solved,
+    BTreeMap<BoxId, Rect>,
+    Vec<Diagnostic>,
+    Vec<DroppedPlacement>,
+) {
+    solve_with_rects_labeled(scene, edges, sizes, &BTreeMap::new(), cfg)
+}
+
+pub(super) fn solve_with_rects_labeled(
+    scene: &Scene,
+    edges: &[(BoxId, BoxId)],
+    sizes: &SizeMap,
+    label_widths: &BTreeMap<(BoxId, BoxId), f64>,
     cfg: &SolveConfig,
 ) -> (
     Solved,
@@ -623,6 +670,7 @@ pub(super) fn solve_with_rects(
                 cfg,
                 &cfor,
                 &connected,
+                label_widths,
                 &mut diags,
                 &mut dropped,
             ),
@@ -636,6 +684,7 @@ pub(super) fn solve_with_rects(
         &child_margins,
         &root_cons,
         &connected,
+        label_widths,
         0.0,
         None,
         cfg,
@@ -1087,6 +1136,61 @@ mod tests {
         let b = rects[&BoxId::Node("b".into())];
         let gap = b.x - (a.x + a.w);
         assert!(gap >= MIN_ASSOC, "gap {gap} should be >= {MIN_ASSOC}");
+        assert_eq!(gap, MIN_ASSOC);
+    }
+
+    #[test]
+    fn a_connected_pair_widens_to_hold_its_terminal_labels() {
+        // Two labels of 90 each plus 24 slack needs 204 -- well past the plain
+        // MIN_ASSOC floor of 72.
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let a = BoxId::Node("a".into());
+        let b = BoxId::Node("b".into());
+        let edges = vec![(a.clone(), b.clone())];
+        let widths = BTreeMap::from([(pair(&a, &b), 90.0 + 90.0 + 24.0)]);
+        let (_solved, rects, _diags, _dropped) = solve_with_rects_labeled(
+            &scene,
+            &edges,
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &widths,
+            &SolveConfig::default(),
+        );
+        let ra = rects[&a];
+        let rb = rects[&b];
+        let gap = rb.x - (ra.x + ra.w);
+        assert_eq!(gap, 204.0, "gap sized to hold both terminal labels");
+    }
+
+    #[test]
+    fn a_connected_pair_with_no_labels_keeps_the_plain_floor() {
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let a = BoxId::Node("a".into());
+        let b = BoxId::Node("b".into());
+        let edges = vec![(a.clone(), b.clone())];
+        let (_solved, rects, _diags, _dropped) = solve_with_rects_labeled(
+            &scene,
+            &edges,
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &BTreeMap::new(),
+            &SolveConfig::default(),
+        );
+        let ra = rects[&a];
+        let rb = rects[&b];
+        let gap = rb.x - (ra.x + ra.w);
         assert_eq!(gap, MIN_ASSOC);
     }
 

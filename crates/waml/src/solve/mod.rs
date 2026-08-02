@@ -236,9 +236,42 @@ pub fn solve_diagram_reported(
     sizes: &SizeMap,
     cfg: &SolveConfig,
 ) -> (Solved, Vec<Diagnostic>, Vec<DroppedPlacement>) {
+    solve_diagram_reported_labeled(diagram, edges, sizes, &[], cfg)
+}
+
+/// Like `solve_diagram_reported`, but also factors each connected pair's
+/// terminal-label widths into the connected-gap floor (see
+/// `geometry::solve_with_rects_labeled`). `label_requests`' `edge` field
+/// indexes into `edges`, matching the convention `place_labels` uses against
+/// `solved.routes`. Callers with no labels to size for (the wasm path,
+/// `flow.rs`) get exactly `solve_diagram_reported`'s behaviour via the empty
+/// wrapper above.
+pub fn solve_diagram_reported_labeled(
+    diagram: &crate::model::Diagram,
+    edges: &[(BoxId, BoxId)],
+    sizes: &SizeMap,
+    label_requests: &[label::LabelRequest],
+    cfg: &SolveConfig,
+) -> (Solved, Vec<Diagnostic>, Vec<DroppedPlacement>) {
     let (scene, mut diags) = resolve::resolve(diagram);
+    let label_cfg = label::LabelConfig::default();
+    let mut label_widths: BTreeMap<(BoxId, BoxId), f64> = BTreeMap::new();
+    for req in label_requests {
+        if !matches!(
+            req.slot,
+            label::LabelSlot::TerminalFrom | label::LabelSlot::TerminalTo
+        ) {
+            continue;
+        }
+        let Some((a, b)) = edges.get(req.edge) else {
+            continue;
+        };
+        let key = geometry::pair(a, b);
+        let w = label::measure(&req.text, &label_cfg).w;
+        *label_widths.entry(key).or_insert(0.0) += w + label_cfg.slack / 2.0;
+    }
     let (mut solved, rects, mut geo_diags, dropped) =
-        geometry::solve_with_rects(&scene, edges, sizes, cfg);
+        geometry::solve_with_rects_labeled(&scene, edges, sizes, &label_widths, cfg);
     diags.append(&mut geo_diags);
     solved.routes = route::route(&scene.boxes, &rects, edges, cfg);
     (solved, diags, dropped)
