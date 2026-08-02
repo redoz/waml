@@ -156,6 +156,9 @@ fn production_rust_sources(root: &Path) -> String {
     for entry in paths {
         let path = entry.path();
         if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == "tests") {
+                continue;
+            }
             source.push_str(&production_rust_sources(&path));
         } else if path.extension().is_some_and(|extension| extension == "rs") {
             source.push_str(&format!("\n// FILE: {}\n", path.display()));
@@ -186,6 +189,38 @@ fn production_editor_has_one_markdown_authority() {
     }
 
     assert!(!editor_root.join("markdown_surface.rs").exists());
+}
+
+#[test]
+fn production_scan_excludes_nested_tests_directories() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "waml-markdown-authority-{}-{unique}",
+        std::process::id()
+    ));
+    let feature_root = root.join("feature");
+    let tests_root = feature_root.join("tests");
+    fs::create_dir_all(&tests_root).expect("nested test source directory");
+    fs::write(
+        feature_root.join("production.rs"),
+        "fn neighboring_production_item() {}",
+    )
+    .expect("neighboring production source");
+    fs::write(
+        tests_root.join("navigation.rs"),
+        "fn test_only_item() { let _: MarkdownAction; }",
+    )
+    .expect("nested test source");
+
+    let source = production_rust_sources(&root);
+    fs::remove_dir_all(&root).expect("temporary source tree cleanup");
+
+    assert!(source.contains("neighboring_production_item"));
+    assert!(!source.contains("test_only_item"));
+    assert!(!source.contains("MarkdownAction"));
 }
 
 #[test]
