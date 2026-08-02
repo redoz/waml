@@ -74,6 +74,15 @@ to-do list.
   it.
 - A behavior stated here without a test behind it is an intention, not a
   guarantee, and should read as one.
+- The strongest form of that obligation is a scenario: `Given`, `When`, `Then`,
+  with a stable identifier that a test names. The [Sequence
+  Language](uml/sequence/language.md) carries the first set. Other goals get
+  scenarios as their behavior settles; a goal whose behavior is still a
+  question does not benefit from a scenario written early.
+- Scenario documents use ASD-STE100 Simplified Technical English: one idea for
+  each sentence, an active verb, the present tense, and the same word for the
+  same thing every time. Prose goals do not yet follow it. Converting them is
+  worth doing and is not done.
 - Every `index.md` in this tree is generated content — an H1, a description,
   and a member list. Authored payload belongs in a document beside the index,
   never in the index itself.
