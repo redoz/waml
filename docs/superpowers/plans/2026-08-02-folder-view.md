@@ -469,7 +469,13 @@ git commit -m "feat(okf): parse profile, view, and unknown keys from index front
 
   `IndexFrontmatter::default()` emits no block at all, so a caller with nothing to declare renders exactly today's bytes.
 
-  **This task is load-bearing for every later task.** `reindex_source` is the write path behind `Op::PkgReorder`, `Op::PkgMove`, and `Op::PkgRetitle`; without it, every Outline edit in Tasks 9–12 would silently erase the folder's `profile:` and `view:`.
+  Also produced by this task (see Steps 7–9): `update_authored_index` (`crates/waml/src/okf/lower.rs:669`) updates a frontmatter `title:` key when one is present, not just the H1.
+
+  **Why this task is needed — and what it is NOT.** `render_index` runs on the op write path in exactly one place: `crates/waml/src/okf/lower.rs:845`, the guarded `else` branch of `write_package_index` where the index file **does not yet exist**. A newly created index must be able to carry declarations, and `reindex_source` (used by `crates/waml/tests/golden.rs:815-851` and any future full-rebuild path) must not drop them.
+
+  It is **not** true that Tasks 9–12 depend on this for correctness. For an index that already exists, the op write path is `update_authored_index` (`crates/waml/src/okf/lower.rs:669`), which edits `index.md` surgically: it rewrites the member ranges and the H1 and leaves the rest of the file — including any frontmatter block — untouched. `reindex_source` has no callers outside `crates/waml/src/index_md.rs`'s own tests, `crates/waml/tests/golden.rs`, and the `#[deprecated]` shim at `crates/waml/src/index_md.rs:136`. So do **not** blanket-append `&IndexFrontmatter::default()` to call sites as a safety measure: the `lower.rs:845` site takes `default()` because that branch has no parsed index to read declarations from, and that is the correct value there.
+
+  The genuine ordering constraint is Steps 7–9 of this task: `Op::PkgRetitle` must move a frontmatter `title:` before Task 10 ships directory-row retitling.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -620,7 +626,7 @@ In `reindex_source` (line 114), pass the parsed index's declarations through:
             ),
 ```
 
-Fix every other `render_index` call site by appending `&IndexFrontmatter::default()` — find them with `rg "render_index\(" crates/`.
+There is exactly one other non-test call site: `crates/waml/src/okf/lower.rs:845`, inside `write_package_index`'s `else` branch (the index file does not exist yet). Pass `&IndexFrontmatter::default()` there — that branch has no parsed index to read declarations from, so declaring nothing is correct. Confirm with `rg "render_index\(" crates/` that no third non-test site exists; if one appears, read it before choosing a value rather than defaulting reflexively.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -633,11 +639,81 @@ Run: `cargo test --workspace`
 Then: `cd editors/vscode && npm run build && npm run test && npm run lint`
 Expected: all green. If a snapshot/fixture test elsewhere now sees a frontmatter block, that bundle declared `profile`/`view` — verify the new bytes are correct rather than reverting.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Write the failing test for the frontmatter-title retitle**
+
+Task 2 makes `parse_authored_index` resolve the title as `title_from_frontmatter.or(<h1>)` (`crates/waml/src/okf/shell.rs:517`) — **frontmatter wins**. But `Op::PkgRetitle` lowers to `write_package_index` → `update_authored_index` (`crates/waml/src/okf/lower.rs:669-706`), which rewrites the **H1 only**. So on a folder whose `index.md` declares `title:`, a retitle would change the H1 and the parsed title would not move: Task 10's directory-row retitle would appear to do nothing.
+
+Add to the test module in `crates/waml/src/okf/lower.rs` (next to the existing `PkgMove` tests at lines 937/954):
+
+```rust
+#[test]
+fn pkg_retitle_moves_a_frontmatter_title_not_just_the_h1() {
+    let source = crate::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+        (
+            "sales/index.md",
+            "---\ntitle: Sales\nprofile: uml-domain\n---\n# Sales\n\n* [Order](./order.md)\n",
+        ),
+        (
+            "sales/order.md",
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        ),
+    ])
+    .unwrap();
+
+    let applied = crate::ops::apply_source(
+        &source,
+        &[crate::ops::Op::PkgRetitle {
+            path: "sales".into(),
+            title: "Sales Domain".into(),
+        }],
+    )
+    .unwrap();
+
+    let text = applied
+        .to_pairs()
+        .into_iter()
+        .find(|(path, _)| path == "sales/index.md")
+        .unwrap()
+        .1;
+    assert!(text.contains("title: Sales Domain"), "frontmatter title moves: {text}");
+    assert!(text.contains("# Sales Domain"), "H1 moves too: {text}");
+    assert!(text.contains("profile: uml-domain"), "other keys survive: {text}");
+
+    // The parsed title — which is what the outline shows — actually changed.
+    let bundle = crate::okf::Bundle::parse(&applied).unwrap();
+    assert_eq!(
+        bundle.index("/sales").unwrap().title.as_deref(),
+        Some("Sales Domain")
+    );
+}
+```
+
+Run: `cargo test -p waml pkg_retitle_moves_a_frontmatter_title`
+Expected: FAIL — the frontmatter still reads `title: Sales`, and the parsed title is unchanged.
+
+- [ ] **Step 7: Make `update_authored_index` update the frontmatter title**
+
+In `update_authored_index` (`crates/waml/src/okf/lower.rs:669`), the `title_override` branch currently edits only the H1 range. Extend it: when the shell's frontmatter already carries a `title` key, also push an edit replacing that key's value range with the new title. The shell (`state.shell(work, index_path, "pkg.index")?`) is already in hand at line 691; use the same frontmatter range information `parse_closed_syntax` produces (`crates/waml/src/frontmatter.rs`) to locate the value span, and render the replacement through the same scalar-quoting helper `render_frontmatter` uses so a title needing quotes stays valid YAML.
+
+Leave the H1 edit exactly as it is — both move together, so a strict OKF consumer reading the H1 and WAML reading the frontmatter never disagree. Do **not** add a `title:` key to an index that does not already have one; a bare-H1 index keeps its shape.
+
+- [ ] **Step 8: Run the test to verify it passes**
+
+Run: `cargo test -p waml pkg_retitle`
+Expected: PASS.
+
+- [ ] **Step 9: Run the full gate**
+
+Run: `cargo test --workspace`
+Then: `cd editors/vscode && npm run build && npm run test && npm run lint`
+Expected: all green.
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add crates/waml/src/index_md.rs
-git commit -m "feat(okf): emit index frontmatter so profile and view survive a reindex"
+git add crates/waml/src/index_md.rs crates/waml/src/okf/lower.rs
+git commit -m "feat(okf): emit index frontmatter and retitle through it"
 ```
 
 ---
@@ -1707,7 +1783,10 @@ git commit -m "feat(editor): folder row opens its resolved view, chevron only fo
 - Consumes: `FolderIndex::set_editable` (Task 7), `waml::ops::Op::{NodeNew, PkgReorder}` (`crates/waml/src/ops/mod.rs:143,181`).
 - Produces: `FolderIndexAction::CreateAfter { index: usize }` and, in `FolderView::handle`, a `ViewOutcome` carrying an `EditIntent` whose op batch is `[Op::NodeNew { .. }, Op::PkgReorder { path, order }]`.
 
-  **Every edit maps to an existing OKF op or a small composite of them. Nothing bypasses the model to write files directly.** Task 3 is what makes this safe: `PkgReorder` re-renders `index.md`, and without emitted frontmatter it would erase the folder's own `profile:`/`view:`.
+  **Every edit maps to an existing OKF op or a small composite of them. Nothing bypasses the model to write files directly.** `PkgReorder` is an OKF-substrate op (`crates/waml/src/compat.rs` → `crates/waml/src/okf/ops.rs`), so it edits `index.md` in place via `update_authored_index` and leaves the folder's `profile:`/`view:` alone.
+
+> **BLOCKED ON OPEN QUESTION 3 — do not start this task until it is answered.**
+> `Op::NodeNew` carries a UML `ElementType` (`crates/waml/src/ops/mod.rs:143`) and its lowering **hard-refuses a non-UML type**: `crates/waml/src/uml/ops.rs:216-218` returns `EditError::at("node.new", "type is not claimed by UML")` unless `crate::uml::recognizes_type(ty)` (`crates/waml/src/uml.rs:37-44`) accepts it, which it does only for `Uml(_)`, `Behavior(_)`, and `Diagram`. `ElementType::Unknown(_)` is rejected. There is today **no op that creates a plain OKF concept**, and Outline is meant to work in a folder with `profile: okf` or no profile at all. See Open question 3 for the options found. Do not resolve it by defaulting to `uml.Class` — that would silently make every outline row a UML class.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1764,11 +1843,13 @@ mod tests {
         let bundle = waml::okf::Bundle::parse(&source()).unwrap();
         let ops = crate::folder_view::create_after_ops(&bundle, "/sales", 0).unwrap();
 
-        let applied = waml::ops::apply(&source().to_pairs(), &ops).unwrap();
-        let reparsed = waml::okf::Bundle::parse(
-            &SourceBundle::try_from_pairs(applied.to_pairs()).unwrap(),
-        )
-        .unwrap();
+        // `apply_source` (crates/waml/src/ops/mod.rs:225) is SourceBundle in,
+        // SourceBundle out. The sibling `apply` (line 219) takes and returns
+        // plain `Vec<(String, String)>` pairs — `ops::Bundle` is a type alias
+        // for that (line 6), NOT a SourceBundle. Do not call `.to_pairs()` on
+        // an `apply` result.
+        let applied = waml::ops::apply_source(&source(), &ops).unwrap();
+        let reparsed = waml::okf::Bundle::parse(&applied).unwrap();
         let index = reparsed.index("/sales").unwrap();
 
         assert_eq!(index.profile.as_deref(), Some("uml-domain"));
@@ -1776,8 +1857,6 @@ mod tests {
     }
 }
 ```
-
-Adapt `waml::ops::apply`'s exact signature and return type from `crates/waml/src/ops/mod.rs:219` and its neighbouring tests (e.g. `crates/waml/src/ops/mod.rs:1157`).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1809,15 +1888,11 @@ pub fn create_after_ops(
     let at = (position + 1).min(order.len());
     order.insert(at, new_id);
     Some(vec![
-        waml::ops::Op::NodeNew {
-            slug: slug.clone(),
-            dir,
-            ty: /* the default concept element type used by the New flow */,
-            title: String::new(),
-            stereotype: Vec::new(),
-            description: None,
-            abstract_: false,
-        },
+        // The creating op — SEE OPEN QUESTION 3. `Op::NodeNew`'s `ty` is a UML
+        // `ElementType` and its lowering refuses anything `recognizes_type`
+        // does not claim, so this line cannot be written until the seam
+        // question is answered. Whatever the answer, it is ONE op here.
+        creating_op,
         waml::ops::Op::PkgReorder {
             path: address.trim_start_matches('/').to_string(),
             order,
@@ -1826,7 +1901,9 @@ pub fn create_after_ops(
 }
 ```
 
-`unique_slug` is a small local helper: `untitled`, `untitled-2`, … until no member id collides. Take the `ty` value from whatever `Op::NodeNew` call site the existing New-Class flow uses (`rg "Op::NodeNew" crates/waml-editor/src`) rather than inventing one.
+`unique_slug` is a small local helper: `untitled`, `untitled-2`, … until no member id collides.
+
+Note there is **no** existing `Op::NodeNew` call site to copy from in the editor: `rg "Op::NodeNew" crates/` finds it only in `crates/waml/src/ops/mod.rs`'s own tests (lines 826, 844, 862, 1072, 1087). `creating_op` comes from the resolution of Open question 3.
 
 - [ ] **Step 4: Wire the key**
 
@@ -1863,6 +1940,10 @@ git commit -m "feat(editor): outline mode creates a concept on Enter"
 - Produces: `FolderIndexAction::Retitle { index: usize, title: String }`, and `pub fn retitle_ops(bundle, address, position, title) -> Option<Vec<Op>>`.
 
   Retitle sets the H1 and the frontmatter `title`. **It is not a file rename** — the slug and path are untouched.
+
+  Two different ops, because the two row kinds sit on opposite sides of the OKF/UML seam:
+  - A **directory** row uses `Op::PkgRetitle`, an OKF-substrate op with no claim gate. It works for any folder — and it moves a frontmatter `title:` only because Task 3 Steps 6–9 made it. **Task 3 must land before this task.**
+  - A **concept** row uses `Op::NodeSet`, which lowers through `Op::ClassifierSet` and calls `require_claimed(state, work, id, "node.set")` (`crates/waml/src/uml/ops.rs:238`). A concept whose `type:` is not claimed by UML — the ordinary case in a `profile: okf` folder — **cannot be retitled by this op**. This is the same seam as Open question 3; the concept-row half of this task inherits that answer. The directory-row half does not and can ship regardless.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1999,7 +2080,9 @@ fn dragging_a_row_reorders_members_and_moves_no_file() {
         "got {ops:?}"
     );
 
-    let applied = waml::ops::apply(&source.to_pairs(), &ops).unwrap();
+    // `apply_source` in, `apply_source` out; `waml::ops::apply` would return
+    // plain pairs (`ops::Bundle`), which has no `to_pairs`.
+    let applied = waml::ops::apply_source(&source, &ops).unwrap();
     let paths: Vec<_> = applied.to_pairs().into_iter().map(|(p, _)| p).collect();
     assert!(paths.contains(&"sales/order.md".to_string()), "no file moved");
     assert!(paths.contains(&"sales/customer.md".to_string()));
@@ -2108,10 +2191,8 @@ fn tab_moves_a_concept_into_the_preceding_sibling_directory() {
         "got {ops:?}"
     );
 
-    let applied = waml::ops::apply(&nested_source().to_pairs(), &ops).unwrap();
-    let reparsed =
-        waml::okf::Bundle::parse(&SourceBundle::try_from_pairs(applied.to_pairs()).unwrap())
-            .unwrap();
+    let applied = waml::ops::apply_source(&nested_source(), &ops).unwrap();
+    let reparsed = waml::okf::Bundle::parse(&applied).unwrap();
     // Both index files are consistent afterwards.
     assert!(!reparsed
         .index("/sales")
@@ -2248,6 +2329,47 @@ git commit -m "feat(editor): outline Tab and Shift-Tab move a concept between di
    excludes it), so opening it in the markdown editor may need a locator form
    that does not exist yet. If it does, fall back to the folder surface and
    raise it rather than adding a reserved path or a new locator kind unasked.
+3. **Creating and retitling a plain OKF concept — the OKF-substrate / UML-profile
+   seam.** Blocks Task 9 outright, and the concept-row half of Task 10. This is a
+   design question, not an implementation detail; it must be answered before
+   those tasks start.
+
+   **What is actually there.** `Op::NodeNew` (`crates/waml/src/ops/mod.rs:143`)
+   takes `ty: ElementType`. `ElementType` (`crates/waml/src/model.rs:772-777`) is
+   `Uml(UmlMetaclass) | Behavior(BehaviorKind) | Diagram | Unknown(String)`, and
+   `Unknown` **does** round-trip cleanly: `ElementType::parse` returns it for any
+   unrecognized string and `as_str` returns that string verbatim
+   (`crates/waml/src/model.rs:794-816`). OKF's own `Concept.ty`
+   (`crates/waml/src/okf.rs:185`) is explicitly "the free-text `type` frontmatter
+   field (NOT the UML `ElementType`)", so the substrate has no objection to an
+   arbitrary type.
+
+   **But the op refuses it.** `Op::NodeNew` lowers through `Op::ClassifierNew`,
+   which returns `EditError::at("node.new", "type is not claimed by UML")` unless
+   `crate::uml::recognizes_type(ty)` accepts it
+   (`crates/waml/src/uml/ops.rs:216-218`), and that function accepts only
+   `Uml(_)`, `Behavior(_)`, and `Diagram` — never `Unknown`
+   (`crates/waml/src/uml.rs:37-44`). `Op::NodeSet` is gated the same way via
+   `require_claimed` (`crates/waml/src/uml/ops.rs:238`). So today there is **no
+   op that creates or retitles a plain OKF concept**; every concept-creating path
+   in the codebase goes through the UML profile.
+
+   Options found, none chosen:
+   - **(a)** Relax `recognizes_type` / the `ClassifierNew` guard to admit
+     `ElementType::Unknown`. Smallest diff, but it widens what the UML profile
+     claims, which is the opposite of what the guard exists for.
+   - **(b)** Add an OKF-substrate `concept.new` / `concept.set` op pair beside
+     the existing `PkgMove`/`PkgReorder`/`PkgRetitle` OKF ops
+     (`crates/waml/src/okf/ops.rs`, `crates/waml/src/okf/lower.rs`), taking a
+     free-text `type` string. Honest to the layering — an OKF concept is a
+     substrate object — but it is new op surface and a new lowering path.
+   - **(c)** Make Outline UML-only for now: a folder whose resolved profile is
+     not `uml-domain` gets the read-only `Index` view and Enter/typing are inert.
+     Ships Tasks 9–12 for the `uml-domain` case with no model change, at the cost
+     of the `profile: okf` case the spec's outliner goal implies.
+
+   The plan does not pick one. Note that Tasks 11 and 12 are unaffected either
+   way: `PkgReorder` and `PkgMove` are OKF-substrate ops with no claim gate.
 
 ## Deliberately out of scope
 
