@@ -38,7 +38,51 @@ pub fn route_keyed(
     boxes: &[Box],
     rects: &BTreeMap<BoxId, Rect>,
     edges: &[(BoxId, BoxId, Option<String>)],
+    cfg: &SolveConfig,
+) -> Vec<Route> {
+    let keyed: Vec<(BoxId, BoxId, Option<String>)> = edges
+        .iter()
+        .map(|(s, t, key)| (s.clone(), t.clone(), key.clone()))
+        .collect();
+    route_keyed_with(boxes, rects, &keyed, cfg, &RouteCost::default())
+}
+
+/// Weights for the router's A* cost function.
+///
+/// Lifted out of `astar`'s hardcoded constants so layout tuning has one place
+/// to live instead of each change inventing its own mechanism. `Default`
+/// reproduces the legacy constants exactly: adding a weight must never move a
+/// route until that weight is deliberately changed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RouteCost {
+    /// Cost per unit of path length.
+    pub length: f64,
+    /// Cost per direction change.
+    pub bend: f64,
+    /// Cost per unit of label band that collides with a hard obstacle. Zero in
+    /// `Default`, and applied only to edges that actually carry a label, so
+    /// unlabelled edges route byte-identically to before this existed.
+    pub label_pressure: f64,
+}
+
+impl Default for RouteCost {
+    fn default() -> Self {
+        RouteCost {
+            length: 1.0,
+            bend: BEND_PENALTY,
+            label_pressure: 0.0,
+        }
+    }
+}
+
+/// `route_keyed`, but with an explicit `RouteCost` rather than the legacy
+/// defaults. The seam `label_pressure` and future layout tuning hang off.
+pub fn route_keyed_with(
+    boxes: &[Box],
+    rects: &BTreeMap<BoxId, Rect>,
+    edges: &[(BoxId, BoxId, Option<String>)],
     _cfg: &SolveConfig,
+    cost: &RouteCost,
 ) -> Vec<Route> {
     let membership = build_membership(boxes);
     let mut routes: Vec<Route> = Vec::new();
@@ -59,7 +103,7 @@ pub fn route_keyed(
         obstacles.sort_by(|a, b| a.id.cmp(&b.id)); // deterministic order
         let (ovg, srcv, tgtv) = build_ovg(&obstacles, src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let points = astar(&ovg, &srcv, &tgtv, goal).unwrap_or_else(|| fallback_l(src, tgt));
+        let points = astar(&ovg, &srcv, &tgtv, goal, cost).unwrap_or_else(|| fallback_l(src, tgt));
         routes.push(Route {
             points,
             source,
@@ -452,7 +496,13 @@ fn simplify(pts: Vec<P>) -> Vec<P> {
     out
 }
 
-fn astar(ovg: &Ovg, sources: &[usize], targets: &[usize], goal: P) -> Option<Vec<P>> {
+fn astar(
+    ovg: &Ovg,
+    sources: &[usize],
+    targets: &[usize],
+    goal: P,
+    cost: &RouteCost,
+) -> Option<Vec<P>> {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
 
@@ -488,8 +538,8 @@ fn astar(ovg: &Ovg, sources: &[usize], targets: &[usize], goal: P) -> Option<Vec
         }
         for &(w, len) in &ovg.adj[v] {
             let nd = dir_of(ovg.verts[v], ovg.verts[w]);
-            let bend = if d != 0 && d != nd { BEND_PENALTY } else { 0.0 };
-            let ng = g + len + bend;
+            let bend = if d != 0 && d != nd { cost.bend } else { 0.0 };
+            let ng = g + len * cost.length + bend;
             let ns = state(w, nd);
             if ng + 1e-9 < dist[ns] {
                 dist[ns] = ng;
@@ -940,7 +990,7 @@ mod tests {
         let tgt = r(300.0, 0.0, 100.0, 60.0);
         let (ovg, srcv, tgtv) = build_ovg(&[], src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let path = astar(&ovg, &srcv, &tgtv, goal).expect("path exists");
+        let path = astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default()).expect("path exists");
         assert!(
             path.len() >= 2,
             "path has at least two points, got {path:?}"
@@ -979,7 +1029,7 @@ mod tests {
         };
         let (ovg, srcv, tgtv) = build_ovg(std::slice::from_ref(&mid), src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let path = astar(&ovg, &srcv, &tgtv, goal).expect("path exists");
+        let path = astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default()).expect("path exists");
         assert!(path.len() >= 4, "a detour has >= 4 points, got {path:?}");
         for w in path.windows(2) {
             assert!(
@@ -1173,6 +1223,40 @@ mod tests {
         for &(x, y) in &out[0].points {
             assert!(!strictly_inside(&inf, x, y));
         }
+    }
+
+    type BentCase = (Vec<Box>, BTreeMap<BoxId, Rect>, Vec<(BoxId, BoxId)>);
+
+    /// A box + rects + edges triple whose route actually bends around an
+    /// obstacle, so it exercises the bend penalty (a straight route would not).
+    fn three_box_bent_case() -> BentCase {
+        let boxes = vec![leafbox("a"), leafbox("b"), leafbox("m")];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("b".into()), nrect(350.0, 0.0, 100.0, 60.0));
+        rects.insert(BoxId::Node("m".into()), nrect(150.0, -30.0, 80.0, 120.0));
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        (boxes, rects, edges)
+    }
+
+    #[test]
+    fn route_cost_default_reproduces_the_legacy_router() {
+        let (boxes, rects, edges) = three_box_bent_case();
+        let legacy = route(&boxes, &rects, &edges, &SolveConfig::default());
+        let via_cost = route_keyed_with(
+            &boxes,
+            &rects,
+            &edges
+                .iter()
+                .map(|(s, t)| (s.clone(), t.clone(), None))
+                .collect::<Vec<_>>(),
+            &SolveConfig::default(),
+            &RouteCost::default(),
+        );
+        assert_eq!(
+            legacy, via_cost,
+            "default weights must not move a single point"
+        );
     }
 
     #[test]
