@@ -382,7 +382,10 @@ pub fn message_label(
         waml::model::EndpointRef::Lifeline { id } => lifeline_title(id),
         waml::model::EndpointRef::Outside => "outside".to_string(),
         waml::model::EndpointRef::LocalGate { gate } => format!("@{gate}"),
-        waml::model::EndpointRef::UseGate { interaction_use, gate } => {
+        waml::model::EndpointRef::UseGate {
+            interaction_use,
+            gate,
+        } => {
             format!("{}@{gate}", interaction_use.0)
         }
     };

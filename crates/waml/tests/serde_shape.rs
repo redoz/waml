@@ -338,7 +338,9 @@ fn sequence_doc_json_matches_ts_field_names() {
 
     let endpoints = [
         EndpointRef::Outside,
-        EndpointRef::LocalGate { gate: "local".into() },
+        EndpointRef::LocalGate {
+            gate: "local".into(),
+        },
         EndpointRef::UseGate {
             interaction_use: InteractionUseId("u0".into()),
             gate: "remote".into(),
@@ -380,7 +382,9 @@ fn sequence_doc_json_matches_ts_field_names() {
     for spec in [
         OperandSpec::Guard("ready".into()),
         OperandSpec::Else,
-        OperandSpec::Branch { label: Some("a".into()) },
+        OperandSpec::Branch {
+            label: Some("a".into()),
+        },
     ] {
         assert_eq!(
             serde_json::from_value::<OperandSpec>(serde_json::to_value(&spec).unwrap()).unwrap(),
@@ -403,7 +407,9 @@ fn sequence_doc_json_matches_ts_field_names() {
             id: MessageId("m0".into()),
             from: EndpointRef::Outside,
             kind: MessageKind::AsyncSignal,
-            to: Some(EndpointRef::LocalGate { gate: "local".into() }),
+            to: Some(EndpointRef::LocalGate {
+                gate: "local".into(),
+            }),
             value: Some("payload".into()),
             call_id: None,
             returns_call: None,
@@ -413,7 +419,10 @@ fn sequence_doc_json_matches_ts_field_names() {
             id: InteractionUseId("u0".into()),
             target: "target".into(),
             alias: "target_use".into(),
-            bindings: vec![SeqBinding { local: "a".into(), target: "b".into() }],
+            bindings: vec![SeqBinding {
+                local: "a".into(),
+                target: "b".into(),
+            }],
             gates: vec!["remote".into()],
         }],
         items: vec![],

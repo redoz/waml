@@ -359,13 +359,33 @@ fn parser_platform_corpus_full_and_retained_results_match() {
                 field(&format!("gate:{index}:name"), &gate.name, &mut out);
             }
             for (index, message) in concept.messages.iter().enumerate() {
-                field(&format!("message:{index}:source"), &message.source, &mut out);
+                field(
+                    &format!("message:{index}:source"),
+                    &message.source,
+                    &mut out,
+                );
                 field(&format!("message:{index}:kind"), &message.kind, &mut out);
-                field(&format!("message:{index}:target"), &message.target, &mut out);
+                field(
+                    &format!("message:{index}:target"),
+                    &message.target,
+                    &mut out,
+                );
                 field(&format!("message:{index}:value"), &message.value, &mut out);
-                field(&format!("message:{index}:call_id"), &message.call_id, &mut out);
-                field(&format!("message:{index}:return_to"), &message.return_to, &mut out);
-                field(&format!("message:{index}:return_for"), &message.return_for, &mut out);
+                field(
+                    &format!("message:{index}:call_id"),
+                    &message.call_id,
+                    &mut out,
+                );
+                field(
+                    &format!("message:{index}:return_to"),
+                    &message.return_to,
+                    &mut out,
+                );
+                field(
+                    &format!("message:{index}:return_for"),
+                    &message.return_for,
+                    &mut out,
+                );
             }
             for (index, fragment) in concept.fragments.iter().enumerate() {
                 field(&format!("fragment:{index}:kind"), &fragment.kind, &mut out);
@@ -374,8 +394,16 @@ fn parser_platform_corpus_full_and_retained_results_match() {
                 field(&format!("operand:{index}:spec"), &operand.spec, &mut out);
             }
             for (index, interaction_use) in concept.interaction_uses.iter().enumerate() {
-                field(&format!("use:{index}:link"), &interaction_use.link, &mut out);
-                field(&format!("use:{index}:alias"), &interaction_use.alias, &mut out);
+                field(
+                    &format!("use:{index}:link"),
+                    &interaction_use.link,
+                    &mut out,
+                );
+                field(
+                    &format!("use:{index}:alias"),
+                    &interaction_use.alias,
+                    &mut out,
+                );
                 for (binding_index, binding) in interaction_use.bindings.iter().enumerate() {
                     field(
                         &format!("use:{index}:binding:{binding_index}:local"),
@@ -499,17 +527,17 @@ fn projection(bundle: &[(String, String)]) -> waml::uml::Projection {
 fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
     use waml::source::SourceBundle;
 
-    let source = SourceBundle::try_from_pairs(
-        PARSER_PLATFORM_FIXTURES
-            .iter()
-            .map(|(path, text)| {
-                (
-                    *path,
-                    text.replace("Buyer calls Order: `submit()`", "Buyer calls Order `submit()`"),
-                )
-            }),
-    )
-    .unwrap();
+    let source =
+        SourceBundle::try_from_pairs(PARSER_PLATFORM_FIXTURES.iter().map(|(path, text)| {
+            (
+                *path,
+                text.replace(
+                    "Buyer calls Order: `submit()`",
+                    "Buyer calls Order `submit()`",
+                ),
+            )
+        }))
+        .unwrap();
     let okf = waml::okf::Bundle::parse(&source).unwrap();
     let projection = waml::analysis::prepare_candidate(source, None, 0)
         .unwrap()

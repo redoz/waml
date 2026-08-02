@@ -46,6 +46,7 @@ struct Endpoints<'a> {
     uses: &'a BTreeMap<String, usize>,
     interaction_uses: &'a mut [SeqInteractionUse],
     target_gates: &'a BTreeMap<String, BTreeSet<String>>,
+    target_connected_gates: &'a BTreeMap<String, BTreeSet<String>>,
     path: &'a str,
     diagnostics: &'a mut Vec<Diagnostic>,
 }
@@ -101,6 +102,19 @@ impl Endpoints<'_> {
                         format!("interaction use '{use_alias}' has no gate '{gate}'"),
                         self.path,
                     );
+                } else if !self
+                    .target_connected_gates
+                    .get(target)
+                    .is_some_and(|gates| gates.contains(gate))
+                {
+                    report(
+                        self.diagnostics,
+                        DiagCode::InvalidInteractionUse,
+                        format!(
+                            "interaction use '{use_alias}' gate '{gate}' has no inner connection"
+                        ),
+                        self.path,
+                    );
                 } else if !self.interaction_uses[index].gates.contains(gate) {
                     self.interaction_uses[index].gates.push(gate.clone());
                 }
@@ -113,6 +127,89 @@ impl Endpoints<'_> {
     }
 }
 
+fn path_for_concept(context: &DomainAnalysisContext<'_>, concept_id: &str) -> Option<String> {
+    context
+        .catalog
+        .documents()
+        .iter()
+        .find_map(|(_, document)| {
+            (crate::okf::id_of(document.path().as_str()) == concept_id)
+                .then(|| document.path().as_str().to_string())
+        })
+}
+
+fn lifeline_classifier_map(concept: &DeclaredConcept, path: &str) -> BTreeMap<String, String> {
+    concept
+        .lifelines
+        .iter()
+        .filter_map(|lifeline| {
+            let title = value(&lifeline.title)?;
+            let handle = value(&lifeline.alias).unwrap_or(title);
+            let classifier = crate::okf::resolve_href(path, value(&lifeline.target)?);
+            Some((handle.clone(), classifier))
+        })
+        .collect()
+}
+
+fn participating_lifelines(concept: &DeclaredConcept) -> BTreeSet<String> {
+    let mut first: BTreeMap<String, bool> = BTreeMap::new();
+    for message in concept.messages.iter() {
+        let kind = value(&message.kind).copied();
+        if let Some(DeclaredEndpointRef::Lifeline(handle)) = value(&message.source) {
+            first.entry(handle.clone()).or_insert(false);
+        }
+        let target = if kind == Some(DeclaredMessageKind::Reply) {
+            value(&message.return_to)
+        } else {
+            value(&message.target)
+        };
+        if let Some(DeclaredEndpointRef::Lifeline(handle)) = target {
+            first
+                .entry(handle.clone())
+                .or_insert(kind == Some(DeclaredMessageKind::Create));
+        }
+    }
+    first
+        .into_iter()
+        .filter_map(|(handle, introduced_by_create)| (!introduced_by_create).then_some(handle))
+        .collect()
+}
+
+fn interaction_use_enters_cycle(
+    context: &DomainAnalysisContext<'_>,
+    declared: &DeclaredBundle,
+    origin: &str,
+    target: &str,
+) -> bool {
+    fn reaches(
+        context: &DomainAnalysisContext<'_>,
+        declared: &DeclaredBundle,
+        current: &str,
+        goal: &str,
+        visited: &mut BTreeSet<String>,
+    ) -> bool {
+        if current == goal {
+            return true;
+        }
+        if !visited.insert(current.to_string()) {
+            return false;
+        }
+        let Some(concept) = declared.concept(current) else {
+            return false;
+        };
+        let Some(path) = path_for_concept(context, current) else {
+            return false;
+        };
+        concept.interaction_uses.iter().any(|interaction_use| {
+            value(&interaction_use.link).is_some_and(|link| {
+                let next = crate::okf::resolve_href(&path, link);
+                reaches(context, declared, &next, goal, visited)
+            })
+        })
+    }
+    reaches(context, declared, target, origin, &mut BTreeSet::new())
+}
+
 enum Ordered<'a> {
     Message(&'a super::DeclaredMessage),
     Fragment(&'a super::DeclaredFragment),
@@ -120,7 +217,12 @@ enum Ordered<'a> {
     InteractionUse(&'a super::DeclaredInteractionUse),
 }
 
-fn add_child(nodes: &mut [SeqNode], operand_stack: &[(usize, usize)], root: &mut Vec<SeqChild>, child: SeqChild) {
+fn add_child(
+    nodes: &mut [SeqNode],
+    operand_stack: &[(usize, usize)],
+    root: &mut Vec<SeqChild>,
+    child: SeqChild,
+) {
     if let Some((_, index)) = operand_stack.last() {
         if let SeqNode::Operand { items, .. } = &mut nodes[*index] {
             items.push(child);
@@ -131,7 +233,7 @@ fn add_child(nodes: &mut [SeqNode], operand_stack: &[(usize, usize)], root: &mut
 }
 
 pub(crate) fn lower(
-    _context: &DomainAnalysisContext<'_>,
+    context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
     concept: &DeclaredConcept,
     okf: &crate::okf::Concept,
@@ -142,6 +244,7 @@ pub(crate) fn lower(
 ) {
     let mut nodes = Vec::new();
     let mut lifelines = BTreeSet::new();
+    let mut lifeline_classifiers = BTreeMap::new();
     for lifeline in concept.lifelines.iter() {
         let (Some(slug), Some(title)) = (value(&lifeline.target), value(&lifeline.title)) else {
             continue;
@@ -166,6 +269,9 @@ pub(crate) fn lower(
         }
         let target = crate::okf::resolve_href(path, slug);
         let ref_ = claimed.contains(target.as_str()).then_some(target);
+        if let Some(classifier) = &ref_ {
+            lifeline_classifiers.insert(id.clone(), classifier.clone());
+        }
         nodes.push(SeqNode::Lifeline {
             id,
             title: title.clone(),
@@ -201,16 +307,44 @@ pub(crate) fn lower(
             )
         })
         .collect::<BTreeMap<_, _>>();
+    let target_connected_gates = declared
+        .concepts()
+        .map(|target| {
+            let mut connected = BTreeSet::new();
+            for message in target.messages.iter() {
+                for endpoint in [
+                    value(&message.source),
+                    value(&message.target),
+                    value(&message.return_to),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if let DeclaredEndpointRef::LocalGate(gate) = endpoint {
+                        connected.insert(gate.clone());
+                    }
+                }
+            }
+            (target.concept_id.clone(), connected)
+        })
+        .collect::<BTreeMap<_, _>>();
 
     let mut interaction_uses = Vec::new();
     let mut use_aliases = BTreeMap::new();
+    let mut authored_use_aliases = BTreeSet::new();
     for declared_use in concept.interaction_uses.iter() {
-        let (Some(link), Some(alias)) = (value(&declared_use.link), value(&declared_use.alias)) else {
+        let (Some(link), Some(alias)) = (value(&declared_use.link), value(&declared_use.alias))
+        else {
             continue;
         };
         let target = crate::okf::resolve_href(path, link);
-        let valid_target = declared.concept(&target).is_some();
-        if !valid_target {
+        let target_concept = declared.concept(&target);
+        let target_is_sequence = context.okf.concept(&target).is_some_and(|concept| {
+            crate::model::ElementType::parse(&concept.ty)
+                == crate::model::ElementType::Behavior(crate::model::BehaviorKind::Sequence)
+        });
+        let mut valid_use = target_concept.is_some() && target_is_sequence;
+        if !valid_use {
             report(
                 diagnostics,
                 DiagCode::InvalidInteractionUse,
@@ -218,15 +352,15 @@ pub(crate) fn lower(
                 path,
             );
         }
-        if lifelines.contains(alias) || use_aliases.contains_key(alias) {
+        if lifelines.contains(alias) || !authored_use_aliases.insert(alias.clone()) {
             report(
                 diagnostics,
                 DiagCode::DuplicateSequenceName,
                 format!("duplicate sequence interaction-use alias '{alias}'"),
                 path,
             );
+            valid_use = false;
         }
-        let id = InteractionUseId(format!("u{}", interaction_uses.len()));
         let bindings = declared_use
             .bindings
             .iter()
@@ -236,7 +370,77 @@ pub(crate) fn lower(
                     target: value(&binding.target)?.clone(),
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if let Some(target_concept) = target_concept {
+            let target_path = path_for_concept(context, &target).unwrap_or_else(|| target.clone());
+            let target_lifelines = lifeline_classifier_map(target_concept, &target_path);
+            let participating = participating_lifelines(target_concept);
+            let mut locals = BTreeSet::new();
+            let mut targets = BTreeSet::new();
+            for binding in &bindings {
+                if !locals.insert(binding.local.clone()) || !targets.insert(binding.target.clone())
+                {
+                    report(
+                        diagnostics,
+                        DiagCode::InvalidInteractionUse,
+                        format!("interaction use '{alias}' has duplicate bindings"),
+                        path,
+                    );
+                    valid_use = false;
+                }
+                if !lifelines.contains(&binding.local)
+                    || !target_lifelines.contains_key(&binding.target)
+                {
+                    report(
+                        diagnostics,
+                        DiagCode::InvalidInteractionUse,
+                        format!("interaction use '{alias}' has an unknown binding endpoint"),
+                        path,
+                    );
+                    valid_use = false;
+                }
+                if let (Some(local_classifier), Some(target_classifier)) = (
+                    lifeline_classifiers.get(&binding.local),
+                    target_lifelines.get(&binding.target),
+                ) {
+                    if local_classifier != target_classifier {
+                        report(
+                            diagnostics,
+                            DiagCode::InvalidInteractionUse,
+                            format!("interaction use '{alias}' binds different classifiers"),
+                            path,
+                        );
+                        valid_use = false;
+                    }
+                }
+            }
+            if participating.iter().any(|handle| !targets.contains(handle)) {
+                report(
+                    diagnostics,
+                    DiagCode::InvalidInteractionUse,
+                    format!(
+                        "interaction use '{alias}' is missing a participating lifeline binding"
+                    ),
+                    path,
+                );
+                valid_use = false;
+            }
+        }
+        if valid_use
+            && interaction_use_enters_cycle(context, declared, &concept.concept_id, &target)
+        {
+            report(
+                diagnostics,
+                DiagCode::InteractionUseCycle,
+                format!("interaction use '{alias}' enters a reference cycle"),
+                path,
+            );
+            valid_use = false;
+        }
+        if !valid_use {
+            continue;
+        }
+        let id = InteractionUseId(format!("u{}", interaction_uses.len()));
         use_aliases.insert(alias.clone(), interaction_uses.len());
         interaction_uses.push(SeqInteractionUse {
             id,
@@ -252,11 +456,17 @@ pub(crate) fn lower(
         .iter()
         .map(|item| (item.syntax.syntax().range().start(), Ordered::Message(item)))
         .chain(concept.fragments.iter().map(|item| {
-            (item.syntax.syntax().range().start(), Ordered::Fragment(item))
+            (
+                item.syntax.syntax().range().start(),
+                Ordered::Fragment(item),
+            )
         }))
-        .chain(concept.operands.iter().map(|item| {
-            (item.syntax.syntax().range().start(), Ordered::Operand(item))
-        }))
+        .chain(
+            concept
+                .operands
+                .iter()
+                .map(|item| (item.syntax.syntax().range().start(), Ordered::Operand(item))),
+        )
         .chain(concept.interaction_uses.iter().map(|item| {
             (
                 item.syntax.syntax().range().start(),
@@ -272,6 +482,7 @@ pub(crate) fn lower(
         uses: &use_aliases,
         interaction_uses: &mut interaction_uses,
         target_gates: &target_gates,
+        target_connected_gates: &target_connected_gates,
         path,
         diagnostics,
     };
@@ -287,10 +498,16 @@ pub(crate) fn lower(
                 let Some(kind) = value(&fragment.kind).copied() else {
                     continue;
                 };
-                while fragment_stack.last().is_some_and(|(depth, _)| *depth >= fragment.depth) {
+                while fragment_stack
+                    .last()
+                    .is_some_and(|(depth, _)| *depth >= fragment.depth)
+                {
                     fragment_stack.pop();
                 }
-                while operand_stack.last().is_some_and(|(depth, _)| *depth >= fragment.depth) {
+                while operand_stack
+                    .last()
+                    .is_some_and(|(depth, _)| *depth >= fragment.depth)
+                {
                     operand_stack.pop();
                 }
                 let id = format!("f{fragment_count}");
@@ -310,7 +527,10 @@ pub(crate) fn lower(
                 fragment_stack.push((fragment.depth, index));
             }
             Ordered::Operand(operand) => {
-                while operand_stack.last().is_some_and(|(depth, _)| *depth >= operand.depth) {
+                while operand_stack
+                    .last()
+                    .is_some_and(|(depth, _)| *depth >= operand.depth)
+                {
                     operand_stack.pop();
                 }
                 let Some((_, fragment_index)) = fragment_stack
@@ -347,7 +567,10 @@ pub(crate) fn lower(
                 operand_stack.push((operand.depth, index));
             }
             Ordered::InteractionUse(declared_use) => {
-                while operand_stack.last().is_some_and(|(depth, _)| *depth >= declared_use.depth) {
+                while operand_stack
+                    .last()
+                    .is_some_and(|(depth, _)| *depth >= declared_use.depth)
+                {
                     operand_stack.pop();
                 }
                 if let Some(alias) = value(&declared_use.alias) {
@@ -364,10 +587,14 @@ pub(crate) fn lower(
                 }
             }
             Ordered::Message(message) => {
-                while operand_stack.last().is_some_and(|(depth, _)| *depth >= message.depth) {
+                while operand_stack
+                    .last()
+                    .is_some_and(|(depth, _)| *depth >= message.depth)
+                {
                     operand_stack.pop();
                 }
-                let (Some(source), Some(kind)) = (value(&message.source), value(&message.kind)) else {
+                let (Some(source), Some(kind)) = (value(&message.source), value(&message.kind))
+                else {
                     continue;
                 };
                 let from = endpoints.resolve(source);
@@ -378,7 +605,8 @@ pub(crate) fn lower(
                     value(&message.target)
                 };
                 let to = authored_target.map(|target| endpoints.resolve(target));
-                if matches!(from, EndpointRef::Outside) && matches!(to, Some(EndpointRef::Outside)) {
+                if matches!(from, EndpointRef::Outside) && matches!(to, Some(EndpointRef::Outside))
+                {
                     report(
                         endpoints.diagnostics,
                         DiagCode::InvalidSequenceEndpoint,
@@ -412,12 +640,15 @@ pub(crate) fn lower(
     drop(endpoints);
 
     resolve_returns(&mut edges, &nodes, &root, diagnostics, path);
-    validate_fragments(&nodes, diagnostics, path);
+    validate_fragments(context, concept, &nodes, diagnostics, path);
     validate_lifetimes(&edges, diagnostics, path);
 
     model.interactions.push(SequenceDoc {
         key: concept.concept_id.clone(),
-        title: okf.title.clone().unwrap_or_else(|| concept.concept_id.clone()),
+        title: okf
+            .title
+            .clone()
+            .unwrap_or_else(|| concept.concept_id.clone()),
         describes: okf
             .extra
             .get_str("describes")
@@ -466,9 +697,7 @@ fn resolve_returns(
     let node_by_id = nodes
         .iter()
         .filter_map(|node| match node {
-            SeqNode::Fragment { id, .. } | SeqNode::Operand { id, .. } => {
-                Some((id.clone(), node))
-            }
+            SeqNode::Fragment { id, .. } | SeqNode::Operand { id, .. } => Some((id.clone(), node)),
             SeqNode::Lifeline { .. } => None,
         })
         .collect::<BTreeMap<_, _>>();
@@ -498,29 +727,29 @@ fn walk_return_items(
     for item in items {
         match item {
             SeqChild::Message { edge } => {
-                let Some(&index) = edge_by_id.get(edge) else { continue };
+                let Some(&index) = edge_by_id.get(edge) else {
+                    continue;
+                };
                 match edges[index].kind {
                     MessageKind::SyncCall | MessageKind::AsyncCall => {
                         open.insert(index);
                     }
-                    MessageKind::Reply => resolve_one_return(
-                        index,
-                        open,
-                        edges,
-                        call_ids,
-                        diagnostics,
-                        path,
-                    ),
+                    MessageKind::Reply => {
+                        resolve_one_return(index, open, edges, call_ids, diagnostics, path)
+                    }
                     MessageKind::AsyncSignal | MessageKind::Create | MessageKind::Delete => {}
                 }
             }
             SeqChild::Fragment { node } => {
-                let Some(SeqNode::Fragment { kind, operands, .. }) = node_by_id.get(node).copied() else {
+                let Some(SeqNode::Fragment { kind, operands, .. }) = node_by_id.get(node).copied()
+                else {
                     continue;
                 };
                 if operands.len() == 1 {
                     let incoming = open.clone();
-                    if let Some(SeqNode::Operand { items, .. }) = node_by_id.get(&operands[0]).copied() {
+                    if let Some(SeqNode::Operand { items, .. }) =
+                        node_by_id.get(&operands[0]).copied()
+                    {
                         walk_return_items(
                             items,
                             open,
@@ -532,7 +761,10 @@ fn walk_return_items(
                             path,
                         );
                     }
-                    if matches!(kind, FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break) {
+                    if matches!(
+                        kind,
+                        FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
+                    ) {
                         open.extend(incoming);
                     }
                     continue;
@@ -667,7 +899,13 @@ fn resolve_one_return(
     open.remove(&candidate);
 }
 
-fn validate_fragments(nodes: &[SeqNode], diagnostics: &mut Vec<Diagnostic>, path: &str) {
+fn validate_fragments(
+    context: &DomainAnalysisContext<'_>,
+    concept: &DeclaredConcept,
+    nodes: &[SeqNode],
+    diagnostics: &mut Vec<Diagnostic>,
+    path: &str,
+) {
     let by_id = nodes
         .iter()
         .filter_map(|node| match node {
@@ -675,8 +913,17 @@ fn validate_fragments(nodes: &[SeqNode], diagnostics: &mut Vec<Diagnostic>, path
             _ => None,
         })
         .collect::<BTreeMap<_, _>>();
+    let mut declared_fragments = concept
+        .fragments
+        .iter()
+        .filter(|fragment| value(&fragment.kind).is_some());
     for node in nodes {
-        let SeqNode::Fragment { kind, operands, .. } = node else { continue };
+        let SeqNode::Fragment { kind, operands, .. } = node else {
+            continue;
+        };
+        let declared_fragment = declared_fragments
+            .next()
+            .expect("each runtime fragment has a typed declared fragment");
         let specs = operands
             .iter()
             .filter_map(|id| by_id.get(id.as_str()).copied())
@@ -704,11 +951,13 @@ fn validate_fragments(nodes: &[SeqNode], diagnostics: &mut Vec<Diagnostic>, path
             }
         };
         if !valid {
-            report(
-                diagnostics,
+            super::analysis::behavior_diagnostic(
+                context,
+                path,
+                declared_fragment.syntax.syntax(),
                 DiagCode::InvalidFragmentOperands,
                 format!("invalid operands for '{}' fragment", kind.as_str()),
-                path,
+                diagnostics,
             );
         }
     }
@@ -750,7 +999,9 @@ fn validate_lifetimes(edges: &[SeqEdge], diagnostics: &mut Vec<Diagnostic>, path
     }
     for (index, edge) in edges.iter().enumerate() {
         for endpoint in std::iter::once(&edge.from).chain(edge.to.iter()) {
-            let EndpointRef::Lifeline { id } = endpoint else { continue };
+            let EndpointRef::Lifeline { id } = endpoint else {
+                continue;
+            };
             if creates
                 .get(id)
                 .and_then(|positions| positions.first())

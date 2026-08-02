@@ -1,7 +1,10 @@
 use waml::{
     analysis::{analyze_okf, DomainAnalysisContext},
     diagnostic::DiagCode,
-    model::{EndpointRef, FragmentKind, InteractionUseId, MessageId, MessageKind, OperandSpec, SeqChild, SeqNode},
+    model::{
+        EndpointRef, FragmentKind, InteractionUseId, MessageId, MessageKind, OperandSpec, SeqChild,
+        SeqNode,
+    },
     source::SourceBundle,
     uml,
 };
@@ -53,7 +56,9 @@ fn endpoint_kinds_resolve() {
     assert_eq!(doc.edges[1].from, EndpointRef::Outside);
     assert_eq!(
         doc.edges[2].from,
-        EndpointRef::LocalGate { gate: "frame".into() }
+        EndpointRef::LocalGate {
+            gate: "frame".into()
+        }
     );
     assert_eq!(
         doc.edges[3].from,
@@ -119,6 +124,11 @@ fn fragment_operand_rules_are_exact() {
         .filter(|diagnostic| diagnostic.code == DiagCode::InvalidFragmentOperands)
         .count();
     assert_eq!(invalid_count, 8);
+    assert!(analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::InvalidFragmentOperands)
+        .all(|diagnostic| diagnostic.range.is_some()));
     let valid_doc = analysis
         .projection
         .interactions
@@ -168,22 +178,36 @@ fn nested_fragments_keep_order_and_branch_boundaries() {
         [SeqChild::Fragment { node }, SeqChild::Message { edge }]
             if node == "f0" && edge.0 == "m4"
     ));
-    let first_alt_operand = doc.nodes.iter().find_map(|node| match node {
-        SeqNode::Operand { id, spec: OperandSpec::Guard(_), items } if id == "f0.o0" => {
-            Some(items)
-        }
-        _ => None,
-    }).unwrap();
+    let first_alt_operand = doc
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            SeqNode::Operand {
+                id,
+                spec: OperandSpec::Guard(_),
+                items,
+            } if id == "f0.o0" => Some(items),
+            _ => None,
+        })
+        .unwrap();
     assert!(matches!(
         first_alt_operand.as_slice(),
         [SeqChild::Message { edge }, SeqChild::Fragment { node }]
             if edge.0 == "m0" && node == "f1"
     ));
     for (id, expected) in [("f1.o0", "m1"), ("f1.o1", "m2")] {
-        let items = doc.nodes.iter().find_map(|node| match node {
-            SeqNode::Operand { id: operand_id, items, .. } if operand_id == id => Some(items),
-            _ => None,
-        }).unwrap();
+        let items = doc
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                SeqNode::Operand {
+                    id: operand_id,
+                    items,
+                    ..
+                } if operand_id == id => Some(items),
+                _ => None,
+            })
+            .unwrap();
         assert!(matches!(items.as_slice(), [SeqChild::Message { edge }] if edge.0 == expected));
     }
 }
@@ -226,4 +250,142 @@ fn conditional_join_keeps_calls_that_can_remain_open() {
         .unwrap();
     assert_eq!(doc.edges[1].returns_call, Some(MessageId("m0".into())));
     assert_eq!(doc.edges[2].returns_call, Some(MessageId("m0".into())));
+}
+
+#[test]
+fn interaction_use_resolves_without_flattening() {
+    let analysis = analyze([
+        ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+        ("payment.md", "---\ntype: uml.Class\n---\n# Payment\n"),
+        (
+            "audit.md",
+            "---\ntype: uml.Sequence\n---\n# Audit\n",
+        ),
+        (
+            "authorize-payment.md",
+            "---\ntype: uml.Sequence\n---\n# Authorize\n\n## Lifelines\n- [Order](./order.md) as caller\n- [Payment](./payment.md) as payment\n\n## Gates\n- request\n\n## Messages\n- ref [Audit](./audit.md) as audit\n- @request calls payment `authorize()` as authorization\n- payment returns `approved` for authorization\n",
+        ),
+        (
+            "checkout.md",
+            "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as order\n- [Payment](./payment.md) as payment\n\n## Messages\n- ref [Authorize](./authorize-payment.md) as auth\n  - bind order to caller\n  - bind payment to payment\n- order calls auth@request `authorize()` as authorization\n",
+        ),
+    ]);
+    let checkout = analysis
+        .projection
+        .interactions
+        .iter()
+        .find(|doc| doc.key == "checkout")
+        .unwrap();
+    let auth = &checkout.interaction_uses[0];
+    assert_eq!(auth.target, "authorize-payment");
+    assert_eq!(auth.alias, "auth");
+    assert_eq!(
+        auth.bindings
+            .iter()
+            .map(|binding| (binding.local.as_str(), binding.target.as_str()))
+            .collect::<Vec<_>>(),
+        [("order", "caller"), ("payment", "payment")]
+    );
+    assert_eq!(auth.gates, ["request"]);
+    assert!(matches!(
+        checkout.items.first(),
+        Some(SeqChild::InteractionUse { interaction_use }) if interaction_use == &auth.id
+    ));
+    assert_eq!(
+        checkout.edges.len(),
+        1,
+        "referenced messages must not be flattened"
+    );
+
+    let target = analysis
+        .projection
+        .interactions
+        .iter()
+        .find(|doc| doc.key == "authorize-payment")
+        .unwrap();
+    assert_eq!(target.interaction_uses[0].target, "audit");
+    assert!(target
+        .edges
+        .iter()
+        .all(|edge| edge.value.as_deref() != Some("audit")));
+}
+
+#[test]
+fn invalid_interaction_uses_keep_declared_siblings() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        (
+            "good.md",
+            "---\ntype: uml.Sequence\n---\n# Good\n",
+        ),
+        (
+            "parent.md",
+            "---\ntype: uml.Sequence\n---\n# Parent\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- ref [Missing](./missing.md) as missing\n- ref [Good](./good.md) as good\n- a signals outside `later`\n",
+        ),
+    ]);
+    let declared = analysis.declared.concept("parent").unwrap();
+    assert_eq!(declared.interaction_uses.len(), 2);
+    let parent = analysis
+        .projection
+        .interactions
+        .iter()
+        .find(|doc| doc.key == "parent")
+        .unwrap();
+    assert_eq!(
+        parent
+            .interaction_uses
+            .iter()
+            .map(|interaction_use| interaction_use.alias.as_str())
+            .collect::<Vec<_>>(),
+        ["good"]
+    );
+    assert!(matches!(
+        parent.items.last(),
+        Some(SeqChild::Message { .. })
+    ));
+    assert!(analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::InvalidInteractionUse));
+}
+
+#[test]
+fn interaction_use_cycles_and_binding_errors_are_diagnosed() {
+    let analysis = analyze([
+        ("a-class.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b-class.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "target.md",
+            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [A](./a-class.md) as ta\n- [B](./b-class.md) as tb\n\n## Gates\n- idle\n- idle\n\n## Messages\n- ta calls tb `work()`\n",
+        ),
+        (
+            "bindings.md",
+            "---\ntype: uml.Sequence\n---\n# Bindings\n\n## Lifelines\n- [A](./a-class.md) as pa\n- [B](./b-class.md) as pb\n\n## Messages\n- ref [Target](./target.md) as duplicate-local\n  - bind pa to ta\n  - bind pa to tb\n- ref [Target](./target.md) as duplicate-target\n  - bind pa to ta\n  - bind pb to ta\n- ref [Target](./target.md) as mismatch\n  - bind pa to tb\n  - bind pb to ta\n- ref [Target](./target.md) as missing-binding\n  - bind pa to ta\n- ref [Target](./target.md) as pa\n  - bind pa to ta\n  - bind pb to tb\n- ref [Target](./target.md) as gate-use\n  - bind pa to ta\n  - bind pb to tb\n- pa calls gate-use@idle `outer()`\n",
+        ),
+        ("cycle-a.md", "---\ntype: uml.Sequence\n---\n# A\n\n## Messages\n- ref [B](./cycle-b.md) as b\n"),
+        ("cycle-b.md", "---\ntype: uml.Sequence\n---\n# B\n\n## Messages\n- ref [A](./cycle-a.md) as a\n"),
+        ("cycle-x.md", "---\ntype: uml.Sequence\n---\n# X\n\n## Messages\n- ref [Y](./cycle-y.md) as y\n"),
+        ("cycle-y.md", "---\ntype: uml.Sequence\n---\n# Y\n\n## Messages\n- ref [Z](./cycle-z.md) as z\n"),
+        ("cycle-z.md", "---\ntype: uml.Sequence\n---\n# Z\n\n## Messages\n- ref [X](./cycle-x.md) as x\n"),
+    ]);
+    assert!(analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::DuplicateGate));
+    assert!(
+        analysis
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidInteractionUse)
+            .count()
+            >= 5
+    );
+    assert!(
+        analysis
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InteractionUseCycle)
+            .count()
+            >= 5
+    );
 }

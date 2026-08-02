@@ -280,15 +280,21 @@ fn behavior_productions_expose_direct_fixed_slots() {
         "`ready`"
     );
     let declared_sequence = analysis.declared.concept("sequence").unwrap();
-    for field in [
-        &declared_sequence.messages[0].from,
-        &declared_sequence.messages[0].to,
-        &declared_sequence.messages[0].signature,
-    ] {
-        let range = match field {
+    let ranges = [
+        match &declared_sequence.messages[0].source {
             uml::DeclaredField::Valid { syntax, .. } => syntax.range(),
-            _ => panic!("message field is valid"),
-        };
+            _ => panic!("message source is valid"),
+        },
+        match &declared_sequence.messages[0].target {
+            uml::DeclaredField::Valid { syntax, .. } => syntax.range(),
+            _ => panic!("message target is valid"),
+        },
+        match &declared_sequence.messages[0].value {
+            uml::DeclaredField::Valid { syntax, .. } => syntax.range(),
+            _ => panic!("message value is valid"),
+        },
+    ];
+    for range in ranges {
         assert_ne!(range, declared_sequence.messages[0].syntax.syntax().range());
     }
 }
@@ -510,11 +516,11 @@ fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() 
         uml::DeclaredField::Absent
     ));
     assert!(matches!(
-        declared_sequence.messages[0].signature,
+        declared_sequence.messages[0].value,
         uml::DeclaredField::Absent
     ));
     assert!(matches!(
-        declared_sequence.sequence_operands[0].guard,
+        declared_sequence.operands[0].spec,
         uml::DeclaredField::Absent
     ));
 }

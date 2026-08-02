@@ -1393,7 +1393,7 @@ fn declared_occurrence_fingerprint(declared: &DeclaredBundle) -> Vec<String> {
     let mut out = Vec::new();
     for concept in declared.concepts() {
         out.push(format!(
-            "concept:{}:attributes={}:values={}:slots={}:relationships={}:members={}:member_groups={}:inline_instances={}:layout={}:flow_nodes={}:lifelines={}:messages={}:sequence_operands={}",
+            "concept:{}:attributes={}:values={}:slots={}:relationships={}:members={}:member_groups={}:inline_instances={}:layout={}:flow_nodes={}:lifelines={}:gates={}:messages={}:fragments={}:operands={}:interaction_uses={}",
             concept.concept_id,
             concept.attributes.len(),
             concept.values.len(),
@@ -1405,8 +1405,11 @@ fn declared_occurrence_fingerprint(declared: &DeclaredBundle) -> Vec<String> {
             concept.layout.len(),
             concept.flow_nodes.len(),
             concept.lifelines.len(),
+            concept.gates.len(),
             concept.messages.len(),
-            concept.sequence_operands.len(),
+            concept.fragments.len(),
+            concept.operands.len(),
+            concept.interaction_uses.len(),
         ));
         for (index, attribute) in concept.attributes.iter().enumerate() {
             out.push(format!(

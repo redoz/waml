@@ -1930,7 +1930,7 @@ fn parse_link_in_text(value: &str) -> Option<crate::layout::LinkRef> {
     parse_link_ref(&value[start..=start + relative_end])
 }
 
-fn behavior_diagnostic(
+pub(crate) fn behavior_diagnostic(
     context: &DomainAnalysisContext<'_>,
     path: &str,
     syntax: &SyntaxNode<UmlLanguage>,
@@ -2896,9 +2896,13 @@ fn declared_endpoint_field(
         crate::uml::DeclaredField::Incomplete { syntax, expected } => {
             crate::uml::DeclaredField::Incomplete { syntax, expected }
         }
-        crate::uml::DeclaredField::Invalid { syntax, diagnostics } => {
-            crate::uml::DeclaredField::Invalid { syntax, diagnostics }
-        }
+        crate::uml::DeclaredField::Invalid {
+            syntax,
+            diagnostics,
+        } => crate::uml::DeclaredField::Invalid {
+            syntax,
+            diagnostics,
+        },
     }
 }
 
@@ -2961,21 +2965,26 @@ trait MapDeclaredField<L: waml_syntax::SyntaxLanguage, T> {
     fn map<U>(self, f: impl FnOnce(T) -> U) -> crate::uml::DeclaredField<L, U>;
 }
 
-impl<L: waml_syntax::SyntaxLanguage, T> MapDeclaredField<L, T>
-    for crate::uml::DeclaredField<L, T>
-{
+impl<L: waml_syntax::SyntaxLanguage, T> MapDeclaredField<L, T> for crate::uml::DeclaredField<L, T> {
     fn map<U>(self, f: impl FnOnce(T) -> U) -> crate::uml::DeclaredField<L, U> {
         match self {
             crate::uml::DeclaredField::Absent => crate::uml::DeclaredField::Absent,
             crate::uml::DeclaredField::Valid { value, syntax } => {
-                crate::uml::DeclaredField::Valid { value: f(value), syntax }
+                crate::uml::DeclaredField::Valid {
+                    value: f(value),
+                    syntax,
+                }
             }
             crate::uml::DeclaredField::Incomplete { syntax, expected } => {
                 crate::uml::DeclaredField::Incomplete { syntax, expected }
             }
-            crate::uml::DeclaredField::Invalid { syntax, diagnostics } => {
-                crate::uml::DeclaredField::Invalid { syntax, diagnostics }
-            }
+            crate::uml::DeclaredField::Invalid {
+                syntax,
+                diagnostics,
+            } => crate::uml::DeclaredField::Invalid {
+                syntax,
+                diagnostics,
+            },
         }
     }
 }
@@ -2994,7 +3003,11 @@ fn declared_binding(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredBindin
         syntax::UmlSyntaxKind::TargetToken,
         crate::uml::ExpectedSyntax::MessageTarget,
     );
-    crate::uml::DeclaredBinding { syntax, local, target }
+    crate::uml::DeclaredBinding {
+        syntax,
+        local,
+        target,
+    }
 }
 
 fn declared_interaction_use(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredInteractionUse {

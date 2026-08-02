@@ -462,7 +462,13 @@ fn absurdly_deep_fragment_nesting_diagnoses_instead_of_recursing() {
             ref_: None,
         },
     ];
-    let edges = vec![edge("m0", "a", MessageKind::AsyncSignal, "b", Some("ping()"))];
+    let edges = vec![edge(
+        "m0",
+        "a",
+        MessageKind::AsyncSignal,
+        "b",
+        Some("ping()"),
+    )];
     // The innermost operand holds the only message; each level wraps the next.
     let mut inner = vec![message("m0")];
     for level in (0..DEPTH).rev() {

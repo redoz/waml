@@ -361,9 +361,7 @@ fn build_interaction_scene(
         .messages
         .iter()
         .map(|m| {
-            let label = edges_by_id
-                .get(m.id.as_str())
-                .and_then(|e| e.value.clone());
+            let label = edges_by_id.get(m.id.as_str()).and_then(|e| e.value.clone());
             MessageGeo {
                 id: m.id.clone(),
                 verb: m.verb,

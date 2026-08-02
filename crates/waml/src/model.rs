@@ -610,9 +610,13 @@ pub struct InteractionUseId(pub String);
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "endpoint", rename_all = "camelCase"))]
 pub enum EndpointRef {
-    Lifeline { id: String },
+    Lifeline {
+        id: String,
+    },
     Outside,
-    LocalGate { gate: String },
+    LocalGate {
+        gate: String,
+    },
     UseGate {
         interaction_use: InteractionUseId,
         gate: String,
@@ -702,9 +706,7 @@ impl FragmentKind {
 pub enum SeqChild {
     Message { edge: MessageId },
     Fragment { node: String },
-    InteractionUse {
-        interaction_use: InteractionUseId,
-    },
+    InteractionUse { interaction_use: InteractionUseId },
 }
 
 /// A message: an interaction-LOCAL, ORDERED edge (design spec §6). It is NOT a

@@ -46,6 +46,16 @@ fn string_field(field: &DeclaredField<waml::uml::syntax::UmlLanguage, String>) -
 }
 
 fn declared_fingerprint(candidate: &PreparedCandidate) -> Vec<String> {
+    fn debug_field<T: std::fmt::Debug>(
+        field: &DeclaredField<waml::uml::syntax::UmlLanguage, T>,
+    ) -> String {
+        match field {
+            DeclaredField::Absent => "absent".into(),
+            DeclaredField::Valid { value, .. } => format!("valid:{value:?}"),
+            DeclaredField::Incomplete { .. } => "incomplete".into(),
+            DeclaredField::Invalid { .. } => "invalid".into(),
+        }
+    }
     let concept = candidate.uml().declared.concept("checkout").unwrap();
     concept
         .lifelines
@@ -60,16 +70,14 @@ fn declared_fingerprint(candidate: &PreparedCandidate) -> Vec<String> {
         })
         .chain(concept.messages.iter().map(|message| {
             format!(
-                "message:{}:{}:{}:{}:{}",
-                string_field(&message.from),
-                match &message.verb {
-                    DeclaredField::Absent => "absent".into(),
-                    DeclaredField::Valid { value, .. } => format!("valid:{value:?}"),
-                    DeclaredField::Incomplete { .. } => "incomplete".into(),
-                    DeclaredField::Invalid { .. } => "invalid".into(),
-                },
-                string_field(&message.to),
-                string_field(&message.signature),
+                "message:{}:{}:{}:{}:{}:{}:{}:{}",
+                debug_field(&message.source),
+                debug_field(&message.kind),
+                debug_field(&message.target),
+                string_field(&message.value),
+                string_field(&message.call_id),
+                debug_field(&message.return_to),
+                string_field(&message.return_for),
                 message.depth
             )
         }))

@@ -5,7 +5,9 @@
 use super::sizing::{self, Font};
 use super::{Rect, Size, SizeMap};
 use crate::diagnostic::{DiagCode, Diagnostic};
-use crate::model::{EndpointRef, FragmentKind, MessageKind, OperandSpec, SeqChild, SeqEdge, SeqNode, SequenceDoc};
+use crate::model::{
+    EndpointRef, FragmentKind, MessageKind, OperandSpec, SeqChild, SeqEdge, SeqNode, SequenceDoc,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Tunable layout constants for the interaction solver (design spec §1.1).
@@ -290,17 +292,13 @@ impl<'a> WalkState<'a> {
                 stack.push(ActiveBar { depth, start_y: y });
             }
             MessageKind::Reply => {
-                let popped = self
-                    .stacks
-                    .get_mut(from)
-                    .and_then(|s| s.pop());
+                let popped = self.stacks.get_mut(from).and_then(|s| s.pop());
                 match popped {
                     Some(bar) => {
                         // The bar STRADDLES the stem it belongs to (design spec
                         // §3.3): its centre, not its left edge, sits on the
                         // lifeline (offset right by the nesting step).
-                        let x = self.lifeline_x[from]
-                            + bar.depth as f64 * self.cfg.nesting_step
+                        let x = self.lifeline_x[from] + bar.depth as f64 * self.cfg.nesting_step
                             - self.cfg.bar_width * 0.5;
                         self.activations.push(SolvedActivation {
                             lifeline: from.to_owned(),

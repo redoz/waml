@@ -1,7 +1,7 @@
 use super::syntax::{
     AttributeSyntax, BindingSyntax, GateSyntax, InlineInstanceSyntax, InteractionUseSyntax,
-    MemberSyntax, MessageSyntax, RelationshipSyntax, SequenceFragmentSyntax,
-    SequenceOperandSyntax, SlotSyntax, UmlLanguage, ValueSyntax,
+    MemberSyntax, MessageSyntax, RelationshipSyntax, SequenceFragmentSyntax, SequenceOperandSyntax,
+    SlotSyntax, UmlLanguage, ValueSyntax,
 };
 use crate::{
     model::{TypeRef, Visibility},
