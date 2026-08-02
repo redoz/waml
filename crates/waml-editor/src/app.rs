@@ -71,16 +71,18 @@ script_mod! {
                 window.caption_bar_height_override: 34.0
                 caption_bar: SolidView{
                     visible: false
-                    // Single-row caption: title controls only. The document tab
-                    // strip used to share this band, but the tree column has to
-                    // reach up alongside it, and the tree lives in the client
-                    // area -- nothing below the caption can grow into an OS
-                    // non-client region. So `tab_row` moved into the body (see
-                    // `center_column`) and this bar shrank to the title row.
-                    // The drag surface the strip's empty gutter used to provide
-                    // is given back by `WindowDragQuery` answering `Caption` over
-                    // that gutter; every interactive child here is likewise made
-                    // client area by the same handler.
+                    // Single-row caption, and the document tab strip is ON that
+                    // row: logo, burger, then `[T]`, the history pair and the tab
+                    // cards, with the window buttons at the far end. The strip
+                    // spent one iteration in the body so the tree column could
+                    // reach up alongside it; it is a non-client band again, so the
+                    // tree starts at the body's top edge instead and the whole
+                    // chrome is 34px tall.
+                    //
+                    // Everything here is an OS window-drag region by default;
+                    // every interactive child is handed back to the client area by
+                    // `override_caption_drag_query`, which leaves the strip's
+                    // empty gutter as the drag surface.
                     width: Fill
                     height: Fill
                     draw_bg.color: atlas.field_bg
@@ -89,9 +91,9 @@ script_mod! {
                         height: Fill
                         flow: Down
                         clip_x: false
-                        // Title row: the burger + the open model's name. `clip_x`
-                        // bounds a long model path to the row. `Fill` leaves the
-                        // seam below it its 1px.
+                        // Title row: the burger and the tab strip. `clip_x` bounds
+                        // an overlong strip to the row. `Fill` leaves the seam
+                        // below it its 1px.
                         title_row := View{
                             width: Fill
                             height: Fill
@@ -123,28 +125,87 @@ script_mod! {
                             // drop-down anchors off the caption bottom (see the
                             // burger-menu handler), so its row placement is free.
                             menu_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{left: 0.0, right: 2.0, top: 4.0} visible: false }
-                            // `Fill`, not `Fit`: the name has to ABSORB the row's
-                            // slack so `windows_buttons` behind it stays pinned to
-                            // the window's right edge. A `Fit` label long enough to
-                            // overflow would shove the button cluster past the row
-                            // and `clip_x` would eat it (the caption-child trap).
-                            // Overflow is clipped by this row instead.
-                            model_name := Label{
+                            // Tab row: the tree-column toggle, the view-history
+                            // pair, then the doc-tab strip -- all on the TITLE
+                            // line, sharing it with the logo and burger. It
+                            // replaces the open model's name, which used to hold
+                            // this slot: the tab cards already name what is open,
+                            // and a name plus a strip do not both fit a 34px row.
+                            //
+                            // `Fill`, so it ABSORBS the row's slack and
+                            // `windows_buttons` behind it stays pinned to the
+                            // window's right edge. A `Fit` child long enough to
+                            // overflow would shove the button cluster past the
+                            // row, where `clip_x` eats it (the caption-child
+                            // trap); overflow is clipped by this row instead.
+                            tab_row := SolidView{
                                 width: Fill
-                                text: ""
-                                draw_text +: {
-                                    color: atlas.text
-                                    // `text_caption` (Regular, 11) -- one px above the
-                                    // 10px doc-tab labels so it reads as the heading,
-                                    // and quieter than `text_title`, which at
-                                    // Condensed SemiBold 16 competes with the 30px
-                                    // burger instead of heading the tabs. The
-                                    // y:0.5-centred metric box centres glyph mass when
-                                    // ascender-|descender| ~= cap; the token's
-                                    // `asc:0.1 desc:0.15` trim (proven for the old
-                                    // single-row name) seats it on the row centre,
-                                    // clear of the window top edge.
-                                    text_style: fonts.text_caption
+                                height: Fill
+                                flow: Right
+                                // Cross-axis centring, which under `Flow::Right`
+                                // is PER-CHILD: it seats the 30px controls on the
+                                // row's centreline (matching the burger beside
+                                // them) and leaves the `Fill`-height strip alone.
+                                align: Align{x: 0.0, y: 0.5}
+                                // The row inherits the caption bar's fill, but
+                                // `DocTabs` repaints `field_bg` across its own
+                                // strip and that strip starts past `[T]` and the
+                                // history pair. Painting it here too keeps the
+                                // lead-in segment the same value as the cards.
+                                draw_bg.color: atlas.field_bg
+                                // The tab strip's top rule reaches left past `[T]`
+                                // and the history pair to this row's own edge.
+                                clip_x: false
+                                // The tree-column toggle's COLLAPSED-state twin.
+                                // While the column is open the real control is
+                                // `tree_btn_dock`, floating over the panel's own
+                                // top-right corner; with the column collapsed to
+                                // nothing that button has nowhere to live, so this
+                                // one takes over and leads the row. Exactly one of
+                                // the pair is ever visible -- `sync_dock_slots`
+                                // picks, off the same value that decides whether
+                                // the panel presents at all.
+                                //
+                                // 30px button / 18px glyph -- the burger's exact
+                                // size, since the two now sit side by side on one
+                                // line and any mismatch reads as a mistake.
+                                // Hidden until a model opens
+                                // (`show_editor`/`show_start_screen`), which also
+                                // sets the glyph (`Icon::PanelLeftClose` at first;
+                                // runtime synchronization switches between
+                                // `PanelLeftOpen` and `PanelLeftClose`).
+                                //
+                                // The slot, not the button, is what the shell
+                                // animates: its width runs inversely to the tree
+                                // column's reservation, so the sum the tab strip
+                                // sits at never jumps during a collapse (see
+                                // `tree_toggle_layout`). The button itself
+                                // cross-fades over that same motion rather than
+                                // being clipped by the slot; only a snap runs the
+                                // slot at all, so a resize drag leaves the twin
+                                // untouched.
+                                tree_btn_slot := View{
+                                    width: 0.0
+                                    height: Fill
+                                    // NOT clipped: the twin cross-fades in place
+                                    // (`sync_dock_slots` drives its `fade`)
+                                    // instead of being sliced by a half-open
+                                    // slot, which read as the button popping out
+                                    // of the column edge.
+                                    clip_x: false
+                                    align: Align{x: 1.0, y: 0.5}
+                                    tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
+                                }
+                                // View history, on the ROW rather than inside the
+                                // document header: one pair for the whole shell,
+                                // so it does not blink in and out with the
+                                // per-document breadcrumb band. Hidden until a
+                                // document is active (`sync_history_controls`).
+                                history_back_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 visible: false }
+                                history_forward_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 visible: false }
+                                doc_tabs := DocTabs{
+                                    width: Fill
+                                    height: Fill
                                 }
                             }
                             // Min/max/close live INSIDE the title row, not beside
@@ -249,92 +310,10 @@ script_mod! {
                                 width: Fill
                                 height: Fill
                                 flow: Down
-                                // Tab row: the tree-column toggle, the view-history
-                                // pair, then the doc-tab strip. It lives HERE, in the
-                                // center column, rather than in the caption bar: the
-                                // tree column has to occupy the same band on the left,
-                                // and the tree is client area, so the band cannot be a
-                                // caption row. Sitting inside `center_column` also
-                                // deletes the arithmetic the old placement needed --
-                                // the strip's turtle now starts on the tree column's
-                                // right edge BY CONSTRUCTION, so the runtime `tree_gap`
-                                // spacer and its `sync_tree_gap` sizing are gone.
-                                //
-                                // `DocTabs`' own `draw_bg` repaints `field_bg`, so the
-                                // band still reads as one chrome mass with the caption
-                                // above it; the active tab card bleeds down into the
-                                // body. 32px, the old caption row's height.
-                                tab_row := SolidView{
-                                    width: Fill
-                                    height: 32.0
-                                    flow: Right
-                                    // `DocTabs` paints `field_bg` across its own
-                                    // strip, but the strip starts past `[T]` and the
-                                    // history pair -- and in the caption this row used
-                                    // to inherit the caption bar's fill. In the body it
-                                    // inherits nothing, so without this the lead-in
-                                    // segment shows bare window ground: a dark notch
-                                    // between the white tree column and the white tabs.
-                                    draw_bg.color: atlas.field_bg
-                                    // The tab strip's top rule reaches left past `[T]`
-                                    // and the history pair to this row's own edge.
-                                    clip_x: false
-                                    // The tree-column toggle's COLLAPSED-state twin.
-                                    // While the column is open the real control is
-                                    // `tree_btn_dock`, floating over the panel's own
-                                    // top-right corner; with the column collapsed to
-                                    // nothing that button has nowhere to live, so this
-                                    // one takes over and leads the row. Exactly one of
-                                    // the pair is ever visible -- `sync_dock_slots`
-                                    // picks, off the same value that decides whether
-                                    // the panel presents at all.
-                                    //
-                                    // 30px button / 18px glyph -- the caption burger's
-                                    // exact size, because the two stack in one column
-                                    // and any mismatch reads as a mistake. That makes
-                                    // this box taller than a tab card (which insets
-                                    // `TOP_MARGIN` = 8 into the 32px row), so it
-                                    // deliberately overhangs the cards rather than
-                                    // sitting flush with them; `top: 1` centres the
-                                    // 30px box in the 32px row. Hidden until a model
-                                    // opens (`show_editor`/`show_start_screen`), which
-                                    // also sets the glyph (`Icon::PanelLeftClose` at
-                                    // first; runtime synchronization switches between
-                                    // `PanelLeftOpen` and `PanelLeftClose`).
-                                    //
-                                    // The slot, not the button, is what the
-                                    // shell animates: its width runs inversely to
-                                    // the tree column's reservation, so the sum
-                                    // the tab strip sits at never jumps during a
-                                    // collapse (see `tree_toggle_layout`). The
-                                    // button itself cross-fades over that same
-                                    // motion rather than being clipped by the
-                                    // slot; only a snap runs the slot at all, so
-                                    // a resize drag leaves the twin untouched.
-                                    tree_btn_slot := View{
-                                        width: 0.0
-                                        height: Fill
-                                        // NOT clipped: the twin cross-fades in
-                                        // place (`sync_dock_slots` drives its
-                                        // `fade`) instead of being sliced by a
-                                        // half-open slot, which read as the
-                                        // button popping out of the column edge.
-                                        clip_x: false
-                                        align: Align{x: 1.0, y: 0.0}
-                                        tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0, top: 1.0} visible: false }
-                                    }
-                                    // View history, on the ROW rather than inside the
-                                    // document header: one pair for the whole shell, so
-                                    // it does not blink in and out with the
-                                    // per-document breadcrumb band. Hidden until a
-                                    // document is active (`sync_history_controls`).
-                                    history_back_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{top: 1.0} visible: false }
-                                    history_forward_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{top: 1.0} visible: false }
-                                    doc_tabs := DocTabs{
-                                        width: Fill
-                                        height: Fill
-                                    }
-                                }
+                                // The breadcrumb band is the column's FIRST row:
+                                // the tab strip that used to lead it moved up into
+                                // the caption's title line (see `title_row`), so
+                                // the header starts at the body's top edge.
                                 document_header := DocumentHeader{
                                     width: Fill
                                     height: 0.0

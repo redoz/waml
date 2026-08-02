@@ -110,10 +110,6 @@ pub(super) fn project_document_header(
 /// number (see `tree_toggle_layout`).
 pub(super) const TREE_BTN_W: f64 = 32.0;
 
-/// Height of `center_column`'s tab row (the `tab_row` DSL `height`). The
-/// inspector docks to the right of the same column and must start BELOW this
-/// band -- unlike the tree, which deliberately reaches up alongside it.
-pub(super) const TAB_ROW_H: f64 = 32.0;
 pub(super) const NARROW_ENTER_W: f64 = 640.0;
 pub(super) const NARROW_EXIT_W: f64 = 680.0;
 
@@ -538,12 +534,12 @@ impl App {
             })
             .unwrap_or(0.0);
         // The inspector docks against `center_column`, whose first row is the
-        // tab strip -- so it always starts `TAB_ROW_H` down, and in narrow mode
-        // clears the breadcrumb header below that as well. (The tree column is
-        // the other side of this: it sits OUTSIDE `center_column` and
-        // deliberately reaches up into the tab row's band.)
-        let inspector_top =
-            TAB_ROW_H + crate::dock::narrow_inspector_top(self.narrow, header_height);
+        // breadcrumb header now that the tab strip lives in the caption -- so it
+        // starts flush with the column's top and only in narrow mode clears the
+        // header below that. (The tree column is the other side of this: it sits
+        // OUTSIDE `center_column`, but the caption is a non-client band, so it
+        // starts at the same y rather than reaching up into the strip.)
+        let inspector_top = crate::dock::narrow_inspector_top(self.narrow, header_height);
         if let Some(mut view) = self
             .ui
             .widget(cx, ids!(inspector_host))

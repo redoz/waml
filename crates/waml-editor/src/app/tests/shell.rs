@@ -287,14 +287,10 @@ fn mounted_dock_areas_follow_wide_and_narrow_production_layout() {
         wide.right_slot.pos.x,
     );
     assert!(drawn_header_right_dock_active(&mut cx, &app));
-    // The tree column starts at the very top of the body -- it sits OUTSIDE
-    // `center_column`, so the tab row's band is the tree's to use. The
-    // inspector, docked against that column, starts one tab row lower.
+    // The tab row lives in the caption, so the body's top edge is already below
+    // it: tree column and inspector both start flush with it.
     assert_near(wide.tree_panel.pos.y, wide.body.pos.y);
-    assert_near(
-        wide.inspector.pos.y,
-        wide.body.pos.y + super::super::shell::TAB_ROW_H,
-    );
+    assert_near(wide.inspector.pos.y, wide.body.pos.y);
 
     let narrow_size = dvec2(560.0, 700.0);
     let (mut cx, mut app) = mounted_production_shell();
@@ -326,18 +322,10 @@ fn mounted_dock_areas_follow_wide_and_narrow_production_layout() {
         false,
     );
     let narrow_absent = draw_mounted_dock(&mut cx, &app, narrow_size);
-    // With no breadcrumb header there is still the tab row to clear: the
-    // inspector docks against `center_column`, whose first row that is.
-    assert_near(
-        narrow_absent.inspector.pos.y,
-        narrow_absent.body.pos.y + super::super::shell::TAB_ROW_H,
-    );
-    // Same for the canvas stack: with the header collapsed the tab row is all
-    // that stands between it and the top of the body.
-    assert_near(
-        narrow_absent.center.pos.y,
-        narrow_absent.body.pos.y + super::super::shell::TAB_ROW_H,
-    );
+    // With no breadcrumb header there is nothing left to clear: `center_column`
+    // has no rows above the canvas stack, and the inspector docks flush.
+    assert_near(narrow_absent.inspector.pos.y, narrow_absent.body.pos.y);
+    assert_near(narrow_absent.center.pos.y, narrow_absent.body.pos.y);
 
     let (mut cx, mut app) = mounted_production_shell();
     configure_mounted_dock(

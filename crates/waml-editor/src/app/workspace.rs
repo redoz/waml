@@ -386,13 +386,6 @@ impl App {
 
         self.open_name = display_name;
 
-        let root_name = self
-            .session
-            .okf()
-            .index("/")
-            .and_then(|index| index.title.as_deref())
-            .unwrap_or(self.open_name.as_str());
-        self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
         self.refresh_nav(cx, true);
 
@@ -508,12 +501,6 @@ impl App {
             self.sync_dock_slots(cx);
             return;
         }
-        let root_name = if self.session.uml_projection().path.is_empty() {
-            self.open_name.as_str()
-        } else {
-            self.session.uml_projection().path.as_str()
-        };
-        self.ui.label(cx, ids!(model_name)).set_text(cx, root_name);
 
         self.refresh_nav(cx, true);
         self.documents.sync_active(cx, &self.ui, &self.session);
@@ -635,10 +622,6 @@ impl App {
         }
         // Replacing the host with no tabs applies hidden chrome through the
         // same transition path used when the final document closes.
-        // Clear the stale model title: the caption bar keeps drawing (logo +
-        // name) even with no model open, so a leftover name reads as if the
-        // closed model were still loaded.
-        self.ui.label(cx, ids!(model_name)).set_text(cx, "");
         self.documents
             .replace_for_session(cx, &self.ui, &self.session, OpenTabs::default());
         self.sync_document_shell(cx);
