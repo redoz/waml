@@ -289,12 +289,6 @@ mod drift {
         Icon::ListTree,
         Icon::FolderTree,
         Icon::PanelLeft,
-        // Task 1 creates the glyph catalog before Task 4 wires these controls.
-        // Task 4 must remove them once the corresponding UI call sites exist.
-        Icon::PanelLeftOpen,
-        Icon::PanelLeftClose,
-        Icon::PanelRightOpen,
-        Icon::PanelRightClose,
     ];
 
     fn table_icons() -> Vec<Icon> {

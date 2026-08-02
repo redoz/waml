@@ -29,6 +29,18 @@ fn open_overlay_contains(
         || (inspector_state == DockState::Pinned && inspector_rect.contains(point))
 }
 
+fn dock_toggle_icon(edge: crate::dock::DockEdge, state: DockState) -> crate::icons::Icon {
+    use crate::dock::DockEdge;
+    use crate::icons::Icon;
+
+    match (edge, state == DockState::Flag) {
+        (DockEdge::Left, true) => Icon::PanelLeftOpen,
+        (DockEdge::Left, false) => Icon::PanelLeftClose,
+        (DockEdge::Right, true) => Icon::PanelRightOpen,
+        (DockEdge::Right, false) => Icon::PanelRightClose,
+    }
+}
+
 fn should_dismiss_narrow_dock(
     point: DVec2,
     canvas_rect: Rect,
@@ -264,9 +276,9 @@ script_mod! {
                             // flush with them; `top: 1` centres the 30px box in the 32px
                             // row. Hidden until a model opens
                             // (`show_editor`/`show_start_screen`), which also sets the
-                            // glyph (`Icon::PanelLeft`: the dock frame reads at
-                            // 18px, where the old `ListTree`'s three rows plus
-                            // connector smeared into an unreadable blob).
+                            // glyph (`Icon::PanelLeftClose` at first; runtime
+                            // synchronization switches between `PanelLeftOpen`
+                            // and `PanelLeftClose`).
                             //
                             // `left: 2` stacks this glyph on the burger's centreline one
                             // row above: the burger gets its 2px from `title_row`'s
@@ -1620,11 +1632,22 @@ impl App {
             .widget(cx, ids!(tree_btn))
             .as_icon_button()
             .set_active(cx, tree_state == DockState::Pinned);
+        self.ui
+            .widget(cx, ids!(tree_btn))
+            .as_icon_button()
+            .set_icon(
+                cx,
+                dock_toggle_icon(crate::dock::DockEdge::Left, tree_state),
+            );
         let header_height = self
             .ui
             .widget(cx, ids!(document_header))
             .borrow_mut::<crate::document_header::DocumentHeader>()
             .map(|mut header| {
+                header.set_right_dock_icon(
+                    cx,
+                    dock_toggle_icon(crate::dock::DockEdge::Right, inspector_state),
+                );
                 header.set_right_dock_active(cx, inspector_state == DockState::Pinned);
                 header.visible_height()
             })
@@ -2205,7 +2228,7 @@ impl App {
         self.ui
             .widget(cx, ids!(tree_btn))
             .as_icon_button()
-            .set_icon(cx, crate::icons::Icon::PanelLeft);
+            .set_icon(cx, crate::icons::Icon::PanelLeftClose);
         if let Some(mut doc_tabs) = self
             .ui
             .widget(cx, ids!(doc_tabs))
@@ -3020,7 +3043,8 @@ impl AppMain for App {
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_save_fragment, close_after_save, doc_switcher_items, logo_command_for, next_narrow,
+        browser_save_fragment, close_after_save, dock_toggle_icon, doc_switcher_items,
+        logo_command_for, next_narrow,
         open_overlay_contains, place_rm_for, prevent_quit_after_failed_save,
         project_document_header, replace_after_save, restore_markdown_asset_host_after_open,
         should_dismiss_narrow_dock, should_flush_save, App, BackingTransitionError, LogoCommand,
@@ -3028,7 +3052,7 @@ mod tests {
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
     use crate::doc_view::{BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData};
-    use crate::dock::DockState;
+    use crate::dock::{DockEdge, DockState};
     use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
     use crate::document_host::DocumentCommand;
     use crate::icons::{Icon, IconSet};
@@ -3047,6 +3071,26 @@ mod tests {
     use waml_markdown_editor::layout::LayoutSnapshot;
     use waml_markdown_editor::widget::MarkdownEditorWidgetRefExt;
     use waml_syntax::{SourceText, TextChange, TextRange, TextSize};
+
+    #[test]
+    fn dock_toggle_glyphs_show_the_next_action() {
+        assert_eq!(
+            dock_toggle_icon(DockEdge::Left, DockState::Flag),
+            Icon::PanelLeftOpen
+        );
+        assert_eq!(
+            dock_toggle_icon(DockEdge::Left, DockState::Pinned),
+            Icon::PanelLeftClose
+        );
+        assert_eq!(
+            dock_toggle_icon(DockEdge::Right, DockState::Flag),
+            Icon::PanelRightOpen
+        );
+        assert_eq!(
+            dock_toggle_icon(DockEdge::Right, DockState::Pinned),
+            Icon::PanelRightClose
+        );
+    }
 
     #[derive(Default)]
     struct FakeBrowser {

@@ -409,6 +409,20 @@ impl DocumentHeader {
         self.sync_content_layout(cx);
     }
 
+    pub fn set_right_dock_icon(&mut self, cx: &mut Cx, icon: Icon) {
+        let Some(current) = self.state.right_dock.as_mut() else {
+            return;
+        };
+        if *current == icon {
+            return;
+        }
+        *current = icon;
+        self.view
+            .widget(cx, ids!(right_button))
+            .as_icon_button()
+            .set_icon(cx, icon);
+    }
+
     pub fn set_right_dock_active(&mut self, cx: &mut Cx, active: bool) {
         self.view
             .widget(cx, ids!(right_button))
@@ -787,5 +801,22 @@ mod tests {
 
         header.set_segments(&mut cx, Vec::new());
         assert_eq!(header.visible_height(), 0.0);
+    }
+
+    #[test]
+    fn right_dock_glyph_tracks_the_next_action() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let mut header = cx.with_vm(DocumentHeader::script_new_with_default);
+
+        header.set_right_dock(&mut cx, Some(Icon::PanelRight));
+        header.set_right_dock_icon(&mut cx, Icon::PanelRightOpen);
+        assert_eq!(header.test_right_dock(), Some(Icon::PanelRightOpen));
+
+        header.set_right_dock_icon(&mut cx, Icon::PanelRightClose);
+        assert_eq!(header.test_right_dock(), Some(Icon::PanelRightClose));
+
+        header.set_right_dock(&mut cx, None);
+        header.set_right_dock_icon(&mut cx, Icon::PanelRightOpen);
+        assert_eq!(header.test_right_dock(), None);
     }
 }
