@@ -226,6 +226,19 @@ pub fn pretty(solved: &Solved) -> String {
             ));
         }
     }
+    for l in &solved.labels {
+        let leader = if l.leader.is_some() { " +leader" } else { "" };
+        out.push_str(&format!(
+            "label {} {:?} @ {:.0},{:.0} {:.0}x{:.0}{leader}\n",
+            l.edge, l.slot, l.rect.x, l.rect.y, l.rect.w, l.rect.h
+        ));
+    }
+    if !solved.labels.is_empty() || solved.label_reroutes > 0 || solved.label_leaders > 0 {
+        out.push_str(&format!(
+            "label-reroutes {} label-leaders {}\n",
+            solved.label_reroutes, solved.label_leaders
+        ));
+    }
     out
 }
 
@@ -904,6 +917,28 @@ mod tests {
             "label must hang off the passed route, not solved.routes: {:?}",
             solved.labels[0]
         );
+    }
+
+    #[test]
+    fn the_pretty_dump_reports_label_placement_effort() {
+        let mut c = crowded_scene_where_one_label_cannot_fit();
+        let requests = crowded_label_requests();
+        place_labels_with_reroute(
+            &mut c.solved,
+            &RoutingContext {
+                boxes: &c.boxes,
+                rects: &c.rects,
+                edges: &c.edges,
+                cfg: &SolveConfig::default(),
+            },
+            &mut c.routes,
+            &requests,
+            &crowded_label_config(),
+        );
+
+        let dump = pretty(&c.solved);
+        assert!(dump.contains("label-reroutes "), "dump: {dump}");
+        assert!(dump.contains("label-leaders "), "dump: {dump}");
     }
 
     #[test]
