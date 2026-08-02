@@ -84,7 +84,17 @@ pub(super) fn draw_groups(
     let dim_ink = draws.group_title_dim.color;
     for (screen, label, mode) in group_draws {
         match mode {
-            GroupDraw::Chrome => draws.group.draw_abs(cx, screen),
+            GroupDraw::Chrome => {
+                draws.group.draw_abs(cx, screen);
+                // Fill alone is nearly invisible against the canvas ground, so
+                // every frame gets a hairline edge over its fill.
+                draws.group_border.set_uniform(
+                    cx,
+                    live_id!(stroke_w),
+                    &[snapshot.linework.group_stroke_width],
+                );
+                draws.group_border.draw_abs(cx, screen);
+            }
             GroupDraw::Dashed => {
                 draws.group_dashed.set_uniform(
                     cx,

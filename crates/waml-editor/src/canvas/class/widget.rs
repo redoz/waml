@@ -237,6 +237,22 @@ script_mod! {
     //     antialiasing the superseded one-sided `(0.5 - f)` ramp gave only one
     //     end of. `the_dash_mask_filters_both_edges_symmetrically` locks the
     //     idiom in, since the pixel fn cannot run headless.
+    // Frame-group border. `group_fill` sits one step off the canvas ground, so a
+    // fill-only frame reads as almost nothing; this solid hairline gives the
+    // frame an edge. Same inset-rect stroke as `GroupDashed` below, minus the
+    // duty mask. `sdf.rect`, never `sdf.box(.., 0)` -- a zero radius floods.
+    mod.draw.GroupBorder = mod.draw.DrawColor{
+        stroke_w: uniform(1.0)
+        pixel: fn() {
+            let p = self.pos * self.rect_size
+            let sdf = Sdf2d.viewport(p)
+            let inset = self.stroke_w * 0.5
+            sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
+            sdf.stroke(self.color, self.stroke_w)
+            return sdf.result
+        }
+    }
+
     mod.draw.GroupDashed = mod.draw.DrawColor{
         dash_px: uniform(6.0)
         stroke_w: uniform(1.0)
@@ -269,6 +285,9 @@ script_mod! {
         height: Fill
         draw_bg +: { color: atlas.canvas_ground }
         draw_group +: { color: atlas.group_fill }
+        // Frame-group edge; dim ink, same secondary-chrome weight as the dashed
+        // x-ray outline so both group kinds read as one family.
+        draw_group_border: mod.draw.GroupBorder{ color: atlas.text_dim }
         // Hidden-group x-ray outline; dim ink so it reads as secondary chrome.
         draw_group_dashed: mod.draw.GroupDashed{ color: atlas.text_dim }
         // Colour-only holder (never drawn): the dim ink copied onto `draw_text`
@@ -395,6 +414,9 @@ pub struct ClassDiagramSurface {
     #[redraw]
     #[live]
     draw_group: DrawColor,
+    #[redraw]
+    #[live]
+    draw_group_border: DrawColor,
     #[redraw]
     #[live]
     draw_group_dashed: DrawColor,
@@ -666,6 +688,7 @@ impl Widget for ClassDiagramSurface {
             draw_bg,
             draw_node,
             draw_group,
+            draw_group_border,
             draw_group_dashed,
             draw_group_title_dim,
             draw_edge_down,
@@ -700,6 +723,7 @@ impl Widget for ClassDiagramSurface {
             bg: draw_bg,
             node: draw_node,
             group: draw_group,
+            group_border: draw_group_border,
             group_dashed: draw_group_dashed,
             group_title_dim: draw_group_title_dim,
             edge: draw_edge_down,
