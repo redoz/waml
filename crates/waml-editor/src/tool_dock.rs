@@ -32,12 +32,15 @@ script_mod! {
     mod.widgets.ToolDockBase = #(ToolDock::register_widget(vm))
 
     mod.widgets.ToolDock = set_type_default() do mod.widgets.ToolDockBase{
-        width: 48.0
+        width: 36.0
         height: Fill
         flow: Down
-        // Centre the 32px buttons in the 48-wide strip; pack from the top.
+        // Centre the 32px buttons in the 36-wide strip; pack from the top.
         align: Align{x: 0.5, y: 0.0}
-        padding: Inset{top: 8.0}
+        // Mirror of the bottom `ViewBar`'s strip metrics rotated 90deg
+        // (there: 36 tall, padding 4/4/2/2, spacing 2) so both HUD strips
+        // read as the same component -- keep the two in sync.
+        padding: Inset{left: 2.0, right: 2.0, top: 4.0, bottom: 4.0}
         // Snug 2px between the 32px buttons; `props_btn`'s extra top margin is
         // the group gap that separates the action pair from the mode trio.
         spacing: 2.0

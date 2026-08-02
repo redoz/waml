@@ -422,7 +422,9 @@ script_mod! {
                                     height: Fill
                                     align: Align{x: 0.0, y: 0.5}
                                     tool_dock := ToolDock{
-                                        width: 48.0
+                                        // Same strip thickness as the bottom
+                                        // `ViewBar`'s 36px height.
+                                        width: 36.0
                                         // Five real `IconButton` children in a
                                         // `flow: Down` turtle since the IconButton
                                         // extraction, so `Fit` measures correctly.
