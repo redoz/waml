@@ -3,6 +3,7 @@
 pub mod action;
 pub mod adornment;
 pub mod analysis;
+pub mod bundle_envelope;
 pub mod diagnostic;
 pub mod edit;
 pub mod frontmatter;
