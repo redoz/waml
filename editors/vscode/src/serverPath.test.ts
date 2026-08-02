@@ -1,8 +1,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { spawnSync } from "node:child_process";
 import ts from "typescript";
 import type { ExtensionContext } from "vscode";
 
@@ -318,22 +317,53 @@ describe("extension lifecycle", () => {
 });
 
 describe("extension package", () => {
-  it("ships runtime JavaScript and declarations without TypeScript tests", () => {
-    const packed = spawnSync("npm", ["pack", "--dry-run", "--json"], {
-      cwd: join(__dirname, ".."),
-      encoding: "utf8",
-      shell: process.platform === "win32",
-    });
-    expect(packed.status, packed.stderr).toBe(0);
-    const result = JSON.parse(packed.stdout) as Array<{
-      files: Array<{ path: string }>;
-    }>;
-    const files = result[0].files.map((file) => file.path);
+  // This used to shell out to `npm pack --dry-run --json`. That was wrong twice
+  // over: the repo is pnpm (there is no npm lockfile -- `npm ci` here fails),
+  // and npm was only reachable because Node bundles it. It also spawned through
+  // cmd.exe on Windows, and two process spawns do not reliably fit inside
+  // vitest's default 5s timeout on a cold runner, so CI flaked.
+  //
+  // What the packer would have told us is decided by `files` in package.json
+  // plus what the build actually emitted, both of which we can just read.
+  const root = join(__dirname, "..");
+  const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+    files: string[];
+    main: string;
+  };
 
-    expect(files).toContain("package.json");
-    expect(files).toContain("dist/extension.js");
-    expect(files).toContain("dist/extension.d.ts");
-    expect(files.some((path) => path.endsWith(".test.ts"))).toBe(false);
-    expect(files.some((path) => path.startsWith("src/"))).toBe(false);
+  const distFiles = (): string[] => {
+    const walk = (dir: string, prefix: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? walk(join(dir, entry.name), `${prefix}${entry.name}/`)
+          : [`${prefix}${entry.name}`],
+      );
+    return walk(join(root, "dist"), "");
+  };
+
+  it("publishes only built output, never sources", () => {
+    // Every include is under dist/, so no `src/` entry -- and therefore no
+    // `.ts` source -- can reach the package regardless of what is on disk.
+    expect(manifest.files.length).toBeGreaterThan(0);
+    for (const pattern of manifest.files) {
+      expect(pattern.startsWith("dist/")).toBe(true);
+    }
+    expect(manifest.main.startsWith("./dist/")).toBe(true);
+  });
+
+  it("ships runtime JavaScript and declarations without compiled tests", () => {
+    // `pnpm build` runs before `pnpm test` in CI; a missing dist means the
+    // build step did not run, which should read as a failure, not a skip.
+    expect(existsSync(join(root, "dist")), "run `pnpm build` first").toBe(true);
+
+    const files = distFiles();
+    expect(files).toContain("extension.js");
+    expect(files).toContain("extension.d.ts");
+
+    // The real packaging hazard, and the one the old assertion missed: it
+    // checked for `.test.ts`, which the dist-only `files` field already made
+    // unreachable. A compiled `*.test.js` in dist WOULD ship.
+    const tests = files.filter((path) => /\.test\.(js|d\.ts)$/.test(path));
+    expect(tests, `compiled tests would ship: ${tests.join(", ")}`).toEqual([]);
   });
 });
