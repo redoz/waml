@@ -128,6 +128,20 @@ fn canonical_messages_have_fixed_lossless_slots() {
     assert_eq!(colon_slot.kind(), uml::syntax::UmlSyntaxKind::ColonToken);
     assert!(!colon_slot.flags().is_missing());
     assert_eq!(colon_slot.text().write_to_string(), ":");
+    let value_slot = messages[4]
+        .syntax()
+        .child_at(uml::MessageSyntax::VALUE_SLOT)
+        .and_then(SyntaxElement::into_node)
+        .unwrap();
+    assert_eq!(value_slot.kind(), uml::syntax::UmlSyntaxKind::MessageValue);
+    assert_eq!(
+        messages[4].value_token().unwrap().text().write_to_string(),
+        "`OrderWorker`"
+    );
+    assert!(matches!(
+        analysis.declared.concept("s").unwrap().messages[4].signature,
+        uml::DeclaredField::Valid { .. }
+    ));
     assert_eq!(written(&analysis, "s.md"), authored);
 }
 

@@ -1568,6 +1568,9 @@ fn parse_call_tail(
             UmlSyntaxKind::AsyncToken,
         ));
     }
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ColonToken),
+    ));
 
     let p = skip_ws(source, owned, content_end);
     if p < content_end && source.as_bytes()[p] == b'`' {
@@ -1629,9 +1632,6 @@ fn parse_call_tail(
         ));
     }
     push_missing_return_slots(f, children);
-    children.push(GreenElement::Token(
-        f.missing_token(UmlSyntaxKind::ColonToken),
-    ));
     finish_message_tail(f, text, owned, content_end, valid)
 }
 
@@ -1652,6 +1652,9 @@ fn parse_return_tail(
         f,
         UmlSyntaxKind::MessageAsync,
         UmlSyntaxKind::AsyncToken,
+    ));
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ColonToken),
     ));
     let mut owned = verb_end;
     let mut valid = true;
@@ -1771,9 +1774,6 @@ fn parse_return_tail(
             UmlSyntaxKind::ReturnCallToken,
         ));
     }
-    children.push(GreenElement::Token(
-        f.missing_token(UmlSyntaxKind::ColonToken),
-    ));
     finish_message_tail(f, text, owned, content_end, valid)
 }
 
@@ -1811,6 +1811,9 @@ fn parse_signal_tail(
         UmlSyntaxKind::MessageAsync,
         UmlSyntaxKind::AsyncToken,
     ));
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ColonToken),
+    ));
     let mut owned = if target_valid {
         target_end
     } else {
@@ -1843,9 +1846,6 @@ fn parse_signal_tail(
         ));
     }
     push_missing_call_and_return_slots(f, children);
-    children.push(GreenElement::Token(
-        f.missing_token(UmlSyntaxKind::ColonToken),
-    ));
     finish_message_tail(f, text, owned, content_end, valid)
 }
 
@@ -1889,38 +1889,53 @@ fn parse_other_message_tail(
         target_start
     };
     let mut valid = target_valid;
-    children.push(missing_message_slot(
-        f,
-        UmlSyntaxKind::MessageValue,
-        UmlSyntaxKind::ValueToken,
-    ));
     let p = skip_ws(source, owned, content_end);
-    let colon = if p < content_end && source.as_bytes()[p] == b':' {
+    if p < content_end && source.as_bytes()[p] == b':' {
         let colon_end = p + 1;
+        children.push(token(
+            f,
+            text,
+            owned,
+            p,
+            colon_end,
+            UmlSyntaxKind::ColonToken,
+        ));
+        owned = colon_end;
         let value_start = skip_ws(source, colon_end, content_end);
-        if scan_backtick(source, value_start, content_end) == Some(content_end) {
-            let colon = token_with_trailing_source(
+        if let Some(value_end) = scan_backtick(source, value_start, content_end) {
+            children.push(slot(
                 f,
-                text,
-                owned,
-                p,
-                colon_end,
-                content_end,
-                UmlSyntaxKind::ColonToken,
-            );
-            owned = content_end;
-            colon
+                UmlSyntaxKind::MessageValue,
+                token(
+                    f,
+                    text,
+                    owned,
+                    value_start,
+                    value_end,
+                    UmlSyntaxKind::ValueToken,
+                ),
+            ));
+            owned = value_end;
         } else {
-            let colon = token(f, text, owned, p, colon_end, UmlSyntaxKind::ColonToken);
-            owned = colon_end;
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageValue,
+                missing_token(f, text, owned, value_start, UmlSyntaxKind::ValueToken),
+            ));
+            owned = value_start;
             valid = false;
-            colon
         }
     } else {
-        GreenElement::Token(f.missing_token(UmlSyntaxKind::ColonToken))
-    };
+        children.push(GreenElement::Token(
+            f.missing_token(UmlSyntaxKind::ColonToken),
+        ));
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageValue,
+            UmlSyntaxKind::ValueToken,
+        ));
+    }
     push_missing_call_and_return_slots(f, children);
-    children.push(colon);
     finish_message_tail(f, text, owned, content_end, valid)
 }
 
@@ -4098,42 +4113,6 @@ fn token(
         vec![]
     };
     GreenElement::Token(f.token(kind, slice(text, start, end), trivia, []).unwrap())
-}
-
-fn token_with_trailing_source(
-    f: &GreenFactory<UmlLanguage>,
-    text: &SourceText,
-    leading: usize,
-    start: usize,
-    end: usize,
-    trailing_end: usize,
-    kind: UmlSyntaxKind,
-) -> GreenElement<UmlLanguage> {
-    let leading_trivia = if leading < start {
-        vec![f
-            .trivia(TriviaKind::Whitespace, slice(text, leading, start))
-            .unwrap()]
-    } else {
-        vec![]
-    };
-    // Create/destroy payload syntax is retained until its separate review.
-    // The fixed colon slot owns those trailing bytes so source order stays exact.
-    let trailing_trivia = if end < trailing_end {
-        vec![f
-            .trivia(TriviaKind::Whitespace, slice(text, end, trailing_end))
-            .unwrap()]
-    } else {
-        vec![]
-    };
-    GreenElement::Token(
-        f.token(
-            kind,
-            slice(text, start, end),
-            leading_trivia,
-            trailing_trivia,
-        )
-        .unwrap(),
-    )
 }
 
 fn missing_token(

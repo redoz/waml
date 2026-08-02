@@ -410,14 +410,14 @@ impl MessageSyntax {
     pub const VERB_SLOT: usize = 2;
     pub const TARGET_SLOT: usize = 3;
     pub const ASYNC_SLOT: usize = 4;
-    pub const VALUE_SLOT: usize = 5;
-    pub const AS_SLOT: usize = 6;
-    pub const CALL_ID_SLOT: usize = 7;
-    pub const TO_SLOT: usize = 8;
-    pub const RETURN_TARGET_SLOT: usize = 9;
-    pub const FOR_SLOT: usize = 10;
-    pub const RETURN_CALL_SLOT: usize = 11;
-    pub const COLON_SLOT: usize = 12;
+    pub const COLON_SLOT: usize = 5;
+    pub const VALUE_SLOT: usize = 6;
+    pub const AS_SLOT: usize = 7;
+    pub const CALL_ID_SLOT: usize = 8;
+    pub const TO_SLOT: usize = 9;
+    pub const RETURN_TARGET_SLOT: usize = 10;
+    pub const FOR_SLOT: usize = 11;
+    pub const RETURN_CALL_SLOT: usize = 12;
     pub const RECOVERY_SLOT: usize = 13;
     pub const NEWLINE_SLOT: usize = 14;
 
