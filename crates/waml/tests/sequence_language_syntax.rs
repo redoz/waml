@@ -382,3 +382,106 @@ fn operands_require_exactly_one_more_indentation_level() {
     assert_eq!(malformed, 1);
     assert_eq!(written(&analysis, "s.md"), authored);
 }
+
+#[test]
+fn gates_refs_and_bindings_have_fixed_lossless_slots() {
+    let authored = "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Gates\n- request\n\n## Messages\n- ref [Authorize payment](./authorize-payment.md) as auth\n  - bind order to caller\n  - bind payment to payment\n- order calls auth@request `authorize()` as authorization\n- auth@request returns `approved` for authorization\n";
+    let target = "---\ntype: uml.Sequence\n---\n# Authorize payment\n";
+    let analysis = analyze([("checkout.md", authored), ("authorize-payment.md", target)]);
+    let root = root(&analysis, "checkout.md");
+
+    let gates = typed::<uml::syntax::GateSyntax>(root.clone());
+    assert_eq!(gates.len(), 1);
+    assert_eq!(gates[0].name_token().text().write_to_string(), "request");
+
+    let uses = typed::<uml::syntax::InteractionUseSyntax>(root.clone());
+    assert_eq!(uses.len(), 1);
+    let link = uses[0].link().unwrap();
+    assert_eq!(
+        link.children()
+            .filter_map(SyntaxElement::into_token)
+            .map(|token| token.text().write_to_string())
+            .collect::<String>(),
+        "[Authorize payment](./authorize-payment.md)"
+    );
+    assert_eq!(uses[0].alias_token().text().write_to_string(), "auth");
+
+    let bindings = typed::<uml::syntax::BindingSyntax>(root.clone());
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(
+        bindings
+            .iter()
+            .map(|binding| (
+                binding.local_token().text().write_to_string(),
+                binding.target_token().text().write_to_string(),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("order".into(), "caller".into()),
+            ("payment".into(), "payment".into())
+        ]
+    );
+
+    let messages = typed::<uml::MessageSyntax>(root);
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        messages[0].target_token().unwrap().text().write_to_string(),
+        "auth@request"
+    );
+    assert_eq!(
+        messages[1].source_token().text().write_to_string(),
+        "auth@request"
+    );
+    assert_eq!(written(&analysis, "checkout.md"), authored);
+}
+
+#[test]
+fn sequence_reference_errors_recover_at_the_next_typed_line() {
+    let authored = "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Messages\n- ref as missing-link\n- ref [Authorize](./authorize.md) as\n- ref [Authorize](./authorize.md) as auth\n  - bind order caller\n  - bind payment to payment\n- sender calls @ `bad()` as invalid_target\n- use@ signals receiver `bad`\n- sender signals receiver `Ready`\n- ref [Later](./later.md) as later\n";
+    let target = "---\ntype: uml.Sequence\n---\n# Target\n";
+    let analysis = analyze([
+        ("checkout.md", authored),
+        ("authorize.md", target),
+        ("later.md", target),
+    ]);
+    let root = root(&analysis, "checkout.md");
+
+    let uses = typed::<uml::syntax::InteractionUseSyntax>(root.clone());
+    assert_eq!(uses.len(), 4);
+    assert_eq!(uses[3].alias_token().text().write_to_string(), "later");
+    let bindings = typed::<uml::syntax::BindingSyntax>(root.clone());
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(
+        bindings[1].local_token().text().write_to_string(),
+        "payment"
+    );
+    assert_eq!(
+        bindings[1].target_token().text().write_to_string(),
+        "payment"
+    );
+    let messages = typed::<uml::MessageSyntax>(root);
+    assert_eq!(messages.len(), 3);
+    assert!(messages[0].target_token().is_none());
+    assert_eq!(messages[0].recovery().count(), 1);
+    assert_eq!(messages[1].recovery().count(), 1);
+    assert_eq!(messages[2].verb_token().text().write_to_string(), "signals");
+
+    let document_id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("checkout.md").unwrap())
+        .unwrap();
+    let malformed = analysis
+        .syntax
+        .document(document_id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::MalformedMessage
+        })
+        .count();
+    assert_eq!(malformed, 6);
+    assert_eq!(written(&analysis, "checkout.md"), authored);
+}

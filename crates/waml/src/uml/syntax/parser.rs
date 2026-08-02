@@ -174,6 +174,20 @@ pub(super) fn parse_island_element(
                     diagnostics,
                 ));
             }
+        } else if island.kind == UmlSyntaxKind::GatesSection {
+            let line = source[line_start..line_end].trim_end_matches(['\r', '\n']);
+            if line.trim().is_empty() {
+                section.push(raw(factory, text, line_start, line_end));
+            } else {
+                section.push(gate_line(
+                    factory,
+                    text,
+                    source,
+                    line_start,
+                    line_end,
+                    diagnostics,
+                ));
+            }
         } else if let Some(item) = simple_item(
             factory,
             text,
@@ -440,7 +454,10 @@ fn sequence_items(
 ) -> Vec<GreenElement<UmlLanguage>> {
     let mut items = Vec::new();
     let mut fragment_indents = Vec::new();
-    for (start, end) in lines_between(source, from, to) {
+    let lines = lines_between(source, from, to).collect::<Vec<_>>();
+    let mut line_index = 0;
+    while let Some(&(start, end)) = lines.get(line_index) {
+        line_index += 1;
         if opaque_line(structure, start, end) {
             items.push(raw(f, text, start, end));
             continue;
@@ -501,6 +518,38 @@ fn sequence_items(
                 "sequence indentation must use pairs of spaces",
                 diags,
             ));
+        } else if body == "ref" || body.starts_with("ref ") {
+            let mut bindings = Vec::new();
+            while let Some(&(binding_start, binding_end)) = lines.get(line_index) {
+                if opaque_line(structure, binding_start, binding_end) {
+                    break;
+                }
+                let binding_source =
+                    source[binding_start..binding_end].trim_end_matches(['\r', '\n']);
+                let binding_leading =
+                    binding_source.len() - binding_source.trim_start_matches(' ').len();
+                let binding_body = binding_source
+                    .trim_start()
+                    .strip_prefix("- ")
+                    .unwrap_or(binding_source.trim_start());
+                if binding_leading != leading + 2
+                    || !(binding_body == "bind" || binding_body.starts_with("bind "))
+                {
+                    break;
+                }
+                bindings.push(binding_line(
+                    f,
+                    text,
+                    source,
+                    binding_start,
+                    binding_end,
+                    diags,
+                ));
+                line_index += 1;
+            }
+            items.push(interaction_use(
+                f, text, source, start, end, bindings, diags,
+            ));
         } else if fragment_head {
             fragment_indents.push(leading);
             items.push(sequence_fragment(f, text, source, start, end));
@@ -537,6 +586,300 @@ fn sequence_items(
         }
     }
     items
+}
+
+fn gate_line(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let bullet_end = if has_bullet { lead + 1 } else { lead };
+    let mut children = vec![if has_bullet {
+        token(f, text, start, lead, bullet_end, UmlSyntaxKind::BulletToken)
+    } else {
+        missing_token(f, text, start, lead, UmlSyntaxKind::BulletToken)
+    }];
+    let name_start = skip_ws(source, bullet_end, content_end);
+    let name_end = scan_endpoint(source, name_start, content_end);
+    children.push(slot(
+        f,
+        UmlSyntaxKind::GateName,
+        if name_start == name_end {
+            missing_token(
+                f,
+                text,
+                bullet_end,
+                name_start,
+                UmlSyntaxKind::IdentifierToken,
+            )
+        } else {
+            token(
+                f,
+                text,
+                bullet_end,
+                name_start,
+                name_end,
+                UmlSyntaxKind::IdentifierToken,
+            )
+        },
+    ));
+    let recovery = (name_end < content_end).then(|| {
+        skipped(
+            f,
+            text,
+            name_end,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+        )
+    });
+    if !has_bullet || name_start == name_end || recovery.is_some() {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+            lead,
+            content_end,
+            "malformed gate",
+        ));
+    }
+    children.push(behavior_recovery(f, recovery));
+    push_behavior_newline(f, text, &mut children, content_end, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::Gate, children).unwrap())
+}
+
+fn interaction_use(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    bindings: Vec<GreenElement<UmlLanguage>>,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let bullet_end = if has_bullet { lead + 1 } else { lead };
+    let ref_start = skip_ws(source, bullet_end, content_end);
+    let ref_end = scan_word(source, ref_start, content_end);
+    let mut children = vec![
+        if has_bullet {
+            token(f, text, start, lead, bullet_end, UmlSyntaxKind::BulletToken)
+        } else {
+            missing_token(f, text, start, lead, UmlSyntaxKind::BulletToken)
+        },
+        token(
+            f,
+            text,
+            bullet_end,
+            ref_start,
+            ref_end,
+            UmlSyntaxKind::RefToken,
+        ),
+    ];
+    let link_start = skip_ws(source, ref_end, content_end);
+    let diagnostic_count = diags.len();
+    let (link, mut p) = behavior_link(
+        f,
+        text,
+        source,
+        link_start,
+        content_end,
+        ref_end,
+        UmlSyntaxDiagnosticCode::MalformedMessage,
+        "malformed interaction-use link",
+        diags,
+    );
+    let mut valid = has_bullet && ref_start < ref_end && diags.len() == diagnostic_count;
+    children.push(link);
+    let as_start = skip_ws(source, p, content_end);
+    if keyword_at(source, as_start, content_end, "as") {
+        children.push(token(
+            f,
+            text,
+            p,
+            as_start,
+            as_start + 2,
+            UmlSyntaxKind::AsToken,
+        ));
+        let alias_start = skip_ws(source, as_start + 2, content_end);
+        let alias_end = scan_endpoint(source, alias_start, content_end);
+        children.push(slot(
+            f,
+            UmlSyntaxKind::InteractionUseAlias,
+            if alias_start == alias_end {
+                valid = false;
+                missing_token(
+                    f,
+                    text,
+                    as_start + 2,
+                    alias_start,
+                    UmlSyntaxKind::AliasToken,
+                )
+            } else {
+                token(
+                    f,
+                    text,
+                    as_start + 2,
+                    alias_start,
+                    alias_end,
+                    UmlSyntaxKind::AliasToken,
+                )
+            },
+        ));
+        p = alias_end;
+    } else {
+        children.push(missing_token(f, text, p, as_start, UmlSyntaxKind::AsToken));
+        children.push(slot(
+            f,
+            UmlSyntaxKind::InteractionUseAlias,
+            GreenElement::Token(f.missing_token(UmlSyntaxKind::AliasToken)),
+        ));
+        p = as_start;
+        valid = false;
+    }
+    let recovery = (p < content_end).then(|| {
+        valid = false;
+        skipped(
+            f,
+            text,
+            p,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+        )
+    });
+    if !valid {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+            lead,
+            content_end,
+            "malformed interaction use",
+        ));
+    }
+    children.push(behavior_recovery(f, recovery));
+    push_behavior_newline(f, text, &mut children, content_end, newline, end);
+    children.push(GreenElement::Node(
+        f.node(UmlSyntaxKind::InteractionBindings, bindings)
+            .unwrap(),
+    ));
+    GreenElement::Node(f.node(UmlSyntaxKind::InteractionUse, children).unwrap())
+}
+
+fn binding_line(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let bullet_end = if has_bullet { lead + 1 } else { lead };
+    let bind_start = skip_ws(source, bullet_end, content_end);
+    let bind_end = scan_word(source, bind_start, content_end);
+    let mut children = vec![
+        if has_bullet {
+            token(f, text, start, lead, bullet_end, UmlSyntaxKind::BulletToken)
+        } else {
+            missing_token(f, text, start, lead, UmlSyntaxKind::BulletToken)
+        },
+        token(
+            f,
+            text,
+            bullet_end,
+            bind_start,
+            bind_end,
+            UmlSyntaxKind::BindToken,
+        ),
+    ];
+    let local_start = skip_ws(source, bind_end, content_end);
+    let local_end = scan_endpoint(source, local_start, content_end);
+    children.push(slot(
+        f,
+        UmlSyntaxKind::BindingLocal,
+        if local_start == local_end || &source[local_start..local_end] == "to" {
+            missing_token(f, text, bind_end, local_start, UmlSyntaxKind::LocalToken)
+        } else {
+            token(
+                f,
+                text,
+                bind_end,
+                local_start,
+                local_end,
+                UmlSyntaxKind::LocalToken,
+            )
+        },
+    ));
+    let to_start = skip_ws(source, local_end, content_end);
+    let has_to = keyword_at(source, to_start, content_end, "to");
+    children.push(if has_to {
+        token(
+            f,
+            text,
+            local_end,
+            to_start,
+            to_start + 2,
+            UmlSyntaxKind::ToToken,
+        )
+    } else {
+        missing_token(f, text, local_end, to_start, UmlSyntaxKind::ToToken)
+    });
+    let target_leading = if has_to { to_start + 2 } else { to_start };
+    let target_start = skip_ws(source, target_leading, content_end);
+    let target_end = scan_endpoint(source, target_start, content_end);
+    children.push(slot(
+        f,
+        UmlSyntaxKind::BindingTarget,
+        if target_start == target_end {
+            missing_token(
+                f,
+                text,
+                target_leading,
+                target_start,
+                UmlSyntaxKind::TargetToken,
+            )
+        } else {
+            token(
+                f,
+                text,
+                target_leading,
+                target_start,
+                target_end,
+                UmlSyntaxKind::TargetToken,
+            )
+        },
+    ));
+    let recovery = (target_end < content_end).then(|| {
+        skipped(
+            f,
+            text,
+            target_end,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+        )
+    });
+    if !has_bullet
+        || bind_start == bind_end
+        || &source[bind_start..bind_end] != "bind"
+        || local_start == local_end
+        || &source[local_start..local_end] == "to"
+        || !has_to
+        || target_start == target_end
+        || recovery.is_some()
+    {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+            lead,
+            content_end,
+            "malformed interaction binding",
+        ));
+    }
+    children.push(behavior_recovery(f, recovery));
+    push_behavior_newline(f, text, &mut children, content_end, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::Binding, children).unwrap())
 }
 
 fn lifeline_line(
@@ -1523,6 +1866,9 @@ fn sequence_message(
     if source_start == source_end {
         return malformed_message(f, text, source, start, end, diags);
     }
+    if !sequence_endpoint_valid(&source[source_start..source_end]) {
+        return malformed_message(f, text, source, start, end, diags);
+    }
     children.push(slot(
         f,
         UmlSyntaxKind::MessageSource,
@@ -1608,7 +1954,8 @@ fn parse_call_tail(
     let target = &source[target_start..target_end];
     let target_valid = target_start < target_end
         && !matches!(target, "async" | "as")
-        && source.as_bytes()[target_start] != b'`';
+        && source.as_bytes()[target_start] != b'`'
+        && sequence_endpoint_valid(target);
     children.push(slot(
         f,
         UmlSyntaxKind::MessageTarget,
@@ -1781,7 +2128,8 @@ fn parse_return_tail(
         let target_valid = target_start < target_end
             && target != "for"
             && target != "async"
-            && source.as_bytes()[target_start] != b'`';
+            && source.as_bytes()[target_start] != b'`'
+            && sequence_endpoint_valid(target);
         children.push(slot(
             f,
             UmlSyntaxKind::MessageReturnTarget,
@@ -1868,8 +2216,10 @@ fn parse_signal_tail(
     let target_start = skip_ws(source, verb_end, content_end);
     let target_end = scan_endpoint(source, target_start, content_end);
     let target = &source[target_start..target_end];
-    let target_valid =
-        target_start < target_end && target != "async" && source.as_bytes()[target_start] != b'`';
+    let target_valid = target_start < target_end
+        && target != "async"
+        && source.as_bytes()[target_start] != b'`'
+        && sequence_endpoint_valid(target);
     children.push(slot(
         f,
         UmlSyntaxKind::MessageTarget,
@@ -1940,8 +2290,10 @@ fn parse_other_message_tail(
     let target_start = skip_ws(source, verb_end, content_end);
     let target_end = scan_endpoint(source, target_start, content_end);
     let target = &source[target_start..target_end];
-    let target_valid =
-        target_start < target_end && target != "async" && source.as_bytes()[target_start] != b'`';
+    let target_valid = target_start < target_end
+        && target != "async"
+        && source.as_bytes()[target_start] != b'`'
+        && sequence_endpoint_valid(target);
     children.push(slot(
         f,
         UmlSyntaxKind::MessageTarget,
@@ -2206,6 +2558,11 @@ fn scan_endpoint(source: &str, mut p: usize, end: usize) -> usize {
         p += 1;
     }
     p
+}
+
+fn sequence_endpoint_valid(endpoint: &str) -> bool {
+    let at_count = endpoint.bytes().filter(|byte| *byte == b'@').count();
+    !endpoint.is_empty() && (at_count == 0 || (at_count == 1 && !endpoint.ends_with('@')))
 }
 
 fn contains_unquoted_colon(source: &str, from: usize, to: usize) -> bool {

@@ -75,7 +75,13 @@ pub struct FlowInternalSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct LifelineSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
+pub struct GateSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
 pub struct MessageSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct InteractionUseSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct BindingSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct SequenceOperandSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
@@ -267,7 +273,10 @@ simple_ast!(FlowTransitionSyntax, FlowTransition);
 simple_ast!(FlowBlockSyntax, FlowBlock);
 simple_ast!(FlowInternalSyntax, FlowInternal);
 simple_ast!(LifelineSyntax, Lifeline);
+simple_ast!(GateSyntax, Gate);
 simple_ast!(MessageSyntax, Message);
+simple_ast!(InteractionUseSyntax, InteractionUse);
+simple_ast!(BindingSyntax, Binding);
 simple_ast!(SequenceOperandSyntax, SequenceOperand);
 simple_ast!(SequenceFragmentSyntax, SequenceFragment);
 simple_ast!(MessagesBlockSyntax, MessagesSection);
@@ -404,6 +413,18 @@ impl LifelineSyntax {
 }
 behavior_syntax!(LifelineSyntax, LifelineSyntax::RECOVERY_SLOT);
 
+impl GateSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const NAME_SLOT: usize = 1;
+    pub const RECOVERY_SLOT: usize = 2;
+    pub const NEWLINE_SLOT: usize = 3;
+
+    pub fn name_token(&self) -> SyntaxToken<UmlLanguage> {
+        required_slot_token_at(&self.0, Self::NAME_SLOT, 0)
+    }
+}
+behavior_syntax!(GateSyntax, GateSyntax::RECOVERY_SLOT);
+
 impl MessageSyntax {
     pub const BULLET_SLOT: usize = 0;
     pub const SOURCE_SLOT: usize = 1;
@@ -459,6 +480,43 @@ impl MessageSyntax {
     }
 }
 behavior_syntax!(MessageSyntax, MessageSyntax::RECOVERY_SLOT);
+
+impl InteractionUseSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const REF_SLOT: usize = 1;
+    pub const LINK_SLOT: usize = 2;
+    pub const AS_SLOT: usize = 3;
+    pub const ALIAS_SLOT: usize = 4;
+    pub const RECOVERY_SLOT: usize = 5;
+    pub const NEWLINE_SLOT: usize = 6;
+    pub const BINDINGS_SLOT: usize = 7;
+
+    pub fn link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        node_at(&self.0, Self::LINK_SLOT)
+    }
+    pub fn alias_token(&self) -> SyntaxToken<UmlLanguage> {
+        required_slot_token_at(&self.0, Self::ALIAS_SLOT, 0)
+    }
+}
+behavior_syntax!(InteractionUseSyntax, InteractionUseSyntax::RECOVERY_SLOT);
+
+impl BindingSyntax {
+    pub const BULLET_SLOT: usize = 0;
+    pub const BIND_SLOT: usize = 1;
+    pub const LOCAL_SLOT: usize = 2;
+    pub const TO_SLOT: usize = 3;
+    pub const TARGET_SLOT: usize = 4;
+    pub const RECOVERY_SLOT: usize = 5;
+    pub const NEWLINE_SLOT: usize = 6;
+
+    pub fn local_token(&self) -> SyntaxToken<UmlLanguage> {
+        required_slot_token_at(&self.0, Self::LOCAL_SLOT, 0)
+    }
+    pub fn target_token(&self) -> SyntaxToken<UmlLanguage> {
+        required_slot_token_at(&self.0, Self::TARGET_SLOT, 0)
+    }
+}
+behavior_syntax!(BindingSyntax, BindingSyntax::RECOVERY_SLOT);
 
 impl SequenceFragmentSyntax {
     pub const BULLET_SLOT: usize = 0;
