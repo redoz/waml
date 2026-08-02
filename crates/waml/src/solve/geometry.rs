@@ -8,17 +8,6 @@ use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::layout::{Axis, Direction, Edge, Margin, Shape};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Minimum facing-border gap between two edge-connected boxes, so the connector
-/// between them can carry arrowheads and a short label. Floors the `Place` gap
-/// for connected pairs; unconnected neighbours keep the plain margin gap.
-const MIN_ASSOC: f64 = 72.0;
-
-/// Minimum facing-border gap between two boxes with NO edge between them.
-/// Without this, unconnected neighbours fall through to the plain margin (16)
-/// while connected pairs are floored at `MIN_ASSOC` (72), so unrelated boxes
-/// read as a tighter pair than related ones -- the opposite of the truth.
-const MIN_SEP: f64 = 40.0;
-
 /// A placement the solver could not honor, plus the constraints it contradicts.
 /// Native-only instrumentation (no wasm ABI); surfaced through
 /// `solve_diagram_reported` to the editor's conflict error list. `relation` is
@@ -203,9 +192,9 @@ pub(super) fn solve_cluster(
                     // 72px gap, and no placement strategy can rescue a gap that
                     // was never wide enough.
                     let needed = label_widths.get(&pair(a, b)).copied().unwrap_or(0.0);
-                    gap.max(MIN_ASSOC).max(needed)
+                    gap.max(cfg.min_assoc).max(needed)
                 } else {
-                    gap.max(MIN_SEP)
+                    gap.max(cfg.min_sep)
                 };
                 let (dx, dy) = place_deltas(*dir, sa, sb, gap);
                 let okx = apply_axis(&mut px, &mut xedges, ci, ia, ib, dx, diags);
@@ -1135,8 +1124,9 @@ mod tests {
         let a = rects[&BoxId::Node("a".into())];
         let b = rects[&BoxId::Node("b".into())];
         let gap = b.x - (a.x + a.w);
-        assert!(gap >= MIN_ASSOC, "gap {gap} should be >= {MIN_ASSOC}");
-        assert_eq!(gap, MIN_ASSOC);
+        let min_assoc = SolveConfig::default().min_assoc;
+        assert!(gap >= min_assoc, "gap {gap} should be >= {min_assoc}");
+        assert_eq!(gap, min_assoc);
     }
 
     #[test]
@@ -1191,7 +1181,7 @@ mod tests {
         let ra = rects[&a];
         let rb = rects[&b];
         let gap = rb.x - (ra.x + ra.w);
-        assert_eq!(gap, MIN_ASSOC);
+        assert_eq!(gap, SolveConfig::default().min_assoc);
     }
 
     #[test]
@@ -1216,7 +1206,7 @@ mod tests {
         let a = rects[&BoxId::Node("a".into())];
         let b = rects[&BoxId::Node("b".into())];
         let gap = b.x - (a.x + a.w);
-        assert_eq!(gap, MIN_SEP);
+        assert_eq!(gap, SolveConfig::default().min_sep);
     }
 
     #[test]
@@ -1243,9 +1233,32 @@ mod tests {
         let b = rects[&BoxId::Node("b".into())];
         let gap = b.x - (a.x + a.w);
         assert_eq!(
-            gap, MIN_SEP,
+            gap,
+            SolveConfig::default().min_sep,
             "unconnected pair should be floored at MIN_SEP"
         );
+    }
+
+    #[test]
+    fn spacing_floors_are_tunable_without_a_recompile() {
+        let mut cfg = SolveConfig::default();
+        assert_eq!(cfg.min_sep, 40.0);
+        assert_eq!(cfg.min_assoc, 72.0);
+
+        cfg.min_sep = 100.0;
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::LeftOf,
+            }],
+        };
+        let (_solved, rects, _diags, _dropped) =
+            solve_with_rects(&scene, &[], &sizes(&["a", "b"], 200.0, 90.0), &cfg);
+        let a = rects[&BoxId::Node("a".into())];
+        let b = rects[&BoxId::Node("b".into())];
+        assert_eq!(b.x - (a.x + a.w), 100.0);
     }
 
     #[test]
@@ -1302,7 +1315,7 @@ mod tests {
         let a = rects[&BoxId::Node("a".into())];
         let b = rects[&BoxId::Node("b".into())];
         let gap = b.y - (a.y + a.h);
-        assert_eq!(gap, MIN_ASSOC);
+        assert_eq!(gap, SolveConfig::default().min_assoc);
     }
 
     #[test]

@@ -7,6 +7,13 @@ use super::wire::{Rect, Size};
 /// `8.0 * zoom`, so 8.0 is the world-space size and both agree at zoom 1.
 const LABEL_FONT: Font = Font::Sans;
 
+/// World-space height of a group's title strip, measured from the top of the
+/// group's rect. Treated as a hard obstacle by `place_labels`: a label may
+/// not sit on top of the title text. The group's INTERIOR below this band is
+/// deliberately not an obstacle -- a group legitimately contains edges and
+/// their labels.
+pub const GROUP_TITLE_BAND: f64 = 32.0;
+
 /// Tunables for label geometry, in world units.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LabelConfig {

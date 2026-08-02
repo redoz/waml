@@ -9,7 +9,7 @@
 //! See docs/superpowers/specs/2026-07-21-default-layout-stress-majorization-design.md.
 //! Not yet wired into `solve_diagram`; that is Phase 3, gated on screenshot review.
 
-use super::{BoxId, Rect, Size};
+use super::{BoxId, Rect, Size, SolveConfig};
 use std::collections::VecDeque;
 use std::f64::consts::PI;
 
@@ -33,7 +33,7 @@ impl Default for StressConfig {
             edge_len: 120.0,
             max_iter: 300,
             epsilon: 1e-4,
-            gap: 24.0,
+            gap: SolveConfig::default().min_sep,
         }
     }
 }
@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(
             via_grid[1],
             Rect {
-                x: 124.0,
+                x: 140.0,
                 y: 0.0,
                 w: 100.0,
                 h: 40.0
@@ -623,7 +623,7 @@ mod tests {
             via_grid[2],
             Rect {
                 x: 0.0,
-                y: 64.0,
+                y: 80.0,
                 w: 100.0,
                 h: 40.0
             }

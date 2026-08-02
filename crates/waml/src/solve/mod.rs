@@ -46,6 +46,15 @@ mod wire {
     pub struct SolveConfig {
         pub margin_px: [f64; 4],
         pub chip: Size,
+        /// Floor for the gap between two UNCONNECTED node neighbours. Defaulted
+        /// on deserialize so a payload serialized before this field existed
+        /// still deserializes.
+        #[cfg_attr(feature = "serde", serde(default = "super::default_min_sep"))]
+        pub min_sep: f64,
+        /// Floor for the facing-border gap between two nodes joined by an edge.
+        /// Defaulted on deserialize for the same reason as `min_sep`.
+        #[cfg_attr(feature = "serde", serde(default = "super::default_min_assoc"))]
+        pub min_assoc: f64,
     }
 
     #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -100,11 +109,23 @@ pub use wire::{FlagSet, Rect, Route, Size, SolveConfig, Solved, SolvedGroup};
 
 pub type SizeMap = BTreeMap<String, Size>;
 
+#[cfg(feature = "serde")]
+fn default_min_sep() -> f64 {
+    40.0
+}
+
+#[cfg(feature = "serde")]
+fn default_min_assoc() -> f64 {
+    72.0
+}
+
 impl Default for SolveConfig {
     fn default() -> Self {
         SolveConfig {
             margin_px: [0.0, 8.0, 16.0, 32.0],
             chip: Size { w: 96.0, h: 28.0 },
+            min_sep: 40.0,
+            min_assoc: 72.0,
         }
     }
 }
@@ -288,12 +309,26 @@ pub fn place_labels(
     requests: &[label::LabelRequest],
     cfg: &label::LabelConfig,
 ) {
-    // Group title bands are deliberately not in `hard` yet -- `SolvedGroup`
-    // carries a `title` and a `rect`, but the title band's height is a
-    // renderer concern. Add it in a follow-up once the renderer exposes that
-    // metric.
     let obstacles = label::Obstacles {
-        hard: solved.nodes.values().copied().collect(),
+        hard: solved
+            .nodes
+            .values()
+            .copied()
+            // A group's TITLE strip is solid; its interior is not. A group box is
+            // a large translucent container that legitimately holds edges and
+            // their labels, so treating the whole rect as hard would forbid every
+            // label inside a group.
+            .chain(
+                solved
+                    .groups
+                    .iter()
+                    .filter(|g| g.title.is_some())
+                    .map(|g| Rect {
+                        h: label::GROUP_TITLE_BAND.min(g.rect.h),
+                        ..g.rect
+                    }),
+            )
+            .collect(),
         soft: solved
             .routes
             .iter()
@@ -342,6 +377,73 @@ mod tests {
         assert_eq!(solved.labels.len(), 1);
         let card = solved.nodes["a"];
         assert!(!label::collides(solved.labels[0].rect, &[card]));
+    }
+
+    #[test]
+    fn a_group_title_band_is_a_hard_obstacle_but_its_interior_is_not() {
+        let mut solved = Solved {
+            nodes: BTreeMap::from([
+                (
+                    "a".to_string(),
+                    Rect {
+                        x: 20.0,
+                        y: 40.0,
+                        w: 120.0,
+                        h: 80.0,
+                    },
+                ),
+                (
+                    "b".to_string(),
+                    Rect {
+                        x: 20.0,
+                        y: 200.0,
+                        w: 120.0,
+                        h: 80.0,
+                    },
+                ),
+            ]),
+            groups: vec![SolvedGroup {
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 400.0,
+                    h: 320.0,
+                },
+                shape: Shape::Frame,
+                title: Some("Users".into()),
+                depth: 0,
+            }],
+            flags: BTreeMap::new(),
+            routes: vec![Route {
+                points: vec![(80.0, 120.0), (80.0, 200.0)],
+                source: "a".into(),
+                target: "b".into(),
+                key: None,
+            }],
+            labels: vec![],
+        };
+        let requests = vec![label::LabelRequest {
+            edge: 0,
+            slot: label::LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+
+        place_labels(&mut solved, &requests, &label::LabelConfig::default());
+
+        assert_eq!(solved.labels.len(), 1);
+        let group = solved.groups[0].rect;
+        let title_band = Rect {
+            h: label::GROUP_TITLE_BAND,
+            ..group
+        };
+        let placed = solved.labels[0].rect;
+        assert!(
+            !label::collides(placed, &[title_band]),
+            "must clear the title"
+        );
+        // But the label IS allowed inside the group body -- a group legitimately
+        // contains edges and their labels.
+        assert!(placed.y > group.y);
     }
 
     #[test]
