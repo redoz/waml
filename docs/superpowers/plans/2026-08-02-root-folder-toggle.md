@@ -20,8 +20,7 @@
 ### Task 1: Route the root directory through the shared toggle path
 
 **Files:**
-- Modify: `crates/waml-editor/src/app/tests/navigation.rs:1295`
-- Modify: `crates/waml-editor/src/app.rs:1033`
+- Modify and test: `crates/waml-editor/src/app.rs:1033, 4687`
 
 **Interfaces:**
 - Consumes: `App::navigate_with`, `NavigationTarget::Directory`, and `ProjectTree::toggle_directory(&mut self, &mut Cx, &str) -> bool`.
@@ -149,6 +148,6 @@ Expected: Both commands exit with code 0.
 - [ ] **Step 6: Commit the implementation**
 
 ```powershell
-rtk git add -- crates/waml-editor/src/app.rs crates/waml-editor/src/app/tests/navigation.rs
+rtk git add -- crates/waml-editor/src/app.rs
 rtk git commit -m "fix(tree): toggle the root folder"
 ```
