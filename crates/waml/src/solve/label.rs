@@ -238,6 +238,61 @@ fn rect_for(
     }
 }
 
+/// What a label may not sit on (`hard`) and what merely costs it (`soft`).
+///
+/// Node cards and already-placed labels are hard: text under a card is
+/// invisible and text on text is unreadable. Group *title bands* are hard, but
+/// group interiors are NOT -- a group box is a large translucent container that
+/// legitimately holds edges and labels, so treating its whole rect as solid
+/// would forbid every label inside a group.
+///
+/// Foreign edge strokes are soft. A label's OWN stroke is neither: the
+/// perpendicular gap already clears it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Obstacles {
+    pub hard: Vec<Rect>,
+    pub soft: Vec<[(f64, f64); 2]>,
+}
+
+/// True when `rect` overlaps any hard obstacle. Abutting exactly is NOT a
+/// collision -- that is the common case when a spacing floor put a box right at
+/// the gap, and rejecting it would throw away the best candidate.
+pub fn collides(rect: Rect, hard: &[Rect]) -> bool {
+    hard.iter().any(|o| {
+        rect.x < o.x + o.w && o.x < rect.x + rect.w && rect.y < o.y + o.h && o.y < rect.y + rect.h
+    })
+}
+
+/// How many soft segments cross `rect`.
+pub fn soft_crossings(rect: Rect, soft: &[[(f64, f64); 2]]) -> usize {
+    soft.iter()
+        .filter(|s| segment_hits_rect(s[0], s[1], rect))
+        .count()
+}
+
+/// True when the axis-aligned segment `a`-`b` crosses `rect`. The router only
+/// ever produces orthogonal routes, so a diagonal segment honestly returns
+/// `false` rather than pretending to handle a case that cannot occur.
+fn segment_hits_rect(a: (f64, f64), b: (f64, f64), rect: Rect) -> bool {
+    let x_min = rect.x;
+    let x_max = rect.x + rect.w;
+    let y_min = rect.y;
+    let y_max = rect.y + rect.h;
+    if (a.0 - b.0).abs() <= f64::EPSILON {
+        // Vertical segment: constant x, varying y.
+        let x = a.0;
+        let (y0, y1) = if a.1 <= b.1 { (a.1, b.1) } else { (b.1, a.1) };
+        x >= x_min && x <= x_max && y0 <= y_max && y1 >= y_min
+    } else if (a.1 - b.1).abs() <= f64::EPSILON {
+        // Horizontal segment: constant y, varying x.
+        let y = a.1;
+        let (x0, x1) = if a.0 <= b.0 { (a.0, b.0) } else { (b.0, a.0) };
+        y >= y_min && y <= y_max && x0 <= x_max && x1 >= x_min
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +391,67 @@ mod tests {
         assert!(candidates(&[], LabelSlot::MidRoute, size, &cfg).is_empty());
         assert!(candidates(&[(1.0, 1.0)], LabelSlot::MidRoute, size, &cfg).is_empty());
         assert!(candidates(&[(1.0, 1.0), (1.0, 1.0)], LabelSlot::MidRoute, size, &cfg).is_empty());
+    }
+
+    #[test]
+    fn a_rect_overlapping_a_card_is_rejected() {
+        let card = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+        };
+        assert!(collides(
+            Rect {
+                x: 90.0,
+                y: 40.0,
+                w: 30.0,
+                h: 20.0
+            },
+            &[card]
+        ));
+        assert!(!collides(
+            Rect {
+                x: 101.0,
+                y: 0.0,
+                w: 30.0,
+                h: 20.0
+            },
+            &[card]
+        ));
+    }
+
+    #[test]
+    fn touching_edges_do_not_count_as_a_collision() {
+        // Exactly abutting is the common case when a floor put a box right at
+        // the gap. Treating it as a collision would reject the best candidate.
+        let card = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+        };
+        assert!(!collides(
+            Rect {
+                x: 100.0,
+                y: 0.0,
+                w: 30.0,
+                h: 20.0
+            },
+            &[card]
+        ));
+    }
+
+    #[test]
+    fn soft_crossings_are_counted_not_fatal() {
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+        };
+        let through = [(-10.0, 25.0), (110.0, 25.0)];
+        let clear = [(-10.0, 200.0), (110.0, 200.0)];
+        assert_eq!(soft_crossings(rect, &[through, clear]), 1);
     }
 }
