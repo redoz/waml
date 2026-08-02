@@ -223,6 +223,7 @@ struct WalkState<'a> {
     messages: Vec<SolvedMessage>,
     fragments: Vec<SolvedFragment>,
     interaction_uses: Vec<SolvedInteractionUse>,
+    gate_occurrences: BTreeMap<(InteractionUseId, String), usize>,
     created_at: BTreeMap<String, f64>,
     destroyed_at: BTreeMap<String, f64>,
     involved: BTreeSet<String>,
@@ -365,6 +366,24 @@ impl<'a> WalkState<'a> {
             self.involved.insert(to.to_owned());
         }
         let row_h = self.row_h_for_message(edge_id);
+        let y = self.y;
+
+        match edge.kind {
+            MessageKind::SyncCall
+            | MessageKind::AsyncCall
+            | MessageKind::Reply
+            | MessageKind::AsyncSignal => {}
+            MessageKind::Create => {
+                if let Some(to) = endpoint_lifeline(to) {
+                    self.created_at.insert(to.to_owned(), y);
+                }
+            }
+            MessageKind::Delete => {
+                if let Some(to) = endpoint_lifeline(to) {
+                    self.destroyed_at.insert(to.to_owned(), y);
+                }
+            }
+        }
 
         let is_self = matches!(
             (&edge.from, to),
@@ -372,7 +391,6 @@ impl<'a> WalkState<'a> {
         );
         if is_self {
             // Self-message: a loop occupying two rows (design spec §3.4).
-            let y = self.y;
             let rect = Rect {
                 x: from_x,
                 y,
@@ -393,24 +411,6 @@ impl<'a> WalkState<'a> {
             });
             self.y += row_h * 2.0;
             return Some((from_x, from_x + rect.w));
-        }
-
-        let y = self.y;
-        match edge.kind {
-            MessageKind::SyncCall
-            | MessageKind::AsyncCall
-            | MessageKind::Reply
-            | MessageKind::AsyncSignal => {}
-            MessageKind::Create => {
-                if let Some(to) = endpoint_lifeline(to) {
-                    self.created_at.insert(to.to_owned(), y);
-                }
-            }
-            MessageKind::Delete => {
-                if let Some(to) = endpoint_lifeline(to) {
-                    self.destroyed_at.insert(to.to_owned(), y);
-                }
-            }
         }
 
         self.messages.push(SolvedMessage {
@@ -469,20 +469,44 @@ impl<'a> WalkState<'a> {
             } => {
                 let peer_x = peer_x?;
                 let y = self.y;
-                let interaction_use = self
+                let interaction_use_index = self
                     .interaction_uses
-                    .iter_mut()
-                    .find(|candidate| candidate.id == *interaction_use)?;
+                    .iter()
+                    .position(|candidate| candidate.id == *interaction_use)?;
+                if !self.interaction_uses[interaction_use_index]
+                    .gates
+                    .iter()
+                    .any(|candidate| candidate.name == *gate)
+                {
+                    return None;
+                }
+                let occurrence = self
+                    .gate_occurrences
+                    .entry((interaction_use.clone(), gate.clone()))
+                    .or_default();
+                let repeated = *occurrence != 0;
+                *occurrence += 1;
+                let interaction_use = &mut self.interaction_uses[interaction_use_index];
                 let midpoint = interaction_use.rect.x + interaction_use.rect.w * 0.5;
                 let x = if peer_x <= midpoint {
                     interaction_use.rect.x
                 } else {
                     interaction_use.rect.x + interaction_use.rect.w
                 };
-                let solved_gate = interaction_use
-                    .gates
-                    .iter_mut()
-                    .find(|candidate| candidate.name == *gate)?;
+                let gate_index = if repeated {
+                    interaction_use.gates.push(SolvedGate {
+                        name: gate.clone(),
+                        x,
+                        y,
+                    });
+                    interaction_use.gates.len() - 1
+                } else {
+                    interaction_use
+                        .gates
+                        .iter()
+                        .position(|candidate| candidate.name == *gate)?
+                };
+                let solved_gate = &mut interaction_use.gates[gate_index];
                 solved_gate.x = x;
                 solved_gate.y = y;
                 include_frame_y(&mut interaction_use.rect, y);
@@ -842,6 +866,7 @@ pub fn solve_interaction(
         messages: Vec::new(),
         fragments: Vec::new(),
         interaction_uses,
+        gate_occurrences: BTreeMap::new(),
         created_at: BTreeMap::new(),
         destroyed_at: BTreeMap::new(),
         involved: BTreeSet::new(),

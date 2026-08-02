@@ -602,3 +602,149 @@ fn mixed_tab_indentation_recovers_before_operand_and_binding_ownership() {
     assert_eq!(malformed_indent, 2);
     assert_eq!(written(&analysis, "s.md"), authored);
 }
+
+#[test]
+fn malformed_sequence_forms_recover_at_operand_heading_and_eof_boundaries() {
+    #[derive(Clone, Copy)]
+    enum Form {
+        Message,
+        Operand,
+        InteractionUse,
+        Binding,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Boundary {
+        Operand,
+        Heading,
+        Eof,
+    }
+
+    let cases = [
+        (
+            "message-operand.md",
+            "---\ntype: uml.Sequence\n---\n# Message operand\n\n## Messages\n- alt\n  - branch `first`\n    - sender calls\n  - branch `next`\n    - sender signals receiver `kept`\n",
+            Form::Message,
+            Boundary::Operand,
+        ),
+        (
+            "operand-operand.md",
+            "---\ntype: uml.Sequence\n---\n# Operand operand\n\n## Messages\n- alt\n  - when\n  - branch `next`\n    - sender signals receiver `kept`\n",
+            Form::Operand,
+            Boundary::Operand,
+        ),
+        (
+            "ref-operand.md",
+            "---\ntype: uml.Sequence\n---\n# Ref operand\n\n## Messages\n- alt\n  - branch `first`\n    - ref [Target](./target.md) as\n  - branch `next`\n    - sender signals receiver `kept`\n",
+            Form::InteractionUse,
+            Boundary::Operand,
+        ),
+        (
+            "bind-operand.md",
+            "---\ntype: uml.Sequence\n---\n# Bind operand\n\n## Messages\n- alt\n  - branch `first`\n    - ref [Target](./target.md) as target\n      - bind local\n  - branch `next`\n    - sender signals receiver `kept`\n",
+            Form::Binding,
+            Boundary::Operand,
+        ),
+        (
+            "message-heading.md",
+            "---\ntype: uml.Sequence\n---\n# Message heading\n\n## Messages\n- sender calls\n\n## Gates\n- next\n",
+            Form::Message,
+            Boundary::Heading,
+        ),
+        (
+            "operand-heading.md",
+            "---\ntype: uml.Sequence\n---\n# Operand heading\n\n## Messages\n- alt\n  - when\n\n## Gates\n- next\n",
+            Form::Operand,
+            Boundary::Heading,
+        ),
+        (
+            "ref-heading.md",
+            "---\ntype: uml.Sequence\n---\n# Ref heading\n\n## Messages\n- ref [Target](./target.md) as\n\n## Gates\n- next\n",
+            Form::InteractionUse,
+            Boundary::Heading,
+        ),
+        (
+            "bind-heading.md",
+            "---\ntype: uml.Sequence\n---\n# Bind heading\n\n## Messages\n- ref [Target](./target.md) as target\n  - bind local\n\n## Gates\n- next\n",
+            Form::Binding,
+            Boundary::Heading,
+        ),
+        (
+            "message-eof.md",
+            "---\ntype: uml.Sequence\n---\n# Message EOF\n\n## Messages\n- sender calls",
+            Form::Message,
+            Boundary::Eof,
+        ),
+        (
+            "operand-eof.md",
+            "---\ntype: uml.Sequence\n---\n# Operand EOF\n\n## Messages\n- alt\n  - when",
+            Form::Operand,
+            Boundary::Eof,
+        ),
+        (
+            "ref-eof.md",
+            "---\ntype: uml.Sequence\n---\n# Ref EOF\n\n## Messages\n- ref [Target](./target.md) as",
+            Form::InteractionUse,
+            Boundary::Eof,
+        ),
+        (
+            "bind-eof.md",
+            "---\ntype: uml.Sequence\n---\n# Bind EOF\n\n## Messages\n- ref [Target](./target.md) as target\n  - bind local",
+            Form::Binding,
+            Boundary::Eof,
+        ),
+    ];
+    let target = "---\ntype: uml.Sequence\n---\n# Target\n";
+
+    for (path, authored, form, boundary) in cases {
+        let analysis = analyze([(path, authored), ("target.md", target)]);
+        let syntax_root = root(&analysis, path);
+        let has_form = match form {
+            Form::Message => !typed::<uml::MessageSyntax>(syntax_root.clone()).is_empty(),
+            Form::Operand => !typed::<uml::SequenceOperandSyntax>(syntax_root.clone()).is_empty(),
+            Form::InteractionUse => {
+                !typed::<uml::syntax::InteractionUseSyntax>(syntax_root.clone()).is_empty()
+            }
+            Form::Binding => !typed::<uml::syntax::BindingSyntax>(syntax_root.clone()).is_empty(),
+        };
+        assert!(has_form, "{path} lost its malformed form");
+
+        match boundary {
+            Boundary::Operand => assert!(typed::<uml::SequenceOperandSyntax>(syntax_root.clone())
+                .iter()
+                .any(|operand| operand
+                    .branch_label_token()
+                    .is_some_and(|token| { token.text().write_to_string() == "`next`" }))),
+            Boundary::Heading => {
+                let gates = typed::<uml::syntax::GateSyntax>(syntax_root.clone());
+                assert_eq!(gates.len(), 1, "{path} swallowed the next heading");
+                assert_eq!(gates[0].name_token().text().write_to_string(), "next");
+            }
+            Boundary::Eof => {}
+        }
+
+        let document_id = analysis
+            .syntax
+            .catalog()
+            .id_for_path(&waml::source::BundlePath::parse(path).unwrap())
+            .unwrap();
+        assert!(
+            analysis
+                .syntax
+                .document(document_id)
+                .unwrap()
+                .syntax()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| {
+                    diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::MalformedMessage
+                }),
+            "{path} did not report malformed sequence syntax"
+        );
+        assert_eq!(
+            written(&analysis, path),
+            authored,
+            "{path} was not lossless"
+        );
+    }
+}

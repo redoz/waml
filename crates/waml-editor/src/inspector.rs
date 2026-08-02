@@ -330,7 +330,7 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
 
 /// A message or fragment of an interaction, keyed `"{document}#{id}"`. These
 /// carry no attributes or associations of their own -- the view is the element's
-/// own text (`a calls b: start()`, `alt`) plus what kind it is.
+/// own text (``a calls b `start()` ``, `alt`) plus what kind it is.
 fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView> {
     use waml::model::SeqNode;
 

@@ -5,6 +5,7 @@ use waml::{
         EndpointRef, FragmentKind, InteractionUseId, MessageId, MessageKind, OperandSpec, SeqChild,
         SeqNode,
     },
+    solve::interaction::{measure_interaction, solve_interaction, InteractionConfig},
     source::SourceBundle,
     uml,
 };
@@ -611,33 +612,39 @@ fn gate_diagnostics_pin_the_exact_gate_or_message() {
 }
 
 #[test]
-fn duplicate_outer_use_gate_connection_is_diagnosed_and_dropped() {
+fn call_and_return_can_share_one_interaction_use_gate() {
     let analysis = analyze([
-        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        ("client.md", "---\ntype: uml.Class\n---\n# Client\n"),
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [B](./b.md) as b\n\n## Gates\n- request\n\n## Messages\n- @request signals b `inside`\n",
+            "---\ntype: uml.Sequence\n---\n# Target\n\n## Gates\n- request\n\n## Messages\n- @request signals outside `inside`\n",
         ),
         (
             "parent.md",
-            "---\ntype: uml.Sequence\n---\n# Parent\n\n## Lifelines\n- [B](./b.md) as b\n\n## Messages\n- ref [Target](./target.md) as auth\n  - bind b to b\n- b signals auth@request `first`\n- b signals auth@request `second`\n",
+            "---\ntype: uml.Sequence\n---\n# Parent\n\n## Lifelines\n- [Client](./client.md) as client\n\n## Messages\n- ref [Target](./target.md) as auth\n- client calls auth@request `authorize()` as authorization\n- auth@request returns `accepted` to client for authorization\n",
         ),
     ]);
-    let parent = analysis.declared.concept("parent").unwrap();
-    let diagnostic = diagnostic(
-        &analysis,
-        DiagCode::InvalidInteractionUse,
-        "more than one outer connection",
-    );
-
-    assert_eq!(
-        diagnostic.range,
-        Some(parent.messages[1].syntax.syntax().range())
-    );
+    assert!(!analysis
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::InvalidInteractionUse));
     let doc = interaction(&analysis, "parent");
-    assert_eq!(doc.edges.len(), 1);
-    assert_eq!(doc.items.len(), 2);
+    assert_eq!(doc.edges.len(), 2);
+    assert_eq!(doc.items.len(), 3);
     assert_eq!(doc.interaction_uses[0].gates, ["request"]);
+    assert_eq!(doc.edges[1].returns_call, Some(doc.edges[0].id.clone()));
+
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(doc, &cfg);
+    let (solved, diagnostics) = solve_interaction(doc, &sizes, &cfg);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let gate_rows = solved.interaction_uses[0]
+        .gates
+        .iter()
+        .filter(|gate| gate.name == "request")
+        .map(|gate| gate.y)
+        .collect::<Vec<_>>();
+    assert_eq!(gate_rows, [solved.messages[0].y, solved.messages[1].y]);
 }
 
 #[test]
@@ -821,6 +828,143 @@ fn repeated_delete_reports_the_exact_second_delete() {
         diagnostics[0].range,
         Some(declared.messages[1].syntax.syntax().range())
     );
+}
+
+#[test]
+fn parallel_sibling_deletes_report_the_second_authored_delete() {
+    let source = "---\ntype: uml.Sequence\n---\n# Parallel delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `first`\n    - a destroys b\n  - branch `second`\n    - a destroys b\n";
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        ("parallel-delete.md", source),
+    ]);
+    let deletes = &analysis
+        .declared
+        .concept("parallel-delete")
+        .unwrap()
+        .messages;
+    let diagnostics = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::InvalidLifelineLifetime)
+        .collect::<Vec<_>>();
+
+    assert_eq!(diagnostics.len(), 1, "{:?}", analysis.diagnostics);
+    assert_eq!(
+        diagnostics[0].message,
+        "lifeline is created or deleted more than once"
+    );
+    assert_eq!(
+        diagnostics[0].range,
+        Some(deletes[1].syntax.syntax().range())
+    );
+}
+
+#[test]
+fn delete_after_parallel_join_is_a_repeated_delete() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "post-join-delete.md",
+            "---\ntype: uml.Sequence\n---\n# Post-join delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `delete`\n    - a destroys b\n  - branch `work`\n    - a signals a `work`\n- a destroys b\n",
+        ),
+    ]);
+    let declared = analysis.declared.concept("post-join-delete").unwrap();
+    let diagnostics = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::InvalidLifelineLifetime)
+        .collect::<Vec<_>>();
+
+    assert_eq!(diagnostics.len(), 1, "{:?}", analysis.diagnostics);
+    assert_eq!(
+        diagnostics[0].message,
+        "lifeline is created or deleted more than once"
+    );
+    assert_eq!(
+        diagnostics[0].range,
+        Some(declared.messages[2].syntax.syntax().range())
+    );
+}
+
+#[test]
+fn reserved_sequence_names_stay_declared_and_out_of_runtime() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        ("target.md", "---\ntype: uml.Sequence\n---\n# Target\n"),
+        (
+            "names.md",
+            "---\ntype: uml.Sequence\n---\n# Names\n\n## Lifelines\n- [A](./a.md) as outside\n- [A](./a.md) as bad@lifeline\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Gates\n- outside\n- bad@gate\n- good\n\n## Messages\n- ref [Target](./target.md) as outside\n- ref [Target](./target.md) as bad@use\n- a calls b `first()` as outside\n- a calls b `second()` as bad@call\n- b returns `first` to a for outside\n- b returns `second` to a for bad@call\n- a signals b `kept`\n",
+        ),
+    ]);
+    let declared = analysis.declared.concept("names").unwrap();
+    assert_eq!(declared.lifelines.len(), 4);
+    assert_eq!(declared.gates.len(), 3);
+    assert_eq!(declared.interaction_uses.len(), 2);
+    assert_eq!(declared.messages.len(), 5);
+
+    let reserved = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::ReservedSequenceName)
+        .collect::<Vec<_>>();
+    assert_eq!(reserved.len(), 10, "{:?}", analysis.diagnostics);
+    assert!(!analysis.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::InvalidInteractionUse
+            && diagnostic
+                .message
+                .contains("unresolved sequence interaction use")
+    }));
+    for kind in ["lifeline", "gate", "interaction-use alias", "call identity"] {
+        assert_eq!(
+            reserved
+                .iter()
+                .filter(|diagnostic| diagnostic.message.contains(kind))
+                .count(),
+            if kind == "call identity" { 4 } else { 2 },
+            "missing reserved-name diagnostics for {kind}: {reserved:?}"
+        );
+    }
+
+    let doc = interaction(&analysis, "names");
+    let runtime_lifelines = doc
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            SeqNode::Lifeline { id, .. } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(runtime_lifelines, ["a", "b"]);
+    assert_eq!(doc.gates, ["good"]);
+    assert!(doc.interaction_uses.is_empty());
+    assert_eq!(doc.edges.len(), 1);
+    assert_eq!(doc.edges[0].kind, MessageKind::AsyncSignal);
+}
+
+#[test]
+fn invalid_target_gate_name_cannot_resolve_through_an_interaction_use() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        (
+            "target.md",
+            "---\ntype: uml.Sequence\n---\n# Target\n\n## Gates\n- outside\n\n## Messages\n- @outside signals outside `inside`\n",
+        ),
+        (
+            "parent.md",
+            "---\ntype: uml.Sequence\n---\n# Parent\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- ref [Target](./target.md) as target\n- a signals target@outside `unsafe`\n",
+        ),
+    ]);
+
+    assert!(analysis.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::InvalidInteractionUse
+            && diagnostic.message.contains("has no gate 'outside'")
+    }));
+    let parent = interaction(&analysis, "parent");
+    assert!(parent.edges.is_empty());
+    assert!(parent.interaction_uses[0].gates.is_empty());
 }
 
 #[test]

@@ -1,8 +1,10 @@
 # Native behavior canvases: activity, state machine, sequence
 
 Date: 2026-07-30
-Status: approved (design sections 1–2 approved interactively; 3–6 completed under the
-delegated-autonomy instruction below)
+Status: superseded for sequence-language syntax and semantics by
+`2026-08-02-waml-sequence-language-completeness.md`. The canvas architecture and flow
+decisions remain historical design context. Do not use this document's `MessageVerb` or
+stack-based reply descriptions as current behavior.
 
 ## Why
 

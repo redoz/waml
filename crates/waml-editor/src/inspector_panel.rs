@@ -1102,7 +1102,7 @@ impl Inspector {
                 // from any node's catalog icon, marking it as the container.
                 ElementKind::Diagram => (SelectLead::Icon(Icon::Frame), row.label.clone(), true),
                 // A behavior element's label is already its full reading (`a
-                // calls b: start()`), so it goes through verbatim -- unlike an
+                // calls b `start()`), so it goes through verbatim -- unlike an
                 // edge row, whose label is a `src -> tgt` pair the picker trims
                 // to the target end.
                 ElementKind::BehaviorElement => {

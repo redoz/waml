@@ -372,30 +372,92 @@ node is a plain bulleted list, same grammar as a classifier's `## Notes`.
 ### Interaction substrate (`uml.Sequence`)
 
 One document is one ordered interaction — self-rendering. Optional
-`describes:` as above. `## Lifelines` declares participants (order fixes the
-diagram's columns); `## Messages` is the ordered list (document order is time
-order):
+`describes:` as above. `## Lifelines` declares participants, `## Gates`
+declares local frame gates, and `## Messages` holds the ordered interaction.
+Lifeline declaration order fixes the diagram columns. Message order is time
+order, except that the operands of a `par` fragment execute concurrently.
 
 ```bnf
-lifeline-line   ::= "-" SP link (SP "as" SP alias)?
-message-line    ::= "-" SP participant SP msg-verb SP participant
+lifeline-line   ::= "-" SP link (SP "as" SP identifier)?
+gate-line       ::= "-" SP identifier
+
+sequence-item   ::= message | fragment | interaction-use
+message         ::= call | return | signal | create | delete
+call            ::= "-" SP endpoint SP "calls" SP endpoint
+                     (SP "async")? (SP expr)?
+                     (SP "as" SP identifier)?
+return          ::= "-" SP endpoint SP "returns" (SP expr)?
+                     (SP "to" SP endpoint)?
+                     (SP "for" SP identifier)?
+signal          ::= "-" SP endpoint SP "signals" SP endpoint (SP expr)?
+create          ::= "-" SP endpoint SP "creates" SP identifier
                      (":" SP expr)?
-msg-verb        ::= "calls" | "sends" | "replies" | "creates" | "destroys"
-participant     ::= local-name | link                ; resolves to a lifeline
-                                                       ; by alias or title
-fragment        ::= "-" SP frag-kind
-                     ( operand )+
-frag-kind       ::= "alt" | "opt" | "loop"
-operand         ::= "-" SP ("when" SP expr | "else")
-                     ( message-line | fragment )+     ; indented one level
-                                                       ; deeper than the operand
+delete          ::= "-" SP endpoint SP "destroys" SP identifier
+
+endpoint        ::= identifier | "outside" | "@" identifier
+                   | identifier "@" identifier
+
+fragment        ::= "-" SP fragment-kind NEWLINE operand+
+fragment-kind   ::= "alt" | "opt" | "loop" | "par" | "break"
+                   | "critical" | "assert" | "neg"
+operand         ::= "-" SP ("when" SP expr | "else"
+                   | "branch" (SP expr)?) NEWLINE sequence-item*
+
+interaction-use ::= "-" SP "ref" SP link SP "as" SP identifier
+                     NEWLINE binding*
+binding         ::= "-" SP "bind" SP identifier SP "to" SP identifier
+
+expr            ::= "`" text "`"
+identifier      ::= token other than "outside" without "@"
 ```
 
-`calls` (sync) renders solid line + filled arrowhead; `sends` (async) solid +
-open arrowhead; `replies` dashed + open arrowhead; `creates` dashed arrow to a
-new lifeline; `destroys` an arrow ending in `✕`. Execution bars are derived
-from call/reply pairing — there is no syntax for them. `par` operands,
-self/found/lost messages, gates, and coregions are not yet supported.
+The message forms have these meanings:
+
+| form | meaning | rendering |
+|---|---|---|
+| `calls` | synchronous call; `async` makes it asynchronous | solid line, filled arrow for sync and open arrow for async |
+| `signals` | asynchronous signal | solid line, open arrow |
+| `returns` | return from a call | dashed line, open arrow |
+| `creates` | create a lifeline | dashed arrow to the new lifeline head |
+| `destroys` | delete a lifeline | solid line that ends at an X |
+
+An optional call identity follows `as`. A return can select that call with
+`for`. Without `for`, the return must have exactly one eligible open call. The
+solver derives activation bars from the selected call identity, not from a
+lifeline stack.
+
+An endpoint has one of four forms:
+
+- A lifeline handle, such as `customer`.
+- `outside`, for a found or lost message. A message cannot have `outside` at
+  both ends.
+- A local gate, such as `@request`, declared in `## Gates`.
+- A gate on an interaction use, such as `auth@request`.
+
+The same lifeline at both ends creates self-message loopback geometry. This
+rule also applies to a self-delete: the delete row ends that lifeline.
+
+An interaction use references another `uml.Sequence` without copying its
+messages. Its `bind` lines map local lifelines to target lifelines. A target
+gate must exist and must have an inner connection. More than one outer message
+can use the same gate. For example, a call and its return can share one gate:
+
+```markdown
+## Messages
+- ref [Authorize](./authorize.md) as auth
+- customer calls auth@request `authorize()` as authorization
+- auth@request returns `accepted` to customer for authorization
+```
+
+Fragments own their indented operands. `when` has a guard, `else` is the
+default `alt` operand, and `branch` identifies a `par` operand. All `par`
+branches execute. Their rows can overlap, and their create and delete effects
+join after all branches.
+
+The parser preserves malformed declarations and recovers at the next sibling,
+operand marker, section heading, or document end. Invalid identifiers also
+stay in the declared syntax, but they do not enter runtime endpoint, gate,
+interaction-use, or call-correlation pools.
 
 ## Association classes (`uml.Association`)
 

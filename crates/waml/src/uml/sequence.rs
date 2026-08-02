@@ -31,6 +31,32 @@ fn report_at(
     super::analysis::behavior_diagnostic(context, path, syntax, code, message.into(), diagnostics);
 }
 
+fn is_sequence_identifier(name: &str) -> bool {
+    name != "outside" && !name.contains('@')
+}
+
+fn validate_sequence_identifier(
+    context: &DomainAnalysisContext<'_>,
+    diagnostics: &mut Vec<Diagnostic>,
+    name: &str,
+    role: &str,
+    path: &str,
+    syntax: &waml_syntax::SyntaxNode<super::syntax::UmlLanguage>,
+) -> bool {
+    if is_sequence_identifier(name) {
+        return true;
+    }
+    report_at(
+        context,
+        diagnostics,
+        DiagCode::ReservedSequenceName,
+        format!("reserved sequence {role} '{name}'"),
+        path,
+        syntax,
+    );
+    false
+}
+
 fn report_message(
     context: &DomainAnalysisContext<'_>,
     concept: &DeclaredConcept,
@@ -371,15 +397,14 @@ pub(crate) fn lower(
         };
         let alias = value(&lifeline.alias).cloned();
         let id = alias.clone().unwrap_or_else(|| title.clone());
-        if id == "outside" || id.contains('@') {
-            report_at(
-                context,
-                diagnostics,
-                DiagCode::ReservedSequenceName,
-                format!("reserved sequence lifeline name '{id}'"),
-                path,
-                lifeline.syntax.syntax(),
-            );
+        if !validate_sequence_identifier(
+            context,
+            diagnostics,
+            &id,
+            "lifeline name",
+            path,
+            lifeline.syntax.syntax(),
+        ) {
             continue;
         }
         if !lifelines.insert(id.clone()) {
@@ -412,6 +437,16 @@ pub(crate) fn lower(
         let Some(gate) = value(&declared_gate.name) else {
             continue;
         };
+        if !validate_sequence_identifier(
+            context,
+            diagnostics,
+            gate,
+            "gate",
+            path,
+            declared_gate.syntax.syntax(),
+        ) {
+            continue;
+        }
         if !gate_names.insert(gate.clone()) {
             report_at(
                 context,
@@ -433,7 +468,11 @@ pub(crate) fn lower(
                 target
                     .gates
                     .iter()
-                    .filter_map(|gate| value(&gate.name).cloned())
+                    .filter_map(|gate| {
+                        value(&gate.name)
+                            .filter(|name| is_sequence_identifier(name))
+                            .cloned()
+                    })
                     .collect::<BTreeSet<_>>(),
             )
         })
@@ -452,7 +491,9 @@ pub(crate) fn lower(
                 .flatten()
                 {
                     if let DeclaredEndpointRef::LocalGate(gate) = endpoint {
-                        connected.insert(gate.clone());
+                        if is_sequence_identifier(gate) {
+                            connected.insert(gate.clone());
+                        }
                     }
                 }
             }
@@ -485,6 +526,16 @@ pub(crate) fn lower(
                 path,
                 declared_use.syntax.syntax(),
             );
+        }
+        if !validate_sequence_identifier(
+            context,
+            diagnostics,
+            alias,
+            "interaction-use alias",
+            path,
+            declared_use.syntax.syntax(),
+        ) {
+            valid_use = false;
         }
         if lifelines.contains(alias) || !authored_use_aliases.insert(alias.clone()) {
             report_at(
@@ -668,7 +719,6 @@ pub(crate) fn lower(
     let mut root = Vec::new();
     let mut fragment_stack: Vec<(usize, usize)> = Vec::new();
     let mut operand_stack: Vec<(usize, usize)> = Vec::new();
-    let mut outer_connected_use_gates: BTreeSet<(InteractionUseId, String)> = BTreeSet::new();
     let fragment_indices = concept
         .fragments
         .iter()
@@ -806,10 +856,27 @@ pub(crate) fn lower(
                 else {
                     continue;
                 };
+                let kind = message_kind(*kind);
+                let call_identity = if kind == MessageKind::Reply {
+                    value(&message.return_for)
+                } else {
+                    value(&message.call_id)
+                };
+                if call_identity.is_some_and(|identity| {
+                    !validate_sequence_identifier(
+                        context,
+                        endpoints.diagnostics,
+                        identity,
+                        "call identity",
+                        path,
+                        message.syntax.syntax(),
+                    )
+                }) {
+                    continue;
+                }
                 let Some(from) = endpoints.resolve(source, message.syntax.syntax()) else {
                     continue;
                 };
-                let kind = message_kind(*kind);
                 let authored_target = if kind == MessageKind::Reply {
                     value(&message.return_to)
                 } else {
@@ -837,41 +904,27 @@ pub(crate) fn lower(
                     );
                     continue;
                 }
-                let mut message_use_gates = BTreeSet::new();
-                let duplicate_use_gate = std::iter::once(&from)
-                    .chain(to.iter())
-                    .filter_map(|endpoint| match endpoint {
-                        EndpointRef::UseGate {
-                            interaction_use,
-                            gate,
-                        } => Some((interaction_use.clone(), gate.clone())),
-                        _ => None,
-                    })
-                    .any(|key| {
-                        !message_use_gates.insert(key.clone())
-                            || outer_connected_use_gates.contains(&key)
-                    });
-                if duplicate_use_gate {
-                    report_at(
-                        context,
-                        endpoints.diagnostics,
-                        DiagCode::InvalidInteractionUse,
-                        "interaction-use gate has more than one outer connection",
-                        path,
-                        message.syntax.syntax(),
-                    );
-                    continue;
-                }
-                for (interaction_use, gate) in &message_use_gates {
+                for (interaction_use, gate) in
+                    std::iter::once(&from)
+                        .chain(to.iter())
+                        .filter_map(|endpoint| match endpoint {
+                            EndpointRef::UseGate {
+                                interaction_use,
+                                gate,
+                            } => Some((interaction_use.clone(), gate.clone())),
+                            _ => None,
+                        })
+                {
                     if let Some(interaction_use) = endpoints
                         .interaction_uses
                         .iter_mut()
-                        .find(|candidate| candidate.id == *interaction_use)
+                        .find(|candidate| candidate.id == interaction_use)
                     {
-                        interaction_use.gates.push(gate.clone());
+                        if !interaction_use.gates.contains(&gate) {
+                            interaction_use.gates.push(gate);
+                        }
                     }
                 }
-                outer_connected_use_gates.extend(message_use_gates);
                 let message_index = message_indices[&message.syntax.syntax().range().start()];
                 let id = MessageId(format!("m{message_index}"));
                 edges.push(SeqEdge {
@@ -880,11 +933,7 @@ pub(crate) fn lower(
                     kind,
                     to,
                     value: value(&message.value).cloned(),
-                    call_id: if kind == MessageKind::Reply {
-                        value(&message.return_for).cloned()
-                    } else {
-                        value(&message.call_id).cloned()
-                    },
+                    call_id: call_identity.cloned(),
                     returns_call: None,
                 });
                 add_child(
@@ -1339,6 +1388,26 @@ fn validate_lifetimes(
                         continue;
                     };
                     let incoming = deleted.clone();
+                    if *kind == FragmentKind::Par {
+                        for operand in operands {
+                            let Some(SeqNode::Operand { items, .. }) = nodes.get(operand).copied()
+                            else {
+                                continue;
+                            };
+                            repeated_deletes(
+                                items,
+                                nodes,
+                                edges,
+                                deleted,
+                                repeated,
+                                context,
+                                concept,
+                                diagnostics,
+                                path,
+                            );
+                        }
+                        continue;
+                    }
                     let mut outcomes = Vec::new();
                     for operand in operands {
                         let Some(SeqNode::Operand { items, .. }) = nodes.get(operand).copied()

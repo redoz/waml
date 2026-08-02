@@ -215,6 +215,33 @@ fn self_message_occupies_two_rows() {
 }
 
 #[test]
+fn self_delete_ends_the_lifeline_at_the_loopback_row() {
+    let doc = SequenceDoc {
+        key: "self-delete".into(),
+        title: "Self delete".into(),
+        describes: None,
+        nodes: vec![SeqNode::Lifeline {
+            id: "a".into(),
+            title: "A".into(),
+            alias: None,
+            ref_: None,
+        }],
+        edges: vec![edge("delete", "a", MessageKind::Delete, "a", None)],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: vec![message("delete")],
+    };
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(solved.messages[0].self_loop.is_some());
+    assert!(solved.lifelines[0].destroyed);
+    assert_eq!(solved.lifelines[0].stem_bottom, solved.messages[0].y);
+}
+
+#[test]
 fn correlated_returns_close_the_selected_activation() {
     let returning = |id: &str, from: &str, to: &str, call: &str| {
         let mut edge = edge(id, from, MessageKind::Reply, to, None);

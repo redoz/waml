@@ -144,7 +144,7 @@ script_mod! {
         }
     }
 
-    // Open message-head pen (`sends`/`replies`, spec §4.2): two open strokes
+// Open message-head pen (`signals`/`returns`, spec §4.2): two open strokes
     // from the apex `v0` out to wing tips `v1`/`v2` -- no closing base, no
     // fill, so it reads as a caret rather than `FlowTriangle`'s solid head.
     mod.draw.InteractionOpenHead = mod.draw.DrawColor{
