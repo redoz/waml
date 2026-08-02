@@ -88,34 +88,6 @@ fn navigation_app() -> (Cx, App) {
     (cx, app)
 }
 
-fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) -> DocTab {
-    DocTab {
-        id,
-        concept_id: key.into(),
-        kind: crate::view_history::DocumentKind::Primary,
-        title: title.into(),
-        presentation: DocumentPresentation {
-            icon: IconSet::icon_for(category).unwrap(),
-            accent: None,
-            category,
-        },
-        preview,
-    }
-}
-
-#[derive(Default)]
-struct FakeBrowser {
-    opened: Vec<String>,
-    error: Option<String>,
-}
-
-impl ExternalUrlAdapter for FakeBrowser {
-    fn open(&mut self, _cx: &mut Cx, url: &str) -> Result<(), String> {
-        self.opened.push(url.into());
-        self.error.clone().map_or(Ok(()), Err)
-    }
-}
-
 fn draw_document_header(cx: &mut Cx, app: &App, size: DVec2) -> Rect {
     let draw_event = DrawEvent {
         redraw_all: true,

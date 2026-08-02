@@ -1,5 +1,20 @@
 use super::*;
 
+fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) -> DocTab {
+    DocTab {
+        id,
+        concept_id: key.into(),
+        kind: crate::view_history::DocumentKind::Primary,
+        title: title.into(),
+        presentation: DocumentPresentation {
+            icon: IconSet::icon_for(category).unwrap(),
+            accent: None,
+            category,
+        },
+        preview,
+    }
+}
+
 #[test]
 fn document_switcher_items_preserve_order_and_tab_identity() {
     let diagram = LiveId::from_str("diagram");

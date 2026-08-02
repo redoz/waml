@@ -1,5 +1,19 @@
 use super::*;
 use crate::doc_view::DocumentHeaderChrome;
+use crate::platform_browser::ExternalUrlAdapter;
+
+#[derive(Default)]
+struct FakeBrowser {
+    opened: Vec<String>,
+    error: Option<String>,
+}
+
+impl ExternalUrlAdapter for FakeBrowser {
+    fn open(&mut self, _cx: &mut Cx, url: &str) -> Result<(), String> {
+        self.opened.push(url.into());
+        self.error.clone().map_or(Ok(()), Err)
+    }
+}
 
 struct ResettingAnchorView(Rc<RefCell<ViewAnchor>>);
 
