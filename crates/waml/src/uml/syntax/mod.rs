@@ -570,8 +570,8 @@ mod tests {
     }
 
     #[test]
-    fn malformed_message_preserves_space_before_signature_recovery() {
-        let authored = "## Messages\n- A calls B: `s";
+    fn malformed_message_preserves_space_before_value_recovery() {
+        let authored = "## Messages\n- A calls B `s";
         let text = SourceText::from_shared(Arc::new(authored.to_owned())).unwrap();
         let shell = parse_okf_markdown(text.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
         let tree = parse_full(text, &shell.structure);

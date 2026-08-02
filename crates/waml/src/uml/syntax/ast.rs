@@ -409,10 +409,18 @@ impl MessageSyntax {
     pub const SOURCE_SLOT: usize = 1;
     pub const VERB_SLOT: usize = 2;
     pub const TARGET_SLOT: usize = 3;
-    pub const COLON_SLOT: usize = 4;
-    pub const SIGNATURE_SLOT: usize = 5;
-    pub const RECOVERY_SLOT: usize = 6;
-    pub const NEWLINE_SLOT: usize = 7;
+    pub const ASYNC_SLOT: usize = 4;
+    pub const VALUE_SLOT: usize = 5;
+    pub const SIGNATURE_SLOT: usize = Self::VALUE_SLOT;
+    pub const AS_SLOT: usize = 6;
+    pub const CALL_ID_SLOT: usize = 7;
+    pub const TO_SLOT: usize = 8;
+    pub const RETURN_TARGET_SLOT: usize = 9;
+    pub const FOR_SLOT: usize = 10;
+    pub const RETURN_CALL_SLOT: usize = 11;
+    pub const COLON_SLOT: usize = 12;
+    pub const RECOVERY_SLOT: usize = 13;
+    pub const NEWLINE_SLOT: usize = 14;
 
     pub fn source_token(&self) -> SyntaxToken<UmlLanguage> {
         required_slot_token_at(&self.0, Self::SOURCE_SLOT, 0)
@@ -420,11 +428,41 @@ impl MessageSyntax {
     pub fn verb_token(&self) -> SyntaxToken<UmlLanguage> {
         required_slot_token_at(&self.0, Self::VERB_SLOT, 0)
     }
-    pub fn target_token(&self) -> SyntaxToken<UmlLanguage> {
-        required_slot_token_at(&self.0, Self::TARGET_SLOT, 0)
+    pub fn target_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_slot_token_at(&self.0, Self::TARGET_SLOT, 0)
+    }
+    pub fn async_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_slot_token_at(&self.0, Self::ASYNC_SLOT, 0)
+    }
+    pub fn value_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_slot_token_kind_at(&self.0, Self::VALUE_SLOT, UmlSyntaxKind::ValueToken)
+    }
+    pub fn as_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_token_at(&self.0, Self::AS_SLOT)
+    }
+    pub fn call_id_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_slot_token_at(&self.0, Self::CALL_ID_SLOT, 0)
+    }
+    pub fn to_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_token_at(&self.0, Self::TO_SLOT)
+    }
+    pub fn return_target_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_slot_token_at(&self.0, Self::RETURN_TARGET_SLOT, 0)
+    }
+    pub fn for_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_token_at(&self.0, Self::FOR_SLOT)
+    }
+    pub fn return_call_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_slot_token_at(&self.0, Self::RETURN_CALL_SLOT, 0)
+    }
+    pub fn colon_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_token_at(&self.0, Self::COLON_SLOT).or_else(|| {
+            node_at(&self.0, Self::VALUE_SLOT)
+                .and_then(|value| present_token_kind(&value, UmlSyntaxKind::ColonToken))
+        })
     }
     pub fn signature_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        present_slot_token_at(&self.0, Self::SIGNATURE_SLOT, 0)
+        self.value_token()
     }
 }
 behavior_syntax!(MessageSyntax, MessageSyntax::RECOVERY_SLOT);
@@ -497,6 +535,26 @@ fn present_slot_token_at(
     token_index: usize,
 ) -> Option<SyntaxToken<UmlLanguage>> {
     node_at(node, slot_index).and_then(|slot| present_token_at(&slot, token_index))
+}
+
+fn present_slot_token_kind_at(
+    node: &SyntaxNode<UmlLanguage>,
+    slot_index: usize,
+    kind: UmlSyntaxKind,
+) -> Option<SyntaxToken<UmlLanguage>> {
+    node_at(node, slot_index).and_then(|slot| present_token_kind(&slot, kind))
+}
+
+fn present_token_kind(
+    node: &SyntaxNode<UmlLanguage>,
+    kind: UmlSyntaxKind,
+) -> Option<SyntaxToken<UmlLanguage>> {
+    node.children().find_map(|element| match element {
+        SyntaxElement::Token(token) if token.kind() == kind && !token.flags().is_missing() => {
+            Some(token)
+        }
+        _ => None,
+    })
 }
 
 fn recovery_at(

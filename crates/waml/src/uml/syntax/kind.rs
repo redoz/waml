@@ -42,6 +42,7 @@ pub enum UmlSyntaxKind {
     LifelinesSection,
     Lifeline,
     MessagesSection,
+    GatesSection,
     Message,
     SequenceOperand,
     SequenceFragment,
@@ -57,7 +58,11 @@ pub enum UmlSyntaxKind {
     MessageSource,
     MessageVerb,
     MessageTarget,
-    MessageSignature,
+    MessageAsync,
+    MessageValue,
+    MessageCallId,
+    MessageReturnTarget,
+    MessageReturnCall,
     FragmentKind,
     OperandGuard,
     FlowNodeKindSlot,
@@ -106,7 +111,12 @@ pub enum UmlSyntaxKind {
     EffectToken,
     SourceToken,
     VerbToken,
-    SignatureToken,
+    AsyncToken,
+    ValueToken,
+    CallIdToken,
+    ReturnTargetToken,
+    ForToken,
+    ReturnCallToken,
     FragmentKindToken,
     OperandKeywordToken,
     InternalKeywordToken,
@@ -116,6 +126,13 @@ pub enum UmlSyntaxKind {
     RawMarkdownToken,
     BadToken,
     EndOfFileToken,
+}
+
+impl UmlSyntaxKind {
+    #[allow(non_upper_case_globals)]
+    pub const MessageSignature: Self = Self::MessageValue;
+    #[allow(non_upper_case_globals)]
+    pub const SignatureToken: Self = Self::ValueToken;
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

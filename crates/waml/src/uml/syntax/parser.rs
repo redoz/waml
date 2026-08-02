@@ -64,6 +64,7 @@ fn uml_section_kind(kind: WamlSectionKind) -> UmlSyntaxKind {
         WamlSectionKind::Nodes => UmlSyntaxKind::FlowSection,
         WamlSectionKind::Lifelines => UmlSyntaxKind::LifelinesSection,
         WamlSectionKind::Messages => UmlSyntaxKind::MessagesSection,
+        WamlSectionKind::Gates => UmlSyntaxKind::GatesSection,
     }
 }
 
@@ -491,22 +492,7 @@ fn sequence_items(
                 diags,
             ));
         } else {
-            let message = sequence_message(f, text, source, start, end, diags);
-            if message_self_target(&message) {
-                items.push(recovery_line_at(
-                    f,
-                    text,
-                    start,
-                    end,
-                    significant_start,
-                    content_end,
-                    UmlSyntaxDiagnosticCode::UnsupportedSequenceForm,
-                    "self messages are not supported",
-                    diags,
-                ));
-            } else {
-                items.push(message);
-            }
+            items.push(sequence_message(f, text, source, start, end, diags));
         }
     }
     items
@@ -1445,130 +1431,72 @@ fn sequence_message(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
-    let mut children = vec![token(
-        f,
-        text,
-        start,
-        lead,
-        lead + 1,
-        UmlSyntaxKind::BulletToken,
-    )];
-    let source_start = skip_ws(source, lead + 1, content_end);
+    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let body_start = if has_bullet { lead + 1 } else { lead };
+    let mut children = vec![if has_bullet {
+        token(f, text, start, lead, lead + 1, UmlSyntaxKind::BulletToken)
+    } else {
+        missing_token(f, text, start, lead, UmlSyntaxKind::BulletToken)
+    }];
+    let source_start = skip_ws(source, body_start, content_end);
     let source_end = scan_word(source, source_start, content_end);
-    let mut valid = source_start < source_end;
+    if source_start == source_end {
+        return malformed_message(f, text, source, start, end, diags);
+    }
     children.push(slot(
         f,
         UmlSyntaxKind::MessageSource,
-        if valid {
-            token(
-                f,
-                text,
-                lead + 1,
-                source_start,
-                source_end,
-                UmlSyntaxKind::SourceToken,
-            )
-        } else {
-            GreenElement::Token(f.missing_token(UmlSyntaxKind::SourceToken))
-        },
+        token(
+            f,
+            text,
+            body_start,
+            source_start,
+            source_end,
+            UmlSyntaxKind::SourceToken,
+        ),
     ));
     let verb_start = skip_ws(source, source_end, content_end);
     let verb_end = scan_word(source, verb_start, content_end);
-    let verb_valid = crate::model::MessageVerb::parse(&source[verb_start..verb_end]).is_some();
+    let verb = &source[verb_start..verb_end];
+    if matches!(verb, "replies" | "sends") {
+        return unsupported_message(f, text, source, start, end, diags);
+    }
+    if !matches!(
+        verb,
+        "calls" | "returns" | "signals" | "creates" | "destroys"
+    ) {
+        return malformed_message(f, text, source, start, end, diags);
+    }
     children.push(slot(
         f,
         UmlSyntaxKind::MessageVerb,
-        if verb_valid {
-            token(
-                f,
-                text,
-                source_end,
-                verb_start,
-                verb_end,
-                UmlSyntaxKind::VerbToken,
-            )
-        } else {
-            valid = false;
-            missing_token(f, text, source_end, verb_start, UmlSyntaxKind::VerbToken)
-        },
-    ));
-    let target_start = skip_ws(
-        source,
-        if verb_valid { verb_end } else { verb_start },
-        content_end,
-    );
-    let target_end = source[target_start..content_end]
-        .find(':')
-        .map(|offset| target_start + offset)
-        .unwrap_or_else(|| scan_word(source, target_start, content_end));
-    let target_end = trim_end_ws(source, target_start, target_end);
-    children.push(slot(
-        f,
-        UmlSyntaxKind::MessageTarget,
-        if target_start < target_end {
-            token(
-                f,
-                text,
-                if verb_valid { verb_end } else { verb_start },
-                target_start,
-                target_end,
-                UmlSyntaxKind::TargetToken,
-            )
-        } else {
-            valid = false;
-            GreenElement::Token(f.missing_token(UmlSyntaxKind::TargetToken))
-        },
-    ));
-    let mut p = target_end;
-    p = skip_ws(source, p, content_end);
-    if p < content_end && source.as_bytes()[p] == b':' {
-        children.push(token(f, text, p, p, p + 1, UmlSyntaxKind::ColonToken));
-        let signature = skip_ws(source, p + 1, content_end);
-        if let Some(q) = scan_backtick(source, signature, content_end) {
-            children.push(slot(
-                f,
-                UmlSyntaxKind::MessageSignature,
-                token(f, text, p + 1, signature, q, UmlSyntaxKind::SignatureToken),
-            ));
-            p = q;
-        } else {
-            children.push(slot(
-                f,
-                UmlSyntaxKind::MessageSignature,
-                missing_token(f, text, p + 1, signature, UmlSyntaxKind::SignatureToken),
-            ));
-            p = signature;
-            valid = false;
-        }
-    } else {
-        children.push(missing_token(
+        token(
             f,
             text,
-            target_end,
-            p,
-            UmlSyntaxKind::ColonToken,
-        ));
-        children.push(slot(
-            f,
-            UmlSyntaxKind::MessageSignature,
-            GreenElement::Token(f.missing_token(UmlSyntaxKind::SignatureToken)),
-        ));
+            source_end,
+            verb_start,
+            verb_end,
+            UmlSyntaxKind::VerbToken,
+        ),
+    ));
+
+    if matches!(verb, "calls" | "returns" | "signals")
+        && contains_unquoted_colon(source, verb_end, content_end)
+    {
+        return unsupported_message(f, text, source, start, end, diags);
     }
-    let recovery = if p < content_end {
-        let recovery = skipped(
-            f,
-            text,
-            p,
-            content_end,
-            UmlSyntaxDiagnosticCode::MalformedMessage,
-        );
-        p = content_end;
-        valid = false;
-        Some(recovery)
-    } else {
-        None
+
+    let tail = match verb {
+        "calls" => parse_call_tail(f, text, source, verb_end, content_end, &mut children),
+        "returns" => parse_return_tail(f, text, source, verb_end, content_end, &mut children),
+        "signals" => parse_signal_tail(f, text, source, verb_end, content_end, &mut children),
+        "creates" | "destroys" => {
+            parse_other_message_tail(f, text, source, verb_end, content_end, &mut children)
+        }
+        "replies" | "sends" => return unsupported_message(f, text, source, start, end, diags),
+        _ => return malformed_message(f, text, source, start, end, diags),
     };
-    if !valid {
+    if !tail.valid {
         diags.push(diag(
             UmlSyntaxDiagnosticCode::MalformedMessage,
             lead,
@@ -1576,27 +1504,638 @@ fn sequence_message(
             "malformed message",
         ));
     }
-    children.push(behavior_recovery(f, recovery));
-    push_behavior_newline(f, text, &mut children, p, newline, end);
+    children.push(behavior_recovery(f, tail.recovery));
+    push_behavior_newline(f, text, &mut children, tail.end, newline, end);
     GreenElement::Node(f.node(UmlSyntaxKind::Message, children).unwrap())
 }
 
-fn message_self_target(element: &GreenElement<UmlLanguage>) -> bool {
-    let GreenElement::Node(node) = element else {
-        return false;
+struct MessageTail {
+    end: usize,
+    valid: bool,
+    recovery: Option<GreenElement<UmlLanguage>>,
+}
+
+fn parse_call_tail(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    verb_end: usize,
+    content_end: usize,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+) -> MessageTail {
+    let target_start = skip_ws(source, verb_end, content_end);
+    let target_end = scan_endpoint(source, target_start, content_end);
+    let target = &source[target_start..target_end];
+    let target_valid = target_start < target_end
+        && !matches!(target, "async" | "as")
+        && source.as_bytes()[target_start] != b'`';
+    children.push(slot(
+        f,
+        UmlSyntaxKind::MessageTarget,
+        if target_valid {
+            token(
+                f,
+                text,
+                verb_end,
+                target_start,
+                target_end,
+                UmlSyntaxKind::TargetToken,
+            )
+        } else {
+            missing_token(f, text, verb_end, target_start, UmlSyntaxKind::TargetToken)
+        },
+    ));
+    let mut owned = if target_valid {
+        target_end
+    } else {
+        target_start
     };
-    fn find(node: &waml_syntax::GreenNode<UmlLanguage>, kind: UmlSyntaxKind) -> Option<String> {
-        node.children().iter().find_map(|child| match child {
-            GreenElement::Token(token) if token.kind() == kind => {
-                Some(token.text().write_to_string())
-            }
-            GreenElement::Node(child) => find(child, kind),
-            GreenElement::Token(_) => None,
-        })
+    let mut valid = target_valid;
+
+    let p = skip_ws(source, owned, content_end);
+    if keyword_at(source, p, content_end, "async") {
+        let q = p + "async".len();
+        children.push(slot(
+            f,
+            UmlSyntaxKind::MessageAsync,
+            token(f, text, owned, p, q, UmlSyntaxKind::AsyncToken),
+        ));
+        owned = q;
+    } else {
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageAsync,
+            UmlSyntaxKind::AsyncToken,
+        ));
     }
-    let source = find(node, UmlSyntaxKind::SourceToken);
-    let target = find(node, UmlSyntaxKind::TargetToken);
-    source.is_some() && source == target
+
+    let p = skip_ws(source, owned, content_end);
+    if p < content_end && source.as_bytes()[p] == b'`' {
+        if let Some(q) = scan_backtick(source, p, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageValue,
+                token(f, text, owned, p, q, UmlSyntaxKind::ValueToken),
+            ));
+            owned = q;
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageValue,
+                missing_token(f, text, owned, p, UmlSyntaxKind::ValueToken),
+            ));
+            owned = p;
+            valid = false;
+        }
+    } else {
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageValue,
+            UmlSyntaxKind::ValueToken,
+        ));
+    }
+
+    let p = skip_ws(source, owned, content_end);
+    if keyword_at(source, p, content_end, "as") {
+        let q = p + "as".len();
+        children.push(token(f, text, owned, p, q, UmlSyntaxKind::AsToken));
+        owned = q;
+        let name_start = skip_ws(source, owned, content_end);
+        let name_end = scan_word(source, name_start, content_end);
+        children.push(slot(
+            f,
+            UmlSyntaxKind::MessageCallId,
+            if name_start < name_end {
+                token(
+                    f,
+                    text,
+                    owned,
+                    name_start,
+                    name_end,
+                    UmlSyntaxKind::CallIdToken,
+                )
+            } else {
+                valid = false;
+                missing_token(f, text, owned, name_start, UmlSyntaxKind::CallIdToken)
+            },
+        ));
+        owned = name_end;
+    } else {
+        children.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::AsToken)));
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageCallId,
+            UmlSyntaxKind::CallIdToken,
+        ));
+    }
+    push_missing_return_slots(f, children);
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ColonToken),
+    ));
+    finish_message_tail(f, text, owned, content_end, valid)
+}
+
+fn parse_return_tail(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    verb_end: usize,
+    content_end: usize,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+) -> MessageTail {
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageTarget,
+        UmlSyntaxKind::TargetToken,
+    ));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageAsync,
+        UmlSyntaxKind::AsyncToken,
+    ));
+    let mut owned = verb_end;
+    let mut valid = true;
+    let p = skip_ws(source, owned, content_end);
+    if p < content_end && source.as_bytes()[p] == b'`' {
+        if let Some(q) = scan_backtick(source, p, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageValue,
+                token(f, text, owned, p, q, UmlSyntaxKind::ValueToken),
+            ));
+            owned = q;
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageValue,
+                missing_token(f, text, owned, p, UmlSyntaxKind::ValueToken),
+            ));
+            owned = p;
+            valid = false;
+        }
+    } else {
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageValue,
+            UmlSyntaxKind::ValueToken,
+        ));
+    }
+    children.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::AsToken)));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageCallId,
+        UmlSyntaxKind::CallIdToken,
+    ));
+
+    let p = skip_ws(source, owned, content_end);
+    if keyword_at(source, p, content_end, "to") {
+        let q = p + "to".len();
+        children.push(token(f, text, owned, p, q, UmlSyntaxKind::ToToken));
+        owned = q;
+        let target_start = skip_ws(source, owned, content_end);
+        let target_end = scan_endpoint(source, target_start, content_end);
+        let target = &source[target_start..target_end];
+        let target_valid = target_start < target_end
+            && target != "for"
+            && target != "async"
+            && source.as_bytes()[target_start] != b'`';
+        children.push(slot(
+            f,
+            UmlSyntaxKind::MessageReturnTarget,
+            if target_valid {
+                token(
+                    f,
+                    text,
+                    owned,
+                    target_start,
+                    target_end,
+                    UmlSyntaxKind::ReturnTargetToken,
+                )
+            } else {
+                valid = false;
+                missing_token(
+                    f,
+                    text,
+                    owned,
+                    target_start,
+                    UmlSyntaxKind::ReturnTargetToken,
+                )
+            },
+        ));
+        owned = if target_valid {
+            target_end
+        } else {
+            target_start
+        };
+    } else {
+        children.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::ToToken)));
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageReturnTarget,
+            UmlSyntaxKind::ReturnTargetToken,
+        ));
+    }
+
+    let p = skip_ws(source, owned, content_end);
+    if keyword_at(source, p, content_end, "for") {
+        let q = p + "for".len();
+        children.push(token(f, text, owned, p, q, UmlSyntaxKind::ForToken));
+        owned = q;
+        let call_start = skip_ws(source, owned, content_end);
+        let call_end = scan_word(source, call_start, content_end);
+        children.push(slot(
+            f,
+            UmlSyntaxKind::MessageReturnCall,
+            if call_start < call_end {
+                token(
+                    f,
+                    text,
+                    owned,
+                    call_start,
+                    call_end,
+                    UmlSyntaxKind::ReturnCallToken,
+                )
+            } else {
+                valid = false;
+                missing_token(f, text, owned, call_start, UmlSyntaxKind::ReturnCallToken)
+            },
+        ));
+        owned = call_end;
+    } else {
+        children.push(GreenElement::Token(
+            f.missing_token(UmlSyntaxKind::ForToken),
+        ));
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageReturnCall,
+            UmlSyntaxKind::ReturnCallToken,
+        ));
+    }
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ColonToken),
+    ));
+    finish_message_tail(f, text, owned, content_end, valid)
+}
+
+fn parse_signal_tail(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    verb_end: usize,
+    content_end: usize,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+) -> MessageTail {
+    let target_start = skip_ws(source, verb_end, content_end);
+    let target_end = scan_endpoint(source, target_start, content_end);
+    let target = &source[target_start..target_end];
+    let target_valid =
+        target_start < target_end && target != "async" && source.as_bytes()[target_start] != b'`';
+    children.push(slot(
+        f,
+        UmlSyntaxKind::MessageTarget,
+        if target_valid {
+            token(
+                f,
+                text,
+                verb_end,
+                target_start,
+                target_end,
+                UmlSyntaxKind::TargetToken,
+            )
+        } else {
+            missing_token(f, text, verb_end, target_start, UmlSyntaxKind::TargetToken)
+        },
+    ));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageAsync,
+        UmlSyntaxKind::AsyncToken,
+    ));
+    let mut owned = if target_valid {
+        target_end
+    } else {
+        target_start
+    };
+    let mut valid = target_valid;
+    let p = skip_ws(source, owned, content_end);
+    if p < content_end && source.as_bytes()[p] == b'`' {
+        if let Some(q) = scan_backtick(source, p, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageValue,
+                token(f, text, owned, p, q, UmlSyntaxKind::ValueToken),
+            ));
+            owned = q;
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::MessageValue,
+                missing_token(f, text, owned, p, UmlSyntaxKind::ValueToken),
+            ));
+            owned = p;
+            valid = false;
+        }
+    } else {
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageValue,
+            UmlSyntaxKind::ValueToken,
+        ));
+    }
+    push_missing_call_and_return_slots(f, children);
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ColonToken),
+    ));
+    finish_message_tail(f, text, owned, content_end, valid)
+}
+
+fn parse_other_message_tail(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    verb_end: usize,
+    content_end: usize,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+) -> MessageTail {
+    let target_start = skip_ws(source, verb_end, content_end);
+    let target_end = scan_endpoint(source, target_start, content_end);
+    let target_valid = target_start < target_end && source.as_bytes()[target_start] != b'`';
+    children.push(slot(
+        f,
+        UmlSyntaxKind::MessageTarget,
+        if target_valid {
+            token(
+                f,
+                text,
+                verb_end,
+                target_start,
+                target_end,
+                UmlSyntaxKind::TargetToken,
+            )
+        } else {
+            missing_token(f, text, verb_end, target_start, UmlSyntaxKind::TargetToken)
+        },
+    ));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageAsync,
+        UmlSyntaxKind::AsyncToken,
+    ));
+    let mut owned = if target_valid {
+        target_end
+    } else {
+        target_start
+    };
+    let mut valid = target_valid;
+    let p = skip_ws(source, owned, content_end);
+    if p < content_end && source.as_bytes()[p] == b':' {
+        let colon_end = p + 1;
+        let value_start = skip_ws(source, colon_end, content_end);
+        let mut value_children = vec![token(
+            f,
+            text,
+            owned,
+            p,
+            colon_end,
+            UmlSyntaxKind::ColonToken,
+        )];
+        if let Some(value_end) = scan_backtick(source, value_start, content_end) {
+            value_children.push(token(
+                f,
+                text,
+                colon_end,
+                value_start,
+                value_end,
+                UmlSyntaxKind::ValueToken,
+            ));
+            owned = value_end;
+        } else {
+            value_children.push(missing_token(
+                f,
+                text,
+                colon_end,
+                value_start,
+                UmlSyntaxKind::ValueToken,
+            ));
+            owned = value_start;
+            valid = false;
+        }
+        children.push(GreenElement::Node(
+            f.node(UmlSyntaxKind::MessageValue, value_children).unwrap(),
+        ));
+    } else {
+        children.push(missing_message_slot(
+            f,
+            UmlSyntaxKind::MessageValue,
+            UmlSyntaxKind::ValueToken,
+        ));
+    }
+    push_missing_call_and_return_slots(f, children);
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ColonToken),
+    ));
+    finish_message_tail(f, text, owned, content_end, valid)
+}
+
+fn missing_message_slot(
+    f: &GreenFactory<UmlLanguage>,
+    slot_kind: UmlSyntaxKind,
+    token_kind: UmlSyntaxKind,
+) -> GreenElement<UmlLanguage> {
+    slot(
+        f,
+        slot_kind,
+        GreenElement::Token(f.missing_token(token_kind)),
+    )
+}
+
+fn push_missing_return_slots(
+    f: &GreenFactory<UmlLanguage>,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+) {
+    children.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::ToToken)));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageReturnTarget,
+        UmlSyntaxKind::ReturnTargetToken,
+    ));
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ForToken),
+    ));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageReturnCall,
+        UmlSyntaxKind::ReturnCallToken,
+    ));
+}
+
+fn push_missing_call_and_return_slots(
+    f: &GreenFactory<UmlLanguage>,
+    children: &mut Vec<GreenElement<UmlLanguage>>,
+) {
+    children.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::AsToken)));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageCallId,
+        UmlSyntaxKind::CallIdToken,
+    ));
+    push_missing_return_slots(f, children);
+}
+
+fn finish_message_tail(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    owned: usize,
+    content_end: usize,
+    mut valid: bool,
+) -> MessageTail {
+    let recovery = if owned < content_end {
+        valid = false;
+        Some(skipped(
+            f,
+            text,
+            owned,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+        ))
+    } else {
+        None
+    };
+    MessageTail {
+        end: if recovery.is_some() {
+            content_end
+        } else {
+            owned
+        },
+        valid,
+        recovery,
+    }
+}
+
+fn malformed_message(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, newline) = behavior_bounds(source, start, end);
+    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let body_start = if has_bullet { lead + 1 } else { lead };
+    let source_start = skip_ws(source, body_start, content_end);
+    let source_end = scan_word(source, source_start, content_end);
+    let verb_start = skip_ws(source, source_end, content_end);
+    let mut children = vec![if has_bullet {
+        token(f, text, start, lead, lead + 1, UmlSyntaxKind::BulletToken)
+    } else {
+        missing_token(f, text, start, lead, UmlSyntaxKind::BulletToken)
+    }];
+    children.push(slot(
+        f,
+        UmlSyntaxKind::MessageSource,
+        if source_start < source_end {
+            token(
+                f,
+                text,
+                body_start,
+                source_start,
+                source_end,
+                UmlSyntaxKind::SourceToken,
+            )
+        } else {
+            missing_token(
+                f,
+                text,
+                body_start,
+                source_start,
+                UmlSyntaxKind::SourceToken,
+            )
+        },
+    ));
+    children.push(slot(
+        f,
+        UmlSyntaxKind::MessageVerb,
+        missing_token(f, text, source_end, verb_start, UmlSyntaxKind::VerbToken),
+    ));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageTarget,
+        UmlSyntaxKind::TargetToken,
+    ));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageAsync,
+        UmlSyntaxKind::AsyncToken,
+    ));
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageValue,
+        UmlSyntaxKind::ValueToken,
+    ));
+    push_missing_call_and_return_slots(f, &mut children);
+    children.push(GreenElement::Token(
+        f.missing_token(UmlSyntaxKind::ColonToken),
+    ));
+    let recovery = (verb_start < content_end).then(|| {
+        skipped(
+            f,
+            text,
+            verb_start,
+            content_end,
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+        )
+    });
+    diags.push(diag(
+        UmlSyntaxDiagnosticCode::MalformedMessage,
+        lead,
+        content_end,
+        "malformed message",
+    ));
+    children.push(behavior_recovery(f, recovery));
+    push_behavior_newline(f, text, &mut children, content_end, newline, end);
+    GreenElement::Node(f.node(UmlSyntaxKind::Message, children).unwrap())
+}
+
+fn unsupported_message(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> GreenElement<UmlLanguage> {
+    let (lead, content_end, _) = behavior_bounds(source, start, end);
+    recovery_line_at(
+        f,
+        text,
+        start,
+        end,
+        lead,
+        content_end,
+        UmlSyntaxDiagnosticCode::UnsupportedSequenceForm,
+        "unsupported sequence form",
+        diags,
+    )
+}
+
+fn scan_endpoint(source: &str, mut p: usize, end: usize) -> usize {
+    while p < end && !source.as_bytes()[p].is_ascii_whitespace() && source.as_bytes()[p] != b':' {
+        p += 1;
+    }
+    p
+}
+
+fn contains_unquoted_colon(source: &str, from: usize, to: usize) -> bool {
+    let mut in_code = false;
+    for byte in source.as_bytes()[from..to].iter().copied() {
+        if byte == b'`' {
+            in_code = !in_code;
+        } else if byte == b':' && !in_code {
+            return true;
+        }
+    }
+    false
 }
 
 fn unsupported_sequence_body(body: &str) -> bool {
