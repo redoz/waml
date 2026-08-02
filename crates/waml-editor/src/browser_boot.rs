@@ -4,8 +4,10 @@
 //! (`#w1.<payload>`) carries the whole model in the URL and must win over
 //! anything the query string asks for, because it is the more specific
 //! request and the only one the user can have edited by hand. Then `?api=`,
-//! then a static `?bundle=` as exported sites use, and finally the start
-//! screen when the URL says nothing.
+//! then a static `?bundle=`, and finally the start screen -- which, on an
+//! exported site, is where [`select_site_boot`] takes over: the site's own
+//! `waml-boot.txt` names what to open when the URL names nothing, so the
+//! address bar stays clean.
 //!
 //! Selection is pure: it reads `WebParams.search` and `WebParams.hash` once at
 //! startup and answers with a [`BrowserBootSource`]. Nothing downstream gets
@@ -57,6 +59,39 @@ pub(crate) fn select_browser_boot(search: &str, hash: &str) -> Result<BrowserBoo
         return Ok(BrowserBootSource::Bundle(url.to_owned()));
     }
     Ok(BrowserBootSource::Start)
+}
+
+/// The file an exported site carries beside its editor, naming what to boot.
+///
+/// The boot source used to travel in the URL, which meant every visitor saw
+/// `?bundle=bundle.waml` in the address bar for a choice they did not make. A
+/// sibling file carries the same string out of sight. It holds a query string,
+/// not a new format, so one grammar and one parser serve both channels.
+pub(crate) const BOOT_CONFIG_FILE: &str = "waml-boot.txt";
+
+/// Pick the boot source a site declares for itself.
+///
+/// The contents are a query string as `select_browser_boot` reads one. A host
+/// that serves an error page (or an `index.html`) at this path answers 200 with
+/// HTML, so anything that does not open with `?` is refused rather than parsed
+/// into nonsense. The empty file is not an error: it is a site that declares
+/// the start screen.
+///
+/// Only the page URL can carry a share fragment, so the config is parsed with
+/// an empty `hash` and cannot reach [`BrowserBootSource::Share`].
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn select_site_boot(config: &str) -> Result<BrowserBootSource, String> {
+    let query = config.trim();
+    if query.is_empty() {
+        return Ok(BrowserBootSource::Start);
+    }
+    if !query.starts_with('?') {
+        return Err(format!(
+            "{BOOT_CONFIG_FILE} must hold a query string that starts with '?'"
+        ));
+    }
+    let query = query.split('#').next().unwrap_or(query);
+    select_browser_boot(query, "")
 }
 
 /// Decode fetched bytes as a Bundle Envelope v1 model.
@@ -259,5 +294,46 @@ mod tests {
     fn network_failure_says_cors_too() {
         let message = boot_fetch_error("bundle.waml", None);
         assert!(message.contains("CORS"), "{message}");
+    }
+
+    #[test]
+    fn a_site_config_naming_a_bundle_boots_it() {
+        assert_eq!(
+            select_site_boot("?bundle=bundle.waml\n").unwrap(),
+            BrowserBootSource::Bundle("bundle.waml".to_string())
+        );
+    }
+
+    #[test]
+    fn a_site_config_naming_a_server_boots_the_api() {
+        assert_eq!(
+            select_site_boot("?api=/api").unwrap(),
+            BrowserBootSource::Api {
+                base: "/api".to_string(),
+                token: None,
+            }
+        );
+    }
+
+    #[test]
+    fn an_html_error_page_is_not_a_site_config() {
+        let error = select_site_boot("<!doctype html><title>404</title>").unwrap_err();
+        assert!(error.contains("waml-boot.txt"), "{error}");
+    }
+
+    #[test]
+    fn an_empty_site_config_is_the_start_screen() {
+        assert_eq!(select_site_boot("   \n").unwrap(), BrowserBootSource::Start);
+    }
+
+    #[test]
+    fn a_site_config_can_never_be_a_share_link() {
+        // The fragment is the page's, not the file's: a config that tries to
+        // carry one would let an exported site's own bytes decide what a
+        // visitor's URL means.
+        assert_eq!(
+            select_site_boot("?bundle=a.waml#w1.abc").unwrap(),
+            BrowserBootSource::Bundle("a.waml".to_string())
+        );
     }
 }
