@@ -195,9 +195,20 @@ pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMa
 
 /// Deepest fragment nesting the solver walks; deeper fragments are dropped
 /// with a diagnostic rather than risking the stack (and `depth`'s own range).
-// Keep a safety margin for the branch-local state that each recursive frame
-// owns. The solver is also exercised on a 128 KiB worker stack.
-const MAX_FRAGMENT_DEPTH: u8 = 24;
+const MAX_FRAGMENT_DEPTH: u8 = 32;
+
+struct FragmentWork {
+    id: String,
+    kind: FragmentKind,
+    operands: Vec<String>,
+    top: f64,
+    fragment_start: usize,
+    min_x: f64,
+    max_x: f64,
+    solved_operands: Vec<SolvedOperand>,
+    branch_start: f64,
+    latest_branch_end: f64,
+}
 
 struct WalkState<'a> {
     doc_key: &'a str,
@@ -518,13 +529,8 @@ impl<'a> WalkState<'a> {
             ));
             return (self.y, self.y, f64::INFINITY, f64::NEG_INFINITY);
         }
-        let id = id.clone();
-        let kind = *kind;
-        let operands = operands.clone();
-
         let top = self.y;
         self.y += self.cfg.row_gap; // header row
-
         if operands.is_empty() {
             self.diagnostics.push(Diagnostic::new(
                 DiagCode::FragmentZeroOperands,
@@ -533,39 +539,39 @@ impl<'a> WalkState<'a> {
                 0,
             ));
         }
+        let mut work = Box::new(FragmentWork {
+            id: id.clone(),
+            kind: *kind,
+            operands: operands.clone(),
+            top,
+            fragment_start: self.fragments.len(),
+            min_x: f64::INFINITY,
+            max_x: f64::NEG_INFINITY,
+            solved_operands: Vec::with_capacity(operands.len()),
+            branch_start: self.y,
+            latest_branch_end: self.y,
+        });
+        self.walk_fragment_operands(&mut work, depth);
+        self.finish_fragment(work, depth)
+    }
 
-        let frag_start_idx = self.fragments.len();
-        let mut min_x = f64::INFINITY;
-        let mut max_x = f64::NEG_INFINITY;
-        let mut solved_operands = Vec::with_capacity(operands.len());
-        let branch_start = self.y;
-        let mut latest_branch_end = branch_start;
-
-        for (i, operand_id) in operands.iter().enumerate() {
-            if kind == FragmentKind::Par {
-                self.y = branch_start;
+    #[inline(never)]
+    fn walk_fragment_operands(&mut self, work: &mut FragmentWork, depth: u8) {
+        for index in 0..work.operands.len() {
+            if work.kind == FragmentKind::Par {
+                self.y = work.branch_start;
             }
             let operand_start = self.y;
-            let divider_y = if i == 0 || kind == FragmentKind::Par {
+            let divider_y = if index == 0 || work.kind == FragmentKind::Par {
                 None
             } else {
                 Some(operand_start)
             };
-            self.y += self.cfg.row_gap; // guard row
-
-            let mut guard: Option<String> = None;
-            let mut branch = false;
-            if let Some(SeqNode::Operand { spec, items, .. }) =
+            self.y += self.cfg.row_gap;
+            let operand_id = Box::new(work.operands[index].clone());
+            if let Some(SeqNode::Operand { items, .. }) =
                 self.nodes_by_id.get(operand_id.as_str()).copied()
             {
-                guard = match spec {
-                    OperandSpec::Guard(value) => Some(value.clone()),
-                    OperandSpec::Else => None,
-                    OperandSpec::Branch { label } => {
-                        branch = true;
-                        label.clone()
-                    }
-                };
                 if items.is_empty() {
                     self.diagnostics.push(Diagnostic::new(
                         DiagCode::EmptyOperandStream,
@@ -574,85 +580,89 @@ impl<'a> WalkState<'a> {
                         0,
                     ));
                 }
-                let items = items.clone();
+                let items = Box::new(items.clone());
                 let (op_min, op_max) = self.walk_items(&items, depth.saturating_add(1));
                 if op_min.is_finite() {
-                    min_x = min_x.min(op_min);
-                    max_x = max_x.max(op_max);
+                    work.min_x = work.min_x.min(op_min);
+                    work.max_x = work.max_x.max(op_max);
                 }
             }
+            self.finish_operand(work, operand_id.as_str(), operand_start, divider_y);
+            work.latest_branch_end = work.latest_branch_end.max(self.y);
+        }
+        if work.kind == FragmentKind::Par {
+            self.y = work.latest_branch_end;
+        }
+    }
 
-            let guard_text = guard.clone().unwrap_or_else(|| "else".to_string());
-            let rendered_guard = if branch {
-                guard_text.clone()
-            } else {
-                format!("[{guard_text}]")
-            };
-            let guard_rect = Rect {
-                x: 0.0, // fixed up below once the frame's left edge is known
+    #[inline(never)]
+    fn finish_operand(
+        &self,
+        work: &mut FragmentWork,
+        operand_id: &str,
+        operand_start: f64,
+        divider_y: Option<f64>,
+    ) {
+        let (guard, branch) = match self.nodes_by_id.get(operand_id).copied() {
+            Some(SeqNode::Operand { spec, .. }) => match spec {
+                OperandSpec::Guard(value) => (Some(value.clone()), false),
+                OperandSpec::Else => (None, false),
+                OperandSpec::Branch { label } => (label.clone(), true),
+            },
+            _ => (None, false),
+        };
+        let guard_text = guard.clone().unwrap_or_else(|| "else".to_string());
+        let rendered_guard = if branch {
+            guard_text
+        } else {
+            format!("[{guard_text}]")
+        };
+        work.solved_operands.push(SolvedOperand {
+            divider_y,
+            guard,
+            branch,
+            guard_rect: Rect {
+                x: 0.0,
                 y: operand_start,
                 w: sizing::text_width(&rendered_guard, self.cfg.font_size, Font::Sans),
                 h: self.cfg.line_height,
-            };
-            solved_operands.push(SolvedOperand {
-                divider_y,
-                guard,
-                branch,
-                guard_rect,
-            });
-            latest_branch_end = latest_branch_end.max(self.y);
-        }
+            },
+        });
+    }
 
-        if kind == FragmentKind::Par {
-            self.y = latest_branch_end;
-        }
-
-        self.y += self.cfg.row_gap; // closing padding
+    #[inline(never)]
+    fn finish_fragment(&mut self, mut work: Box<FragmentWork>, depth: u8) -> (f64, f64, f64, f64) {
+        self.y += self.cfg.row_gap;
         let bottom = self.y;
-
-        if !min_x.is_finite() {
-            // No messages anywhere inside — fall back to a zero-width frame
-            // at the header's own y so the rect is still well-formed.
-            min_x = 0.0;
-            max_x = 0.0;
+        if !work.min_x.is_finite() {
+            work.min_x = 0.0;
+            work.max_x = 0.0;
         }
-
         let pad = self.cfg.frame_inset;
-        let mut left = min_x - pad;
-        let mut right = max_x + pad;
-
-        // Nested frames grow their PARENT outward rather than being squeezed
-        // inward (design spec §3.5). Clamping the child instead put its border
-        // exactly `frame_inset` inside ours -- which, whenever the two spanned
-        // the same lifelines, is exactly that lifeline's stem: the inner frame
-        // drew straight down the participant it was framing. Every frame now
-        // keeps its own stem-padded span, and each enclosing level steps out by
-        // `nesting_step` so the borders stay visibly apart.
-        for child in &self.fragments[frag_start_idx..] {
+        let mut left = work.min_x - pad;
+        let mut right = work.max_x + pad;
+        for child in &self.fragments[work.fragment_start..] {
             left = left.min(child.rect.x - self.cfg.nesting_step);
             right = right.max(child.rect.x + child.rect.w + self.cfg.nesting_step);
         }
-
         let rect = Rect {
             x: left,
-            y: top,
+            y: work.top,
             w: right - left,
-            h: bottom - top,
+            h: bottom - work.top,
         };
-
-        for op in &mut solved_operands {
-            op.guard_rect.x = rect.x + pad;
+        for operand in &mut work.solved_operands {
+            operand.guard_rect.x = rect.x + pad;
         }
-
+        let result = (work.top, bottom, work.min_x, work.max_x);
         self.fragments.push(SolvedFragment {
-            id,
-            kind,
+            id: work.id,
+            kind: work.kind,
             rect,
             depth,
-            operands: solved_operands,
+            operands: work.solved_operands,
         });
-
-        (top, bottom, min_x, max_x)
+        result
     }
 }
 
@@ -705,10 +715,19 @@ fn derive_activations(
 
     let mut active_by_lifeline: BTreeMap<String, Vec<(u8, f64)>> = BTreeMap::new();
     let mut activations = Vec::new();
-    for call in messages
+    let mut calls = messages
         .iter()
-        .filter(|message| matches!(message.verb, MessageKind::SyncCall | MessageKind::AsyncCall))
-    {
+        .enumerate()
+        .filter(|(_, message)| {
+            matches!(message.verb, MessageKind::SyncCall | MessageKind::AsyncCall)
+        })
+        .collect::<Vec<_>>();
+    calls.sort_by(|(left_index, left), (right_index, right)| {
+        left.y
+            .total_cmp(&right.y)
+            .then_with(|| left_index.cmp(right_index))
+    });
+    for (_, call) in calls {
         let EndpointRef::Lifeline { id: lifeline } = &call.to else {
             continue;
         };

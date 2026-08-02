@@ -348,10 +348,33 @@ fn found_and_lost_messages_use_frame_edges() {
                 EndpointRef::Outside,
                 None,
             ),
+            typed_edge(
+                "local-found",
+                EndpointRef::LocalGate {
+                    gate: "entry".into(),
+                },
+                MessageKind::AsyncSignal,
+                EndpointRef::Lifeline { id: "left".into() },
+                None,
+            ),
+            typed_edge(
+                "local-lost",
+                EndpointRef::Lifeline { id: "right".into() },
+                MessageKind::AsyncSignal,
+                EndpointRef::LocalGate {
+                    gate: "exit".into(),
+                },
+                None,
+            ),
         ],
-        gates: Vec::new(),
+        gates: vec!["entry".into(), "exit".into()],
         interaction_uses: Vec::new(),
-        items: vec![message("found"), message("lost")],
+        items: vec![
+            message("found"),
+            message("lost"),
+            message("local-found"),
+            message("local-lost"),
+        ],
     };
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(&doc, &cfg);
@@ -362,9 +385,15 @@ fn found_and_lost_messages_use_frame_edges() {
     assert_eq!(solved.messages[0].to_x, solved.lifelines[0].stem_x);
     assert_eq!(solved.messages[1].from_x, solved.lifelines[1].stem_x);
     assert_eq!(solved.messages[1].to_x, solved.size.w);
+    assert_eq!(solved.messages[2].from_x, 0.0);
+    assert_eq!(solved.messages[2].to_x, solved.lifelines[0].stem_x);
+    assert_eq!(solved.messages[3].from_x, solved.lifelines[1].stem_x);
+    assert_eq!(solved.messages[3].to_x, solved.size.w);
     let pretty = pretty_interaction(&solved);
     assert!(pretty.contains("outside-left"), "{pretty}");
     assert!(pretty.contains("outside-right"), "{pretty}");
+    assert!(pretty.contains("gate:entry"), "{pretty}");
+    assert!(pretty.contains("gate:exit"), "{pretty}");
 }
 
 #[test]
@@ -674,6 +703,74 @@ fn absurdly_deep_fragment_nesting_diagnoses_instead_of_recursing() {
     );
 }
 
+#[test]
+fn thirty_two_nested_fragments_solve_without_subtree_loss() {
+    const DEPTH: usize = 32;
+    let mut nodes = vec![
+        SeqNode::Lifeline {
+            id: "a".into(),
+            title: "A".into(),
+            alias: None,
+            ref_: None,
+        },
+        SeqNode::Lifeline {
+            id: "b".into(),
+            title: "B".into(),
+            alias: None,
+            ref_: None,
+        },
+    ];
+    let mut inner = vec![message("m0")];
+    for level in (0..DEPTH).rev() {
+        nodes.push(SeqNode::Operand {
+            id: format!("o{level}"),
+            spec: OperandSpec::Guard(format!("g{level}")),
+            items: inner,
+        });
+        nodes.push(SeqNode::Fragment {
+            id: format!("f{level}"),
+            kind: FragmentKind::Opt,
+            operands: vec![format!("o{level}")],
+        });
+        inner = vec![SeqChild::Fragment {
+            node: format!("f{level}"),
+        }];
+    }
+    let doc = SequenceDoc {
+        key: "depth-32".into(),
+        title: "Depth 32".into(),
+        describes: None,
+        nodes,
+        edges: vec![edge(
+            "m0",
+            "a",
+            MessageKind::AsyncSignal,
+            "b",
+            Some("ping()"),
+        )],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: inner,
+    };
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (fragment_count, message_count, diagnostics) = std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(move || {
+            let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+            (solved.fragments.len(), solved.messages.len(), diagnostics)
+        })
+        .unwrap()
+        .join()
+        .expect("32 valid nested fragments must fit the bounded solver stack");
+
+    assert_eq!(fragment_count, DEPTH);
+    assert_eq!(message_count, 1);
+    assert!(!diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == waml::diagnostic::DiagCode::FragmentNestingTooDeep));
+}
+
 /// An activation bar STRADDLES the lifeline stem it belongs to: its centre,
 /// offset right by the nesting step per depth, sits ON the stem (design spec
 /// §3.3). A bar whose left edge sat on the stem would hang entirely to the
@@ -779,17 +876,121 @@ fn par_branches_share_a_start_and_join_after_all_branches() {
 }
 
 #[test]
+fn par_activation_depths_follow_row_intervals_not_operand_walk_order() {
+    let returning = |id: &str, call: &str| {
+        let mut edge = edge(id, "b", MessageKind::Reply, "a", None);
+        edge.returns_call = Some(MessageId(call.into()));
+        edge
+    };
+    let doc = SequenceDoc {
+        key: "parallel-activations".into(),
+        title: "Parallel activations".into(),
+        describes: None,
+        nodes: vec![
+            SeqNode::Lifeline {
+                id: "a".into(),
+                title: "A".into(),
+                alias: None,
+                ref_: None,
+            },
+            SeqNode::Lifeline {
+                id: "b".into(),
+                title: "B".into(),
+                alias: None,
+                ref_: None,
+            },
+            SeqNode::Operand {
+                id: "first".into(),
+                spec: OperandSpec::Branch {
+                    label: Some("first".into()),
+                },
+                items: vec![
+                    message("first-signal"),
+                    message("late"),
+                    message("late-return"),
+                    message("long"),
+                    message("long-return"),
+                ],
+            },
+            SeqNode::Operand {
+                id: "second".into(),
+                spec: OperandSpec::Branch {
+                    label: Some("second".into()),
+                },
+                items: vec![
+                    message("early"),
+                    message("early-return"),
+                    message("second-signal"),
+                    message("overlap"),
+                    message("overlap-return"),
+                ],
+            },
+            SeqNode::Fragment {
+                id: "parallel".into(),
+                kind: FragmentKind::Par,
+                operands: vec!["first".into(), "second".into()],
+            },
+        ],
+        edges: vec![
+            edge("first-signal", "a", MessageKind::AsyncSignal, "b", None),
+            edge("late", "a", MessageKind::SyncCall, "b", None),
+            returning("late-return", "late"),
+            edge("long", "a", MessageKind::AsyncCall, "b", None),
+            returning("long-return", "long"),
+            edge("early", "a", MessageKind::AsyncCall, "b", None),
+            returning("early-return", "early"),
+            edge("second-signal", "a", MessageKind::AsyncSignal, "b", None),
+            edge("overlap", "a", MessageKind::SyncCall, "b", None),
+            returning("overlap-return", "overlap"),
+        ],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: vec![SeqChild::Fragment {
+            node: "parallel".into(),
+        }],
+    };
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+    let depths = |id: &str| {
+        let y = solved
+            .messages
+            .iter()
+            .find(|message| message.id == id)
+            .unwrap()
+            .y;
+        let mut depths = solved
+            .activations
+            .iter()
+            .filter(|activation| activation.rect.y == y && activation.lifeline == "b")
+            .map(|activation| activation.depth)
+            .collect::<Vec<_>>();
+        depths.sort_unstable();
+        depths
+    };
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(depths("early"), [0]);
+    assert_eq!(depths("late"), [0]);
+    assert_eq!(depths("long"), [0, 1]);
+}
+
+#[test]
 fn new_fragment_kinds_have_canonical_pretty_output() {
     let kinds = [
-        ("break-frame", "break-op", FragmentKind::Break, "m0"),
+        ("alt-frame", "alt-op", FragmentKind::Alt, "m0"),
+        ("opt-frame", "opt-op", FragmentKind::Opt, "m1"),
+        ("loop-frame", "loop-op", FragmentKind::Loop, "m2"),
+        ("par-frame", "par-op", FragmentKind::Par, "m3"),
+        ("break-frame", "break-op", FragmentKind::Break, "m4"),
         (
             "critical-frame",
             "critical-op",
             FragmentKind::Critical,
-            "m1",
+            "m5",
         ),
-        ("assert-frame", "assert-op", FragmentKind::Assert, "m2"),
-        ("neg-frame", "neg-op", FragmentKind::Neg, "m3"),
+        ("assert-frame", "assert-op", FragmentKind::Assert, "m6"),
+        ("neg-frame", "neg-op", FragmentKind::Neg, "m7"),
     ];
     let mut nodes = vec![
         SeqNode::Lifeline {
@@ -826,7 +1027,7 @@ fn new_fragment_kinds_have_canonical_pretty_output() {
         title: "Frames".into(),
         describes: None,
         nodes,
-        edges: (0..4)
+        edges: (0..8)
             .map(|index| {
                 edge(
                     &format!("m{index}"),
@@ -847,6 +1048,10 @@ fn new_fragment_kinds_have_canonical_pretty_output() {
     let pretty = pretty_interaction(&solved);
 
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(pretty.contains("fragment alt-frame alt"), "{pretty}");
+    assert!(pretty.contains("fragment opt-frame opt"), "{pretty}");
+    assert!(pretty.contains("fragment loop-frame loop"), "{pretty}");
+    assert!(pretty.contains("fragment par-frame par"), "{pretty}");
     assert!(pretty.contains("fragment break-frame break"), "{pretty}");
     assert!(
         pretty.contains("fragment critical-frame critical"),
@@ -966,6 +1171,13 @@ fn interaction_use_frames_keep_bindings_and_gates() {
         );
         assert!(gate.y >= frame.rect.y && gate.y <= frame.rect.y + frame.rect.h);
     }
+    let accepted_gate_connections = solved
+        .messages
+        .iter()
+        .flat_map(|message| [(&message.from, message.from_x), (&message.to, message.to_x)])
+        .filter(|(endpoint, _)| matches!(endpoint, EndpointRef::UseGate { .. }))
+        .count();
+    assert_eq!(accepted_gate_connections, frame.gates.len());
     let pretty = pretty_interaction(&solved);
     assert!(
         pretty.contains("interaction-use u0 target-sequence"),

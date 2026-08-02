@@ -582,6 +582,36 @@ fn gate_diagnostics_pin_the_exact_gate_or_message() {
 }
 
 #[test]
+fn duplicate_outer_use_gate_connection_is_diagnosed_and_dropped() {
+    let analysis = analyze([
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "target.md",
+            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [B](./b.md) as b\n\n## Gates\n- request\n\n## Messages\n- @request signals b `inside`\n",
+        ),
+        (
+            "parent.md",
+            "---\ntype: uml.Sequence\n---\n# Parent\n\n## Lifelines\n- [B](./b.md) as b\n\n## Messages\n- ref [Target](./target.md) as auth\n  - bind b to b\n- b signals auth@request `first`\n- b signals auth@request `second`\n",
+        ),
+    ]);
+    let parent = analysis.declared.concept("parent").unwrap();
+    let diagnostic = diagnostic(
+        &analysis,
+        DiagCode::InvalidInteractionUse,
+        "more than one outer connection",
+    );
+
+    assert_eq!(
+        diagnostic.range,
+        Some(parent.messages[1].syntax.syntax().range())
+    );
+    let doc = interaction(&analysis, "parent");
+    assert_eq!(doc.edges.len(), 1);
+    assert_eq!(doc.items.len(), 2);
+    assert_eq!(doc.interaction_uses[0].gates, ["request"]);
+}
+
+#[test]
 fn direct_interaction_use_cycle_reports_each_valid_authored_ref() {
     let source =
         "---\ntype: uml.Sequence\n---\n# Direct\n\n## Messages\n- ref [Missing](./missing.md) as invalid\n- ref [Direct](./direct.md) as self_ref\n";

@@ -161,8 +161,6 @@ impl Endpoints<'_> {
                         self.diagnostics,
                     );
                     return None;
-                } else if !self.interaction_uses[index].gates.contains(gate) {
-                    self.interaction_uses[index].gates.push(gate.clone());
                 }
                 Some(EndpointRef::UseGate {
                     interaction_use: self.interaction_uses[index].id.clone(),
@@ -669,6 +667,7 @@ pub(crate) fn lower(
     let mut root = Vec::new();
     let mut fragment_stack: Vec<(usize, usize)> = Vec::new();
     let mut operand_stack: Vec<(usize, usize)> = Vec::new();
+    let mut outer_connected_use_gates: BTreeSet<(InteractionUseId, String)> = BTreeSet::new();
     let fragment_indices = concept
         .fragments
         .iter()
@@ -836,6 +835,41 @@ pub(crate) fn lower(
                         message.syntax.syntax(),
                     );
                 }
+                let mut message_use_gates = BTreeSet::new();
+                let duplicate_use_gate = std::iter::once(&from)
+                    .chain(to.iter())
+                    .filter_map(|endpoint| match endpoint {
+                        EndpointRef::UseGate {
+                            interaction_use,
+                            gate,
+                        } => Some((interaction_use.clone(), gate.clone())),
+                        _ => None,
+                    })
+                    .any(|key| {
+                        !message_use_gates.insert(key.clone())
+                            || outer_connected_use_gates.contains(&key)
+                    });
+                if duplicate_use_gate {
+                    report_at(
+                        context,
+                        endpoints.diagnostics,
+                        DiagCode::InvalidInteractionUse,
+                        "interaction-use gate has more than one outer connection",
+                        path,
+                        message.syntax.syntax(),
+                    );
+                    continue;
+                }
+                for (interaction_use, gate) in &message_use_gates {
+                    if let Some(interaction_use) = endpoints
+                        .interaction_uses
+                        .iter_mut()
+                        .find(|candidate| candidate.id == *interaction_use)
+                    {
+                        interaction_use.gates.push(gate.clone());
+                    }
+                }
+                outer_connected_use_gates.extend(message_use_gates);
                 let message_index = message_indices[&message.syntax.syntax().range().start()];
                 let id = MessageId(format!("m{message_index}"));
                 edges.push(SeqEdge {
