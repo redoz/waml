@@ -25,6 +25,12 @@ only: whether the goal is necessary for the sentence above. The bar is small
 and self-referential on purpose. The first user of WAML is the documentation of
 WAML.
 
+[The MVP Definition](./mvp.md) consolidates this bar into one page set: the
+scope with its out-of-scope list, the completeness matrix for each area, the
+ordered gap backlog, the explicit deferrals, and the definition of done for
+each area. That document orders the work. This tree stays the source of truth
+for each single goal.
+
 ## Status legend
 
 | Status | Meaning |

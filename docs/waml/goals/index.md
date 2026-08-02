@@ -4,6 +4,7 @@ What WAML is for. Each goal divides into smaller goals until a leaf is the size
 of one implementation.
 
 * [Root Goal](./root-goal.md) - The root statement, the MVP bar, the status legend, and the level-1 roadmap.
+* [The MVP Definition](./mvp.md) - The scope, the completeness matrix, the ordered gap backlog, the deferrals, and the definition of done for each area.
 * [Read a Bundle](read-a-bundle/) - A reader opens a bundle and moves in it.
 * [Author in the Editor](author-in-the-editor/) - An author changes a bundle in the editor.
 * [Trust the Content](trust-the-content/) - The bundle on disk stays correct, and the tool reports each problem.
