@@ -317,10 +317,11 @@ fn build_interaction_scene(
         .lifelines
         .iter()
         .map(|l| {
-            let (title, ref_, alias) = lifeline_nodes
-                .get(l.id.as_str())
-                .copied()
-                .unwrap_or((l.id.as_str(), None, None));
+            let (title, ref_, alias) =
+                lifeline_nodes
+                    .get(l.id.as_str())
+                    .copied()
+                    .unwrap_or((l.id.as_str(), None, None));
             let label = title.to_string();
             // An alias that just repeats the title is a handle, not a name --
             // stacking `Order` over `Order` says nothing.
@@ -553,7 +554,10 @@ fn behavior_elements(
                 id, title, alias, ..
             } = node
             {
-                push_participant(BehaviorTarget::Lifeline(id.clone()), lifeline_label(title, alias));
+                push_participant(
+                    BehaviorTarget::Lifeline(id.clone()),
+                    lifeline_label(title, alias),
+                );
             }
         }
     }
@@ -747,12 +751,7 @@ impl BehaviorDocView {
     /// the picker bar renders over a behavior tab still holding the LAST class
     /// diagram's rows, and every pick repoints the panel at an element that
     /// isn't on screen.
-    fn sync_inspector_elements(
-        &self,
-        cx: &mut Cx,
-        body: &BodyWidgets,
-        model: &waml::model::Model,
-    ) {
+    fn sync_inspector_elements(&self, cx: &mut Cx, body: &BodyWidgets, model: &waml::model::Model) {
         let (flow, interaction) = self.docs(model);
         let rows = behavior_elements(model, &self.key, flow, interaction);
         if let Some(mut inspector) = body
@@ -1004,8 +1003,7 @@ impl DocView for BehaviorDocView {
             if let Some(subject) = subject {
                 let model = &data.uml_analysis.projection;
                 let (flow, interaction) = self.docs(model);
-                let target =
-                    target_for_subject(model, &subject, &self.key, flow, interaction);
+                let target = target_for_subject(model, &subject, &self.key, flow, interaction);
                 if let Some(mut canvas) = body
                     .behavior_canvas(cx)
                     .borrow_mut::<crate::canvas::BehaviorSurface>()

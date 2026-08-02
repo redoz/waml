@@ -581,7 +581,9 @@ fn draw_fragment_tab(
             .thickness(emphasis.thickness(FRAME_THICKNESS)),
     ) as f32;
     let stroke = emphasis.stroke(draws.palette.line, draws.palette);
-    draws.pentagon.set_uniform(cx, live_id!(stroke_w), &[border]);
+    draws
+        .pentagon
+        .set_uniform(cx, live_id!(stroke_w), &[border]);
     draws.pentagon.set_uniform(
         cx,
         live_id!(border_col),

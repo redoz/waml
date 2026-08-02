@@ -342,9 +342,9 @@ fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView
             doc.nodes
                 .iter()
                 .find_map(|n| match n {
-                    SeqNode::Lifeline { id, title, alias, .. } if id == lid => {
-                        Some(alias.clone().unwrap_or_else(|| title.clone()))
-                    }
+                    SeqNode::Lifeline {
+                        id, title, alias, ..
+                    } if id == lid => Some(alias.clone().unwrap_or_else(|| title.clone())),
                     _ => None,
                 })
                 .unwrap_or_else(|| lid.to_string())
@@ -368,7 +368,10 @@ fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView
 
 /// One message's display text: `from verb to: signature`, the same reading
 /// order the markdown authors it in.
-pub fn message_label(edge: &waml::model::SeqEdge, lifeline_title: &dyn Fn(&str) -> String) -> String {
+pub fn message_label(
+    edge: &waml::model::SeqEdge,
+    lifeline_title: &dyn Fn(&str) -> String,
+) -> String {
     let head = format!(
         "{} {} {}",
         lifeline_title(&edge.from),
