@@ -24,6 +24,12 @@ shipped template is covered by a test that parses and renders it.
 - The picker itself is not built. `New model` and `New project` both log
   `"template picker is a later slice"` (`crates/waml-editor/src/app/actions.rs`
   lines 248 and 616) and do nothing else.
+- The worked examples are already specified:
+  `docs/superpowers/plans/2026-07-16-orders-uml-template-split.md` splits the
+  single Orders Domain template into four independent kind-specific templates —
+  class, activity, sequence, and use case — and fixes the canvas for a template
+  that carries only behavior documents. `2026-07-16-new-package-flow.md` defines
+  the Empty / Diagram / Template tiers this picker presents.
 - Worked examples should be small enough to read in one screen and should each
   exercise the features that kind's [feature cut](../uml/) marks `MVP: yes` —
   which makes them a rendering regression suite as well as a teaching aid.

@@ -16,6 +16,12 @@ format discards authored bytes.
 
 - The syntax layer preserves losslessly and reparses incrementally, with
   property and fuzz coverage. This is the strongest part of the codebase.
+- It got there through
+  `docs/superpowers/plans/2026-07-28-parser-platform-implementation.md`, which
+  replaced the legacy semantic parser with one lossless, revision-scoped
+  parser platform that derives OKF and UML analyses from a single authority.
+  `2026-07-29-task-21-authority-boundary-implementation.md` then enforced that
+  boundary through the compiler and Cargo rather than through convention.
 - `issues.md` records that one input format can discard authored bytes. That
   single hole is what keeps this `partial`.
 - Line endings and trailing whitespace count as authored bytes.

@@ -16,7 +16,10 @@ prose.
 ## Notes
 
 - A generic OKF view exists for untyped documents, so an unknown type degrades
-  to prose rather than to nothing.
+  to prose rather than to nothing. That came from
+  `docs/superpowers/plans/2026-07-27-first-class-okf-documents.md`, which made
+  the source-authoritative OKF bundle the semantic root and UML a selective
+  projection over it — the structural reason this tool can grow past UML.
 - Tables are the likely gap. This goal tree uses them heavily, which makes them
   MVP-blocking by the dogfood bar.
 - A source view exists for reading the underlying text on demand. That is a

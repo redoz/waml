@@ -17,6 +17,12 @@ account is needed to read one.
 
 - Share packing and the bundle envelope exist in the library, with a share
   round-trip documented as a workflow.
+- Bundle Envelope v1 — one versioned, nonce-delimited codec replacing
+  headerless Markdown splitting — is specified in
+  `docs/superpowers/plans/2026-07-31-bundle-envelope-v1.md` and is a
+  prerequisite for [Export a Bundle](./export-a-bundle.md) and
+  [Serve Locally](./serve-locally.md). Whether it has landed is the first thing
+  to check when auditing this row.
 - Link length is the practical ceiling, and this bundle is growing. If a
   full-bundle link exceeds what a browser or a chat client accepts, the goal
   needs a leaf for a hosted or chunked form.

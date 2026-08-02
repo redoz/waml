@@ -21,3 +21,11 @@ changes asks.
   half of "Done when" is the part to verify first.
 - Undo granularity for prose editing is inherited from [Edit
   Prose](./edit-prose.md) and is not separately tracked here.
+- `docs/superpowers/plans/2026-07-28-undo-redo-view-history.md` specifies
+  operation-based global undo and redo as one thing and Back/Forward logical
+  view history as a separate one, including preview-tab replacement, manual tab
+  switching, and undo revealing the editor it affected. The two-histories
+  distinction is the important part: undo must not navigate and Back must not
+  edit.
+- `2026-07-31-easy-correctness-fixes.md` covers portable repeated configuration
+  writes and pinning inline edits to the exact active preview tab.

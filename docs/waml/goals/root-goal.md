@@ -61,6 +61,16 @@ to-do list.
   live under [UML shared](uml/shared/).
 - The wiki horizon shapes boundaries rather than work: nothing in the core may
   assume UML. It is not a goal to be delivered.
+- Much of what looks unbuilt here is already specified. The repository carries
+  roughly sixty unarchived implementation plans under
+  `docs/superpowers/plans/` and a larger corpus of designs under
+  `docs/superpowers/specs/`. Goals cite the plan that owns them where one
+  exists. Before planning any work from this tree, check whether a plan already
+  covers it — and if the two disagree, the plan wins and the goal is wrong.
+- A plan sitting at the top level of `plans/` is not proof that its work is
+  unfinished. Archiving to `completed/` has been inconsistent, and several
+  top-level plans describe work that has landed. That ambiguity is one more
+  thing the audit pass has to settle.
 - Every `index.md` in this tree is generated content — an H1, a description,
   and a member list. Authored payload belongs in a document beside the index,
   never in the index itself.

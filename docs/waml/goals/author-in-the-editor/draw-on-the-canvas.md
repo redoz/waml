@@ -24,6 +24,11 @@ each lands as one undoable transaction.
 - Rubber-band selection and multi-select editing are unbuilt.
 - Copy and paste of a subgraph is unbuilt and deserves its own leaf once the
   single-element gestures are solid.
+- Six deferred threads for the drag-to-place work are parked in
+  `docs/superpowers/backlog/drag-place-viz-threads.md`: hover-trace, conflict
+  ring attribution, override amber against conflict red, group-scoped drag,
+  real glyph art, and a visualization toggle. They are the known next moves
+  here, already thought through.
 - Preview-before-commit matters more than it sounds: a drag whose result is
   only visible after release forces the author to undo to explore.
 - Related: [Select and Inspect](../uml/shared/select-and-inspect.md) owns what

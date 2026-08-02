@@ -15,10 +15,29 @@ the result round-trips byte-for-byte through the parser when unchanged.
 
 ## Notes
 
-- A Markdown editing crate and Markdown hosts exist. How complete the editing
-  surface is — selection, clipboard, multi-line editing, undo granularity — is
-  the unverified part and the most likely source of MVP-blocking work.
-- Table editing deserves its own leaf once this is audited. Editing a Markdown
-  table as raw pipes is technically sufficient and practically miserable.
+- This is the most heavily planned area in the repository. Four plans cover it,
+  in dependency order:
+  - `2026-07-31-markdown-syntax-platform.md` — one lossless, revisioned
+    `waml-syntax` tree as the incremental authority for CommonMark 0.31.2, the
+    five named GFM extensions, WAML frontmatter, and WAML section islands.
+  - `2026-07-31-markdown-editor-foundation.md` — a standalone WAML-owned
+    editing crate: immutable revisioned snapshots, exact edit transactions,
+    Unicode-safe selections, input method support, variable-metric layout, and
+    viewport virtualization.
+  - `2026-07-31-markdown-editor-integration.md` — replacing the read-only
+    source surface, and making analysis, canvas, persistence, navigation,
+    assets, and the language server consume one revision.
+  - `2026-07-31-markdown-presentation-motion.md` — visible syntax, semantic
+    typography, embedded blocks, and a shared deterministic 100 ms geometry
+    transition. This one has landed commits against tasks 1 through 8.
+- `2026-07-31-markdown-bracket-activation.md` covers nested link and image
+  labels with CommonMark bracket activation.
+- Because the GFM extensions are named in the syntax platform plan, table
+  *parsing* is scoped. Table *editing* ergonomics are not, and still deserve a
+  leaf once the integration plan lands.
 - Byte-fidelity on untouched regions is owned by [Round-Trip
   Losslessly](../trust-the-content/round-trip-losslessly.md), not here.
+- The status above is `partial` on the strength of those landed motion tasks.
+  The audit should establish how much of foundation and integration is real
+  before anyone plans more work here — this is the single most likely place for
+  the tree to be wrong in either direction.
