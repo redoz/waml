@@ -939,7 +939,10 @@ fn run_export_site(dir: &PathBuf, out: &Path, force: bool) -> i32 {
             return 2;
         }
     };
-    let files = match io::read_files(std::slice::from_ref(dir)) {
+    // Rooted, not `read_files`: a bundle path is relative to the model root,
+    // so keying documents by the path as typed would put `C:/...` or `/home/...`
+    // in the envelope and fail validation on the way out.
+    let files = match io::read_bundle_rooted(std::slice::from_ref(dir), false) {
         Ok(files) => files,
         Err(error) => {
             eprintln!("waml: {error}");

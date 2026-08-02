@@ -43,7 +43,17 @@ fn main() {
         .expect("write the empty embedded artifact table");
         return;
     };
+    // A build script runs with the CRATE directory as its cwd, so a relative
+    // `WAML_WEB_EMBED_DIR` -- which is what a workspace-root command line and
+    // the Pages workflow both naturally pass -- would resolve under
+    // crates/waml-cli and be missing. Resolve it against the workspace root
+    // instead, which is where the packager writes.
     let dir = PathBuf::from(dir);
+    let dir = if dir.is_absolute() {
+        dir
+    } else {
+        workspace_root().join(dir)
+    };
     let manifest = dir.join("manifest.txt");
     println!("cargo:rerun-if-changed={}", manifest.display());
 
@@ -102,6 +112,17 @@ fn main() {
     }
 
     fs::write(&generated, entries).expect("write the embedded artifact table");
+}
+
+/// `crates/waml-cli` -> the workspace root two levels up.
+fn workspace_root() -> PathBuf {
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .expect("crates/waml-cli sits two levels under the workspace root")
 }
 
 fn validate_path(path: &str, manifest: &Path, line: usize) {
