@@ -1,8 +1,8 @@
 #!/usr/bin/env pwsh
 # Launch the native waml-editor on a fixture (defaults to tests/fixtures/mini).
-# Usage: ./scripts/run-native.ps1 [path-to-fixture]
-#        ./scripts/run-native.ps1 -Empty       # no bundle -> start screen
-#        ./scripts/run-native.ps1 -Optimized   # release build (optimized)
+# Usage: ./run.ps1 [path-to-fixture]
+#        ./run.ps1 -Empty       # no bundle -> start screen
+#        ./run.ps1 -Optimized   # release build (optimized)
 param(
     [Parameter(Position = 0)]
     [string]$Fixture,
@@ -14,7 +14,7 @@ param(
     [string]$Color
 )
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
+$root = $PSScriptRoot
 Set-Location $root
 
 # --release swaps in the optimized profile / separate target dir; thread it

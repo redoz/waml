@@ -9,8 +9,8 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-Run the native editor with `scripts/run-native.ps1` on Windows or
-`scripts/run-native.sh` on Unix-like systems.
+Run the native editor with `run.ps1` on Windows or `run.sh` on Unix-like
+systems.
 
 The Rust workspace contains `waml`, `waml-cli`, `waml-ops-dto`, `waml-syntax`,
 and `waml-editor`. The VS Code extension in `editors/vscode` is a standalone

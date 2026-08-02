@@ -1,11 +1,11 @@
 ---
 name: run
-description: Launch the native waml-editor via scripts/run-native.ps1 — empty (start screen) or on a preset fixture. Use when the user asks to run / start / launch the editor, or wants a preset loaded.
+description: Launch the native waml-editor via run.ps1 — empty (start screen) or on a preset fixture. Use when the user asks to run / start / launch the editor, or wants a preset loaded.
 ---
 
 # run
 
-Launch the native `waml-editor` window. The script `scripts/run-native.ps1`
+Launch the native `waml-editor` window. The script `run.ps1`
 kills any running instance, rebuilds (`cargo build`), and only then runs — so a
 stale window can't show old code and compile errors surface at the terminal.
 
@@ -13,9 +13,9 @@ stale window can't show old code and compile errors surface at the terminal.
 
 | Preset | Meaning | Command |
 |--------|---------|---------|
-| `empty` | No bundle → start screen | `pwsh scripts/run-native.ps1 -Empty` |
-| `mini` (default) | `crates/waml-editor/tests/fixtures/mini` | `pwsh scripts/run-native.ps1` |
-| `<path>` | Any fixture path | `pwsh scripts/run-native.ps1 <path>` |
+| `empty` | No bundle → start screen | `pwsh run.ps1 -Empty` |
+| `mini` (default) | `crates/waml-editor/tests/fixtures/mini` | `pwsh run.ps1` |
+| `<path>` | Any fixture path | `pwsh run.ps1 <path>` |
 
 `mini` is the only bundled fixture today. If the user names a preset that isn't
 `empty`/`mini` and isn't an existing path, tell them and list what's available
@@ -33,5 +33,5 @@ stale window can't show old code and compile errors surface at the terminal.
 
 ## Notes
 
-- Run from a checkout where `scripts/run-native.ps1` exists (main or a worktree).
+- Run from a checkout where `run.ps1` exists (main or a worktree).
 - To screenshot the running window: `pwsh scripts/capture-window.ps1 -Out x.png -Process waml-editor`.
