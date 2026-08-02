@@ -1,6 +1,6 @@
 use waml::model::{
-    EndpointRef, FragmentKind, MessageId, MessageKind, OperandSpec, SeqChild, SeqEdge, SeqNode,
-    SequenceDoc,
+    EndpointRef, FragmentKind, InteractionUseId, MessageId, MessageKind, OperandSpec, SeqBinding,
+    SeqChild, SeqEdge, SeqInteractionUse, SeqNode, SequenceDoc,
 };
 use waml::solve::interaction::pretty_interaction;
 use waml::solve::interaction::{
@@ -698,4 +698,279 @@ fn activation_bars_straddle_their_lifeline_stem() {
             bar.depth
         );
     }
+}
+
+#[test]
+fn par_branches_share_a_start_and_join_after_all_branches() {
+    let doc = SequenceDoc {
+        key: "parallel".into(),
+        title: "Parallel".into(),
+        describes: None,
+        nodes: vec![
+            SeqNode::Lifeline {
+                id: "a".into(),
+                title: "A".into(),
+                alias: None,
+                ref_: None,
+            },
+            SeqNode::Lifeline {
+                id: "b".into(),
+                title: "B".into(),
+                alias: None,
+                ref_: None,
+            },
+            SeqNode::Operand {
+                id: "left".into(),
+                spec: OperandSpec::Branch {
+                    label: Some("left".into()),
+                },
+                items: vec![message("m0"), message("m1")],
+            },
+            SeqNode::Operand {
+                id: "right".into(),
+                spec: OperandSpec::Branch {
+                    label: Some("right".into()),
+                },
+                items: vec![message("m2"), message("m3")],
+            },
+            SeqNode::Fragment {
+                id: "workers".into(),
+                kind: FragmentKind::Par,
+                operands: vec!["left".into(), "right".into()],
+            },
+        ],
+        edges: vec![
+            edge("m0", "a", MessageKind::AsyncSignal, "b", None),
+            edge("m1", "b", MessageKind::AsyncSignal, "a", None),
+            edge("m2", "a", MessageKind::AsyncSignal, "b", None),
+            edge("m3", "b", MessageKind::AsyncSignal, "a", None),
+            edge("after", "a", MessageKind::AsyncSignal, "b", None),
+        ],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: vec![
+            SeqChild::Fragment {
+                node: "workers".into(),
+            },
+            message("after"),
+        ],
+    };
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+    let row = |id: &str| {
+        solved
+            .messages
+            .iter()
+            .find(|item| item.id == id)
+            .unwrap_or_else(|| panic!("missing message {id}"))
+            .y
+    };
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(row("m0"), row("m2"));
+    assert!(row("m1") > row("m0"));
+    assert!(row("m3") > row("m2"));
+    assert!(row("after") > row("m1"));
+    assert!(row("after") > row("m3"));
+    let pretty = pretty_interaction(&solved);
+    assert!(pretty.contains("branch=left"), "{pretty}");
+    assert!(pretty.contains("branch=right"), "{pretty}");
+}
+
+#[test]
+fn new_fragment_kinds_have_canonical_pretty_output() {
+    let kinds = [
+        ("break-frame", "break-op", FragmentKind::Break, "m0"),
+        (
+            "critical-frame",
+            "critical-op",
+            FragmentKind::Critical,
+            "m1",
+        ),
+        ("assert-frame", "assert-op", FragmentKind::Assert, "m2"),
+        ("neg-frame", "neg-op", FragmentKind::Neg, "m3"),
+    ];
+    let mut nodes = vec![
+        SeqNode::Lifeline {
+            id: "a".into(),
+            title: "A".into(),
+            alias: None,
+            ref_: None,
+        },
+        SeqNode::Lifeline {
+            id: "b".into(),
+            title: "B".into(),
+            alias: None,
+            ref_: None,
+        },
+    ];
+    let mut items = Vec::new();
+    for (fragment, operand, kind, message_id) in kinds {
+        nodes.push(SeqNode::Operand {
+            id: operand.into(),
+            spec: OperandSpec::Guard("allowed".into()),
+            items: vec![message(message_id)],
+        });
+        nodes.push(SeqNode::Fragment {
+            id: fragment.into(),
+            kind,
+            operands: vec![operand.into()],
+        });
+        items.push(SeqChild::Fragment {
+            node: fragment.into(),
+        });
+    }
+    let doc = SequenceDoc {
+        key: "frames".into(),
+        title: "Frames".into(),
+        describes: None,
+        nodes,
+        edges: (0..4)
+            .map(|index| {
+                edge(
+                    &format!("m{index}"),
+                    "a",
+                    MessageKind::AsyncSignal,
+                    "b",
+                    None,
+                )
+            })
+            .collect(),
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items,
+    };
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+    let pretty = pretty_interaction(&solved);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(pretty.contains("fragment break-frame break"), "{pretty}");
+    assert!(
+        pretty.contains("fragment critical-frame critical"),
+        "{pretty}"
+    );
+    assert!(pretty.contains("fragment assert-frame assert"), "{pretty}");
+    assert!(pretty.contains("fragment neg-frame neg"), "{pretty}");
+    assert!(pretty.contains("guard=[allowed]"), "{pretty}");
+}
+
+#[test]
+fn interaction_use_frames_keep_bindings_and_gates() {
+    let use_id = InteractionUseId("u0".into());
+    let use_gate = |gate: &str| EndpointRef::UseGate {
+        interaction_use: use_id.clone(),
+        gate: gate.into(),
+    };
+    let doc = SequenceDoc {
+        key: "reference".into(),
+        title: "Reference".into(),
+        describes: None,
+        nodes: vec![
+            SeqNode::Lifeline {
+                id: "a".into(),
+                title: "A".into(),
+                alias: None,
+                ref_: None,
+            },
+            SeqNode::Lifeline {
+                id: "b".into(),
+                title: "B".into(),
+                alias: None,
+                ref_: None,
+            },
+        ],
+        edges: vec![
+            typed_edge(
+                "request",
+                EndpointRef::Lifeline { id: "a".into() },
+                MessageKind::AsyncSignal,
+                use_gate("request"),
+                None,
+            ),
+            typed_edge(
+                "result",
+                use_gate("result"),
+                MessageKind::AsyncSignal,
+                EndpointRef::Lifeline { id: "b".into() },
+                None,
+            ),
+        ],
+        gates: Vec::new(),
+        interaction_uses: vec![SeqInteractionUse {
+            id: use_id.clone(),
+            target: "target-sequence".into(),
+            alias: "target".into(),
+            bindings: vec![
+                SeqBinding {
+                    local: "a".into(),
+                    target: "caller".into(),
+                },
+                SeqBinding {
+                    local: "b".into(),
+                    target: "service".into(),
+                },
+            ],
+            gates: vec!["request".into(), "result".into()],
+        }],
+        items: vec![
+            message("request"),
+            SeqChild::InteractionUse {
+                interaction_use: use_id,
+            },
+            message("result"),
+        ],
+    };
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(solved.interaction_uses.len(), 1);
+    let frame = &solved.interaction_uses[0];
+    assert_eq!(frame.id, InteractionUseId("u0".into()));
+    assert_eq!(frame.target, "target-sequence");
+    assert_eq!(frame.bindings, doc.interaction_uses[0].bindings);
+    assert_eq!(frame.gates.len(), 2);
+    assert_eq!(
+        solved.messages.len(),
+        2,
+        "target messages must not be copied"
+    );
+
+    for (message_id, gate_name, endpoint_is_source) in
+        [("request", "request", false), ("result", "result", true)]
+    {
+        let message = solved
+            .messages
+            .iter()
+            .find(|message| message.id == message_id)
+            .unwrap();
+        let gate = frame
+            .gates
+            .iter()
+            .find(|gate| gate.name == gate_name)
+            .unwrap();
+        let endpoint_x = if endpoint_is_source {
+            message.from_x
+        } else {
+            message.to_x
+        };
+        assert_eq!(endpoint_x, gate.x);
+        assert_eq!(message.y, gate.y);
+        assert!(
+            gate.x == frame.rect.x || gate.x == frame.rect.x + frame.rect.w,
+            "gate {gate_name} is not on a vertical frame boundary"
+        );
+        assert!(gate.y >= frame.rect.y && gate.y <= frame.rect.y + frame.rect.h);
+    }
+    let pretty = pretty_interaction(&solved);
+    assert!(
+        pretty.contains("interaction-use u0 target-sequence"),
+        "{pretty}"
+    );
+    assert!(pretty.contains("bind a=caller"), "{pretty}");
+    assert!(pretty.contains("gate request"), "{pretty}");
 }

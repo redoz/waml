@@ -17,7 +17,7 @@ message m7 reply lifeline:d@276->lifeline:b@105 y=518 returns=m6
 message m8 syncCall lifeline:a@19->lifeline:b@105 y=638
 message m9 delete lifeline:a@19->lifeline:d@276 y=718
 fragment f1 opt d1 @ 93,438 195x160
-  operand y=start guard=extra
+  operand y=start guard=[extra]
 fragment f0 alt d0 @ 7,318 287x400
-  operand y=start guard=ready
-  operand y=598 guard=else
+  operand y=start guard=[ready]
+  operand y=598 guard=[else]

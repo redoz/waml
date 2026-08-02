@@ -6,8 +6,8 @@ use super::sizing::{self, Font};
 use super::{Rect, Size, SizeMap};
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::model::{
-    EndpointRef, FragmentKind, MessageId, MessageKind, OperandSpec, SeqChild, SeqEdge, SeqNode,
-    SequenceDoc,
+    EndpointRef, FragmentKind, InteractionUseId, MessageId, MessageKind, OperandSpec, SeqBinding,
+    SeqChild, SeqEdge, SeqNode, SequenceDoc,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -93,6 +93,7 @@ pub struct SolvedMessage {
 pub struct SolvedOperand {
     pub divider_y: Option<f64>,
     pub guard: Option<String>,
+    pub branch: bool,
     pub guard_rect: Rect,
 }
 
@@ -107,11 +108,28 @@ pub struct SolvedFragment {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SolvedGate {
+    pub name: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SolvedInteractionUse {
+    pub id: InteractionUseId,
+    pub target: String,
+    pub rect: Rect,
+    pub bindings: Vec<SeqBinding>,
+    pub gates: Vec<SolvedGate>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct SolvedInteraction {
     pub lifelines: Vec<SolvedLifeline>,
     pub activations: Vec<SolvedActivation>,
     pub messages: Vec<SolvedMessage>,
     pub fragments: Vec<SolvedFragment>,
+    pub interaction_uses: Vec<SolvedInteractionUse>,
     pub size: Size,
 }
 
@@ -177,7 +195,9 @@ pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMa
 
 /// Deepest fragment nesting the solver walks; deeper fragments are dropped
 /// with a diagnostic rather than risking the stack (and `depth`'s own range).
-const MAX_FRAGMENT_DEPTH: u8 = 32;
+// Keep a safety margin for the branch-local state that each recursive frame
+// owns. The solver is also exercised on a 128 KiB worker stack.
+const MAX_FRAGMENT_DEPTH: u8 = 24;
 
 struct WalkState<'a> {
     doc_key: &'a str,
@@ -191,10 +211,66 @@ struct WalkState<'a> {
     y: f64,
     messages: Vec<SolvedMessage>,
     fragments: Vec<SolvedFragment>,
+    interaction_uses: Vec<SolvedInteractionUse>,
     created_at: BTreeMap<String, f64>,
     destroyed_at: BTreeMap<String, f64>,
     involved: BTreeSet<String>,
     diagnostics: Vec<Diagnostic>,
+}
+
+fn include_frame_y(rect: &mut Rect, y: f64) {
+    if !rect.y.is_finite() {
+        rect.y = y;
+        rect.h = 0.0;
+        return;
+    }
+    let top = rect.y.min(y);
+    let bottom = (rect.y + rect.h).max(y);
+    rect.y = top;
+    rect.h = bottom - top;
+}
+
+fn precompute_interaction_uses(
+    doc: &SequenceDoc,
+    lifeline_x: &BTreeMap<&str, f64>,
+    cfg: &InteractionConfig,
+) -> Vec<SolvedInteractionUse> {
+    doc.interaction_uses
+        .iter()
+        .map(|interaction_use| {
+            let mut local_x = interaction_use
+                .bindings
+                .iter()
+                .filter_map(|binding| lifeline_x.get(binding.local.as_str()).copied());
+            let first = local_x.next();
+            let (min_x, max_x) = local_x.fold(
+                first.map(|x| (x, x)).unwrap_or((0.0, 0.0)),
+                |(min_x, max_x), x| (min_x.min(x), max_x.max(x)),
+            );
+            let left = min_x - cfg.frame_inset;
+            let right = max_x + cfg.frame_inset;
+            SolvedInteractionUse {
+                id: interaction_use.id.clone(),
+                target: interaction_use.target.clone(),
+                rect: Rect {
+                    x: left,
+                    y: f64::INFINITY,
+                    w: right - left,
+                    h: 0.0,
+                },
+                bindings: interaction_use.bindings.clone(),
+                gates: interaction_use
+                    .gates
+                    .iter()
+                    .map(|name| SolvedGate {
+                        name: name.clone(),
+                        x: left,
+                        y: 0.0,
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
 }
 
 impl<'a> WalkState<'a> {
@@ -227,10 +303,31 @@ impl<'a> WalkState<'a> {
                         max_x = max_x.max(hi);
                     }
                 }
-                SeqChild::InteractionUse { .. } => {}
+                SeqChild::InteractionUse { interaction_use } => {
+                    if let Some((lo, hi)) = self.walk_interaction_use(&interaction_use.0) {
+                        min_x = min_x.min(lo);
+                        max_x = max_x.max(hi);
+                    }
+                }
             }
         }
         (min_x, max_x)
+    }
+
+    fn walk_interaction_use(&mut self, id: &str) -> Option<(f64, f64)> {
+        let top = self.y;
+        let bottom = top + self.cfg.row_gap;
+        self.y = bottom;
+        let interaction_use = self
+            .interaction_uses
+            .iter_mut()
+            .find(|interaction_use| interaction_use.id.0 == id)?;
+        include_frame_y(&mut interaction_use.rect, top);
+        include_frame_y(&mut interaction_use.rect, bottom);
+        Some((
+            interaction_use.rect.x,
+            interaction_use.rect.x + interaction_use.rect.w,
+        ))
     }
 
     fn walk_message(&mut self, edge_id: &str) -> Option<(f64, f64)> {
@@ -346,7 +443,7 @@ impl<'a> WalkState<'a> {
         Some(Some(x))
     }
 
-    fn endpoint_x(&self, endpoint: &EndpointRef, peer_x: Option<f64>) -> Option<f64> {
+    fn endpoint_x(&mut self, endpoint: &EndpointRef, peer_x: Option<f64>) -> Option<f64> {
         match endpoint {
             EndpointRef::Lifeline { id } => self.lifeline_x.get(id.as_str()).copied(),
             EndpointRef::Outside | EndpointRef::LocalGate { .. } => peer_x.map(|peer_x| {
@@ -357,7 +454,31 @@ impl<'a> WalkState<'a> {
                     self.frame_right
                 }
             }),
-            EndpointRef::UseGate { .. } => None,
+            EndpointRef::UseGate {
+                interaction_use,
+                gate,
+            } => {
+                let peer_x = peer_x?;
+                let y = self.y;
+                let interaction_use = self
+                    .interaction_uses
+                    .iter_mut()
+                    .find(|candidate| candidate.id == *interaction_use)?;
+                let midpoint = interaction_use.rect.x + interaction_use.rect.w * 0.5;
+                let x = if peer_x <= midpoint {
+                    interaction_use.rect.x
+                } else {
+                    interaction_use.rect.x + interaction_use.rect.w
+                };
+                let solved_gate = interaction_use
+                    .gates
+                    .iter_mut()
+                    .find(|candidate| candidate.name == *gate)?;
+                solved_gate.x = x;
+                solved_gate.y = y;
+                include_frame_y(&mut interaction_use.rect, y);
+                Some(x)
+            }
         }
     }
 
@@ -417,20 +538,33 @@ impl<'a> WalkState<'a> {
         let mut min_x = f64::INFINITY;
         let mut max_x = f64::NEG_INFINITY;
         let mut solved_operands = Vec::with_capacity(operands.len());
+        let branch_start = self.y;
+        let mut latest_branch_end = branch_start;
 
         for (i, operand_id) in operands.iter().enumerate() {
+            if kind == FragmentKind::Par {
+                self.y = branch_start;
+            }
             let operand_start = self.y;
-            let divider_y = if i == 0 { None } else { Some(operand_start) };
+            let divider_y = if i == 0 || kind == FragmentKind::Par {
+                None
+            } else {
+                Some(operand_start)
+            };
             self.y += self.cfg.row_gap; // guard row
 
             let mut guard: Option<String> = None;
+            let mut branch = false;
             if let Some(SeqNode::Operand { spec, items, .. }) =
                 self.nodes_by_id.get(operand_id.as_str()).copied()
             {
                 guard = match spec {
                     OperandSpec::Guard(value) => Some(value.clone()),
                     OperandSpec::Else => None,
-                    OperandSpec::Branch { label } => label.clone(),
+                    OperandSpec::Branch { label } => {
+                        branch = true;
+                        label.clone()
+                    }
                 };
                 if items.is_empty() {
                     self.diagnostics.push(Diagnostic::new(
@@ -449,17 +583,28 @@ impl<'a> WalkState<'a> {
             }
 
             let guard_text = guard.clone().unwrap_or_else(|| "else".to_string());
+            let rendered_guard = if branch {
+                guard_text.clone()
+            } else {
+                format!("[{guard_text}]")
+            };
             let guard_rect = Rect {
                 x: 0.0, // fixed up below once the frame's left edge is known
                 y: operand_start,
-                w: sizing::text_width(&format!("[{guard_text}]"), self.cfg.font_size, Font::Sans),
+                w: sizing::text_width(&rendered_guard, self.cfg.font_size, Font::Sans),
                 h: self.cfg.line_height,
             };
             solved_operands.push(SolvedOperand {
                 divider_y,
                 guard,
+                branch,
                 guard_rect,
             });
+            latest_branch_end = latest_branch_end.max(self.y);
+        }
+
+        if kind == FragmentKind::Par {
+            self.y = latest_branch_end;
         }
 
         self.y += self.cfg.row_gap; // closing padding
@@ -665,6 +810,7 @@ pub fn solve_interaction(
     } else {
         0.0
     };
+    let interaction_uses = precompute_interaction_uses(doc, &lifeline_x, cfg);
 
     let mut state = WalkState {
         doc_key: doc.key.as_str(),
@@ -678,6 +824,7 @@ pub fn solve_interaction(
         y: first_row_y,
         messages: Vec::new(),
         fragments: Vec::new(),
+        interaction_uses,
         created_at: BTreeMap::new(),
         destroyed_at: BTreeMap::new(),
         involved: BTreeSet::new(),
@@ -744,6 +891,7 @@ pub fn solve_interaction(
         activations,
         messages: state.messages,
         fragments: state.fragments,
+        interaction_uses: state.interaction_uses,
         size: Size {
             w: total_w,
             h: bottom,
@@ -849,7 +997,31 @@ pub fn pretty_interaction(solved: &SolvedInteraction) -> String {
                 .map(|y| format!("{y:.0}"))
                 .unwrap_or_else(|| "start".to_string());
             let guard = op.guard.clone().unwrap_or_else(|| "else".to_string());
-            out.push_str(&format!("  operand y={divider} guard={guard}\n"));
+            if op.branch {
+                out.push_str(&format!("  operand y={divider} branch={guard}\n"));
+            } else {
+                out.push_str(&format!("  operand y={divider} guard=[{guard}]\n"));
+            }
+        }
+    }
+    for interaction_use in &solved.interaction_uses {
+        out.push_str(&format!(
+            "interaction-use {} {} @ {:.0},{:.0} {:.0}x{:.0}\n",
+            interaction_use.id.0,
+            interaction_use.target,
+            interaction_use.rect.x,
+            interaction_use.rect.y,
+            interaction_use.rect.w,
+            interaction_use.rect.h,
+        ));
+        for binding in &interaction_use.bindings {
+            out.push_str(&format!("  bind {}={}\n", binding.local, binding.target));
+        }
+        for gate in &interaction_use.gates {
+            out.push_str(&format!(
+                "  gate {} @ {:.0},{:.0}\n",
+                gate.name, gate.x, gate.y
+            ));
         }
     }
     out
