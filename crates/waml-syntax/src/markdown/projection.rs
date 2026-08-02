@@ -22,6 +22,7 @@ pub enum WamlSectionKind {
     Layout,
     Nodes,
     Lifelines,
+    Gates,
     Messages,
 }
 
@@ -271,6 +272,7 @@ pub(crate) fn waml_kind(source: &str, text_range: TextRange) -> Option<WamlSecti
         "Layout" => Some(WamlSectionKind::Layout),
         "Nodes" => Some(WamlSectionKind::Nodes),
         "Lifelines" => Some(WamlSectionKind::Lifelines),
+        "Gates" => Some(WamlSectionKind::Gates),
         "Messages" => Some(WamlSectionKind::Messages),
         _ => None,
     }

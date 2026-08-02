@@ -41,7 +41,7 @@ fn range(start: usize, end: usize) -> TextRange {
 
 #[test]
 fn waml_extensions_keep_initial_frontmatter_and_mark_only_top_level_sections() {
-    let source = "\u{feff}---\ntype: uml.Class\ntitle: Example\n---\n# Class\n## Attributes\n- field\n### Details\ntext\n## Values\nvalue\n\n---\n\n> ## Slots\n\n- ## Relationships\n\n```waml\n## Relationships\n```\n\n<div>\n## Members\n</div>\n\n## Notes\nnot a WAML section\n## Layout\nlayout\n## Nodes\nnodes\n## Lifelines\nlifelines\n## Messages\nmessages\n";
+    let source = "\u{feff}---\ntype: uml.Class\ntitle: Example\n---\n# Class\n## Attributes\n- field\n### Details\ntext\n## Values\nvalue\n\n---\n\n> ## Slots\n\n- ## Relationships\n\n```waml\n## Relationships\n```\n\n<div>\n## Members\n</div>\n\n## Notes\nnot a WAML section\n## Layout\nlayout\n## Nodes\nnodes\n## Lifelines\nlifelines\n## Gates\ngates\n## Messages\nmessages\n";
     let parsed = parse(source);
 
     assert_eq!(parsed.tree.write_to_string(), source);
@@ -55,7 +55,8 @@ fn waml_extensions_keep_initial_frontmatter_and_mark_only_top_level_sections() {
             source.find("## Values").unwrap()..source.find("## Notes").unwrap(),
             source.find("## Layout").unwrap()..source.find("## Nodes").unwrap(),
             source.find("## Nodes").unwrap()..source.find("## Lifelines").unwrap(),
-            source.find("## Lifelines").unwrap()..source.find("## Messages").unwrap(),
+            source.find("## Lifelines").unwrap()..source.find("## Gates").unwrap(),
+            source.find("## Gates").unwrap()..source.find("## Messages").unwrap(),
             source.find("## Messages").unwrap()..source.len(),
         ]
         .into_iter()
@@ -75,6 +76,7 @@ fn waml_extensions_keep_initial_frontmatter_and_mark_only_top_level_sections() {
             WamlSectionKind::Layout,
             WamlSectionKind::Nodes,
             WamlSectionKind::Lifelines,
+            WamlSectionKind::Gates,
             WamlSectionKind::Messages,
         ]
     );
@@ -91,12 +93,38 @@ fn waml_extensions_keep_initial_frontmatter_and_mark_only_top_level_sections() {
 }
 
 #[test]
+fn gates_is_a_waml_section_between_lifelines_and_messages() {
+    let source = "# S\n## Lifelines\n- [A](./a.md)\n## Gates\n- request\n## Messages\n- @request signals A `start`\n# Next\n";
+    let parsed = parse(source);
+    assert_eq!(
+        parsed
+            .structure
+            .islands
+            .iter()
+            .map(|island| island.kind)
+            .collect::<Vec<_>>(),
+        [
+            WamlSectionKind::Lifelines,
+            WamlSectionKind::Gates,
+            WamlSectionKind::Messages,
+        ]
+    );
+    assert_eq!(
+        parsed.structure.islands[1].content_range,
+        range(
+            source.find("## Gates\n").unwrap() + "## Gates\n".len(),
+            source.find("## Messages").unwrap(),
+        )
+    );
+}
+
+#[test]
 fn waml_section_kinds_cover_every_recognized_name_and_end_at_lower_heading() {
-    let source = "# Document\n## Attributes\na\n### nested\n## Values\nv\n## Slots\ns\n## Relationships\nr\n## Members\nm\n## Layout\nl\n## Nodes\nn\n## Lifelines\nlife\n## Messages\nmessage\n# Next\n";
+    let source = "# Document\n## Attributes\na\n### nested\n## Values\nv\n## Slots\ns\n## Relationships\nr\n## Members\nm\n## Layout\nl\n## Nodes\nn\n## Lifelines\nlife\n## Gates\ngate\n## Messages\nmessage\n# Next\n";
     let parsed = parse(source);
     let islands = parsed.structure.islands.as_ref();
 
-    assert_eq!(islands.len(), 9);
+    assert_eq!(islands.len(), 10);
     assert_eq!(islands[0].kind, WamlSectionKind::Attributes);
     assert_eq!(islands[1].kind, WamlSectionKind::Values);
     assert_eq!(islands[2].kind, WamlSectionKind::Slots);
@@ -105,7 +133,8 @@ fn waml_section_kinds_cover_every_recognized_name_and_end_at_lower_heading() {
     assert_eq!(islands[5].kind, WamlSectionKind::Layout);
     assert_eq!(islands[6].kind, WamlSectionKind::Nodes);
     assert_eq!(islands[7].kind, WamlSectionKind::Lifelines);
-    assert_eq!(islands[8].kind, WamlSectionKind::Messages);
+    assert_eq!(islands[8].kind, WamlSectionKind::Gates);
+    assert_eq!(islands[9].kind, WamlSectionKind::Messages);
     assert_eq!(
         islands[0].content_range,
         range(
@@ -114,7 +143,7 @@ fn waml_section_kinds_cover_every_recognized_name_and_end_at_lower_heading() {
         )
     );
     assert_eq!(
-        islands[8].content_range,
+        islands[9].content_range,
         range(
             source.find("## Messages").unwrap() + "## Messages\n".len(),
             source.find("# Next").unwrap(),
