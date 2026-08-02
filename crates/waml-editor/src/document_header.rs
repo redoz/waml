@@ -37,7 +37,9 @@ script_mod! {
         // tabs are `fonts.text_menu` (10 Regular), so the current segment takes
         // the same 10 in Medium and the ancestors drop to 9.
         draw_ancestor +: {
-            color: atlas.text_dim
+            // `text_mid`, not `text_dim`: at 9px italic the dim grey falls under
+            // the surface contrast floor and the ancestors read as disabled.
+            color: atlas.text_mid
             text_style: fonts.text_micro_italic
         }
         draw_current +: {
