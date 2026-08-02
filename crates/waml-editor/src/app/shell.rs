@@ -80,7 +80,7 @@ pub(super) fn next_narrow(narrow: bool, viewport_w: f64) -> bool {
 impl App {
     /// Push the active diagram title into the switcher's trigger chip, falling
     /// back to another open diagram when a classifier is active.
-    pub(super) fn sync_diagram_switcher_current(&mut self, cx: &mut Cx) {
+    fn sync_diagram_switcher_current(&mut self, cx: &mut Cx) {
         let title = self
             .documents
             .active_tab()
@@ -121,7 +121,7 @@ impl App {
 
     /// Force the overlay's visibility (used by the `Escape` hotkey, which
     /// should only ever close it, never toggle it open).
-    pub(super) fn set_shortcuts_overlay(&mut self, cx: &mut Cx, visible: bool) {
+    fn set_shortcuts_overlay(&mut self, cx: &mut Cx, visible: bool) {
         if let Some(mut overlay) = self
             .ui
             .widget(cx, ids!(shortcuts_overlay))
@@ -493,7 +493,7 @@ impl App {
     /// `doc_tabs` no longer begins at the window's left edge, and the rule must
     /// reach back to `tab_row`'s left edge, which is the window edge in this
     /// full-width caption hierarchy.
-    pub(super) fn sync_tree_gap(&mut self, cx: &mut Cx, tree_w: f64) {
+    fn sync_tree_gap(&mut self, cx: &mut Cx, tree_w: f64) {
         let row_x = self.ui.widget(cx, ids!(tab_row)).area().rect(cx).pos.x;
         let tabs_x = self.ui.widget(cx, ids!(doc_tabs)).area().rect(cx).pos.x;
         let overshoot = (tabs_x - row_x).max(0.0);

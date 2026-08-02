@@ -256,9 +256,10 @@ impl App {
         Ok(completion)
     }
 
-    /// Read `dir` off disk and populate the editor. Returns `false` (having
-    /// `log!`d) only when the model fails to load, so the caller keeps the
-    /// start screen up.
+    /// Read `dir` from disk and populate the editor. Returns `false` if a
+    /// required save, bundle load, asset-root policy or canonicalization step,
+    /// or replacement-session analysis fails. The caller then keeps the
+    /// current screen visible.
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn open_dir(
         &mut self,
@@ -350,8 +351,8 @@ impl App {
     ///
     /// Split out of `open_dir` so the web build, which has no filesystem, can
     /// open a model decoded from the URL fragment through exactly this path.
-    /// Always returns `true`: the fallible part -- reading and parsing -- has
-    /// already happened by the time it is called.
+    /// Returns `false` if the replacement bundle cannot complete session
+    /// analysis. Reading and source-bundle construction have already completed.
     pub(super) fn open_bundle(
         &mut self,
         cx: &mut Cx,
