@@ -383,6 +383,14 @@ fn self_loop_geometry(rect: waml::solve::Rect) -> ([Segment; 3], Segment) {
     )
 }
 
+fn message_style(kind: MessageKind) -> (bool, bool) {
+    match kind {
+        MessageKind::SyncCall | MessageKind::AsyncCall | MessageKind::Delete => (false, true),
+        MessageKind::AsyncSignal => (false, false),
+        MessageKind::Reply | MessageKind::Create => (true, false),
+    }
+}
+
 fn draw_message(
     cx: &mut Cx2d,
     viewport: ViewportSnapshot,
@@ -396,7 +404,7 @@ fn draw_message(
         .linework
         .thickness(emphasis.thickness(MESSAGE_THICKNESS));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
-    let dashed = matches!(message.verb, MessageKind::Reply | MessageKind::Create);
+    let (dashed, filled_head) = message_style(message.verb);
 
     let (from, to) = match message.self_loop {
         Some(rect) => {
@@ -422,10 +430,6 @@ fn draw_message(
         }
     };
 
-    let filled_head = matches!(
-        message.verb,
-        MessageKind::SyncCall | MessageKind::AsyncCall | MessageKind::Delete
-    );
     draw_arrowhead(cx, &camera, rect_pos, from, to, filled_head, draws);
 
     if let Some(label) = &message.label {
@@ -601,6 +605,22 @@ fn draw_fragment_tab(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_message_styles() {
+        let cases = [
+            (MessageKind::SyncCall, (false, true)),
+            (MessageKind::AsyncCall, (false, true)),
+            (MessageKind::AsyncSignal, (false, false)),
+            (MessageKind::Reply, (true, false)),
+            (MessageKind::Create, (true, false)),
+            (MessageKind::Delete, (false, true)),
+        ];
+
+        for (kind, expected) in cases {
+            assert_eq!(message_style(kind), expected);
+        }
+    }
 
     /// A self-message draws all THREE outer sides of its loop rect and its head
     /// returns to the stem (the rect's left edge), not down at the far corner.

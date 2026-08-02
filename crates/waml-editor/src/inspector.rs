@@ -3,7 +3,7 @@
 //! `inspector_panel.rs`. Mirrors the `tree.rs` (pure) / `tree_panel.rs` (widget)
 //! split.
 
-use waml::model::{DiagramGroup, ElementType, Model, RelationshipKind};
+use waml::model::{DiagramGroup, ElementType, EndpointRef, Model, RelationshipKind};
 use waml::multiplicity::Multiplicity;
 
 /// What the inspector is currently pointed at. `None` renders the empty state.
@@ -372,33 +372,52 @@ fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView
     })
 }
 
-/// One message's display text: `from verb to: signature`, the same reading
-/// order the markdown authors it in.
+fn endpoint_label(endpoint: &EndpointRef, lifeline_title: &dyn Fn(&str) -> String) -> String {
+    match endpoint {
+        EndpointRef::Lifeline { id } => lifeline_title(id),
+        EndpointRef::Outside => "outside".into(),
+        EndpointRef::LocalGate { gate } => format!("@{gate}"),
+        EndpointRef::UseGate {
+            interaction_use,
+            gate,
+        } => format!("{}@{gate}", interaction_use.0),
+    }
+}
+
+/// One message's display text in the same reading order as the markdown.
 pub fn message_label(
     edge: &waml::model::SeqEdge,
     lifeline_title: &dyn Fn(&str) -> String,
 ) -> String {
-    let endpoint_title = |endpoint: &waml::model::EndpointRef| match endpoint {
-        waml::model::EndpointRef::Lifeline { id } => lifeline_title(id),
-        waml::model::EndpointRef::Outside => "outside".to_string(),
-        waml::model::EndpointRef::LocalGate { gate } => format!("@{gate}"),
-        waml::model::EndpointRef::UseGate {
-            interaction_use,
-            gate,
-        } => {
-            format!("{}@{gate}", interaction_use.0)
+    let source = endpoint_label(&edge.from, lifeline_title);
+    let target = edge
+        .to
+        .as_ref()
+        .map(|endpoint| endpoint_label(endpoint, lifeline_title));
+
+    if edge.kind == waml::model::MessageKind::Reply {
+        let mut label = format!("{source} returns");
+        if let Some(value) = &edge.value {
+            label.push(' ');
+            label.push_str(value);
         }
-    };
-    let head = format!(
-        "{} {} {}",
-        endpoint_title(&edge.from),
-        edge.kind.as_str(),
-        edge.to.as_ref().map(&endpoint_title).unwrap_or_default()
-    );
-    match &edge.value {
-        Some(value) => format!("{head}: {value}"),
-        None => head,
+        if let Some(target) = target {
+            label.push_str(" to ");
+            label.push_str(&target);
+        }
+        return label;
     }
+
+    let mut label = format!("{source} {}", edge.kind.as_str());
+    if let Some(target) = target {
+        label.push(' ');
+        label.push_str(&target);
+    }
+    if let Some(value) = &edge.value {
+        label.push(' ');
+        label.push_str(value);
+    }
+    label
 }
 
 fn behavior_element_view(title: String, kind_label: &str) -> InspectorView {
@@ -650,6 +669,76 @@ mod tests {
     use super::*;
     use crate::load;
     use std::path::Path;
+
+    #[test]
+    fn canonical_sequence_endpoint_labels() {
+        use waml::model::{EndpointRef, InteractionUseId, MessageId, MessageKind, SeqEdge};
+
+        let edge = |from, kind, to, value| SeqEdge {
+            id: MessageId("m0".into()),
+            from,
+            kind,
+            to,
+            value,
+            call_id: None,
+            returns_call: None,
+        };
+        let title = |id: &str| format!("<{id}>");
+        let cases = [
+            (
+                edge(
+                    EndpointRef::Lifeline { id: "caller".into() },
+                    MessageKind::SyncCall,
+                    Some(EndpointRef::Lifeline { id: "callee".into() }),
+                    Some("work()".into()),
+                ),
+                "<caller> calls <callee> work()",
+            ),
+            (
+                edge(
+                    EndpointRef::Outside,
+                    MessageKind::AsyncSignal,
+                    Some(EndpointRef::Lifeline { id: "worker".into() }),
+                    Some("ready".into()),
+                ),
+                "outside signals <worker> ready",
+            ),
+            (
+                edge(
+                    EndpointRef::LocalGate { gate: "entry".into() },
+                    MessageKind::AsyncCall,
+                    Some(EndpointRef::Lifeline { id: "worker".into() }),
+                    None,
+                ),
+                "@entry calls <worker>",
+            ),
+            (
+                edge(
+                    EndpointRef::Lifeline { id: "caller".into() },
+                    MessageKind::AsyncCall,
+                    Some(EndpointRef::UseGate {
+                        interaction_use: InteractionUseId("use0".into()),
+                        gate: "reply".into(),
+                    }),
+                    None,
+                ),
+                "<caller> calls use0@reply",
+            ),
+            (
+                edge(
+                    EndpointRef::Lifeline { id: "callee".into() },
+                    MessageKind::Reply,
+                    Some(EndpointRef::Lifeline { id: "caller".into() }),
+                    Some("result".into()),
+                ),
+                "<callee> returns result to <caller>",
+            ),
+        ];
+
+        for (edge, expected) in cases {
+            assert_eq!(message_label(&edge, &title), expected);
+        }
+    }
 
     fn mini() -> Model {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
