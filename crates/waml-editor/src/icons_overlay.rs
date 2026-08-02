@@ -67,8 +67,12 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
     (
         "TREE PANEL / DOCUMENT TABS",
         &[
-            ie!(PanelLeft, "Caption tree-column toggle"),
+            ie!(FolderTree, "Project tree hierarchy catalog glyph"),
+            ie!(PanelLeftOpen, "Open the project tree"),
+            ie!(PanelLeftClose, "Close the project tree"),
             ie!(PanelRight, "Document-header right-dock toggle"),
+            ie!(PanelRightOpen, "Open the inspector"),
+            ie!(PanelRightClose, "Close the inspector"),
             ie!(ListTree, "Retired tree toggle -- illegible at 18px"),
             ie!(Folder, "Folder / package node"),
             ie!(Funnel, "Filter chip"),
@@ -123,6 +127,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
                 InspectionPanel,
                 "Inspection panel — catalog glyph, no current call site"
             ),
+            ie!(PanelLeft, "Retired static left-dock toggle"),
         ],
     ),
 ];
@@ -278,7 +283,19 @@ mod drift {
     /// code draws them right now: the catalog is add-only (prune deliberately),
     /// so losing a call site must not silently hide a glyph from the reference.
     /// Guard 2 allows exactly these rows to have no `Icon::<Variant>` call site.
-    const UNWIRED_BUT_LISTED: &[Icon] = &[Icon::PinOff, Icon::InspectionPanel, Icon::ListTree];
+    const UNWIRED_BUT_LISTED: &[Icon] = &[
+        Icon::PinOff,
+        Icon::InspectionPanel,
+        Icon::ListTree,
+        Icon::FolderTree,
+        Icon::PanelLeft,
+        // Task 1 creates the glyph catalog before Task 4 wires these controls.
+        // Task 4 must remove them once the corresponding UI call sites exist.
+        Icon::PanelLeftOpen,
+        Icon::PanelLeftClose,
+        Icon::PanelRightOpen,
+        Icon::PanelRightClose,
+    ];
 
     fn table_icons() -> Vec<Icon> {
         ICON_GROUPS

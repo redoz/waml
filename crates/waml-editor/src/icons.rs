@@ -3683,6 +3683,160 @@ script_mod! {
         }
     }
 
+    mod.draw.IconFolderTree = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.8333, s * 0.4167)
+            sdf.arc_to(s * 0.8333, s * 0.3750, s * 0.0417, 1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.2500)
+            sdf.arc_to(s * 0.8333, s * 0.2500, s * 0.0417, 0.0000, -1.5708)
+            sdf.line_to(s * 0.7292, s * 0.2083)
+            sdf.arc_to(s * 0.7292, s * 0.1667, s * 0.0417, 1.5708, 2.4981)
+            sdf.line_to(s * 0.6583, s * 0.1417)
+            sdf.arc_to(s * 0.6250, s * 0.1667, s * 0.0417, -0.6435, -1.5708)
+            sdf.line_to(s * 0.5417, s * 0.1250)
+            sdf.arc_to(s * 0.5417, s * 0.1667, s * 0.0417, -1.5708, -3.1416)
+            sdf.line_to(s * 0.5000, s * 0.3750)
+            sdf.arc_to(s * 0.5417, s * 0.3750, s * 0.0417, 3.1416, 1.5708)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8333, s * 0.8750)
+            sdf.arc_to(s * 0.8333, s * 0.8333, s * 0.0417, 1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7083)
+            sdf.arc_to(s * 0.8333, s * 0.7083, s * 0.0417, 0.0000, -1.5708)
+            sdf.line_to(s * 0.7125, s * 0.6667)
+            sdf.arc_to(s * 0.7130, s * 0.6250, s * 0.0417, 1.5839, 2.6749)
+            sdf.line_to(s * 0.6583, s * 0.6083)
+            sdf.arc_to(s * 0.6201, s * 0.6250, s * 0.0417, -0.4115, -1.5743)
+            sdf.line_to(s * 0.5417, s * 0.5833)
+            sdf.arc_to(s * 0.5417, s * 0.6250, s * 0.0417, -1.5708, -3.1416)
+            sdf.line_to(s * 0.5000, s * 0.8333)
+            sdf.arc_to(s * 0.5417, s * 0.8333, s * 0.0417, 3.1416, 1.5708)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 1.5708)
+            sdf.line_to(s * 0.3333, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1250, s * 0.1250)
+            sdf.line_to(s * 0.1250, s * 0.6667)
+            sdf.arc_to(s * 0.2083, s * 0.6667, s * 0.0833, 3.1416, 1.5708)
+            sdf.line_to(s * 0.3333, s * 0.7500)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    mod.draw.IconPanelLeftOpen = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3750, s * 0.1250)
+            sdf.line_to(s * 0.3750, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.3750)
+            sdf.line_to(s * 0.7083, s * 0.5000)
+            sdf.line_to(s * 0.5833, s * 0.6250)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    mod.draw.IconPanelLeftClose = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3750, s * 0.1250)
+            sdf.line_to(s * 0.3750, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6667, s * 0.6250)
+            sdf.line_to(s * 0.5417, s * 0.5000)
+            sdf.line_to(s * 0.6667, s * 0.3750)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    mod.draw.IconPanelRightOpen = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.1250)
+            sdf.line_to(s * 0.6250, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.4167, s * 0.6250)
+            sdf.line_to(s * 0.2917, s * 0.5000)
+            sdf.line_to(s * 0.4167, s * 0.3750)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    mod.draw.IconPanelRightClose = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.1250)
+            sdf.line_to(s * 0.6250, s * 0.8750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.3750)
+            sdf.line_to(s * 0.4583, s * 0.5000)
+            sdf.line_to(s * 0.3333, s * 0.6250)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3800,6 +3954,11 @@ script_mod! {
         arrow_up_left: mod.draw.IconArrowUpLeft{ color: atlas.accent }
         panel_left: mod.draw.IconPanelLeft{ color: atlas.accent }
         panel_right: mod.draw.IconPanelRight{ color: atlas.accent }
+        folder_tree: mod.draw.IconFolderTree{ color: atlas.accent }
+        panel_left_open: mod.draw.IconPanelLeftOpen{ color: atlas.accent }
+        panel_left_close: mod.draw.IconPanelLeftClose{ color: atlas.accent }
+        panel_right_open: mod.draw.IconPanelRightOpen{ color: atlas.accent }
+        panel_right_close: mod.draw.IconPanelRightClose{ color: atlas.accent }
     }
 }
 
@@ -4031,6 +4190,16 @@ pub struct IconSet {
     pub panel_left: DrawColor,
     #[live]
     pub panel_right: DrawColor,
+    #[live]
+    pub folder_tree: DrawColor,
+    #[live]
+    pub panel_left_open: DrawColor,
+    #[live]
+    pub panel_left_close: DrawColor,
+    #[live]
+    pub panel_right_open: DrawColor,
+    #[live]
+    pub panel_right_close: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -4154,6 +4323,11 @@ impl IconSet {
             Icon::ArrowUpLeft => &mut self.arrow_up_left,
             Icon::PanelLeft => &mut self.panel_left,
             Icon::PanelRight => &mut self.panel_right,
+            Icon::FolderTree => &mut self.folder_tree,
+            Icon::PanelLeftOpen => &mut self.panel_left_open,
+            Icon::PanelLeftClose => &mut self.panel_left_close,
+            Icon::PanelRightOpen => &mut self.panel_right_open,
+            Icon::PanelRightClose => &mut self.panel_right_close,
         }
     }
 
@@ -4284,13 +4458,18 @@ pub enum Icon {
     ArrowUpLeft,
     PanelLeft,
     PanelRight,
+    FolderTree,
+    PanelLeftOpen,
+    PanelLeftClose,
+    PanelRightOpen,
+    PanelRightClose,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 112] = [
+    pub const ALL: [Icon; 117] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4403,6 +4582,11 @@ impl Icon {
         Icon::ArrowUpLeft,
         Icon::PanelLeft,
         Icon::PanelRight,
+        Icon::FolderTree,
+        Icon::PanelLeftOpen,
+        Icon::PanelLeftClose,
+        Icon::PanelRightOpen,
+        Icon::PanelRightClose,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -4521,6 +4705,11 @@ impl Icon {
             Icon::ArrowUpLeft => "arrow-up-left",
             Icon::PanelLeft => "panel-left",
             Icon::PanelRight => "panel-right",
+            Icon::FolderTree => "folder-tree",
+            Icon::PanelLeftOpen => "panel-left-open",
+            Icon::PanelLeftClose => "panel-left-close",
+            Icon::PanelRightOpen => "panel-right-open",
+            Icon::PanelRightClose => "panel-right-close",
         }
     }
 }
@@ -4530,8 +4719,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_112_entries() {
-        assert_eq!(Icon::ALL.len(), 112);
+    fn icon_all_has_117_entries() {
+        assert_eq!(Icon::ALL.len(), 117);
     }
 
     #[test]
@@ -4572,6 +4761,25 @@ mod tests {
     }
 
     #[test]
+    fn dock_action_glyphs_follow_catalog_order_and_lucide_slugs() {
+        assert_eq!(
+            &Icon::ALL[112..],
+            &[
+                Icon::FolderTree,
+                Icon::PanelLeftOpen,
+                Icon::PanelLeftClose,
+                Icon::PanelRightOpen,
+                Icon::PanelRightClose,
+            ]
+        );
+        assert_eq!(Icon::FolderTree.label(), "folder-tree");
+        assert_eq!(Icon::PanelLeftOpen.label(), "panel-left-open");
+        assert_eq!(Icon::PanelLeftClose.label(), "panel-left-close");
+        assert_eq!(Icon::PanelRightOpen.label(), "panel-right-open");
+        assert_eq!(Icon::PanelRightClose.label(), "panel-right-close");
+    }
+
+    #[test]
     fn view_bar_glyphs_present_with_lucide_slugs() {
         assert_eq!(Icon::ZoomIn.label(), "zoom-in");
         assert_eq!(Icon::ZoomOut.label(), "zoom-out");
@@ -4590,7 +4798,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 112);
+        assert_eq!(seen.len(), 117);
     }
 
     #[test]
