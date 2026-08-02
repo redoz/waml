@@ -556,17 +556,12 @@ fn projection(bundle: &[(String, String)]) -> waml::uml::Projection {
 fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
     use waml::source::SourceBundle;
 
-    let source =
-        SourceBundle::try_from_pairs(PARSER_PLATFORM_FIXTURES.iter().map(|(path, text)| {
-            (
-                *path,
-                text.replace(
-                    "Buyer calls Order: `submit()`",
-                    "Buyer calls Order `submit()`",
-                ),
-            )
-        }))
-        .unwrap();
+    let source = SourceBundle::try_from_pairs(
+        PARSER_PLATFORM_FIXTURES
+            .iter()
+            .map(|(path, text)| (*path, *text)),
+    )
+    .unwrap();
     let okf = waml::okf::Bundle::parse(&source).unwrap();
     let projection = waml::analysis::prepare_candidate(source, None, 0)
         .unwrap()

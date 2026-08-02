@@ -20,12 +20,12 @@ description: An interaction that packs a bundle into a link and rebuilds that bu
 - [Native Editor](./../concepts/runtime/native-editor.md) as editor
 
 ## Messages
-- author calls tool: `create a link for this bundle`
-- tool calls link: `compress and encode the documents`
-- link replies tool: `address with the bundle in its fragment`
-- tool replies author: `share link`
-- author sends browser: `open the share link`
-- browser calls editor: `start with the fragment of the address`
-- editor calls link: `decode the fragment`
-- link replies editor: `the same documents`
-- editor replies author: `the bundle in the editor`
+- author calls tool `create a link for this bundle`
+- tool calls link `compress and encode the documents`
+- link returns `address with the bundle in its fragment` to tool
+- tool returns `share link` to author
+- author signals browser `open the share link`
+- browser calls editor `start with the fragment of the address`
+- editor calls link `decode the fragment`
+- link returns `the same documents` to editor
+- editor returns `the bundle in the editor` to author

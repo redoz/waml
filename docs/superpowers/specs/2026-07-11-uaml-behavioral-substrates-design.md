@@ -292,14 +292,15 @@ the message kind** and fixes the line and arrowhead.
 
 | verb | UML message | renders |
 |---|---|---|
-| `calls` | synchronous | solid line, filled ▶ |
-| `sends` | asynchronous | solid line, open → |
-| `replies` | reply / return | dashed line, open → |
+| `calls` | synchronous or asynchronous with `async` | solid line, filled or open ▶ |
+| `signals` | asynchronous signal | solid line, open → |
+| `returns` | reply / return | dashed line, open → |
 | `creates` | create | dashed → to new lifeline head |
 | `destroys` | delete | → ending in ✕ |
 
 Sender and Receiver are lifeline aliases or links (bare references); the
-**signature** is an expression and is backticked after the `:`.
+**signature** is an expression and is backticked after the receiver. A return
+puts its optional value after `returns` and its receiver after `to`.
 
 **Combined fragments** (`alt`, `opt`, `loop`, `par`) are keyword bullets that
 **own operands**. Each operand is a header bullet — `when <guard>` (a guarded
@@ -311,16 +312,16 @@ question.
 
 ```markdown
 ## Messages
-- Customer calls order: `place(items)`
+- Customer calls order `place(items)`
 - alt
   - when `paid`
-    - order calls wh: `ship()`
+    - order calls wh `ship()`
   - else
-    - order sends Customer: `paymentFailed()`
-- order replies Customer: `confirmation`
+    - order signals Customer `paymentFailed()`
+- order returns `confirmation` to Customer
 ```
 
-Execution/activation bars derive automatically from `calls`/`replies` nesting —
+Execution/activation bars derive automatically from `calls`/`returns` nesting —
 no syntax. Self, found, and lost messages are deferred.
 
 ## Coverage summary

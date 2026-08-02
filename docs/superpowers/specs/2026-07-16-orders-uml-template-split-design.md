@@ -90,15 +90,15 @@ describes: [Order](./order.md)
 - [PricingService](./pricing-service.md) as pricing
 
 ## Messages
-- Customer calls order: `place(items)`
-- order calls pricing: `calculateTotal(items)`
-- pricing replies order: `total`
+- Customer calls order `place(items)`
+- order calls pricing `calculateTotal(items)`
+- pricing returns `total` to order
 - alt
   - when `paymentAuthorized`
-    - order calls order: `recordOrder()`
-    - order replies Customer: `confirmation`
+    - order calls order `recordOrder()`
+    - order returns `confirmation` to Customer
   - else
-    - order sends Customer: `paymentFailed()`
+    - order signals Customer `paymentFailed()`
 ```
 
 `customer.md` in this folder is a `uml.Actor` (the person interacting with

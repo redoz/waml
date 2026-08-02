@@ -12,11 +12,15 @@ title: Broken sequence
 - alt
    - when `bad-indent`
   - when `ok`
-    - target calls nowhere
+    - target calls
     - opt
       - else
-        - target sends target
+        - target returns to
 - par
+  - when `not-a-branch`
+- ref [Target](./target.md) as target-use
+  - bind target target
+- target signals target
 
 ## Relationships
 - depends [Target](./target.md)

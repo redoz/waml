@@ -11,18 +11,18 @@ title: Nested Exchange
 - [D](./d.md) as d
 
 ## Messages
-- a calls b: `start()`
-- b calls c: `work()`
-- c replies b: `done`
-- b replies a: `ok`
-- a sends b: `notify()`
+- a calls b `start()`
+- b calls c `work()`
+- c returns `done` to b
+- b returns `ok` to a
+- a signals b `notify()`
 - a creates d
 - alt
   - when `ready`
-    - b calls d: `init()`
+    - b calls d `init()`
     - opt
       - when `extra`
-        - d replies b: `ack`
+        - d returns `ack` to b
   - else
-    - a calls b: `retry()`
+    - a calls b `retry()`
 - a destroys d

@@ -87,8 +87,8 @@ fn flow_fixed_slots_project_every_current_node_and_transition_form_losslessly() 
 }
 
 #[test]
-fn sequence_nested_slots_project_supported_forms_and_diagnose_deferred_forms() {
-    let authored = "---\r\ntype: uml.Sequence\r\ntitle: Checkout\r\n---\r\n# Checkout\r\n\r\n## Lifelines\r\n- [Buyer](./buyer.md) as buyer\r\n- [Order](./order.md)\r\n\r\n## Messages\r\n- buyer calls Order: `place(é)`\r\n- alt\r\n  - when `valid`\r\n    - Order replies buyer: `ok`\r\n    - loop\r\n      - when `again`\r\n        - buyer sends Order\r\n  - else\r\n    - buyer destroys Order\r\n- par\r\n- buyer calls buyer\r\n- -> Order: `found`\r\n";
+fn sequence_nested_slots_project_current_forms_losslessly() {
+    let authored = "---\r\ntype: uml.Sequence\r\ntitle: Checkout\r\n---\r\n# Checkout\r\n\r\n## Lifelines\r\n- [Buyer](./buyer.md) as buyer\r\n- [Order](./order.md)\r\n\r\n## Messages\r\n- buyer calls Order `place(é)`\r\n- alt\r\n  - when `valid`\r\n    - Order returns `ok` to buyer\r\n    - loop\r\n      - when `again`\r\n        - buyer signals Order\r\n  - else\r\n    - buyer destroys Order\r\n- par\r\n  - branch `self`\r\n    - buyer calls buyer\r\n  - branch `outside`\r\n    - outside signals Order `found`\r\n";
     let analysis = analyze([
         ("sequence.md", authored),
         ("buyer.md", "---\ntype: uml.Actor\n---\n# Buyer\n"),
@@ -96,8 +96,8 @@ fn sequence_nested_slots_project_supported_forms_and_diagnose_deferred_forms() {
     ]);
     let syntax = root(&analysis, "sequence.md");
     assert_eq!(count::<uml::LifelineSyntax>(syntax.clone()), 2);
-    assert_eq!(count::<uml::MessageSyntax>(syntax.clone()), 2);
-    assert_eq!(count::<uml::SequenceOperandSyntax>(syntax.clone()), 3);
+    assert_eq!(count::<uml::MessageSyntax>(syntax.clone()), 6);
+    assert_eq!(count::<uml::SequenceOperandSyntax>(syntax.clone()), 5);
     assert_eq!(count::<uml::MessagesBlockSyntax>(syntax.clone()), 1);
     assert_eq!(written(&analysis, "sequence.md"), authored);
     let sequence = analysis
@@ -106,7 +106,7 @@ fn sequence_nested_slots_project_supported_forms_and_diagnose_deferred_forms() {
         .iter()
         .find(|s| s.key == "sequence")
         .unwrap();
-    assert_eq!(sequence.edges.len(), 2);
+    assert_eq!(sequence.edges.len(), 6);
     let id = analysis
         .syntax
         .catalog()
@@ -123,7 +123,7 @@ fn sequence_nested_slots_project_supported_forms_and_diagnose_deferred_forms() {
             diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::UnsupportedSequenceForm
         })
         .count();
-    assert_eq!(unsupported, 5);
+    assert_eq!(unsupported, 0);
 }
 
 #[test]
@@ -300,32 +300,84 @@ fn behavior_productions_expose_direct_fixed_slots() {
 }
 
 #[test]
-fn every_deferred_sequence_form_has_unsupported_code_and_exact_range() {
-    let authored = "---\ntype: uml.Sequence\n---\n# Deferred\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- par\n- order calls order: `old`\n- -> order: `found`\n- order sends ->\n- gate entry -> order\n- coregion order, Order\n";
+fn self_par_outside_gate_and_ref_forms_are_accepted() {
+    let authored = "---\ntype: uml.Sequence\n---\n# Current\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Gates\n- entry\n\n## Messages\n- ref [Use](./use.md) as used\n  - bind order to order\n- par\n  - branch `self`\n    - order calls order `work()`\n  - branch `outside`\n    - outside signals order `found`\n  - branch `gate`\n    - @entry signals used@exit `through`\n";
     let analysis = analyze([
-        ("deferred.md", authored),
+        ("current.md", authored),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+        (
+            "use.md",
+            "---\ntype: uml.Sequence\n---\n# Use\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Gates\n- exit\n\n## Messages\n- order signals @exit `ready`\n",
+        ),
     ]);
+    let syntax = root(&analysis, "current.md");
+    assert_eq!(
+        count::<uml::syntax::InteractionUseSyntax>(syntax.clone()),
+        1
+    );
+    assert_eq!(count::<uml::syntax::BindingSyntax>(syntax.clone()), 1);
+    assert_eq!(count::<uml::SequenceFragmentSyntax>(syntax.clone()), 1);
+    assert_eq!(count::<uml::SequenceOperandSyntax>(syntax.clone()), 3);
+    assert_eq!(count::<uml::MessageSyntax>(syntax), 3);
+    assert_eq!(written(&analysis, "current.md"), authored);
     let id = analysis
         .syntax
         .catalog()
-        .id_for_path(&waml::source::BundlePath::parse("deferred.md").unwrap())
+        .id_for_path(&waml::source::BundlePath::parse("current.md").unwrap())
         .unwrap();
-    let diagnostics = analysis.syntax.document(id).unwrap().syntax().diagnostics();
-    let unsupported = diagnostics
+    assert!(analysis
+        .syntax
+        .document(id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
+        .is_empty());
+}
+
+#[test]
+fn deferred_and_removed_sequence_spellings_have_exact_unsupported_ranges() {
+    let authored = "---\ntype: uml.Sequence\n---\n# Removed\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- strict\n- seq\n- ignore\n- consider\n- coregion order, Order\n- order calls order: `old-call`\n- order replies order: `old-return`\n- order sends order: `old-signal`\n- -> order: `found`\n- order sends ->\n- gate entry -> order\n- order signals order `current`\n";
+    let analysis = analyze([
+        ("removed.md", authored),
+        ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+    ]);
+    let syntax = root(&analysis, "removed.md");
+    let messages = typed::<uml::MessageSyntax>(syntax);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].value_token().unwrap().text().write_to_string(),
+        "`current`"
+    );
+    assert_eq!(written(&analysis, "removed.md"), authored);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("removed.md").unwrap())
+        .unwrap();
+    let unsupported = analysis
+        .syntax
+        .document(id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
         .iter()
         .filter(|diagnostic| {
             diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::UnsupportedSequenceForm
         })
         .collect::<Vec<_>>();
-    assert_eq!(unsupported.len(), 6);
+    assert_eq!(unsupported.len(), 11);
     for spelling in [
-        "- par",
-        "- order calls order: `old`",
+        "- strict",
+        "- seq",
+        "- ignore",
+        "- consider",
+        "- coregion order, Order",
+        "- order calls order: `old-call`",
+        "- order replies order: `old-return`",
+        "- order sends order: `old-signal`",
         "- -> order: `found`",
         "- order sends ->",
         "- gate entry -> order",
-        "- coregion order, Order",
     ] {
         let start = authored.find(spelling).unwrap();
         assert!(unsupported.iter().any(|diagnostic| {
@@ -494,7 +546,7 @@ fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() 
     assert_eq!(fragments[0].syntax().children().count(), 4);
     let operands = typed::<uml::SequenceOperandSyntax>(sequence_root);
     for operand in &operands {
-        assert_eq!(operand.syntax().children().count(), 5);
+        assert_eq!(operand.syntax().children().count(), 6);
         assert_eq!(
             operand
                 .syntax()
@@ -521,7 +573,7 @@ fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() 
     ));
     assert!(matches!(
         declared_sequence.operands[0].spec,
-        uml::DeclaredField::Absent
+        uml::DeclaredField::Valid { .. }
     ));
 }
 

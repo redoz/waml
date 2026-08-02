@@ -19,15 +19,15 @@ description: An interaction that evaluates authored content and presents its der
 - [Layout Solving](./../concepts/workflows/layout-solving.md) as solver
 
 ## Messages
-- author calls editor: `supply authored content`
-- editor calls validation: `evaluate bundle`
-- validation replies editor: `diagnostics`
+- author calls editor `supply authored content`
+- editor calls validation `evaluate bundle`
+- validation returns `diagnostics` to editor
 - alt
   - when `no error`
-    - editor calls projection: `derive current model and views`
-    - projection replies editor: `model and views`
-    - editor calls solver: `solve geometry for the active view`
-    - solver replies editor: `view geometry`
-    - editor replies author: `view and diagnostics`
+    - editor calls projection `derive current model and views`
+    - projection returns `model and views` to editor
+    - editor calls solver `solve geometry for the active view`
+    - solver returns `view geometry` to editor
+    - editor returns `view and diagnostics` to author
   - else
-    - editor replies author: `previous view and diagnostics`
+    - editor returns `previous view and diagnostics` to author

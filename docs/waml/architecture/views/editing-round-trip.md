@@ -21,16 +21,16 @@ description: An interaction that serializes a semantic edit and returns its rebu
 - [Edit History](./../concepts/workflows/edit-history.md) as history
 
 ## Messages
-- author calls editor: `perform semantic edit`
-- editor calls bundle: `update the affected authored documents`
-- editor calls serialization: `canonicalize the changed documents`
-- serialization replies editor: `stable supported document form`
-- editor calls projection: `derive current model and views`
+- author calls editor `perform semantic edit`
+- editor calls bundle `update the affected authored documents`
+- editor calls serialization `canonicalize the changed documents`
+- serialization returns `stable supported document form` to editor
+- editor calls projection `derive current model and views`
 - alt
   - when `bundle analyzes`
-    - projection replies editor: `model and views`
-    - editor calls history: `record the reverse edit`
-    - editor replies author: `updated view`
+    - projection returns `model and views` to editor
+    - editor calls history `record the reverse edit`
+    - editor returns `updated view` to author
   - else
-    - editor calls bundle: `restore the previous documents`
-    - editor replies author: `previous view and diagnostics`
+    - editor calls bundle `restore the previous documents`
+    - editor returns `previous view and diagnostics` to author
