@@ -67,6 +67,7 @@ function prune(root, referenced, label) {
   let kept = 0;
   let kickedBytes = 0;
   let kickedCount = 0;
+  const before = new Set(walk(root).map((file) => posix(relative(root, file))));
   for (const file of walk(root)) {
     const rel = posix(relative(root, file));
     // Only fonts are pruned: the same trees carry icons and shaders whose
@@ -88,15 +89,27 @@ function prune(root, referenced, label) {
     if (readdirSync(dir).length === 0) rmdirSync(dir);
   }
 
-  // A referenced font that is not in the artifact means the app will 404 at
-  // runtime. Catch it here, where the log is readable, not in a browser console.
+  // A font this script deleted while the source still names it would 404 at
+  // runtime. Catch it here, where the log is readable, not in a browser
+  // console.
   const present = new Set(walk(root).map((file) => posix(relative(root, file))));
-  const missing = [...referenced].filter((path) => !present.has(path));
-  if (missing.length > 0) {
+  const deleted = [...referenced].filter((path) => before.has(path) && !present.has(path));
+  if (deleted.length > 0) {
     console.error(
-      `prune-web-fonts: ${label}: referenced fonts missing from artifact:\n  ${missing.join("\n  ")}`,
+      `prune-web-fonts: ${label}: pruned fonts the source still references:\n  ${deleted.join("\n  ")}`,
     );
     process.exit(1);
+  }
+
+  // Referenced but never in the artifact is somebody else's decision, not a
+  // pruning bug: `--no-threads` implies cargo-makepad's `--small-fonts`, which
+  // drops the CJK and emoji faces makepad's own DSL names. Say so and carry on.
+  const absent = [...referenced].filter((path) => !before.has(path));
+  if (absent.length > 0) {
+    console.log(
+      `prune-web-fonts: ${label}: ${absent.length} referenced font(s) were not in the ` +
+        `artifact to begin with (expected under --small-fonts): ${absent.join(", ")}`,
+    );
   }
 
   const mb = (n) => (n / 1024 / 1024).toFixed(1);

@@ -37,6 +37,25 @@ cargo makepad wasm build -p waml-editor --release --no-threads
 `scripts/inject-runtime-shell.mjs` over the generated artifact. `cargo-makepad`
 must be installed at the same makepad rev as `crates/waml-editor/Cargo.toml`.
 
+## Export a site
+
+A `waml` binary built with `--features embed-web` carries the whole web editor
+and can write a self-contained site for any model — the editor plus that
+model's `bundle.waml`, with no server behind it:
+
+```bash
+waml export site docs/waml --out site
+python -m http.server --directory site
+```
+
+Open the served page and the editor boots that bundle. The embedded
+`bundle.waml` is immutable — nothing writes back to it — but edits are not
+lost: the first one moves the whole model into the page's `#w1.` share URL, so
+a refresh or a copied link reopens the edited version, and **Export WAML
+bundle…** in the burger menu downloads the edited source as one `.waml` file.
+`--out` defaults to `./site` and refuses a non-empty directory unless you pass
+`--force`.
+
 ## License
 
 [Mozilla Public License 2.0](LICENSE) — © 2026 Patrik Husfloen (redoz).
