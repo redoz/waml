@@ -1,12 +1,13 @@
 //! Sequence-diagram layout: lifeline columns, time rows, message geometry,
-//! activation bars derived from the calls/replies stack, and combined
+//! activation bars derived from correlated call/reply identities, and combined
 //! fragment frames with operand dividers/guards (design spec §3.1-§3.6).
 
 use super::sizing::{self, Font};
 use super::{Rect, Size, SizeMap};
 use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::model::{
-    EndpointRef, FragmentKind, MessageKind, OperandSpec, SeqChild, SeqEdge, SeqNode, SequenceDoc,
+    EndpointRef, FragmentKind, MessageId, MessageKind, OperandSpec, SeqChild, SeqEdge, SeqNode,
+    SequenceDoc,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -77,6 +78,9 @@ pub struct SolvedActivation {
 pub struct SolvedMessage {
     pub id: String,
     pub verb: MessageKind,
+    pub from: EndpointRef,
+    pub to: EndpointRef,
+    pub returns_call: Option<MessageId>,
     pub from_x: f64,
     pub to_x: f64,
     pub y: f64,
@@ -175,23 +179,17 @@ pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMa
 /// with a diagnostic rather than risking the stack (and `depth`'s own range).
 const MAX_FRAGMENT_DEPTH: u8 = 32;
 
-struct ActiveBar {
-    depth: u8,
-    start_y: f64,
-}
-
 struct WalkState<'a> {
     doc_key: &'a str,
     lifeline_x: &'a BTreeMap<&'a str, f64>,
-    lifeline_ids: &'a BTreeSet<&'a str>,
     edges_by_id: &'a BTreeMap<&'a str, &'a SeqEdge>,
     nodes_by_id: &'a BTreeMap<&'a str, &'a SeqNode>,
     sizes: &'a SizeMap,
     cfg: &'a InteractionConfig,
+    frame_left: f64,
+    frame_right: f64,
     y: f64,
-    stacks: BTreeMap<String, Vec<ActiveBar>>,
     messages: Vec<SolvedMessage>,
-    activations: Vec<SolvedActivation>,
     fragments: Vec<SolvedFragment>,
     created_at: BTreeMap<String, f64>,
     destroyed_at: BTreeMap<String, f64>,
@@ -237,32 +235,36 @@ impl<'a> WalkState<'a> {
 
     fn walk_message(&mut self, edge_id: &str) -> Option<(f64, f64)> {
         let edge = self.edges_by_id.get(edge_id).copied()?;
-        let (Some(from), Some(to)) = (
-            endpoint_lifeline(&edge.from),
-            edge.to.as_ref().and_then(endpoint_lifeline),
-        ) else {
+        let Some(to) = edge.to.as_ref() else {
             return None;
         };
-        if !self.lifeline_ids.contains(from) || !self.lifeline_ids.contains(to) {
+        if matches!(edge.from, EndpointRef::Outside) && matches!(to, EndpointRef::Outside) {
             self.diagnostics.push(Diagnostic::new(
-                DiagCode::UnknownLifelineHandle,
-                format!(
-                    "message '{}' references unknown lifeline handle ('{}' or '{}')",
-                    edge.id.0, from, to
-                ),
+                DiagCode::InvalidSequenceEndpoint,
+                format!("message '{}' cannot connect outside to outside", edge.id.0),
                 self.doc_key.to_string(),
                 0,
             ));
             return None;
         }
-        self.involved.insert(from.to_owned());
-        self.involved.insert(to.to_owned());
 
-        let from_x = self.lifeline_x[from];
-        let to_x = self.lifeline_x[to];
+        let from_lifeline_x = self.lifeline_endpoint_x(&edge.from, &edge.id)?;
+        let to_lifeline_x = self.lifeline_endpoint_x(to, &edge.id)?;
+        let from_x = self.endpoint_x(&edge.from, to_lifeline_x)?;
+        let to_x = self.endpoint_x(to, from_lifeline_x)?;
+        if let Some(from) = endpoint_lifeline(&edge.from) {
+            self.involved.insert(from.to_owned());
+        }
+        if let Some(to) = endpoint_lifeline(to) {
+            self.involved.insert(to.to_owned());
+        }
         let row_h = self.row_h_for_message(edge_id);
 
-        if from == to {
+        let is_self = matches!(
+            (&edge.from, to),
+            (EndpointRef::Lifeline { id: from }, EndpointRef::Lifeline { id: to }) if from == to
+        );
+        if is_self {
             // Self-message: a loop occupying two rows (design spec §3.4).
             let y = self.y;
             let rect = Rect {
@@ -274,6 +276,9 @@ impl<'a> WalkState<'a> {
             self.messages.push(SolvedMessage {
                 id: edge.id.0.clone(),
                 verb: edge.kind,
+                from: edge.from.clone(),
+                to: to.clone(),
+                returns_call: edge.returns_call.clone(),
                 from_x,
                 to_x,
                 y,
@@ -286,54 +291,28 @@ impl<'a> WalkState<'a> {
 
         let y = self.y;
         match edge.kind {
-            MessageKind::SyncCall | MessageKind::AsyncCall => {
-                let stack = self.stacks.entry(to.to_owned()).or_default();
-                let depth = stack.len() as u8;
-                stack.push(ActiveBar { depth, start_y: y });
-            }
-            MessageKind::Reply => {
-                let popped = self.stacks.get_mut(from).and_then(|s| s.pop());
-                match popped {
-                    Some(bar) => {
-                        // The bar STRADDLES the stem it belongs to (design spec
-                        // §3.3): its centre, not its left edge, sits on the
-                        // lifeline (offset right by the nesting step).
-                        let x = self.lifeline_x[from] + bar.depth as f64 * self.cfg.nesting_step
-                            - self.cfg.bar_width * 0.5;
-                        self.activations.push(SolvedActivation {
-                            lifeline: from.to_owned(),
-                            rect: Rect {
-                                x,
-                                y: bar.start_y,
-                                w: self.cfg.bar_width,
-                                h: y - bar.start_y,
-                            },
-                            depth: bar.depth,
-                            unclosed: false,
-                        });
-                    }
-                    None => {
-                        self.diagnostics.push(Diagnostic::new(
-                            DiagCode::UnmatchedReturn,
-                            format!("return '{}' from '{}' has no open call", edge.id.0, from),
-                            self.doc_key.to_string(),
-                            0,
-                        ));
-                    }
+            MessageKind::SyncCall
+            | MessageKind::AsyncCall
+            | MessageKind::Reply
+            | MessageKind::AsyncSignal => {}
+            MessageKind::Create => {
+                if let Some(to) = endpoint_lifeline(to) {
+                    self.created_at.insert(to.to_owned(), y);
                 }
             }
-            MessageKind::AsyncSignal => {}
-            MessageKind::Create => {
-                self.created_at.insert(to.to_owned(), y);
-            }
             MessageKind::Delete => {
-                self.destroyed_at.insert(to.to_owned(), y);
+                if let Some(to) = endpoint_lifeline(to) {
+                    self.destroyed_at.insert(to.to_owned(), y);
+                }
             }
         }
 
         self.messages.push(SolvedMessage {
             id: edge.id.0.clone(),
             verb: edge.kind,
+            from: edge.from.clone(),
+            to: to.clone(),
+            returns_call: edge.returns_call.clone(),
             from_x,
             to_x,
             y,
@@ -342,6 +321,44 @@ impl<'a> WalkState<'a> {
         });
         self.y += row_h;
         Some((from_x.min(to_x), from_x.max(to_x)))
+    }
+
+    fn lifeline_endpoint_x(
+        &mut self,
+        endpoint: &EndpointRef,
+        message: &MessageId,
+    ) -> Option<Option<f64>> {
+        let EndpointRef::Lifeline { id } = endpoint else {
+            return Some(None);
+        };
+        let Some(&x) = self.lifeline_x.get(id.as_str()) else {
+            self.diagnostics.push(Diagnostic::new(
+                DiagCode::UnknownLifelineHandle,
+                format!(
+                    "message '{}' references unknown lifeline handle '{}'",
+                    message.0, id
+                ),
+                self.doc_key.to_string(),
+                0,
+            ));
+            return None;
+        };
+        Some(Some(x))
+    }
+
+    fn endpoint_x(&self, endpoint: &EndpointRef, peer_x: Option<f64>) -> Option<f64> {
+        match endpoint {
+            EndpointRef::Lifeline { id } => self.lifeline_x.get(id.as_str()).copied(),
+            EndpointRef::Outside | EndpointRef::LocalGate { .. } => peer_x.map(|peer_x| {
+                let midpoint = (self.frame_left + self.frame_right) * 0.5;
+                if peer_x <= midpoint {
+                    self.frame_left
+                } else {
+                    self.frame_right
+                }
+            }),
+            EndpointRef::UseGate { .. } => None,
+        }
     }
 
     fn label_rect(&self, edge_id: &str, from_x: f64, to_x: f64, y: f64) -> Option<Rect> {
@@ -494,6 +511,91 @@ impl<'a> WalkState<'a> {
     }
 }
 
+fn derive_activations(
+    doc_key: &str,
+    edges_by_id: &BTreeMap<&str, &SeqEdge>,
+    messages: &[SolvedMessage],
+    lifeline_x: &BTreeMap<&str, f64>,
+    bottom: f64,
+    cfg: &InteractionConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<SolvedActivation> {
+    let rows_by_id: BTreeMap<&str, &SolvedMessage> = messages
+        .iter()
+        .map(|message| (message.id.as_str(), message))
+        .collect();
+    let mut replies_by_call: BTreeMap<&str, &SolvedMessage> = BTreeMap::new();
+
+    for reply in messages
+        .iter()
+        .filter(|message| message.verb == MessageKind::Reply)
+    {
+        let Some(call_id) = reply.returns_call.as_ref() else {
+            diagnostics.push(Diagnostic::new(
+                DiagCode::UnmatchedReturn,
+                format!("return '{}' has no correlated call", reply.id),
+                doc_key.to_string(),
+                0,
+            ));
+            continue;
+        };
+        let valid_call = edges_by_id.get(call_id.0.as_str()).is_some_and(|call| {
+            matches!(call.kind, MessageKind::SyncCall | MessageKind::AsyncCall)
+                && rows_by_id.contains_key(call_id.0.as_str())
+        });
+        if !valid_call {
+            diagnostics.push(Diagnostic::new(
+                DiagCode::UnmatchedReturn,
+                format!(
+                    "return '{}' references unavailable call '{}'",
+                    reply.id, call_id.0
+                ),
+                doc_key.to_string(),
+                0,
+            ));
+            continue;
+        }
+        replies_by_call.entry(call_id.0.as_str()).or_insert(reply);
+    }
+
+    let mut active_by_lifeline: BTreeMap<String, Vec<(u8, f64)>> = BTreeMap::new();
+    let mut activations = Vec::new();
+    for call in messages
+        .iter()
+        .filter(|message| matches!(message.verb, MessageKind::SyncCall | MessageKind::AsyncCall))
+    {
+        let EndpointRef::Lifeline { id: lifeline } = &call.to else {
+            continue;
+        };
+        let Some(&stem_x) = lifeline_x.get(lifeline.as_str()) else {
+            continue;
+        };
+        let reply_y = replies_by_call
+            .get(call.id.as_str())
+            .map(|reply| reply.y)
+            .filter(|reply_y| *reply_y >= call.y);
+        let end_y = reply_y.unwrap_or(bottom);
+        let active = active_by_lifeline.entry(lifeline.clone()).or_default();
+        active.retain(|(_, active_end)| *active_end > call.y);
+        let depth = (0..=u8::MAX)
+            .find(|candidate| active.iter().all(|(depth, _)| depth != candidate))
+            .unwrap_or(u8::MAX);
+        active.push((depth, end_y));
+        activations.push(SolvedActivation {
+            lifeline: lifeline.clone(),
+            rect: Rect {
+                x: stem_x + depth as f64 * cfg.nesting_step - cfg.bar_width * 0.5,
+                y: call.y,
+                w: cfg.bar_width,
+                h: end_y - call.y,
+            },
+            depth,
+            unclosed: reply_y.is_none(),
+        });
+    }
+    activations
+}
+
 /// Solve one `SequenceDoc` into columns, rows, messages, activation bars, and
 /// fragment frames (design spec §3.1-§3.6).
 pub fn solve_interaction(
@@ -506,14 +608,6 @@ pub fn solve_interaction(
         .iter()
         .filter(|n| matches!(n, SeqNode::Lifeline { .. }))
         .collect();
-    let lifeline_ids: BTreeSet<&str> = lifeline_nodes
-        .iter()
-        .map(|n| match n {
-            SeqNode::Lifeline { id, .. } => id.as_str(),
-            _ => unreachable!(),
-        })
-        .collect();
-
     let mut lifeline_x: BTreeMap<&str, f64> = BTreeMap::new();
     let mut cursor = 0.0;
     for n in &lifeline_nodes {
@@ -527,6 +621,19 @@ pub fn solve_interaction(
         lifeline_x.insert(id.as_str(), cursor + w / 2.0);
         cursor += w + cfg.column_gap;
     }
+    let total_w = lifeline_nodes
+        .last()
+        .and_then(|n| match n {
+            SeqNode::Lifeline { id, .. } => {
+                let w = sizes
+                    .get(&lifeline_size_key(id))
+                    .map(|s| s.w)
+                    .unwrap_or(0.0);
+                Some(lifeline_x[id.as_str()] + w / 2.0)
+            }
+            _ => None,
+        })
+        .unwrap_or(0.0);
 
     let edges_by_id: BTreeMap<&str, &SeqEdge> =
         doc.edges.iter().map(|e| (e.id.0.as_str(), e)).collect();
@@ -562,15 +669,14 @@ pub fn solve_interaction(
     let mut state = WalkState {
         doc_key: doc.key.as_str(),
         lifeline_x: &lifeline_x,
-        lifeline_ids: &lifeline_ids,
         edges_by_id: &edges_by_id,
         nodes_by_id: &nodes_by_id,
         sizes,
         cfg,
+        frame_left: 0.0,
+        frame_right: total_w,
         y: first_row_y,
-        stacks: BTreeMap::new(),
         messages: Vec::new(),
-        activations: Vec::new(),
         fragments: Vec::new(),
         created_at: BTreeMap::new(),
         destroyed_at: BTreeMap::new(),
@@ -580,26 +686,15 @@ pub fn solve_interaction(
     let _ = state.walk_items(&doc.items, 0);
 
     let bottom = state.y;
-    // Any activation still open at the end closes at the interaction bottom,
-    // flagged unclosed (design spec §3.3).
-    for (lifeline, stack) in state.stacks.iter() {
-        for bar in stack {
-            // Centred on the stem, exactly as a closed bar is.
-            let x = lifeline_x[lifeline.as_str()] + bar.depth as f64 * cfg.nesting_step
-                - cfg.bar_width * 0.5;
-            state.activations.push(SolvedActivation {
-                lifeline: lifeline.clone(),
-                rect: Rect {
-                    x,
-                    y: bar.start_y,
-                    w: cfg.bar_width,
-                    h: bottom - bar.start_y,
-                },
-                depth: bar.depth,
-                unclosed: true,
-            });
-        }
-    }
+    let activations = derive_activations(
+        doc.key.as_str(),
+        &edges_by_id,
+        &state.messages,
+        &lifeline_x,
+        bottom,
+        cfg,
+        &mut state.diagnostics,
+    );
 
     for n in &lifeline_nodes {
         let SeqNode::Lifeline { id, .. } = n else {
@@ -644,23 +739,9 @@ pub fn solve_interaction(
         });
     }
 
-    let total_w = lifeline_nodes
-        .last()
-        .and_then(|n| match n {
-            SeqNode::Lifeline { id, .. } => {
-                let w = sizes
-                    .get(&lifeline_size_key(id))
-                    .map(|s| s.w)
-                    .unwrap_or(0.0);
-                Some(lifeline_x[id.as_str()] + w / 2.0)
-            }
-            _ => None,
-        })
-        .unwrap_or(0.0);
-
     let solved = SolvedInteraction {
         lifelines,
-        activations: state.activations,
+        activations,
         messages: state.messages,
         fragments: state.fragments,
         size: Size {
@@ -669,6 +750,35 @@ pub fn solve_interaction(
         },
     };
     (solved, state.diagnostics)
+}
+
+fn canonical_message_kind(kind: MessageKind) -> &'static str {
+    match kind {
+        MessageKind::SyncCall => "syncCall",
+        MessageKind::AsyncCall => "asyncCall",
+        MessageKind::AsyncSignal => "asyncSignal",
+        MessageKind::Reply => "reply",
+        MessageKind::Create => "create",
+        MessageKind::Delete => "delete",
+    }
+}
+
+fn endpoint_label(endpoint: &EndpointRef, x: f64, frame_right: f64) -> String {
+    match endpoint {
+        EndpointRef::Lifeline { id } => format!("lifeline:{id}"),
+        EndpointRef::Outside => {
+            if x <= frame_right * 0.5 {
+                "outside-left".to_string()
+            } else {
+                "outside-right".to_string()
+            }
+        }
+        EndpointRef::LocalGate { gate } => format!("gate:{gate}"),
+        EndpointRef::UseGate {
+            interaction_use,
+            gate,
+        } => format!("use:{}@{gate}", interaction_use.0),
+    }
 }
 
 /// Deterministic dump for goldens, mirroring `solve::pretty` (see the format
@@ -702,14 +812,24 @@ pub fn pretty_interaction(solved: &SolvedInteraction) -> String {
         ));
     }
     for m in &solved.messages {
+        let from = endpoint_label(&m.from, m.from_x, solved.size.w);
+        let to = endpoint_label(&m.to, m.to_x, solved.size.w);
+        let returns = m
+            .returns_call
+            .as_ref()
+            .map(|id| format!(" returns={}", id.0))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "message {} {} {:.0}->{:.0} y={:.0}{}\n",
+            "message {} {} {}@{:.0}->{}@{:.0} y={:.0}{}{}\n",
             m.id,
-            m.verb.as_str(),
+            canonical_message_kind(m.verb),
+            from,
             m.from_x,
+            to,
             m.to_x,
             m.y,
-            if m.self_loop.is_some() { " self" } else { "" }
+            if m.self_loop.is_some() { " self" } else { "" },
+            returns,
         ));
     }
     for f in &solved.fragments {

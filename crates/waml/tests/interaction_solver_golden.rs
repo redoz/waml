@@ -9,11 +9,27 @@ use waml::solve::interaction::{
 use waml::source::SourceBundle;
 
 fn edge(id: &str, from: &str, kind: MessageKind, to: &str, value: Option<&str>) -> SeqEdge {
+    typed_edge(
+        id,
+        EndpointRef::Lifeline { id: from.into() },
+        kind,
+        EndpointRef::Lifeline { id: to.into() },
+        value,
+    )
+}
+
+fn typed_edge(
+    id: &str,
+    from: EndpointRef,
+    kind: MessageKind,
+    to: EndpointRef,
+    value: Option<&str>,
+) -> SeqEdge {
     SeqEdge {
         id: MessageId(id.into()),
-        from: EndpointRef::Lifeline { id: from.into() },
+        from,
         kind,
-        to: Some(EndpointRef::Lifeline { id: to.into() }),
+        to: Some(to),
         value: value.map(str::to_string),
         call_id: None,
         returns_call: None,
@@ -209,6 +225,146 @@ fn self_message_occupies_two_rows() {
     let m1 = &solved.messages[1];
     assert!(m0.self_loop.is_some());
     assert!(m1.y >= m0.y + 2.0 * cfg.row_gap - 0.5);
+}
+
+#[test]
+fn correlated_returns_close_the_selected_activation() {
+    let returning = |id: &str, from: &str, to: &str, call: &str| {
+        let mut edge = edge(id, from, MessageKind::Reply, to, None);
+        edge.returns_call = Some(MessageId(call.into()));
+        edge
+    };
+    let doc = SequenceDoc {
+        key: "correlated".into(),
+        title: "Correlated".into(),
+        describes: None,
+        nodes: vec![
+            SeqNode::Lifeline {
+                id: "a".into(),
+                title: "A".into(),
+                alias: None,
+                ref_: None,
+            },
+            SeqNode::Lifeline {
+                id: "b".into(),
+                title: "B".into(),
+                alias: None,
+                ref_: None,
+            },
+        ],
+        edges: vec![
+            edge("self-call", "a", MessageKind::SyncCall, "a", None),
+            returning("self-return", "a", "a", "self-call"),
+            edge("slow", "a", MessageKind::AsyncCall, "b", None),
+            edge("fast", "a", MessageKind::AsyncCall, "b", None),
+            returning("unmatched", "b", "a", "missing"),
+            returning("slow-return", "b", "a", "slow"),
+            returning("fast-return", "b", "a", "fast"),
+        ],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: vec![
+            message("self-call"),
+            message("self-return"),
+            message("slow"),
+            message("fast"),
+            message("unmatched"),
+            message("slow-return"),
+            message("fast-return"),
+        ],
+    };
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+    let row = |id: &str| {
+        solved
+            .messages
+            .iter()
+            .find(|message| message.id == id)
+            .unwrap_or_else(|| panic!("missing message {id}"))
+            .y
+    };
+    let activation = |lifeline: &str, start: &str| {
+        let start_y = row(start);
+        solved
+            .activations
+            .iter()
+            .find(|activation| activation.lifeline == lifeline && activation.rect.y == start_y)
+            .unwrap_or_else(|| panic!("missing activation for {start}"))
+    };
+
+    assert!(solved.messages[0].self_loop.is_some());
+    assert!(solved.messages[1].self_loop.is_some());
+    let recursive = activation("a", "self-call");
+    assert_eq!(recursive.rect.y + recursive.rect.h, row("self-return"));
+    assert!(!recursive.unclosed);
+
+    let slow = activation("b", "slow");
+    assert_eq!(slow.depth, 0);
+    assert_eq!(slow.rect.y + slow.rect.h, row("slow-return"));
+    assert!(!slow.unclosed);
+    let fast = activation("b", "fast");
+    assert_eq!(fast.depth, 1);
+    assert_eq!(fast.rect.y + fast.rect.h, row("fast-return"));
+    assert!(!fast.unclosed);
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == waml::diagnostic::DiagCode::UnmatchedReturn));
+    assert!(pretty_interaction(&solved).contains("returns=slow"));
+}
+
+#[test]
+fn found_and_lost_messages_use_frame_edges() {
+    let doc = SequenceDoc {
+        key: "boundaries".into(),
+        title: "Boundaries".into(),
+        describes: None,
+        nodes: vec![
+            SeqNode::Lifeline {
+                id: "left".into(),
+                title: "Left".into(),
+                alias: None,
+                ref_: None,
+            },
+            SeqNode::Lifeline {
+                id: "right".into(),
+                title: "Right".into(),
+                alias: None,
+                ref_: None,
+            },
+        ],
+        edges: vec![
+            typed_edge(
+                "found",
+                EndpointRef::Outside,
+                MessageKind::AsyncSignal,
+                EndpointRef::Lifeline { id: "left".into() },
+                None,
+            ),
+            typed_edge(
+                "lost",
+                EndpointRef::Lifeline { id: "right".into() },
+                MessageKind::AsyncSignal,
+                EndpointRef::Outside,
+                None,
+            ),
+        ],
+        gates: Vec::new(),
+        interaction_uses: Vec::new(),
+        items: vec![message("found"), message("lost")],
+    };
+    let cfg = InteractionConfig::default();
+    let sizes = measure_interaction(&doc, &cfg);
+    let (solved, diagnostics) = solve_interaction(&doc, &sizes, &cfg);
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(solved.messages[0].from_x, 0.0);
+    assert_eq!(solved.messages[0].to_x, solved.lifelines[0].stem_x);
+    assert_eq!(solved.messages[1].from_x, solved.lifelines[1].stem_x);
+    assert_eq!(solved.messages[1].to_x, solved.size.w);
+    let pretty = pretty_interaction(&solved);
+    assert!(pretty.contains("outside-left"), "{pretty}");
+    assert!(pretty.contains("outside-right"), "{pretty}");
 }
 
 #[test]

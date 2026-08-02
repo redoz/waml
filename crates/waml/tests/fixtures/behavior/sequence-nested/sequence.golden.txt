@@ -2,20 +2,20 @@ lifeline a head @ 0,0 38x57 stem x=19 57..758
 lifeline b head @ 86,0 38x57 stem x=105 57..758
 lifeline c head @ 172,0 37x57 stem x=191 57..758
 lifeline d head @ 257,278 38x57 stem x=276 334..718 destroyed
-activation c d0 @ 185,118 12x40
 activation b d0 @ 99,78 12x120
+activation c d0 @ 185,118 12x40
 activation d d0 @ 270,398 12x120
 activation b d0 @ 99,638 12x120 unclosed
-message m0 calls 19->105 y=78
-message m1 calls 105->191 y=118
-message m2 replies 191->105 y=158
-message m3 replies 105->19 y=198
-message m4 sends 19->105 y=238
-message m5 creates 19->276 y=278
-message m6 calls 105->276 y=398
-message m7 replies 276->105 y=518
-message m8 calls 19->105 y=638
-message m9 destroys 19->276 y=718
+message m0 syncCall lifeline:a@19->lifeline:b@105 y=78
+message m1 syncCall lifeline:b@105->lifeline:c@191 y=118
+message m2 reply lifeline:c@191->lifeline:b@105 y=158 returns=m1
+message m3 reply lifeline:b@105->lifeline:a@19 y=198 returns=m0
+message m4 asyncSignal lifeline:a@19->lifeline:b@105 y=238
+message m5 create lifeline:a@19->lifeline:d@276 y=278
+message m6 syncCall lifeline:b@105->lifeline:d@276 y=398
+message m7 reply lifeline:d@276->lifeline:b@105 y=518 returns=m6
+message m8 syncCall lifeline:a@19->lifeline:b@105 y=638
+message m9 delete lifeline:a@19->lifeline:d@276 y=718
 fragment f1 opt d1 @ 93,438 195x160
   operand y=start guard=extra
 fragment f0 alt d0 @ 7,318 287x400
