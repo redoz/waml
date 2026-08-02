@@ -222,35 +222,35 @@ Commit: `feat(editor): export current WAML bundle`
 - Produces: `fn select_browser_boot(search: &str, hash: &str) -> Result<BrowserBootSource, String>`.
 - Produces: one pending HTTP request id for the bundle load and an event handler that decodes envelope v1 into `SourceBundle`.
 
-- [ ] **Step 1: Write the precedence table tests**
+- [x] **Step 1: Write the precedence table tests**
 
 Cover share-over-api, share-over-bundle, api-over-bundle, percent-decoded absolute and relative bundle URLs, empty values, malformed query encoding, non-share anchors, HTTP failure, CORS failure text, malformed envelope, and a valid envelope.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `rtk cargo test -p waml-editor browser_boot app::tests::workspace`
 
 Expected: FAIL because only fragment startup exists.
 
-- [ ] **Step 3: Implement the pure selector**
+- [x] **Step 3: Implement the pure selector**
 
 Read `WebParams.search` and `WebParams.hash` once. Do not let application shell code inspect platform-specific URLs after startup.
 
-- [ ] **Step 4: Implement `?bundle=` fetch and visible failure**
+- [x] **Step 4: Implement `?bundle=` fetch and visible failure**
 
 Issue `cx.http_request(live_id!(boot_bundle), HttpRequest::new(url, HttpMethod::GET))`. On success require a valid bundle envelope, open it as display name `exported`, and keep the existing fragment save backend. On any network, CORS, status, or decode error, show the start screen and put the specific message in the existing status/error surface; never leave an empty editor.
 
-- [ ] **Step 5: Prove the first edit replaces the hash**
+- [x] **Step 5: Prove the first edit replaces the hash**
 
 Extend `browser_save_fragment` tests to start from `?bundle=bundle.waml`, apply one edit, and assert the resulting URL retains the query and has exactly one `#w1.` fragment via `replaceState` semantics.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run: `rtk cargo test -p waml-editor browser_boot app::tests::workspace`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Commit: `feat(web): load exported WAML bundles`
 
@@ -270,31 +270,31 @@ Commit: `feat(web): load exported WAML bundles`
 - Produces: `pub(crate) fn assemble_site(artifact: &[EmbeddedAsset], source: SiteSource) -> Result<BTreeMap<String, Vec<u8>>, SiteError>`.
 - Produces: clap hierarchy `Command::Export { target: ExportCommand }` and `ExportCommand::Site { dir, out, force }`.
 
-- [ ] **Step 1: Write failing assembler tests**
+- [x] **Step 1: Write failing assembler tests**
 
 For `Static`, assert raw decompressed assets, `bundle.waml`, and an `index.html` whose boot URL is `?bundle=bundle.waml`. For `Api`, assert no bundle and `?api=/api`. Reject duplicate paths, unsafe paths, missing `index.html`, and decompression failures.
 
-- [ ] **Step 2: Write failing output-guard and clap tests**
+- [x] **Step 2: Write failing output-guard and clap tests**
 
 Cover absent output directory, empty output directory, non-empty refusal, non-empty `--force`, default `./site`, and `waml export site DIR --out OUT --force` parsing.
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 Run: `rtk cargo test -p waml-cli site parses_export_site`
 
 Expected: FAIL because the assembler and command group do not exist.
 
-- [ ] **Step 4: Implement assembler and guarded writer**
+- [x] **Step 4: Implement assembler and guarded writer**
 
 Decompress every embedded asset with a bounded decoder, patch only the generated HTML boot URL through an exact sentinel owned by `scripts/inject-runtime-shell.mjs`, encode the source directory with `encode_bundle_envelope`, and build the complete map before the first filesystem write.
 
 Validate the resolved output path. Without `--force`, require missing or empty. With `--force`, replace only paths present in the assembled map; do not recursively delete unrelated output files.
 
-- [ ] **Step 5: Implement feature-off diagnostics**
+- [x] **Step 5: Implement feature-off diagnostics**
 
 Both `export site` and the future `serve` entry must compile without `embed-web`. Running them returns exit code 2 and a message that names `--features embed-web` and `WAML_WEB_EMBED_DIR`.
 
-- [ ] **Step 6: Run focused and E2E tests**
+- [x] **Step 6: Run focused and E2E tests**
 
 Run: `rtk cargo test -p waml-cli site`
 
@@ -302,7 +302,7 @@ Run: `rtk cargo test -p waml-cli --test cli_e2e export_site`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Commit: `feat(cli): export self-contained WAML sites`
 
@@ -321,25 +321,25 @@ Commit: `feat(cli): export self-contained WAML sites`
 - Consumes: Tasks 2 and 5 packaging/CLI.
 - Produces: Pages upload directory created only by `waml export site docs/waml --out target/pages`.
 
-- [ ] **Step 1: Extend shell-script tests with a stable boot sentinel**
+- [x] **Step 1: Extend shell-script tests with a stable boot sentinel**
 
 The generated `index.html` must contain one exact placeholder that the assembler can replace with `?bundle=bundle.waml` or `?api=/api`; multiple or missing placeholders are errors.
 
-- [ ] **Step 2: Run script tests and verify RED**
+- [x] **Step 2: Run script tests and verify RED**
 
 Run: `rtk node --test "scripts/*.test.mjs"`
 
 Expected: FAIL because the sentinel contract is absent.
 
-- [ ] **Step 3: Fix pruning across dependency resource trees**
+- [x] **Step 3: Fix pruning across dependency resource trees**
 
 Derive the keep set from WAML and Makepad live-design sources, delete the measured duplicate/unreferenced widget fonts, and retain a fixture assertion for every font path still referenced by either source tree.
 
-- [ ] **Step 4: Replace hand assembly in Pages**
+- [x] **Step 4: Replace hand assembly in Pages**
 
 Keep the nightly, cargo-makepad, binaryen, branding, shell injection, script tests, and artifact verification steps. Then package the artifact, build `waml-cli --release --features embed-web` with `WAML_WEB_EMBED_DIR`, run `target/release/waml export site docs/waml --out target/pages`, verify `target/pages`, and upload only `target/pages`.
 
-- [ ] **Step 5: Run workflow-adjacent verification locally**
+- [x] **Step 5: Run workflow-adjacent verification locally**
 
 Run: `rtk node --test "scripts/*.test.mjs"`
 
@@ -347,7 +347,7 @@ Run: `rtk cargo test -p waml-cli site`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit: `ci(pages): publish through waml export site`
 
@@ -365,17 +365,17 @@ Commit: `ci(pages): publish through waml export site`
 - Consumes: the release binary and built artifact from Tasks 1–6.
 - Produces: end-to-end evidence for bundle boot, share-URL persistence, and `.waml` download.
 
-- [ ] **Step 1: Add the browser acceptance test**
+- [x] **Step 1: Add the browser acceptance test**
 
 Build a temporary two-document bundle, export it, serve the directory over an ephemeral HTTP port, and use the repository's pinned Playwright Chromium. Assert no console panic, expected model title, one edit changing the hash to `#w1.`, a refresh preserving the edit, and a captured download named `*.waml` whose bytes decode to the edited source.
 
-- [ ] **Step 2: Run browser verification**
+- [x] **Step 2: Run browser verification**
 
 Run: `rtk node --test scripts/export-site-browser.test.mjs`
 
 Expected: PASS. Do not accept `file://` as a substitute.
 
-- [ ] **Step 3: Update user and architecture documentation**
+- [x] **Step 3: Update user and architecture documentation**
 
 Document:
 
@@ -386,7 +386,7 @@ python -m http.server --directory site
 
 State that the embedded bundle is immutable, edits persist in the share URL, and **Export WAML bundle…** downloads the edited source.
 
-- [ ] **Step 4: Run the complete verification gate**
+- [x] **Step 4: Run the complete verification gate**
 
 Run: `rtk cargo fmt --all -- --check`
 
@@ -402,7 +402,7 @@ Run: `rtk node scripts/verify-web-artifact.mjs target/pages`
 
 Expected: every command exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit: `test(export): verify standalone WAML sites`
 
