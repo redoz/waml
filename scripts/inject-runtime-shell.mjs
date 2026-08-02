@@ -62,11 +62,15 @@ writeFileSync(
 // ---------------------------------------------------------------------------
 
 const logoSvg = readFileSync("waml.svg", "utf8");
-const groupMatch = logoSvg.match(/<g\s+stroke-width[\s\S]*?<\/g>/);
+const groupMatch = logoSvg.match(/<g\s+(stroke-width[^>]*)>[\s\S]*?<\/g>/);
 if (!groupMatch) {
   console.error("inject-runtime-shell: could not find the polygon group in waml.svg");
   process.exit(1);
 }
+// Carried over verbatim: the segments are stroked in their own fill colour, and
+// without the group's stroke-width/linejoin the loader copies inherit a 1-unit
+// MITER join, which spits visible spikes out of the zigzag's acute corners.
+const STROKE_ATTRS = groupMatch[1].trim();
 // Ids are duplicated across the two copies below, so strip them rather than
 // emit an invalid document.
 const polygons = [...groupMatch[0].matchAll(/<polygon\b[^>]*\/>/g)].map(
@@ -93,8 +97,8 @@ const LOADER_BODY = `
         <div class='canvas_loader' data-phase='loading'>
             <span class='waml_loader_content'>
                 <svg class='waml_loader_mark' viewBox='${VIEW_BOX}' aria-label='Loading WAML'>
-                    <g opacity='0.16'>${ghostSegments}</g>
-                    <g>${progressSegments}</g>
+                    <g ${STROKE_ATTRS} opacity='0.16'>${ghostSegments}</g>
+                    <g ${STROKE_ATTRS}>${progressSegments}</g>
                 </svg>
                 <span class='waml_loader_status' role='status' aria-live='polite'>Loading…</span>
             </span>

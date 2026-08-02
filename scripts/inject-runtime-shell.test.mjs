@@ -204,6 +204,12 @@ test("injector renders six sequential loader segments", async (t) => {
         assert.match(html, new RegExp(`--segment-index: ${index}`));
     }
     assert.doesNotMatch(html, /waml_loader_clip|waml_loader_reveal/);
+    // Both copies must carry waml.svg's own stroke settings; the default miter
+    // join spikes out of the zigzag's acute corners.
+    assert.equal(
+        (html.match(/<g stroke-width="0\.5" stroke-linejoin="round"/g) ?? []).length,
+        2,
+    );
     assert.match(html, /opacity 250ms ease/);
     assert.match(
         html,
