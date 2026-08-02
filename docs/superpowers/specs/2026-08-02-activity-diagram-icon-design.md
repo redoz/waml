@@ -31,9 +31,10 @@ clear at the editor's small icon sizes.
 
 ## Integration
 
-Replace `resources/icons/activity.svg`, then use the existing icon generator
-to update `IconActivity` in `crates/waml-editor/src/icons.rs`. Keep the public
-`Icon::Activity` identity and catalog mapping unchanged.
+Replace `crates/waml-editor/resources/icons/activity.svg`, then use the
+existing icon generator to update `IconActivity` in
+`crates/waml-editor/src/icons.rs`. Keep the public `Icon::Activity` identity
+and catalog mapping unchanged.
 
 ## Validation
 
