@@ -789,7 +789,11 @@ impl DocTabs {
             return None;
         }
         let accent = self.active_accent.unwrap_or(self.draw_accent.color);
-        Some((rect.pos.x.round(), (rect.pos.x + rect.size.x).round(), accent))
+        Some((
+            rect.pos.x.round(),
+            (rect.pos.x + rect.size.x).round(),
+            accent,
+        ))
     }
 
     /// The rect captured for `id` during the most recent draw, or the default

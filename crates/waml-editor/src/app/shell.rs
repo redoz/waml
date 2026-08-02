@@ -491,11 +491,7 @@ impl App {
         // which only fires when the reservation itself changes.
         if (row_slot_w - self.tree_btn_slot_w).abs() > 0.01 {
             self.tree_btn_slot_w = row_slot_w;
-            if let Some(mut slot) = self
-                .ui
-                .widget(cx, ids!(tree_btn_slot))
-                .borrow_mut::<View>()
-            {
+            if let Some(mut slot) = self.ui.widget(cx, ids!(tree_btn_slot)).borrow_mut::<View>() {
                 slot.walk.width = Size::Fixed(row_slot_w);
             }
             cx.redraw_all();
@@ -504,7 +500,10 @@ impl App {
         // aligned in a clipping slot, so it wipes out from behind the column's
         // edge instead of popping in at full size.
         let row_visible = row_slot_w > 0.5;
-        for (id, visible) in [(ids!(tree_btn_dock), dock_visible), (ids!(tree_btn), row_visible)] {
+        for (id, visible) in [
+            (ids!(tree_btn_dock), dock_visible),
+            (ids!(tree_btn), row_visible),
+        ] {
             let button = self.ui.widget(cx, id);
             button.set_visible(cx, visible);
             let button = button.as_icon_button();

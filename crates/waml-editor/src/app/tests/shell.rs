@@ -7,7 +7,10 @@ const TREE_W: f64 = crate::tree_panel::PROJECT_TREE_W;
 /// tab-row slot costs the strip nothing.
 #[test]
 fn unmounted_tree_toggle_shows_neither_seat() {
-    assert_eq!(tree_toggle_layout(false, false, TREE_W, TREE_W), (false, 0.0));
+    assert_eq!(
+        tree_toggle_layout(false, false, TREE_W, TREE_W),
+        (false, 0.0)
+    );
     assert_eq!(tree_toggle_layout(false, false, 0.0, TREE_W), (false, 0.0));
 }
 
@@ -40,7 +43,11 @@ fn tab_strip_offset_is_continuous_through_the_collapse() {
         // Monotonically closing, and never by more than one column's worth of
         // travel per step -- no frame moves the strip by the button's width.
         assert!(next <= prev + 0.001, "offset grew at body {i}");
-        assert!(prev - next < 1.5, "offset jumped {} at body {i}", prev - next);
+        assert!(
+            prev - next < 1.5,
+            "offset jumped {} at body {i}",
+            prev - next
+        );
         prev = next;
     }
 }
