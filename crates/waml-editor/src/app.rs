@@ -1,8 +1,7 @@
 mod actions;
 
 use crate::doc_tabs::OpenTabs;
-use crate::dock::DockState;
-use crate::dock::ResponsiveDockLayout;
+use crate::dock::{DockMotion, DockState, ResponsiveDockLayout};
 use crate::document::NavCategory;
 use crate::document_host::{DocumentCommand, DocumentHost};
 use crate::editor_session::{EditorSession, ExternalReplacement, SaveCompletion, SaveTicket};
@@ -739,6 +738,12 @@ pub struct App {
     pointer_in_narrow_dock: bool,
     #[rust]
     dock_layout: ResponsiveDockLayout,
+    #[rust(DockMotion::new(1.0))]
+    tree_motion: DockMotion,
+    #[rust]
+    inspector_motion: DockMotion,
+    #[rust]
+    dock_next_frame: NextFrame,
     /// Last-applied caption `tree_gap` width, same change-guard role as
     /// `dock_layout` (see `sync_tree_gap`). Negative so the first sync always
     /// writes, even when the computed gap is 0 (collapsed tree).
@@ -1592,22 +1597,47 @@ impl App {
         }
 
         let (tree_state, inspector_state) = self.dock_states(cx);
+        let now = cx.seconds_since_app_start();
+        self.tree_motion.request(
+            if tree_state == DockState::Pinned {
+                1.0
+            } else {
+                0.0
+            },
+            now,
+        );
+        self.inspector_motion.request(
+            if inspector_state == DockState::Pinned {
+                1.0
+            } else {
+                0.0
+            },
+            now,
+        );
+        let tree_value = self.tree_motion.value();
+        let inspector_value = self.inspector_motion.value();
         let layout = crate::dock::responsive_layout(
             self.narrow,
             viewport_w,
-            if tree_state == crate::dock::DockState::Pinned {
-                1.0
-            } else {
-                0.0
-            },
-            if inspector_state == crate::dock::DockState::Pinned {
-                1.0
-            } else {
-                0.0
-            },
+            tree_value,
+            inspector_value,
             crate::tree_panel::PROJECT_TREE_W,
             crate::inspector_panel::INSPECTOR_W,
         );
+        if let Some(mut panel) = self
+            .ui
+            .widget(cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+        {
+            panel.set_presentation_visible(cx, crate::dock::presentation_visible(tree_value));
+        }
+        if let Some(mut panel) = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            panel.set_presentation_visible(cx, crate::dock::presentation_visible(inspector_value));
+        }
         if layout != self.dock_layout {
             self.dock_layout = layout;
             if let Some(mut view) = self.ui.widget(cx, ids!(left_slot)).borrow_mut::<View>() {
@@ -1628,17 +1658,12 @@ impl App {
             }
             cx.redraw_all();
         }
-        self.ui
-            .widget(cx, ids!(tree_btn))
-            .as_icon_button()
-            .set_active(cx, tree_state == DockState::Pinned);
-        self.ui
-            .widget(cx, ids!(tree_btn))
-            .as_icon_button()
-            .set_icon(
-                cx,
-                dock_toggle_icon(crate::dock::DockEdge::Left, tree_state),
-            );
+        let tree_button = self.ui.widget(cx, ids!(tree_btn)).as_icon_button();
+        tree_button.set_icon(
+            cx,
+            dock_toggle_icon(crate::dock::DockEdge::Left, tree_state),
+        );
+        tree_button.set_active(cx, tree_state == DockState::Pinned);
         let header_height = self
             .ui
             .widget(cx, ids!(document_header))
@@ -1662,6 +1687,9 @@ impl App {
                 view.walk.margin.top = inspector_top;
                 cx.redraw_all();
             }
+        }
+        if self.tree_motion.is_active() || self.inspector_motion.is_active() {
+            self.dock_next_frame = cx.new_next_frame();
         }
         self.sync_tree_gap(cx, layout.left_slot);
     }
@@ -3043,16 +3071,15 @@ impl AppMain for App {
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_save_fragment, close_after_save, dock_toggle_icon, doc_switcher_items,
-        logo_command_for, next_narrow,
-        open_overlay_contains, place_rm_for, prevent_quit_after_failed_save,
-        project_document_header, replace_after_save, restore_markdown_asset_host_after_open,
-        should_dismiss_narrow_dock, should_flush_save, App, BackingTransitionError, LogoCommand,
-        PendingFragment, SaveFeedback, TransitionCause,
+        browser_save_fragment, close_after_save, doc_switcher_items, dock_toggle_icon,
+        logo_command_for, next_narrow, open_overlay_contains, place_rm_for,
+        prevent_quit_after_failed_save, project_document_header, replace_after_save,
+        restore_markdown_asset_host_after_open, should_dismiss_narrow_dock, should_flush_save, App,
+        BackingTransitionError, LogoCommand, PendingFragment, SaveFeedback, TransitionCause,
     };
     use crate::doc_tabs::{DocTab, OpenTabs};
     use crate::doc_view::{BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData};
-    use crate::dock::{DockEdge, DockState};
+    use crate::dock::{DockEdge, DockMotion, DockState};
     use crate::document::{DocumentPresentation, NavCategory, OpenDocument};
     use crate::document_host::DocumentCommand;
     use crate::icons::{Icon, IconSet};
@@ -3232,6 +3259,7 @@ mod tests {
 
     fn navigation_app() -> (Cx, App) {
         let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
         cx.widget_tree_mark_dirty(WidgetUid(0));
         let mut app = cx.with_vm(App::script_new_with_default);
         let source = waml::source::SourceBundle::try_from_pairs([
@@ -3304,6 +3332,7 @@ mod tests {
 
     fn diagram_properties_app() -> (Cx, App) {
         let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
         cx.widget_tree_mark_dirty(WidgetUid(0));
         let mut app = cx.with_vm(App::script_new_with_default);
         let source = waml::source::SourceBundle::try_from_pairs([(
@@ -3703,6 +3732,7 @@ mod tests {
 
     fn mounted_production_shell() -> (Cx, App) {
         let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
         let app = cx.with_vm(|vm| {
             let value = <App as AppMain>::script_mod(vm);
             let mut app = <App as ScriptNew>::script_from_value(vm, value);
@@ -3717,9 +3747,11 @@ mod tests {
         body: Rect,
         left_slot: Rect,
         right_slot: Rect,
+        tree_panel: Rect,
         header: Rect,
         center: Rect,
         inspector: Rect,
+        inspector_panel: Rect,
     }
 
     fn draw_mounted_dock(cx: &mut Cx, app: &App, size: DVec2) -> DockAreas {
@@ -3751,9 +3783,11 @@ mod tests {
             body: rect(ids!(dock_body)),
             left_slot: rect(ids!(left_slot)),
             right_slot: rect(ids!(right_slot)),
+            tree_panel: rect(ids!(project_tree)),
             header: rect(ids!(document_header)),
             center: rect(ids!(center_stack)),
             inspector: rect(ids!(inspector_host)),
+            inspector_panel: rect(ids!(inspector)),
         }
     }
 
@@ -3773,6 +3807,12 @@ mod tests {
         cx.windows[window_id].window_geom.inner_size = size;
         cx.windows[window_id].window_geom.outer_size = size;
         app.apply_dock_states(cx, tree, inspector);
+        app.tree_motion = DockMotion::new(if tree == DockState::Pinned { 1.0 } else { 0.0 });
+        app.inspector_motion = DockMotion::new(if inspector == DockState::Pinned {
+            1.0
+        } else {
+            0.0
+        });
         let header_widget = app.ui.widget(cx, ids!(document_header));
         let mut header = header_widget
             .borrow_mut::<crate::document_header::DocumentHeader>()
@@ -3814,6 +3854,50 @@ mod tests {
         active
     }
 
+    fn header_right_dock_icon(cx: &mut Cx, app: &App) -> Option<Icon> {
+        app.ui
+            .widget(cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .expect("production shell mounts document_header")
+            .test_right_dock()
+    }
+
+    #[test]
+    fn mounted_dock_close_keeps_presented_geometry_until_motion_completes() {
+        let size = dvec2(1_200.0, 700.0);
+        let (mut cx, mut app) = mounted_production_shell();
+        configure_mounted_dock(
+            &mut cx,
+            &mut app,
+            size,
+            DockState::Pinned,
+            DockState::Pinned,
+            true,
+        );
+
+        app.apply_dock_states(&mut cx, DockState::Flag, DockState::Flag);
+        app.sync_dock_slots(&mut cx);
+        let closing = draw_mounted_dock(&mut cx, &app, size);
+
+        assert_eq!(app.dock_states(&mut cx), (DockState::Flag, DockState::Flag));
+        assert_near(app.dock_layout.left_slot, crate::tree_panel::PROJECT_TREE_W);
+        assert_near(
+            app.dock_layout.right_slot,
+            crate::inspector_panel::INSPECTOR_W,
+        );
+        assert_near(closing.tree_panel.size.x, crate::tree_panel::PROJECT_TREE_W);
+        assert_near(
+            closing.inspector_panel.size.x,
+            crate::inspector_panel::INSPECTOR_W,
+        );
+        assert_eq!(
+            header_right_dock_icon(&mut cx, &app),
+            Some(Icon::PanelRightOpen)
+        );
+        assert!(!drawn_header_right_dock_active(&mut cx, &app));
+        assert_ne!(app.dock_next_frame, NextFrame::default());
+    }
+
     #[test]
     fn mounted_dock_areas_follow_wide_and_narrow_production_layout() {
         let wide_size = dvec2(1_200.0, 700.0);
@@ -3830,6 +3914,8 @@ mod tests {
         assert_near(wide.body.size.x, wide_size.x);
         assert_near(wide.left_slot.size.x, crate::tree_panel::PROJECT_TREE_W);
         assert_near(wide.right_slot.size.x, crate::inspector_panel::INSPECTOR_W);
+        assert_near(app.dock_layout.left_slot, app.dock_layout.tree_body);
+        assert_near(app.dock_layout.right_slot, app.dock_layout.inspector_body);
         assert_near(
             wide.header.pos.x,
             wide.left_slot.pos.x + wide.left_slot.size.x,
