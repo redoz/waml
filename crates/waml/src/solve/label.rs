@@ -367,6 +367,7 @@ pub struct PlacedLabel {
     /// Set when this label could not be placed beside its route and was
     /// pushed out to free space instead: `[attach, nearest point on rect]`.
     /// `None` for every label placed normally by `place`.
+    #[cfg_attr(feature = "serde", serde(default))]
     pub leader: Option<[(f64, f64); 2]>,
 }
 
@@ -449,9 +450,10 @@ fn try_place(
     }
 }
 
-/// Ring count for the leader search. Each ring steps out by two label heights,
-/// so this reaches well past any realistic diagram's bounding box -- which is
-/// what makes the search total.
+/// Ring count for the leader search. Bounded work, not a totality guarantee:
+/// on a diagram far larger than the rings reach, the search falls back to a
+/// position parked outside the content bounding box, which is free by
+/// construction.
 const MAX_LEADER_RINGS: usize = 64;
 /// Positions sampled per ring. Fixed count in fixed angular order, so the
 /// search is deterministic.
@@ -502,13 +504,83 @@ fn nearest_edge_point(rect: Rect, from: (f64, f64)) -> (f64, f64) {
     }
 }
 
+/// True when any route segment crosses `rect`. Unlike `foreign_crossings`, no
+/// route is exempt: a displaced label has been pushed away from its own route,
+/// so sitting on ANY stroke -- including its own -- means being drawn on top of
+/// something.
+fn hits_any_route(rect: Rect, routes: &[Vec<(f64, f64)>]) -> bool {
+    routes
+        .iter()
+        .flat_map(|points| points.windows(2))
+        .any(|s| segment_hits_rect(s[0], s[1], rect))
+}
+
+/// Axis-aligned box containing every hard obstacle and every route point.
+/// `None` when the scene is empty, in which case every position is free.
+fn content_bounds(hard: &[Rect], routes: &[Vec<(f64, f64)>]) -> Option<Rect> {
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    let mut any = false;
+    let mut absorb = |x: f64, y: f64| {
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    };
+    for r in hard {
+        any = true;
+        absorb(r.x, r.y);
+        absorb(r.x + r.w, r.y + r.h);
+    }
+    for points in routes {
+        for p in points {
+            any = true;
+            absorb(p.0, p.1);
+        }
+    }
+    if !any || !min_x.is_finite() || !max_x.is_finite() {
+        return None;
+    }
+    Some(Rect {
+        x: min_x,
+        y: min_y,
+        w: max_x - min_x,
+        h: max_y - min_y,
+    })
+}
+
+/// A position that is free BY CONSTRUCTION: parked clear of the right edge of
+/// everything currently in the scene. Nothing can collide with it, because
+/// every obstacle and every route point lies at a smaller x.
+fn parked_rect(
+    hard: &[Rect],
+    routes: &[Vec<(f64, f64)>],
+    anchor: (f64, f64),
+    size: Size,
+    step: f64,
+) -> Rect {
+    let x = match content_bounds(hard, routes) {
+        Some(b) => b.x + b.w + step,
+        None => anchor.0 + step,
+    };
+    Rect {
+        x,
+        y: anchor.1 - size.h * 0.5,
+        w: size.w,
+        h: size.h,
+    }
+}
+
 /// Place every request, falling back to a leader line for any that will not fit
 /// beside their route.
 ///
-/// This is TOTAL for any request whose route resolves: obstacles are finite,
-/// so an expanding ring always reaches empty space outside the content
-/// bounding box. That is what makes leader lines a complete strategy rather
-/// than one more thing that can fail. A request whose `edge` does not resolve
+/// This is TOTAL for any request whose route resolves: the ring search does the
+/// nice-looking work, and when it runs out of rings the label is parked clear
+/// of the content bounding box, which is free by construction. That is what
+/// makes leader lines a complete strategy rather than one more thing that can
+/// fail. A request whose `edge` does not resolve
 /// to a route, or whose route is too degenerate to yield an anchor, comes back
 /// in `unplaced` -- there is no route for a leader to attach to.
 pub fn place_with_leaders(
@@ -537,38 +609,41 @@ pub fn place_with_leaders(
             continue;
         };
 
+        // Step out by the label's own footprint, not its height alone: a wide
+        // label scaled only by an 8pt line height would search a few hundred
+        // world units and give up well inside a large diagram.
+        let step = (size.w.max(size.h) + size.h).max(1.0);
         let mut found = None;
         'rings: for ring in 1..=MAX_LEADER_RINGS {
-            let radius = ring as f64 * size.h * 2.0;
-            for step in 0..LEADER_STEPS {
-                let angle = std::f64::consts::TAU * step as f64 / LEADER_STEPS as f64;
+            let radius = ring as f64 * step;
+            for i in 0..LEADER_STEPS {
+                let angle = std::f64::consts::TAU * i as f64 / LEADER_STEPS as f64;
                 let rect = Rect {
                     x: anchor.0 + radius * angle.cos() - size.w * 0.5,
                     y: anchor.1 + radius * angle.sin() - size.h * 0.5,
                     w: size.w,
                     h: size.h,
                 };
-                if !collides(rect, &hard) {
+                if !collides(rect, &hard) && !hits_any_route(rect, routes) {
                     found = Some(rect);
                     break 'rings;
                 }
             }
         }
 
-        match found {
-            Some(rect) => {
-                hard.push(rect);
-                out.placed.push(PlacedLabel {
-                    edge: request.edge,
-                    slot: request.slot,
-                    text: request.text.clone(),
-                    rect,
-                    attach: anchor,
-                    leader: Some([anchor, nearest_edge_point(rect, anchor)]),
-                });
-            }
-            None => out.unplaced.push(request),
-        }
+        // Exhausting the rings must never drop a label: park it clear of
+        // everything instead. That position cannot collide, so this arm is what
+        // makes the stage total rather than the ring count.
+        let rect = found.unwrap_or_else(|| parked_rect(&hard, routes, anchor, size, step));
+        hard.push(rect);
+        out.placed.push(PlacedLabel {
+            edge: request.edge,
+            slot: request.slot,
+            text: request.text.clone(),
+            rect,
+            attach: anchor,
+            leader: Some([anchor, nearest_edge_point(rect, anchor)]),
+        });
     }
     out
 }
@@ -1008,6 +1083,72 @@ mod tests {
         let out = place_with_leaders(&route_pair(), &reqs, &obstacles, &LabelConfig::default());
         assert_eq!(out.placed.len(), 1);
         assert!(out.unplaced.is_empty());
+    }
+
+    #[test]
+    fn a_leader_target_never_lands_on_a_route() {
+        // Displaced labels must clear strokes too, not just cards: a comb of
+        // horizontal routes 5 units apart leaves no gap a label can sit in, so
+        // the search has to leave the comb entirely.
+        let mut routes = route_pair();
+        for i in -100..=100 {
+            let y = i as f64 * 5.0;
+            routes.push(vec![(-1000.0, y), (1000.0, y)]);
+        }
+        let obstacles = Obstacles {
+            hard: vec![Rect {
+                x: -200.0,
+                y: -200.0,
+                w: 800.0,
+                h: 400.0,
+            }],
+        };
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let out = place_with_leaders(&routes, &reqs, &obstacles, &LabelConfig::default());
+        assert!(out.unplaced.is_empty());
+        let placed = &out.placed[0];
+        assert!(
+            !hits_any_route(placed.rect, &routes),
+            "leader target sits on a stroke: {:?}",
+            placed.rect
+        );
+    }
+
+    #[test]
+    fn a_label_is_never_dropped_when_the_ring_search_is_exhausted() {
+        // Free space further away than the rings reach. Dropping the label here
+        // would make it silently vanish from the diagram.
+        let obstacles = Obstacles {
+            hard: vec![Rect {
+                x: -50_000.0,
+                y: -50_000.0,
+                w: 100_000.0,
+                h: 100_000.0,
+            }],
+        };
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let out = place_with_leaders(&route_pair(), &reqs, &obstacles, &LabelConfig::default());
+        assert!(out.unplaced.is_empty(), "no label may be dropped");
+        let placed = &out.placed[0];
+        assert!(!collides(placed.rect, &obstacles.hard));
+        assert!(placed.leader.is_some());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn a_placed_label_written_before_leaders_still_deserializes() {
+        let json = r#"{"edge":0,"slot":"MidRoute","text":"places",
+            "rect":{"x":0.0,"y":0.0,"w":10.0,"h":10.0},"attach":[1.0,2.0]}"#;
+        let p: PlacedLabel = serde_json::from_str(json).expect("leader defaults when absent");
+        assert!(p.leader.is_none());
     }
 
     #[test]
