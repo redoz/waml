@@ -15,7 +15,7 @@ use crate::doc_view::{
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icons::Icon;
-use crate::inspector::Subject;
+use crate::inspector::{ElementKind, ElementRow, Subject};
 use crate::node_style::AccentBucket;
 use waml::analysis::ProjectionFreshness;
 use waml::diagnostic::Diagnostic;
@@ -296,13 +296,19 @@ fn build_interaction_scene(
         return (BehaviorScene::Empty { message }, diagnostics);
     }
 
-    let lifeline_nodes: BTreeMap<&str, (&str, Option<&str>)> = doc
+    let lifeline_nodes: BTreeMap<&str, (&str, Option<&str>, Option<&str>)> = doc
         .nodes
         .iter()
         .filter_map(|n| match n {
             SeqNode::Lifeline {
-                id, title, ref_, ..
-            } => Some((id.as_str(), (title.as_str(), ref_.as_deref()))),
+                id,
+                title,
+                ref_,
+                alias,
+            } => Some((
+                id.as_str(),
+                (title.as_str(), ref_.as_deref(), alias.as_deref()),
+            )),
             _ => None,
         })
         .collect();
@@ -311,11 +317,14 @@ fn build_interaction_scene(
         .lifelines
         .iter()
         .map(|l| {
-            let (title, ref_) = lifeline_nodes
+            let (title, ref_, alias) = lifeline_nodes
                 .get(l.id.as_str())
                 .copied()
-                .unwrap_or((l.id.as_str(), None));
+                .unwrap_or((l.id.as_str(), None, None));
             let label = title.to_string();
+            // An alias that just repeats the title is a handle, not a name --
+            // stacking `Order` over `Order` says nothing.
+            let instance = alias.filter(|a| *a != title).map(str::to_string);
             let bucket = ref_
                 .and_then(|r| model.node(r))
                 .map(|n| crate::accent::tree_kind_bucket(crate::tree::kind_of(&n.ty)))
@@ -328,6 +337,7 @@ fn build_interaction_scene(
                 stem_bottom: l.stem_bottom,
                 destroyed: l.destroyed,
                 label,
+                instance,
                 bucket,
             }
         })
@@ -454,7 +464,14 @@ fn subject_for_target(
                 candidates.push(Subject::Classifier(ref_));
             }
         }
-        BehaviorTarget::Message(_) | BehaviorTarget::Fragment(_) => {}
+        // A message or fragment IS inspectable, as itself: it is a
+        // document-local element with no pool identity, so it carries the
+        // behavior-element subject rather than falling through to the document.
+        BehaviorTarget::Message(id) | BehaviorTarget::Fragment(id) => {
+            if !id.is_empty() {
+                candidates.push(Subject::BehaviorElement(behavior_element_key(doc_key, id)));
+            }
+        }
     }
     // The document-level fallback, in resolvability order.
     if let Some(describes) = describes {
@@ -468,6 +485,204 @@ fn subject_for_target(
         .into_iter()
         .find(|subject| crate::inspector::build_view(model, subject).is_some())
         .unwrap_or(Subject::None)
+}
+
+/// The inspector element-picker's rows for a behavior document: the document
+/// subject first (the fallback, exactly as a class diagram's own row is), then
+/// one row per participant that resolves to something the inspector can build a
+/// view for.
+///
+/// A behavior element is not a model classifier of its own, so a row's key is
+/// the classifier the participant is TYPED BY -- the same target
+/// `subject_for_target` picks when that participant is clicked on the canvas.
+/// Participants that resolve to nothing (a lifeline with no `ref_`, a plain
+/// flow node) are left out rather than listed as rows that would repoint the
+/// panel at an empty subject.
+fn behavior_elements(
+    model: &waml::model::Model,
+    doc_key: &str,
+    flow: Option<&FlowDoc>,
+    interaction: Option<&SequenceDoc>,
+) -> Vec<ElementRow> {
+    let title = flow
+        .map(|d| d.title.clone())
+        .or_else(|| interaction.map(|d| d.title.clone()))
+        .unwrap_or_else(|| doc_key.to_string());
+    let doc_subject = subject_for_target(
+        model,
+        &BehaviorTarget::Message(String::new()),
+        doc_key,
+        flow,
+        interaction,
+    );
+    let mut rows = Vec::new();
+    match doc_subject {
+        Subject::Diagram(key) => rows.push(ElementRow {
+            key,
+            label: title,
+            kind: ElementKind::Diagram,
+        }),
+        Subject::Classifier(key) => rows.push(ElementRow {
+            key,
+            label: title,
+            kind: ElementKind::Node,
+        }),
+        _ => {}
+    }
+
+    let mut push_participant = |target: BehaviorTarget, label: String| {
+        if let Subject::Classifier(key) =
+            subject_for_target(model, &target, doc_key, flow, interaction)
+        {
+            // A participant that fell through to the document subject is not a
+            // participant row -- it would duplicate row 0.
+            if rows.iter().any(|r| r.key == key) {
+                return;
+            }
+            rows.push(ElementRow {
+                key,
+                label,
+                kind: ElementKind::Node,
+            });
+        }
+    };
+
+    if let Some(doc) = interaction {
+        for node in &doc.nodes {
+            if let SeqNode::Lifeline {
+                id, title, alias, ..
+            } = node
+            {
+                push_participant(BehaviorTarget::Lifeline(id.clone()), lifeline_label(title, alias));
+            }
+        }
+    }
+    if let Some(doc) = flow {
+        for key in &doc.nodes {
+            let label = model
+                .activity_nodes
+                .iter()
+                .find(|n| &n.key == key)
+                .map(|n| n.id.clone())
+                .unwrap_or_else(|| key.clone());
+            push_participant(BehaviorTarget::FlowNode(key.clone()), label);
+        }
+    }
+
+    // The interaction's own elements -- messages and fragments -- after the
+    // participants. They resolve to no classifier, so they carry their own
+    // subject; without these rows the picker claims a sequence diagram is a
+    // handful of boxes and nothing else.
+    if let Some(doc) = interaction {
+        let lifeline_title = |lid: &str| -> String {
+            doc.nodes
+                .iter()
+                .find_map(|n| match n {
+                    SeqNode::Lifeline {
+                        id, title, alias, ..
+                    } if id == lid => Some(alias.clone().unwrap_or_else(|| title.clone())),
+                    _ => None,
+                })
+                .unwrap_or_else(|| lid.to_string())
+        };
+        for edge in &doc.edges {
+            rows.push(ElementRow {
+                key: behavior_element_key(doc_key, &edge.id),
+                label: crate::inspector::message_label(edge, &lifeline_title),
+                kind: ElementKind::BehaviorElement,
+            });
+        }
+        for node in &doc.nodes {
+            if let SeqNode::Fragment { id, kind, .. } = node {
+                rows.push(ElementRow {
+                    key: behavior_element_key(doc_key, id),
+                    label: kind.as_str().to_string(),
+                    kind: ElementKind::BehaviorElement,
+                });
+            }
+        }
+    }
+    rows
+}
+
+/// A lifeline's picker label: UML's `instance : Type`. The head box stacks the
+/// same two values instead, because there the colon has to teach itself to a
+/// reader glancing at a box; in a list of rows the pair reads as a signature
+/// and the canonical form is the clearer one (redoz@).
+fn lifeline_label(title: &str, alias: &Option<String>) -> String {
+    match alias {
+        Some(alias) if alias != title => format!("{alias} : {title}"),
+        _ => title.to_string(),
+    }
+}
+
+/// `Subject::BehaviorElement`'s key format.
+fn behavior_element_key(doc_key: &str, id: &str) -> String {
+    format!("{doc_key}#{id}")
+}
+
+/// The inverse of `subject_for_target` for the picker's commit path: which
+/// canvas element the picked subject is. A behavior element names its target
+/// outright; a classifier has to be searched for among the participants that
+/// resolve to it. Anything else selects nothing -- picking a row that isn't on
+/// this canvas is a deselect, not a stale highlight.
+fn target_for_subject(
+    model: &waml::model::Model,
+    subject: &Subject,
+    doc_key: &str,
+    flow: Option<&FlowDoc>,
+    interaction: Option<&SequenceDoc>,
+) -> Option<BehaviorTarget> {
+    match subject {
+        Subject::Classifier(key) => {
+            participant_for_classifier(model, key, doc_key, flow, interaction)
+        }
+        Subject::BehaviorElement(key) => {
+            let (_, id) = crate::inspector::split_behavior_key(key)?;
+            let doc = interaction?;
+            if doc.edges.iter().any(|e| e.id == id) {
+                return Some(BehaviorTarget::Message(id.to_string()));
+            }
+            doc.nodes
+                .iter()
+                .any(|n| matches!(n, SeqNode::Fragment { id: nid, .. } if nid == id))
+                .then(|| BehaviorTarget::Fragment(id.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// Which participant of this document resolves to `classifier`, if any.
+fn participant_for_classifier(
+    model: &waml::model::Model,
+    classifier: &str,
+    doc_key: &str,
+    flow: Option<&FlowDoc>,
+    interaction: Option<&SequenceDoc>,
+) -> Option<BehaviorTarget> {
+    let matches = |target: &BehaviorTarget| {
+        subject_for_target(model, target, doc_key, flow, interaction)
+            == Subject::Classifier(classifier.to_string())
+    };
+    if let Some(doc) = interaction {
+        for node in &doc.nodes {
+            if let SeqNode::Lifeline { id, .. } = node {
+                let target = BehaviorTarget::Lifeline(id.clone());
+                if matches(&target) {
+                    return Some(target);
+                }
+            }
+        }
+    }
+    if let Some(doc) = flow {
+        for key in &doc.nodes {
+            let target = BehaviorTarget::FlowNode(key.clone());
+            if matches(&target) {
+                return Some(target);
+            }
+        }
+    }
+    None
 }
 
 pub struct BehaviorDocView {
@@ -510,6 +725,41 @@ impl BehaviorDocView {
             .borrow_mut::<crate::inspector_panel::Inspector>()
         {
             inspector.set_subject(cx, model, subject);
+        }
+    }
+
+    /// The two documents this view might be showing, resolved out of the model
+    /// (at most one is `Some`, per `self.kind`).
+    fn docs<'m>(
+        &self,
+        model: &'m waml::model::Model,
+    ) -> (Option<&'m FlowDoc>, Option<&'m SequenceDoc>) {
+        match self.kind {
+            BehaviorKind::Flow => (model.flows.iter().find(|d| d.key == self.key), None),
+            BehaviorKind::Interaction => {
+                (None, model.interactions.iter().find(|d| d.key == self.key))
+            }
+        }
+    }
+
+    /// Feed the inspector's element-picker this behavior's participants, the
+    /// same way `ClassDiagramView` feeds it a diagram's contents. Without this
+    /// the picker bar renders over a behavior tab still holding the LAST class
+    /// diagram's rows, and every pick repoints the panel at an element that
+    /// isn't on screen.
+    fn sync_inspector_elements(
+        &self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        model: &waml::model::Model,
+    ) {
+        let (flow, interaction) = self.docs(model);
+        let rows = behavior_elements(model, &self.key, flow, interaction);
+        if let Some(mut inspector) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+        {
+            inspector.set_diagram_elements(cx, model, rows);
         }
     }
 
@@ -567,6 +817,7 @@ impl BehaviorDocView {
                 self.sync_inspector_subject(cx, body, model, Subject::None);
             }
         }
+        self.sync_inspector_elements(cx, body, model);
         let status = diagnostics_status(&diagnostics);
         if status != self.last_diagnostics {
             if let Some(line) = &status {
@@ -675,6 +926,24 @@ impl DocView for BehaviorDocView {
             }
         }
 
+        // Element-picker: the SelectBox asked to open its flyout. Same relay as
+        // `ClassDiagramView` -- the inspector is one shared panel, so a
+        // behavior tab has to answer for it too.
+        if let Some((anchor_rect, min_width, items)) = body
+            .inspector(cx)
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+            .and_then(|inspector| inspector.take_open_request(cx, actions))
+        {
+            out.popup = Some(crate::doc_view::PopupRequest::Select {
+                tag: live_id!(element_picker),
+                anchor_rect,
+                min_width,
+                items,
+                compact_frame: false,
+            });
+            return out;
+        }
+
         // Selection drives the inspector; a double-click reaches the same
         // View Source path the node context menu uses (spec §5.2, Task 9).
         // No mutation ever reaches the document from this read-only surface.
@@ -713,6 +982,39 @@ impl DocView for BehaviorDocView {
         }
 
         out
+    }
+
+    fn on_popup_result(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        data: ViewData<'_>,
+        tag: LiveId,
+        result: crate::popup::base::PopupResult,
+    ) -> ViewOutcome {
+        if tag == live_id!(element_picker) {
+            let subject = body
+                .inspector(cx)
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+                .and_then(|mut inspector| {
+                    inspector.on_picker_closed(cx, data.uml_analysis, result)
+                });
+            // A committed pick also moves the canvas selection, so the picked
+            // element is called out where the reader is looking.
+            if let Some(subject) = subject {
+                let model = &data.uml_analysis.projection;
+                let (flow, interaction) = self.docs(model);
+                let target =
+                    target_for_subject(model, &subject, &self.key, flow, interaction);
+                if let Some(mut canvas) = body
+                    .behavior_canvas(cx)
+                    .borrow_mut::<crate::canvas::BehaviorSurface>()
+                {
+                    canvas.select_target(cx, target);
+                }
+            }
+        }
+        ViewOutcome::default()
     }
 
     fn chrome(&self) -> BodyChrome {

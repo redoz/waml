@@ -23,12 +23,20 @@ pub struct InteractionConfig {
     /// measurement the editor draws glyphs with. A label rect shorter than this
     /// puts its glyphs across whatever sits under its bottom edge.
     pub line_height: f64,
+    /// Message signature labels draw a rung smaller than the lifeline heads: a
+    /// sequence diagram is mostly annotation, and at head size the signatures
+    /// crowd the arrows they belong to.
+    pub message_font_size: f64,
+    /// Line height for [`InteractionConfig::message_font_size`].
+    pub message_line_height: f64,
 }
 
 impl Default for InteractionConfig {
     fn default() -> Self {
         let font_size = 13.0 * sizing::PT_TO_LPX;
         let metrics = sizing::chrome_metrics(font_size, Font::Sans);
+        let message_font_size = 10.0 * sizing::PT_TO_LPX;
+        let message_metrics = sizing::chrome_metrics(message_font_size, Font::Sans);
         InteractionConfig {
             column_gap: 48.0,
             row_gap: 40.0,
@@ -39,6 +47,8 @@ impl Default for InteractionConfig {
             frame_inset: 12.0,
             font_size,
             line_height: metrics.row_height,
+            message_font_size,
+            message_line_height: message_metrics.row_height,
         }
     }
 }
@@ -112,23 +122,39 @@ fn message_size_key(id: &str) -> String {
 pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMap {
     let mut sizes = SizeMap::new();
     for node in &doc.nodes {
-        if let SeqNode::Lifeline { id, title, .. } = node {
-            // A head label is drawn in the `text_heading` SemiBold cut, whose
-            // advances are wider than Regular's.
-            let w =
-                sizing::text_width(title, cfg.font_size, Font::SansSemiBold) + cfg.head_pad_x * 2.0;
-            let h = cfg.line_height + cfg.head_pad_y * 2.0;
+        if let SeqNode::Lifeline {
+            id, title, alias, ..
+        } = node
+        {
+            // A head is one line -- the classifier, in the `text_heading`
+            // SemiBold cut whose advances are wider than Regular's -- unless the
+            // author named the instance (`as checkout`), which stacks the name
+            // over the type. UML would write that one line as `checkout : Order`;
+            // the stack says the same thing with weight and size instead of
+            // punctuation nobody outside UML reads (see `head_label_lines`).
+            let name = alias.as_deref().filter(|a| *a != title);
+            let title_w = sizing::text_width(title, cfg.font_size, Font::SansSemiBold);
+            let (text_w, text_h) = match name {
+                Some(name) => (
+                    sizing::text_width(name, cfg.font_size, Font::SansSemiBold)
+                        .max(sizing::text_width(title, cfg.message_font_size, Font::Sans)),
+                    cfg.line_height + cfg.message_line_height,
+                ),
+                None => (title_w, cfg.line_height),
+            };
+            let w = text_w + cfg.head_pad_x * 2.0;
+            let h = text_h + cfg.head_pad_y * 2.0;
             sizes.insert(lifeline_size_key(id), Size { w, h });
         }
     }
     for edge in &doc.edges {
         if let Some(sig) = &edge.signature {
-            let w = sizing::text_width(sig, cfg.font_size, Font::Sans);
+            let w = sizing::text_width(sig, cfg.message_font_size, Font::Sans);
             sizes.insert(
                 message_size_key(&edge.id),
                 Size {
                     w,
-                    h: cfg.line_height,
+                    h: cfg.message_line_height,
                 },
             );
         }
@@ -417,27 +443,30 @@ impl<'a> WalkState<'a> {
         }
 
         let pad = self.cfg.frame_inset;
+        let mut left = min_x - pad;
+        let mut right = max_x + pad;
+
+        // Nested frames grow their PARENT outward rather than being squeezed
+        // inward (design spec §3.5). Clamping the child instead put its border
+        // exactly `frame_inset` inside ours -- which, whenever the two spanned
+        // the same lifelines, is exactly that lifeline's stem: the inner frame
+        // drew straight down the participant it was framing. Every frame now
+        // keeps its own stem-padded span, and each enclosing level steps out by
+        // `nesting_step` so the borders stay visibly apart.
+        for child in &self.fragments[frag_start_idx..] {
+            left = left.min(child.rect.x - self.cfg.nesting_step);
+            right = right.max(child.rect.x + child.rect.w + self.cfg.nesting_step);
+        }
+
         let rect = Rect {
-            x: min_x - pad,
+            x: left,
             y: top,
-            w: (max_x - min_x) + 2.0 * pad,
+            w: right - left,
             h: bottom - top,
         };
 
         for op in &mut solved_operands {
             op.guard_rect.x = rect.x + pad;
-        }
-
-        // Clamp already-recorded descendant fragment rects to sit strictly
-        // inside this one, inset by frame_inset when their spans coincide
-        // with ours (design spec §3.5).
-        let min_allowed_x = rect.x + pad;
-        let max_allowed_right = rect.x + rect.w - pad;
-        for child in &mut self.fragments[frag_start_idx..] {
-            let new_x = child.rect.x.max(min_allowed_x);
-            let new_right = (child.rect.x + child.rect.w).min(max_allowed_right);
-            child.rect.x = new_x;
-            child.rect.w = (new_right - new_x).max(0.0);
         }
 
         self.fragments.push(SolvedFragment {

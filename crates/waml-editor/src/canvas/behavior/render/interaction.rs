@@ -17,20 +17,40 @@ use crate::node_style::AccentBucket;
 use makepad_widgets::*;
 use waml::model::MessageVerb;
 
-const HEAD_ALPHA: f32 = 0.16;
+/// Head fill: a hint of the participant's accent, not a field of it -- the
+/// gradient border carries the colour, so the wash only has to keep the box
+/// from reading as canvas ground.
+const HEAD_ALPHA: f32 = 0.07;
+/// The two ends of the head frame's gradient stroke: near-opaque accent at the
+/// gradient's start, faded at its end -- the same falloff the Atlas frame draws
+/// with its neutral stops.
+const HEAD_BORDER_HI_ALPHA: f32 = 1.0;
+const HEAD_BORDER_LO_ALPHA: f32 = 0.45;
+
+/// Extra weight on the head frame over the app-wide 1.5px hairline. With the
+/// wash this faint the border is what draws the box, so it carries a heavier
+/// pen than a class card's -- fed through `stroke_scale`, which keeps the
+/// result screen-space in CAD mode.
+const HEAD_FRAME_WEIGHT: f32 = 1.5;
+
+/// Fragment-tab padding around the kind keyword, in lpx at zoom 1, and the
+/// bevel's share of the plate height (matches `InteractionTab`'s `notch`).
+const TAB_PAD_X: f64 = 6.0;
+const TAB_PAD_Y: f64 = 3.0;
+const TAB_BEVEL_FRACTION: f64 = 0.45;
 const ACTIVATION_ALPHA: f32 = 0.55;
 const ACTIVATION_UNCLOSED_ALPHA: f32 = 0.3;
 const DASH_LEN: f64 = 5.0;
 const DASH_GAP: f64 = 4.0;
 
 pub(in crate::canvas::behavior) struct InteractionDrawResources<'a> {
-    pub(super) node_box: &'a mut DrawColor,
     pub(super) fill: &'a mut DrawColor,
     pub(super) triangle: &'a mut DrawColor,
     pub(super) open_head: &'a mut DrawColor,
     pub(super) x_mark: &'a mut DrawColor,
     pub(super) frame_border: &'a mut DrawColor,
     pub(super) pentagon: &'a mut DrawColor,
+    pub(super) head: &'a mut DrawColor,
     pub(super) text: &'a mut DrawText,
     pub(super) text_heading: &'a mut DrawText,
     pub(super) palette: BehaviorPalette,
@@ -97,7 +117,10 @@ pub(super) fn draw(
     draws: &mut InteractionDrawResources<'_>,
 ) {
     // Frames first (background layer), then stems, then activation bars,
-    // then messages/arrowheads/labels, then lifeline head cards on top.
+    // then messages/arrowheads/labels, then the fragment tabs and the lifeline
+    // head cards on top. The tab is a plate with a keyword on it: a lifeline
+    // running under it would strike straight through the word, so it draws
+    // above the stems even though its frame draws below them.
     for fragment in fragments {
         draw_fragment(
             cx,
@@ -119,12 +142,26 @@ pub(super) fn draw(
     for activation in activations {
         draw_activation(cx, viewport, accent, activation, draws);
     }
+    // Signatures draw a rung smaller than the rest of the scene text (see
+    // `MESSAGE_TEXT_PT`), and so does a named head's type line -- the same rung
+    // the solver measured both with. The pen goes back to the base size once
+    // both passes are done, so the next frame's guards start from it.
+    super::apply_text_zoom_pt(draws.text, viewport.camera.zoom, super::MESSAGE_TEXT_PT);
     for message in messages {
         draw_message(
             cx,
             viewport,
             message,
             message_emphasis(hovered, selected, &message.id),
+            draws,
+        );
+    }
+    for fragment in fragments {
+        draw_fragment_tab(
+            cx,
+            viewport,
+            fragment,
+            fragment_emphasis(hovered, selected, &fragment.id),
             draws,
         );
     }
@@ -138,6 +175,7 @@ pub(super) fn draw(
             draws,
         );
     }
+    super::apply_text_zoom(draws.text, viewport.camera.zoom);
 }
 
 fn draw_dashed_segment(
@@ -149,8 +187,14 @@ fn draw_dashed_segment(
     b: (f64, f64),
     thickness: f64,
 ) {
-    let dx = b.0 - a.0;
-    let dy = b.1 - a.1;
+    // CAD hatching: the dash pattern is stepped in SCREEN space, so its period
+    // stays put at any zoom -- exactly as `BehaviorLineworkMetrics` holds the
+    // stroke width. Stepping in world space instead stretched the dashes with
+    // the camera and turned the lifelines solid when zoomed in.
+    let sa = edge_point_to_screen(camera, rect_pos, a);
+    let sb = edge_point_to_screen(camera, rect_pos, b);
+    let dx = sb.x - sa.x;
+    let dy = sb.y - sa.y;
     let len = dx.hypot(dy);
     if len <= f64::EPSILON {
         return;
@@ -160,9 +204,9 @@ fn draw_dashed_segment(
     let mut travelled = 0.0;
     while travelled < len {
         let dash_end = (travelled + DASH_LEN).min(len);
-        let p0 = (a.0 + ux * travelled, a.1 + uy * travelled);
-        let p1 = (a.0 + ux * dash_end, a.1 + uy * dash_end);
-        draw_solid_segment(cx, camera, rect_pos, fill, p0, p1, thickness);
+        let p0 = dvec2(sa.x + ux * travelled, sa.y + uy * travelled);
+        let p1 = dvec2(sa.x + ux * dash_end, sa.y + uy * dash_end);
+        fill.draw_abs(cx, stroke_quad(cx, p0, p1, thickness));
         travelled += period;
     }
 }
@@ -217,19 +261,88 @@ fn draw_head(
     draws: &mut InteractionDrawResources<'_>,
 ) {
     let screen = world_rect_to_screen(viewport, lifeline.head);
+    let head_accent = lifeline_accent(accent, lifeline.bucket);
+    let wash = accent_with_alpha(head_accent, HEAD_ALPHA + emphasis.wash_boost());
+    // The head is drawn with the app-wide `AccentFrame`: same 150deg gradient
+    // border, same geometry, re-tinted to this participant's accent instead of
+    // the theme's neutral frame stops (redoz@). `border_hi`/`border_lo` are the
+    // two ends of that gradient, so passing the accent at two alphas keeps the
+    // angle and the fade and only changes the hue.
     let zoom = viewport.camera.zoom;
-    let wash = accent_with_alpha(
-        lifeline_accent(accent, lifeline.bucket),
-        HEAD_ALPHA + emphasis.wash_boost(),
-    );
-    draws.node_box.set_uniform(cx, live_id!(radius), &[0.0]);
-    draws.node_box.color = wash;
-    draws.node_box.draw_abs(cx, screen);
-    draws.text_heading.draw_abs(
+    draws.head.set_uniform(cx, live_id!(zoom), &[zoom as f32]);
+    draws.head.set_uniform(
         cx,
-        dvec2(screen.pos.x + 6.0 * zoom, screen.pos.y + 4.0 * zoom),
-        &lifeline.label,
+        live_id!(stroke_scale),
+        &[draws.linework.frame_stroke_scale * HEAD_FRAME_WEIGHT],
     );
+    draws.head.set_uniform(
+        cx,
+        live_id!(screen_space),
+        &[draws.linework.frame_screen_space],
+    );
+    let hi = accent_with_alpha(head_accent, HEAD_BORDER_HI_ALPHA);
+    let lo = accent_with_alpha(head_accent, HEAD_BORDER_LO_ALPHA);
+    draws
+        .head
+        .set_uniform(cx, live_id!(border_hi), &[hi.x, hi.y, hi.z, hi.w]);
+    draws
+        .head
+        .set_uniform(cx, live_id!(border_lo), &[lo.x, lo.y, lo.z, lo.w]);
+    draws.head.color = wash;
+    draws.head.draw_abs(cx, screen);
+
+    // Anonymous head: the classifier alone, centred. Named head: the instance
+    // name over the classifier -- what UML writes `checkout : Order`, said with
+    // weight and size instead of a colon (see `measure_interaction`, which
+    // sizes the box for exactly these two lines).
+    //
+    // Both lines are measured rather than offset by a constant: the solver
+    // sizes the box as `text + head_pad * 2`, so a fixed offset only happens to
+    // look right for one label width and drifts for every other.
+    let title_size = measure_text(cx, draws.text_heading, &lifeline.label);
+    match &lifeline.instance {
+        None => {
+            let pos = dvec2(
+                screen.pos.x + (screen.size.x - title_size.x) * 0.5,
+                screen.pos.y + (screen.size.y - title_size.y) * 0.5,
+            );
+            draws.text_heading.draw_abs(cx, pos, &lifeline.label);
+        }
+        Some(name) => {
+            let name_size = measure_text(cx, draws.text_heading, name);
+            // `text` is the message pen at this point in the pass, one rung
+            // below `text_heading` -- the same size relation the solver
+            // measured the type line with.
+            let type_size = measure_text(cx, draws.text, &lifeline.label);
+            let stack_h = name_size.y + type_size.y;
+            let top = screen.pos.y + (screen.size.y - stack_h) * 0.5;
+            draws.text_heading.draw_abs(
+                cx,
+                dvec2(screen.pos.x + (screen.size.x - name_size.x) * 0.5, top),
+                name,
+            );
+            draws.text.draw_abs(
+                cx,
+                dvec2(
+                    screen.pos.x + (screen.size.x - type_size.x) * 0.5,
+                    top + name_size.y,
+                ),
+                &lifeline.label,
+            );
+        }
+    }
+}
+
+/// Drawn size of `text` through `pen`, in screen px at the pen's current zoom.
+fn measure_text(cx: &mut Cx2d, pen: &mut DrawText, text: &str) -> DVec2 {
+    let measured = pen
+        .layout(cx, 0.0, 0.0, None, false, Align::default(), text)
+        .size_in_lpxs;
+    let scale = pen.font_scale as f64;
+    dvec2(
+        measured.width as f64 * scale,
+        measured.height as f64 * scale,
+    )
 }
 
 fn draw_activation(
@@ -416,20 +529,6 @@ fn draw_fragment(
         .set_uniform(cx, live_id!(stroke_w), &[border]);
     draws.frame_border.draw_abs(cx, screen);
 
-    let zoom = viewport.camera.zoom;
-    let tab_w = (36.0 * zoom).max(20.0);
-    let tab_h = (18.0 * zoom).max(12.0);
-    let tab = Rect {
-        pos: screen.pos,
-        size: dvec2(tab_w, tab_h),
-    };
-    draws.pentagon.draw_abs(cx, tab);
-    draws.text_heading.draw_abs(
-        cx,
-        dvec2(tab.pos.x + 4.0 * zoom, tab.pos.y + 3.0 * zoom),
-        fragment.kind.as_str(),
-    );
-
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
     draws.fill.color = draws.palette.line;
@@ -446,6 +545,52 @@ fn draw_fragment(
             &format!("[{}]", operand.guard_text),
         );
     }
+}
+
+/// The fragment's kind plate, drawn in its own pass on top of the stems (see
+/// `draw`). The plate is sized from the keyword it carries, not from a
+/// constant: at a fixed 36x18 the word overflowed the plate at every zoom and
+/// the bevel cut through it.
+fn draw_fragment_tab(
+    cx: &mut Cx2d,
+    viewport: ViewportSnapshot,
+    fragment: &FragmentGeo,
+    emphasis: Emphasis,
+    draws: &mut InteractionDrawResources<'_>,
+) {
+    let screen = snap_rect(cx, world_rect_to_screen(viewport, fragment.rect));
+    let zoom = viewport.camera.zoom;
+    let label = fragment.kind.as_str();
+    let text = measure_text(cx, draws.text_heading, label);
+    let pad_x = TAB_PAD_X * zoom;
+    let pad_y = TAB_PAD_Y * zoom;
+    // The bevel eats the bottom-right corner, so the plate carries an extra
+    // half-bevel of width past the text to keep the last glyph clear of it.
+    let bevel = (text.y + pad_y * 2.0) * TAB_BEVEL_FRACTION;
+    let tab = Rect {
+        pos: screen.pos,
+        size: dvec2(text.x + pad_x * 2.0 + bevel * 0.5, text.y + pad_y * 2.0),
+    };
+    // The plate strokes its own outline in the frame's colour. Its top and left
+    // edges sit ON the frame's border, so an unstroked plate erased that stretch
+    // of border and left a white notch in the corner of the frame.
+    let border = snap_stroke_width(
+        cx,
+        draws
+            .linework
+            .thickness(emphasis.thickness(FRAME_THICKNESS)),
+    ) as f32;
+    let stroke = emphasis.stroke(draws.palette.line, draws.palette);
+    draws.pentagon.set_uniform(cx, live_id!(stroke_w), &[border]);
+    draws.pentagon.set_uniform(
+        cx,
+        live_id!(border_col),
+        &[stroke.x, stroke.y, stroke.z, stroke.w],
+    );
+    draws.pentagon.draw_abs(cx, tab);
+    draws
+        .text_heading
+        .draw_abs(cx, dvec2(tab.pos.x + pad_x, tab.pos.y + pad_y), label);
 }
 
 #[cfg(test)]

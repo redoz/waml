@@ -50,7 +50,12 @@ pub(crate) struct LifelineGeo {
     pub stem_top: f64,
     pub stem_bottom: f64,
     pub destroyed: bool,
+    /// The classifier the lifeline is typed by -- the bottom line of a named
+    /// head, the only line of an anonymous one.
     pub label: String,
+    /// The instance name (`as checkout`), when the author gave one. UML would
+    /// draw the pair as `checkout : Order`; the head stacks them instead.
+    pub instance: Option<String>,
     pub bucket: AccentBucket,
 }
 
@@ -281,6 +286,7 @@ mod tests {
                 stem_bottom: 300.0,
                 destroyed: false,
                 label: "a".into(),
+                instance: None,
                 bucket: AccentBucket::None,
             }],
             activations: Vec::new(),

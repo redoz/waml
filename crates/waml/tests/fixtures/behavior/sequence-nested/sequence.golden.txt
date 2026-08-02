@@ -1,23 +1,23 @@
-lifeline a head @ 0,0 40x41 stem x=20 41..742
-lifeline b head @ 88,0 39x41 stem x=107 41..742
-lifeline c head @ 175,0 39x41 stem x=195 41..742
-lifeline d head @ 262,262 40x41 stem x=282 302..702 destroyed
-activation c d0 @ 189,102 12x40
-activation b d0 @ 101,62 12x120
-activation d d0 @ 276,382 12x120
-activation b d0 @ 101,622 12x120 unclosed
-message m0 calls 20->107 y=62
-message m1 calls 107->195 y=102
-message m2 replies 195->107 y=142
-message m3 replies 107->20 y=182
-message m4 sends 20->107 y=222
-message m5 creates 20->282 y=262
-message m6 calls 107->282 y=382
-message m7 replies 282->107 y=502
-message m8 calls 20->107 y=622
-message m9 destroys 20->282 y=702
-fragment f1 opt d1 @ 95,422 187x160
+lifeline a head @ 0,0 38x57 stem x=19 57..758
+lifeline b head @ 86,0 38x57 stem x=105 57..758
+lifeline c head @ 172,0 37x57 stem x=191 57..758
+lifeline d head @ 257,278 38x57 stem x=276 334..718 destroyed
+activation c d0 @ 185,118 12x40
+activation b d0 @ 99,78 12x120
+activation d d0 @ 270,398 12x120
+activation b d0 @ 99,638 12x120 unclosed
+message m0 calls 19->105 y=78
+message m1 calls 105->191 y=118
+message m2 replies 191->105 y=158
+message m3 replies 105->19 y=198
+message m4 sends 19->105 y=238
+message m5 creates 19->276 y=278
+message m6 calls 105->276 y=398
+message m7 replies 276->105 y=518
+message m8 calls 19->105 y=638
+message m9 destroys 19->276 y=718
+fragment f1 opt d1 @ 93,438 195x160
   operand y=start guard=extra
-fragment f0 alt d0 @ 8,302 286x400
+fragment f0 alt d0 @ 7,318 287x400
   operand y=start guard=ready
-  operand y=582 guard=else
+  operand y=598 guard=else

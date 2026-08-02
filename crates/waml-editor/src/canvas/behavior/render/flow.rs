@@ -354,10 +354,11 @@ mod tests {
         assert_eq!(edge_emphasis(None, Some(&node), key), Emphasis::None);
 
         assert!(Emphasis::Selected.wash_boost() > Emphasis::Hovered.wash_boost());
-        assert!(
-            Emphasis::Selected.thickness(ROUTE_THICKNESS)
-                > Emphasis::Hovered.thickness(ROUTE_THICKNESS)
-        );
+        // Emphasis is colour + wash only: every level strokes at the resting
+        // pen weight.
+        for e in [Emphasis::None, Emphasis::Hovered, Emphasis::Selected] {
+            assert_eq!(e.thickness(ROUTE_THICKNESS), ROUTE_THICKNESS);
+        }
         let palette = BehaviorPalette {
             line: vec4(0.4, 0.4, 0.4, 1.0),
             hovered: vec4(0.1, 0.2, 0.3, 1.0),

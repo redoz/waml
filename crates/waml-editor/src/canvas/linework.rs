@@ -28,6 +28,13 @@ pub(in crate::canvas) struct BehaviorLineworkMetrics {
     stroke_scale: f64,
     /// Floor a stroke may not drop below, in the same space as the result.
     min_thickness: f64,
+    /// `AccentFrame::stroke_scale` for the lifeline-head surface -- the same
+    /// inverse-zoom the class cards push, so both canvases' frames hold one
+    /// screen-space hairline.
+    pub(in crate::canvas) frame_stroke_scale: f32,
+    /// `AccentFrame::screen_space`: 1.0 when the frame drops its zoom-driven
+    /// compensations (CAD), 0.0 in scaled mode.
+    pub(in crate::canvas) frame_screen_space: f32,
 }
 
 impl BehaviorLineworkMetrics {
@@ -39,10 +46,14 @@ impl BehaviorLineworkMetrics {
             LineworkMode::Cad => Self {
                 stroke_scale: 1.0,
                 min_thickness: 1.0,
+                frame_stroke_scale: (1.0 / zoom) as f32,
+                frame_screen_space: 1.0,
             },
             LineworkMode::Scaled => Self {
                 stroke_scale: zoom.max(0.3),
                 min_thickness: 1.4,
+                frame_stroke_scale: 1.0,
+                frame_screen_space: 0.0,
             },
         }
     }

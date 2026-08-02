@@ -448,6 +448,8 @@ fn ref_card_icon(kind: ElementKind) -> Icon {
         // The container glyph, matching the diagram's own picker row.
         ElementKind::Diagram => Icon::Frame,
         ElementKind::Node => Icon::PanelTop,
+        // A message/fragment is a step in a flow of control, not a container.
+        ElementKind::BehaviorElement => Icon::Spline,
     }
 }
 
@@ -1089,6 +1091,13 @@ impl Inspector {
                 // The root diagram row leads with the `Frame` glyph -- distinct
                 // from any node's catalog icon, marking it as the container.
                 ElementKind::Diagram => (SelectLead::Icon(Icon::Frame), row.label.clone(), true),
+                // A behavior element's label is already its full reading (`a
+                // calls b: start()`), so it goes through verbatim -- unlike an
+                // edge row, whose label is a `src -> tgt` pair the picker trims
+                // to the target end.
+                ElementKind::BehaviorElement => {
+                    (SelectLead::Icon(Icon::Spline), row.label.clone(), true)
+                }
             };
             items.push(SelectItem {
                 id,
@@ -1155,7 +1164,8 @@ impl Inspector {
             Subject::Diagram(key)
             | Subject::Classifier(key)
             | Subject::Group(key)
-            | Subject::Edge(key) => Some(key.clone()),
+            | Subject::Edge(key)
+            | Subject::BehaviorElement(key) => Some(key.clone()),
             Subject::None => None,
         }
     }
@@ -1264,21 +1274,21 @@ impl Inspector {
     }
 
     /// The flyout closed. Clear the box's active state; on a committed node pick
-    /// repoint the inspector via `apply_pick`.
+    /// repoint the inspector via `apply_pick`. Returns the new subject on a
+    /// commit, so a caller that also owns a canvas can follow the pick there
+    /// (`None` on a dismiss, or on an id with no matching row).
     pub fn on_picker_closed(
         &mut self,
         cx: &mut Cx,
         analysis: &waml::uml::Analysis,
         result: PopupResult,
-    ) {
+    ) -> Option<Subject> {
         let picked = self
             .view
             .widget(cx, ids!(element_bar.select_box))
             .borrow_mut::<SelectBox>()
-            .and_then(|mut b| b.on_closed(cx, result));
-        if let Some(id) = picked {
-            self.apply_pick(cx, analysis, id);
-        }
+            .and_then(|mut b| b.on_closed(cx, result))?;
+        self.apply_pick(cx, analysis, picked)
     }
 }
 

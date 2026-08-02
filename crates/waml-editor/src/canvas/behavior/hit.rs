@@ -274,6 +274,7 @@ mod tests {
             stem_bottom: 200.0,
             destroyed: false,
             label: id.into(),
+            instance: None,
             bucket: AccentBucket::None,
         }
     }

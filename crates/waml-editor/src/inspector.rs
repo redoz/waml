@@ -20,6 +20,17 @@ pub enum Subject {
     Group(String),
     /// Synthetic `"src->tgt"` id (the Edge picker row's key).
     Edge(String),
+    /// A behavior-LOCAL element -- an interaction's message or combined
+    /// fragment, keyed `"{document}#{id}"`. These live in no model pool (design
+    /// spec §6: interaction nodes are document-local), so they cannot be a
+    /// `Classifier` or an `Edge`; they get their own subject rather than being
+    /// silently collapsed onto the document the way an unresolvable target is.
+    BehaviorElement(String),
+}
+
+/// Split a [`Subject::BehaviorElement`] key back into `(document, id)`.
+pub fn split_behavior_key(key: &str) -> Option<(&str, &str)> {
+    key.split_once('#')
 }
 
 #[cfg(test)]
@@ -72,6 +83,9 @@ pub enum ElementKind {
     Group,
     Node,
     Edge,
+    /// A message or combined fragment of a behavior document
+    /// ([`Subject::BehaviorElement`]).
+    BehaviorElement,
 }
 
 /// A navigable reference to one diagram element: enough for the panel to
@@ -271,6 +285,7 @@ pub fn subject_to_index(rows: &[ElementRow], subject: &Subject) -> usize {
         Subject::Classifier(k) => (ElementKind::Node, k),
         Subject::Group(k) => (ElementKind::Group, k),
         Subject::Edge(k) => (ElementKind::Edge, k),
+        Subject::BehaviorElement(k) => (ElementKind::BehaviorElement, k),
         Subject::None => return 0,
     };
     rows.iter()
@@ -286,6 +301,7 @@ pub fn subject_from(key: &str, kind: ElementKind) -> Subject {
         ElementKind::Node => Subject::Classifier(key.to_string()),
         ElementKind::Group => Subject::Group(key.to_string()),
         ElementKind::Edge => Subject::Edge(key.to_string()),
+        ElementKind::BehaviorElement => Subject::BehaviorElement(key.to_string()),
     }
 }
 
@@ -308,6 +324,74 @@ pub fn build_view(model: &Model, subject: &Subject) -> Option<InspectorView> {
         Subject::Classifier(key) => build_classifier_view(model, key),
         Subject::Group(name) => build_group_view(model, name),
         Subject::Edge(id) => build_edge_view(model, id),
+        Subject::BehaviorElement(key) => build_behavior_element_view(model, key),
+    }
+}
+
+/// A message or fragment of an interaction, keyed `"{document}#{id}"`. These
+/// carry no attributes or associations of their own -- the view is the element's
+/// own text (`a calls b: start()`, `alt`) plus what kind it is.
+fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView> {
+    use waml::model::SeqNode;
+
+    let (doc_key, id) = split_behavior_key(key)?;
+    let doc = model.interactions.iter().find(|d| d.key == doc_key)?;
+
+    if let Some(edge) = doc.edges.iter().find(|e| e.id == id) {
+        let lifeline_title = |lid: &str| -> String {
+            doc.nodes
+                .iter()
+                .find_map(|n| match n {
+                    SeqNode::Lifeline { id, title, alias, .. } if id == lid => {
+                        Some(alias.clone().unwrap_or_else(|| title.clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| lid.to_string())
+        };
+        return Some(behavior_element_view(
+            message_label(edge, &lifeline_title),
+            "Message",
+        ));
+    }
+    doc.nodes.iter().find_map(|node| match node {
+        SeqNode::Fragment { id: nid, kind, .. } if nid == id => {
+            Some(behavior_element_view(kind.as_str().to_string(), "Fragment"))
+        }
+        SeqNode::Operand { id: nid, guard, .. } if nid == id => Some(behavior_element_view(
+            guard.clone().unwrap_or_else(|| "else".to_string()),
+            "Operand",
+        )),
+        _ => None,
+    })
+}
+
+/// One message's display text: `from verb to: signature`, the same reading
+/// order the markdown authors it in.
+pub fn message_label(edge: &waml::model::SeqEdge, lifeline_title: &dyn Fn(&str) -> String) -> String {
+    let head = format!(
+        "{} {} {}",
+        lifeline_title(&edge.from),
+        edge.verb.as_str(),
+        lifeline_title(&edge.to)
+    );
+    match &edge.signature {
+        Some(signature) => format!("{head}: {signature}"),
+        None => head,
+    }
+}
+
+fn behavior_element_view(title: String, kind_label: &str) -> InspectorView {
+    InspectorView {
+        title,
+        kind_label: kind_label.to_string(),
+        profile: String::new(),
+        abstract_flag: false,
+        stereotypes: Vec::new(),
+        description: None,
+        attributes: Vec::new(),
+        members: Vec::new(),
+        associations: Vec::new(),
     }
 }
 

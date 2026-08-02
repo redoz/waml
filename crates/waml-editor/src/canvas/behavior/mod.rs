@@ -194,21 +194,31 @@ script_mod! {
         }
     }
 
-    // Fragment-tab pentagon pen (spec §4.2): the "house" 5-point path carrying
-    // the kind keyword (`alt`/`opt`/`loop`), notched on the right edge.
-    mod.draw.InteractionPentagon = mod.draw.DrawColor{
+    // Fragment-tab pen (spec §4.2): the kind keyword's plate in the frame's
+    // top-left corner. UML cuts the BOTTOM-RIGHT corner off a rectangle -- the
+    // tab is a rectangle with one bevel, not an arrow. The earlier "house"
+    // path (a full-height point on the right edge) both read as an arrow and
+    // ate the keyword, because the point is where the last glyphs land.
+    //
+    // The bevel is a fixed fraction of the plate height, so it stays a corner
+    // cut at every label width instead of growing into the text.
+    mod.draw.InteractionTab = mod.draw.DrawColor{
+        border_col: uniform(#x00000000)
+        stroke_w: uniform(1.0)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            let w = self.rect_size.x
-            let h = self.rect_size.y
-            let notch = min(w * 0.25, h * 0.5)
-            sdf.move_to(0.0, 0.0)
-            sdf.line_to(w - notch, 0.0)
-            sdf.line_to(w, h * 0.5)
+            let inset = self.stroke_w * 0.5
+            let w = self.rect_size.x - inset
+            let h = self.rect_size.y - inset
+            let notch = min(h * 0.45, w * 0.5)
+            sdf.move_to(inset, inset)
+            sdf.line_to(w, inset)
+            sdf.line_to(w, h - notch)
             sdf.line_to(w - notch, h)
-            sdf.line_to(0.0, h)
+            sdf.line_to(inset, h)
             sdf.close_path()
-            sdf.fill(self.color)
+            sdf.fill_keep(self.color)
+            sdf.stroke(self.border_col, self.stroke_w)
             return sdf.result
         }
     }
@@ -224,7 +234,16 @@ script_mod! {
         draw_open_head: mod.draw.InteractionOpenHead{ color: atlas.text_dim }
         draw_x_mark: mod.draw.InteractionXMark{ color: atlas.text_dim }
         draw_frame_border: mod.draw.InteractionFrameBorder{ color: atlas.text_dim }
-        draw_pentagon: mod.draw.InteractionPentagon{ color: atlas.field_bg }
+        draw_pentagon: mod.draw.InteractionTab{ color: atlas.field_bg }
+        // The lifeline head is a real Atlas surface: the app-wide 150deg
+        // gradient border, re-tinted per lifeline to that participant's accent
+        // (`draw_head`), over a wash of the same accent. Frost is off -- the
+        // head carries the accent wash the canvas has always drawn, not the
+        // near-white card fill.
+        draw_head: mod.draw.AccentFrame{
+            frost_top: 1.0 frost_bot: 1.0
+            depth_y: 0.0 depth_blur: 0.0 depth_a: 0.0 bloom: 0.0
+        }
         draw_fill +: { color: atlas.text_dim }
         // Route/stem/frame resting stroke plus the two call-out colours, as
         // atlas roles: hover darkens to full-strength text, selection takes
@@ -296,6 +315,9 @@ pub struct BehaviorSurface {
     #[redraw]
     #[live]
     draw_pentagon: DrawColor,
+    #[redraw]
+    #[live]
+    draw_head: DrawColor,
     #[redraw]
     #[live]
     draw_stale_badge: DrawColor,
@@ -495,6 +517,7 @@ impl Widget for BehaviorSurface {
             x_mark: &mut self.draw_x_mark,
             frame_border: &mut self.draw_frame_border,
             pentagon: &mut self.draw_pentagon,
+            head: &mut self.draw_head,
             accent,
             palette,
         };
@@ -638,6 +661,17 @@ impl BehaviorSurface {
     /// `ClassDiagramSurface::zoom_pct`).
     pub(crate) fn zoom_pct(&self) -> i32 {
         (self.viewport.camera().zoom * 100.0).round() as i32
+    }
+
+    /// Drive the selection from outside the canvas -- the inspector's element
+    /// picker, which selects the participant the reader just picked. `None`
+    /// deselects (picking the document row is deselecting). Selection-only: the
+    /// camera is left where the reader put it.
+    pub(crate) fn select_target(&mut self, cx: &mut Cx, target: Option<BehaviorTarget>) {
+        if self.selected != target {
+            self.selected = target;
+            self.draw_bg.redraw(cx);
+        }
     }
 
     /// `Esc` clears the selection (spec §5.2).

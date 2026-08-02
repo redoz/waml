@@ -22,6 +22,11 @@ pub(super) use interaction::InteractionDrawResources;
 /// every glyph a third wider than the box the solver sized around it.
 const BASE_TEXT_PT: f32 = 13.0;
 
+/// Message signature labels, in POINTS at zoom 1. Must track
+/// `InteractionConfig::message_font_size`, which the solver measures the label
+/// rects with.
+pub(super) const MESSAGE_TEXT_PT: f32 = 10.0;
+
 /// Arrow-head extent, in lpx at zoom 1 -- one value for flow routes and
 /// interaction messages alike.
 pub(super) const ARROW_HEAD: f64 = 9.0;
@@ -31,7 +36,12 @@ pub(super) const ARROW_HEAD: f64 = 9.0;
 /// renderer does. Without this the glyph geometry stays at the DSL size while
 /// the boxes scale, so text detaches from its box at any zoom != 1.
 pub(super) fn apply_text_zoom(text: &mut DrawText, zoom: f64) {
-    let target = (BASE_TEXT_PT * zoom as f32).max(4.0);
+    apply_text_zoom_pt(text, zoom, BASE_TEXT_PT);
+}
+
+/// [`apply_text_zoom`] at an explicit base size in points.
+pub(super) fn apply_text_zoom_pt(text: &mut DrawText, zoom: f64, base_pt: f32) {
+    let target = (base_pt * zoom as f32).max(4.0);
     let font_size = crate::canvas::primitives::font_raster_size(target);
     text.text_style.font_size = font_size;
     text.font_scale = target / font_size;
@@ -90,13 +100,13 @@ impl Emphasis {
         }
     }
 
-    /// Stroke thickness multiplier.
+    /// Stroke thickness at this emphasis -- deliberately the resting weight at
+    /// every level. Hover and selection are called out with colour and wash
+    /// only (redoz@): a CAD drawing keeps one pen weight per line role, and
+    /// fattening a lifeline or route under the pointer reads as a different
+    /// kind of line rather than the same line highlighted.
     pub(super) fn thickness(self, resting: f64) -> f64 {
-        match self {
-            Emphasis::None => resting,
-            Emphasis::Hovered => resting * 1.5,
-            Emphasis::Selected => resting * 2.0,
-        }
+        resting
     }
 }
 
@@ -113,6 +123,7 @@ pub(super) struct BehaviorDrawResources<'a> {
     pub(super) x_mark: &'a mut DrawColor,
     pub(super) frame_border: &'a mut DrawColor,
     pub(super) pentagon: &'a mut DrawColor,
+    pub(super) head: &'a mut DrawColor,
     pub(super) accent: Vec4,
     pub(super) palette: BehaviorPalette,
 }
@@ -175,13 +186,13 @@ pub(super) fn draw(
             fragments,
         } => {
             let mut interaction_draws = InteractionDrawResources {
-                node_box: &mut *draws.node_box,
                 fill: &mut *draws.fill,
                 triangle: &mut *draws.triangle,
                 open_head: &mut *draws.open_head,
                 x_mark: &mut *draws.x_mark,
                 frame_border: &mut *draws.frame_border,
                 pentagon: &mut *draws.pentagon,
+                head: &mut *draws.head,
                 text: &mut *draws.text,
                 text_heading: &mut *draws.text_heading,
                 palette: draws.palette,
