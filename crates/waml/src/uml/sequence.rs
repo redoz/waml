@@ -226,6 +226,7 @@ type InteractionUseGraph = BTreeMap<String, Vec<(usize, String)>>;
 fn interaction_use_graph(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
+    claimed: &BTreeSet<&str>,
 ) -> InteractionUseGraph {
     let mut graph = BTreeMap::new();
     for concept in declared.concepts() {
@@ -243,7 +244,10 @@ fn interaction_use_graph(
             if handle == "outside" || handle.contains('@') || !lifelines.insert(handle.clone()) {
                 continue;
             }
-            local_classifiers.insert(handle.clone(), crate::okf::resolve_href(&path, link));
+            let classifier = crate::okf::resolve_href(&path, link);
+            if claimed.contains(classifier.as_str()) {
+                local_classifiers.insert(handle.clone(), classifier);
+            }
         }
         let mut aliases = lifelines.clone();
         for (index, interaction_use) in concept.interaction_uses.iter().enumerate() {
@@ -460,7 +464,7 @@ pub(crate) fn lower(
     let mut interaction_uses = Vec::new();
     let mut use_aliases = BTreeMap::new();
     let mut authored_use_aliases = BTreeSet::new();
-    let use_graph = interaction_use_graph(context, declared);
+    let use_graph = interaction_use_graph(context, declared, claimed);
     for (declared_use_index, declared_use) in concept.interaction_uses.iter().enumerate() {
         let (Some(link), Some(alias)) = (value(&declared_use.link), value(&declared_use.alias))
         else {
@@ -493,6 +497,19 @@ pub(crate) fn lower(
                 declared_use.syntax.syntax(),
             );
             valid_use = false;
+        }
+        for binding in declared_use.bindings.iter() {
+            if value(&binding.local).is_none() || value(&binding.target).is_none() {
+                report_at(
+                    context,
+                    diagnostics,
+                    DiagCode::InvalidInteractionUse,
+                    format!("interaction use '{alias}' has an invalid binding"),
+                    path,
+                    binding.syntax.syntax(),
+                );
+                valid_use = false;
+            }
         }
         let binding_entries = declared_use
             .bindings
@@ -664,6 +681,24 @@ pub(crate) fn lower(
         .enumerate()
         .map(|(index, message)| (message.syntax.syntax().range().start(), index))
         .collect::<BTreeMap<_, _>>();
+    let mut operand_indices = BTreeMap::new();
+    let mut next_operand_index = BTreeMap::new();
+    for operand in concept.operands.iter() {
+        let start = operand.syntax.syntax().range().start();
+        let owner = concept
+            .fragments
+            .iter()
+            .filter(|fragment| {
+                fragment.syntax.syntax().range().start() < start && fragment.depth < operand.depth
+            })
+            .max_by_key(|fragment| (fragment.depth, fragment.syntax.syntax().range().start()))
+            .map(|fragment| fragment.syntax.syntax().range().start());
+        if let Some(owner) = owner {
+            let next = next_operand_index.entry(owner).or_insert(0usize);
+            operand_indices.insert(start, *next);
+            *next += 1;
+        }
+    }
 
     for (_, item) in ordered {
         match item {
@@ -724,8 +759,9 @@ pub(crate) fn lower(
                         label: label.clone(),
                     },
                 };
+                let operand_index = operand_indices[&operand.syntax.syntax().range().start()];
                 let id = match &nodes[fragment_index] {
-                    SeqNode::Fragment { id, operands, .. } => format!("{id}.o{}", operands.len()),
+                    SeqNode::Fragment { id, .. } => format!("{id}.o{operand_index}"),
                     _ => unreachable!(),
                 };
                 let index = nodes.len();
@@ -1222,49 +1258,174 @@ fn validate_lifetimes(
     diagnostics: &mut Vec<Diagnostic>,
     path: &str,
 ) {
-    fn walk_scopes(
+    fn walk(
         items: &[SeqChild],
         nodes: &BTreeMap<String, &SeqNode>,
-        scopes: &BTreeMap<String, String>,
-        out: &mut BTreeMap<MessageId, BTreeMap<String, String>>,
+        edges: &BTreeMap<MessageId, &SeqEdge>,
+        alive: &mut BTreeSet<String>,
+        context: &DomainAnalysisContext<'_>,
+        concept: &DeclaredConcept,
+        diagnostics: &mut Vec<Diagnostic>,
+        path: &str,
     ) {
+        fn created_in(
+            items: &[SeqChild],
+            nodes: &BTreeMap<String, &SeqNode>,
+            edges: &BTreeMap<MessageId, &SeqEdge>,
+            out: &mut BTreeSet<String>,
+        ) {
+            for item in items {
+                match item {
+                    SeqChild::Message { edge } => {
+                        if let Some(SeqEdge {
+                            kind: MessageKind::Create,
+                            to: Some(EndpointRef::Lifeline { id }),
+                            ..
+                        }) = edges.get(edge).copied()
+                        {
+                            out.insert(id.clone());
+                        }
+                    }
+                    SeqChild::Fragment { node } => {
+                        if let Some(SeqNode::Fragment { operands, .. }) = nodes.get(node).copied() {
+                            for operand in operands {
+                                if let Some(SeqNode::Operand { items, .. }) =
+                                    nodes.get(operand).copied()
+                                {
+                                    created_in(items, nodes, edges, out);
+                                }
+                            }
+                        }
+                    }
+                    SeqChild::InteractionUse { .. } => {}
+                }
+            }
+        }
         for item in items {
             match item {
                 SeqChild::Message { edge } => {
-                    out.insert(edge.clone(), scopes.clone());
+                    let Some(message) = edges.get(edge).copied() else {
+                        continue;
+                    };
+                    let mut invalid = None;
+                    let mut require_alive = |endpoint: &EndpointRef| {
+                        if let EndpointRef::Lifeline { id } = endpoint {
+                            if !alive.contains(id) {
+                                invalid.get_or_insert_with(|| id.clone());
+                            }
+                        }
+                    };
+                    require_alive(&message.from);
+                    if message.kind != MessageKind::Create {
+                        if let Some(target) = &message.to {
+                            require_alive(target);
+                        }
+                    }
+                    if let Some(id) = invalid {
+                        report_message(
+                            context,
+                            concept,
+                            diagnostics,
+                            DiagCode::InvalidLifelineLifetime,
+                            format!("lifeline '{id}' is used outside its lifetime"),
+                            path,
+                            edge,
+                        );
+                    }
+                    if let Some(EndpointRef::Lifeline { id }) = &message.to {
+                        match message.kind {
+                            MessageKind::Create => {
+                                if alive.contains(id) {
+                                    report_message(
+                                        context,
+                                        concept,
+                                        diagnostics,
+                                        DiagCode::InvalidLifelineLifetime,
+                                        "lifeline is created or deleted more than once",
+                                        path,
+                                        edge,
+                                    );
+                                }
+                                alive.insert(id.clone());
+                            }
+                            MessageKind::Delete => {
+                                alive.remove(id);
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 SeqChild::InteractionUse { .. } => {}
                 SeqChild::Fragment { node } => {
-                    let Some(SeqNode::Fragment { id, kind, operands }) = nodes.get(node).copied()
+                    let Some(SeqNode::Fragment { kind, operands, .. }) = nodes.get(node).copied()
                     else {
                         continue;
                     };
-                    for operand in operands {
+                    let incoming = alive.clone();
+                    let mut outcomes = Vec::new();
+                    let operand_creates = operands
+                        .iter()
+                        .map(|operand| {
+                            let mut creates = BTreeSet::new();
+                            if let Some(SeqNode::Operand { items, .. }) =
+                                nodes.get(operand).copied()
+                            {
+                                created_in(items, nodes, edges, &mut creates);
+                            }
+                            creates
+                        })
+                        .collect::<Vec<_>>();
+                    for (operand_index, operand) in operands.iter().enumerate() {
                         let Some(SeqNode::Operand { items, .. }) = nodes.get(operand).copied()
                         else {
                             continue;
                         };
-                        let mut branch = scopes.clone();
+                        let mut branch = incoming.clone();
                         if *kind == FragmentKind::Par {
-                            branch.insert(id.clone(), operand.clone());
+                            for (sibling_index, creates) in operand_creates.iter().enumerate() {
+                                if sibling_index != operand_index {
+                                    branch.extend(creates.iter().cloned());
+                                }
+                            }
                         }
-                        walk_scopes(items, nodes, &branch, out);
+                        walk(
+                            items,
+                            nodes,
+                            edges,
+                            &mut branch,
+                            context,
+                            concept,
+                            diagnostics,
+                            path,
+                        );
+                        outcomes.push(branch);
+                    }
+                    let has_else = operands.iter().any(|operand| {
+                        matches!(
+                            nodes.get(operand).copied(),
+                            Some(SeqNode::Operand {
+                                spec: OperandSpec::Else,
+                                ..
+                            })
+                        )
+                    });
+                    if matches!(kind, FragmentKind::Alt) && !has_else
+                        || matches!(
+                            kind,
+                            FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
+                        )
+                    {
+                        outcomes.push(incoming.clone());
+                    }
+                    if let Some(first) = outcomes.first().cloned() {
+                        *alive = outcomes.iter().skip(1).fold(first, |mut joined, branch| {
+                            joined.retain(|id| branch.contains(id));
+                            joined
+                        });
                     }
                 }
             }
         }
-    }
-    fn comparable(
-        left: &MessageId,
-        right: &MessageId,
-        scopes: &BTreeMap<MessageId, BTreeMap<String, String>>,
-    ) -> bool {
-        let (Some(left), Some(right)) = (scopes.get(left), scopes.get(right)) else {
-            return true;
-        };
-        !left
-            .iter()
-            .any(|(fragment, operand)| right.get(fragment).is_some_and(|other| other != operand))
     }
     let node_by_id = nodes
         .iter()
@@ -1273,10 +1434,7 @@ fn validate_lifetimes(
             SeqNode::Lifeline { .. } => None,
         })
         .collect::<BTreeMap<_, _>>();
-    let mut scopes = BTreeMap::new();
-    walk_scopes(items, &node_by_id, &BTreeMap::new(), &mut scopes);
     let mut creates: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    let mut deletes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, edge) in edges.iter().enumerate() {
         let target = edge.to.as_ref();
         if matches!(edge.kind, MessageKind::Create | MessageKind::Delete)
@@ -1296,54 +1454,30 @@ fn validate_lifetimes(
         if let Some(EndpointRef::Lifeline { id }) = target {
             match edge.kind {
                 MessageKind::Create => creates.entry(id.clone()).or_default().push(index),
-                MessageKind::Delete => deletes.entry(id.clone()).or_default().push(index),
+                MessageKind::Delete => {}
                 _ => {}
             }
         }
     }
-    for positions in creates.values().chain(deletes.values()) {
-        if positions.len() > 1 {
-            for position in positions {
-                report_message(
-                    context,
-                    concept,
-                    diagnostics,
-                    DiagCode::InvalidLifelineLifetime,
-                    "lifeline is created or deleted more than once",
-                    path,
-                    &edges[*position].id,
-                );
-            }
-        }
-    }
-    for (index, edge) in edges.iter().enumerate() {
-        for endpoint in std::iter::once(&edge.from).chain(edge.to.iter()) {
-            let EndpointRef::Lifeline { id } = endpoint else {
-                continue;
-            };
-            if creates
-                .get(id)
-                .and_then(|positions| positions.first())
-                .is_some_and(|created| {
-                    index < *created && comparable(&edge.id, &edges[*created].id, &scopes)
-                })
-                || deletes
-                    .get(id)
-                    .and_then(|positions| positions.first())
-                    .is_some_and(|deleted| {
-                        index > *deleted && comparable(&edge.id, &edges[*deleted].id, &scopes)
-                    })
-            {
-                report_message(
-                    context,
-                    concept,
-                    diagnostics,
-                    DiagCode::InvalidLifelineLifetime,
-                    format!("lifeline '{id}' is used outside its lifetime"),
-                    path,
-                    &edge.id,
-                );
-            }
-        }
-    }
+    let mut alive = nodes
+        .iter()
+        .filter_map(|node| match node {
+            SeqNode::Lifeline { id, .. } if !creates.contains_key(id) => Some(id.clone()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let edge_by_id = edges
+        .iter()
+        .map(|edge| (edge.id.clone(), edge))
+        .collect::<BTreeMap<_, _>>();
+    walk(
+        items,
+        &node_by_id,
+        &edge_by_id,
+        &mut alive,
+        context,
+        concept,
+        diagnostics,
+        path,
+    );
 }

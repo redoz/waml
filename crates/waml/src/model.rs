@@ -802,8 +802,8 @@ pub enum SeqNode {
         )]
         ref_: Option<String>,
     },
-    /// A combined fragment (`alt`/`opt`/`loop`). `operands` are its `Operand`
-    /// node ids, in order.
+    /// A combined fragment of any canonical `FragmentKind`. `operands` are its
+    /// `Operand` node ids, in order.
     Fragment {
         id: String,
         kind: FragmentKind,
@@ -842,7 +842,8 @@ pub struct SequenceDoc {
     pub edges: Vec<SeqEdge>,
     pub gates: Vec<String>,
     pub interaction_uses: Vec<SeqInteractionUse>,
-    /// The interaction root's ordered item stream (message/fragment refs).
+    /// The interaction root's ordered item stream (message, fragment, and
+    /// interaction-use references).
     pub items: Vec<SeqChild>,
 }
 

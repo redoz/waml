@@ -424,6 +424,41 @@ fn invalid_interaction_uses_keep_declared_siblings() {
 }
 
 #[test]
+fn invalid_reference_validation_never_silently_removes_later_valid_uses() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "target.md",
+            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [B](./b.md) as target_b\n\n## Messages\n- target_b signals outside `participates`\n",
+        ),
+        ("empty.md", "---\ntype: uml.Sequence\n---\n# Empty\n"),
+        (
+            "uses.md",
+            "---\ntype: uml.Sequence\n---\n# Uses\n\n## Lifelines\n- [A](./a.md) as local_a\n\n## Messages\n- ref [Missing](./missing.md) as invalid_link\n- ref [Target](./target.md) as mismatch\n  - bind local_a to target_b\n- ref [Empty](./empty.md) as valid\n",
+        ),
+    ]);
+    let doc = interaction(&analysis, "uses");
+    assert_eq!(doc.interaction_uses.len(), 1);
+    assert_eq!(doc.interaction_uses[0].alias, "valid");
+    assert_eq!(doc.interaction_uses[0].id, InteractionUseId("u2".into()));
+    let rejected = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.file == "uses.md" && diagnostic.code == DiagCode::InvalidInteractionUse
+        })
+        .collect::<Vec<_>>();
+    assert!(rejected
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("unresolved")));
+    assert!(rejected
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("different classifiers")));
+    assert!(rejected.iter().all(|diagnostic| diagnostic.range.is_some()));
+}
+
+#[test]
 fn interaction_use_cycles_and_binding_errors_are_diagnosed() {
     let analysis = analyze([
         ("a-class.md", "---\ntype: uml.Class\n---\n# A\n"),
@@ -690,7 +725,7 @@ fn lifetime_diagnostics_pin_the_exact_authored_message() {
     let declared = analysis.declared.concept("lifetime").unwrap();
     for (code, message, message_index) in [
         (DiagCode::InvalidLifelineLifetime, "outside its lifetime", 0),
-        (DiagCode::InvalidLifelineLifetime, "more than once", 1),
+        (DiagCode::InvalidLifelineLifetime, "more than once", 2),
         (DiagCode::InvalidSequenceEndpoint, "must be local", 3),
     ] {
         let found = diagnostic(&analysis, code, message);
@@ -700,4 +735,73 @@ fn lifetime_diagnostics_pin_the_exact_authored_message() {
         );
         assert!(found.line > 1);
     }
+}
+
+#[test]
+fn repairing_an_earlier_operand_does_not_renumber_later_operands() {
+    let bad = analyze([(
+        "operands.md",
+        "---\ntype: uml.Sequence\n---\n# Operands\n\n## Messages\n- alt\n  - when\n  - when `later`\n",
+    )]);
+    let fixed = analyze([(
+        "operands.md",
+        "---\ntype: uml.Sequence\n---\n# Operands\n\n## Messages\n- alt\n  - when `fixed`\n  - when `later`\n",
+    )]);
+    let bad_fragment = interaction(&bad, "operands")
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            SeqNode::Fragment { operands, .. } => Some(operands),
+            _ => None,
+        })
+        .unwrap();
+    let fixed_fragment = interaction(&fixed, "operands")
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            SeqNode::Fragment { operands, .. } => Some(operands),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(bad_fragment, &["f0.o1"]);
+    assert_eq!(fixed_fragment, &["f0.o0", "f0.o1"]);
+}
+
+#[test]
+fn alt_lifetime_states_join_only_definitely_alive_lifelines() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "sibling.md",
+            "---\ntype: uml.Sequence\n---\n# Sibling\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `create`\n    - a creates b: `B`\n  - else\n    - a signals b `sibling use`\n",
+        ),
+        (
+            "implicit.md",
+            "---\ntype: uml.Sequence\n---\n# Implicit\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `create`\n    - a creates b: `B`\n- a signals b `after implicit path`\n",
+        ),
+        (
+            "definite.md",
+            "---\ntype: uml.Sequence\n---\n# Definite\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `first`\n    - a creates b: `B`\n  - else\n    - a creates b: `B`\n- a signals b `after all branches`\n",
+        ),
+    ]);
+    for (concept_id, message_index) in [("sibling", 1), ("implicit", 1)] {
+        let declared = analysis.declared.concept(concept_id).unwrap();
+        let diagnostics = analysis
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.file == format!("{concept_id}.md")
+                    && diagnostic.code == DiagCode::InvalidLifelineLifetime
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].range,
+            Some(declared.messages[message_index].syntax.syntax().range())
+        );
+    }
+    assert!(!analysis.diagnostics.iter().any(|diagnostic| {
+        diagnostic.file == "definite.md" && diagnostic.code == DiagCode::InvalidLifelineLifetime
+    }));
 }
