@@ -485,3 +485,93 @@ fn sequence_reference_errors_recover_at_the_next_typed_line() {
     assert_eq!(malformed, 6);
     assert_eq!(written(&analysis, "checkout.md"), authored);
 }
+
+#[test]
+fn bare_fragment_and_operand_keep_their_text_and_recover_locally() {
+    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- alt\n  when `ready`\n  - else\nalt\n- sender signals receiver `Ready`\n";
+    let analysis = analyze([("s.md", authored)]);
+    let root = root(&analysis, "s.md");
+    let fragments = typed::<uml::SequenceFragmentSyntax>(root.clone());
+    assert_eq!(fragments.len(), 2);
+    assert_eq!(fragments[1].kind_token().text().write_to_string(), "alt");
+    assert!(fragments[1]
+        .syntax()
+        .child_at(uml::SequenceFragmentSyntax::BULLET_SLOT)
+        .and_then(SyntaxElement::into_token)
+        .unwrap()
+        .flags()
+        .is_missing());
+    let operands = typed::<uml::SequenceOperandSyntax>(root.clone());
+    assert_eq!(operands.len(), 2);
+    assert_eq!(operands[0].keyword_token().text().write_to_string(), "when");
+    assert!(operands[0]
+        .syntax()
+        .child_at(uml::SequenceOperandSyntax::BULLET_SLOT)
+        .and_then(SyntaxElement::into_token)
+        .unwrap()
+        .flags()
+        .is_missing());
+    let messages = typed::<uml::MessageSyntax>(root);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].verb_token().text().write_to_string(), "signals");
+    let document_id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("s.md").unwrap())
+        .unwrap();
+    let malformed = analysis
+        .syntax
+        .document(document_id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::MalformedMessage
+        })
+        .count();
+    assert_eq!(malformed, 2);
+    assert_eq!(written(&analysis, "s.md"), authored);
+}
+
+#[test]
+fn mixed_tab_indentation_recovers_before_operand_and_binding_ownership() {
+    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- alt\n  \t- branch `mixed`\n  - branch `valid`\n- ref [Use](./use.md) as used\n  \t- bind bad to bad\n  - bind good to good\n- sender signals receiver `Ready`\n";
+    let target = "---\ntype: uml.Sequence\n---\n# Use\n";
+    let analysis = analyze([("s.md", authored), ("use.md", target)]);
+    let root = root(&analysis, "s.md");
+    let operands = typed::<uml::SequenceOperandSyntax>(root.clone());
+    assert_eq!(operands.len(), 1);
+    assert_eq!(
+        operands[0]
+            .branch_label_token()
+            .unwrap()
+            .text()
+            .write_to_string(),
+        "`valid`"
+    );
+    let bindings = typed::<uml::syntax::BindingSyntax>(root.clone());
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].local_token().text().write_to_string(), "good");
+    let messages = typed::<uml::MessageSyntax>(root);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].verb_token().text().write_to_string(), "signals");
+    let document_id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("s.md").unwrap())
+        .unwrap();
+    let malformed_indent = analysis
+        .syntax
+        .document(document_id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::MalformedIndentation
+        })
+        .count();
+    assert_eq!(malformed_indent, 2);
+    assert_eq!(written(&analysis, "s.md"), authored);
+}

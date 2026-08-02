@@ -443,6 +443,42 @@ fn flow_block(
     f.node(UmlSyntaxKind::FlowBlock, roots).unwrap()
 }
 
+#[derive(Clone, Copy)]
+struct SequenceIndentation {
+    bytes: usize,
+    spaces: usize,
+    malformed: bool,
+}
+
+fn sequence_indentation(line: &str) -> SequenceIndentation {
+    let mut bytes = 0;
+    let mut spaces = 0;
+    let mut has_tab = false;
+    for byte in line.bytes() {
+        match byte {
+            b' ' => {
+                bytes += 1;
+                spaces += 1;
+            }
+            b'\t' => {
+                bytes += 1;
+                has_tab = true;
+            }
+            _ => break,
+        }
+    }
+    SequenceIndentation {
+        bytes,
+        spaces,
+        malformed: has_tab || spaces % 2 != 0,
+    }
+}
+
+fn sequence_body(line: &str, indentation: SequenceIndentation) -> &str {
+    let content = &line[indentation.bytes..];
+    content.strip_prefix("- ").unwrap_or(content)
+}
+
 fn sequence_items(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,
@@ -458,31 +494,39 @@ fn sequence_items(
     let mut line_index = 0;
     while let Some(&(start, end)) = lines.get(line_index) {
         line_index += 1;
-        if opaque_line(structure, start, end) {
-            items.push(raw(f, text, start, end));
-            continue;
-        }
         let line = source[start..end].trim_end_matches(['\r', '\n']);
         if line.trim().is_empty() {
             items.push(raw(f, text, start, end));
             continue;
         }
-        let leading = line.len() - line.trim_start_matches(' ').len();
-        let malformed_indent = leading % 2 != 0 || line.starts_with('\t');
-        let significant_start = start + leading;
+        let indentation = sequence_indentation(line);
+        let leading = indentation.spaces;
+        let malformed_indent = indentation.malformed;
+        let significant_start = start + indentation.bytes;
         let content_end = start + line.len();
-        let body = line
-            .trim_start()
-            .strip_prefix("- ")
-            .unwrap_or(line.trim_start());
-        if !malformed_indent {
-            while fragment_indents
-                .last()
-                .copied()
-                .map_or(false, |indent| indent >= leading)
-            {
-                fragment_indents.pop();
-            }
+        let body = sequence_body(line, indentation);
+        if malformed_indent {
+            items.push(recovery_line(
+                f,
+                text,
+                start,
+                end,
+                UmlSyntaxDiagnosticCode::MalformedIndentation,
+                "sequence indentation must use pairs of spaces",
+                diags,
+            ));
+            continue;
+        }
+        if opaque_line(structure, start, end) {
+            items.push(raw(f, text, start, end));
+            continue;
+        }
+        while fragment_indents
+            .last()
+            .copied()
+            .map_or(false, |indent| indent >= leading)
+        {
+            fragment_indents.pop();
         }
         let nested_under_fragment = fragment_indents
             .last()
@@ -508,33 +552,31 @@ fn sequence_items(
                 "unsupported sequence form",
                 diags,
             ));
-        } else if malformed_indent {
-            items.push(recovery_line(
-                f,
-                text,
-                start,
-                end,
-                UmlSyntaxDiagnosticCode::MalformedIndentation,
-                "sequence indentation must use pairs of spaces",
-                diags,
-            ));
         } else if body == "ref" || body.starts_with("ref ") {
             let mut bindings = Vec::new();
             while let Some(&(binding_start, binding_end)) = lines.get(line_index) {
+                let binding_source =
+                    source[binding_start..binding_end].trim_end_matches(['\r', '\n']);
+                let binding_indentation = sequence_indentation(binding_source);
+                let binding_body = sequence_body(binding_source, binding_indentation);
+                let is_binding = binding_body == "bind" || binding_body.starts_with("bind ");
+                if binding_indentation.malformed && is_binding {
+                    bindings.push(recovery_line(
+                        f,
+                        text,
+                        binding_start,
+                        binding_end,
+                        UmlSyntaxDiagnosticCode::MalformedIndentation,
+                        "sequence indentation must use pairs of spaces",
+                        diags,
+                    ));
+                    line_index += 1;
+                    continue;
+                }
                 if opaque_line(structure, binding_start, binding_end) {
                     break;
                 }
-                let binding_source =
-                    source[binding_start..binding_end].trim_end_matches(['\r', '\n']);
-                let binding_leading =
-                    binding_source.len() - binding_source.trim_start_matches(' ').len();
-                let binding_body = binding_source
-                    .trim_start()
-                    .strip_prefix("- ")
-                    .unwrap_or(binding_source.trim_start());
-                if binding_leading != leading + 2
-                    || !(binding_body == "bind" || binding_body.starts_with("bind "))
-                {
+                if binding_indentation.spaces != leading + 2 || !is_binding {
                     break;
                 }
                 bindings.push(binding_line(
@@ -552,7 +594,7 @@ fn sequence_items(
             ));
         } else if fragment_head {
             fragment_indents.push(leading);
-            items.push(sequence_fragment(f, text, source, start, end));
+            items.push(sequence_fragment(f, text, source, start, end, diags));
         } else if body == "when"
             || body.starts_with("when ")
             || body == "else"
@@ -597,7 +639,7 @@ fn gate_line(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
-    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let has_bullet = source.get(lead..lead + 2) == Some("- ");
     let bullet_end = if has_bullet { lead + 1 } else { lead };
     let mut children = vec![if has_bullet {
         token(f, text, start, lead, bullet_end, UmlSyntaxKind::BulletToken)
@@ -660,7 +702,7 @@ fn interaction_use(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
-    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let has_bullet = source.get(lead..lead + 2) == Some("- ");
     let bullet_end = if has_bullet { lead + 1 } else { lead };
     let ref_start = skip_ws(source, bullet_end, content_end);
     let ref_end = scan_word(source, ref_start, content_end);
@@ -776,7 +818,7 @@ fn binding_line(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
-    let has_bullet = source.get(lead..lead + 1) == Some("-");
+    let has_bullet = source.get(lead..lead + 2) == Some("- ");
     let bullet_end = if has_bullet { lead + 1 } else { lead };
     let bind_start = skip_ws(source, bullet_end, content_end);
     let bind_end = scan_word(source, bind_start, content_end);
@@ -1706,24 +1748,39 @@ fn sequence_fragment(
     source: &str,
     start: usize,
     end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
-    let kind_start = skip_ws(source, lead + 1, content_end);
+    let has_bullet = source.get(lead..lead + 2) == Some("- ");
+    let body_start = if has_bullet { lead + 1 } else { lead };
+    let kind_start = skip_ws(source, body_start, content_end);
     let mut children = vec![
-        token(f, text, start, lead, lead + 1, UmlSyntaxKind::BulletToken),
+        if has_bullet {
+            token(f, text, start, lead, lead + 1, UmlSyntaxKind::BulletToken)
+        } else {
+            missing_token(f, text, start, lead, UmlSyntaxKind::BulletToken)
+        },
         slot(
             f,
             UmlSyntaxKind::FragmentKind,
             token(
                 f,
                 text,
-                lead + 1,
+                body_start,
                 kind_start,
                 content_end,
                 UmlSyntaxKind::FragmentKindToken,
             ),
         ),
     ];
+    if !has_bullet {
+        diags.push(diag(
+            UmlSyntaxDiagnosticCode::MalformedMessage,
+            lead,
+            content_end,
+            "missing sequence fragment bullet",
+        ));
+    }
     children.push(behavior_recovery(f, None));
     push_behavior_newline(f, text, &mut children, content_end, newline, end);
     GreenElement::Node(f.node(UmlSyntaxKind::SequenceFragment, children).unwrap())
@@ -1739,21 +1796,27 @@ fn sequence_operand(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
-    let keyword = skip_ws(source, lead + 1, content_end);
+    let has_bullet = source.get(lead..lead + 2) == Some("- ");
+    let body_start = if has_bullet { lead + 1 } else { lead };
+    let keyword = skip_ws(source, body_start, content_end);
     let keyword_end = scan_word(source, keyword, content_end);
     let mut children = vec![
-        token(f, text, start, lead, lead + 1, UmlSyntaxKind::BulletToken),
+        if has_bullet {
+            token(f, text, start, lead, lead + 1, UmlSyntaxKind::BulletToken)
+        } else {
+            missing_token(f, text, start, lead, UmlSyntaxKind::BulletToken)
+        },
         token(
             f,
             text,
-            lead + 1,
+            body_start,
             keyword,
             keyword_end,
             UmlSyntaxKind::OperandKeywordToken,
         ),
     ];
     let mut p = keyword_end;
-    let mut valid = nested;
+    let mut valid = nested && has_bullet;
     if &source[keyword..keyword_end] == "when" {
         let guard = skip_ws(source, keyword_end, content_end);
         if let Some(q) = scan_backtick(source, guard, content_end) {
