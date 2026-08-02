@@ -525,14 +525,25 @@ pub fn build_scene(
             *size = Size { w, h };
         }
     }
-    let edges: Vec<(BoxId, BoxId)> = drawable_edges(model)
-        .into_iter()
+    let model_edges = drawable_edges(model);
+    let edges: Vec<(BoxId, BoxId)> = model_edges
+        .iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
+    // Label text is known before any geometry is, so the connected-gap floor can
+    // be sized to hold each pair's terminal labels. These requests index into
+    // `model_edges`, which is the same list (same order) as `edges`.
+    let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
     let (mut solved, diags, dropped) = if use_stress_default(diagram) {
         (stress_default(model, &sizes), Vec::new(), Vec::new())
     } else {
-        waml::solve::solve_diagram_reported(diagram, &edges, &sizes, &SolveConfig::default())
+        waml::solve::solve_diagram_reported_labeled(
+            diagram,
+            &edges,
+            &sizes,
+            &sizing_requests,
+            &SolveConfig::default(),
+        )
     };
 
     let node_of: BTreeMap<&str, &waml::model::Node> =
@@ -606,9 +617,16 @@ pub fn build_scene(
         }
     }
 
+    // Requests index into `edges` (the scene's drawable edges), and `edges` is
+    // NOT `solved.routes`: presence-filtering and the straight-polyline fallback
+    // above let the two lists desync. Hand `place_labels` the very polylines the
+    // requests were built from, so a label can never be placed against another
+    // edge's route.
     let requests = crate::edge_labels::label_requests(&edges, &display);
+    let routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
     waml::solve::place_labels(
         &mut solved,
+        &routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
     );

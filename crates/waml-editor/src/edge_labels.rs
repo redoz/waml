@@ -9,10 +9,29 @@
 use crate::{diagram_display::ResolvedDiagramDisplay, scene::SceneEdge};
 use makepad_widgets::{dvec2, DVec2};
 use waml::{
-    adornment::End,
+    adornment::{End, Marker},
     model::AssocName,
     solve::label::{LabelRequest, LabelSlot},
 };
+
+/// How far along the route a terminal label steps, past whatever adornment sits
+/// on the endpoint. Screen px, like the marker geometry it has to clear.
+pub const HEAD_GAP: f64 = 4.0;
+
+/// How far back along the route an endpoint adornment reaches, in screen px, so
+/// a terminal label can step past it. Mirrors `canvas::geometry::marker_geometry`:
+/// triangles and open arrows run one `marker_size` back from the tip, diamonds two.
+///
+/// Placement itself is world-space now, but adornments are drawn at a FIXED
+/// screen size, so the clearance that keeps text off them cannot be projected --
+/// a world-space gap collapses onto the arrowhead exactly when you zoom out.
+pub fn marker_extent(marker: Marker, marker_size: f64) -> f64 {
+    match marker {
+        Marker::None => 0.0,
+        Marker::OpenArrow | Marker::HollowTriangle => marker_size,
+        Marker::HollowDiamond | Marker::FilledDiamond => 2.0 * marker_size,
+    }
+}
 
 /// Where a label's box sits relative to its anchor.
 ///
@@ -55,56 +74,101 @@ pub struct EdgeLabel {
 pub fn label_requests(edges: &[SceneEdge], display: &ResolvedDiagramDisplay) -> Vec<LabelRequest> {
     let mut requests = Vec::new();
     for (index, edge) in edges.iter().enumerate() {
-        if edge.kind.is_ended() {
-            for end in [End::From, End::To] {
-                let end_data = match end {
-                    End::From => &edge.from_end,
-                    End::To => &edge.to_end,
-                };
-                let cardinality = display
-                    .show_cardinality
-                    .then(|| {
-                        end_data
-                            .multiplicity
-                            .as_ref()
-                            .map(|multiplicity| format!("{{{}}}", multiplicity.as_str()))
-                    })
-                    .flatten();
-                let role = display
-                    .show_roles
-                    .then_some(end_data.role.as_deref())
-                    .flatten();
-                let text = match (role, cardinality) {
-                    (Some(role), Some(cardinality)) => Some(format!("{role} {cardinality}")),
-                    (Some(role), None) => Some(role.to_string()),
-                    (None, Some(cardinality)) => Some(cardinality),
-                    (None, None) => None,
-                };
-                if let Some(text) = text {
-                    let slot = match end {
-                        End::From => LabelSlot::TerminalFrom,
-                        End::To => LabelSlot::TerminalTo,
-                    };
-                    requests.push(LabelRequest {
-                        edge: index,
-                        slot,
-                        text,
-                    });
-                }
-            }
-        }
+        push_requests(
+            index,
+            edge.kind,
+            edge.name.as_ref(),
+            &edge.from_end,
+            &edge.to_end,
+            display,
+            &mut requests,
+        );
+    }
+    requests
+}
 
-        if display.show_labels {
-            if let Some(name) = edge.name.as_ref().and_then(relationship_name) {
+/// The same requests, composed from MODEL edges instead of scene edges, so the
+/// pre-solve pass that sizes connected gaps to hold their terminal labels
+/// (`solve_diagram_reported_labeled`) can be fed before any geometry exists.
+/// `edge` indexes into the slice given here, matching the `(BoxId, BoxId)` edge
+/// list the solver is handed.
+pub fn model_label_requests(
+    edges: &[&waml::model::Edge],
+    display: &ResolvedDiagramDisplay,
+) -> Vec<LabelRequest> {
+    let mut requests = Vec::new();
+    for (index, edge) in edges.iter().enumerate() {
+        push_requests(
+            index,
+            edge.kind,
+            edge.name.as_ref(),
+            &edge.from_end,
+            &edge.to_end,
+            display,
+            &mut requests,
+        );
+    }
+    requests
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_requests(
+    index: usize,
+    kind: waml::model::RelationshipKind,
+    name: Option<&AssocName>,
+    from_end: &waml::model::RelEnd,
+    to_end: &waml::model::RelEnd,
+    display: &ResolvedDiagramDisplay,
+    requests: &mut Vec<LabelRequest>,
+) {
+    if kind.is_ended() {
+        for end in [End::From, End::To] {
+            let end_data = match end {
+                End::From => from_end,
+                End::To => to_end,
+            };
+            let cardinality = display
+                .show_cardinality
+                .then(|| {
+                    end_data
+                        .multiplicity
+                        .as_ref()
+                        .map(|multiplicity| format!("{{{}}}", multiplicity.as_str()))
+                })
+                .flatten();
+            let role = display
+                .show_roles
+                .then_some(end_data.role.as_deref())
+                .flatten();
+            let text = match (role, cardinality) {
+                (Some(role), Some(cardinality)) => Some(format!("{role} {cardinality}")),
+                (Some(role), None) => Some(role.to_string()),
+                (None, Some(cardinality)) => Some(cardinality),
+                (None, None) => None,
+            };
+            if let Some(text) = text {
+                let slot = match end {
+                    End::From => LabelSlot::TerminalFrom,
+                    End::To => LabelSlot::TerminalTo,
+                };
                 requests.push(LabelRequest {
                     edge: index,
-                    slot: LabelSlot::MidRoute,
-                    text: name.to_string(),
+                    slot,
+                    text,
                 });
             }
         }
     }
-    requests
+
+    if display.show_labels {
+        if let Some(name) = name.and_then(relationship_name) {
+            requests.push(LabelRequest {
+                edge: index,
+                slot: LabelSlot::MidRoute,
+                text: name.to_string(),
+            });
+        }
+    }
 }
 
 /// Mid-route label anchor for a plain polyline (kind-agnostic; the class path
@@ -149,7 +213,7 @@ fn clear_of_route(orientation: Orientation, growth: Option<f64>) -> (DVec2, Labe
 }
 
 /// Clearance between a route and the label riding alongside it, in world units.
-const LABEL_GAP: f64 = 3.0;
+pub const LABEL_GAP: f64 = 3.0;
 
 enum Orientation {
     Horizontal,

@@ -254,12 +254,13 @@ fn rect_for(
 /// legitimately holds edges and labels, so treating its whole rect as solid
 /// would forbid every label inside a group.
 ///
-/// Foreign edge strokes are soft. A label's OWN stroke is neither: the
-/// perpendicular gap already clears it.
+/// Foreign edge strokes are soft, and `place` derives them from the route list
+/// it is given rather than from this struct: a label's OWN stroke is neither
+/// hard nor soft (the perpendicular gap already clears it), and only `place`
+/// knows which route each request belongs to.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Obstacles {
     pub hard: Vec<Rect>,
-    pub soft: Vec<[(f64, f64); 2]>,
 }
 
 /// True when `rect` overlaps any hard obstacle. Abutting exactly is NOT a
@@ -274,6 +275,20 @@ pub fn collides(rect: Rect, hard: &[Rect]) -> bool {
 /// How many soft segments cross `rect`.
 pub fn soft_crossings(rect: Rect, soft: &[[(f64, f64); 2]]) -> usize {
     soft.iter()
+        .filter(|s| segment_hits_rect(s[0], s[1], rect))
+        .count()
+}
+
+/// How many FOREIGN route segments cross `rect`. `own` is the index of the
+/// route the label belongs to; its own stroke is skipped, because the
+/// perpendicular gap already clears it and charging a label for its own bend
+/// would flip it to a worse side for no reason.
+fn foreign_crossings(rect: Rect, routes: &[Vec<(f64, f64)>], own: usize) -> usize {
+    routes
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != own)
+        .flat_map(|(_, points)| points.windows(2))
         .filter(|s| segment_hits_rect(s[0], s[1], rect))
         .count()
 }
@@ -340,16 +355,11 @@ pub fn place(
     // stops labels landing on each other.
     let mut hard = obstacles.hard.clone();
 
-    let mut deferred: Vec<&LabelRequest> = Vec::new();
+    // Single pass. A retry would be a no-op: `hard` only ever GROWS (each
+    // placement pushes its rect and nothing is ever removed), so a request that
+    // collided on every candidate collides again on any later pass.
     for request in requests {
-        if !try_place(request, routes, &mut hard, obstacles, cfg, &mut out) {
-            deferred.push(request);
-        }
-    }
-    // One retry pass. Greedy is order-dependent, so a label rejected early may
-    // fit once the rest have settled into their own slots.
-    for request in deferred {
-        if !try_place(request, routes, &mut hard, obstacles, cfg, &mut out) {
+        if !try_place(request, routes, &mut hard, cfg, &mut out) {
             out.unplaced.push(request.clone());
         }
     }
@@ -362,7 +372,6 @@ fn try_place(
     request: &LabelRequest,
     routes: &[Vec<(f64, f64)>],
     hard: &mut Vec<Rect>,
-    obstacles: &Obstacles,
     cfg: &LabelConfig,
     out: &mut Placement,
 ) -> bool {
@@ -377,7 +386,7 @@ fn try_place(
         }
         let score = W_SLIDE * c.slide_cost
             + if c.side_is_canonical { 0.0 } else { W_SIDE }
-            + W_CROSSING * soft_crossings(c.rect, &obstacles.soft) as f64;
+            + W_CROSSING * foreign_crossings(c.rect, routes, request.edge) as f64;
         // Strict `<` keeps the FIRST candidate of a tie, and candidate order is
         // deterministic, so ties resolve the same way every run.
         if best.as_ref().map(|(b, _)| score < *b).unwrap_or(true) {
@@ -562,6 +571,52 @@ mod tests {
         assert_eq!(soft_crossings(rect, &[through, clear]), 1);
     }
 
+    #[test]
+    fn a_label_is_never_charged_for_its_own_stroke() {
+        // Two identical polylines: whichever one owns the label, exactly one
+        // crossing is charged -- the OTHER one. A bent route must not pay
+        // W_CROSSING for running through its own label's box.
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+        };
+        let routes = vec![
+            vec![(-10.0, 25.0), (110.0, 25.0)],
+            vec![(-10.0, 25.0), (110.0, 25.0)],
+        ];
+        assert_eq!(foreign_crossings(rect, &routes, 0), 1);
+        assert_eq!(foreign_crossings(rect, &routes, 1), 1);
+        assert_eq!(foreign_crossings(rect, &routes[..1], 0), 0);
+    }
+
+    #[test]
+    fn a_foreign_stroke_still_pushes_a_label_to_the_other_side() {
+        // The soft term now comes from the route list itself, so a neighbouring
+        // route running through the canonical side must still flip the label.
+        let routes = vec![
+            vec![(0.0, 50.0), (300.0, 50.0)],
+            vec![(0.0, 45.0), (300.0, 45.0)],
+        ];
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let out = place(
+            &routes,
+            &reqs,
+            &Obstacles::default(),
+            &LabelConfig::default(),
+        );
+        assert!(
+            out.placed[0].rect.y > 50.0,
+            "foreign stroke above should push the label below: {:?}",
+            out.placed[0].rect
+        );
+    }
+
     fn route_pair() -> Vec<Vec<(f64, f64)>> {
         vec![vec![(0.0, 50.0), (300.0, 50.0)]]
     }
@@ -599,7 +654,6 @@ mod tests {
                 w: 140.0,
                 h: 100.0,
             }],
-            soft: vec![],
         };
         let reqs = vec![LabelRequest {
             edge: 0,
@@ -627,7 +681,6 @@ mod tests {
                 w: 2000.0,
                 h: 2000.0,
             }],
-            soft: vec![],
         };
         let reqs = vec![LabelRequest {
             edge: 0,

@@ -300,12 +300,20 @@ pub fn solve_diagram_reported_labeled(
 
 /// Place `requests` against the already-solved geometry, filling `solved.labels`.
 ///
+/// `routes` is the polyline list `LabelRequest::edge` indexes into, and the
+/// caller passes it EXPLICITLY rather than letting this read `solved.routes`:
+/// a frontend may presence-filter or substitute routes (the editor falls back
+/// to a straight polyline when the ordered route stream desyncs), and resolving
+/// label indices against a different list than the one they were built from
+/// silently places labels on the wrong edge.
+///
 /// Kept separate from `solve_diagram_reported` on purpose: composing the label
 /// TEXT is display policy (which toggles are on, how a role and a multiplicity
 /// combine), and that belongs to the frontend. The solver only ever sees final
 /// strings, so the display model does not have to move into this crate.
 pub fn place_labels(
     solved: &mut Solved,
+    routes: &[Vec<(f64, f64)>],
     requests: &[label::LabelRequest],
     cfg: &label::LabelConfig,
 ) {
@@ -329,20 +337,18 @@ pub fn place_labels(
                     }),
             )
             .collect(),
-        soft: solved
-            .routes
-            .iter()
-            .flat_map(|r| r.points.windows(2).map(|w| [w[0], w[1]]))
-            .collect(),
     };
-    let routes: Vec<Vec<(f64, f64)>> = solved.routes.iter().map(|r| r.points.clone()).collect();
-    let placement = label::place(&routes, requests, &obstacles, cfg);
+    let placement = label::place(routes, requests, &obstacles, cfg);
     solved.labels = placement.placed;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route_points(solved: &Solved) -> Vec<Vec<(f64, f64)>> {
+        solved.routes.iter().map(|r| r.points.clone()).collect()
+    }
 
     #[test]
     fn placed_labels_avoid_the_solved_node_rects() {
@@ -372,7 +378,13 @@ mod tests {
             text: "order {1}".into(),
         }];
 
-        place_labels(&mut solved, &requests, &label::LabelConfig::default());
+        let routes = route_points(&solved);
+        place_labels(
+            &mut solved,
+            &routes,
+            &requests,
+            &label::LabelConfig::default(),
+        );
 
         assert_eq!(solved.labels.len(), 1);
         let card = solved.nodes["a"];
@@ -428,7 +440,13 @@ mod tests {
             text: "places".into(),
         }];
 
-        place_labels(&mut solved, &requests, &label::LabelConfig::default());
+        let routes = route_points(&solved);
+        place_labels(
+            &mut solved,
+            &routes,
+            &requests,
+            &label::LabelConfig::default(),
+        );
 
         assert_eq!(solved.labels.len(), 1);
         let group = solved.groups[0].rect;
@@ -444,6 +462,47 @@ mod tests {
         // But the label IS allowed inside the group body -- a group legitimately
         // contains edges and their labels.
         assert!(placed.y > group.y);
+    }
+
+    #[test]
+    fn labels_resolve_against_the_caller_s_route_list_not_solved_routes() {
+        // The editor's drawable-edge list and `solved.routes` are explicitly
+        // allowed to desync (route::route presence-filters, and the editor
+        // substitutes a straight fallback polyline without advancing its
+        // cursor). Requests index the CALLER's list, so placement must follow
+        // the polylines it is handed.
+        let mut solved = Solved {
+            nodes: BTreeMap::new(),
+            groups: vec![],
+            flags: BTreeMap::new(),
+            routes: vec![Route {
+                points: vec![(0.0, 1000.0), (300.0, 1000.0)],
+                source: "a".into(),
+                target: "b".into(),
+                key: None,
+            }],
+            labels: vec![],
+        };
+        let routes = vec![vec![(0.0, 50.0), (300.0, 50.0)]];
+        let requests = vec![label::LabelRequest {
+            edge: 0,
+            slot: label::LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+
+        place_labels(
+            &mut solved,
+            &routes,
+            &requests,
+            &label::LabelConfig::default(),
+        );
+
+        assert_eq!(solved.labels.len(), 1);
+        assert!(
+            (solved.labels[0].attach.1 - 50.0).abs() < 1.0,
+            "label must hang off the passed route, not solved.routes: {:?}",
+            solved.labels[0]
+        );
     }
 
     #[test]

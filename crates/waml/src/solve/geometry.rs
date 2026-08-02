@@ -191,7 +191,18 @@ pub(super) fn solve_cluster(
                     // unplaceable on short edges: two ~90px labels cannot share a
                     // 72px gap, and no placement strategy can rescue a gap that
                     // was never wide enough.
-                    let needed = label_widths.get(&pair(a, b)).copied().unwrap_or(0.0);
+                    //
+                    // `needed` is a sum of label WIDTHS, so it only floors a gap
+                    // the labels actually have to span sideways: a strictly
+                    // horizontal placement. Above/Below (and the diagonals, which
+                    // spend the same `gap` on BOTH axes) would otherwise blow a
+                    // vertical gap out to the labels' combined width, where only
+                    // a line height is at stake.
+                    let needed = if matches!(dir, Direction::LeftOf | Direction::RightOf) {
+                        label_widths.get(&pair(a, b)).copied().unwrap_or(0.0)
+                    } else {
+                        0.0
+                    };
                     gap.max(cfg.min_assoc).max(needed)
                 } else {
                     gap.max(cfg.min_sep)
@@ -1156,6 +1167,36 @@ mod tests {
         let rb = rects[&b];
         let gap = rb.x - (ra.x + ra.w);
         assert_eq!(gap, 204.0, "gap sized to hold both terminal labels");
+    }
+
+    #[test]
+    fn a_vertical_pair_does_not_widen_by_the_label_widths() {
+        // `needed` is a sum of label WIDTHS. Above/Below separate the pair
+        // VERTICALLY, where only a line height is at stake, so the width floor
+        // must not blow the vertical gap out to 204.
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("b")],
+            constraints: vec![Constraint::Place {
+                a: BoxId::Node("a".into()),
+                b: BoxId::Node("b".into()),
+                dir: Direction::Above,
+            }],
+        };
+        let a = BoxId::Node("a".into());
+        let b = BoxId::Node("b".into());
+        let edges = vec![(a.clone(), b.clone())];
+        let widths = BTreeMap::from([(pair(&a, &b), 90.0 + 90.0 + 24.0)]);
+        let (_solved, rects, _diags, _dropped) = solve_with_rects_labeled(
+            &scene,
+            &edges,
+            &sizes(&["a", "b"], 200.0, 90.0),
+            &widths,
+            &SolveConfig::default(),
+        );
+        let ra = rects[&a];
+        let rb = rects[&b];
+        let gap = rb.y - (ra.y + ra.h);
+        assert_eq!(gap, SolveConfig::default().min_assoc);
     }
 
     #[test]
