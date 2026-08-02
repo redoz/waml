@@ -145,35 +145,30 @@ if (referenceCount < MIN_EXPECTED_REFERENCES) {
   process.exit(1);
 }
 
-// The boot source, checked for both shapes this script is pointed at: a raw
-// cargo-makepad artifact, whose placeholder is still unreplaced, and an
-// exported site, whose boot query must name a file that is actually there. A
-// site that boots `?bundle=bundle.waml` without the bundle opens the start
-// screen -- green tick, empty editor, exactly the failure class above.
-const BOOT_QUERY_SENTINEL = "__WAML_BOOT_QUERY__";
-const indexPath = join(artifactDir, "index.html");
-if (existsSync(indexPath)) {
-  const boot = readFileSync(indexPath, "utf8").match(
-    /<script data-waml-boot-url>[\s\S]*?var query = '([^']*)'/,
-  );
-  if (boot && boot[1] !== BOOT_QUERY_SENTINEL) {
-    const query = boot[1];
-    if (!query.startsWith("?")) {
-      console.error(
-        `verify-web-artifact: the boot query ${JSON.stringify(query)} is neither the ` +
-          `${BOOT_QUERY_SENTINEL} placeholder nor a query string.`,
-      );
-      process.exit(1);
-    }
-    const bundle = query.match(/^\?bundle=(.+)$/);
-    if (bundle && !existsSync(join(artifactDir, decodeURIComponent(bundle[1])))) {
-      console.error(
-        `verify-web-artifact: index.html boots from ${query} but ${bundle[1]} is not in the site.`,
-      );
-      process.exit(1);
-    }
-    console.log(`verify-web-artifact: boots from ${query}`);
+// The boot source, for the shape that has one: an exported site declares it in
+// waml-boot.txt, and a query naming a bundle must name a file that is actually
+// there. A site that boots `?bundle=bundle.waml` without the bundle opens the
+// start screen -- green tick, empty editor, exactly the failure class above. A
+// raw cargo-makepad artifact carries no config, which is not a fault.
+const BOOT_CONFIG_FILE = "waml-boot.txt";
+const bootConfigPath = join(artifactDir, BOOT_CONFIG_FILE);
+if (existsSync(bootConfigPath)) {
+  const query = readFileSync(bootConfigPath, "utf8").trim();
+  if (!query.startsWith("?")) {
+    console.error(
+      `verify-web-artifact: ${BOOT_CONFIG_FILE} holds ${JSON.stringify(query)}, ` +
+        `which is not a query string.`,
+    );
+    process.exit(1);
   }
+  const bundle = query.match(/^\?bundle=(.+)$/);
+  if (bundle && !existsSync(join(artifactDir, decodeURIComponent(bundle[1])))) {
+    console.error(
+      `verify-web-artifact: the site boots from ${query} but ${bundle[1]} is not in the site.`,
+    );
+    process.exit(1);
+  }
+  console.log(`verify-web-artifact: boots from ${query}`);
 }
 
 console.log(
