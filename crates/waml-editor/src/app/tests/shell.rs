@@ -1,40 +1,53 @@
-use super::super::shell::{dock_toggle_icon, panel_body_w, tree_toggle_layout, TREE_BTN_W};
+use super::super::shell::{
+    dock_toggle_icon, panel_body_w, tree_toggle_layout, DEFAULT_TAB_ROW_LEAD_W, TREE_BTN_W,
+};
 use super::*;
 
 const TREE_W: f64 = crate::tree_panel::PROJECT_TREE_W;
+/// What the logo and burger cost before `tab_row` starts. The row sits in the
+/// caption, whose left edge the tree column shares, so this plus the slot is
+/// where the row's first control lands.
+const LEAD: f64 = DEFAULT_TAB_ROW_LEAD_W;
 
 /// With no model open neither seat of the tree-column toggle shows, and the
 /// tab-row slot costs the strip nothing.
 #[test]
 fn unmounted_tree_toggle_shows_neither_seat() {
     assert_eq!(
-        tree_toggle_layout(false, false, TREE_W, TREE_W),
-        (false, 0.0)
+        tree_toggle_layout(false, false, TREE_W, TREE_W, LEAD),
+        (false, 0.0, 0.0)
     );
-    assert_eq!(tree_toggle_layout(false, false, 0.0, TREE_W), (false, 0.0));
+    assert_eq!(
+        tree_toggle_layout(false, false, 0.0, TREE_W, LEAD),
+        (false, 0.0, 0.0)
+    );
 }
 
-/// At rest the seats are exclusive: open puts the toggle inside the panel and
-/// costs the row nothing; collapsed hands it to the row at full width.
+/// At rest the seats are exclusive, and the OPEN seat is what lines the row's
+/// first control up with the tree column's right edge: `LEAD + slot == TREE_W`.
+/// Collapsed hands the toggle to the row, which leads it at full width.
 #[test]
 fn tree_toggle_seats_are_exclusive_at_rest() {
-    assert_eq!(tree_toggle_layout(true, false, TREE_W, TREE_W), (true, 0.0));
     assert_eq!(
-        tree_toggle_layout(true, false, 0.0, TREE_W),
-        (false, TREE_BTN_W)
+        tree_toggle_layout(true, false, TREE_W, TREE_W, LEAD),
+        (true, TREE_W - LEAD, 0.0)
+    );
+    assert_eq!(
+        tree_toggle_layout(true, false, 0.0, TREE_W, LEAD),
+        (false, TREE_BTN_W, 1.0)
     );
 }
 
-/// The jerk this replaced: the tab strip sits at `left_slot + row_slot_w`, and
-/// that sum has to be continuous across the whole collapse. It runs from
-/// `TREE_W` (open) to `TREE_BTN_W` (collapsed) with no step anywhere -- in
-/// particular none at the handoff, where the old flag-based swap added
-/// `TREE_BTN_W` in a single frame.
+/// The jerk this replaced: the row's first control sits at `LEAD + row_slot_w`,
+/// and that sum has to be continuous across the whole collapse. It runs from
+/// `TREE_W` (open, flush with the column's right edge) to `LEAD + TREE_BTN_W`
+/// (collapsed) with no step anywhere -- in particular none at the handoff, where
+/// the old flag-based swap added `TREE_BTN_W` in a single frame.
 #[test]
 fn tab_strip_offset_is_continuous_through_the_collapse() {
-    let offset = |body: f64| body + tree_toggle_layout(true, false, body, TREE_W).1;
+    let offset = |body: f64| LEAD + tree_toggle_layout(true, false, body, TREE_W, LEAD).1;
     assert_eq!(offset(TREE_W), TREE_W);
-    assert_eq!(offset(0.0), TREE_BTN_W);
+    assert_eq!(offset(0.0), LEAD + TREE_BTN_W);
 
     let steps = 280;
     let mut prev = offset(TREE_W);
@@ -53,17 +66,17 @@ fn tab_strip_offset_is_continuous_through_the_collapse() {
 }
 
 /// Narrow docks the panel as a floating overlay, so `left_slot` stays 0 and the
-/// strip never moves: the row slot holds full width throughout, and both seats
-/// may be live at once (the floating panel covers the row's twin).
+/// strip never moves: the row slot holds the twin's seat throughout, and both
+/// seats may be live at once (the floating panel covers the row's twin).
 #[test]
 fn narrow_holds_the_row_slot_open() {
     assert_eq!(
-        tree_toggle_layout(true, true, TREE_W, TREE_W),
-        (true, TREE_BTN_W)
+        tree_toggle_layout(true, true, TREE_W, TREE_W, LEAD),
+        (true, TREE_BTN_W, 1.0)
     );
     assert_eq!(
-        tree_toggle_layout(true, true, 0.0, TREE_W),
-        (false, TREE_BTN_W)
+        tree_toggle_layout(true, true, 0.0, TREE_W, LEAD),
+        (false, TREE_BTN_W, 1.0)
     );
 }
 

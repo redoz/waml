@@ -129,16 +129,20 @@ impl Widget for ChromeSeam {
                 },
             );
         }
-        // The break itself, in the active view's accent: the selected tab's
-        // 2px accent bar begins on the row below, so painting this row to match
-        // reads as one 3px flag interrupting the rule -- which is what the
-        // accent-drawn-over-the-rule arrangement looked like before the rule
-        // moved up into the caption.
-        if let Some((bx0, bx1, accent)) = self.tab_break {
+        // The break, painted in the active card's own FILL. The seam is the
+        // caption's bottom edge and the tab strip shares the title line above
+        // it, so this row is what the card's BOTTOM meets: a rule here (accent
+        // or hairline) reads as a border closing the selected tab off from the
+        // document, and leaving it bare is worse -- the caption's `field_bg`
+        // shows through as a white line in the same place. Repainting it in the
+        // card's colour is what lets the card fill straight into the body.
+        // (The card's accent flag is drawn whole at its TOP edge by `DocTabs`;
+        // the seam carried a px of it back when the rule sat above the strip.)
+        if let Some((bx0, bx1, fill)) = self.tab_break {
             let bx0 = bx0.clamp(x0, solid_end);
             let bx1 = bx1.clamp(x0, solid_end);
             if bx1 > bx0 {
-                self.draw_edge.color = accent;
+                self.draw_edge.color = fill;
                 self.draw_edge.draw_abs(
                     cx,
                     Rect {

@@ -287,13 +287,13 @@ const CLOSE_HOVER_DY: f64 = 2.0;
 const ICON_SIZE: f64 = 15.0;
 /// Gap between the leading glyph and the tab label.
 const ICON_GAP: f64 = 6.0;
-/// Thickness of the active tab's top accent bar WITHIN this strip. The flag
-/// reads 2px thick, but only the lower px is drawn here: the upper one is the
-/// seam row itself, which `ChromeSeam` paints in this accent where the active
-/// card meets it (see `active_card_span`). Back when the rule was this strip's
-/// own top edge the bar was 2px and simply covered it; the split keeps the same
-/// 2px reading now that the rule lives a pixel higher, in the caption.
-const ACCENT_H: f64 = 1.0;
+/// Thickness of the active tab's top accent bar. Drawn WHOLE here: the strip
+/// shares the caption's title line now, so the card's top edge is the window's
+/// own top edge and there is no rule above it to split the flag across. (The
+/// bar was 1px for one iteration, with `ChromeSeam` painting the second px
+/// where the card met it -- but the seam is the caption's BOTTOM edge, which
+/// the card's bottom meets, so that half landed under the tab, not over it.)
+const ACCENT_H: f64 = 3.0;
 /// Fraction of the row height a between-tabs divider spans, centred vertically.
 /// A short hairline reads as a separator; a full-bleed one reads as a grid and
 /// re-boxes the tabs the flat treatment just un-boxed.
@@ -770,16 +770,18 @@ impl DocTabs {
         LiveId::default()
     }
 
-    /// The active card's horizontal span and accent colour, in window
+    /// The active card's horizontal span and FILL colour, in window
     /// coordinates, from the most recent draw -- or `None` when no tab is
     /// active or the active one has scrolled out of the visible range.
     ///
     /// Read by `App::sync_chrome_seam` so the chrome/content hairline can break
-    /// where the selected document meets it. The accent bar used to be drawn
-    /// straight over that rule, back when the rule was this strip's own top
-    /// edge; now the rule belongs to the caption (see `chrome_seam.rs`), which
-    /// paints a frame earlier and a pixel higher than anything here can reach.
-    /// So the break is handed upward instead of painted over.
+    /// where the selected document meets it. The strip shares the caption's
+    /// title line and the seam is the caption's BOTTOM edge, so this is the row
+    /// the active card's bottom runs into: the rule has to stop there, and the
+    /// px has to be repainted in the card's own colour rather than left to the
+    /// caption's `field_bg`, which reads as a white line closing the tab off
+    /// from the document. Handed upward because the seam draws a frame earlier
+    /// and a pixel lower than anything here can reach.
     pub fn active_card_span(&self) -> Option<(f64, f64, Vec4)> {
         if self.active == LiveId::default() {
             return None;
@@ -788,11 +790,10 @@ impl DocTabs {
         if rect.size.x <= 0.0 {
             return None;
         }
-        let accent = self.active_accent.unwrap_or(self.draw_accent.color);
         Some((
             rect.pos.x.round(),
             (rect.pos.x + rect.size.x).round(),
-            accent,
+            self.draw_tab.color,
         ))
     }
 

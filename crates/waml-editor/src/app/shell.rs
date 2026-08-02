@@ -50,13 +50,14 @@ pub(super) fn tree_toggle_layout(
     narrow: bool,
     tree_body: f64,
     tree_w: f64,
-) -> (bool, f64) {
+    lead_w: f64,
+) -> (bool, f64, f64) {
     if !mounted {
-        return (false, 0.0);
+        return (false, 0.0, 0.0);
     }
     let dock_visible = tree_body > 0.0;
     if narrow {
-        return (dock_visible, TREE_BTN_W);
+        return (dock_visible, TREE_BTN_W, 1.0);
     }
     // `tree_w` is the column's LIVE reserved width, not the compile-time
     // default: a drag that resizes the column moves body and reservation
@@ -68,7 +69,29 @@ pub(super) fn tree_toggle_layout(
     } else {
         0.0
     };
-    (dock_visible, TREE_BTN_W * (1.0 - progress))
+    // The two ends the slot runs between:
+    //
+    // Collapsed, it is exactly the twin's seat -- the button leads the row.
+    //
+    // Open, it ends where the tree column does, so the history pair's left edge
+    // lands on the column's right edge and the row reads as two columns rather
+    // than one run of controls floating over the boundary. `lead_w` is what the
+    // logo and burger already cost before the row starts, measured rather than
+    // assumed, so the slot only has to make up the difference.
+    //
+    // Lerped on `progress` off the RESERVATION, not the animating body: that
+    // keeps the run monotonic end to end (a body-derived target dips below the
+    // twin's seat while the column is narrower than `lead_w`).
+    let open_w = (tree_w - lead_w).max(0.0);
+    // The twin's opacity is the collapse fraction, NOT the slot width: the slot
+    // now grows as the column opens (it is what carries the row's controls out
+    // to the column's edge), so a width-derived fade would show the twin at its
+    // strongest exactly when the docked seat owns the control.
+    (
+        dock_visible,
+        TREE_BTN_W + (open_w - TREE_BTN_W) * progress,
+        1.0 - progress,
+    )
 }
 
 pub(super) fn should_dismiss_narrow_dock(
@@ -109,6 +132,11 @@ pub(super) fn project_document_header(
 /// against this, so the twin's seat and the width it costs the row are one
 /// number (see `tree_toggle_layout`).
 pub(super) const TREE_BTN_W: f64 = 32.0;
+
+/// `tab_row`'s x within the caption, as the DSL declares it: `title_row`'s 2px
+/// left padding, the 44px logo, and the 30px burger with its 2px right margin.
+/// Only used before the row has a drawn rect to measure (see `sync_dock_slots`).
+pub(super) const DEFAULT_TAB_ROW_LEAD_W: f64 = 78.0;
 
 pub(super) const NARROW_ENTER_W: f64 = 640.0;
 pub(super) const NARROW_EXIT_W: f64 = 680.0;
@@ -481,11 +509,26 @@ impl App {
         // Both toggles carry the same glyph and active state -- they are one
         // control that changes seat, not two controls -- so only visibility
         // distinguishes them.
-        let (dock_visible, row_slot_w) = tree_toggle_layout(
+        // What the logo and burger cost before `tab_row`'s turtle starts, taken
+        // off the row's own drawn rect: the tree column and the caption share
+        // the window's left edge, so the row's x IS the offset the slot has to
+        // make up to reach the column's right edge. Falls back to the DSL sum
+        // (2px padding + 44 logo + 30 burger + 2 margin) on the first frame,
+        // before the row has a rect.
+        let lead_w = {
+            let rect = self.ui.widget(cx, ids!(tab_row)).area().rect(cx);
+            if rect.size.x > 0.0 {
+                rect.pos.x
+            } else {
+                DEFAULT_TAB_ROW_LEAD_W
+            }
+        };
+        let (dock_visible, row_slot_w, row_fade) = tree_toggle_layout(
             self.tree_toggle_mounted,
             self.narrow,
             layout.tree_body,
             self.dock_widths.tree_w,
+            lead_w,
         );
         // The slot is what keeps the handoff smooth, so it is written every
         // frame of the motion -- outside the `dock_layout` change guard above,
@@ -497,15 +540,14 @@ impl App {
             }
             cx.redraw_all();
         }
-        // Visible whenever the slot has opened at all, and CROSS-FADED across
-        // the motion: the twin used to be clipped by its slot, so a half-open
-        // slot showed a sliced glyph sliding out from behind the column edge.
-        // It draws whole now and its opacity tracks the slot instead, so the
-        // handoff reads as one control fading between two seats. Only the snap
-        // ever runs the slot between its ends (see `tree_toggle_layout`), so a
-        // plain resize drag neither fades nor moves it.
-        let row_visible = row_slot_w > 0.5;
-        let row_fade = (row_slot_w / TREE_BTN_W).clamp(0.0, 1.0);
+        // CROSS-FADED across the motion: the twin used to be clipped by its
+        // slot, so a half-open slot showed a sliced glyph sliding out from
+        // behind the column edge. It draws whole now and its opacity runs
+        // inversely to the column's, so the handoff reads as one control fading
+        // between two seats. Only the snap ever moves either end (see
+        // `tree_toggle_layout`), so a plain resize drag neither fades nor moves
+        // it.
+        let row_visible = row_fade > 0.001;
         for (id, visible, fade) in [
             (ids!(tree_btn_dock), dock_visible, 1.0),
             (ids!(tree_btn), row_visible, row_fade),
