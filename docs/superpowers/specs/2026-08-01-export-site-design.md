@@ -156,9 +156,10 @@ less capable than the current deploy.
 
 ### The editor exports the current WAML bundle
 
-The editor's Export menu gains **WAML bundle (.waml)**. It serializes the current
-model, including edits preserved in the share URL, and downloads one bundle
-envelope v1 file. This is a complete editable artifact, not an op-log or patch.
+The editor's existing burger menu gains **Export WAML bundle…** beside Create,
+Open model, and Close model. It serializes the current model, including edits
+preserved in the share URL, and downloads one `.waml` bundle-envelope v1 file.
+This is a complete editable artifact, not an op-log or patch.
 
 The same action is available in the native editor, `waml serve`, exported sites,
 and the GitHub Pages deployment. The editor owns this product capability.
@@ -206,7 +207,7 @@ out/
 
 The first version adds no IndexedDB or service-worker persistence. Edits are
 preserved in the `#w1.` share URL as soon as the model changes. The user can also
-download the current state through **Export → WAML bundle (.waml)**. Browser-local
+download the current state through **Export WAML bundle…**. Browser-local
 session storage remains a separate future design.
 
 ## Testing
@@ -218,7 +219,7 @@ session storage remains a separate future design.
   the embedded blob holds.
 - **Browser.** Playwright against a served export: the wasm boots without a
   console panic, `?bundle=` loads the bundle, an edit writes the current model
-  into `#w1.`, and **Export → WAML bundle (.waml)** downloads a bundle that opens
+  into `#w1.`, and **Export WAML bundle…** downloads a bundle that opens
   with the edited state.
 - **CI.** The Pages deploy runs `waml export site` and the existing
   `scripts/verify-web-artifact.mjs` guard still passes.
