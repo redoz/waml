@@ -15,19 +15,15 @@
 //!   you must pull back out past the strictly larger `reopen` to open again, so
 //!   a pointer jittering on the threshold cannot flap the panel.
 //!
-//! Nothing in the crate consumes this module yet — the `DockSplitter` widget
-//! and the shell wiring land separately — so every item here would trip rustc's
-//! `dead_code` lint, which the project gate promotes to a hard error via clippy
-//! `-D warnings`. Inert items therefore carry
-//! `#[cfg_attr(not(test), allow(dead_code))]`, the same treatment `dock.rs`
-//! gives its own currently-unsent API.
+//! The consumer is `App::apply_splitter_drag` (`app/shell.rs`), which feeds it
+//! the raw pointer x reported by the `DockSplitter` widget and routes the
+//! outcome into `dock_widths` / `DockEvent::{Close, Open}`.
 
 use crate::dock::DockEdge;
 
 /// The narrowest the center canvas may ever become. Both splitters stop when
 /// the canvas would shrink past this, so the diagram never reaches zero width
 /// and both panels stay reachable.
-#[cfg_attr(not(test), allow(dead_code))]
 pub const MIN_CENTER_W: f64 = 320.0;
 
 /// The three width thresholds that shape one dock column's drag.
@@ -42,7 +38,6 @@ pub const MIN_CENTER_W: f64 = 320.0;
 /// panel refuses to move (resistance), and `reopen` sits *above* `min` so
 /// reopening costs strictly more travel than collapsing did (hysteresis).
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub struct DockLimits {
     /// Narrowest width the panel will actually render at. Pointer positions
     /// between `collapse` and this clamp *up* to it.
@@ -55,7 +50,6 @@ pub struct DockLimits {
     pub reopen: f64,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl DockLimits {
     /// Limits for the left-docked Model tree. Default width is
     /// `crate::tree_panel::PROJECT_TREE_W`.
@@ -86,14 +80,12 @@ impl DockLimits {
 /// result is lifted to at least `min`, so a cramped viewport yields a panel
 /// pinned at `min` (overlapping the nominal center reservation) instead of a
 /// nonsensical zero-width or inverted clamp range.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn max_width(viewport_w: f64, other_slot_w: f64) -> f64 {
     (viewport_w - other_slot_w - MIN_CENTER_W).max(0.0)
 }
 
 /// What one drag frame decided.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum DragOutcome {
     /// Stay open at this width (already clamped to `[min, max]`).
     Width(f64),
@@ -115,7 +107,6 @@ pub enum DragOutcome {
 /// window edge. `collapsed` is the whole of the hysteresis — the same
 /// `pointer_x` deliberately means different things depending on which side of
 /// the snap the panel is already on.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn drag(
     edge: DockEdge,
     limits: DockLimits,

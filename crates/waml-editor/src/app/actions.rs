@@ -197,6 +197,8 @@ impl App {
                 panel.toggle_dock(cx);
             }
         }
+
+        self.observe_dock_splitters(cx, actions);
     }
 
     fn observe_popup_results(&mut self, cx: &mut Cx, actions: &Actions) {

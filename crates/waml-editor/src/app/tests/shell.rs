@@ -1,4 +1,4 @@
-use super::super::shell::dock_toggle_icon;
+use super::super::shell::{dock_toggle_icon, panel_body_w};
 use super::*;
 
 #[test]
@@ -176,10 +176,15 @@ fn mounted_dock_close_keeps_presented_geometry_until_motion_completes() {
         app.dock_layout.right_slot,
         crate::inspector_panel::INSPECTOR_W,
     );
-    assert_near(closing.tree_panel.size.x, crate::tree_panel::PROJECT_TREE_W);
+    // The panel BODY is the column minus the splitter strip it shares the host
+    // with (see `panel_body_w`); the slot/column width is unchanged.
+    assert_near(
+        closing.tree_panel.size.x,
+        panel_body_w(crate::tree_panel::PROJECT_TREE_W),
+    );
     assert_near(
         closing.inspector_panel.size.x,
-        crate::inspector_panel::INSPECTOR_W,
+        panel_body_w(crate::inspector_panel::INSPECTOR_W),
     );
     assert_eq!(
         header_right_dock_icon(&mut cx, &app),
@@ -384,4 +389,98 @@ fn visible_mounted_document_header_is_client_area_but_collapsed_header_is_not() 
         }),
     );
     assert!(matches!(response.get(), WindowDragQueryResponse::Caption));
+}
+
+/// A synthesized drag of the LEFT (tree) splitter moves the column and its
+/// reservation slot together. `apply_splitter_drag` is the seam the widget's
+/// `Dragged(pointer_x)` action feeds, so driving it directly is the same code
+/// path a real pointer takes, minus the hit test.
+#[test]
+fn mounted_tree_splitter_drag_widens_the_left_slot() {
+    let size = dvec2(1_200.0, 700.0);
+    let (mut cx, mut app) = mounted_production_shell();
+    configure_mounted_dock(
+        &mut cx,
+        &mut app,
+        size,
+        DockState::Pinned,
+        DockState::Pinned,
+        true,
+    );
+
+    app.apply_splitter_drag(&mut cx, DockEdge::Left, 420.0);
+
+    assert_near(app.dock_widths.tree_w, 420.0);
+    assert_near(app.dock_layout.left_slot, 420.0);
+    let drawn = draw_mounted_dock(&mut cx, &app, size);
+    assert_near(drawn.left_slot.size.x, 420.0);
+    assert_near(drawn.tree_panel.size.x, panel_body_w(420.0));
+    // The inspector is untouched by the other edge's drag.
+    assert_near(
+        app.dock_widths.inspector_w,
+        crate::inspector_panel::INSPECTOR_W,
+    );
+}
+
+/// The right edge derives its width from the far side of the viewport, so the
+/// same pointer x means a different column width.
+#[test]
+fn mounted_inspector_splitter_drag_narrows_the_right_slot() {
+    let size = dvec2(1_200.0, 700.0);
+    let (mut cx, mut app) = mounted_production_shell();
+    configure_mounted_dock(
+        &mut cx,
+        &mut app,
+        size,
+        DockState::Pinned,
+        DockState::Pinned,
+        true,
+    );
+
+    // 1200 - 950 = 250 wide.
+    app.apply_splitter_drag(&mut cx, DockEdge::Right, 950.0);
+
+    assert_near(app.dock_widths.inspector_w, 250.0);
+    assert_near(app.dock_layout.right_slot, 250.0);
+    let drawn = draw_mounted_dock(&mut cx, &app, size);
+    assert_near(drawn.right_slot.size.x, 250.0);
+    assert_near(drawn.inspector_panel.size.x, panel_body_w(250.0));
+}
+
+/// Dragging past `collapse` drives the panel to `Flag` MID-DRAG through the
+/// ordinary `DockEvent::Close` transition, so `DockMotion` animates the snap
+/// and `DockState` stays the single source of truth. The persisted width is
+/// left at the last non-collapsed value.
+#[test]
+fn mounted_tree_splitter_drag_past_collapse_flags_the_panel() {
+    let size = dvec2(1_200.0, 700.0);
+    let (mut cx, mut app) = mounted_production_shell();
+    configure_mounted_dock(
+        &mut cx,
+        &mut app,
+        size,
+        DockState::Pinned,
+        DockState::Flag,
+        true,
+    );
+
+    // Inside the sticky band (collapse 140 .. min 180): still open, held at min.
+    app.apply_splitter_drag(&mut cx, DockEdge::Left, 160.0);
+    assert_eq!(app.dock_states(&mut cx).0, DockState::Pinned);
+    assert_near(app.dock_widths.tree_w, crate::splitter::DockLimits::TREE.min);
+
+    // Past it: collapsed.
+    app.apply_splitter_drag(&mut cx, DockEdge::Left, 120.0);
+    assert_eq!(app.dock_states(&mut cx).0, DockState::Flag);
+    // The width the panel will reopen at is the last OPEN one, not the
+    // threshold it was dragged through.
+    assert_near(app.dock_widths.tree_w, crate::splitter::DockLimits::TREE.min);
+
+    // Hysteresis: a collapsed panel needs strictly more travel back out than it
+    // took to close, and only then reopens.
+    app.apply_splitter_drag(&mut cx, DockEdge::Left, 190.0);
+    assert_eq!(app.dock_states(&mut cx).0, DockState::Flag);
+    app.apply_splitter_drag(&mut cx, DockEdge::Left, 260.0);
+    assert_eq!(app.dock_states(&mut cx).0, DockState::Pinned);
+    assert_near(app.dock_widths.tree_w, 260.0);
 }

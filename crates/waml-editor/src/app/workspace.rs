@@ -326,6 +326,12 @@ impl App {
             return false;
         }
         self.open_dir = Some(next_root);
+        // The project root is only known here, so this is where the per-project
+        // dock column widths are seeded (defaults if the project has no
+        // `.waml/settings.json`).
+        if let Some(root) = self.open_dir.clone() {
+            self.load_dock_widths(cx, &root);
+        }
         let root_name = if self.session.uml_projection().path.is_empty() {
             self.open_name.as_str()
         } else {
@@ -562,6 +568,9 @@ impl App {
 
         cx.stop_timer(self.save_timer);
         self.open_dir = None;
+        // Column widths are per-project state; closing the project returns them
+        // to the defaults the next one will start from unless it has its own.
+        self.dock_widths = crate::project_settings::DockWidths::default();
         self.markdown_assets = None;
         self.sync_save_error(cx);
         self.show_start_screen(cx);

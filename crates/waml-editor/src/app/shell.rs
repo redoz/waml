@@ -69,6 +69,17 @@ pub(super) const TREE_BTN_W: f64 = 32.0;
 pub(super) const NARROW_ENTER_W: f64 = 640.0;
 pub(super) const NARROW_EXIT_W: f64 = 680.0;
 
+/// Width a dock panel's BODY draws at inside a host of `host_w`: the host
+/// width less the splitter strip that shares the host with it. Floored at zero
+/// so a mid-animation host narrower than the strip cannot go negative.
+///
+/// This is the spec's stated consequence of mounting the splitter inside the
+/// panel host: the stored/persisted width is the whole column, and the body is
+/// `SPLITTER_W` narrower than that number.
+pub(super) fn panel_body_w(host_w: f64) -> f64 {
+    (host_w - crate::dock_splitter::SPLITTER_W).max(0.0)
+}
+
 pub(super) fn next_narrow(narrow: bool, viewport_w: f64) -> bool {
     if narrow {
         viewport_w <= NARROW_EXIT_W
@@ -345,8 +356,8 @@ impl App {
             viewport_w,
             tree_value,
             inspector_value,
-            crate::tree_panel::PROJECT_TREE_W,
-            crate::inspector_panel::INSPECTOR_W,
+            self.dock_widths.tree_w,
+            self.dock_widths.inspector_w,
         );
         if let Some(mut panel) = self
             .ui
@@ -380,7 +391,40 @@ impl App {
             {
                 view.walk.width = Size::Fixed(layout.inspector_body);
             }
+            // The panel bodies are runtime-Fixed to the host minus the
+            // splitter strip -- NOT `Size::Fill`. A `Fill` sibling would be
+            // deferred by makepad, leaving the splitter (which trails it in
+            // `tree_host`) caching a pre-shift rect and silently unhittable.
+            if let Some(mut view) = self
+                .ui
+                .widget(cx, ids!(project_tree))
+                .borrow_mut::<crate::tree_panel::ProjectTree>()
+            {
+                view.walk.width = Size::Fixed(panel_body_w(layout.tree_body));
+            }
+            if let Some(mut view) = self
+                .ui
+                .widget(cx, ids!(inspector))
+                .borrow_mut::<crate::inspector_panel::Inspector>()
+            {
+                view.walk.width = Size::Fixed(panel_body_w(layout.inspector_body));
+            }
             cx.redraw_all();
+        }
+        // Splitters are wide-mode only: in narrow mode the panel floats over
+        // the center at a viewport-capped width, so there is no edge to drag.
+        let splitters_visible = !self.narrow;
+        for id in [ids!(tree_splitter), ids!(inspector_splitter)] {
+            if let Some(mut view) = self
+                .ui
+                .widget(cx, id)
+                .borrow_mut::<crate::dock_splitter::DockSplitter>()
+            {
+                if view.visible != splitters_visible {
+                    view.visible = splitters_visible;
+                    cx.redraw_all();
+                }
+            }
         }
         let tree_button = self.ui.widget(cx, ids!(tree_btn)).as_icon_button();
         tree_button.set_icon(
@@ -416,6 +460,115 @@ impl App {
             self.dock_next_frame = cx.new_next_frame();
         }
         self.sync_tree_gap(cx, layout.left_slot);
+    }
+
+    /// Seed the dock column widths from the project that just opened. Called
+    /// once per `open_dir`; a project with no `.waml/settings.json` (or an
+    /// unreadable one) lands on the compiled-in defaults.
+    pub(super) fn load_dock_widths(&mut self, cx: &mut Cx, project_root: &std::path::Path) {
+        self.dock_widths = crate::project_settings::load(project_root).dock;
+        self.sync_dock_slots(cx);
+    }
+
+    /// Route the two splitters' drag actions. Wide mode only -- in narrow mode
+    /// the panels float over the center at a viewport-capped width and the
+    /// splitters are hidden.
+    pub(super) fn observe_dock_splitters(&mut self, cx: &mut Cx, actions: &Actions) {
+        if self.narrow {
+            return;
+        }
+        let tree = self.ui.widget(cx, ids!(tree_splitter)).as_dock_splitter();
+        let inspector = self
+            .ui
+            .widget(cx, ids!(inspector_splitter))
+            .as_dock_splitter();
+
+        if let Some(x) = tree.dragged(actions) {
+            self.apply_splitter_drag(cx, crate::dock::DockEdge::Left, x);
+        }
+        if let Some(x) = inspector.dragged(actions) {
+            self.apply_splitter_drag(cx, crate::dock::DockEdge::Right, x);
+        }
+        // Persistence is on RELEASE only -- never per drag frame, which would
+        // hammer the disk for the length of a gesture.
+        if tree.released(actions) || inspector.released(actions) {
+            self.persist_dock_widths();
+        }
+    }
+
+    /// One drag frame: run the pure decision function over the live viewport
+    /// and dock state, then apply its outcome. Collapse and reopen go through
+    /// the ordinary `DockEvent::Close`/`Open` transitions so `DockMotion`
+    /// animates the snap and `DockState` stays the single source of truth for
+    /// open versus closed.
+    pub(super) fn apply_splitter_drag(
+        &mut self,
+        cx: &mut Cx,
+        edge: crate::dock::DockEdge,
+        pointer_x: f64,
+    ) {
+        use crate::dock::{DockEdge, DockEvent};
+        use crate::splitter::{DockLimits, DragOutcome};
+
+        let viewport_w = self.window_bounds(cx).size.x;
+        let (tree_state, inspector_state) = self.dock_states(cx);
+        let (limits, state, other_slot_w) = match edge {
+            DockEdge::Left => (DockLimits::TREE, tree_state, self.dock_layout.right_slot),
+            DockEdge::Right => (
+                DockLimits::INSPECTOR,
+                inspector_state,
+                self.dock_layout.left_slot,
+            ),
+        };
+        let collapsed = state != DockState::Pinned;
+        let outcome = crate::splitter::drag(
+            edge,
+            limits,
+            pointer_x,
+            viewport_w,
+            other_slot_w,
+            collapsed,
+        );
+
+        let set_width = |widths: &mut crate::project_settings::DockWidths, w: f64| match edge {
+            DockEdge::Left => widths.tree_w = w,
+            DockEdge::Right => widths.inspector_w = w,
+        };
+        let event = match outcome {
+            DragOutcome::Width(w) => {
+                set_width(&mut self.dock_widths, w);
+                None
+            }
+            DragOutcome::Collapse => Some(DockEvent::Close),
+            DragOutcome::Reopen(w) => {
+                set_width(&mut self.dock_widths, w);
+                Some(DockEvent::Open)
+            }
+        };
+        if let Some(event) = event {
+            let (tree, inspector) = match edge {
+                DockEdge::Left => (crate::dock::next(tree_state, event), inspector_state),
+                DockEdge::Right => (tree_state, crate::dock::next(inspector_state, event)),
+            };
+            self.apply_dock_states(cx, tree, inspector);
+        }
+        self.sync_dock_slots(cx);
+    }
+
+    /// Write the current column widths to the open project's `.waml/`. No
+    /// resolvable project root (an unsaved or browser-decoded model) simply
+    /// skips persistence -- the drag still works for the session. A disk
+    /// failure is logged and swallowed: losing a column width must never cost
+    /// an edit.
+    fn persist_dock_widths(&mut self) {
+        let Some(root) = self.open_dir.clone() else {
+            return;
+        };
+        let mut settings = crate::project_settings::load(&root);
+        settings.dock = self.dock_widths;
+        if let Err(error) = crate::project_settings::store(&root, &settings) {
+            log!("failed to store dock widths for {root:?}: {error}");
+        }
     }
 
     /// Push the launch-flag marks into `AgentMark`. Called at startup AND from

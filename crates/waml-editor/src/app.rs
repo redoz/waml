@@ -18,7 +18,9 @@ use crate::document::NavCategory;
 use crate::document_host::{DocumentCommand, DocumentHost};
 use crate::editor_session::{EditorSession, ExternalReplacement, SaveCompletion, SaveTicket};
 use crate::fps_meter::FpsMeter;
+use crate::dock_splitter::DockSplitterWidgetRefExt;
 use crate::icon_button::IconButtonWidgetRefExt;
+use crate::project_settings::DockWidths;
 use crate::load;
 use crate::nav::NavState;
 use crate::platform_browser::{ExternalUrlAdapter, PlatformBrowser};
@@ -446,20 +448,32 @@ script_mod! {
                             width: Fill
                             height: Fill
                             align: Align{x: 0.0, y: 0.0}
+                            // The splitter is the LAST child, so it sits on the
+                            // column's inner (canvas-facing) edge. The body is
+                            // runtime-sized to `host - SPLITTER_W` by
+                            // `sync_dock_slots` rather than being `Fill`:
+                            // makepad DEFERS `Fill`, and a widget drawn after a
+                            // `Fill` sibling caches a pre-shift rect whose hit
+                            // test then silently misses.
                             tree_host := View{
                                 width: 0.0
                                 height: Fill
-                                project_tree := ProjectTree{ width: Fill height: Fill }
+                                project_tree := ProjectTree{ width: 0.0 height: Fill }
+                                tree_splitter := DockSplitter{ rule_edge: 1.0 }
                             }
                         }
                         inspector_layer := View{
                             width: Fill
                             height: Fill
                             align: Align{x: 1.0, y: 0.0}
+                            // Mirror of `tree_host`: the splitter leads, so it
+                            // again lands on the inner edge. Same
+                            // runtime-Fixed body width, same reason.
                             inspector_host := View{
                                 width: 0.0
                                 height: Fill
-                                inspector := Inspector{ width: Fill height: Fill }
+                                inspector_splitter := DockSplitter{ rule_edge: 0.0 }
+                                inspector := Inspector{ width: 0.0 height: Fill }
                             }
                         }
                     }
@@ -552,6 +566,12 @@ pub struct App {
     pointer_in_narrow_dock: bool,
     #[rust]
     dock_layout: ResponsiveDockLayout,
+    /// User-dragged widths of the two dock columns, seeded from the open
+    /// project's `.waml/settings.json` and persisted back on drag release.
+    /// Replaces the compile-time `PROJECT_TREE_W` / `INSPECTOR_W` that
+    /// `responsive_layout` used to be handed.
+    #[rust]
+    dock_widths: DockWidths,
     #[rust(DockMotion::new(1.0))]
     tree_motion: DockMotion,
     #[rust]
@@ -691,6 +711,12 @@ impl AppMain for App {
         // unqueryable node (invisible glyph, `set_icon`/`clicked` no-op). Its own
         // deps (`icons`, `atlas`) are already registered above.
         crate::icon_button::script_mod(vm);
+        // `DockSplitter` is mounted directly by App's own live layout (inside
+        // `tree_host` / `inspector_host`), so it must register before the App
+        // DSL is evaluated by `self::script_mod` -- same eager `mod.widgets.*`
+        // resolution as `IconButton` above. Unregistered, the strip silently
+        // becomes a dead, invisible, unhittable node.
+        crate::dock_splitter::script_mod(vm);
         // `DocumentHeader` mounts `IconButton`, and App's live layout mounts
         // `DocumentHeader`, so register it after its dependency and before the
         // App DSL is evaluated by `self::script_mod`.

@@ -70,7 +70,6 @@ rather than one the editor made quietly on their behalf.
 /// for display at layout time, so widening the window restores the size the user
 /// actually asked for. Defaults are the compiled-in column widths, referenced
 /// rather than re-hardcoded so the two cannot drift apart.
-#[cfg_attr(not(test), allow(dead_code))] // The shell wiring lands separately.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DockWidths {
     /// Width of the left (model tree) column.
@@ -93,7 +92,6 @@ impl Default for DockWidths {
 /// Every field carries `#[serde(default)]` -- exactly as `EditorConfig` does --
 /// so a file written by an older editor, or one hand-edited down to `{}`, still
 /// loads with the missing pieces filled in from defaults.
-#[cfg_attr(not(test), allow(dead_code))] // The shell wiring lands separately.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub(crate) struct ProjectSettings {
     /// Schema version of this file.
@@ -115,7 +113,6 @@ fn project_dir(project_root: &Path) -> PathBuf {
 /// to `settings.json.bak` and defaults are returned. Never panics, never errors:
 /// a project whose settings cannot be read is simply a project at default
 /// widths.
-#[cfg_attr(not(test), allow(dead_code))] // The shell wiring lands separately.
 pub(crate) fn load(project_root: &Path) -> ProjectSettings {
     crate::config::load_from(&project_dir(project_root), SETTINGS_FILE)
 }
@@ -131,7 +128,6 @@ pub(crate) fn load(project_root: &Path) -> ProjectSettings {
 /// to persist a column width must never surface as a dialog or block an edit.
 /// The readme is best-effort and never overwritten: a user may have edited it,
 /// and it is explanatory prose, not state we own after the first write.
-#[cfg_attr(not(test), allow(dead_code))] // The shell wiring lands separately.
 pub(crate) fn store(project_root: &Path, settings: &ProjectSettings) -> io::Result<()> {
     let dir = project_dir(project_root);
     let stamped = ProjectSettings {
