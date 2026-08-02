@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 pub mod flow;
 pub mod geometry;
 pub mod interaction;
+pub mod label;
 pub mod potentials;
 pub mod resolve;
 pub mod route;
