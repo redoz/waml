@@ -293,6 +293,104 @@ fn segment_hits_rect(a: (f64, f64), b: (f64, f64), rect: Rect) -> bool {
     }
 }
 
+/// Weight on how far a candidate slid from its slot's ideal position.
+const W_SLIDE: f64 = 1.0;
+/// Weight on taking the non-canonical side. Small: it only breaks near-ties,
+/// so a genuinely better position still wins.
+const W_SIDE: f64 = 8.0;
+/// Weight per foreign stroke crossed.
+const W_CROSSING: f64 = 40.0;
+
+/// A label the solver found a home for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacedLabel {
+    pub edge: usize,
+    pub slot: LabelSlot,
+    pub text: String,
+    pub rect: Rect,
+    pub attach: (f64, f64),
+}
+
+/// Result of a placement pass. `unplaced` is not an error: it is the input to
+/// the reroute and leader-line stages, and its length is the instrumentation
+/// that says whether those stages are earning their complexity.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Placement {
+    pub placed: Vec<PlacedLabel>,
+    pub unplaced: Vec<LabelRequest>,
+}
+
+pub fn place(
+    routes: &[Vec<(f64, f64)>],
+    requests: &[LabelRequest],
+    obstacles: &Obstacles,
+    cfg: &LabelConfig,
+) -> Placement {
+    let mut out = Placement::default();
+    // Already-placed labels become hard obstacles for later ones, which is what
+    // stops labels landing on each other.
+    let mut hard = obstacles.hard.clone();
+
+    let mut deferred: Vec<&LabelRequest> = Vec::new();
+    for request in requests {
+        if !try_place(request, routes, &mut hard, obstacles, cfg, &mut out) {
+            deferred.push(request);
+        }
+    }
+    // One retry pass. Greedy is order-dependent, so a label rejected early may
+    // fit once the rest have settled into their own slots.
+    for request in deferred {
+        if !try_place(request, routes, &mut hard, obstacles, cfg, &mut out) {
+            out.unplaced.push(request.clone());
+        }
+    }
+    out
+}
+
+/// Score a single request against every candidate and take the best that has no
+/// hard collision. Returns false when nothing fits.
+fn try_place(
+    request: &LabelRequest,
+    routes: &[Vec<(f64, f64)>],
+    hard: &mut Vec<Rect>,
+    obstacles: &Obstacles,
+    cfg: &LabelConfig,
+    out: &mut Placement,
+) -> bool {
+    let Some(points) = routes.get(request.edge) else {
+        return false;
+    };
+    let size = measure(&request.text, cfg);
+    let mut best: Option<(f64, Candidate)> = None;
+    for c in candidates(points, request.slot, size, cfg) {
+        if collides(c.rect, hard) {
+            continue;
+        }
+        let score = W_SLIDE * c.slide_cost
+            + if c.side_is_canonical { 0.0 } else { W_SIDE }
+            + W_CROSSING * soft_crossings(c.rect, &obstacles.soft) as f64;
+        // Strict `<` keeps the FIRST candidate of a tie, and candidate order is
+        // deterministic, so ties resolve the same way every run.
+        if best.as_ref().map(|(b, _)| score < *b).unwrap_or(true) {
+            best = Some((score, c));
+        }
+    }
+    match best {
+        Some((_, c)) => {
+            hard.push(c.rect);
+            out.placed.push(PlacedLabel {
+                edge: request.edge,
+                slot: request.slot,
+                text: request.text.clone(),
+                rect: c.rect,
+                attach: c.attach,
+            });
+            true
+        }
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +551,128 @@ mod tests {
         let through = [(-10.0, 25.0), (110.0, 25.0)];
         let clear = [(-10.0, 200.0), (110.0, 200.0)];
         assert_eq!(soft_crossings(rect, &[through, clear]), 1);
+    }
+
+    fn route_pair() -> Vec<Vec<(f64, f64)>> {
+        vec![vec![(0.0, 50.0), (300.0, 50.0)]]
+    }
+
+    #[test]
+    fn two_labels_on_one_route_never_overlap_each_other() {
+        let reqs = vec![
+            LabelRequest {
+                edge: 0,
+                slot: LabelSlot::TerminalFrom,
+                text: "order {1}".into(),
+            },
+            LabelRequest {
+                edge: 0,
+                slot: LabelSlot::TerminalTo,
+                text: "customer {1}".into(),
+            },
+        ];
+        let out = place(
+            &route_pair(),
+            &reqs,
+            &Obstacles::default(),
+            &LabelConfig::default(),
+        );
+        assert_eq!(out.placed.len(), 2, "both placed: {:?}", out.unplaced);
+        assert!(!collides(out.placed[0].rect, &[out.placed[1].rect]));
+    }
+
+    #[test]
+    fn a_label_never_lands_on_a_card() {
+        let obstacles = Obstacles {
+            hard: vec![Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 100.0,
+            }],
+            soft: vec![],
+        };
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::TerminalFrom,
+            text: "order {1}".into(),
+        }];
+        let out = place(&route_pair(), &reqs, &obstacles, &LabelConfig::default());
+        for p in &out.placed {
+            assert!(
+                !collides(p.rect, &obstacles.hard),
+                "placed on a card: {:?}",
+                p.rect
+            );
+        }
+    }
+
+    #[test]
+    fn an_impossible_label_is_reported_not_silently_dropped() {
+        // One enormous obstacle covering the whole route: nothing can be placed,
+        // and the caller must be able to tell.
+        let obstacles = Obstacles {
+            hard: vec![Rect {
+                x: -500.0,
+                y: -500.0,
+                w: 2000.0,
+                h: 2000.0,
+            }],
+            soft: vec![],
+        };
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let out = place(&route_pair(), &reqs, &obstacles, &LabelConfig::default());
+        assert!(out.placed.is_empty());
+        assert_eq!(
+            out.unplaced, reqs,
+            "unplaceable labels come back to the caller"
+        );
+    }
+
+    #[test]
+    fn placement_is_deterministic() {
+        let reqs = vec![
+            LabelRequest {
+                edge: 0,
+                slot: LabelSlot::TerminalFrom,
+                text: "a".into(),
+            },
+            LabelRequest {
+                edge: 0,
+                slot: LabelSlot::TerminalTo,
+                text: "b".into(),
+            },
+            LabelRequest {
+                edge: 0,
+                slot: LabelSlot::MidRoute,
+                text: "c".into(),
+            },
+        ];
+        let cfg = LabelConfig::default();
+        let one = place(&route_pair(), &reqs, &Obstacles::default(), &cfg);
+        let two = place(&route_pair(), &reqs, &Obstacles::default(), &cfg);
+        assert_eq!(one.placed, two.placed);
+    }
+
+    #[test]
+    fn the_canonical_side_wins_an_otherwise_tied_choice() {
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let out = place(
+            &route_pair(),
+            &reqs,
+            &Obstacles::default(),
+            &LabelConfig::default(),
+        );
+        // Open space both sides: the label must take the canonical one (above a
+        // horizontal run) rather than picking arbitrarily.
+        assert!(out.placed[0].rect.y < 50.0, "should sit above the route");
     }
 }
