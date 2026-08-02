@@ -30,8 +30,6 @@ const DOCUMENT_POPUP_RELAY_ORDER: [PopupRelay; 2] = [PopupRelay::Armed, PopupRel
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ExclusiveHandler {
-    NavigationQuery,
-    NavigationFilter,
     TreeContextMenu,
     TreeNavigation,
     HistoryControls,
@@ -48,9 +46,7 @@ enum ExclusiveHandler {
     DocumentTabs,
 }
 
-const EXCLUSIVE_ORDER: [ExclusiveHandler; 16] = [
-    ExclusiveHandler::NavigationQuery,
-    ExclusiveHandler::NavigationFilter,
+const EXCLUSIVE_ORDER: [ExclusiveHandler; 14] = [
     ExclusiveHandler::TreeContextMenu,
     ExclusiveHandler::TreeNavigation,
     ExclusiveHandler::HistoryControls,
@@ -98,8 +94,6 @@ impl App {
 
         for handler in EXCLUSIVE_ORDER {
             let flow = match handler {
-                ExclusiveHandler::NavigationQuery => self.handle_navigation_query(cx, actions),
-                ExclusiveHandler::NavigationFilter => self.handle_navigation_filter(cx, actions),
                 ExclusiveHandler::TreeContextMenu => self.handle_tree_context_menu(cx, actions),
                 ExclusiveHandler::TreeNavigation => self.handle_tree_navigation(cx, actions),
                 ExclusiveHandler::HistoryControls => self.handle_history_controls(cx, actions),
@@ -220,7 +214,6 @@ impl App {
         let burger_closed = result_for(live_id!(burger));
         let doc_switcher_closed = result_for(live_id!(doc_switcher));
         let node_closed = result_for(live_id!(node_menu));
-        let nav_filter_closed = result_for(live_id!(nav_filter));
         let mut document_armed = popup.armed_event(actions);
         drop(popup);
 
@@ -294,13 +287,6 @@ impl App {
                 }
             }
         }
-        if let Some(PopupResult::Invoked(id)) = nav_filter_closed {
-            if let Some((_, filter)) = self.nav_filter_ids.iter().find(|(item, _)| *item == id) {
-                self.nav_state.filter = *filter;
-                self.refresh_nav(cx, false);
-            }
-        }
-
         for relay in DOCUMENT_POPUP_RELAY_ORDER {
             let outcome = match relay {
                 PopupRelay::Armed => document_armed.take().and_then(|(tag, id)| {
@@ -377,77 +363,6 @@ impl App {
             }
             Some(crate::popup::conflict_list::ConflictListAction::None) | None => {}
         }
-    }
-
-    fn handle_navigation_query(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
-        let query = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-            .and_then(|panel| panel.query_changed(actions));
-        let Some(query) = query else {
-            return ActionFlow::Continue;
-        };
-        self.nav_state.query = query;
-        self.refresh_nav(cx, false);
-        ActionFlow::Consumed
-    }
-
-    fn handle_navigation_filter(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
-        let request = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-            .and_then(|panel| panel.filter_request(actions));
-        let Some(anchor_rect) = request else {
-            return ActionFlow::Continue;
-        };
-
-        self.nav_filter_ids.clear();
-        let mut items = Vec::new();
-        for filter in std::iter::once(None).chain(self.nav_kinds.iter().copied().map(Some)) {
-            let id = match filter {
-                None => live_id!(filter_all),
-                Some(kind) => LiveId::from_str(&format!("filter:{kind:?}")),
-            };
-            self.nav_filter_ids.push((id, filter));
-            let lead = match filter {
-                None => SelectLead::Icon(crate::icons::Icon::Funnel),
-                Some(kind) => crate::icons::IconSet::icon_for(kind)
-                    .map(SelectLead::Icon)
-                    .unwrap_or(SelectLead::None),
-            };
-            items.push(SelectItem {
-                id,
-                lead,
-                label: crate::nav::chip_label(filter).to_string(),
-                selected: filter == self.nav_state.filter,
-                enabled: true,
-            });
-        }
-        let anchor = dvec2(
-            anchor_rect.pos.x,
-            anchor_rect.pos.y + anchor_rect.size.y + crate::popup::select::SELECT_GAP,
-        );
-        let bounds = self.window_bounds(cx);
-        if let Some(mut popup) = self
-            .ui
-            .widget(cx, ids!(popup_root))
-            .borrow_mut::<PopupRoot>()
-        {
-            popup.show_at(
-                cx,
-                PopupSpec::Select {
-                    tag: live_id!(nav_filter),
-                    anchor,
-                    min_width: anchor_rect.size.x,
-                    bounds,
-                    items,
-                    compact_frame: false,
-                },
-            );
-        }
-        ActionFlow::Consumed
     }
 
     fn handle_tree_context_menu(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
@@ -1273,8 +1188,6 @@ mod tests {
         assert_eq!(
             EXCLUSIVE_ORDER,
             [
-                ExclusiveHandler::NavigationQuery,
-                ExclusiveHandler::NavigationFilter,
                 ExclusiveHandler::TreeContextMenu,
                 ExclusiveHandler::TreeNavigation,
                 ExclusiveHandler::HistoryControls,

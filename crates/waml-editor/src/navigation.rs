@@ -414,25 +414,14 @@ mod tests {
     }
 
     #[test]
-    fn filtered_nav_state_cannot_change_canonical_breadcrumb() {
+    fn scoped_nav_state_cannot_change_canonical_breadcrumb() {
         let (okf, uml) = fixture();
         let before = breadcrumb_for(&okf, &uml, "sales/archive/order");
         let states = [
             crate::nav::NavState {
                 scope: "/sales".into(),
-                query: String::new(),
-                filter: None,
             },
-            crate::nav::NavState {
-                scope: "/".into(),
-                query: "purchase".into(),
-                filter: None,
-            },
-            crate::nav::NavState {
-                scope: "/".into(),
-                query: String::new(),
-                filter: Some(crate::tree::TreeKind::Class),
-            },
+            crate::nav::NavState { scope: "/".into() },
         ];
         for state in states {
             let _projected = crate::nav::view(&okf, &uml, &state);

@@ -14,31 +14,21 @@ use crate::tree::{build_tree, ProjectTree, TreeKind, TreeNode};
 pub struct NavState {
     /// Directory address; `"/"` = whole-bundle scope.
     pub scope: String,
-    /// Search text; `""` = browse (never a search state).
-    pub query: String,
-    /// `None` = All.
-    pub filter: Option<TreeKind>,
 }
 
 impl Default for NavState {
     fn default() -> Self {
-        Self {
-            scope: "/".into(),
-            query: String::new(),
-            filter: None,
-        }
+        Self { scope: "/".into() }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum NavView {
-    /// Scoped subtree, type-filtered, no query.
+    /// The scoped subtree. The panel's only non-empty projection: the header's
+    /// search field and type-filter chip are gone, so there is nothing left to
+    /// narrow the tree by and no `Results`/`Elsewhere` state to fall into.
     Browse(ProjectTree),
-    /// Query matches inside scope (matches + their ancestor packages).
-    Results(ProjectTree),
-    /// No scope match; whole-model matches, shown under a note.
-    Elsewhere(ProjectTree),
-    /// Nothing matches anywhere.
+    /// The scope address resolves to no node in the model.
     Empty,
 }
 
@@ -47,71 +37,6 @@ pub struct PackageRow {
     pub key: String,
     pub title: String,
     pub depth: usize,
-}
-
-/// De-prefixed display name for a kind (drives the type-filter chip label and
-/// any kind-labelled UI). `Unknown` reads as "Other".
-pub fn kind_label(kind: TreeKind) -> &'static str {
-    match kind {
-        TreeKind::Directory => "Directory",
-        TreeKind::OkfDocument => "OKF",
-        TreeKind::Class => "Class",
-        TreeKind::Interface => "Interface",
-        TreeKind::Enum => "Enum",
-        TreeKind::DataType => "DataType",
-        TreeKind::Diagram => "Diagram",
-        TreeKind::Behavior => "Behavior",
-        TreeKind::Sequence => "Sequence",
-        TreeKind::Note => "Note",
-    }
-}
-
-/// The type-filter chip's current label: `All` for no filter, else the kind.
-pub fn chip_label(filter: Option<TreeKind>) -> &'static str {
-    match filter {
-        None => "All",
-        Some(k) => kind_label(k),
-    }
-}
-
-/// Canonical kind order (matches `TreeKind`'s declaration), used to give
-/// `kinds_in_model` a stable, model-independent ordering.
-const KIND_ORDER: [TreeKind; 10] = [
-    TreeKind::Directory,
-    TreeKind::OkfDocument,
-    TreeKind::Class,
-    TreeKind::Interface,
-    TreeKind::Enum,
-    TreeKind::DataType,
-    TreeKind::Diagram,
-    TreeKind::Behavior,
-    TreeKind::Sequence,
-    TreeKind::Note,
-];
-
-/// The distinct `TreeKind`s present anywhere in the model, in canonical order.
-/// Drives the type-filter chip's cycle; compute once on Model load, not per
-/// keystroke.
-pub fn kinds_in_model(
-    okf: &waml::analysis::OkfAnalysis,
-    uml: &waml::uml::Analysis,
-) -> Vec<TreeKind> {
-    let full = build_tree(okf, uml, "Untitled");
-    let mut present: Vec<TreeKind> = Vec::new();
-    fn walk(nodes: &[TreeNode], present: &mut Vec<TreeKind>) {
-        for n in nodes {
-            if !present.contains(&n.kind) {
-                present.push(n.kind);
-            }
-            walk(&n.children, present);
-        }
-    }
-    walk(&full.roots, &mut present);
-    KIND_ORDER
-        .iter()
-        .copied()
-        .filter(|k| present.contains(k))
-        .collect()
 }
 
 /// Nested directory-only rows for the title dropdown, depth-indented.
@@ -187,87 +112,19 @@ fn under(wrapper: &TreeNode, children: Vec<TreeNode>) -> ProjectTree {
     }
 }
 
-/// Keep rows whose kind == `kind`; retain ancestor packages of any kept row for
-/// structure; prune everything else. (Only packages carry children, so a pruned
-/// non-package never strands descendants.)
-fn filter_kind(nodes: &[TreeNode], kind: TreeKind) -> Vec<TreeNode> {
-    nodes
-        .iter()
-        .filter_map(|n| {
-            let kids = filter_kind(&n.children, kind);
-            if n.kind == kind || !kids.is_empty() {
-                Some(TreeNode {
-                    children: kids,
-                    ..n.clone()
-                })
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// Case-insensitive substring on `title`.
-fn title_matches(title: &str, q: &str) -> bool {
-    title.to_lowercase().contains(&q.to_lowercase())
-}
-
-/// Prune non-matching leaves; keep a node if its own title matches OR any
-/// descendant is kept (packages thus survive on a matching member).
-fn query_prune(nodes: &[TreeNode], q: &str) -> Vec<TreeNode> {
-    nodes
-        .iter()
-        .filter_map(|n| {
-            let kids = query_prune(&n.children, q);
-            if title_matches(&n.title, q) || !kids.is_empty() {
-                Some(TreeNode {
-                    children: kids,
-                    ..n.clone()
-                })
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 pub fn view(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
     state: &NavState,
 ) -> NavView {
     let full = build_tree(okf, uml, "Untitled");
-    // Every non-`Empty` view is a single scope row with the matching members
-    // beneath it -- including the search states, so the row you can select
-    // never disappears mid-query.
+    // A non-`Empty` view is the scope row with its members beneath it: that row
+    // is the model's on-screen identity and the thing to select when a whole
+    // bundle/directory is the subject.
     let Some(scope) = scope_node(&full, &state.scope) else {
         return NavView::Empty;
     };
-    let scoped = scoped_roots(&full, &state.scope);
-    let filtered = match state.filter {
-        Some(k) => filter_kind(&scoped, k),
-        None => scoped,
-    };
-    if state.query.trim().is_empty() {
-        return NavView::Browse(under(&scope, filtered));
-    }
-    let in_scope = query_prune(&filtered, &state.query);
-    if !in_scope.is_empty() {
-        return NavView::Results(under(&scope, in_scope));
-    }
-    // Nothing in scope: search the whole bundle, under the bundle root row.
-    let whole = scoped_roots(&full, "/");
-    let whole_filtered = match state.filter {
-        Some(k) => filter_kind(&whole, k),
-        None => whole,
-    };
-    let elsewhere = query_prune(&whole_filtered, &state.query);
-    if elsewhere.is_empty() {
-        NavView::Empty
-    } else {
-        let root = scope_node(&full, "/").unwrap_or(scope);
-        NavView::Elsewhere(under(&root, elsewhere))
-    }
+    NavView::Browse(under(&scope, scoped_roots(&full, &state.scope)))
 }
 
 #[cfg(test)]
@@ -295,33 +152,6 @@ mod tests {
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         let (_, okf, uml, _) = prepared.into_parts();
         (okf, uml)
-    }
-
-    #[test]
-    fn chip_label_is_all_when_unfiltered_else_the_kind() {
-        assert_eq!(chip_label(None), "All");
-        assert_eq!(chip_label(Some(TreeKind::Class)), "Class");
-        assert_eq!(chip_label(Some(TreeKind::Directory)), "Directory");
-    }
-
-    #[test]
-    fn kinds_in_model_is_distinct_and_canonically_ordered() {
-        let (bundle, projection) = built();
-        let kinds = kinds_in_model(&bundle, &projection);
-        // Present: Package (root+sub), Class (cls), Interface (iface). Canonical
-        // order puts Package before Class before Interface; no dupes.
-        assert_eq!(
-            kinds,
-            vec![TreeKind::Directory, TreeKind::Class, TreeKind::Interface]
-        );
-    }
-
-    #[test]
-    fn kinds_are_canonically_ordered() {
-        let (bundle, projection) = built();
-        let kinds = kinds_in_model(&bundle, &projection);
-        let idx = |k: &TreeKind| KIND_ORDER.iter().position(|x| x == k).unwrap();
-        assert!(kinds.windows(2).all(|w| idx(&w[0]) < idx(&w[1])));
     }
 
     #[test]
@@ -390,7 +220,6 @@ mod tests {
     fn scope_roots_at_the_packages_subtree() {
         let state = NavState {
             scope: "/sub".to_string(),
-            ..Default::default()
         };
         let (bundle, projection) = built();
         let v = view(&bundle, &projection, &state);
@@ -406,107 +235,9 @@ mod tests {
     }
 
     #[test]
-    fn type_filter_keeps_matching_kinds_and_ancestor_packages_prunes_rest() {
+    fn unknown_scope_is_empty() {
         let state = NavState {
-            filter: Some(TreeKind::Class),
-            ..Default::default()
-        };
-        let (bundle, projection) = built();
-        let v = view(&bundle, &projection, &state);
-        let t = browse_roots(&v);
-        // Only the Class survives, but its ancestor package "sub" is retained for
-        // structure; the sibling Interface "iface" is pruned. The scope row
-        // itself is never filtered away.
-        assert_eq!(
-            flat(t),
-            vec![
-                ("/".to_string(), TreeKind::Directory),
-                ("/sub".to_string(), TreeKind::Directory),
-                ("sub/cls".to_string(), TreeKind::Class)
-            ]
-        );
-    }
-
-    #[test]
-    fn type_filter_on_package_keeps_package_rows() {
-        let state = NavState {
-            filter: Some(TreeKind::Directory),
-            ..Default::default()
-        };
-        let (bundle, projection) = built();
-        let v = view(&bundle, &projection, &state);
-        let t = browse_roots(&v);
-        assert_eq!(
-            flat(t),
-            vec![
-                ("/".to_string(), TreeKind::Directory),
-                ("/sub".to_string(), TreeKind::Directory)
-            ]
-        );
-    }
-
-    #[test]
-    fn query_prunes_non_matching_leaves_and_keeps_matching_branches() {
-        let state = NavState {
-            query: "custom".to_string(),
-            ..Default::default()
-        };
-        let (bundle, projection) = built();
-        let v = view(&bundle, &projection, &state);
-        let t = match &v {
-            NavView::Results(t) => t,
-            other => panic!("expected Results, got {other:?}"),
-        };
-        // "Customer" matches; its ancestor "sub" is kept; "Payments" is pruned.
-        // The scope row survives every search state.
-        assert_eq!(
-            flat(t),
-            vec![
-                ("/".to_string(), TreeKind::Directory),
-                ("/sub".to_string(), TreeKind::Directory),
-                ("sub/cls".to_string(), TreeKind::Class)
-            ]
-        );
-    }
-
-    #[test]
-    fn query_is_case_insensitive() {
-        let state = NavState {
-            query: "PAYMENTS".to_string(),
-            ..Default::default()
-        };
-        let (bundle, projection) = built();
-        match view(&bundle, &projection, &state) {
-            NavView::Results(t) => {
-                assert!(flat(&t).iter().any(|(k, _)| k == "iface"));
-            }
-            other => panic!("expected Results, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn no_scope_match_but_whole_model_match_is_elsewhere() {
-        // Scope into "sub" (holds only "Customer"), search for the interface that
-        // lives outside the scope.
-        let state = NavState {
-            scope: "/sub".to_string(),
-            query: "payments".to_string(),
-            ..Default::default()
-        };
-        let (bundle, projection) = built();
-        let v = view(&bundle, &projection, &state);
-        let t = match &v {
-            NavView::Elsewhere(t) => t,
-            other => panic!("expected Elsewhere, got {other:?}"),
-        };
-        assert!(flat(t).iter().any(|(k, _)| k == "iface"));
-    }
-
-    #[test]
-    fn no_match_anywhere_is_empty() {
-        let state = NavState {
-            query: "zzzznope".to_string(),
-            ..Default::default()
+            scope: "/nope".to_string(),
         };
         let (bundle, projection) = built();
         assert_eq!(view(&bundle, &projection, &state), NavView::Empty);

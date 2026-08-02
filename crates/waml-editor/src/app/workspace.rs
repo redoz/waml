@@ -375,10 +375,7 @@ impl App {
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
         // against this bundle and rebuilds the model (see `handle_actions`).
-        // Fresh model: recompute the type-filter chip's cycle and reset scope /
-        // search / filter to the whole-model browse state.
-        self.nav_kinds =
-            crate::nav::kinds_in_model(self.session.okf_analysis(), self.session.uml_analysis());
+        // Fresh model: reset the scope to the whole-model browse state.
         self.nav_state = NavState::default();
 
         self.open_name = display_name;

@@ -8,11 +8,10 @@
 //! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
 //! filter page and git-status dots.
 //!
-//! The header is a real `flow: Down` `View`, but it owns no interactive
-//! children: the caption bar's tree toggle is the sole collapse/expand
-//! affordance, so the scope-title trigger, search field, and type chip are the
-//! only controls left and all three stay immediate-mode hand-drawn over the
-//! header band.
+//! There is no header band: the search field and the type-filter chip that used
+//! to be hand-drawn over one are gone, and the rows start at the top of the
+//! panel. The caption bar's tree toggle is the sole collapse/expand affordance,
+//! so the panel owns no controls at all.
 //!
 //! The panel's dock state is binary -- `Pinned` (a flush column) or `Flag`
 //! (zero pixels, nothing drawn). Like the inspector it never enters `Peek`,
@@ -45,6 +44,10 @@ script_mod! {
     set_type_default() do #(DrawChevron::script_shader(vm)){
         ..mod.draw.DrawQuad
         color: instance(#fff)
+        // Ride-along alpha so a chevron fades with its rows while its parent
+        // folder collapses (see `draw_row_chevron`); an instance, like `open`,
+        // because each row carries its own value in one batch.
+        fade: instance(1.0)
         stroke_w: uniform(1.3)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
@@ -61,7 +64,7 @@ script_mod! {
             sdf.move_to(mx + ca * x0 - sa * y0, my + sa * x0 + ca * y0)
             sdf.line_to(mx - sa * y1, my + ca * y1)
             sdf.line_to(mx + ca * r - sa * y0, my + sa * r + ca * y0)
-            sdf.stroke(self.color, self.stroke_w)
+            sdf.stroke(self.color * self.fade, self.stroke_w)
             return sdf.result
         }
     }
@@ -131,37 +134,9 @@ script_mod! {
         // edges; it used to double as clearance for the 1.5px frame ring.
         padding: 6.0
 
-        // Header band: one empty spacer. `search_row` reserves it, and the
-        // search field + type chip are drawn immediate-mode over it -- the same
-        // hybrid `inspector::element_bar` uses. The scope title used to sit in
-        // a `title_row` above; the model's identity is the tree's root row now
-        // (see `nav::scope_node`), so the band is search-only.
-        //
-        // `search_row` MUST be `height: Fill`, not a fixed 30.0 matching the
-        // band: a lone fixed-height child that exactly fills its fixed-height
-        // parent degenerates the turtle and silently kills the FileTree's text
-        // draw below (rows keep their immediate-mode glyphs, every label blanks).
-        header := View {
-            width: Fill
-            height: 30.0
-            flow: Down
-            search_row := View {
-                width: Fill
-                height: Fill
-            }
-        }
-
-        // Note band: an empty spacer reserving vertical room above the body for
-        // the two-line `Elsewhere` note ("No matches in <scope>" / "Elsewhere in
-        // model"), which is hand-drawn (immediate-mode) into this gap. Hidden by
-        // default; `draw_walk` shows it only in the `Elsewhere` state so the note
-        // sits above the whole-model rows instead of over them. Height must match
-        // `NOTE_H`.
-        note_band := View {
-            width: Fill
-            height: 40.0
-            visible: false
-        }
+        // No header band: the search field and type-filter chip that used to be
+        // hand-drawn over one are gone, so the tree rows start at the top of the
+        // panel.
 
         // Load-bearing despite drawing nothing: see `draw_title`'s field comment.
         draw_title +: {
@@ -171,11 +146,6 @@ script_mod! {
         draw_dim +: {
             color: atlas.text_dim
             text_style: fonts.text_label
-        }
-        // Search-field / type-chip pill background (Task 9). Opaque `field_bg`,
-        // matching the panel body.
-        draw_field_bg: mod.draw.DrawColor{
-            color: atlas.field_bg
         }
 
         // Plain-View wrapper around the fork `FileTree`. The fork widget's
@@ -279,15 +249,6 @@ pub enum ProjectTreeAction {
     #[default]
     None,
     Navigate(NavigationIntent),
-    /// Search-field edit. Emitted by `emit_query` on every keystroke; `App`
-    /// applies it to `NavState::query`.
-    Query(String),
-    /// Type-filter chip click; `App` relays it to `PopupRoot` to show the
-    /// type-filter `SelectFlyout`. `anchor` is the
-    /// chip's window rect so the flyout drops under it, sized to its width.
-    FilterRequest {
-        anchor: Rect,
-    },
     /// A secondary-button press over a classifier row. `App` selects the row
     /// (via `open_preview`) and opens the base node menu at `anchor`.
     ContextMenu {
@@ -296,14 +257,12 @@ pub enum ProjectTreeAction {
     },
 }
 
-/// Which projection the panel is showing, for the header note + empty state
-/// (Task 8). The rendered rows live in `self.tree`; this only records intent.
+/// Which projection the panel is showing, for the empty state. The rendered
+/// rows live in `self.tree`; this only records intent.
 #[derive(Clone, Copy, PartialEq, Default)]
 enum NavStateTag {
     #[default]
     Browse,
-    Results,
-    Elsewhere,
     Empty,
 }
 
@@ -343,28 +302,8 @@ const CHEVRON_LEFT_MARGIN: f64 = 4.0;
 /// icon/label gap grow per level.
 const ICON_DEPTH_INDENT: f64 = 15.0;
 
-// Header band geometry (px), matching the inspector's own bar-strip constants.
-const HEADER_H: f64 = 30.0;
+/// Inset (px) of the hand-drawn empty-state message from the panel edge.
 const PAD: f64 = 10.0;
-const ICON: f64 = 16.0;
-const ICON_GAP: f64 = 10.0;
-// Vertical room (px) reserved above the FileTree body for the two-line
-// `Elsewhere` note. Must match the `note_band` View's height in the DSL.
-const NOTE_H: f64 = 40.0;
-
-/// Height (px) of the `note_band` spacer inserted between the header and the
-/// FileTree body for `tag`. Non-zero only in the reachable `Elsewhere` state
-/// while the body is shown -- that state draws a two-line note above the
-/// whole-model rows, so the body must be pushed down by this much or the note
-/// renders over the first rows. Every other state (and the collapsed body)
-/// draws no note and reserves nothing.
-fn note_band_height(tag: NavStateTag, collapsed: bool) -> f64 {
-    if !collapsed && matches!(tag, NavStateTag::Elsewhere) {
-        NOTE_H
-    } else {
-        0.0
-    }
-}
 
 /// The four `TreeKind`s that previews treat as classifiers (they used to share
 /// `TreeKind::Class` before per-glyph rows split them out). Used by the
@@ -424,6 +363,11 @@ pub struct DrawChevron {
     /// arrow swings with the rows instead of on a second timer.
     #[live]
     open: f32,
+    /// Alpha multiplier, fed the same fold scale the rows shrink by, so a
+    /// chevron dissolves as its ancestor folder closes instead of staying at
+    /// full ink over a 1px-tall row.
+    #[live]
+    fade: f32,
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -472,44 +416,15 @@ pub struct ProjectTree {
     #[redraw]
     #[live]
     draw_title: DrawText,
-    // Header band ink. `draw_dim` is everything subdued (the search/chip/note
-    // tint source), and is also the tint source for the hand-drawn header
-    // glyphs.
+    // Subdued ink; the tint source for the hand-drawn empty-state message.
     #[redraw]
     #[live]
     draw_dim: DrawText,
-    // Search-field / type-chip pill background (Task 9).
-    #[redraw]
-    #[live]
-    draw_field_bg: DrawColor,
-    /// The current scope's display title. No longer drawn as a header label
-    /// (the scope is the tree's root row now); it still names the scope in the
-    /// `Elsewhere` note. Empty falls back to `"Untitled"`.
+    /// The current scope's display title. Not drawn -- the scope is the tree's
+    /// root row -- but `App` still pushes it; kept so the panel can label the
+    /// scope again without re-plumbing.
     #[rust]
     scope_title: String,
-    /// Live search text, edited in place (hand-rolled, no fork `TextInput`).
-    /// Emits `ProjectTreeAction::Query` on every keystroke.
-    #[rust]
-    query_text: String,
-    /// Whether the search field currently has key focus / shows the caret.
-    #[rust]
-    editing_search: bool,
-    /// The type-filter chip's current label (`App` pushes this from
-    /// `nav::chip_label`, Task 10). Empty falls back to `"All"`.
-    #[rust]
-    chip_label: String,
-    /// The active filter kind, so the chip can draw the matching leading icon.
-    /// `None` is the "All" state (drawn with `Icon::Funnel`). Pushed alongside
-    /// `chip_label` via `set_chip_filter`.
-    #[rust]
-    chip_kind: Option<TreeKind>,
-    /// The search field's hit rect. A click begins editing + takes key focus.
-    #[rust]
-    search_rect: Rect,
-    /// The type-filter chip's hit rect. A click emits
-    /// `ProjectTreeAction::FilterRequest`, opening the type-filter dropdown.
-    #[rust]
-    chip_rect: Rect,
     /// The dock visual state, binary here: `Pinned` (flush column) or `Flag`
     /// (zero pixels). Owned here; the app reads `slot_width()` to drive the
     /// left reservation slot.
@@ -522,8 +437,6 @@ pub struct ProjectTree {
     dock: DockState,
     #[rust(true)]
     presentation_visible: bool,
-    #[rust]
-    header_rect: Rect,
     // Key of the row to highlight, mirroring the active doc tab. Set via
     // `set_selected_key` from the app's `sync_active_tab`.
     #[rust]
@@ -579,21 +492,14 @@ fn build_id_maps(tree: &ProjectTreeData) -> TreeIdMaps {
     (keys, concepts, openable)
 }
 
-/// The package-folder keys `set_view` expands for `tag`, in depth-first order.
-///
-/// `Browse` opens the scope row plus the packages directly under it — the user
-/// drills down from there manually. (The scope row is the single root of every
-/// view since the header stopped carrying the scope title, so stopping at
-/// depth 0 would show one collapsed row and nothing else.)
-/// The search states (`Results`/`Elsewhere`) open EVERY package: the nav pass
-/// already pruned the tree to the matches plus their ancestor packages, so a
-/// match nested two+ package levels deep stays hidden behind a collapsed
-/// sub-package unless those ancestor packages are expanded too.
-fn folders_to_open(tag: NavStateTag, tree: &ProjectTreeData) -> Vec<String> {
-    let deep = matches!(tag, NavStateTag::Results | NavStateTag::Elsewhere);
-    // `Browse` descends one level past the scope row; the search states have no
-    // depth limit.
-    let max_depth = if deep { usize::MAX } else { 1 };
+/// The package-folder keys `set_view` expands, in depth-first order: the scope
+/// row plus the packages directly under it — the user drills down from there
+/// manually. (The scope row is the single root of every view since the header
+/// stopped carrying the scope title, so stopping at depth 0 would show one
+/// collapsed row and nothing else.)
+fn folders_to_open(tree: &ProjectTreeData) -> Vec<String> {
+    // Descend one level past the scope row.
+    let max_depth = 1;
     fn collect(nodes: &[TreeNode], depth: usize, max_depth: usize, out: &mut Vec<String>) {
         for n in nodes {
             if n.is_directory {
@@ -659,7 +565,6 @@ fn reconcile_open_directories(
     addresses: &HashSet<String>,
     planned_open: &HashSet<String>,
     reset: bool,
-    seed_planned: bool,
 ) -> HashSet<String> {
     if reset {
         return planned_open.intersection(addresses).cloned().collect();
@@ -669,10 +574,6 @@ fn reconcile_open_directories(
         .intersection(addresses)
         .cloned()
         .collect::<HashSet<_>>();
-    if seed_planned {
-        open.extend(planned_open.intersection(addresses).cloned());
-        return open;
-    }
     for address in addresses.difference(previous_addresses) {
         if planned_open.contains(address) {
             open.insert(address.clone());
@@ -682,6 +583,11 @@ fn reconcile_open_directories(
 }
 
 /// Draw the provider-supplied row-leading glyph at `row_top`.
+///
+/// `scale` is the fold amount the fork `FileTree` is drawing this row at (1.0
+/// at rest, shrinking to 0 as an ancestor folder closes): the glyph shrinks and
+/// fades with it, so the row's hand-drawn marks dissolve together with the
+/// widget-drawn label rather than staying full-size over a collapsing row.
 ///
 /// The draw position is rounded to whole device pixels before `draw_abs` so the
 /// SDF glyph's thin strokes land pixel-aligned; a subpixel `x`/`y` would soften
@@ -693,57 +599,74 @@ fn draw_row_icon(
     row_top: Vec2d,
     depth: usize,
     color: Vec4,
+    scale: f64,
 ) {
+    let size = ICON_SIZE * scale;
     let x = (row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
-    let y = (row_top.y + (ROW_HEIGHT - ICON_SIZE) / 2.0).round();
+    let y = (row_top.y + (ROW_HEIGHT * scale - size) / 2.0).round();
     icons.draw(
         cx,
         icon,
         Rect {
             pos: dvec2(x, y),
-            size: dvec2(ICON_SIZE, ICON_SIZE),
+            size: dvec2(size, size),
         },
-        color,
+        fade(color, scale),
     );
 }
 
 /// Draw the fold chevron for an expandable row at `row_top`, rotated by `open`
-/// (0 collapsed / 1 expanded). Same pixel rounding as `draw_row_icon`: the
-/// chevron is a 1.3px stroke, so a subpixel origin would smear it.
+/// (0 collapsed / 1 expanded) and shrunk/faded by `scale` (see
+/// `draw_row_icon`). Same pixel rounding as `draw_row_icon`: the chevron is a
+/// 1.3px stroke, so a subpixel origin would smear it.
 fn draw_row_chevron(
     cx: &mut Cx2d,
     draw_chevron: &mut DrawChevron,
     row_top: Vec2d,
     depth: usize,
     open: f32,
+    scale: f64,
 ) {
+    let size = CHEVRON_SIZE * scale;
     let x = (row_top.x + CHEVRON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
-    let y = (row_top.y + (ROW_HEIGHT - CHEVRON_SIZE) / 2.0).round();
+    let y = (row_top.y + (ROW_HEIGHT * scale - size) / 2.0).round();
     draw_chevron.open = open;
+    draw_chevron.fade = scale as f32;
     draw_chevron.draw_abs(
         cx,
         Rect {
             pos: dvec2(x, y),
-            size: dvec2(CHEVRON_SIZE, CHEVRON_SIZE),
+            size: dvec2(size, size),
         },
     );
 }
 
 /// Paint the active-row highlight over the row at `row_top`, spanning the full
-/// tree width. Translucent, so it drops over the already-drawn row (bg + label)
-/// without hiding the text. Drawn before the glyph so the icon stays on top.
-fn draw_row_highlight(cx: &mut Cx2d, draw_selection: &mut DrawColor, row_top: Vec2d) {
+/// tree width and the row's current (folded) height. Translucent, so it drops
+/// over the already-drawn row (bg + label) without hiding the text. Drawn before
+/// the glyph so the icon stays on top.
+fn draw_row_highlight(cx: &mut Cx2d, draw_selection: &mut DrawColor, row_top: Vec2d, scale: f64) {
     let width = cx.turtle().rect().size.x;
     if !width.is_finite() {
         return;
     }
+    // The pen's colour is the theme's (or, for the reveal pulse, the caller's);
+    // put it back after the fade so repeated rows don't compound the multiply.
+    let color = draw_selection.color;
+    draw_selection.color = fade(color, scale);
     draw_selection.draw_abs(
         cx,
         Rect {
             pos: dvec2(row_top.x, row_top.y),
-            size: dvec2(width, ROW_HEIGHT),
+            size: dvec2(width, ROW_HEIGHT * scale),
         },
     );
+    draw_selection.color = color;
+}
+
+/// `color` with its alpha scaled by the row's fold amount.
+fn fade(color: Vec4, scale: f64) -> Vec4 {
+    vec4(color.x, color.y, color.z, color.w * scale as f32)
 }
 
 /// Emit `begin_folder`/`end_folder` for packages and `file` for leaves, overlay
@@ -751,6 +674,12 @@ fn draw_row_highlight(cx: &mut Cx2d, draw_selection: &mut DrawColor, row_top: Ve
 /// on the row whose key matches `selected`. A collapsed folder returns `Err`
 /// from `begin_folder`; skip its children then (its own row is still drawn
 /// either way, so the icon is drawn unconditionally).
+///
+/// `scale` is the fold amount these rows are drawn at -- the product of every
+/// ancestor folder's animated `folder_opened`, which is exactly the factor the
+/// fork shrinks the row height and font by. Every hand-drawn mark below takes
+/// it too, so the overlay dissolves with the rows instead of standing at full
+/// size and full ink over a folder mid-collapse.
 #[allow(clippy::too_many_arguments)]
 fn draw_nodes(
     cx: &mut Cx2d,
@@ -766,6 +695,7 @@ fn draw_nodes(
     reveal_color: Vec4,
     reveal_key: Option<&str>,
     reveal_strength: f32,
+    scale: f64,
 ) -> bool {
     let mut reveal_was_drawn = false;
     for node in nodes {
@@ -776,7 +706,7 @@ fn draw_nodes(
         if node.is_directory {
             let opened = ft.begin_folder(cx, id, &node.title).is_ok();
             if is_selected {
-                draw_row_highlight(cx, draw_selection, row_top);
+                draw_row_highlight(cx, draw_selection, row_top, scale);
             }
             if is_reveal {
                 draw_reveal.color = vec4(
@@ -785,13 +715,14 @@ fn draw_nodes(
                     reveal_color.z,
                     0.24 * reveal_strength,
                 );
-                draw_row_highlight(cx, draw_reveal, row_top);
+                draw_row_highlight(cx, draw_reveal, row_top, scale);
                 reveal_was_drawn = true;
             }
-            draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color);
+            draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color, scale);
             // Rotation comes from the fork's own animated fold amount, so the
             // chevron swings exactly with the rows rather than on a second timer.
-            draw_row_chevron(cx, draw_chevron, row_top, depth, ft.folder_opened(id));
+            let child_open = ft.folder_opened(id);
+            draw_row_chevron(cx, draw_chevron, row_top, depth, child_open, scale);
             if opened {
                 reveal_was_drawn |= draw_nodes(
                     cx,
@@ -807,13 +738,14 @@ fn draw_nodes(
                     reveal_color,
                     reveal_key,
                     reveal_strength,
+                    scale * child_open as f64,
                 );
                 ft.end_folder();
             }
         } else {
             ft.file(cx, id, &node.title);
             if is_selected {
-                draw_row_highlight(cx, draw_selection, row_top);
+                draw_row_highlight(cx, draw_selection, row_top, scale);
             }
             if is_reveal {
                 draw_reveal.color = vec4(
@@ -822,10 +754,10 @@ fn draw_nodes(
                     reveal_color.z,
                     0.24 * reveal_strength,
                 );
-                draw_row_highlight(cx, draw_reveal, row_top);
+                draw_row_highlight(cx, draw_reveal, row_top, scale);
                 reveal_was_drawn = true;
             }
-            draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color);
+            draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color, scale);
         }
     }
     reveal_was_drawn
@@ -840,62 +772,17 @@ impl Widget for ProjectTree {
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
         self.view.handle_event(cx, event, scope);
 
-        // Header hit-test: the panel is left-aligned (`hit_off ≈ 0`), but keep
-        // the translate-by-offset pattern per `makepad-aligned-parent-hit-rect-
-        // offset` -- rects captured in `draw_walk` are pre-alignment, events
-        // arrive post-alignment.
-        let panel_rect = self.view.area().rect(cx);
-        let hit_off = panel_rect.pos - self.header_rect.pos;
-
-        // No peek-hover / auto-collapse handling here: the tree is binary
+        // The panel owns no hand-drawn controls any more (the search field and
+        // filter chip are gone), so the only hit read here is the row press that
+        // carries the tap count for single-vs-double click.
+        //
+        // No peek-hover / auto-collapse handling either: the tree is binary
         // (`Pinned` <-> `Flag`) and only the caption bar's tree toggle moves it,
         // so there is no self-collapsing state to time out.
-        match tree_panel_hit(event, cx, self.view.area()) {
-            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+        if let Hit::FingerDown(fe) = tree_panel_hit(event, cx, self.view.area()) {
+            if fe.is_primary_hit() {
                 self.pending_tap_count = fe.tap_count;
             }
-            Hit::FingerUp(fe) if fe.is_primary_hit() => {
-                if header_release_hits(&fe, hit_off, self.search_rect) {
-                    self.editing_search = true;
-                    cx.set_key_focus(self.view.area());
-                    self.view.redraw(cx);
-                    return;
-                }
-                if header_release_hits(&fe, hit_off, self.chip_rect) {
-                    let anchor = Rect {
-                        pos: self.chip_rect.pos + hit_off,
-                        size: self.chip_rect.size,
-                    };
-                    cx.widget_action(uid, ProjectTreeAction::FilterRequest { anchor });
-                    return;
-                }
-            }
-            Hit::KeyFocusLost(_) => {
-                if self.editing_search {
-                    self.editing_search = false;
-                    self.view.redraw(cx);
-                }
-            }
-            Hit::KeyDown(ke) if self.editing_search => match ke.key_code {
-                KeyCode::Backspace => {
-                    self.query_text.pop();
-                    self.emit_query(cx, uid);
-                }
-                KeyCode::Escape => {
-                    self.editing_search = false;
-                    self.view.redraw(cx);
-                }
-                _ => {}
-            },
-            Hit::TextInput(ti) if self.editing_search => {
-                for ch in ti.input.chars() {
-                    if !ch.is_control() {
-                        self.query_text.push(ch);
-                    }
-                }
-                self.emit_query(cx, uid);
-            }
-            _ => {}
         }
 
         if let Event::Actions(actions) = event {
@@ -951,8 +838,6 @@ impl Widget for ProjectTree {
             fw.height = Size::Fixed(0.0);
             fw.margin = Inset::default();
             self.view.view(cx, ids!(tree_scroll)).set_visible(cx, false);
-            self.view.view(cx, ids!(header)).set_visible(cx, false);
-            self.view.view(cx, ids!(note_band)).set_visible(cx, false);
             // `View::draw_walk` is a multi-step `DrawStep` machine: it opens the
             // view's turtle on the first call and only closes it once the loop
             // runs it to `done`. Calling it once and dropping the result leaves
@@ -963,18 +848,8 @@ impl Widget for ProjectTree {
             while self.view.draw_walk(cx, scope, fw).step().is_some() {}
             return DrawStep::done();
         }
-        // Presentation-visible: restore the header and body.
-        self.view.view(cx, ids!(header)).set_visible(cx, true);
+        // Presentation-visible: restore the body.
         self.view.view(cx, ids!(tree_scroll)).set_visible(cx, true);
-
-        // Reserve room above the body for the `Elsewhere` note so its two lines
-        // don't overlap the whole-model rows. The band is a laid-out spacer, so
-        // showing it (Down flow) pushes the FileTree body down by `NOTE_H`; every
-        // other state hides it and the rows fill from the top.
-        let note_visible = note_band_height(self.nav_tag, false) > 0.0;
-        self.view
-            .view(cx, ids!(note_band))
-            .set_visible(cx, note_visible);
 
         // Expanded draws a flush column butted to the window edge: strip the
         // docked-edge (left) margin + the float top/bottom margins so no
@@ -1002,6 +877,7 @@ impl Widget for ProjectTree {
                     self.reveal_color,
                     self.reveal_key.as_deref(),
                     self.reveal_strength,
+                    1.0,
                 );
             }
         }
@@ -1017,141 +893,20 @@ impl Widget for ProjectTree {
             );
         }
 
-        // Header band: drawn immediate-mode over the (childless) `search_row`.
-        // Only reached while expanded -- the collapsed panel returned above
-        // without drawing anything.
-        let rect = self.view.area().rect(cx);
-        self.header_rect = Rect {
-            pos: rect.pos,
-            size: dvec2(rect.size.x, HEADER_H),
-        };
-        // `draw_dim` carries the neutral tint for the glyphs; read it out
-        // before borrowing `self.icons` (same tint-copy idiom as the
-        // inspector's pin/caret glyphs).
-        let dim = self.draw_dim.color;
-
-        // Search row: field + leading magnifier (left), rotating type chip
-        // (right). It is the whole header band now -- the scope title that used
-        // to sit above it is the tree's root row. An expanded panel always draws
-        // the full body, so this runs unconditionally.
-        {
-            let field_h = HEADER_H - 6.0;
-            let field_y = rect.pos.y + 3.0;
-            let chip_w = 104.0;
-
-            let chip_rect = Rect {
-                pos: dvec2(rect.pos.x + rect.size.x - PAD - chip_w, field_y),
-                size: dvec2(chip_w, field_h),
-            };
-            self.chip_rect = chip_rect;
-
-            let search_rect = Rect {
-                pos: dvec2(rect.pos.x + PAD, field_y),
-                size: dvec2(
-                    (chip_rect.pos.x - ICON_GAP - (rect.pos.x + PAD)).max(0.0),
-                    field_h,
-                ),
-            };
-            self.search_rect = search_rect;
-
-            self.draw_field_bg.draw_abs(cx, search_rect);
-            let magnifier = Rect {
-                pos: dvec2(
-                    search_rect.pos.x + 6.0,
-                    search_rect.pos.y + (field_h - ICON) * 0.5,
-                ),
-                size: dvec2(ICON, ICON),
-            };
-            self.icons.draw(cx, Icon::Search, magnifier, dim);
-            let text_pos = dvec2(
-                magnifier.pos.x + ICON + 6.0,
-                search_rect.pos.y + field_h * 0.5 - 7.0,
-            );
-            if self.editing_search {
-                self.draw_dim
-                    .draw_abs(cx, text_pos, &format!("{}\u{2502}", self.query_text));
-            } else if self.query_text.is_empty() {
-                self.draw_dim.draw_abs(cx, text_pos, "Search model");
-            } else {
-                self.draw_dim.draw_abs(cx, text_pos, &self.query_text);
-            }
-
-            self.draw_field_bg.draw_abs(cx, chip_rect);
-            let chip_label = if self.chip_label.is_empty() {
-                "All"
-            } else {
-                self.chip_label.as_str()
-            };
-            // Leading icon: the active kind's glyph, or `Funnel` for "All".
-            let lead_rect = Rect {
-                pos: dvec2(
-                    chip_rect.pos.x + 6.0,
-                    chip_rect.pos.y + (field_h - ICON) * 0.5,
-                ),
-                size: dvec2(ICON, ICON),
-            };
-            let lead_icon = self
-                .chip_kind
-                .and_then(IconSet::icon_for)
-                .unwrap_or(Icon::Funnel);
-            self.icons.draw(cx, lead_icon, lead_rect, dim);
-            // Label, between the leading icon and the trailing chevron.
-            self.draw_dim.draw_abs(
-                cx,
-                dvec2(
-                    lead_rect.pos.x + ICON + 4.0,
-                    chip_rect.pos.y + field_h * 0.5 - 7.0,
-                ),
-                chip_label,
-            );
-            // Trailing chevron: the real up/down SDF glyph (a proper Select
-            // affordance), replacing the old U+2304 text character.
-            let chev_rect = Rect {
-                pos: dvec2(
-                    chip_rect.pos.x + chip_rect.size.x - 6.0 - ICON,
-                    chip_rect.pos.y + (field_h - ICON) * 0.5,
-                ),
-                size: dvec2(ICON, ICON),
-            };
-            self.icons.draw(cx, Icon::ChevronsUpDown, chev_rect, dim);
-        }
-
-        // Empty-state / elsewhere note, over the body area, below the header.
-        // `Browse`/`Results` draw no note -- the rows speak for themselves. An
-        // expanded panel always draws the body, so this runs unconditionally.
-        {
-            let body_top = rect.pos.y + HEADER_H;
-            match self.nav_tag {
-                NavStateTag::Elsewhere => {
-                    let scope_label = if self.scope_title.is_empty() {
-                        "Untitled"
-                    } else {
-                        self.scope_title.as_str()
-                    };
-                    self.draw_dim.draw_abs(
-                        cx,
-                        dvec2(rect.pos.x + PAD, body_top + 6.0),
-                        &format!("No matches in {scope_label}"),
-                    );
-                    self.draw_dim.draw_abs(
-                        cx,
-                        dvec2(rect.pos.x + PAD, body_top + 6.0 + 16.0),
-                        "Elsewhere in model",
-                    );
-                }
-                NavStateTag::Empty => {
-                    let msg = "No matches found";
-                    let w = self
-                        .draw_dim
-                        .layout(cx, 0.0, 0.0, None, false, Align::default(), msg)
-                        .size_in_lpxs
-                        .width as f64;
-                    let x = rect.pos.x + (rect.size.x - w) * 0.5;
-                    let y = body_top + (rect.size.y - HEADER_H) * 0.5;
-                    self.draw_dim.draw_abs(cx, dvec2(x.max(rect.pos.x), y), msg);
-                }
-                NavStateTag::Browse | NavStateTag::Results => {}
-            }
+        // Empty state, hand-drawn over the (empty) body area. `Browse` draws
+        // nothing here -- the rows speak for themselves. An expanded panel always
+        // draws the body, so this runs unconditionally.
+        if matches!(self.nav_tag, NavStateTag::Empty) {
+            let rect = self.view.area().rect(cx);
+            let msg = "Nothing to show";
+            let w = self
+                .draw_dim
+                .layout(cx, 0.0, 0.0, None, false, Align::default(), msg)
+                .size_in_lpxs
+                .width as f64;
+            let x = rect.pos.x + (rect.size.x - w) * 0.5;
+            let y = rect.pos.y + rect.size.y * 0.5;
+            self.draw_dim.draw_abs(cx, dvec2(x.max(rect.pos.x + PAD), y), msg);
         }
 
         DrawStep::done()
@@ -1222,32 +977,23 @@ impl ProjectTree {
     pub fn set_view_with_fold_reset(&mut self, cx: &mut Cx, view: NavView, reset_folds: bool) {
         let (tree, tag) = match view {
             NavView::Browse(t) => (t, NavStateTag::Browse),
-            NavView::Results(t) => (t, NavStateTag::Results),
-            NavView::Elsewhere(t) => (t, NavStateTag::Elsewhere),
             NavView::Empty => (ProjectTreeData::default(), NavStateTag::Empty),
         };
         let (id_to_key, id_to_concept, openable_ids) = build_id_maps(&tree);
         let directory_addresses = directory_addresses(&tree)
             .into_iter()
             .collect::<HashSet<_>>();
-        let planned_open = folders_to_open(tag, &tree)
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let entering_search = matches!(tag, NavStateTag::Results | NavStateTag::Elsewhere)
-            && !matches!(self.nav_tag, NavStateTag::Results | NavStateTag::Elsewhere);
+        let planned_open = folders_to_open(&tree).into_iter().collect::<HashSet<_>>();
         let open_directories = reconcile_open_directories(
             &self.directory_addresses,
             &self.open_directories,
             &directory_addresses,
             &planned_open,
             reset_folds,
-            entering_search,
         );
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
-        // Open package folders so the panel isn't collapsed. Browse expands only
-        // the top-level packages (under scope the roots are the scope's members,
-        // not one wrapper); the search states expand every ancestor package so a
-        // deeply nested match isn't hidden behind a collapsed sub-package.
+        // Open package folders so the panel isn't collapsed: only the top-level
+        // ones (under scope the roots are the scope's members, not one wrapper).
         for address in &directory_addresses {
             file_tree.set_folder_is_open(
                 cx,
@@ -1357,53 +1103,6 @@ impl ProjectTree {
         }
     }
 
-    /// The type-filter chip's current filter. `App` pushes this whenever the
-    /// filter changes (see `App::refresh_nav`): `label` from `nav::chip_label`
-    /// for the chip text, `kind` for the matching leading icon (`None` = "All").
-    pub fn set_chip_filter(&mut self, cx: &mut Cx, kind: Option<TreeKind>, label: &str) {
-        if self.chip_label != label || self.chip_kind != kind {
-            self.chip_label = label.to_string();
-            self.chip_kind = kind;
-            self.view.redraw(cx);
-        }
-    }
-
-    /// The authoritative search text. `App` pushes this from `NavState::query`
-    /// so the field reflects state even when set programmatically (e.g. cleared
-    /// when `open_dir` opens a different model, or restored on a theme reload).
-    /// A programmatic set is never an in-progress edit, so it also drops the
-    /// caret (`editing_search`) -- otherwise a cleared field would keep blinking
-    /// over stale, now-empty text.
-    pub fn set_query_text(&mut self, cx: &mut Cx, text: &str) {
-        let changed = self.query_text != text || self.editing_search;
-        self.query_text = text.to_string();
-        self.editing_search = false;
-        if changed {
-            self.view.redraw(cx);
-        }
-    }
-
-    /// Reads a search-field edit; `App` applies it to `NavState::query`.
-    pub fn query_changed(&self, actions: &Actions) -> Option<String> {
-        let item = actions.find_widget_action(self.widget_uid())?;
-        if let ProjectTreeAction::Query(q) = item.cast() {
-            Some(q)
-        } else {
-            None
-        }
-    }
-
-    /// The type-chip's open-request. `App` relays it to `PopupRoot` to show
-    /// the type-filter `SelectFlyout`, mirroring `scope_request`.
-    pub fn filter_request(&self, actions: &Actions) -> Option<Rect> {
-        let item = actions.find_widget_action(self.widget_uid())?;
-        if let ProjectTreeAction::FilterRequest { anchor } = item.cast() {
-            Some(anchor)
-        } else {
-            None
-        }
-    }
-
     /// A right-click over a classifier row. `App` selects the row and relays
     /// the base node menu to `PopupRoot` (mirrors `scope_request`/`filter_request`).
     pub fn context_menu_request(&self, actions: &Actions) -> Option<(String, DVec2)> {
@@ -1415,20 +1114,10 @@ impl ProjectTree {
         }
     }
 
-    /// Redraws and fires `ProjectTreeAction::Query` with the current buffer.
-    /// Shared by the backspace and text-input edit paths.
-    fn emit_query(&mut self, cx: &mut Cx, uid: WidgetUid) {
-        self.view.redraw(cx);
-        cx.widget_action(uid, ProjectTreeAction::Query(self.query_text.clone()));
-    }
 }
 
 fn tree_panel_hit(event: &Event, cx: &mut Cx, area: Area) -> Hit {
     event.hits_with_capture_overload(cx, area, true)
-}
-
-fn header_release_hits(fe: &FingerUpEvent, hit_off: DVec2, target: Rect) -> bool {
-    target.contains(fe.abs_start - hit_off) && target.contains(fe.abs - hit_off)
 }
 
 #[cfg(test)]
@@ -1718,53 +1407,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn tree_row_press_released_over_header_does_not_activate_header() {
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        let panel_rect = Rect {
-            pos: dvec2(0.0, 0.0),
-            size: dvec2(100.0, 100.0),
-        };
-        let row_rect = Rect {
-            pos: dvec2(0.0, 40.0),
-            size: dvec2(100.0, 30.0),
-        };
-        let header_rect = Rect {
-            pos: dvec2(0.0, 0.0),
-            size: dvec2(100.0, 20.0),
-        };
-        let (_child_draw_list, child_area) = overlapping_area(&mut cx, row_rect);
-        let (_panel_draw_list, panel_area) = overlapping_area(&mut cx, panel_rect);
-        let down = Event::MouseDown(MouseDownEvent {
-            abs: dvec2(10.0, 50.0),
-            button: MouseButton::PRIMARY,
-            window_id: WindowId(0, 0),
-            modifiers: KeyModifiers::default(),
-            handled: Cell::new(Area::default()),
-            time: 0.0,
-        });
-
-        assert!(matches!(down.hits(&mut cx, child_area), Hit::FingerDown(_)));
-        assert!(matches!(
-            tree_panel_hit(&down, &mut cx, panel_area),
-            Hit::FingerDown(_)
-        ));
-
-        let up = Event::MouseUp(MouseUpEvent {
-            abs: dvec2(10.0, 10.0),
-            button: MouseButton::PRIMARY,
-            window_id: WindowId(0, 0),
-            modifiers: KeyModifiers::default(),
-            time: 0.1,
-        });
-        let Hit::FingerUp(fe) = tree_panel_hit(&up, &mut cx, panel_area) else {
-            panic!("captured panel must receive the release");
-        };
-
-        assert_eq!(fe.abs_start, dvec2(10.0, 50.0));
-        assert!(!header_release_hits(&fe, dvec2(0.0, 0.0), header_rect));
-    }
-
     fn node(key: &str, title: &str, kind: TreeKind, children: Vec<TreeNode>) -> TreeNode {
         let is_classifier = is_classifier_kind(kind);
         TreeNode {
@@ -1992,79 +1634,6 @@ mod tests {
     }
 
     #[test]
-    fn entering_results_or_elsewhere_from_browse_reopens_every_planned_ancestor() {
-        for search_tag in [NavStateTag::Results, NavStateTag::Elsewhere] {
-            let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
-            panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
-            assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
-            assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
-            assert_eq!(
-                panel.open_directories,
-                HashSet::from(["/".to_owned(), "/sales".to_owned()])
-            );
-            assert!(!file_tree_folder_is_open(
-                &mut cx,
-                &file_tree,
-                "/sales/archive"
-            ));
-
-            let search_view = match search_tag {
-                NavStateTag::Results => NavView::Results(nested_search_tree()),
-                NavStateTag::Elsewhere => NavView::Elsewhere(nested_search_tree()),
-                _ => unreachable!(),
-            };
-            panel.set_view(&mut cx, search_view);
-
-            assert_eq!(
-                panel.open_directories,
-                HashSet::from([
-                    "/".to_owned(),
-                    "/sales".to_owned(),
-                    "/sales/archive".to_owned()
-                ])
-            );
-            assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
-            assert!(file_tree_folder_is_open(
-                &mut cx,
-                &file_tree,
-                "/sales/archive"
-            ));
-        }
-    }
-
-    #[test]
-    fn same_search_presentation_refresh_preserves_subsequent_user_fold_state() {
-        for search_tag in [NavStateTag::Results, NavStateTag::Elsewhere] {
-            let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
-            let initial_view = match search_tag {
-                NavStateTag::Results => NavView::Results(nested_search_tree()),
-                NavStateTag::Elsewhere => NavView::Elsewhere(nested_search_tree()),
-                _ => unreachable!(),
-            };
-            panel.set_view_with_fold_reset(&mut cx, initial_view, true);
-            assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
-
-            let refreshed_view = match search_tag {
-                NavStateTag::Results => NavView::Results(nested_search_tree()),
-                NavStateTag::Elsewhere => NavView::Elsewhere(nested_search_tree()),
-                _ => unreachable!(),
-            };
-            panel.set_view(&mut cx, refreshed_view);
-
-            assert_eq!(
-                panel.open_directories,
-                HashSet::from(["/".to_owned(), "/sales".to_owned()])
-            );
-            assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
-            assert!(!file_tree_folder_is_open(
-                &mut cx,
-                &file_tree,
-                "/sales/archive"
-            ));
-        }
-    }
-
-    #[test]
     fn refresh_prunes_removed_folders_and_seeds_only_new_defaults() {
         let (mut cx, mut panel) = project_tree_test_context();
         panel.set_view(
@@ -2195,38 +1764,14 @@ mod tests {
     }
 
     #[test]
-    fn search_states_expand_ancestor_packages_of_nested_matches() {
+    fn browse_opens_the_scope_row_and_its_direct_packages_only() {
         let tree = nested_two_deep();
-        // Browse opens the scope row and the packages directly under it; the
-        // user drills in from there.
+        // The scope row and the packages directly under it; the user drills in
+        // from there, so the doubly-nested "inner" stays folded.
         assert_eq!(
-            folders_to_open(NavStateTag::Browse, &tree),
+            folders_to_open(&tree),
             vec!["/".to_string(), "outer".to_string()]
         );
-        // Results/Elsewhere must open EVERY ancestor package (outer AND inner) or
-        // the nested "deep" match stays hidden behind a collapsed sub-package.
-        assert_eq!(
-            folders_to_open(NavStateTag::Results, &tree),
-            vec!["/".to_string(), "outer".to_string(), "inner".to_string()]
-        );
-        assert_eq!(
-            folders_to_open(NavStateTag::Elsewhere, &tree),
-            vec!["/".to_string(), "outer".to_string(), "inner".to_string()]
-        );
-    }
-
-    #[test]
-    fn elsewhere_reserves_note_band_above_rows() {
-        // The `Elsewhere` state draws a two-line note above the whole-model rows,
-        // so the body must be pushed down by a positive amount or the note lands
-        // on the first rows.
-        assert!(note_band_height(NavStateTag::Elsewhere, false) > 0.0);
-        // Collapsed: the body is hidden and no note draws -> reserve nothing.
-        assert_eq!(note_band_height(NavStateTag::Elsewhere, true), 0.0);
-        // Noteless states let the rows fill the body from the top.
-        assert_eq!(note_band_height(NavStateTag::Browse, false), 0.0);
-        assert_eq!(note_band_height(NavStateTag::Results, false), 0.0);
-        assert_eq!(note_band_height(NavStateTag::Empty, false), 0.0);
     }
 }
 

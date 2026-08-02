@@ -635,10 +635,6 @@ impl App {
             self.sync_document_shell(cx);
         }
         if change.navigation_changed {
-            self.nav_kinds = crate::nav::kinds_in_model(
-                self.session.okf_analysis(),
-                self.session.uml_analysis(),
-            );
             self.refresh_nav(cx, false);
         }
         if change.conflicts_changed {

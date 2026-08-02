@@ -24,7 +24,6 @@ use crate::nav::NavState;
 use crate::platform_browser::{ExternalUrlAdapter, PlatformBrowser};
 use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
-use crate::popup::select::{SelectItem, SelectLead};
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
 use makepad_widgets::*;
 use std::path::{Path, PathBuf};
@@ -538,20 +537,10 @@ pub struct App {
     /// interaction and maps it to the tint the logo renders. See `fps_meter.rs`.
     #[rust]
     fps_meter: FpsMeter,
-    /// Scope / search / type-filter state for the tree panel's header band; the
-    /// app owns it and rebuilds `NavView` on every change (see `nav.rs`).
+    /// Scope state for the tree panel; the app owns it and rebuilds `NavView`
+    /// on every change (see `nav.rs`).
     #[rust]
     nav_state: NavState,
-    /// Distinct `TreeKind`s present in the currently open model, in canonical
-    /// order; the type-filter dropdown lists these (plus the "All" row).
-    /// Recomputed once per model load (`open_dir`), not per keystroke.
-    #[rust]
-    nav_kinds: Vec<crate::tree::TreeKind>,
-    /// Maps each type-filter dropdown item id back to its filter (`None` = the
-    /// "All" row), so the `nav_filter` tag's committed `LiveId` resolves to a
-    /// `NavState::filter`. Rebuilt every time the dropdown opens.
-    #[rust]
-    nav_filter_ids: Vec<(LiveId, Option<crate::tree::TreeKind>)>,
     /// The key of the node whose context menu is currently open, stashed when
     /// the menu opens so the committed id (which carries no subject) can be
     /// dispatched against it. Read in the `node_closed` branch (Task 4).

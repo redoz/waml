@@ -564,24 +564,17 @@ impl App {
     }
 
     /// Rebuild the nav projection from the current `nav_state` and push it to
-    /// the tree panel, along with the header's chip label. The single choke
-    /// point for every scope/query/filter change (see
-    /// `ScopeRequest`/`Query`/`FilterRequest` handling in `handle_actions`).
+    /// the tree panel. The single choke point for every scope change.
     ///
-    /// `scope_changed` gates the two header bits that only move when the scope
-    /// (or model) changes: the scope title -- whose lookup runs a full
-    /// `nav::packages` tree build -- and the authoritative search text. Keeping
-    /// them off the per-keystroke `Query` path holds a query edit to a single
-    /// tree build (the `view` below, not two), and lets `open_dir`/scope-pick
-    /// clear the search field when they reset `nav_state.query` (otherwise the
-    /// field keeps showing the previous model's text over an unfiltered tree).
+    /// `scope_changed` gates the scope title, whose lookup runs a full
+    /// `nav::packages` tree build -- so a plain model refresh costs one tree
+    /// build (the `view` below), not two.
     pub(super) fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
         let view = crate::nav::view(
             self.session.okf_analysis(),
             self.session.uml_analysis(),
             &self.nav_state,
         );
-        let chip = crate::nav::chip_label(self.nav_state.filter).to_string();
         let title = scope_changed.then(|| {
             crate::nav::packages(self.session.okf_analysis(), self.session.uml_analysis())
                 .into_iter()
@@ -595,10 +588,8 @@ impl App {
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
             panel.set_view_with_fold_reset(cx, view, scope_changed);
-            panel.set_chip_filter(cx, self.nav_state.filter, &chip);
             if let Some(title) = title {
                 panel.set_scope_title(cx, title);
-                panel.set_query_text(cx, &self.nav_state.query);
             }
         }
     }

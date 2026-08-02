@@ -289,6 +289,9 @@ mod drift {
         Icon::ListTree,
         Icon::FolderTree,
         Icon::PanelLeft,
+        // Was the tree panel's type-filter chip "All" lead; the chip is gone but
+        // the glyph stays catalogued (catalog glyphs are pruned deliberately).
+        Icon::Funnel,
     ];
 
     fn table_icons() -> Vec<Icon> {

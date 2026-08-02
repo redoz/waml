@@ -1252,8 +1252,6 @@ fn navigation_root_toggles_without_resetting_navigation_or_docks() {
     app.narrow = true;
     app.nav_state = NavState {
         scope: "/sales".into(),
-        query: "order".into(),
-        filter: Some(TreeKind::Class),
     };
     app.ui
         .widget(&cx, ids!(project_tree))
