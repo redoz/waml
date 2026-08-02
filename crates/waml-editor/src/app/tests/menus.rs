@@ -103,7 +103,7 @@ fn burger_menu_items_preserve_the_complete_row_model() {
             (
                 live_id!(export_waml),
                 "Export WAML bundle…",
-                Some(Icon::Save),
+                Some(Icon::FolderDown),
                 false,
                 true,
             ),

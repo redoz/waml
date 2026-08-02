@@ -43,7 +43,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(Info, "About"),
             ie!(DoorOpen, "Open model"),
             ie!(DoorClosed, "Close model"),
-            ie!(Save, "Export WAML bundle"),
+            ie!(FolderDown, "Export WAML bundle"),
             ie!(Paintbrush, "Fonts reference (this menu family)"),
             ie!(SquareMenu, "Icons reference (this menu family)"),
             ie!(Squircle, "Colors reference (this menu family)"),

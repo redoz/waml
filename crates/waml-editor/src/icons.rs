@@ -3837,6 +3837,36 @@ script_mod! {
         }
     }
 
+    mod.draw.IconFolderDown = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.8333, s * 0.8333)
+            sdf.arc_to(s * 0.8333, s * 0.7500, s * 0.0833, 1.5708, 0.0000)
+            sdf.line_to(s * 0.9167, s * 0.3333)
+            sdf.arc_to(s * 0.8333, s * 0.3333, s * 0.0833, 0.0000, -1.5708)
+            sdf.line_to(s * 0.5042, s * 0.2500)
+            sdf.arc_to(s * 0.5034, s * 0.1667, s * 0.0833, 1.5610, 2.5593)
+            sdf.line_to(s * 0.4000, s * 0.1625)
+            sdf.arc_to(s * 0.3304, s * 0.2083, s * 0.0833, -0.5824, -1.5706)
+            sdf.line_to(s * 0.1667, s * 0.1250)
+            sdf.arc_to(s * 0.1667, s * 0.2083, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.0833, s * 0.7500)
+            sdf.arc_to(s * 0.1667, s * 0.7500, s * 0.0833, 3.1416, 1.5708)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.4167)
+            sdf.line_to(s * 0.5000, s * 0.6667)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.5417)
+            sdf.line_to(s * 0.5000, s * 0.6667)
+            sdf.line_to(s * 0.3750, s * 0.5417)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3959,6 +3989,7 @@ script_mod! {
         panel_left_close: mod.draw.IconPanelLeftClose{ color: atlas.accent }
         panel_right_open: mod.draw.IconPanelRightOpen{ color: atlas.accent }
         panel_right_close: mod.draw.IconPanelRightClose{ color: atlas.accent }
+        folder_down: mod.draw.IconFolderDown{ color: atlas.accent }
     }
 }
 
@@ -4200,6 +4231,8 @@ pub struct IconSet {
     pub panel_right_open: DrawColor,
     #[live]
     pub panel_right_close: DrawColor,
+    #[live]
+    pub folder_down: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -4328,6 +4361,7 @@ impl IconSet {
             Icon::PanelLeftClose => &mut self.panel_left_close,
             Icon::PanelRightOpen => &mut self.panel_right_open,
             Icon::PanelRightClose => &mut self.panel_right_close,
+            Icon::FolderDown => &mut self.folder_down,
         }
     }
 
@@ -4463,13 +4497,14 @@ pub enum Icon {
     PanelLeftClose,
     PanelRightOpen,
     PanelRightClose,
+    FolderDown,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 117] = [
+    pub const ALL: [Icon; 118] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4587,6 +4622,7 @@ impl Icon {
         Icon::PanelLeftClose,
         Icon::PanelRightOpen,
         Icon::PanelRightClose,
+        Icon::FolderDown,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -4710,6 +4746,7 @@ impl Icon {
             Icon::PanelLeftClose => "panel-left-close",
             Icon::PanelRightOpen => "panel-right-open",
             Icon::PanelRightClose => "panel-right-close",
+            Icon::FolderDown => "folder-down",
         }
     }
 }
@@ -4719,8 +4756,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_117_entries() {
-        assert_eq!(Icon::ALL.len(), 117);
+    fn icon_all_has_118_entries() {
+        assert_eq!(Icon::ALL.len(), 118);
     }
 
     #[test]
@@ -4763,7 +4800,7 @@ mod tests {
     #[test]
     fn dock_action_glyphs_follow_catalog_order_and_lucide_slugs() {
         assert_eq!(
-            &Icon::ALL[112..],
+            &Icon::ALL[112..117],
             &[
                 Icon::FolderTree,
                 Icon::PanelLeftOpen,
@@ -4777,6 +4814,13 @@ mod tests {
         assert_eq!(Icon::PanelLeftClose.label(), "panel-left-close");
         assert_eq!(Icon::PanelRightOpen.label(), "panel-right-open");
         assert_eq!(Icon::PanelRightClose.label(), "panel-right-close");
+    }
+
+    /// The export command's glyph, appended after the dock action run.
+    #[test]
+    fn export_glyph_closes_the_catalog_with_its_lucide_slug() {
+        assert_eq!(Icon::ALL[117], Icon::FolderDown);
+        assert_eq!(Icon::FolderDown.label(), "folder-down");
     }
 
     #[test]
@@ -4798,7 +4842,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 117);
+        assert_eq!(seen.len(), 118);
     }
 
     #[test]

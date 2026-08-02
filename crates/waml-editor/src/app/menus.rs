@@ -83,10 +83,9 @@ pub fn burger_menu_items(has_model: bool) -> Vec<crate::popup::base::PopupItem> 
         PopupItem {
             id: live_id!(export_waml),
             label: "Export WAML bundle…".into(),
-            // The save glyph: this writes the model out of the editor. There
-            // is no download glyph in the catalog and the catalog order is an
-            // invariant, so do not add one for a single row.
-            icon: Some(Icon::Save),
+            // A folder going down: the whole model directory leaves the
+            // editor as one file.
+            icon: Some(Icon::FolderDown),
             danger: false,
             enabled: has_model,
         },
