@@ -49,10 +49,10 @@ UML interchange metamodel.
    is a total order. WAML does not use UML weak sequencing as its default.
 2. **Concurrency is explicit.** A `par` fragment is the only new construct that removes
    order between branches. Each branch still has a total internal order.
-3. **Message intent uses words.** The canonical verbs are `calls`, `invokes`, `sends`,
-   `replies`, `creates`, and `destroys`.
+3. **Message intent uses words.** The canonical verbs are `calls`, `sends`, `replies`,
+   `creates`, and `destroys`. The `async` modifier applies only to `calls`.
 4. **Existing `sends` documents keep their meaning.** `sends` is the asynchronous
-   signal or event form. `invokes` is the new asynchronous operation-call form.
+   signal or event form. `calls ... async` is the new asynchronous operation-call form.
 5. **Boundary endpoints are structural.** `outside` represents a found or lost message.
    Named gates use `@gate` inside an interaction and `ref@gate` around an interaction
    use. Found and lost are not extra message verbs.
@@ -77,7 +77,7 @@ coherent later visual form.
 | UML concept | Decision | WAML form |
 | --- | --- | --- |
 | synchronous call | keep | `calls` |
-| asynchronous operation call | add | `invokes` |
+| asynchronous operation call | add | `calls <target> async` |
 | asynchronous signal | keep and clarify | `sends` |
 | reply | keep | `replies` |
 | create message | keep | `creates` |
@@ -152,23 +152,25 @@ The canonical message shape stays sentence-like:
 The grammar is:
 
 ```text
-message       := "-" endpoint verb endpoint (":" payload)?
+message       := call-message | other-message
+call-message  := "-" endpoint "calls" endpoint ("async")? (":" payload)?
+other-message := "-" endpoint other-verb endpoint (":" payload)?
 endpoint      := lifeline-handle | "outside" | local-gate | use-gate
 local-gate    := "@" name
 use-gate      := use-alias "@" name
-verb          := "calls" | "invokes" | "sends" | "replies"
-               | "creates" | "destroys"
+other-verb    := "sends" | "replies" | "creates" | "destroys"
 ```
 
-The colon and payload remain optional for source compatibility. The formatter does not
-invent a payload.
+The `async` modifier occurs after the target and before the colon. It is valid only on a
+`calls` message. The colon and payload remain optional for source compatibility. The
+formatter does not invent a payload.
 
 ### Message meaning
 
 ```markdown
 - customer calls order: `submit()`
 - order replies customer: `accepted`
-- order invokes order: `recalculate()`
+- order calls order async: `recalculate()`
 - order sends bus: `OrderPlaced`
 - order creates worker: `OrderWorker`
 - order destroys worker
@@ -177,7 +179,7 @@ invent a payload.
 | Verb | Meaning | Sender waits | Activation effect |
 | --- | --- | --- | --- |
 | `calls` | synchronous operation call | yes | open activation on target |
-| `invokes` | asynchronous operation call | no | none |
+| `calls ... async` | asynchronous operation call | no | none |
 | `sends` | asynchronous signal or event | no | none |
 | `replies` | return from a synchronous call | n/a | close matching activation |
 | `creates` | create target lifeline instance | n/a | start target stem at message |
@@ -244,7 +246,7 @@ Parallel and unconditional fragments use `branch` operands:
   - branch `payment`
     - order calls payment: `charge()`
   - branch `fulfilment`
-    - order invokes inventory: `reserve()`
+    - order calls inventory async: `reserve()`
 
 - critical
   - branch
@@ -369,7 +371,7 @@ also the reason that `strict`, `seq`, general ordering, and coregion are not acc
 
 The lossless syntax tree must add typed nodes for:
 
-- `invokes` messages;
+- the `async` modifier on `calls` messages;
 - boundary and gate endpoints;
 - the five new fragment heads;
 - `branch` operands and their optional labels;
@@ -420,9 +422,10 @@ resolve.
 
 The runtime replaces authored handles with typed identifiers. `SeqEdge.from` and
 `SeqEdge.to` must become endpoint references rather than unqualified lifeline strings.
-The message enum adds `AsyncCall`; existing `Calls` maps to `SyncCall` and existing
-`Sends` maps to `AsyncSignal`. Serialization names must be explicit so an enum rename does
-not change external data by accident.
+The message enum adds `AsyncCall`; an unmodified `calls` message maps to `SyncCall`, a
+`calls ... async` message maps to `AsyncCall`, and existing `Sends` maps to `AsyncSignal`.
+Serialization names must be explicit so an enum rename does not change external data by
+accident.
 
 `SeqChild` adds an interaction-use reference. The fragment and operand pools keep the
 ordered child structure. Interaction uses live in their own pool because they have a
@@ -451,7 +454,8 @@ interaction use. The parser must continue after:
 
 The formatter emits the canonical forms in this document. It preserves valid existing
 `calls`, `sends`, `replies`, `creates`, `destroys`, `alt`, `opt`, and `loop` source. It
-must not rewrite `sends` to `invokes`, because the two forms have different meaning.
+must not rewrite `sends` to `calls ... async`, because the two forms have different
+meaning.
 
 Formatting is idempotent. Parse → format → parse must preserve the declared semantic
 model. Editing unrelated source must not normalize malformed interaction content that the
@@ -564,8 +568,8 @@ fragment kinds in this design.
 
 Examples of later editor questions are:
 
-- “Should Order wait for the response?” → `calls` or `invokes`.
-- “Is this an operation call or an event notification?” → `invokes` or `sends`.
+- “Should Order wait for the response?” → `calls` or `calls ... async`.
+- “Is this an operation call or an event notification?” → `calls ... async` or `sends`.
 - “Does this message enter from outside this diagram?” → `outside` source.
 - “Can these happen at the same time?” → separate `par` branches.
 - “Does this condition select an alternative, repeat work, or stop the interaction?” →
