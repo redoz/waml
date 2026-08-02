@@ -20,15 +20,6 @@ fn value<T>(field: &DeclaredField<super::syntax::UmlLanguage, T>) -> Option<&T> 
     }
 }
 
-fn report(
-    diagnostics: &mut Vec<Diagnostic>,
-    code: DiagCode,
-    message: impl Into<String>,
-    path: &str,
-) {
-    diagnostics.push(Diagnostic::new(code, message, path, 1));
-}
-
 fn report_at(
     context: &DomainAnalysisContext<'_>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -38,6 +29,34 @@ fn report_at(
     syntax: &waml_syntax::SyntaxNode<super::syntax::UmlLanguage>,
 ) {
     super::analysis::behavior_diagnostic(context, path, syntax, code, message.into(), diagnostics);
+}
+
+fn report_message(
+    context: &DomainAnalysisContext<'_>,
+    concept: &DeclaredConcept,
+    diagnostics: &mut Vec<Diagnostic>,
+    code: DiagCode,
+    message: impl Into<String>,
+    path: &str,
+    id: &MessageId,
+) {
+    let Some(index) =
+        id.0.strip_prefix('m')
+            .and_then(|value| value.parse::<usize>().ok())
+    else {
+        return;
+    };
+    let Some(declared) = concept.messages.get(index) else {
+        return;
+    };
+    report_at(
+        context,
+        diagnostics,
+        code,
+        message,
+        path,
+        declared.syntax.syntax(),
+    );
 }
 
 fn message_kind(kind: DeclaredMessageKind) -> MessageKind {
@@ -202,39 +221,110 @@ fn participating_lifelines(concept: &DeclaredConcept) -> BTreeSet<String> {
         .collect()
 }
 
-fn interaction_use_enters_cycle(
+type InteractionUseGraph = BTreeMap<String, Vec<(usize, String)>>;
+
+fn interaction_use_graph(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
-    origin: &str,
-    target: &str,
-) -> bool {
-    fn reaches(
-        context: &DomainAnalysisContext<'_>,
-        declared: &DeclaredBundle,
-        current: &str,
-        goal: &str,
-        visited: &mut BTreeSet<String>,
-    ) -> bool {
-        if current == goal {
-            return true;
-        }
-        if !visited.insert(current.to_string()) {
-            return false;
-        }
-        let Some(concept) = declared.concept(current) else {
-            return false;
+) -> InteractionUseGraph {
+    let mut graph = BTreeMap::new();
+    for concept in declared.concepts() {
+        let Some(path) = path_for_concept(context, &concept.concept_id) else {
+            continue;
         };
-        let Some(path) = path_for_concept(context, current) else {
-            return false;
-        };
-        concept.interaction_uses.iter().any(|interaction_use| {
-            value(&interaction_use.link).is_some_and(|link| {
-                let next = crate::okf::resolve_href(&path, link);
-                reaches(context, declared, &next, goal, visited)
-            })
-        })
+        let mut lifelines = BTreeSet::new();
+        let mut local_classifiers = BTreeMap::new();
+        for lifeline in concept.lifelines.iter() {
+            let (Some(link), Some(title)) = (value(&lifeline.target), value(&lifeline.title))
+            else {
+                continue;
+            };
+            let handle = value(&lifeline.alias).unwrap_or(title);
+            if handle == "outside" || handle.contains('@') || !lifelines.insert(handle.clone()) {
+                continue;
+            }
+            local_classifiers.insert(handle.clone(), crate::okf::resolve_href(&path, link));
+        }
+        let mut aliases = lifelines.clone();
+        for (index, interaction_use) in concept.interaction_uses.iter().enumerate() {
+            let (Some(link), Some(alias)) =
+                (value(&interaction_use.link), value(&interaction_use.alias))
+            else {
+                continue;
+            };
+            if !aliases.insert(alias.clone()) {
+                continue;
+            }
+            let target = crate::okf::resolve_href(&path, link);
+            let Some(target_concept) = declared.concept(&target) else {
+                continue;
+            };
+            let target_is_sequence = context.okf.concept(&target).is_some_and(|concept| {
+                crate::model::ElementType::parse(&concept.ty)
+                    == crate::model::ElementType::Behavior(crate::model::BehaviorKind::Sequence)
+            });
+            if !target_is_sequence {
+                continue;
+            }
+            let target_path = path_for_concept(context, &target).unwrap_or_else(|| target.clone());
+            let target_lifelines = lifeline_classifier_map(target_concept, &target_path);
+            let participating = participating_lifelines(target_concept);
+            let mut locals = BTreeSet::new();
+            let mut targets = BTreeSet::new();
+            let mut valid = true;
+            for binding in interaction_use.bindings.iter() {
+                let (Some(local), Some(bound_target)) =
+                    (value(&binding.local), value(&binding.target))
+                else {
+                    valid = false;
+                    continue;
+                };
+                if !locals.insert(local.clone()) || !targets.insert(bound_target.clone()) {
+                    valid = false;
+                }
+                if !lifelines.contains(local) || !target_lifelines.contains_key(bound_target) {
+                    valid = false;
+                }
+                if let (Some(local_classifier), Some(target_classifier)) = (
+                    local_classifiers.get(local),
+                    target_lifelines.get(bound_target),
+                ) {
+                    if local_classifier != target_classifier {
+                        valid = false;
+                    }
+                }
+            }
+            if participating.iter().any(|handle| !targets.contains(handle)) {
+                valid = false;
+            }
+            if valid {
+                graph
+                    .entry(concept.concept_id.clone())
+                    .or_insert_with(Vec::new)
+                    .push((index, target));
+            }
+        }
     }
-    reaches(context, declared, target, origin, &mut BTreeSet::new())
+    graph
+}
+
+fn graph_reaches(
+    graph: &InteractionUseGraph,
+    current: &str,
+    goal: &str,
+    visited: &mut BTreeSet<String>,
+) -> bool {
+    if current == goal {
+        return true;
+    }
+    if !visited.insert(current.to_string()) {
+        return false;
+    }
+    graph.get(current).is_some_and(|links| {
+        links
+            .iter()
+            .any(|(_, target)| graph_reaches(graph, target, goal, visited))
+    })
 }
 
 enum Ordered<'a> {
@@ -370,6 +460,7 @@ pub(crate) fn lower(
     let mut interaction_uses = Vec::new();
     let mut use_aliases = BTreeMap::new();
     let mut authored_use_aliases = BTreeSet::new();
+    let use_graph = interaction_use_graph(context, declared);
     for (declared_use_index, declared_use) in concept.interaction_uses.iter().enumerate() {
         let (Some(link), Some(alias)) = (value(&declared_use.link), value(&declared_use.alias))
         else {
@@ -403,15 +494,22 @@ pub(crate) fn lower(
             );
             valid_use = false;
         }
-        let bindings = declared_use
+        let binding_entries = declared_use
             .bindings
             .iter()
             .filter_map(|binding| {
-                Some(SeqBinding {
-                    local: value(&binding.local)?.clone(),
-                    target: value(&binding.target)?.clone(),
-                })
+                Some((
+                    SeqBinding {
+                        local: value(&binding.local)?.clone(),
+                        target: value(&binding.target)?.clone(),
+                    },
+                    binding,
+                ))
             })
+            .collect::<Vec<_>>();
+        let bindings = binding_entries
+            .iter()
+            .map(|(binding, _)| binding.clone())
             .collect::<Vec<_>>();
         if let Some(target_concept) = target_concept {
             let target_path = path_for_concept(context, &target).unwrap_or_else(|| target.clone());
@@ -419,25 +517,29 @@ pub(crate) fn lower(
             let participating = participating_lifelines(target_concept);
             let mut locals = BTreeSet::new();
             let mut targets = BTreeSet::new();
-            for binding in &bindings {
+            for (binding, declared_binding) in &binding_entries {
                 if !locals.insert(binding.local.clone()) || !targets.insert(binding.target.clone())
                 {
-                    report(
+                    report_at(
+                        context,
                         diagnostics,
                         DiagCode::InvalidInteractionUse,
                         format!("interaction use '{alias}' has duplicate bindings"),
                         path,
+                        declared_binding.syntax.syntax(),
                     );
                     valid_use = false;
                 }
                 if !lifelines.contains(&binding.local)
                     || !target_lifelines.contains_key(&binding.target)
                 {
-                    report(
+                    report_at(
+                        context,
                         diagnostics,
                         DiagCode::InvalidInteractionUse,
                         format!("interaction use '{alias}' has an unknown binding endpoint"),
                         path,
+                        declared_binding.syntax.syntax(),
                     );
                     valid_use = false;
                 }
@@ -446,30 +548,45 @@ pub(crate) fn lower(
                     target_lifelines.get(&binding.target),
                 ) {
                     if local_classifier != target_classifier {
-                        report(
+                        report_at(
+                            context,
                             diagnostics,
                             DiagCode::InvalidInteractionUse,
                             format!("interaction use '{alias}' binds different classifiers"),
                             path,
+                            declared_binding.syntax.syntax(),
                         );
                         valid_use = false;
                     }
                 }
             }
             if participating.iter().any(|handle| !targets.contains(handle)) {
-                report(
+                report_at(
+                    context,
                     diagnostics,
                     DiagCode::InvalidInteractionUse,
                     format!(
                         "interaction use '{alias}' is missing a participating lifeline binding"
                     ),
                     path,
+                    declared_use.syntax.syntax(),
                 );
                 valid_use = false;
             }
         }
+        let is_graph_link = use_graph
+            .get(&concept.concept_id)
+            .is_some_and(|links| links.contains(&(declared_use_index, target.clone())));
+        if valid_use && !is_graph_link {
+            valid_use = false;
+        }
         if valid_use
-            && interaction_use_enters_cycle(context, declared, &concept.concept_id, &target)
+            && graph_reaches(
+                &use_graph,
+                &target,
+                &concept.concept_id,
+                &mut BTreeSet::new(),
+            )
         {
             report_at(
                 context,
@@ -674,11 +791,13 @@ pub(crate) fn lower(
                 };
                 if matches!(from, EndpointRef::Outside) && matches!(to, Some(EndpointRef::Outside))
                 {
-                    report(
+                    report_at(
+                        context,
                         endpoints.diagnostics,
                         DiagCode::InvalidSequenceEndpoint,
                         "outside cannot be both message endpoints",
                         path,
+                        message.syntax.syntax(),
                     );
                 }
                 let message_index = message_indices[&message.syntax.syntax().range().start()];
@@ -707,9 +826,17 @@ pub(crate) fn lower(
     }
     drop(endpoints);
 
-    resolve_returns(&mut edges, &nodes, &root, diagnostics, path);
+    resolve_returns(
+        context,
+        concept,
+        &mut edges,
+        &nodes,
+        &root,
+        diagnostics,
+        path,
+    );
     validate_fragments(context, concept, &nodes, diagnostics, path);
-    validate_lifetimes(&edges, &nodes, &root, diagnostics, path);
+    validate_lifetimes(context, concept, &edges, &nodes, &root, diagnostics, path);
 
     model.interactions.push(SequenceDoc {
         key: concept.concept_id.clone(),
@@ -733,6 +860,8 @@ pub(crate) fn lower(
 }
 
 fn resolve_returns(
+    context: &DomainAnalysisContext<'_>,
+    concept: &DeclaredConcept,
     edges: &mut [SeqEdge],
     nodes: &[SeqNode],
     items: &[SeqChild],
@@ -749,12 +878,17 @@ fn resolve_returns(
     }
     for (call_id, entries) in &call_ids {
         if entries.len() > 1 {
-            report(
-                diagnostics,
-                DiagCode::DuplicateCallIdentity,
-                format!("duplicate call identity '{call_id}'"),
-                path,
-            );
+            for index in entries {
+                report_message(
+                    context,
+                    concept,
+                    diagnostics,
+                    DiagCode::DuplicateCallIdentity,
+                    format!("duplicate call identity '{call_id}'"),
+                    path,
+                    &edges[*index].id,
+                );
+            }
         }
     }
     let edge_by_id = edges
@@ -777,6 +911,8 @@ fn resolve_returns(
         &edge_by_id,
         &node_by_id,
         &call_ids,
+        context,
+        concept,
         diagnostics,
         path,
     );
@@ -789,6 +925,8 @@ fn walk_return_items(
     edge_by_id: &BTreeMap<MessageId, usize>,
     node_by_id: &BTreeMap<String, &SeqNode>,
     call_ids: &BTreeMap<String, Vec<usize>>,
+    context: &DomainAnalysisContext<'_>,
+    concept: &DeclaredConcept,
     diagnostics: &mut Vec<Diagnostic>,
     path: &str,
 ) {
@@ -802,9 +940,16 @@ fn walk_return_items(
                     MessageKind::SyncCall | MessageKind::AsyncCall => {
                         open.insert(index);
                     }
-                    MessageKind::Reply => {
-                        resolve_one_return(index, open, edges, call_ids, diagnostics, path)
-                    }
+                    MessageKind::Reply => resolve_one_return(
+                        index,
+                        open,
+                        edges,
+                        call_ids,
+                        context,
+                        concept,
+                        diagnostics,
+                        path,
+                    ),
                     MessageKind::AsyncSignal | MessageKind::Create | MessageKind::Delete => {}
                 }
             }
@@ -825,6 +970,8 @@ fn walk_return_items(
                             edge_by_id,
                             node_by_id,
                             call_ids,
+                            context,
+                            concept,
                             diagnostics,
                             path,
                         );
@@ -849,6 +996,8 @@ fn walk_return_items(
                             edge_by_id,
                             node_by_id,
                             call_ids,
+                            context,
+                            concept,
                             diagnostics,
                             path,
                         );
@@ -880,6 +1029,8 @@ fn resolve_one_return(
     open: &mut BTreeSet<usize>,
     edges: &mut [SeqEdge],
     call_ids: &BTreeMap<String, Vec<usize>>,
+    context: &DomainAnalysisContext<'_>,
+    concept: &DeclaredConcept,
     diagnostics: &mut Vec<Diagnostic>,
     path: &str,
 ) {
@@ -898,20 +1049,26 @@ fn resolve_one_return(
         match preceding.as_slice() {
             [candidate] => Some(*candidate),
             [] => {
-                report(
+                report_message(
+                    context,
+                    concept,
                     diagnostics,
                     DiagCode::UnknownCallIdentity,
                     format!("unknown call identity '{authored_for}'"),
                     path,
+                    &edges[index].id,
                 );
                 None
             }
             _ => {
-                report(
+                report_message(
+                    context,
+                    concept,
                     diagnostics,
                     DiagCode::AmbiguousReturn,
                     format!("call identity '{authored_for}' is not unique"),
                     path,
+                    &edges[index].id,
                 );
                 None
             }
@@ -930,20 +1087,26 @@ fn resolve_one_return(
         match candidates.as_slice() {
             [candidate] => Some(*candidate),
             [] => {
-                report(
+                report_message(
+                    context,
+                    concept,
                     diagnostics,
                     DiagCode::UnmatchedReturn,
                     "return has no eligible preceding call",
                     path,
+                    &edges[index].id,
                 );
                 None
             }
             _ => {
-                report(
+                report_message(
+                    context,
+                    concept,
                     diagnostics,
                     DiagCode::AmbiguousReturn,
                     "return matches more than one preceding call",
                     path,
+                    &edges[index].id,
                 );
                 None
             }
@@ -951,11 +1114,14 @@ fn resolve_one_return(
     };
     let Some(candidate) = selected else { return };
     if !open.contains(&candidate) {
-        report(
+        report_message(
+            context,
+            concept,
             diagnostics,
             DiagCode::CompletedReturn,
             "call already has an explicit return",
             path,
+            &edges[index].id,
         );
         return;
     }
@@ -964,11 +1130,14 @@ fn resolve_one_return(
         .as_ref()
         .is_none_or(|to| to == &edges[candidate].from);
     if !source_matches || !to_matches {
-        report(
+        report_message(
+            context,
+            concept,
             diagnostics,
             DiagCode::ConflictingReturn,
             "return endpoints conflict with the selected call",
             path,
+            &edges[index].id,
         );
         return;
     }
@@ -1045,6 +1214,8 @@ fn validate_fragments(
 }
 
 fn validate_lifetimes(
+    context: &DomainAnalysisContext<'_>,
+    concept: &DeclaredConcept,
     edges: &[SeqEdge],
     nodes: &[SeqNode],
     items: &[SeqChild],
@@ -1111,11 +1282,14 @@ fn validate_lifetimes(
         if matches!(edge.kind, MessageKind::Create | MessageKind::Delete)
             && !matches!(target, Some(EndpointRef::Lifeline { .. }))
         {
-            report(
+            report_message(
+                context,
+                concept,
                 diagnostics,
                 DiagCode::InvalidSequenceEndpoint,
                 "create and delete targets must be local lifelines",
                 path,
+                &edge.id,
             );
             continue;
         }
@@ -1129,12 +1303,17 @@ fn validate_lifetimes(
     }
     for positions in creates.values().chain(deletes.values()) {
         if positions.len() > 1 {
-            report(
-                diagnostics,
-                DiagCode::InvalidLifelineLifetime,
-                "lifeline is created or deleted more than once",
-                path,
-            );
+            for position in positions {
+                report_message(
+                    context,
+                    concept,
+                    diagnostics,
+                    DiagCode::InvalidLifelineLifetime,
+                    "lifeline is created or deleted more than once",
+                    path,
+                    &edges[*position].id,
+                );
+            }
         }
     }
     for (index, edge) in edges.iter().enumerate() {
@@ -1155,11 +1334,14 @@ fn validate_lifetimes(
                         index > *deleted && comparable(&edge.id, &edges[*deleted].id, &scopes)
                     })
             {
-                report(
+                report_message(
+                    context,
+                    concept,
                     diagnostics,
                     DiagCode::InvalidLifelineLifetime,
                     format!("lifeline '{id}' is used outside its lifetime"),
                     path,
+                    &edge.id,
                 );
             }
         }

@@ -8,6 +8,7 @@ use waml::{
     source::SourceBundle,
     uml,
 };
+use waml_syntax::{AstNode, TextRange, TextSize};
 
 fn analyze(pairs: impl IntoIterator<Item = (&'static str, &'static str)>) -> uml::Analysis {
     let source = SourceBundle::try_from_pairs(pairs).unwrap();
@@ -32,6 +33,36 @@ fn interaction<'a>(analysis: &'a uml::Analysis, key: &str) -> &'a waml::model::S
         .iter()
         .find(|doc| doc.key == key)
         .unwrap()
+}
+
+fn diagnostic<'a>(
+    analysis: &'a uml::Analysis,
+    code: DiagCode,
+    message: &str,
+) -> &'a waml::diagnostic::Diagnostic {
+    analysis
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == code && diagnostic.message.contains(message))
+        .unwrap()
+}
+
+fn range_of(source: &str, needle: &str) -> TextRange {
+    let start = source.find(needle).unwrap();
+    TextRange::new(
+        TextSize::new(start as u32),
+        TextSize::new((start + needle.len()) as u32),
+    )
+    .unwrap()
+}
+
+fn range_of_last(source: &str, needle: &str) -> TextRange {
+    let start = source.rfind(needle).unwrap();
+    TextRange::new(
+        TextSize::new(start as u32),
+        TextSize::new((start + needle.len()) as u32),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -120,6 +151,40 @@ fn returns_follow_the_locked_candidate_algorithm() {
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == DiagCode::UnknownCallIdentity));
+}
+
+#[test]
+fn return_diagnostics_pin_the_exact_authored_message() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "returns.md",
+            "---\ntype: uml.Sequence\n---\n# Returns\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `one()` as duplicate\n- a calls b `two()` as duplicate\n- b returns `ambiguous explicit` for duplicate\n- b returns `unknown` for missing\n- a returns `unmatched`\n- a calls b `three()`\n- a calls b `four()`\n- b returns `ambiguous inferred`\n- a calls b `done()` as done\n- b returns `done` for done\n- b returns `completed` for done\n- a calls b `conflict()` as conflict\n- a returns `conflicting` for conflict\n",
+        ),
+    ]);
+    let declared = analysis.declared.concept("returns").unwrap();
+    for (code, message, message_index) in [
+        (
+            DiagCode::DuplicateCallIdentity,
+            "duplicate call identity",
+            0,
+        ),
+        (DiagCode::AmbiguousReturn, "not unique", 2),
+        (DiagCode::UnknownCallIdentity, "unknown call identity", 3),
+        (DiagCode::UnmatchedReturn, "no eligible", 4),
+        (DiagCode::AmbiguousReturn, "more than one", 7),
+        (DiagCode::CompletedReturn, "already has", 10),
+        (DiagCode::ConflictingReturn, "conflict", 12),
+    ] {
+        let found = diagnostic(&analysis, code, message);
+        assert_eq!(
+            found.range,
+            Some(declared.messages[message_index].syntax.syntax().range()),
+            "{code:?} must point at message {message_index}"
+        );
+        assert!(found.line > 1);
+    }
 }
 
 #[test]
@@ -400,6 +465,125 @@ fn interaction_use_cycles_and_binding_errors_are_diagnosed() {
 }
 
 #[test]
+fn binding_diagnostics_pin_the_exact_bind_or_ref() {
+    let source = "---\ntype: uml.Sequence\n---\n# Bindings\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- ref [Target](./target.md) as duplicate\n  - bind a to ta\n  - bind a to tb\n- ref [Target](./target.md) as unknown\n  - bind missing to ta\n  - bind b to tb\n- ref [Target](./target.md) as mismatch\n  - bind a to tb\n  - bind b to ta\n- ref [Target](./target.md) as missing\n  - bind a to ta\n";
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "target.md",
+            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [A](./a.md) as ta\n- [B](./b.md) as tb\n\n## Messages\n- ta signals tb `work`\n",
+        ),
+        (
+            "bindings-focused.md",
+            source,
+        ),
+    ]);
+    let declared = analysis.declared.concept("bindings-focused").unwrap();
+    for (message, expected) in [
+        (
+            "duplicate' has duplicate bindings",
+            declared.interaction_uses[0].bindings[1]
+                .syntax
+                .syntax()
+                .range(),
+        ),
+        (
+            "unknown' has an unknown binding",
+            declared.interaction_uses[1].bindings[0]
+                .syntax
+                .syntax()
+                .range(),
+        ),
+        (
+            "mismatch' binds different",
+            declared.interaction_uses[2].bindings[0]
+                .syntax
+                .syntax()
+                .range(),
+        ),
+        (
+            "missing' is missing a participating",
+            range_of_last(source, "./target.md"),
+        ),
+    ] {
+        let found = diagnostic(&analysis, DiagCode::InvalidInteractionUse, message);
+        assert_eq!(found.range, Some(expected));
+        assert!(found.line > 1);
+    }
+}
+
+#[test]
+fn gate_diagnostics_pin_the_exact_gate_or_message() {
+    let analysis = analyze([
+        (
+            "target.md",
+            "---\ntype: uml.Sequence\n---\n# Target\n\n## Gates\n- idle\n- idle\n",
+        ),
+        (
+            "gates-focused.md",
+            "---\ntype: uml.Sequence\n---\n# Gates\n\n## Messages\n- ref [Target](./target.md) as target\n- target@missing signals outside `missing`\n- target@idle signals outside `disconnected`\n",
+        ),
+    ]);
+    let target = analysis.declared.concept("target").unwrap();
+    let parent = analysis.declared.concept("gates-focused").unwrap();
+    assert_eq!(
+        diagnostic(&analysis, DiagCode::DuplicateGate, "duplicate gate").range,
+        Some(target.gates[1].syntax.syntax().range())
+    );
+    assert_eq!(
+        diagnostic(&analysis, DiagCode::InvalidInteractionUse, "has no gate").range,
+        Some(parent.messages[0].syntax.syntax().range())
+    );
+    assert_eq!(
+        diagnostic(
+            &analysis,
+            DiagCode::InvalidInteractionUse,
+            "no inner connection"
+        )
+        .range,
+        Some(parent.messages[1].syntax.syntax().range())
+    );
+}
+
+#[test]
+fn direct_interaction_use_cycle_reports_each_valid_authored_ref() {
+    let source =
+        "---\ntype: uml.Sequence\n---\n# Direct\n\n## Messages\n- ref [Missing](./missing.md) as invalid\n- ref [Direct](./direct.md) as self_ref\n";
+    let analysis = analyze([("direct.md", source)]);
+    let cycles = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::InteractionUseCycle)
+        .collect::<Vec<_>>();
+    assert_eq!(cycles.len(), 1);
+    assert_eq!(cycles[0].range, Some(range_of(source, "./direct.md")));
+}
+
+#[test]
+fn indirect_three_document_cycle_reports_each_valid_authored_ref() {
+    let a = "---\ntype: uml.Sequence\n---\n# A\n\n## Messages\n- ref [Missing](./missing.md) as invalid\n- ref [B](./b.md) as b\n";
+    let b = "---\ntype: uml.Sequence\n---\n# B\n\n## Messages\n- ref [C](./c.md) as c\n";
+    let c = "---\ntype: uml.Sequence\n---\n# C\n\n## Messages\n- ref [A](./a.md) as a\n";
+    let analysis = analyze([("a.md", a), ("b.md", b), ("c.md", c)]);
+    let cycles = analysis
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::InteractionUseCycle)
+        .collect::<Vec<_>>();
+    assert_eq!(cycles.len(), 3);
+    for (file, range) in [
+        ("a.md", range_of(a, "./b.md")),
+        ("b.md", range_of(b, "./c.md")),
+        ("c.md", range_of(c, "./a.md")),
+    ] {
+        assert!(cycles
+            .iter()
+            .any(|diagnostic| { diagnostic.file == file && diagnostic.range == Some(range) }));
+    }
+}
+
+#[test]
 fn invalid_runtime_entries_do_not_renumber_valid_siblings() {
     let bad = analyze([
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
@@ -491,4 +675,29 @@ fn parallel_sibling_branches_do_not_impose_lifetime_order() {
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == DiagCode::InvalidLifelineLifetime));
+}
+
+#[test]
+fn lifetime_diagnostics_pin_the_exact_authored_message() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "lifetime.md",
+            "---\ntype: uml.Sequence\n---\n# Lifetime\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a signals b `before`\n- a creates b: `B`\n- a creates b: `B again`\n- a destroys outside\n",
+        ),
+    ]);
+    let declared = analysis.declared.concept("lifetime").unwrap();
+    for (code, message, message_index) in [
+        (DiagCode::InvalidLifelineLifetime, "outside its lifetime", 0),
+        (DiagCode::InvalidLifelineLifetime, "more than once", 1),
+        (DiagCode::InvalidSequenceEndpoint, "must be local", 3),
+    ] {
+        let found = diagnostic(&analysis, code, message);
+        assert_eq!(
+            found.range,
+            Some(declared.messages[message_index].syntax.syntax().range())
+        );
+        assert!(found.line > 1);
+    }
 }
