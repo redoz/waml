@@ -137,15 +137,16 @@ It is a vendor integration, not a generic feature, and unauthenticated GitHub AP
 access is 60 requests per hour per IP, which a docs tree of a few dozen files
 exhausts in one or two loads. It needs its own design.
 
-### Editing an exported site forks into a share link
+### Edits are preserved in a self-contained share URL
 
 The exported site is read-only at the transport level: there is nothing behind
 `?bundle=` to write to. But the editor is a full editor, and silently discarding
 edits is not acceptable.
 
 So the fragment backend becomes the save *sink* even when it was not the boot
-*source*. The first edit writes accumulated state into `#w1.` and the URL becomes
-a share link. The exported bundle is the starting point; edits fork into the URL.
+*source*. The first edit writes the current state into `#w1.` and the URL becomes
+a self-contained share URL. The exported bundle remains unchanged; the URL holds
+the user's editable copy.
 
 This costs almost nothing — the fragment arm already exists — and preserves the
 "open the docs, tweak something, send someone the link" flow that Pages has
@@ -153,68 +154,26 @@ today. A read-only mode that hides every mutating affordance was rejected: it is
 real UI work across every edit path, and it would make the docs site strictly
 less capable than the current deploy.
 
-### The op-log is downloadable
+### The editor exports the current WAML bundle
 
-A share link forks the state. It does not let you take your edits back to the
-source repository. An op-log does: `waml apply` already accepts NDJSON, and ops
-are semantic, so they survive an unrelated change to the target bundle in a way
-a forked document does not.
+The editor's Export menu gains **WAML bundle (.waml)**. It serializes the current
+model, including edits preserved in the share URL, and downloads one bundle
+envelope v1 file. This is a complete editable artifact, not an op-log or patch.
 
-The pieces are already in place, which is what makes this in scope:
+The same action is available in the native editor, `waml serve`, exported sites,
+and the GitHub Pages deployment. The editor owns this product capability.
 
-- The editor already mutates through ops. Every mutation goes through
-  `EditorSession::apply<B: EditBatch>` (`crates/waml-editor/src/editor_session.rs:109`),
-  and callers push `waml::uml::Op::{ClassifierSet, AttributeRemove, PlacementSet,
-  PlacementRemove, DiagramSet}` and `waml::okf::Op::IndexRetitle` inside
-  `waml::uml::Batch` / `PendingEdit`.
-- The applied edits are already retained in order. `EditorHistory`
-  (`crates/waml-editor/src/editor_history.rs:91`) holds `EditHistoryStep`s each
-  carrying a `PendingEdit`, with `mark_saved` / `is_saved` / `current_state`.
-- `waml-ops-dto` is already an exhaustive versioned wire contract, each variant
-  carrying a `v: u32`.
+Native builds use the platform save dialog. Web builds use one supported
+Makepad primitive added to the pinned fork:
 
-The gap is one direction of conversion. `waml-ops-dto` has
-`to_batch(dtos) -> Batch` (`crates/waml-ops-dto/src/lib.rs:387`) — DTO inbound,
-which is all the CLI and `serve` ever need. `Op -> OpDto` does not exist. Partial
-precedent does: `to_compat_step` / `from_compat_step` (`:399`, `:676`) already
-round-trip through a `Step` form.
+```rust
+cx.download_file(name, bytes, mime_type)
+```
 
-So the work is: reverse-map the DTO enum (mechanical, one arm per variant),
-serialize the history to NDJSON, and deliver the file to the user.
-
-The log carries a header line — the format already permits one, per commit
-`9c68d06f`, "op-log is NDJSON with optional header line, not array envelope" —
-holding a hash of the bundle the ops were authored against. `waml apply` refuses
-a mismatched base unless forced, so applying a stale log to a drifted bundle is
-an error rather than silent corruption.
-
-### Download is implemented in the generated shell, not the fork
-
-makepad's web bridge exposes a fixed message set
-(`platform/src/os/web/from_wasm.rs`); there is no arbitrary wasm-to-JS escape
-hatch. `cx.open_url` — the editor's only current exit
-(`crates/waml-editor/src/platform_browser.rs:12`) — cannot download, because
-browsers block top-level navigation to `data:` URLs.
-
-But `export site` generates `index.html`, so the shell can supply the capability
-itself. `FromWasmOpenUrl` is a method on an exported class
-(`export class WasmWebBrowser` — `platform/src/os/web/web.js:3`, with
-`WasmWebGL extends` it), whose implementation builds an anchor and clicks it
-(`web.js:266`). The generated shell patches that method on the prototype before
-boot, intercepts a private scheme (`waml-download:<name>`), and performs a
-Blob-anchor download. Real URLs pass through untouched.
-
-This needs no fork change, no new pin, and no wasm rebuild — which matters,
-because the fork pin is a standing trap in this repository (pin the exact sha
-from `Cargo.toml`, never a branch tip).
-
-Its limit is that the capability lives in shells *we* generate. Exported sites
-and the Pages deploy get download; someone hosting the bare artifact by hand does
-not. If it ever needs to be universal it graduates to a `cx.download_file`
-primitive in the fork, at the same call site.
-
-"Copy op-log" is offered alongside and is free: makepad already implements web
-clipboard copy (`FromWasmTextCopyResponse`).
+The primitive transfers owned bytes to the browser bridge, creates a Blob,
+clicks a temporary download anchor, and then revokes the Blob URL. It is generic
+platform capability, not WAML-specific behavior. The generated site shell does
+not add a private URL scheme or patch a Makepad prototype.
 
 ## Command surface
 
@@ -236,79 +195,31 @@ package requires an HTTP origin; `python -m http.server` suffices.
 
 ```text
 out/
-  index.html          shell: prototype patch, then boot with ?bundle=bundle.waml
+  index.html          boot with ?bundle=bundle.waml
   waml_editor.wasm
   *.js                makepad JS glue
   resources/...       fonts and assets, post-pruning
   bundle.waml         envelope v1
 ```
 
-## Open question: browser-local persistence
+## Browser-local persistence
 
-Undecided, and deliberately separated from the settled design above. Nothing
-else in this spec depends on the answer.
-
-The problem: an exported site holds edits only in memory and in the URL
-fragment. Closing the tab loses anything not yet forked into a link, and the
-fragment is a poor place to accumulate a long editing session.
-
-### Option A — service worker backed by IndexedDB
-
-The exported site ships a service worker implementing the same `/api/*` routes
-`waml serve` defines, against IndexedDB. The editor is unchanged: it uses the
-`?api=` backend and cannot tell whether it is talking to a local server or to
-the browser's own storage.
-
-```text
-serve:          editor --HTTP--> waml serve      --> disk
-exported site:  editor --HTTP--> service worker  --> IndexedDB
-```
-
-Gains: edits survive refresh and tab close, the revision counter works as
-designed, and one backend arm serves both worlds.
-
-Costs: service workers require HTTPS or localhost — fine for Pages and `serve`,
-but a plain `http://` intranet host would lose persistence silently unless a
-degraded mode is explicit. And a service worker is a real artifact with scope,
-versioning and update semantics, carrying the standard trap of a stale worker
-pinning a stale wasm indefinitely.
-
-### Option B — prototype shim over `FromWasmHTTPRequest`
-
-The same interception trick as the download shim: the generated shell answers
-private API paths from IndexedDB directly. No HTTPS requirement and no service
-worker cache traps, but the response has to be handed back *into* wasm through
-makepad's internal dispatch, which is unsupported surface that a fork bump can
-break without a compile error.
-
-### Option C — no persistence
-
-Edits live in memory and in the fragment, and the op-log download is the way to
-take work away. Simplest by a wide margin, and it is what Pages does today.
-
-### Option D — explicit local save/restore
-
-No background persistence. The user explicitly saves a session to IndexedDB and
-restores it, through a shell-provided capability. Less magic than A, far less
-machinery, but it does not survive an accidental tab close, which is the main
-thing persistence is for.
+The first version adds no IndexedDB or service-worker persistence. Edits are
+preserved in the `#w1.` share URL as soon as the model changes. The user can also
+download the current state through **Export → WAML bundle (.waml)**. Browser-local
+session storage remains a separate future design.
 
 ## Testing
 
 - **Unit.** Assembler output map for both `Static` and `Api` sources: correct
   paths present, bundle present or absent, `index.html` boot parameters correct.
   Output-directory guard (empty, non-empty, non-empty with `--force`).
-- **Round trip.** `Op -> OpDto -> to_batch -> Op` over every variant, asserting
-  equality. The reverse mapping is new code against an exhaustive enum, so
-  exhaustiveness is the property worth testing.
-- **Op-log.** An editing session's history serializes to NDJSON that `waml apply`
-  accepts against the source bundle and rejects against a drifted one.
 - **Compression.** Bytes written by `export site` decompress to the same bytes
   the embedded blob holds.
 - **Browser.** Playwright against a served export: the wasm boots without a
-  console panic, `?bundle=` loads the bundle, an edit forks into `#w1.`, and the
-  download shim produces a file. This is the regression guard on the shell
-  patch, which is the most fork-fragile part of the design.
+  console panic, `?bundle=` loads the bundle, an edit writes the current model
+  into `#w1.`, and **Export → WAML bundle (.waml)** downloads a bundle that opens
+  with the edited state.
 - **CI.** The Pages deploy runs `waml export site` and the existing
   `scripts/verify-web-artifact.mjs` guard still passes.
 
@@ -317,8 +228,8 @@ thing persistence is for.
 - `?repo=owner/name` and GitHub tree discovery.
 - `export svg`, `export json`, and folding in `waml bundle`.
 - `file://` support.
-- Browser-local persistence (open question above).
+- Browser-local persistence beyond the share URL.
 - A `--base-url` for hosting under a subpath; relative paths cover the known
   cases.
 - Anything behind `waml serve`: the HTTP API, tokens, the security matrix.
-- A `cx.download_file` primitive in the makepad fork.
+- Op-log generation, download, or `Op -> OpDto` reverse mapping.
