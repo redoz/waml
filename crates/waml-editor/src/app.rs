@@ -306,14 +306,20 @@ script_mod! {
                                     // shell animates: its width runs inversely to
                                     // the tree column's reservation, so the sum
                                     // the tab strip sits at never jumps during a
-                                    // collapse (see `tree_toggle_layout`). Right-
-                                    // aligned and clipping, so the button wipes
-                                    // out from behind the column's edge rather
-                                    // than appearing at full size mid-slide.
+                                    // collapse (see `tree_toggle_layout`). The
+                                    // button itself cross-fades over that same
+                                    // motion rather than being clipped by the
+                                    // slot; only a snap runs the slot at all, so
+                                    // a resize drag leaves the twin untouched.
                                     tree_btn_slot := View{
                                         width: 0.0
                                         height: Fill
-                                        clip_x: true
+                                        // NOT clipped: the twin cross-fades in
+                                        // place (`sync_dock_slots` drives its
+                                        // `fade`) instead of being sliced by a
+                                        // half-open slot, which read as the
+                                        // button popping out of the column edge.
+                                        clip_x: false
                                         align: Align{x: 1.0, y: 0.0}
                                         tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0, top: 1.0} visible: false }
                                     }

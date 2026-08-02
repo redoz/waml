@@ -58,6 +58,11 @@ pub(super) fn tree_toggle_layout(
     if narrow {
         return (dock_visible, TREE_BTN_W);
     }
+    // `tree_w` is the column's LIVE reserved width, not the compile-time
+    // default: a drag that resizes the column moves body and reservation
+    // together, so `progress` stays 1 and the twin never peeks out mid-drag.
+    // Only a snap (collapse/reopen), which animates the body against a fixed
+    // reservation, runs `progress` between the ends.
     let progress = if tree_w > 0.0 {
         (tree_body / tree_w).clamp(0.0, 1.0)
     } else {
@@ -484,7 +489,7 @@ impl App {
             self.tree_toggle_mounted,
             self.narrow,
             layout.tree_body,
-            crate::tree_panel::PROJECT_TREE_W,
+            self.dock_widths.tree_w,
         );
         // The slot is what keeps the handoff smooth, so it is written every
         // frame of the motion -- outside the `dock_layout` change guard above,
@@ -496,17 +501,23 @@ impl App {
             }
             cx.redraw_all();
         }
-        // Visible whenever the slot has opened at all: the button is right-
-        // aligned in a clipping slot, so it wipes out from behind the column's
-        // edge instead of popping in at full size.
+        // Visible whenever the slot has opened at all, and CROSS-FADED across
+        // the motion: the twin used to be clipped by its slot, so a half-open
+        // slot showed a sliced glyph sliding out from behind the column edge.
+        // It draws whole now and its opacity tracks the slot instead, so the
+        // handoff reads as one control fading between two seats. Only the snap
+        // ever runs the slot between its ends (see `tree_toggle_layout`), so a
+        // plain resize drag neither fades nor moves it.
         let row_visible = row_slot_w > 0.5;
-        for (id, visible) in [
-            (ids!(tree_btn_dock), dock_visible),
-            (ids!(tree_btn), row_visible),
+        let row_fade = (row_slot_w / TREE_BTN_W).clamp(0.0, 1.0);
+        for (id, visible, fade) in [
+            (ids!(tree_btn_dock), dock_visible, 1.0),
+            (ids!(tree_btn), row_visible, row_fade),
         ] {
             let button = self.ui.widget(cx, id);
             button.set_visible(cx, visible);
             let button = button.as_icon_button();
+            button.set_fade(cx, fade);
             button.set_icon(
                 cx,
                 dock_toggle_icon(crate::dock::DockEdge::Left, tree_state),

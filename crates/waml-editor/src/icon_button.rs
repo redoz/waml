@@ -48,9 +48,14 @@ script_mod! {
         draw_bg +: {
             color: atlas.accent
             lit: uniform(0.0)
+            // Whole-button opacity, 1 at rest. Only a host that CROSS-FADES a
+            // button drives it (see `App::sync_dock_slots`): a button that has
+            // to appear or vanish mid-animation fades in place rather than
+            // sliding out from behind a clip edge.
+            fade: uniform(1.0)
             pixel: fn() {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                let a = 0.16 * self.lit
+                let a = 0.16 * self.lit * self.fade
                 let ws = min(min(self.rect_size.x, self.rect_size.y) - 4.0, 28.0)
                 sdf.box(
                     (self.rect_size.x - ws) * 0.5,
@@ -126,6 +131,11 @@ pub struct IconButton {
     /// Pointer-over state, self-managed from FingerHoverIn/Out.
     #[rust]
     hovered: bool,
+    /// Cross-fade opacity, 1 at rest. Scales the wash and the glyph tint's
+    /// alpha; the button keeps its box and stays clickable at any value, so a
+    /// host that fades one out must also hide it at the end of the motion.
+    #[rust]
+    fade: Option<f64>,
     #[live]
     action_tag: LiveId,
 }
@@ -180,16 +190,21 @@ impl Widget for IconButton {
         self.view
             .draw_bg
             .set_uniform(cx, live_id!(lit), &[if hot { 1.0 } else { 0.0 }]);
+        let fade = self.fade.unwrap_or(1.0);
+        self.view
+            .draw_bg
+            .set_uniform(cx, live_id!(fade), &[fade as f32]);
         let step = self.view.draw_walk(cx, scope, walk);
         let rect = self.view.area().rect(cx);
         if let Some(icon) = self.icon {
-            let tint = if ink {
+            let mut tint = if ink {
                 self.draw_icon_lit.color
             } else if self.dim {
                 self.draw_icon_dim.color
             } else {
                 self.draw_icon_idle.color
             };
+            tint.w *= fade as f32;
             let sz = self.icon_size;
             let glyph = Rect {
                 pos: dvec2(
@@ -218,6 +233,15 @@ impl IconButton {
     pub fn set_active(&mut self, cx: &mut Cx, active: bool) {
         if self.active != active {
             self.active = active;
+            self.view.redraw(cx);
+        }
+    }
+
+    /// Drive the cross-fade opacity (1 = opaque), redrawing only on a change.
+    pub fn set_fade(&mut self, cx: &mut Cx, fade: f64) {
+        let fade = fade.clamp(0.0, 1.0);
+        if self.fade.is_none_or(|old| (old - fade).abs() > 0.001) {
+            self.fade = Some(fade);
             self.view.redraw(cx);
         }
     }
@@ -286,6 +310,13 @@ impl IconButtonRef {
     pub fn set_active(&self, cx: &mut Cx, active: bool) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_active(cx, active);
+        }
+    }
+
+    /// See [`IconButton::set_fade`].
+    pub fn set_fade(&self, cx: &mut Cx, fade: f64) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_fade(cx, fade);
         }
     }
 
