@@ -126,7 +126,14 @@ pub fn candidates(
                 rect,
                 attach,
                 side_is_canonical: canonical,
-                slide_cost: s * total,
+                // Cost is the DISTANCE SLID from the slot's ideal position, not
+                // the raw fraction: terminal fractions already measure from
+                // their own end, but mid-route ones are absolute, so the ideal
+                // (the centre) has to be subtracted off.
+                slide_cost: match slot {
+                    LabelSlot::MidRoute => (s - 0.5).abs() * total,
+                    _ => s * total,
+                },
             });
         }
     }
@@ -846,5 +853,29 @@ mod tests {
         // Open space both sides: the label must take the canonical one (above a
         // horizontal run) rather than picking arbitrarily.
         assert!(out.placed[0].rect.y < 50.0, "should sit above the route");
+    }
+
+    #[test]
+    fn an_unobstructed_mid_route_label_stays_at_the_middle() {
+        let reqs = vec![LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let out = place(
+            &route_pair(),
+            &reqs,
+            &Obstacles::default(),
+            &LabelConfig::default(),
+        );
+        // Nothing to slide away from, so the label must attach at the route's
+        // midpoint (x = 150 on a 0..300 run) — not at the first MID_SLIDES entry
+        // that happens to be listed.
+        let rect = out.placed[0].rect;
+        let centre = rect.x + rect.w / 2.0;
+        assert!(
+            (centre - 150.0).abs() < 1.0,
+            "expected the midpoint, got centre {centre} (rect {rect:?})"
+        );
     }
 }
