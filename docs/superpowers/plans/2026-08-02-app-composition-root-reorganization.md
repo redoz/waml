@@ -277,7 +277,7 @@ rtk git commit -m "refactor(editor): extract app navigation"
 
 ```powershell
 rtk cargo test -p waml-editor app::tests::shell
-rtk cargo test -p waml-editor mounted_project_tree_state
+rtk cargo test -p waml-editor breadcrumb_reveal_pins_tree_without_navigation
 ```
 
 Expected: PASS.
@@ -656,7 +656,7 @@ rtk git commit -m "refactor(editor): unify session projections"
 ```powershell
 rtk cargo test -p waml-editor global_history_chord_dispatches_before_the_widget_tree
 rtk cargo test -p waml-editor shutdown_and_quit_request_are_final_save_events
-rtk cargo test -p waml-editor mounted_project_tree_state
+rtk cargo test -p waml-editor breadcrumb_reveal_pins_tree_without_navigation
 ```
 
 Expected: PASS.
@@ -758,4 +758,3 @@ rtk git commit -m "refactor(editor): expose app event phases"
 - `handle_event` shows its phase order directly and keeps the undo or redo early return before widget dispatch.
 - No new controller, facade, event registry, trait, or dependency exists.
 - `EditorSession`, `DocumentHost`, `transition_to_location`, and ordered action dispatch keep their current authority.
-
