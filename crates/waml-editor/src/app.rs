@@ -854,7 +854,10 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     fn start_boot_bundle_fetch(&mut self, cx: &mut Cx, url: String) {
         self.pending_boot_bundle = Some(url.clone());
-        cx.http_request(live_id!(boot_bundle), HttpRequest::new(url, HttpMethod::GET));
+        cx.http_request(
+            live_id!(boot_bundle),
+            HttpRequest::new(url, HttpMethod::GET),
+        );
     }
 }
 
