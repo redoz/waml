@@ -58,11 +58,11 @@ script_mod! {
         // inspector, whose splitter leads the panel), 1 = right (the tree,
         // whose splitter trails it). Pushed each `draw_walk` from `rule_edge`.
         //
-        // The strip draws NOTHING at rest: `lit` fades the rule in from fully
-        // transparent, so only a hovered or dragged splitter is visible. The
-        // panel host already paints its own border on this exact seam, so a
-        // resting rule here lands beside it and reads as a doubled dark bar
-        // rather than as an affordance.
+        // The rule is ALWAYS drawn: it is the column's own edge, the vertical
+        // twin of the horizontal chrome seam, and no panel paints that seam
+        // itself (a border on the panel body would land `SPLITTER_W` inside the
+        // column, not on its edge). `lit` only lerps it from `surface_border`
+        // to the accent while hovered or dragged.
         //
         // `lit` and `edge` are the only values Rust pushes, so no RGBA crosses
         // the seam.
@@ -78,6 +78,7 @@ script_mod! {
         draw_bg +: {
             color: atlas.field_bg
             accent: atlas.accent
+            border: atlas.surface_border
             edge: uniform(0.0)
             lit: uniform(0.0)
             pixel: fn() {
@@ -91,8 +92,9 @@ script_mod! {
                 let base = vec4(self.color.rgb * self.color.a, self.color.a)
                 let px = self.pos.x * self.rect_size.x
                 let x = mix(0.0, self.rect_size.x - 1.0, self.edge)
-                let on = step(x, px) * step(px, x + 1.0) * self.lit
-                let rule = vec4(self.accent.rgb * self.accent.a, self.accent.a)
+                let on = step(x, px) * step(px, x + 1.0)
+                let hue = mix(self.border, self.accent, self.lit)
+                let rule = vec4(hue.rgb * hue.a, hue.a)
                 return mix(base, rule, on)
             }
         }

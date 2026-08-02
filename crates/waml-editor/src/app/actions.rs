@@ -152,12 +152,12 @@ impl App {
                 .set_active(cx, true);
         }
 
-        if self
-            .ui
-            .widget(cx, ids!(tree_btn))
-            .as_icon_button()
-            .clicked(actions)
-        {
+        // Either seat of the tree-column toggle (see `tree_toggle_visibility`):
+        // only one is visible at a time, so this is one control, not two.
+        let tree_toggled = [ids!(tree_btn), ids!(tree_btn_dock)]
+            .into_iter()
+            .any(|id| self.ui.widget(cx, id).as_icon_button().clicked(actions));
+        if tree_toggled {
             if self.narrow {
                 let (tree, inspector) = self.dock_states(cx);
                 let (tree, inspector) =

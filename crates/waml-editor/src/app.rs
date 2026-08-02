@@ -51,6 +51,7 @@ script_mod! {
     use mod.widgets.SelectionToolbar
     use mod.widgets.Statusbar
     use mod.widgets.SolidView
+    use mod.widgets.ChromeSeam
     use mod.widgets.DesktopButton
     use mod.widgets.DesktopButtonType
     use mod.widgets.StartScreen
@@ -67,13 +68,19 @@ script_mod! {
             main_window := Window{
                 window.inner_size: vec2(1280, 840)
                 window.title: "WAML"
-                window.caption_bar_height_override: 66.0
+                window.caption_bar_height_override: 34.0
                 caption_bar: SolidView{
                     visible: false
-                    // Full-width two-row caption. `caption_col` owns the vertical
-                    // split: title controls live above the document strip. Every
-                    // interactive child is made client area by `WindowDragQuery`,
-                    // overriding the surrounding native drag region.
+                    // Single-row caption: title controls only. The document tab
+                    // strip used to share this band, but the tree column has to
+                    // reach up alongside it, and the tree lives in the client
+                    // area -- nothing below the caption can grow into an OS
+                    // non-client region. So `tab_row` moved into the body (see
+                    // `center_column`) and this bar shrank to the title row.
+                    // The drag surface the strip's empty gutter used to provide
+                    // is given back by `WindowDragQuery` answering `Caption` over
+                    // that gutter; every interactive child here is likewise made
+                    // client area by the same handler.
                     width: Fill
                     height: Fill
                     draw_bg.color: atlas.field_bg
@@ -81,16 +88,13 @@ script_mod! {
                         width: Fill
                         height: Fill
                         flow: Down
-                        // Don't clip the tab band at the column's left edge: the
-                        // top rule reaches back over `[T]` and the tree spacer to
-                        // `tab_row`'s own start.
                         clip_x: false
-                        // Title row: the burger + the open model's name, sitting on
-                        // one line above the tabs. `clip_x` bounds a long model path
-                        // to the row.
+                        // Title row: the burger + the open model's name. `clip_x`
+                        // bounds a long model path to the row. `Fill` leaves the
+                        // seam below it its 1px.
                         title_row := View{
                             width: Fill
-                            height: 34.0
+                            height: Fill
                             flow: Right
                             // `align y:0.5` centres the burger + heading metric box
                             // in the row (the proven single-row recipe -- margins
@@ -187,67 +191,11 @@ script_mod! {
                                 }
                             }
                         }
-                        // Tab row: the tree-column toggle then the doc-tab strip fill
-                        // the lower band. `DocTabs`' own `draw_bg` repaints
-                        // `field_bg`, so it reads seamless with the caption; the
-                        // active tab card bleeds down into the body.
-                        //
-                        // `flow: Right` is what makes the Zed reading cheap: one
-                        // runtime-driven spacer between `[T]` and the strip moves
-                        // every tab card, so no tab-side offset arithmetic is needed.
-                        tab_row := View{
-                            width: Fill
-                            height: Fill
-                            flow: Right
-                            // See `caption_col`: the tab strip's top rule reaches
-                            // left to this row's own edge, past `[T]` and the spacer.
-                            clip_x: false
-                            // The tree-column toggle, FIRST child so it is anchored
-                            // hard against the full-width row's left edge and never moves: expanding the
-                            // tree must slide only the tab cards, not the control that
-                            // slides them. 30px button / 18px glyph -- the burger's exact
-                            // size, because the two stack in one column and any mismatch
-                            // reads as a mistake. That makes this box taller than a tab
-                            // card (which insets `TOP_MARGIN` = 8 into the 32px row), so
-                            // it deliberately overhangs the cards rather than sitting
-                            // flush with them; `top: 1` centres the 30px box in the 32px
-                            // row. Hidden until a model opens
-                            // (`show_editor`/`show_start_screen`), which also sets the
-                            // glyph (`Icon::PanelLeftClose` at first; runtime
-                            // synchronization switches between `PanelLeftOpen`
-                            // and `PanelLeftClose`).
-                            //
-                            // `left: 2` stacks this glyph on the burger's centreline one
-                            // row above: the burger gets its 2px from `title_row`'s
-                            // `padding`, this row has no padding, so the button carries
-                            // the same 2 as a margin instead. Both rows start at the same
-                            // x=0 and both boxes are now 30px
-                            // wide, so equal insets align the columns. Counted into
-                            // `TREE_BTN_W`, which `sync_tree_gap` subtracts.
-                            tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{left: 2.0, top: 1.0} visible: false }
-                            // Runtime-driven spacer (`sync_dock_slots`) between `[T]`
-                            // and the strip, sized so the STRIP's left edge lands on
-                            // the tree column's right edge -- where the `field_bg`
-                            // chrome mass steps in from full-width to column-width;
-                            // the first card then sits `TAB_LEFT_INSET` inside that.
-                            // 0 while the tree is collapsed, so the strip falls back
-                            // against `[T]` with only that inset between them.
-                            tree_gap := View{ width: 0.0, height: Fill }
-                            // View history, on the ROW rather than inside the
-                            // document header: one pair for the whole shell, so
-                            // it does not blink in and out with the per-document
-                            // breadcrumb band. Placed AFTER `tree_gap`, so the
-                            // pair -- not the first tab card -- starts on the
-                            // tree column's right edge and the strip follows it.
-                            // Hidden until a document is active
-                            // (`sync_history_controls`).
-                            history_back_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{top: 1.0} visible: false }
-                            history_forward_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{top: 1.0} visible: false }
-                            doc_tabs := DocTabs{
-                                width: Fill
-                                height: Fill
-                            }
-                        }
+                        // Chrome/content seam: the caption's last row, a 1px
+                        // full-width rule. Drawn here rather than by `DocTabs`
+                        // so it can span the tree column without fighting the
+                        // body's overlay paint order (see `chrome_seam.rs`).
+                        chrome_seam := ChromeSeam{}
                     }
                 }
                 body +: {
@@ -301,6 +249,86 @@ script_mod! {
                                 width: Fill
                                 height: Fill
                                 flow: Down
+                                // Tab row: the tree-column toggle, the view-history
+                                // pair, then the doc-tab strip. It lives HERE, in the
+                                // center column, rather than in the caption bar: the
+                                // tree column has to occupy the same band on the left,
+                                // and the tree is client area, so the band cannot be a
+                                // caption row. Sitting inside `center_column` also
+                                // deletes the arithmetic the old placement needed --
+                                // the strip's turtle now starts on the tree column's
+                                // right edge BY CONSTRUCTION, so the runtime `tree_gap`
+                                // spacer and its `sync_tree_gap` sizing are gone.
+                                //
+                                // `DocTabs`' own `draw_bg` repaints `field_bg`, so the
+                                // band still reads as one chrome mass with the caption
+                                // above it; the active tab card bleeds down into the
+                                // body. 32px, the old caption row's height.
+                                tab_row := SolidView{
+                                    width: Fill
+                                    height: 32.0
+                                    flow: Right
+                                    // `DocTabs` paints `field_bg` across its own
+                                    // strip, but the strip starts past `[T]` and the
+                                    // history pair -- and in the caption this row used
+                                    // to inherit the caption bar's fill. In the body it
+                                    // inherits nothing, so without this the lead-in
+                                    // segment shows bare window ground: a dark notch
+                                    // between the white tree column and the white tabs.
+                                    draw_bg.color: atlas.field_bg
+                                    // The tab strip's top rule reaches left past `[T]`
+                                    // and the history pair to this row's own edge.
+                                    clip_x: false
+                                    // The tree-column toggle's COLLAPSED-state twin.
+                                    // While the column is open the real control is
+                                    // `tree_btn_dock`, floating over the panel's own
+                                    // top-right corner; with the column collapsed to
+                                    // nothing that button has nowhere to live, so this
+                                    // one takes over and leads the row. Exactly one of
+                                    // the pair is ever visible -- `sync_dock_slots`
+                                    // picks, off the same value that decides whether
+                                    // the panel presents at all.
+                                    //
+                                    // 30px button / 18px glyph -- the caption burger's
+                                    // exact size, because the two stack in one column
+                                    // and any mismatch reads as a mistake. That makes
+                                    // this box taller than a tab card (which insets
+                                    // `TOP_MARGIN` = 8 into the 32px row), so it
+                                    // deliberately overhangs the cards rather than
+                                    // sitting flush with them; `top: 1` centres the
+                                    // 30px box in the 32px row. Hidden until a model
+                                    // opens (`show_editor`/`show_start_screen`), which
+                                    // also sets the glyph (`Icon::PanelLeftClose` at
+                                    // first; runtime synchronization switches between
+                                    // `PanelLeftOpen` and `PanelLeftClose`).
+                                    //
+                                    // The slot, not the button, is what the
+                                    // shell animates: its width runs inversely to
+                                    // the tree column's reservation, so the sum
+                                    // the tab strip sits at never jumps during a
+                                    // collapse (see `tree_toggle_layout`). Right-
+                                    // aligned and clipping, so the button wipes
+                                    // out from behind the column's edge rather
+                                    // than appearing at full size mid-slide.
+                                    tree_btn_slot := View{
+                                        width: 0.0
+                                        height: Fill
+                                        clip_x: true
+                                        align: Align{x: 1.0, y: 0.0}
+                                        tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0, top: 1.0} visible: false }
+                                    }
+                                    // View history, on the ROW rather than inside the
+                                    // document header: one pair for the whole shell, so
+                                    // it does not blink in and out with the
+                                    // per-document breadcrumb band. Hidden until a
+                                    // document is active (`sync_history_controls`).
+                                    history_back_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{top: 1.0} visible: false }
+                                    history_forward_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{top: 1.0} visible: false }
+                                    doc_tabs := DocTabs{
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
                                 document_header := DocumentHeader{
                                     width: Fill
                                     height: 0.0
@@ -469,7 +497,45 @@ script_mod! {
                             tree_host := View{
                                 width: 0.0
                                 height: Fill
-                                project_tree := ProjectTree{ width: 0.0 height: Fill }
+                                // The body is its own node so the splitter can
+                                // stay a flow-Right sibling on the column's
+                                // inner edge while `[T]` overlays the body. The
+                                // two cannot share one host: Overlay would
+                                // stack the splitter ON the tree instead of
+                                // beside it. `sync_dock_slots` gives this the
+                                // runtime `host - SPLITTER_W` width.
+                                tree_body := View{
+                                    width: 0.0
+                                    height: Fill
+                                    // Overlay, so `[T]` floats over the panel's
+                                    // top-right corner rather than taking a header
+                                    // row off the top of it: the whole point of the
+                                    // tab row moving into `center_column` was to let
+                                    // these rows start at the body's top edge, and a
+                                    // header band would hand that back. The first
+                                    // row's label runs under the button; tree labels
+                                    // are short enough that they don't collide, and
+                                    // the row is still clickable to the button's left.
+                                    //
+                                    // Declared AFTER `project_tree` so it wins the
+                                    // hit: makepad walks children in reverse for
+                                    // events, and the default `capture_overload:
+                                    // false` lets the topmost claim the press.
+                                    flow: Overlay
+                                    project_tree := ProjectTree{ width: Fill height: Fill }
+                                    tree_btn_layer := View{
+                                        width: Fill
+                                        height: Fill
+                                        align: Align{x: 1.0, y: 0.0}
+                                        // Right-aligned against `tree_body`, which
+                                        // ends where the splitter begins -- so this
+                                        // tracks the column's edge through both the
+                                        // open/close animation and a splitter drag
+                                        // for free. `right: 2` mirrors the 2px the
+                                        // tab-row twin carries on its left.
+                                        tree_btn_dock := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0, top: 1.0} visible: false }
+                                    }
+                                }
                                 tree_splitter := PanelSplitter{ rule_edge: 1.0 }
                             }
                         }
@@ -595,22 +661,25 @@ pub struct App {
     inspector_motion: DockMotion,
     #[rust]
     dock_next_frame: NextFrame,
-    /// Last-applied caption `tree_gap` width, same change-guard role as
-    /// `dock_layout` (see `sync_tree_gap`). Negative so the first sync always
-    /// writes, even when the computed gap is 0 (collapsed tree).
-    #[rust(-1.0)]
-    tree_gap_w: f64,
     /// Whether `tab_row`'s history pair is mounted (guards the visibility
-    /// writes; the pair sits after `tree_gap`, so it does not enter the spacer
-    /// arithmetic).
+    /// writes).
     #[rust]
     history_controls_visible: bool,
-    /// Last-applied `DocTabs::left_overshoot` (see `sync_tree_gap`). Guarded
-    /// separately from `tree_gap_w` because it is measured off `doc_tabs`' own
-    /// rect, which settles one frame AFTER the gap that moved it. Negative so
-    /// the first sync always writes.
+    /// Last-applied `tree_btn_slot` width (see `tree_toggle_layout`). Written
+    /// every frame of a dock motion, so it carries its own guard rather than
+    /// riding `dock_layout`'s. Negative so the first sync always writes.
     #[rust(-1.0)]
-    rule_overshoot: f64,
+    tree_btn_slot_w: f64,
+    /// Last-applied `ChromeSeam` break (see `sync_chrome_seam`). Change-guard
+    /// only -- the seam owns the value it draws with.
+    #[rust]
+    seam_break: Option<(f64, f64, Vec4)>,
+    /// Whether a model is open, and so whether the tree-column toggle should be
+    /// showing at all. Which of its two seats it takes is `sync_dock_slots`'
+    /// call (see `tree_toggle_visibility`); this is the gate above that, so the
+    /// open/close paths don't have to know there are two buttons.
+    #[rust]
+    tree_toggle_mounted: bool,
     /// `--title` badge text, retained so a theme live-edit reload can re-push it
     /// (`Apply::Reload` wipes the widget's own `#[rust]` state).
     #[rust]
@@ -839,6 +908,7 @@ impl AppMain for App {
         // dead, invisible node whose setters no-op. Green tests and review both
         // miss it.
         crate::agent_mark::script_mod(vm);
+        crate::chrome_seam::script_mod(vm);
         crate::selection_toolbar::script_mod(vm);
         crate::statusbar::script_mod(vm);
         crate::logo::script_mod(vm);

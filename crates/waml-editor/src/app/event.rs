@@ -143,20 +143,40 @@ impl App {
     }
 
     pub(super) fn override_caption_drag_query(&mut self, cx: &mut Cx, event: &Event) {
-        // The Window widget marks the entire caption bar (minus the window
-        // min/max/close buttons) as an OS window-drag region, which swallows
-        // pointer events over the doc-tab strip living there -- tab clicks and
-        // hover never reach the widget. Re-answer the drag query as `Client`
-        // over the tab strip so it behaves as a normal interactive area. This
-        // runs after `ui.handle_event`, so this `set` overrides the Window's
-        // `Caption` answer (last write wins before the platform reads it).
+        // Two-way override, both directions off the same query.
+        //
+        // Client-ward: the Window widget marks the entire caption bar (minus the
+        // window min/max/close buttons) as an OS window-drag region, which
+        // swallows pointer events over the interactive controls living there --
+        // clicks and hover never reach the widget.
+        //
+        // Caption-ward: `tab_row` moved OUT of the caption and into the body
+        // (see `app.rs`), so its empty gutter -- the strip past the last tab
+        // card, the slivers between cards -- defaults to client area and no
+        // longer drags the window. Windows dispatches this query for the whole
+        // window, not just the non-client band (`win32_window.rs`, WM_NCHITTEST
+        // falls through to the app for every non-resize-edge hit), so answering
+        // `Caption` there gives the drag surface back. With the caption down to
+        // one 34px row crowded by the logo, burger, model name and window
+        // buttons, that gutter is most of what is left to grab.
+        //
+        // This runs after `ui.handle_event`, so both `set`s override the
+        // Window's own answer (last write wins before the platform reads it).
         if let Event::WindowDragQuery(dq) = event {
-            let over_tab = self
-                .ui
-                .widget(cx, ids!(doc_tabs))
+            let tabs = self.ui.widget(cx, ids!(doc_tabs));
+            let over_tab = tabs
                 .borrow::<crate::doc_tabs::DocTabs>()
                 .map(|tabs| tabs.hits_any_tab(dq.abs))
                 .unwrap_or(false);
+            // The tab row's own rect, minus everything interactive in it: `[T]`,
+            // the history pair and the tab cards are all handled below, so what
+            // is left of this rect is the draggable gutter.
+            let over_tab_row = self
+                .ui
+                .widget(cx, ids!(tab_row))
+                .area()
+                .rect(cx)
+                .contains(dq.abs);
             // The logo also lives in the caption drag region; without this
             // the logo never gets hover/click (the whole feature is dead).
             let over_logo = self
@@ -173,15 +193,21 @@ impl App {
                 .as_icon_button()
                 .rect(cx)
                 .contains(dq.abs);
-            // Same for the tab row's tree-column toggle: it sits in the caption
-            // drag region, so without this its clicks become window drags and
-            // the toggle is dead.
-            let over_tree_btn = self
-                .ui
-                .widget(cx, ids!(tree_btn))
-                .as_icon_button()
-                .rect(cx)
-                .contains(dq.abs);
+            // The tab row's own controls: the tree-column toggle and the
+            // view-history pair. They are client area by default now, but the
+            // gutter rule below hands the rest of the row back to the OS, so
+            // each one has to be named here or it goes with it and the control
+            // is dead.
+            let over_row_btn = [
+                ids!(tree_btn),
+                ids!(history_back_btn),
+                ids!(history_forward_btn),
+            ]
+            .into_iter()
+            .any(|id| {
+                let btn = self.ui.widget(cx, id);
+                btn.visible() && btn.as_icon_button().rect(cx).contains(dq.abs)
+            });
             // Breadcrumb segments and the right-dock button share the header's
             // live rect. Keep that interactive row in client space.
             let document_header = self.ui.widget(cx, ids!(document_header));
@@ -207,11 +233,18 @@ impl App {
             if over_tab
                 || over_logo
                 || over_btn
-                || over_tree_btn
+                || over_row_btn
                 || over_document_header
                 || menu_open
             {
                 dq.response.set(WindowDragQueryResponse::Client);
+            } else if over_tab_row {
+                // Nothing interactive under the cursor, but we are inside the
+                // tab row: this is the strip's empty gutter, the window's main
+                // drag handle now that the caption is one row (see the note at
+                // the top of this function). Ordered AFTER the client checks so
+                // a card, a control or an open menu always wins.
+                dq.response.set(WindowDragQueryResponse::Caption);
             }
         }
     }

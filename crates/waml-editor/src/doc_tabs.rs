@@ -24,7 +24,6 @@ script_mod! {
         width: Fill
         height: 34.0
         draw_bg +: { color: atlas.field_bg }
-        draw_edge +: { color: atlas.surface_border }
         // The active tab is a flat, full-height block of the document body's own
         // colour, so it reads as continuous with the canvas below rather than as
         // a raised card floating on the bar. No border, no rounding -- the only
@@ -288,9 +287,13 @@ const CLOSE_HOVER_DY: f64 = 2.0;
 const ICON_SIZE: f64 = 15.0;
 /// Gap between the leading glyph and the tab label.
 const ICON_GAP: f64 = 6.0;
-/// Thickness of the active tab's top accent bar. Painted at the strip's top
-/// edge, so it sits over (and interrupts) the 1px top rule.
-const ACCENT_H: f64 = 2.0;
+/// Thickness of the active tab's top accent bar WITHIN this strip. The flag
+/// reads 2px thick, but only the lower px is drawn here: the upper one is the
+/// seam row itself, which `ChromeSeam` paints in this accent where the active
+/// card meets it (see `active_card_span`). Back when the rule was this strip's
+/// own top edge the bar was 2px and simply covered it; the split keeps the same
+/// 2px reading now that the rule lives a pixel higher, in the caption.
+const ACCENT_H: f64 = 1.0;
 /// Fraction of the row height a between-tabs divider spans, centred vertically.
 /// A short hairline reads as a separator; a full-bleed one reads as a grid and
 /// re-boxes the tabs the flat treatment just un-boxed.
@@ -304,23 +307,11 @@ const EDGE_DIVIDER_FRAC: f64 = 1.0;
 /// trim shared by the font roles rides glyphs high inside their line box (see
 /// the asc/desc notes in `fonts.rs`), so true centring still reads a touch high.
 const TEXT_DY: f64 = 1.0;
-/// Device-px over which the top rule dissolves before the window's right edge. A
-/// crisp 1px rule is a plain quad (an SDF fill under ~2px has zero AA coverage on
-/// this fork -- see the shader-gotchas memory), and a plain quad carries one flat
-/// colour, so the fade is faked as `EDGE_FADE_STEPS` stacked 1px segments of
-/// decreasing alpha rather than a true per-pixel gradient.
-const EDGE_FADE: f64 = 48.0;
-const EDGE_FADE_STEPS: usize = 4;
-/// Breathing room between the tab row's tree-column toggle `[T]` and the first
-/// tab card, applied ONLY when the tree column is collapsed. `tab_row` is
-/// `flow: Right` (see `app.rs`), so with no column to span, this strip's turtle
-/// starts flush against `[T]`'s right edge and the cards would butt straight
-/// into it; this inset is then the whole gap between them, matching `CLOSE_GAP`.
-///
-/// With the column open the inset is 0: the strip's turtle already starts on the
-/// column's right edge, which is also the canvas's left edge, so a flush first
-/// card puts the tab's left flank on the canvas's -- no step in the chrome.
-/// `App::sync_tree_gap` picks between the two (see `lead_inset`).
+/// Breathing room between the view-history pair that precedes this strip in
+/// `tab_row` and the first tab card. `tab_row` is `flow: Right` (see `app.rs`),
+/// so this strip's turtle starts flush against the forward button's right edge
+/// and the cards would butt straight into it; this inset is the whole gap
+/// between them, matching `CLOSE_GAP`.
 pub const TAB_LEFT_INSET: f64 = 10.0;
 const WIDE_MAX_TITLE_CHARS: usize = 18;
 const NARROW_MAX_TITLE_CHARS: usize = 36;
@@ -342,10 +333,6 @@ fn tab_width(narrow: bool, natural: f64, available: f64) -> f64 {
     } else {
         natural
     }
-}
-
-fn rule_x_start(strip_left: f64, left_overshoot: f64) -> f64 {
-    (strip_left - left_overshoot).round()
 }
 
 /// One divider hairline: 1px wide, `frac` of `row`'s height, centred on its
@@ -417,10 +404,6 @@ pub struct DocTabs {
     #[redraw]
     #[live]
     draw_bg: DrawColor,
-    /// Subtle source-bright top edge (shared HUD panel material).
-    #[redraw]
-    #[live]
-    draw_edge: DrawColor,
     /// The active tab's block: a flat fill in the document body's own colour,
     /// so the tab reads as continuous with the canvas rather than as a card.
     #[redraw]
@@ -497,20 +480,9 @@ pub struct DocTabs {
     #[rust]
     hidden: bool,
 
-    /// Left-end reach of the top rule: how far it goes back past
-    /// this strip's own turtle, so it starts at `tab_row`'s left edge (the
-    /// wordmark's right edge) rather than at the first tab card. Runtime-driven
-    /// by `App::sync_tree_gap`, because the distance is whatever the tree-column
-    /// spacer plus `[T]` currently measure. Defaults 0 -> no overshoot, which is
-    /// the safe reading if the wiring is ever dropped.
-    #[rust]
-    left_overshoot: f64,
-
-    /// Gap between this strip's turtle and the first card. Runtime-driven by
-    /// `App::sync_tree_gap`: 0 while the tree column is open (so the first
-    /// card's left flank lands on the canvas's left edge), `TAB_LEFT_INSET`
-    /// while it is collapsed and the cards would otherwise butt into `[T]`.
-    /// Defaults to `TAB_LEFT_INSET`, the safe reading if the wiring is dropped.
+    /// Gap between this strip's turtle and the first card (see
+    /// `TAB_LEFT_INSET`). Fixed: the controls ahead of the strip are always the
+    /// same ones, so there is nothing to vary with.
     #[rust(TAB_LEFT_INSET)]
     lead_inset: f64,
 
@@ -519,11 +491,6 @@ pub struct DocTabs {
     /// default on `draw_accent`, the theme accent.
     #[rust]
     active_accent: Option<Vec4>,
-}
-
-/// Pixel-snapped far end of the top rule at this strip's own right edge.
-fn rule_x_end(strip_right: f64) -> f64 {
-    strip_right.round()
 }
 
 impl Widget for DocTabs {
@@ -591,57 +558,10 @@ impl Widget for DocTabs {
         }
         let rect = cx.walk_turtle(walk);
         self.draw_bg.draw_abs(cx, rect);
-        // Top rule: a crisp, pixel-snapped 1px line spanning from the wordmark's
-        // right edge to the window's right edge -- across the tree toggle and
-        // the tree-column spacer, not just this strip's turtle. Snapping the y to
-        // a whole device row keeps it from straddling (and blurring across) two
-        // rows.
-        //
-        // At the near end it reaches back by `left_overshoot`, runtime-driven,
-        // landing on `tab_row`'s left edge. It deliberately stops there rather
-        // than at the window's own left edge (x = 0): the logo is a keep-out
-        // zone and a rule through it slices the wordmark in half.
-        //
-        // At the far end the line stops at this strip's own right edge, then
-        // dissolves over the last `EDGE_FADE` px -- faked as stacked 1px
-        // segments of falling alpha since a crisp plain quad carries one flat
-        // colour (see `EDGE_FADE`).
-        //
-        // Both reaches escape this strip's turtle only because `caption_col` and
-        // `tab_row` set `clip_x: false` (see `app.rs`).
-        let base = self.draw_edge.color;
-        let y = rect.pos.y.round();
-        let x0 = rule_x_start(rect.pos.x, self.left_overshoot);
-        let x_end = rule_x_end(rect.pos.x + rect.size.x);
-        let solid_end = x_end - EDGE_FADE;
-        self.draw_edge.color = base;
-        self.draw_edge.draw_abs(
-            cx,
-            Rect {
-                pos: dvec2(x0, y),
-                size: dvec2(solid_end - x0, 1.0),
-            },
-        );
-        for i in 0..EDGE_FADE_STEPS {
-            let step_w = EDGE_FADE / EDGE_FADE_STEPS as f64;
-            let sx = solid_end + step_w * i as f64;
-            // Alpha falls from ~0.875 (nearest the solid run) to ~0.125 at the edge.
-            let a = 1.0 - (i as f32 + 0.5) / EDGE_FADE_STEPS as f32;
-            self.draw_edge.color = Vec4 {
-                x: base.x,
-                y: base.y,
-                z: base.z,
-                w: base.w * a,
-            };
-            self.draw_edge.draw_abs(
-                cx,
-                Rect {
-                    pos: dvec2(sx, y),
-                    size: dvec2(step_w, 1.0),
-                },
-            );
-        }
-        self.draw_edge.color = base;
+        // This strip used to draw the chrome's top rule, reaching left past its
+        // own turtle to cover `[T]` and the tree column. It no longer owns that
+        // line: it spans the whole window now and is drawn once at the caption's
+        // bottom edge (see `chrome_seam.rs`).
 
         self.tab_rects.clear();
         self.close_rects.clear();
@@ -850,6 +770,28 @@ impl DocTabs {
         LiveId::default()
     }
 
+    /// The active card's horizontal span and accent colour, in window
+    /// coordinates, from the most recent draw -- or `None` when no tab is
+    /// active or the active one has scrolled out of the visible range.
+    ///
+    /// Read by `App::sync_chrome_seam` so the chrome/content hairline can break
+    /// where the selected document meets it. The accent bar used to be drawn
+    /// straight over that rule, back when the rule was this strip's own top
+    /// edge; now the rule belongs to the caption (see `chrome_seam.rs`), which
+    /// paints a frame earlier and a pixel higher than anything here can reach.
+    /// So the break is handed upward instead of painted over.
+    pub fn active_card_span(&self) -> Option<(f64, f64, Vec4)> {
+        if self.active == LiveId::default() {
+            return None;
+        }
+        let rect = self.tab_rect(self.active);
+        if rect.size.x <= 0.0 {
+            return None;
+        }
+        let accent = self.active_accent.unwrap_or(self.draw_accent.color);
+        Some((rect.pos.x.round(), (rect.pos.x + rect.size.x).round(), accent))
+    }
+
     /// The rect captured for `id` during the most recent draw, or the default
     /// rect when the tab is not currently visible.
     fn tab_rect(&self, id: LiveId) -> Rect {
@@ -894,22 +836,6 @@ impl DocTabs {
             self.hidden = !visible;
             cx.redraw_all();
         }
-    }
-
-    /// How far the top rule reaches back past this strip's turtle (see
-    /// `left_overshoot`). `App` measures it; the caller already change-guards,
-    /// so this just stores and repaints.
-    pub fn set_left_overshoot(&mut self, cx: &mut Cx, px: f64) {
-        self.left_overshoot = px;
-        self.draw_bg.redraw(cx);
-    }
-
-    /// Gap from this strip's turtle to the first card (see `lead_inset`).
-    /// `App::sync_tree_gap` already change-guards, so this just stores and
-    /// repaints.
-    pub fn set_lead_inset(&mut self, cx: &mut Cx, px: f64) {
-        self.lead_inset = px;
-        self.draw_bg.redraw(cx);
     }
 
     /// Colour for the active tab's accent bar, as dictated by the view that tab
@@ -1009,12 +935,6 @@ mod tests {
         assert_eq!(tab_width(true, 140.0, 250.0), 250.0);
         assert_eq!(tab_width(true, 140.0, 500.0), 320.0);
         assert_eq!(tab_width(false, 140.0, 500.0), 140.0);
-    }
-
-    #[test]
-    fn top_rule_starts_at_zero_in_wide_and_narrow_geometry() {
-        assert_eq!(rule_x_start(280.0, 280.0), 0.0);
-        assert_eq!(rule_x_start(32.0, 32.0), 0.0);
     }
 
     #[test]
@@ -1218,12 +1138,6 @@ mod tests {
         assert_ne!(generic, source);
         assert_eq!(open.tabs.len(), 2);
         assert!(open.tabs.iter().all(|tab| !tab.preview));
-    }
-
-    #[test]
-    fn top_rule_ends_at_the_tab_strip_edge() {
-        let strip_right = 970.0;
-        assert_eq!(rule_x_end(strip_right), strip_right);
     }
 
     #[test]

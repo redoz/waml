@@ -457,11 +457,17 @@ impl App {
             .widget(cx, ids!(menu_btn))
             .as_icon_button()
             .set_icon(cx, crate::icons::Icon::Menu);
-        self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, true);
-        self.ui
-            .widget(cx, ids!(tree_btn))
-            .as_icon_button()
-            .set_icon(cx, crate::icons::Icon::PanelLeft);
+        // Arms the toggle; `sync_dock_slots` seats it (panel corner while the
+        // column is open, tab row while it is collapsed) and sets the real
+        // glyph. The `PanelLeft` written here is only the first-frame reading,
+        // before any dock state has been sampled.
+        self.tree_toggle_mounted = true;
+        for id in [ids!(tree_btn), ids!(tree_btn_dock)] {
+            self.ui
+                .widget(cx, id)
+                .as_icon_button()
+                .set_icon(cx, crate::icons::Icon::PanelLeft);
+        }
         if let Some(mut doc_tabs) = self
             .ui
             .widget(cx, ids!(doc_tabs))
@@ -499,8 +505,6 @@ impl App {
                 tabs.set_narrow(cx, self.narrow);
             }
             self.dock_layout = ResponsiveDockLayout::default();
-            self.tree_gap_w = -1.0;
-            self.rule_overshoot = -1.0;
             self.sync_dock_slots(cx);
             return;
         }
@@ -523,8 +527,6 @@ impl App {
             tabs.set_narrow(cx, self.narrow);
         }
         self.dock_layout = ResponsiveDockLayout::default();
-        self.tree_gap_w = -1.0;
-        self.rule_overshoot = -1.0;
         self.sync_dock_slots(cx);
     }
 
@@ -627,7 +629,10 @@ impl App {
         // clean rather than inheriting the closed model's tabs (open_dir
         // rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
-        self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, false);
+        self.tree_toggle_mounted = false;
+        for id in [ids!(tree_btn), ids!(tree_btn_dock)] {
+            self.ui.widget(cx, id).set_visible(cx, false);
+        }
         // Replacing the host with no tabs applies hidden chrome through the
         // same transition path used when the final document closes.
         // Clear the stale model title: the caption bar keeps drawing (logo +

@@ -26,6 +26,46 @@ pub(super) fn dock_toggle_icon(
     }
 }
 
+/// The tree-column toggle exists twice: `tree_btn_dock` floats over the panel's
+/// top-right corner, and `tree_btn` leads the tab row. The docked one has
+/// nowhere to sit once the column collapses, so the tab-row twin takes over.
+///
+/// Returns `(dock_visible, row_slot_w)` -- the tab-row twin's SLOT WIDTH, not a
+/// flag, because a flag is what made the handoff jerk. The tab row sits inside
+/// `center_column`, whose left edge is the column's right edge, so the strip's
+/// offset is `left_slot + row_slot_w`. Toggling the twin on at the end of the
+/// collapse added its 32px in one frame and shoved every tab right.
+///
+/// Sizing the slot as `TREE_BTN_W * (1 - progress)` makes that sum
+/// `TREE_BTN_W + (tree_w - TREE_BTN_W) * progress`: continuous the whole way,
+/// landing on `tree_w` open (the twin gone, the docked one inside the column)
+/// and on `TREE_BTN_W` collapsed (the twin leading the row). Nothing jumps.
+///
+/// Narrow is the exception: the panel floats instead of reserving, so
+/// `left_slot` is always 0 and the strip never moves. The slot stays at full
+/// width there and both toggles can be live at once -- the floating panel is
+/// drawn over the tab row, so it covers the twin anyway.
+pub(super) fn tree_toggle_layout(
+    mounted: bool,
+    narrow: bool,
+    tree_body: f64,
+    tree_w: f64,
+) -> (bool, f64) {
+    if !mounted {
+        return (false, 0.0);
+    }
+    let dock_visible = tree_body > 0.0;
+    if narrow {
+        return (dock_visible, TREE_BTN_W);
+    }
+    let progress = if tree_w > 0.0 {
+        (tree_body / tree_w).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (dock_visible, TREE_BTN_W * (1.0 - progress))
+}
+
 pub(super) fn should_dismiss_narrow_dock(
     point: DVec2,
     canvas_rect: Rect,
@@ -59,13 +99,16 @@ pub(super) fn project_document_header(
     (segments, chrome.right_dock)
 }
 
-/// Footprint of the caption's tree-column toggle: the `tree_btn` DSL `width`
-/// (30, the burger's size) plus its 2px left margin, which seats it on the
-/// burger's centreline one row above (see the `tree_btn` comment). Kept here
-/// because `sync_tree_gap` has to subtract it from the tree column's width: the
-/// button leads the row, so the spacer after it is short by exactly the button's
-/// own footprint.
+/// Footprint of the tab row's tree-column toggle: the `tree_btn` DSL `width`
+/// (30, the caption burger's size) plus its 2px margin. `tree_btn_slot` is sized
+/// against this, so the twin's seat and the width it costs the row are one
+/// number (see `tree_toggle_layout`).
 pub(super) const TREE_BTN_W: f64 = 32.0;
+
+/// Height of `center_column`'s tab row (the `tab_row` DSL `height`). The
+/// inspector docks to the right of the same column and must start BELOW this
+/// band -- unlike the tree, which deliberately reaches up alongside it.
+pub(super) const TAB_ROW_H: f64 = 32.0;
 pub(super) const NARROW_ENTER_W: f64 = 640.0;
 pub(super) const NARROW_EXIT_W: f64 = 680.0;
 
@@ -407,11 +450,7 @@ impl App {
             // splitter strip -- NOT `Size::Fill`. A `Fill` sibling would be
             // deferred by makepad, leaving the splitter (which trails it in
             // `tree_host`) caching a pre-shift rect and silently unhittable.
-            if let Some(mut view) = self
-                .ui
-                .widget(cx, ids!(project_tree))
-                .borrow_mut::<crate::tree_panel::ProjectTree>()
-            {
+            if let Some(mut view) = self.ui.widget(cx, ids!(tree_body)).borrow_mut::<View>() {
                 view.walk.width = Size::Fixed(panel_body_w(layout.tree_body));
             }
             if let Some(mut view) = self
@@ -438,12 +477,43 @@ impl App {
                 }
             }
         }
-        let tree_button = self.ui.widget(cx, ids!(tree_btn)).as_icon_button();
-        tree_button.set_icon(
-            cx,
-            dock_toggle_icon(crate::dock::DockEdge::Left, tree_state),
+        // Both toggles carry the same glyph and active state -- they are one
+        // control that changes seat, not two controls -- so only visibility
+        // distinguishes them.
+        let (dock_visible, row_slot_w) = tree_toggle_layout(
+            self.tree_toggle_mounted,
+            self.narrow,
+            layout.tree_body,
+            crate::tree_panel::PROJECT_TREE_W,
         );
-        tree_button.set_active(cx, tree_state == DockState::Pinned);
+        // The slot is what keeps the handoff smooth, so it is written every
+        // frame of the motion -- outside the `dock_layout` change guard above,
+        // which only fires when the reservation itself changes.
+        if (row_slot_w - self.tree_btn_slot_w).abs() > 0.01 {
+            self.tree_btn_slot_w = row_slot_w;
+            if let Some(mut slot) = self
+                .ui
+                .widget(cx, ids!(tree_btn_slot))
+                .borrow_mut::<View>()
+            {
+                slot.walk.width = Size::Fixed(row_slot_w);
+            }
+            cx.redraw_all();
+        }
+        // Visible whenever the slot has opened at all: the button is right-
+        // aligned in a clipping slot, so it wipes out from behind the column's
+        // edge instead of popping in at full size.
+        let row_visible = row_slot_w > 0.5;
+        for (id, visible) in [(ids!(tree_btn_dock), dock_visible), (ids!(tree_btn), row_visible)] {
+            let button = self.ui.widget(cx, id);
+            button.set_visible(cx, visible);
+            let button = button.as_icon_button();
+            button.set_icon(
+                cx,
+                dock_toggle_icon(crate::dock::DockEdge::Left, tree_state),
+            );
+            button.set_active(cx, tree_state == DockState::Pinned);
+        }
         let header_height = self
             .ui
             .widget(cx, ids!(document_header))
@@ -457,7 +527,13 @@ impl App {
                 header.visible_height()
             })
             .unwrap_or(0.0);
-        let inspector_top = crate::dock::narrow_inspector_top(self.narrow, header_height);
+        // The inspector docks against `center_column`, whose first row is the
+        // tab strip -- so it always starts `TAB_ROW_H` down, and in narrow mode
+        // clears the breadcrumb header below that as well. (The tree column is
+        // the other side of this: it sits OUTSIDE `center_column` and
+        // deliberately reaches up into the tab row's band.)
+        let inspector_top =
+            TAB_ROW_H + crate::dock::narrow_inspector_top(self.narrow, header_height);
         if let Some(mut view) = self
             .ui
             .widget(cx, ids!(inspector_host))
@@ -471,7 +547,7 @@ impl App {
         if self.tree_motion.is_active() || self.inspector_motion.is_active() {
             self.dock_next_frame = cx.new_next_frame();
         }
-        self.sync_tree_gap(cx, layout.left_slot);
+        self.sync_chrome_seam(cx);
     }
 
     /// Seed the dock column widths from the project that just opened. Called
@@ -610,7 +686,7 @@ impl App {
     /// Measure the title row and push its width to `AgentMark`, which draws
     /// across it with `draw_abs` (it is mounted zero-width, so it cannot learn
     /// the row width from its own turtle). Same measure-and-push shape as
-    /// `sync_tree_gap` feeding `DocTabs::set_left_overshoot`.
+    /// `sync_agent_row` feeding `AgentMark::set_row_width`.
     ///
     /// The min/max/close cluster shares this row, and the marker is a
     /// RIGHT-floated pill, so the cluster's width is subtracted -- otherwise the
@@ -641,73 +717,38 @@ impl App {
         }
     }
 
-    /// Size the caption's `tree_gap` so the tab STRIP's left edge lands on the
-    /// tree column's right edge -- the invariant that makes the two-row caption
-    /// read as one chrome mass: the tabs start exactly where `field_bg` steps in
-    /// from full-width to column-width (the first card sits `TAB_LEFT_INSET`
-    /// inside that). `[T]` itself leads the row and never moves; only the cards
-    /// travel, because the control that moves them must not move itself.
+    /// Tell the chrome/content seam where the active doc tab meets it, so the
+    /// hairline breaks there rather than running unbroken over the selected
+    /// document (see `ChromeSeam::set_tab_break`).
     ///
-    /// `tree_w` is the column's width in window coordinates (the body starts at
-    /// x=0, so it is also the column's right edge). `tab_row` starts at x=0 and
-    /// `[T]` occupies the first `TREE_BTN_W` of it, so the gap is what is left
-    /// after the button; clamped at 0 so the collapsed
-    /// state collapses the spacer instead of going negative and the strip sits
-    /// immediately right of `[T]` (`TAB_LEFT_INSET` supplies the breathing gap).
-    ///
-    /// The row offset is read from the last-drawn `tab_row` rect rather than
-    /// hardcoded, so a reshaped caption can't silently desync the cards from the
-    /// column. That makes this a two-frame settle on the very first draw (the
-    /// rect is zero until `tab_row` has been laid out once), hence the guard is
-    /// on the computed gap rather than on `tree_w` alone.
-    ///
-    /// Same measured rects also drive the tab strip's top-rule left overshoot:
-    /// `doc_tabs` no longer begins at the window's left edge, and the rule must
-    /// reach back to `tab_row`'s left edge, which is the window edge in this
-    /// full-width caption hierarchy.
-    fn sync_tree_gap(&mut self, cx: &mut Cx, tree_w: f64) {
-        let row_x = self.ui.widget(cx, ids!(tab_row)).area().rect(cx).pos.x;
-        let tabs_x = self.ui.widget(cx, ids!(doc_tabs)).area().rect(cx).pos.x;
-        let overshoot = (tabs_x - row_x).max(0.0);
-        if (overshoot - self.rule_overshoot).abs() > 0.5 {
-            self.rule_overshoot = overshoot;
-            if let Some(mut tabs) = self
-                .ui
-                .widget(cx, ids!(doc_tabs))
-                .borrow_mut::<crate::doc_tabs::DocTabs>()
-            {
-                tabs.set_left_overshoot(cx, overshoot);
-            }
-        }
-        let gap = (tree_w - TREE_BTN_W).max(0.0);
-        if (gap - self.tree_gap_w).abs() <= 0.5 {
-            return;
-        }
-        self.tree_gap_w = gap;
-        // The first card's lead-in is a pure function of the gap, so it rides
-        // the same change guard. Open column (gap > 0): flush, so the card's
-        // left flank lands on the tree column's right edge -- the canvas's left
-        // edge -- and the chrome has no step in it. Collapsed (gap == 0): the
-        // strip butts against `[T]`, which needs the breathing room back.
-        if let Some(mut tabs) = self
+    /// Measured off `DocTabs`' last-drawn card rects rather than computed from
+    /// tab widths: the strip scrolls, elides and narrows, and only it knows
+    /// where a card actually landed. That makes this a one-frame settle after
+    /// any tab change, hence the change guard on the span itself.
+    fn sync_chrome_seam(&mut self, cx: &mut Cx) {
+        let span = self
             .ui
             .widget(cx, ids!(doc_tabs))
-            .borrow_mut::<crate::doc_tabs::DocTabs>()
+            .borrow::<crate::doc_tabs::DocTabs>()
+            .and_then(|tabs| tabs.active_card_span());
+        let changed = match (span, self.seam_break) {
+            (None, None) => false,
+            (Some((a0, a1, ac)), Some((b0, b1, bc))) => {
+                (a0 - b0).abs() > 0.5 || (a1 - b1).abs() > 0.5 || ac != bc
+            }
+            _ => true,
+        };
+        if !changed {
+            return;
+        }
+        self.seam_break = span;
+        if let Some(mut seam) = self
+            .ui
+            .widget(cx, ids!(chrome_seam))
+            .borrow_mut::<crate::chrome_seam::ChromeSeam>()
         {
-            let inset = if gap > 0.5 {
-                0.0
-            } else {
-                crate::doc_tabs::TAB_LEFT_INSET
-            };
-            tabs.set_lead_inset(cx, inset);
+            seam.set_tab_break(cx, span);
         }
-        // Same seam as the dock slots: no live-DSL setter in this fork, so
-        // mutate the public `walk` field and force a full relayout (the
-        // `flow: Right` row must reflow, not just this child).
-        if let Some(mut spacer) = self.ui.widget(cx, ids!(tree_gap)).borrow_mut::<View>() {
-            spacer.walk.width = Size::Fixed(gap);
-        }
-        cx.redraw_all();
     }
 
     /// Push diagram name / node count / zoom / active tool into the bottom

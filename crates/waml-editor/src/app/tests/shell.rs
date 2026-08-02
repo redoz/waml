@@ -1,5 +1,64 @@
-use super::super::shell::{dock_toggle_icon, panel_body_w};
+use super::super::shell::{dock_toggle_icon, panel_body_w, tree_toggle_layout, TREE_BTN_W};
 use super::*;
+
+const TREE_W: f64 = crate::tree_panel::PROJECT_TREE_W;
+
+/// With no model open neither seat of the tree-column toggle shows, and the
+/// tab-row slot costs the strip nothing.
+#[test]
+fn unmounted_tree_toggle_shows_neither_seat() {
+    assert_eq!(tree_toggle_layout(false, false, TREE_W, TREE_W), (false, 0.0));
+    assert_eq!(tree_toggle_layout(false, false, 0.0, TREE_W), (false, 0.0));
+}
+
+/// At rest the seats are exclusive: open puts the toggle inside the panel and
+/// costs the row nothing; collapsed hands it to the row at full width.
+#[test]
+fn tree_toggle_seats_are_exclusive_at_rest() {
+    assert_eq!(tree_toggle_layout(true, false, TREE_W, TREE_W), (true, 0.0));
+    assert_eq!(
+        tree_toggle_layout(true, false, 0.0, TREE_W),
+        (false, TREE_BTN_W)
+    );
+}
+
+/// The jerk this replaced: the tab strip sits at `left_slot + row_slot_w`, and
+/// that sum has to be continuous across the whole collapse. It runs from
+/// `TREE_W` (open) to `TREE_BTN_W` (collapsed) with no step anywhere -- in
+/// particular none at the handoff, where the old flag-based swap added
+/// `TREE_BTN_W` in a single frame.
+#[test]
+fn tab_strip_offset_is_continuous_through_the_collapse() {
+    let offset = |body: f64| body + tree_toggle_layout(true, false, body, TREE_W).1;
+    assert_eq!(offset(TREE_W), TREE_W);
+    assert_eq!(offset(0.0), TREE_BTN_W);
+
+    let steps = 280;
+    let mut prev = offset(TREE_W);
+    for i in (0..=steps).rev() {
+        let next = offset(TREE_W * i as f64 / steps as f64);
+        // Monotonically closing, and never by more than one column's worth of
+        // travel per step -- no frame moves the strip by the button's width.
+        assert!(next <= prev + 0.001, "offset grew at body {i}");
+        assert!(prev - next < 1.5, "offset jumped {} at body {i}", prev - next);
+        prev = next;
+    }
+}
+
+/// Narrow docks the panel as a floating overlay, so `left_slot` stays 0 and the
+/// strip never moves: the row slot holds full width throughout, and both seats
+/// may be live at once (the floating panel covers the row's twin).
+#[test]
+fn narrow_holds_the_row_slot_open() {
+    assert_eq!(
+        tree_toggle_layout(true, true, TREE_W, TREE_W),
+        (true, TREE_BTN_W)
+    );
+    assert_eq!(
+        tree_toggle_layout(true, true, 0.0, TREE_W),
+        (false, TREE_BTN_W)
+    );
+}
 
 #[test]
 fn dock_toggle_glyphs_show_the_next_action() {
@@ -221,6 +280,14 @@ fn mounted_dock_areas_follow_wide_and_narrow_production_layout() {
         wide.right_slot.pos.x,
     );
     assert!(drawn_header_right_dock_active(&mut cx, &app));
+    // The tree column starts at the very top of the body -- it sits OUTSIDE
+    // `center_column`, so the tab row's band is the tree's to use. The
+    // inspector, docked against that column, starts one tab row lower.
+    assert_near(wide.tree_panel.pos.y, wide.body.pos.y);
+    assert_near(
+        wide.inspector.pos.y,
+        wide.body.pos.y + super::super::shell::TAB_ROW_H,
+    );
 
     let narrow_size = dvec2(560.0, 700.0);
     let (mut cx, mut app) = mounted_production_shell();
@@ -252,8 +319,18 @@ fn mounted_dock_areas_follow_wide_and_narrow_production_layout() {
         false,
     );
     let narrow_absent = draw_mounted_dock(&mut cx, &app, narrow_size);
-    assert_near(narrow_absent.inspector.pos.y, narrow_absent.body.pos.y);
-    assert_near(narrow_absent.center.pos.y, narrow_absent.body.pos.y);
+    // With no breadcrumb header there is still the tab row to clear: the
+    // inspector docks against `center_column`, whose first row that is.
+    assert_near(
+        narrow_absent.inspector.pos.y,
+        narrow_absent.body.pos.y + super::super::shell::TAB_ROW_H,
+    );
+    // Same for the canvas stack: with the header collapsed the tab row is all
+    // that stands between it and the top of the body.
+    assert_near(
+        narrow_absent.center.pos.y,
+        narrow_absent.body.pos.y + super::super::shell::TAB_ROW_H,
+    );
 
     let (mut cx, mut app) = mounted_production_shell();
     configure_mounted_dock(
@@ -292,9 +369,10 @@ fn draw_tab_row(cx: &mut Cx, app: &App, size: DVec2) {
     draw_cx.end_pass(&pass);
 }
 
-/// The history pair belongs to the TAB ROW, not the per-document header,
-/// and sits past the tree column (after `tree_gap`) directly ahead of the
-/// tab strip.
+/// The history pair belongs to the TAB ROW, not the per-document header, and
+/// sits between the tree-column toggle and the tab strip. Drawn in the collapsed
+/// arrangement -- the toggle's tab-row seat, its slot opened to full width, as
+/// `tree_toggle_layout` sizes it once the column is gone.
 #[test]
 fn mounted_history_buttons_lead_the_tab_strip_past_the_tree_column() {
     let size = dvec2(600.0, 32.0);
@@ -305,6 +383,16 @@ fn mounted_history_buttons_lead_the_tab_strip_past_the_tree_column() {
         ids!(history_forward_btn),
     ] {
         app.ui.widget(&cx, id).set_visible(&mut cx, true);
+    }
+    // The slot is runtime-sized (0 in the DSL, so an open column costs the row
+    // nothing); without this the button draws clipped to zero and lands on top
+    // of the back button.
+    if let Some(mut slot) = app
+        .ui
+        .widget(&cx, ids!(tree_btn_slot))
+        .borrow_mut::<makepad_widgets::View>()
+    {
+        slot.walk.width = Size::Fixed(TREE_BTN_W);
     }
 
     draw_tab_row(&mut cx, &app, size);

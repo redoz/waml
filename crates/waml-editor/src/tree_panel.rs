@@ -926,6 +926,11 @@ impl Widget for ProjectTree {
                 .draw_abs(cx, dvec2(x.max(rect.pos.x + PAD), y), msg);
         }
 
+        // NOTE: the column's right edge is NOT drawn here. `PanelSplitter` sits
+        // between this body and the canvas and owns that seam -- the body ends
+        // `SPLITTER_W` short of the column edge, so a hairline on THIS rect
+        // would float 6px inside the panel rather than bounding it.
+
         DrawStep::done()
     }
 }
