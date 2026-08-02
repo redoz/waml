@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use waml::analysis::{prepare_candidate, PreviousAnalyses};
@@ -13,6 +13,7 @@ mod commands;
 mod io;
 mod lsp;
 mod ops_dto;
+mod site;
 mod web_artifact;
 
 #[derive(Parser)]
@@ -141,6 +142,30 @@ enum Command {
         /// Exported const name; required when `--format ts`.
         #[arg(long)]
         export_name: Option<String>,
+    },
+    /// Export a model in a self-contained form.
+    Export {
+        #[command(subcommand)]
+        target: ExportCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExportCommand {
+    /// Write a static site: the web editor plus this model's `bundle.waml`.
+    ///
+    /// The result is plain files with no server behind them -- open
+    /// `index.html` over HTTP and the editor boots the bundle, editable and
+    /// re-exportable from the browser.
+    Site {
+        /// Directory to recursively collect `*.md` from.
+        dir: PathBuf,
+        /// Where to write the site.
+        #[arg(long, default_value = "./site")]
+        out: PathBuf,
+        /// Overwrite the site's own files in a non-empty output directory.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -445,6 +470,9 @@ fn main() {
             out,
             export_name,
         } => run_bundle(&dir, format, out, export_name),
+        Command::Export {
+            target: ExportCommand::Site { dir, out, force },
+        } => run_export_site(&dir, &out, force),
     };
     std::process::exit(code);
 }
@@ -898,6 +926,48 @@ fn run_bundle(
     0
 }
 
+/// Write the web editor and this directory's model out as a static site.
+///
+/// The editor comes from the binary itself, so a build without `embed-web`
+/// has nothing to write and says so rather than producing a site that is only
+/// half there.
+fn run_export_site(dir: &PathBuf, out: &Path, force: bool) -> i32 {
+    let artifact = match web_artifact::embedded_artifact() {
+        Ok(artifact) => artifact,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let files = match io::read_files(std::slice::from_ref(dir)) {
+        Ok(files) => files,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let bundle = match encode_bundle_envelope(&files) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let site = match site::assemble_site(artifact, site::SiteSource::Static(bundle.into_bytes())) {
+        Ok(site) => site,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    if let Err(error) = site::write_site(out, &site, force) {
+        eprintln!("waml: {error}");
+        return 2;
+    }
+    println!("wrote {} files to {}", site.len(), out.display());
+    0
+}
+
 fn run_list(ty: &Option<String>, q: &QueryArgs) -> i32 {
     let bundle = match io::read_bundle_rooted(std::slice::from_ref(&q.dir), false) {
         Ok(bundle) => bundle,
@@ -1060,6 +1130,37 @@ mod tests {
                 assert_eq!(export_name.as_deref(), Some("myBundle"));
             }
             _ => panic!("expected bundle"),
+        }
+    }
+
+    #[test]
+    fn parses_export_site_with_out_and_force() {
+        let cli =
+            Cli::try_parse_from(["waml", "export", "site", "docs", "--out", "out", "--force"])
+                .unwrap();
+        match cli.command {
+            Command::Export {
+                target: ExportCommand::Site { dir, out, force },
+            } => {
+                assert_eq!(dir, PathBuf::from("docs"));
+                assert_eq!(out, PathBuf::from("out"));
+                assert!(force);
+            }
+            _ => panic!("expected export site"),
+        }
+    }
+
+    #[test]
+    fn parses_export_site_defaults_to_a_site_directory() {
+        let cli = Cli::try_parse_from(["waml", "export", "site", "docs"]).unwrap();
+        match cli.command {
+            Command::Export {
+                target: ExportCommand::Site { out, force, .. },
+            } => {
+                assert_eq!(out, PathBuf::from("./site"));
+                assert!(!force);
+            }
+            _ => panic!("expected export site"),
         }
     }
 

@@ -15,7 +15,7 @@ default = []
 # Embed the CI-built web editor so `waml export site` can write a complete,
 # self-contained site. Off by default: an ordinary build and `cargo test` must
 # never need a WASM toolchain or a prebuilt artifact.
-embed-web = ["dep:brotli-decompressor"]
+embed-web = []
 
 [dependencies]
 waml = { path = "../waml" }
@@ -25,4 +25,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tower-lsp = { workspace = true }
-brotli-decompressor = { version = "5", optional = true }
+brotli = "7"

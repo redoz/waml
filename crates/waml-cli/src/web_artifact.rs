@@ -4,10 +4,6 @@
 //! writes them out. `waml export site` writes raw files: only a future `waml
 //! serve` may keep the compressed form, and only as HTTP content encoding.
 
-// The site assembler behind `waml export site` is the only consumer; until it
-// lands, nothing in the binary reads these.
-#![allow(dead_code)]
-
 use std::fmt;
 
 /// One file of the built web editor, kept in its compressed form.

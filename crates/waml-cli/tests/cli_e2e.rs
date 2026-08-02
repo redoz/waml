@@ -524,3 +524,31 @@ fn multi_document_fmt_stdout_is_a_v1_envelope() {
         ]
     );
 }
+
+/// Without `embed-web` the binary has no editor to write, and must say how to
+/// get one instead of writing a site that is only half there.
+///
+/// The gate builds with `--all-features`, where the feature is on but no
+/// artifact was packaged; that build still has an empty table, so the same
+/// diagnostic is correct for both.
+#[test]
+fn export_site_without_an_embedded_editor_explains_itself() {
+    let d = tmp();
+    std::fs::write(
+        d.join("order.md"),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+    )
+    .unwrap();
+    let out = bin()
+        .args(["export", "site"])
+        .arg(&d)
+        .arg("--out")
+        .arg(d.join("site"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("--features embed-web"), "{stderr}");
+    assert!(stderr.contains("WAML_WEB_EMBED_DIR"), "{stderr}");
+    assert!(!d.join("site").exists());
+}
