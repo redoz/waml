@@ -1,7 +1,7 @@
 //! World-space edge label placement.
 
 use super::sizing::{self, Font};
-use super::wire::Size;
+use super::wire::{Rect, Size};
 
 /// The face edge labels are drawn in. The renderer's `target_size` is
 /// `8.0 * zoom`, so 8.0 is the world-space size and both agree at zoom 1.
@@ -39,6 +39,205 @@ pub fn measure(text: &str, cfg: &LabelConfig) -> Size {
     }
 }
 
+/// Which label on an edge this is. The two terminals carry role/multiplicity
+/// text and belong to one end; the mid-route label carries the relationship
+/// name and belongs to the whole route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelSlot {
+    TerminalFrom,
+    TerminalTo,
+    MidRoute,
+}
+
+/// One label to place: which edge (index into the route list), which slot, and
+/// the already-composed text. Text composition is display policy and stays with
+/// the frontend; the solver only ever sees the final string.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelRequest {
+    pub edge: usize,
+    pub slot: LabelSlot,
+    pub text: String,
+}
+
+/// One possible position for a label.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Candidate {
+    /// World box the text would occupy.
+    pub rect: Rect,
+    /// Point on the route this candidate hangs off, for the leader-line stage
+    /// and for the renderer's own head clearance.
+    pub attach: (f64, f64),
+    /// True when this is the preferred side (above a horizontal run, right of
+    /// a vertical one). Used to break near-ties so labels do not flip sides
+    /// between two layouts that score the same.
+    pub side_is_canonical: bool,
+    /// How far this slid from the slot's ideal position, in world units.
+    pub slide_cost: f64,
+}
+
+/// Fraction-of-band slide positions offered to a terminal label, measured from
+/// its own endpoint. Bounded: slid too far and the text stops reading as
+/// belonging to that end.
+const TERMINAL_SLIDES: [f64; 4] = [0.0, 0.15, 0.30, 0.45];
+/// Arc-length positions offered to a mid-route label, as a fraction of total
+/// route length. Centred on the true middle.
+const MID_SLIDES: [f64; 5] = [0.50, 0.42, 0.58, 0.35, 0.65];
+
+pub fn candidates(
+    points: &[(f64, f64)],
+    slot: LabelSlot,
+    size: Size,
+    cfg: &LabelConfig,
+) -> Vec<Candidate> {
+    let total = polyline_length(points);
+    if points.len() < 2 || total <= f64::EPSILON {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let slides: &[f64] = match slot {
+        LabelSlot::MidRoute => &MID_SLIDES,
+        _ => &TERMINAL_SLIDES,
+    };
+
+    for &s in slides {
+        // Terminal slots measure their fraction from their own end of the
+        // route; mid-route measures from the start.
+        let t = match slot {
+            LabelSlot::TerminalFrom => s,
+            LabelSlot::TerminalTo => 1.0 - s,
+            LabelSlot::MidRoute => s,
+        };
+        let Some((attach, tangent)) = point_at_fraction(points, t) else {
+            continue;
+        };
+        let horizontal = tangent.0.abs() >= tangent.1.abs();
+        for canonical in [true, false] {
+            let rect = rect_for(attach, tangent, horizontal, canonical, size, slot, cfg);
+            out.push(Candidate {
+                rect,
+                attach,
+                side_is_canonical: canonical,
+                slide_cost: s * total,
+            });
+        }
+    }
+    out
+}
+
+/// Sum of segment lengths of a polyline.
+fn polyline_length(points: &[(f64, f64)]) -> f64 {
+    points
+        .windows(2)
+        .map(|segment| (segment[1].0 - segment[0].0).hypot(segment[1].1 - segment[0].1))
+        .sum()
+}
+
+/// Walks the polyline's arc length to `t * total` (t in `[0, 1]`) and returns
+/// the point there plus the UNIT tangent of the segment it landed on. `None`
+/// for a degenerate (empty, single-point, or zero-length) polyline.
+fn point_at_fraction(points: &[(f64, f64)], t: f64) -> Option<((f64, f64), (f64, f64))> {
+    let total = polyline_length(points);
+    if points.len() < 2 || total <= f64::EPSILON {
+        return None;
+    }
+    let t = t.clamp(0.0, 1.0);
+    let mut remaining = t * total;
+    for segment in points.windows(2) {
+        let dx = segment[1].0 - segment[0].0;
+        let dy = segment[1].1 - segment[0].1;
+        let length = dx.hypot(dy);
+        if length <= f64::EPSILON {
+            continue;
+        }
+        if remaining <= length {
+            let fraction = remaining / length;
+            let point = (segment[0].0 + dx * fraction, segment[0].1 + dy * fraction);
+            let tangent = (dx / length, dy / length);
+            return Some((point, tangent));
+        }
+        remaining -= length;
+    }
+    // Rounding can leave a hair of remaining length after the loop; land on
+    // the final segment's endpoint with its tangent.
+    let last = points.windows(2).last()?;
+    let dx = last[1].0 - last[0].0;
+    let dy = last[1].1 - last[0].1;
+    let length = dx.hypot(dy);
+    if length <= f64::EPSILON {
+        return None;
+    }
+    Some((last[1], (dx / length, dy / length)))
+}
+
+/// World box for one candidate: lifted `cfg.gap` off the stroke on the chosen
+/// side, and grown along the route axis so a terminal label never grows back
+/// over its own endpoint (and the card sitting there).
+///
+/// Mirrors `LabelAlign` in `waml-editor/src/edge_labels.rs::aligned_text_pos`:
+/// a horizontal route lifts the text above or below it; a vertical route steps
+/// the text aside to the right or left.
+fn rect_for(
+    attach: (f64, f64),
+    tangent: (f64, f64),
+    horizontal: bool,
+    canonical: bool,
+    size: Size,
+    slot: LabelSlot,
+    cfg: &LabelConfig,
+) -> Rect {
+    let (ax, ay) = attach;
+    if horizontal {
+        // Canonical side is above the stroke; the other candidate offers below.
+        let y = if canonical {
+            ay - cfg.gap - size.h
+        } else {
+            ay + cfg.gap
+        };
+        let x = match slot {
+            LabelSlot::TerminalFrom => ax,
+            LabelSlot::TerminalTo => ax - size.w,
+            LabelSlot::MidRoute => ax - size.w * 0.5,
+        };
+        Rect {
+            x,
+            y,
+            w: size.w,
+            h: size.h,
+        }
+    } else {
+        // Canonical side is right of the stroke; the other candidate offers left.
+        let x = if canonical {
+            ax + cfg.gap
+        } else {
+            ax - cfg.gap - size.w
+        };
+        let y = match slot {
+            LabelSlot::TerminalFrom => {
+                if tangent.1 >= 0.0 {
+                    ay
+                } else {
+                    ay - size.h
+                }
+            }
+            LabelSlot::TerminalTo => {
+                if tangent.1 >= 0.0 {
+                    ay - size.h
+                } else {
+                    ay
+                }
+            }
+            LabelSlot::MidRoute => ay - size.h * 0.5,
+        };
+        Rect {
+            x,
+            y,
+            w: size.w,
+            h: size.h,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,5 +259,82 @@ mod tests {
         let m = measure("", &LabelConfig::default());
         assert_eq!(m.w, 0.0);
         assert!(m.h > 0.0);
+    }
+
+    #[test]
+    fn terminal_candidates_stay_near_their_own_endpoint() {
+        let cfg = LabelConfig::default();
+        let size = Size { w: 40.0, h: 10.0 };
+        let route = [(0.0, 0.0), (200.0, 0.0)];
+
+        let from = candidates(&route, LabelSlot::TerminalFrom, size, &cfg);
+        let to = candidates(&route, LabelSlot::TerminalTo, size, &cfg);
+
+        assert!(!from.is_empty() && !to.is_empty());
+        // Each terminal set clusters at its OWN end, never past the middle.
+        for c in &from {
+            assert!(c.attach.0 < 100.0, "from candidates stay in the near half");
+        }
+        for c in &to {
+            assert!(c.attach.0 > 100.0, "to candidates stay in the far half");
+        }
+    }
+
+    #[test]
+    fn every_candidate_clears_the_stroke_by_the_gap() {
+        let cfg = LabelConfig::default();
+        let size = Size { w: 40.0, h: 10.0 };
+        // Horizontal route along y = 50: no candidate rect may touch that line.
+        for c in candidates(
+            &[(0.0, 50.0), (200.0, 50.0)],
+            LabelSlot::MidRoute,
+            size,
+            &cfg,
+        ) {
+            let clears_above = c.rect.y + c.rect.h <= 50.0 - cfg.gap + 1e-9;
+            let clears_below = c.rect.y >= 50.0 + cfg.gap - 1e-9;
+            assert!(
+                clears_above || clears_below,
+                "rect sits on the stroke: {:?}",
+                c.rect
+            );
+        }
+    }
+
+    #[test]
+    fn both_sides_of_the_stroke_are_offered() {
+        let cfg = LabelConfig::default();
+        let size = Size { w: 40.0, h: 10.0 };
+        let cs = candidates(
+            &[(0.0, 50.0), (200.0, 50.0)],
+            LabelSlot::MidRoute,
+            size,
+            &cfg,
+        );
+        assert!(cs.iter().any(|c| c.rect.y < 50.0), "some candidate above");
+        assert!(cs.iter().any(|c| c.rect.y > 50.0), "some candidate below");
+        assert!(
+            cs.iter().any(|c| c.side_is_canonical),
+            "canonical side offered"
+        );
+    }
+
+    #[test]
+    fn candidate_generation_is_deterministic() {
+        let cfg = LabelConfig::default();
+        let size = Size { w: 40.0, h: 10.0 };
+        let route = [(0.0, 0.0), (60.0, 0.0), (60.0, 90.0)];
+        let a = candidates(&route, LabelSlot::MidRoute, size, &cfg);
+        let b = candidates(&route, LabelSlot::MidRoute, size, &cfg);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_degenerate_route_yields_no_candidates() {
+        let cfg = LabelConfig::default();
+        let size = Size { w: 40.0, h: 10.0 };
+        assert!(candidates(&[], LabelSlot::MidRoute, size, &cfg).is_empty());
+        assert!(candidates(&[(1.0, 1.0)], LabelSlot::MidRoute, size, &cfg).is_empty());
+        assert!(candidates(&[(1.0, 1.0), (1.0, 1.0)], LabelSlot::MidRoute, size, &cfg).is_empty());
     }
 }
