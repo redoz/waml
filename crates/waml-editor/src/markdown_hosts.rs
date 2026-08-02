@@ -454,7 +454,7 @@ fn approved_path(
 
     let document_path = Path::new(document.as_str());
     let document_dir = document_path.parent().unwrap_or_else(|| Path::new(""));
-    let candidate = canonical_root.join(document_dir).join(relative);
+    let candidate = lexically_normalized(&canonical_root.join(document_dir).join(relative));
     let parent = candidate
         .parent()
         .ok_or_else(|| Arc::<str>::from("Markdown image destination has no parent directory"))?;
@@ -472,6 +472,38 @@ fn approved_path(
         return Err("Markdown image destination leaves the bundle root".into());
     }
     Ok(canonical)
+}
+
+/// Collapse `.` and `..` textually, without consulting the filesystem.
+///
+/// `fs::canonicalize` is called below on this path's parent, and the two
+/// platforms disagree about what that means for a `..` segment. Windows
+/// normalises `..` before the syscall, so `<root>/docs/..` resolves to `<root>`
+/// whether or not `docs` exists. Linux uses `realpath`, which requires every
+/// component to exist and so fails with `NotFound` on the same input. Without
+/// this, a Markdown image reaching upward with `../` resolves on Windows and
+/// breaks on Linux whenever an intermediate directory is absent.
+///
+/// Collapsing here rather than trusting the OS makes both platforms agree.
+/// It is safe against traversal because the caller still canonicalises the
+/// result and rejects anything that escapes the bundle root -- this only
+/// decides which path gets that check, never whether it happens. A `..` with
+/// nothing to pop is kept, so the containment check still sees the escape.
+fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut parts: Vec<Component<'_>> = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => match parts.last() {
+                Some(Component::Normal(_)) => {
+                    parts.pop();
+                }
+                _ => parts.push(part),
+            },
+            other => parts.push(other),
+        }
+    }
+    parts.iter().collect()
 }
 
 fn has_uri_scheme(destination: &str) -> bool {
@@ -599,6 +631,26 @@ mod tests {
             }
             std::thread::yield_now();
         }
+    }
+
+    #[test]
+    fn lexical_normalization_collapses_dot_segments_without_touching_the_filesystem() {
+        let root = fixture_root();
+        // The case that broke CI: `docs` does not exist on disk, so on Linux
+        // `canonicalize` of the un-normalised parent fails where Windows had
+        // silently collapsed it. This assertion runs identically on both.
+        assert_eq!(
+            lexically_normalized(&root.join("docs").join("../tiny.svg")),
+            root.join("tiny.svg")
+        );
+        assert_eq!(
+            lexically_normalized(&root.join("./a/./b/../c.svg")),
+            root.join("a").join("c.svg")
+        );
+        // A `..` with nothing left to pop must survive, so the caller's
+        // containment check still sees the escape rather than a tidied path.
+        let escaped = lexically_normalized(&root.join("../../outside.svg"));
+        assert!(!escaped.starts_with(&root), "{escaped:?} must escape root");
     }
 
     #[test]
