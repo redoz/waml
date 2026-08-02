@@ -19,13 +19,16 @@ identical to the original.
 
 - Bundle export exists in the editor, and the editor loads exported bundles
   back.
-- `waml export site` is specified in
-  `docs/superpowers/plans/2026-08-02-waml-export-site.md`, which also covers
-  embedded brotli-compressed assets, browser boot precedence
-  (`#w1.` then `?api=` then `?bundle=` then the start screen), and the
-  burger-menu **Export WAML bundle…** command. It depends on
-  [Bundle Envelope v1](./share-a-link.md).
-- That plan explicitly defers `export svg`, `export json`, Mermaid output,
-  IndexedDB, service workers, and `file://` support. Image export therefore has
-  no home yet and remains the obvious first post-MVP feature.
+- `waml export site` writes raw files. The editor's own assets are embedded and
+  compressed in the command; there is no flag to point it at an artifact
+  directory, because an artifact assembled anywhere but the pinned build is a
+  different product than the one that was tested.
+- The browser picks its startup source in a fixed order: the URL fragment
+  first, then an API query, then a bundle query, then the start screen. An edit
+  made in an exported site updates the fragment in place and never rewrites the
+  bundle file it was served from.
+- The export command in the editor is one menu row, in both forms. A native
+  build opens a save dialog; a browser build triggers a download.
+- Image export does not exist and has no home in any goal. It is the obvious
+  first post-MVP feature and the one most readers will ask for first.
 - `MVP: no`: the dogfood bar is reading and authoring, not extraction.

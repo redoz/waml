@@ -19,9 +19,12 @@ loopback.
 
 ## Notes
 
-- Specified in full: `docs/superpowers/plans/2026-07-25-waml-serve.md` and its
-  design. Nothing here is an open question, only unbuilt.
-- The plan names the native `save_backend` stub as the hole this fills, which
-  makes this goal a dependency of web-form authoring rather than a convenience.
+- The web form has no way to write to disk today; its save backend is a stub.
+  This command is that backend. Until it exists, authoring in a browser is
+  reading with extra steps, which makes this a dependency of web-form
+  authoring rather than a convenience.
+- The served editor and the published editor are the same artifact. A serve
+  command that shipped its own build would be a second product to keep
+  correct.
 - Loopback only. A serve command that binds a public interface is a different
   product with a security model this project has not designed.

@@ -20,11 +20,12 @@ runs.
   Rust.
 - The endpoint-on-border invariant is enforced by a two-pass connect step.
 - Crossing minimisation and parallel-run separation are the unbuilt parts.
-- Planned in `docs/superpowers/plans/2026-07-22-orthogonal-edge-router.md` — a
-  hand-rolled Manhattan router returning obstacle-avoiding polylines as
-  `Solved.routes` beside the rectangles — and
-  `2026-07-12-straighten-edges-shared-band.md`, which draws a straight line
-  whenever both nodes' facing border strips can be hit head-on.
-- `2026-08-03-edge-label-route-pressure.md` couples routing to labelling: the
-  router should prefer paths that leave room for their labels. Route and label
-  quality cannot be finished independently.
+- The solver returns routes as polylines alongside the rectangles. The renderer
+  draws what it is given and decides nothing about the path.
+- A jog that a straight line could have avoided is a defect. When both nodes'
+  facing border strips can be hit head-on by one straight segment, that is the
+  route; it reverts to a stepped path only when the nodes slide out of that
+  shared band.
+- Routing and labelling are one problem. The router prefers paths that leave
+  room for the label the edge will carry, so route quality and
+  [label quality](./place-the-labels.md) cannot be finished independently.

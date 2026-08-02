@@ -17,10 +17,14 @@ and the threshold has hysteresis so a drag near it does not flicker.
 
 ## Notes
 
-- Specified in `docs/superpowers/plans/2026-07-26-responsive-viewport-chrome.md`
-  as one hysteretic wide/narrow chrome mode.
-- The narrow form moves the tree and inspector above the view; the wide form
-  puts them at the side.
+- There is one chrome mode with two states, wide and narrow, not a spectrum of
+  layouts. The narrow form moves the tree and inspector above the view; the
+  wide form puts them at the side.
+- The transition is hysteretic: the width that switches to narrow is smaller
+  than the width that switches back to wide. Without that gap, a drag that
+  hovers near the threshold thrashes.
+- Crossing the threshold changes only where chrome is drawn. It must not close
+  a document, change the active tab, or reset which panels the reader opened.
 - Docked collapsible panels, dock splitters, and a two-row caption bar all
   exist and interact with this. Chrome changes here have a history of blanking
   text when a fixed child fills a fixed parent.

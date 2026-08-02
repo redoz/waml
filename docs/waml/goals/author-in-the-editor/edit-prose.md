@@ -15,29 +15,29 @@ the result round-trips byte-for-byte through the parser when unchanged.
 
 ## Notes
 
-- This is the most heavily planned area in the repository. Four plans cover it,
-  in dependency order:
-  - `2026-07-31-markdown-syntax-platform.md` — one lossless, revisioned
-    `waml-syntax` tree as the incremental authority for CommonMark 0.31.2, the
-    five named GFM extensions, WAML frontmatter, and WAML section islands.
-  - `2026-07-31-markdown-editor-foundation.md` — a standalone WAML-owned
-    editing crate: immutable revisioned snapshots, exact edit transactions,
-    Unicode-safe selections, input method support, variable-metric layout, and
-    viewport virtualization.
-  - `2026-07-31-markdown-editor-integration.md` — replacing the read-only
-    source surface, and making analysis, canvas, persistence, navigation,
-    assets, and the language server consume one revision.
-  - `2026-07-31-markdown-presentation-motion.md` — visible syntax, semantic
-    typography, embedded blocks, and a shared deterministic 100 ms geometry
-    transition. This one has landed commits against tasks 1 through 8.
-- `2026-07-31-markdown-bracket-activation.md` covers nested link and image
-  labels with CommonMark bracket activation.
-- Because the GFM extensions are named in the syntax platform plan, table
-  *parsing* is scoped. Table *editing* ergonomics are not, and still deserve a
-  leaf once the integration plan lands.
+- The accepted dialect is CommonMark 0.31.2 plus five GFM extensions —
+  tables, task lists, strikethrough, autolinks, and footnotes — plus WAML
+  frontmatter and WAML section islands. Anything outside that is not Markdown
+  this tool claims to handle.
+- One lossless, revisioned syntax tree is the incremental authority for that
+  dialect. The editor, the analysis, the canvas, persistence, navigation, and
+  the language server all read the same revision. A surface holding its own
+  copy of the text is how an editor and a diagram come to disagree about what
+  the document says.
+- The editing model is transactional over immutable snapshots: an edit is an
+  exact transaction against a known revision, not a mutation of a buffer.
+  Selections are Unicode-safe, input methods work, layout handles variable
+  metrics, and the viewport is virtualized so document length does not decide
+  frame time.
+- Source is presented, not exposed. Syntax stays visible, typography carries
+  meaning, embedded blocks render in place, and geometry changes animate over
+  one shared, deterministic duration rather than snapping.
+- Table *parsing* is in the dialect above. Table *editing* — moving between
+  cells, adding a row, keeping the pipes aligned — is not, and deserves its own
+  leaf. Editing a table as raw pipes is technically sufficient and practically
+  miserable.
 - Byte-fidelity on untouched regions is owned by [Round-Trip
   Losslessly](../trust-the-content/round-trip-losslessly.md), not here.
-- The status above is `partial` on the strength of those landed motion tasks.
-  The audit should establish how much of foundation and integration is real
-  before anyone plans more work here — this is the single most likely place for
-  the tree to be wrong in either direction.
+- This is the single most likely place for the tree to be wrong in either
+  direction. Presentation work has landed; how much of the editing foundation
+  is real is the first thing an audit should settle.

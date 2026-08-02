@@ -30,51 +30,45 @@ Every status in this table is a first-pass guess. `Evidence` reads
 | Feature | Status | MVP | Evidence |
 | --- | --- | --- | --- |
 | `calls` — synchronous message | done | yes | unverified |
-| `calls ... async` — asynchronous message | planned | yes | in the approved slice |
-| `returns` — reply message | partial | yes | replaces the old `replies` spelling |
-| `signals` — signal message | planned | yes | in the approved slice |
-| `creates` — create message | planned | no | in the approved slice |
-| `destroys` — destroy message | planned | no | in the approved slice |
+| `calls ... async` — asynchronous message | planned | yes | [language](./language.md) |
+| `returns` — reply message | partial | yes | [language](./language.md) |
+| `signals` — signal message | planned | yes | [language](./language.md) |
+| `creates` — create message | planned | no | [language](./language.md) |
+| `destroys` — destroy message | planned | no | [language](./language.md) |
 | Self message | partial | yes | unverified |
 | Message arguments | partial | no | unverified |
 | Message return value | partial | no | unverified |
-| Lost and found message | horizon | no | excluded from the approved slice |
+| Lost and found message | horizon | no | [excluded](./language.md) |
 
 ## Structure
 
 | Feature | Status | MVP | Evidence |
 | --- | --- | --- | --- |
-| `alt` fragment — one or more `when`, optional final `else` | planned | yes | in the approved slice |
-| `opt` fragment — exactly one `when` | planned | yes | in the approved slice |
-| `loop` fragment — exactly one `when` | planned | yes | in the approved slice |
-| `break` fragment — exactly one `when` | planned | no | in the approved slice |
-| `par` fragment — two or more `branch` | planned | no | in the approved slice |
-| `critical` fragment — exactly one `branch` | planned | no | in the approved slice |
-| `assert` fragment — exactly one `branch` | planned | no | in the approved slice |
-| `neg` fragment — exactly one `branch` | planned | no | in the approved slice |
-| Nested fragments | planned | no | in the approved slice |
-| Guard on a fragment operand | planned | yes | in the approved slice |
-| `ref` — interaction use of another interaction | planned | no | in the approved slice |
-| Gate at the interaction boundary, with bindings | planned | no | `## Gates` section, in the approved slice |
-| `outside` as a boundary endpoint | planned | no | in the approved slice |
+| `alt` fragment — one or more `when`, optional final `else` | planned | yes | [language](./language.md) |
+| `opt` fragment — exactly one `when` | planned | yes | [language](./language.md) |
+| `loop` fragment — exactly one `when` | planned | yes | [language](./language.md) |
+| `break` fragment — exactly one `when` | planned | no | [language](./language.md) |
+| `par` fragment — two or more `branch` | planned | no | [language](./language.md) |
+| `critical` fragment — exactly one `branch` | planned | no | [language](./language.md) |
+| `assert` fragment — exactly one `branch` | planned | no | [language](./language.md) |
+| `neg` fragment — exactly one `branch` | planned | no | [language](./language.md) |
+| Nested fragments | planned | no | [language](./language.md) |
+| Guard on a fragment operand | planned | yes | [language](./language.md) |
+| `ref` — interaction use of another interaction | planned | no | [language](./language.md) |
+| Gate at the interaction boundary, with bindings | planned | no | [language](./language.md) |
+| `outside` as a boundary endpoint | planned | no | [language](./language.md) |
 | Note anchored to a message | partial | no | unverified |
-| Time and duration constraint | horizon | no | excluded from the approved slice |
-| Coregion, continuation, general ordering | horizon | no | excluded from the approved slice |
-| `strict`, `seq`, `ignore`, `consider` fragments | horizon | no | excluded from the approved slice |
-| Part decomposition, state invariant, execution specification | horizon | no | excluded from the approved slice |
+| Time and duration constraint | horizon | no | [excluded](./language.md) |
+| Coregion, continuation, general ordering | horizon | no | [excluded](./language.md) |
+| `strict`, `seq`, `ignore`, `consider` fragments | horizon | no | [excluded](./language.md) |
+| Part decomposition, state invariant, execution specification | horizon | no | [excluded](./language.md) |
 
 ## Notes
 
-- Almost every `planned` row above is already specified. An approved plan,
-  `docs/superpowers/plans/2026-08-02-waml-sequence-language-completeness.md`,
-  covers the whole sequence language as one vertical slice from lossless syntax
-  through solver output. Rows marked `in the approved slice` are that plan's
-  scope; rows marked `excluded` are constructs it deliberately refuses. This
-  cut should not diverge from that plan — change the plan first.
-- That plan also fixes the message vocabulary to exactly `calls`, `returns`,
-  `signals`, `creates`, and `destroys`, with `async` valid only after the
-  target of `calls`. `replies`, `sends`, and the colon call form are rejected
-  with `UnsupportedSequenceForm`.
+- The [Sequence Language](./language.md) states what each row above means in
+  authored source. A row here says whether it works; that document says what
+  "works" is. Rows marked `excluded` are constructs the language refuses on
+  purpose — adding one means changing that document first.
 - Combined fragments are the largest single gap, and the reason most real
   sequence diagrams cannot yet be drawn. `alt`, `opt`, and `loop` are the three
   that matter for the dogfood bar.
@@ -83,5 +77,7 @@ Every status in this table is a first-pass guess. `Evidence` reads
   Expect work to land in [Shared](../shared/) as much as here.
 - The interaction substrate is separate from the flow substrate that Activity
   and State Machine share, so nothing here comes free from those kinds.
-- The plan explicitly does not change the visual sequence editor. Authoring
-  these constructs on the canvas is a later goal, not part of that slice.
+- Reading and authoring are separate. A construct can be `done` here — parsed,
+  resolved, drawn — while still being unauthorable on the canvas. Canvas
+  authoring is owned by [Draw on the
+  Canvas](../../author-in-the-editor/draw-on-the-canvas.md).
