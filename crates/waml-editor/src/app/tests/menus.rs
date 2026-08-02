@@ -1,3 +1,4 @@
+use super::super::shell::{next_narrow, open_overlay_contains, should_dismiss_narrow_dock};
 use super::*;
 
 fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) -> DocTab {

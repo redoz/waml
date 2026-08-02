@@ -1,4 +1,5 @@
 use super::*;
+use super::super::shell::dock_toggle_icon;
 
 #[test]
 fn dock_toggle_glyphs_show_the_next_action() {

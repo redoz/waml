@@ -356,47 +356,6 @@ impl App {
         }
     }
 
-    /// Synchronize shell projections after the document host has completed a
-    /// transition. Document content and view-specific chrome stay host-owned.
-    pub(super) fn sync_document_shell(&mut self, cx: &mut Cx) {
-        let active_concept = self
-            .documents
-            .active_tab()
-            .map(|tab| tab.concept_id.clone());
-        let chrome = self.documents.active_chrome().document_header;
-        let breadcrumb = if chrome.breadcrumb {
-            active_concept.as_deref().and_then(|concept_id| {
-                crate::navigation::breadcrumb_for(
-                    self.session.okf_analysis(),
-                    self.session.uml_analysis(),
-                    concept_id,
-                )
-            })
-        } else {
-            None
-        };
-        let (segments, right_dock) = project_document_header(chrome, breadcrumb);
-        if let Some(mut header) = self
-            .ui
-            .widget(cx, ids!(document_header))
-            .borrow_mut::<crate::document_header::DocumentHeader>()
-        {
-            header.set_segments(cx, segments);
-            header.set_right_dock(cx, right_dock);
-        }
-        self.sync_history_controls(cx);
-        if let Some(mut tree) = self
-            .ui
-            .widget(cx, ids!(project_tree))
-            .borrow_mut::<crate::tree_panel::ProjectTree>()
-        {
-            tree.set_selected_key(cx, active_concept);
-        }
-        self.sync_diagram_switcher_current(cx);
-        self.sync_statusbar(cx);
-        self.sync_conflict_badge(cx);
-    }
-
     /// Open or focus a document through the shared preview slot. All callers
     /// use this path so replacement cleanup and view/chrome synchronization
     /// stay identical for classifiers and diagrams.

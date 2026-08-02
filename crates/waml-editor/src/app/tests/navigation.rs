@@ -1,3 +1,4 @@
+use super::super::shell::project_document_header;
 use super::*;
 use crate::doc_view::DocumentHeaderChrome;
 use crate::platform_browser::ExternalUrlAdapter;
