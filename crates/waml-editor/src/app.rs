@@ -1027,21 +1027,6 @@ impl App {
                 self.set_navigation_message(cx, None);
                 changed
             }
-            crate::navigation::NavigationTarget::Directory { address } if address == "/" => {
-                self.nav_state.scope = "/".into();
-                self.nav_state.query.clear();
-                self.nav_state.filter = None;
-                let (_, inspector) = self.dock_states(cx);
-                let inspector = if self.narrow {
-                    crate::dock::narrow_entry_states(DockState::Pinned, inspector).1
-                } else {
-                    inspector
-                };
-                self.apply_dock_states(cx, DockState::Pinned, inspector);
-                self.refresh_nav(cx, true);
-                self.set_navigation_message(cx, None);
-                true
-            }
             crate::navigation::NavigationTarget::Directory { address } => {
                 let toggled = self
                     .ui
@@ -4684,48 +4669,31 @@ mod tests {
     }
 
     #[test]
-    fn navigation_root_restores_scope_and_clears_query_and_filter() {
+    fn navigation_root_toggles_without_resetting_navigation_or_docks() {
         let (mut cx, mut app) = navigation_app();
         let mut browser = FakeBrowser::default();
+        app.narrow = true;
         app.nav_state = NavState {
             scope: "/sales".into(),
             query: "order".into(),
             filter: Some(TreeKind::Class),
         };
+        app.ui
+            .widget(&cx, ids!(project_tree))
+            .borrow_mut::<crate::tree_panel::ProjectTree>()
+            .expect("test project tree is mounted")
+            .close_dock(&mut cx);
+        app.ui
+            .widget(&cx, ids!(inspector))
+            .borrow_mut::<crate::inspector_panel::Inspector>()
+            .expect("test inspector is mounted")
+            .open_dock(&mut cx);
+        let expected_nav = app.nav_state.clone();
+        let expected_document = app.documents.active_id();
+        let expected_docks = app.dock_states(&mut cx);
 
-        assert!(app.navigate_with(
-            &mut cx,
-            NavigationTarget::Directory {
-                address: "/".into(),
-            },
-            OpenDisposition::Preview,
-            &mut browser,
-        ));
-        assert_eq!(app.nav_state, NavState::default());
-        let project_tree = app.ui.widget(&cx, ids!(project_tree));
-        let project_tree = project_tree
-            .borrow::<crate::tree_panel::ProjectTree>()
-            .expect("test project tree is mounted");
-        assert_eq!(project_tree.dock_state(), DockState::Pinned);
-    }
-
-    #[test]
-    fn navigation_root_uses_narrow_mutual_exclusion_and_preserves_wide_inspector() {
-        for (narrow, expected_inspector) in [(true, DockState::Flag), (false, DockState::Pinned)] {
-            let (mut cx, mut app) = navigation_app();
-            let mut browser = FakeBrowser::default();
-            app.narrow = narrow;
-            app.ui
-                .widget(&cx, ids!(project_tree))
-                .borrow_mut::<crate::tree_panel::ProjectTree>()
-                .expect("test project tree is mounted")
-                .close_dock(&mut cx);
-            app.ui
-                .widget(&cx, ids!(inspector))
-                .borrow_mut::<crate::inspector_panel::Inspector>()
-                .expect("test inspector is mounted")
-                .open_dock(&mut cx);
-
+        assert!(project_tree_folder_is_open(&mut cx, &app, "/"));
+        for expected_open in [false, true] {
             assert!(app.navigate_with(
                 &mut cx,
                 NavigationTarget::Directory {
@@ -4734,11 +4702,13 @@ mod tests {
                 OpenDisposition::Preview,
                 &mut browser,
             ));
-
             assert_eq!(
-                app.dock_states(&mut cx),
-                (DockState::Pinned, expected_inspector)
+                project_tree_folder_is_open(&mut cx, &app, "/"),
+                expected_open
             );
+            assert_eq!(app.nav_state, expected_nav);
+            assert_eq!(app.documents.active_id(), expected_document);
+            assert_eq!(app.dock_states(&mut cx), expected_docks);
         }
     }
 
