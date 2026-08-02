@@ -275,8 +275,26 @@ pub fn solve_diagram_reported_labeled(
     cfg: &SolveConfig,
 ) -> (Solved, Vec<Diagnostic>, Vec<DroppedPlacement>) {
     let (scene, mut diags) = resolve::resolve(diagram);
+    let label_widths = connected_label_widths(edges, label_requests);
+    let (mut solved, rects, mut geo_diags, dropped) =
+        geometry::solve_with_rects_labeled(&scene, edges, sizes, &label_widths, cfg);
+    diags.append(&mut geo_diags);
+    solved.routes = route::route(&scene.boxes, &rects, edges, cfg);
+    (solved, diags, dropped)
+}
+
+/// Terminal-label width floor per connected pair.
+///
+/// Within ONE edge the two terminal labels share the gap, so their widths add.
+/// ACROSS parallel edges between the same pair they do not: each edge's labels
+/// ride its own route, so the gap only has to hold the widest edge. Summing
+/// there would blow a facing-border gap out by a multiple of what one edge needs.
+fn connected_label_widths(
+    edges: &[(BoxId, BoxId)],
+    label_requests: &[label::LabelRequest],
+) -> BTreeMap<(BoxId, BoxId), f64> {
     let label_cfg = label::LabelConfig::default();
-    let mut label_widths: BTreeMap<(BoxId, BoxId), f64> = BTreeMap::new();
+    let mut per_edge: BTreeMap<usize, f64> = BTreeMap::new();
     for req in label_requests {
         if !matches!(
             req.slot,
@@ -284,18 +302,19 @@ pub fn solve_diagram_reported_labeled(
         ) {
             continue;
         }
-        let Some((a, b)) = edges.get(req.edge) else {
+        if req.edge >= edges.len() {
             continue;
-        };
-        let key = geometry::pair(a, b);
+        }
         let w = label::measure(&req.text, &label_cfg).w;
-        *label_widths.entry(key).or_insert(0.0) += w + label_cfg.slack / 2.0;
+        *per_edge.entry(req.edge).or_insert(0.0) += w + label_cfg.slack / 2.0;
     }
-    let (mut solved, rects, mut geo_diags, dropped) =
-        geometry::solve_with_rects_labeled(&scene, edges, sizes, &label_widths, cfg);
-    diags.append(&mut geo_diags);
-    solved.routes = route::route(&scene.boxes, &rects, edges, cfg);
-    (solved, diags, dropped)
+    let mut out: BTreeMap<(BoxId, BoxId), f64> = BTreeMap::new();
+    for (edge, width) in per_edge {
+        let (a, b) = &edges[edge];
+        let slot = out.entry(geometry::pair(a, b)).or_insert(0.0);
+        *slot = slot.max(width);
+    }
+    out
 }
 
 /// Place `requests` against the already-solved geometry, filling `solved.labels`.
@@ -311,12 +330,15 @@ pub fn solve_diagram_reported_labeled(
 /// TEXT is display policy (which toggles are on, how a role and a multiplicity
 /// combine), and that belongs to the frontend. The solver only ever sees final
 /// strings, so the display model does not have to move into this crate.
+/// Returns the requests that could not be positioned at all (a degenerate
+/// route); labels that merely collided everywhere are still placed, at a
+/// degraded last-resort position.
 pub fn place_labels(
     solved: &mut Solved,
     routes: &[Vec<(f64, f64)>],
     requests: &[label::LabelRequest],
     cfg: &label::LabelConfig,
-) {
+) -> Vec<label::LabelRequest> {
     let obstacles = label::Obstacles {
         hard: solved
             .nodes
@@ -338,8 +360,20 @@ pub fn place_labels(
             )
             .collect(),
     };
-    let placement = label::place(routes, requests, &obstacles, cfg);
+    let mut placement = label::place(routes, requests, &obstacles, cfg);
+    // A label that fits nowhere must NOT silently disappear from the diagram:
+    // fall back to its best-scoring position ignoring obstacles, and hand back
+    // whatever even that could not position (a degenerate route) so the caller
+    // can report it.
+    let mut unresolved = Vec::new();
+    for request in placement.unplaced {
+        match label::fallback(routes, &request, cfg) {
+            Some(placed) => placement.placed.push(placed),
+            None => unresolved.push(request),
+        }
+    }
     solved.labels = placement.placed;
+    unresolved
 }
 
 #[cfg(test)]
@@ -348,6 +382,92 @@ mod tests {
 
     fn route_points(solved: &Solved) -> Vec<Vec<(f64, f64)>> {
         solved.routes.iter().map(|r| r.points.clone()).collect()
+    }
+
+    #[test]
+    fn parallel_edges_take_the_widest_label_floor_not_the_sum() {
+        let edges = vec![
+            (BoxId::Node("a".into()), BoxId::Node("b".into())),
+            (BoxId::Node("a".into()), BoxId::Node("b".into())),
+        ];
+        let requests = vec![
+            label::LabelRequest {
+                edge: 0,
+                slot: label::LabelSlot::TerminalFrom,
+                text: "order {1}".into(),
+            },
+            label::LabelRequest {
+                edge: 1,
+                slot: label::LabelSlot::TerminalFrom,
+                text: "order {1}".into(),
+            },
+        ];
+        let one = connected_label_widths(&edges, &requests[..1]);
+        let both = connected_label_widths(&edges, &requests);
+        assert_eq!(
+            one, both,
+            "a second parallel edge must not add its label width to the gap"
+        );
+    }
+
+    #[test]
+    fn both_terminals_of_one_edge_still_add_up() {
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        let key = (BoxId::Node("a".into()), BoxId::Node("b".into()));
+        let from = label::LabelRequest {
+            edge: 0,
+            slot: label::LabelSlot::TerminalFrom,
+            text: "order {1}".into(),
+        };
+        let to = label::LabelRequest {
+            edge: 0,
+            slot: label::LabelSlot::TerminalTo,
+            text: "customer {1}".into(),
+        };
+        let one = connected_label_widths(&edges, std::slice::from_ref(&from))[&key];
+        let two = connected_label_widths(&edges, &[from, to])[&key];
+        assert!(two > one, "the two ends of one edge share the same gap");
+    }
+
+    #[test]
+    fn a_label_that_fits_nowhere_is_still_drawn() {
+        // Before: it silently vanished from the diagram. A degraded placement
+        // beats no label at all.
+        let mut solved = Solved {
+            nodes: BTreeMap::from([(
+                "a".to_string(),
+                Rect {
+                    x: -500.0,
+                    y: -500.0,
+                    w: 2000.0,
+                    h: 2000.0,
+                },
+            )]),
+            groups: vec![],
+            flags: BTreeMap::new(),
+            routes: vec![Route {
+                points: vec![(0.0, 50.0), (300.0, 50.0)],
+                source: "a".into(),
+                target: "b".into(),
+                key: None,
+            }],
+            labels: vec![],
+        };
+        let requests = vec![label::LabelRequest {
+            edge: 0,
+            slot: label::LabelSlot::MidRoute,
+            text: "places".into(),
+        }];
+        let routes = route_points(&solved);
+        let unresolved = place_labels(
+            &mut solved,
+            &routes,
+            &requests,
+            &label::LabelConfig::default(),
+        );
+        assert!(unresolved.is_empty());
+        assert_eq!(solved.labels.len(), 1, "the label must still be drawn");
+        assert_eq!(solved.labels[0].text, "places");
     }
 
     #[test]

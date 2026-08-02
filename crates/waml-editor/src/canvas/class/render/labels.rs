@@ -7,11 +7,18 @@ use waml::solve::label::LabelSlot;
 
 const LABEL_PAD: f64 = 3.0;
 
-/// Smallest drawn font size for edge text. Zooming out FLOORS the size here
-/// rather than skipping the label: a hard cutoff put a visibility cliff at
-/// ordinary zoom-out levels, where the labels are exactly what tells you which
-/// end of an edge is which.
+/// Below this drawn size edge text is an unreadable smear, so it is skipped.
+///
+/// It is a CUTOFF, never a floor: the solver's non-overlap guarantee is stated
+/// over world rects, and the drawn text only stays inside its projected screen
+/// rect while it scales with the zoom. Flooring the font instead drew text
+/// larger than its own box, overflowing the chip and re-overlapping the
+/// neighbouring labels and cards the placement stage exists to avoid.
 const MIN_LEGIBLE_PX: f64 = 5.0;
+
+/// World-space font size for edge text, matching `LabelConfig::font_size` --
+/// what the solver measured the label boxes with.
+const WORLD_FONT_SIZE: f64 = 8.0;
 
 pub(super) fn draw_edge_labels(
     cx: &mut Cx2d,
@@ -21,7 +28,11 @@ pub(super) fn draw_edge_labels(
     let viewport = snapshot.viewport;
     // Edge text is annotation, not content: it reads well below the card type
     // scale, and at 11 the multiplicity/role chips out-shouted the cards.
-    let target_size = ((8.0 * viewport.camera.zoom).max(MIN_LEGIBLE_PX)) as f32;
+    let world_target = WORLD_FONT_SIZE * viewport.camera.zoom;
+    if world_target < MIN_LEGIBLE_PX {
+        return;
+    }
+    let target_size = world_target as f32;
     let font_size = font_raster_size(target_size);
     draws.edge_label.text_style.font_size = font_size;
     draws.edge_label.font_scale = target_size / font_size;
@@ -124,16 +135,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zooming_out_floors_the_font_instead_of_hiding_the_label() {
-        // The old `(8.0 * zoom).max(4.0)` plus a hard 5px cutoff made every edge
-        // label vanish below zoom 0.625 -- an ordinary zoom-out level.
-        for zoom in [0.6_f64, 0.4, 0.2] {
-            let target_size = (8.0 * zoom).max(MIN_LEGIBLE_PX);
+    fn the_drawn_font_never_outgrows_its_projected_box() {
+        // Flooring the size made the text bigger than the solver's world rect
+        // projected by the zoom, so it spilled out of its chip and back over the
+        // neighbours the placement stage had just cleared.
+        let cfg = waml::solve::label::LabelConfig::default();
+        for zoom in [0.2_f64, 0.4, 0.625, 1.0, 3.0] {
+            let world_target = WORLD_FONT_SIZE * zoom;
+            if world_target < MIN_LEGIBLE_PX {
+                continue;
+            }
+            let world_box = waml::solve::label::measure("customer {1}", &cfg);
             assert!(
-                target_size >= MIN_LEGIBLE_PX,
-                "labels must stay legible at zoom {zoom}"
+                world_target <= world_box.h * zoom + 1e-9,
+                "text outgrew its box at zoom {zoom}"
             );
         }
+        assert_eq!(
+            WORLD_FONT_SIZE, cfg.font_size,
+            "the drawn world size must be the size the solver measured with"
+        );
     }
 
     fn edge() -> crate::scene::SceneEdge {

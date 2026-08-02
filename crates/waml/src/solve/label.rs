@@ -202,9 +202,25 @@ fn rect_for(
         } else {
             ay + cfg.gap
         };
+        // Grow AWAY from the label's own endpoint, which means consulting the
+        // tangent's sign: on a right-to-left route both terminal labels would
+        // otherwise grow back over their own endpoint's card.
+        let forward = tangent.0 >= 0.0;
         let x = match slot {
-            LabelSlot::TerminalFrom => ax,
-            LabelSlot::TerminalTo => ax - size.w,
+            LabelSlot::TerminalFrom => {
+                if forward {
+                    ax
+                } else {
+                    ax - size.w
+                }
+            }
+            LabelSlot::TerminalTo => {
+                if forward {
+                    ax - size.w
+                } else {
+                    ax
+                }
+            }
             LabelSlot::MidRoute => ax - size.w * 0.5,
         };
         Rect {
@@ -293,6 +309,14 @@ fn foreign_crossings(rect: Rect, routes: &[Vec<(f64, f64)>], own: usize) -> usiz
         .count()
 }
 
+/// How far off-axis a segment may be and still count as axis-aligned. A
+/// GEOMETRIC tolerance, deliberately not `f64::EPSILON`: route and geometry
+/// arithmetic leaves sub-pixel drift on nominally orthogonal segments, and at
+/// machine epsilon every such segment falls through to the diagonal arm, so
+/// `W_CROSSING` would be silently skipped and a label would sit on a foreign
+/// stroke.
+const AXIS_TOLERANCE: f64 = 1e-6;
+
 /// True when the axis-aligned segment `a`-`b` crosses `rect`. The router only
 /// ever produces orthogonal routes, so a diagonal segment honestly returns
 /// `false` rather than pretending to handle a case that cannot occur.
@@ -301,12 +325,12 @@ fn segment_hits_rect(a: (f64, f64), b: (f64, f64), rect: Rect) -> bool {
     let x_max = rect.x + rect.w;
     let y_min = rect.y;
     let y_max = rect.y + rect.h;
-    if (a.0 - b.0).abs() <= f64::EPSILON {
+    if (a.0 - b.0).abs() <= AXIS_TOLERANCE {
         // Vertical segment: constant x, varying y.
         let x = a.0;
         let (y0, y1) = if a.1 <= b.1 { (a.1, b.1) } else { (b.1, a.1) };
         x >= x_min && x <= x_max && y0 <= y_max && y1 >= y_min
-    } else if (a.1 - b.1).abs() <= f64::EPSILON {
+    } else if (a.1 - b.1).abs() <= AXIS_TOLERANCE {
         // Horizontal segment: constant y, varying x.
         let y = a.1;
         let (x0, x1) = if a.0 <= b.0 { (a.0, b.0) } else { (b.0, a.0) };
@@ -366,6 +390,40 @@ pub fn place(
     out
 }
 
+/// Last-resort placement for a request `place` could not fit: the best-scoring
+/// candidate IGNORING hard obstacles. Overlapping text beats a label that
+/// silently vanishes from the diagram, so the caller uses this rather than
+/// dropping the label. `None` only for a degenerate route with no candidates at
+/// all.
+pub fn fallback(
+    routes: &[Vec<(f64, f64)>],
+    request: &LabelRequest,
+    cfg: &LabelConfig,
+) -> Option<PlacedLabel> {
+    let points = routes.get(request.edge)?;
+    let size = measure(&request.text, cfg);
+    let mut best: Option<(f64, Candidate)> = None;
+    for c in candidates(points, request.slot, size, cfg) {
+        let score = score_candidate(&c, routes, request.edge);
+        if best.as_ref().map(|(b, _)| score < *b).unwrap_or(true) {
+            best = Some((score, c));
+        }
+    }
+    best.map(|(_, c)| PlacedLabel {
+        edge: request.edge,
+        slot: request.slot,
+        text: request.text.clone(),
+        rect: c.rect,
+        attach: c.attach,
+    })
+}
+
+fn score_candidate(c: &Candidate, routes: &[Vec<(f64, f64)>], own: usize) -> f64 {
+    W_SLIDE * c.slide_cost
+        + if c.side_is_canonical { 0.0 } else { W_SIDE }
+        + W_CROSSING * foreign_crossings(c.rect, routes, own) as f64
+}
+
 /// Score a single request against every candidate and take the best that has no
 /// hard collision. Returns false when nothing fits.
 fn try_place(
@@ -384,9 +442,7 @@ fn try_place(
         if collides(c.rect, hard) {
             continue;
         }
-        let score = W_SLIDE * c.slide_cost
-            + if c.side_is_canonical { 0.0 } else { W_SIDE }
-            + W_CROSSING * foreign_crossings(c.rect, routes, request.edge) as f64;
+        let score = score_candidate(&c, routes, request.edge);
         // Strict `<` keeps the FIRST candidate of a tie, and candidate order is
         // deterministic, so ties resolve the same way every run.
         if best.as_ref().map(|(b, _)| score < *b).unwrap_or(true) {
@@ -507,6 +563,60 @@ mod tests {
         assert!(candidates(&[], LabelSlot::MidRoute, size, &cfg).is_empty());
         assert!(candidates(&[(1.0, 1.0)], LabelSlot::MidRoute, size, &cfg).is_empty());
         assert!(candidates(&[(1.0, 1.0), (1.0, 1.0)], LabelSlot::MidRoute, size, &cfg).is_empty());
+    }
+
+    #[test]
+    fn terminal_labels_grow_away_from_their_endpoint_on_a_right_to_left_route() {
+        // Target left of source: the route runs -x, so a `from` label must grow
+        // LEFT off its endpoint and a `to` label must grow RIGHT off its own.
+        // Growing the other way puts both boxes back over their own card.
+        let cfg = LabelConfig::default();
+        let size = Size { w: 40.0, h: 10.0 };
+        let route = [(300.0, 50.0), (0.0, 50.0)];
+
+        for c in candidates(&route, LabelSlot::TerminalFrom, size, &cfg) {
+            assert!(
+                c.rect.x + c.rect.w <= c.attach.0 + 1e-9,
+                "from label grew back over its endpoint: {:?}",
+                c.rect
+            );
+        }
+        for c in candidates(&route, LabelSlot::TerminalTo, size, &cfg) {
+            assert!(
+                c.rect.x >= c.attach.0 - 1e-9,
+                "to label grew back over its endpoint: {:?}",
+                c.rect
+            );
+        }
+    }
+
+    #[test]
+    fn a_nearly_axis_aligned_segment_still_counts_as_a_crossing() {
+        // Route arithmetic leaves sub-pixel drift on nominally orthogonal
+        // segments; at machine epsilon those fell through to the diagonal arm
+        // and the crossing term was silently skipped.
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+        };
+        assert!(segment_hits_rect((-10.0, 25.0), (110.0, 25.0 + 1e-9), rect));
+        assert!(segment_hits_rect((50.0, -10.0), (50.0 + 1e-9, 60.0), rect));
+    }
+
+    #[test]
+    fn an_unplaceable_label_still_gets_a_last_resort_position() {
+        // Nothing fits, but the label must not vanish from the diagram.
+        let reqs = LabelRequest {
+            edge: 0,
+            slot: LabelSlot::MidRoute,
+            text: "places".into(),
+        };
+        let placed = fallback(&route_pair(), &reqs, &LabelConfig::default())
+            .expect("a real route always yields some candidate");
+        assert_eq!(placed.text, "places");
+        assert!(placed.rect.h > 0.0);
     }
 
     #[test]

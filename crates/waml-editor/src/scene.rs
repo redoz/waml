@@ -624,11 +624,15 @@ pub fn build_scene(
     // edge's route.
     let requests = crate::edge_labels::label_requests(&edges, &display);
     let routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
-    waml::solve::place_labels(
+    let unresolved = waml::solve::place_labels(
         &mut solved,
         &routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
+    );
+    debug_assert!(
+        unresolved.is_empty(),
+        "edge labels with no position at all: {unresolved:?}"
     );
 
     let relations = project_relations(diagram);
