@@ -273,6 +273,31 @@ fn reference_paste_into_heading_matches_clean_parse() {
 }
 
 #[test]
+fn heading_edit_leaving_trailing_eof_whitespace_matches_clean_parse() {
+    // This fails if a heading window reparse keeps end-of-document spaces inside the
+    // heading; a full parse hands them to end-of-file trivia instead.
+    let before = "# Modx x";
+    let candidate = "# Modx ";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(before),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(2),
+        source(candidate),
+        &[TextChange {
+            old_range: range(7, 8),
+            replacement: Arc::from(""),
+        }],
+    )
+    .unwrap();
+    assert_full_oracle(&update.snapshot, candidate);
+}
+
+#[test]
 fn width_changes_before_reference_definition_update_destination_ranges() {
     // This fails if reused reference annotations retain pre-edit definition offsets.
     let mut candidate = BASE.to_owned();

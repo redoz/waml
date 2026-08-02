@@ -217,6 +217,17 @@ pub(crate) fn parse_window(
             range: window.range,
         });
     }
+    // A full parse peels trailing spaces and tabs at the end of the document into
+    // end-of-file trivia. Only the tail window emits that token, so a block window
+    // reaching the document end over such whitespace cannot reproduce the full parse.
+    if matches!(
+        window.kind,
+        ShellWindowKind::Heading | ShellWindowKind::MarkdownRegion
+    ) && end == source.len()
+        && trailing_eof_whitespace_start(source, start) < end
+    {
+        return Err(window_not_consumed());
+    }
     let factory = GreenFactory::<OkfMarkdownLanguage>::new();
     let mut diagnostics = Vec::new();
     let elements = match window.kind {
