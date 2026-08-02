@@ -60,6 +60,58 @@ fn browser_save_ticket_encodes_invalid_source_bytes_exactly() {
     );
 }
 
+/// A site booted from `?bundle=` must keep that query after the first edit,
+/// and boot from the fragment from then on.
+///
+/// `FromWasmBrowserUpdateUrl` resolves what `save_backend` hands it against the
+/// current href, so a fragment-only string leaves `pathname` and `search`
+/// untouched and replaces the fragment whole -- there can never be two. That
+/// only holds while the saved string really is fragment-only, which is what is
+/// asserted here, together with the precedence flip it causes.
+#[test]
+fn a_first_edit_replaces_the_fragment_and_keeps_the_bundle_query() {
+    let search = "?bundle=bundle.waml";
+    assert_eq!(
+        crate::browser_boot::select_browser_boot(search, "").unwrap(),
+        crate::browser_boot::BrowserBootSource::Bundle("bundle.waml".to_string())
+    );
+
+    let original = "# Order\n";
+    let edited = "# Order edited\n";
+    let path = waml::source::BundlePath::parse("order.md").unwrap();
+    let mut session = crate::editor_session::EditorSession::default();
+    session
+        .replace(waml::source::SourceBundle::try_from_pairs([("order.md", original)]).unwrap())
+        .unwrap();
+    let before = session.snapshot();
+    let document = before.okf_analysis.catalog.id_for_path(&path).unwrap();
+    let syntax = before.markdown_snapshot(document).unwrap();
+    session
+        .apply(waml::edit::ExactSourceEdit {
+            document,
+            base_revision: syntax.revision(),
+            changes: Arc::from([TextChange {
+                old_range: TextRange::new(TextSize::new(0), syntax.text().len()).unwrap(),
+                replacement: Arc::from(edited),
+            }]),
+            expected_text: SourceText::new(edited.to_string()).unwrap(),
+        })
+        .unwrap();
+    let ticket = session.save_ticket().unwrap();
+    let (fragment, _) = browser_save_fragment(&ticket);
+
+    assert!(fragment.starts_with('#'), "{fragment}");
+    assert_eq!(fragment.matches('#').count(), 1, "{fragment}");
+    assert!(
+        !fragment.contains('?') && !fragment.contains('/'),
+        "{fragment}"
+    );
+    assert_eq!(
+        crate::browser_boot::select_browser_boot(search, &fragment).unwrap(),
+        crate::browser_boot::BrowserBootSource::Share(fragment)
+    );
+}
+
 #[test]
 fn shutdown_and_quit_request_are_final_save_events() {
     assert!(should_flush_save(&Event::Shutdown));

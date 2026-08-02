@@ -723,16 +723,18 @@ fn format_opened(secs: u64) -> String {
     }
 }
 
-/// The current URL fragment, `#` included, or `None` when the page has none.
+/// The current URL's query string and fragment, their `?` and `#` included.
 ///
 /// makepad hands the browser's `location` to Rust as `OsType::Web`, refreshed
 /// on every `hashchange`, so this is a plain read -- no JS interop needed.
+/// Read once at startup and handed to `browser_boot::select_browser_boot`;
+/// nothing else in the shell inspects the URL.
 #[cfg(target_arch = "wasm32")]
-pub(super) fn web_location_hash(cx: &Cx) -> Option<String> {
+pub(super) fn web_location_query(cx: &Cx) -> (String, String) {
     match cx.os_type() {
-        makepad_widgets::makepad_platform::OsType::Web(params) if !params.hash.is_empty() => {
-            Some(params.hash.clone())
+        makepad_widgets::makepad_platform::OsType::Web(params) => {
+            (params.search.clone(), params.hash.clone())
         }
-        _ => None,
+        _ => (String::new(), String::new()),
     }
 }

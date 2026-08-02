@@ -7,7 +7,7 @@ mod workspace;
 
 use self::navigation::{PendingAnchorRestore, PendingFragment, TransitionCause};
 #[cfg(target_arch = "wasm32")]
-use self::workspace::web_location_hash;
+use self::workspace::web_location_query;
 use self::workspace::{prevent_quit_after_failed_save, should_flush_save, SaveFeedback};
 pub use menus::{burger_menu_items, logo_command_for, logo_menu_items, LogoCommand};
 use menus::{doc_switcher_items, DOC_SWITCHER_MAX_H};
@@ -626,6 +626,11 @@ pub struct App {
     pending_fragment: Option<PendingFragment>,
     #[rust]
     pending_anchor_restore: Option<PendingAnchorRestore>,
+    /// URL of the in-flight `?bundle=` boot fetch, so its response can name it
+    /// in a failure message. `None` once the response (or error) is handled.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[rust]
+    pending_boot_bundle: Option<String>,
 }
 
 impl MatchEvent for App {
@@ -673,24 +678,79 @@ impl MatchEvent for App {
         // dead. Let a lone finger drive the mouse stream; a second finger still
         // arrives as touch, which is what the canvas pinch-zoom reads.
         cx.set_touch_emulates_mouse(true);
-        let Some(fragment) = web_location_hash(cx) else {
-            self.show_start_screen(cx);
-            return;
+        let (search, hash) = web_location_query(cx);
+        let source = match crate::browser_boot::select_browser_boot(&search, &hash) {
+            Ok(source) => source,
+            Err(e) => {
+                log!("could not read this page's URL: {e}");
+                crate::browser_boot::BrowserBootSource::Start
+            }
         };
-        if !waml::share::is_share_link(&fragment) {
-            // Some other anchor (or nothing at all): not our business.
-            self.show_start_screen(cx);
+        match source {
+            crate::browser_boot::BrowserBootSource::Share(fragment) => {
+                match waml::share::decode_source(&fragment) {
+                    Ok(bundle) => {
+                        self.open_bundle(cx, bundle, "shared".to_string(), None);
+                        self.show_editor(cx);
+                    }
+                    Err(e) => {
+                        log!("could not open the model in this link: {e}");
+                        self.show_start_screen(cx);
+                    }
+                }
+            }
+            crate::browser_boot::BrowserBootSource::Bundle(url) => {
+                // The fetch lands in `handle_http_response`. Until it does the
+                // start screen holds the window -- never a blank one -- and it
+                // stays put if the fetch fails.
+                self.pending_boot_bundle = Some(url.clone());
+                self.show_start_screen(cx);
+                cx.http_request(
+                    live_id!(boot_bundle),
+                    HttpRequest::new(url, HttpMethod::GET),
+                );
+            }
+            // `?api=` is selected for, but no live model server exists yet; the
+            // URL is honoured as far as "not a bundle, not a share link".
+            crate::browser_boot::BrowserBootSource::Api { .. }
+            | crate::browser_boot::BrowserBootSource::Start => self.show_start_screen(cx),
+        }
+    }
+
+    /// The `?bundle=` fetch came back. Anything other than a 2xx carrying a
+    /// valid envelope leaves the start screen up with the reason logged.
+    #[cfg(target_arch = "wasm32")]
+    fn handle_http_response(&mut self, cx: &mut Cx, request_id: LiveId, response: &HttpResponse) {
+        if request_id != live_id!(boot_bundle) {
             return;
         }
-        match waml::share::decode_source(&fragment) {
+        let Some(url) = self.pending_boot_bundle.take() else {
+            return;
+        };
+        if response.status_code < 200 || response.status_code >= 300 {
+            log!(
+                "{}",
+                crate::browser_boot::boot_fetch_error(&url, Some(response.status_code))
+            );
+            return;
+        }
+        let body = response.get_body().map(Vec::as_slice).unwrap_or(&[]);
+        match crate::browser_boot::decode_boot_bundle(body) {
             Ok(bundle) => {
-                self.open_bundle(cx, bundle, "shared".to_string(), None);
+                self.open_bundle(cx, bundle, "exported".to_string(), None);
                 self.show_editor(cx);
             }
-            Err(e) => {
-                log!("could not open the model in this link: {e}");
-                self.show_start_screen(cx);
-            }
+            Err(e) => log!("could not open {url}: {e}"),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn handle_http_request_error(&mut self, _cx: &mut Cx, request_id: LiveId, _error: &HttpError) {
+        if request_id != live_id!(boot_bundle) {
+            return;
+        }
+        if let Some(url) = self.pending_boot_bundle.take() {
+            log!("{}", crate::browser_boot::boot_fetch_error(&url, None));
         }
     }
 

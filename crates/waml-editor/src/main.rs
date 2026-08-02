@@ -8,6 +8,7 @@ mod agent_mark;
 mod app;
 mod attr_row;
 mod behavior_doc_view;
+mod browser_boot;
 mod bundle_export;
 mod canvas;
 mod card;
