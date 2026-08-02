@@ -905,6 +905,50 @@ mod tests {
         ResolvedDiagramDisplay::default()
     }
 
+    /// The whole label-placement feature reaches the editor only through
+    /// `build_scene`, and `place_labels_with_reroute` silently degrades to a
+    /// plain pass when the scene's edge list and the router's route list
+    /// desync. Unit tests in `waml` cover the placer on synthetic scenes; this
+    /// covers the wiring on real fixtures, with every text toggle on so the
+    /// terminal role/multiplicity labels are actually requested.
+    #[test]
+    fn placed_labels_clear_the_cards_on_real_fixtures() {
+        use waml::model::CardinalityVisibility;
+
+        // `groups` is deliberately absent: that fixture declares no
+        // relationships, so it has no edges to label.
+        for (name, model) in [("mini", mini()), ("sixkind", sixkind())] {
+            let mut display = test_display();
+            display.show_cardinality = true;
+            display.cardinality = CardinalityVisibility::All;
+            display.show_roles = true;
+            display.show_labels = true;
+            let (scene, _) = build_scene(
+                &model,
+                &model.diagrams[0],
+                display,
+                &std::collections::HashSet::new(),
+            );
+            assert!(
+                !scene.labels.is_empty(),
+                "{name}: no edge labels were placed at all — the wiring is dead"
+            );
+            for label in &scene.labels {
+                for node in &scene.nodes {
+                    let clear = label.rect.x + label.rect.w <= node.rect.x
+                        || node.rect.x + node.rect.w <= label.rect.x
+                        || label.rect.y + label.rect.h <= node.rect.y
+                        || node.rect.y + node.rect.h <= label.rect.y;
+                    assert!(
+                        clear,
+                        "{name}: label {:?} at {:?} sits on card {} at {:?}",
+                        label.text, label.rect, node.key, node.rect
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn attribute_cardinality_respects_all_three_modes() {
         use waml::model::CardinalityVisibility::{All, Explicit, Off};
