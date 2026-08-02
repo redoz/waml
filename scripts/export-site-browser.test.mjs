@@ -1,10 +1,11 @@
 // End-to-end acceptance for `waml export site`, in a real browser over real
 // HTTP.
 //
-// What this proves that no unit test can: an exported site BOOTS. The
-// assembler's own tests see three synthetic files; here the real wasm fetches
-// the real bundle, opens the model, and hands a `.waml` file back through the
-// download bridge.
+// What this proves that no unit test can: an exported site BOOTS from its own
+// `waml-boot.txt`, with the visitor's address bar left clean. The assembler's
+// own tests see three synthetic files; here the real wasm fetches
+// `waml-boot.txt`, reads the bundle path it names, fetches the real bundle,
+// opens the model, and hands a `.waml` file back through the download bridge.
 //
 // `file://` is not a substitute and is not accepted: the editor FETCHES its
 // bundle, and a file:// page has a null origin that fails that fetch. The
@@ -42,8 +43,9 @@
 // canvas gesture with no DOM handle, and none of select/drag/double-click/the
 // Add tool could be driven blind from Playwright. The share-URL half of the
 // story is instead proven the way Task 4 specifies it -- a `#w1.` fragment
-// outranks the site's own bundle, and the export hands back what the session
-// currently holds -- which is exactly what an edit produces once made.
+// outranks the site's own `waml-boot.txt`, and the export hands back what the
+// session currently holds -- which is exactly what an edit produces once
+// made.
 //
 // Run: node --test scripts/export-site-browser.test.mjs
 
@@ -174,13 +176,19 @@ test("an exported site boots and exports its model back", options, async (t) => 
   page.on("pageerror", (error) => failures.push(String(error)));
 
   await page.goto(`${host.origin}/`, { waitUntil: "load" });
-  // The injected boot snippet rewrites a bare URL before the wasm reads it.
-  await page.waitForFunction(() => location.search === "?bundle=bundle.waml", null, {
-    timeout: 30_000,
-  });
   await booted(page);
   assert.deepEqual(failures, [], "the site must boot without panics or failed fetches");
+  assert.ok(
+    host.requested.includes("/waml-boot.txt"),
+    "the editor must read the site's boot config",
+  );
   assert.ok(host.requested.includes("/bundle.waml"), "the editor must fetch the site's bundle");
+  // The whole point: the visitor's URL is untouched by the boot.
+  assert.equal(
+    await page.evaluate(() => location.search),
+    "",
+    "booting a site must not put a query in the address bar",
+  );
 
   const exported = await exportBundle(page, work);
   assert.match(exported, /<!-- waml\/1 part /, "the download must be a Bundle Envelope v1");
@@ -188,26 +196,31 @@ test("an exported site boots and exports its model back", options, async (t) => 
   assert.match(exported, /# Customer/);
   assert.match(exported, /- total: Money/);
 
-  // A share fragment outranks the site's own bundle, and the export follows
-  // the session rather than the file the site shipped -- which is what makes an
-  // edit survive a refresh and come back out through **Export WAML bundle...**.
+  // A share fragment is the more specific request, and it must win without the
+  // site's config ever being consulted -- otherwise a shared edit would race
+  // the site's own bundle.
+  host.requested.length = 0;
   await writeFile(
     join(work, "customer.md"),
     "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n\n- loyalty: Tier\n",
   );
   const fragment = execFileSync(BIN, ["share", work, "--fragment-only"], { encoding: "utf8" }).trim();
-  // goto + reload, not goto alone: the page is already at
-  // `?bundle=bundle.waml`, and a URL differing only in its fragment is an
-  // in-page navigation -- the wasm would never restart and would still hold
-  // the model it booted with.
-  await page.goto(`${host.origin}/?bundle=bundle.waml#${fragment}`, { waitUntil: "load" });
+  // goto + reload, not goto alone: the page is already at `${host.origin}/`,
+  // and a URL differing only in its fragment is an in-page navigation -- the
+  // wasm would never restart and would still hold the model it booted with.
+  await page.goto(`${host.origin}/#${fragment}`, { waitUntil: "load" });
   await page.reload({ waitUntil: "load" });
   await booted(page);
   assert.deepEqual(failures, [], "a shared model must open without panics");
   assert.equal(
+    host.requested.includes("/waml-boot.txt"),
+    false,
+    "a share link must not consult the site's boot config",
+  );
+  assert.equal(
     await page.evaluate(() => location.search),
-    "?bundle=bundle.waml",
-    "the site's boot query must survive a share link",
+    "",
+    "a share link must not gain a query",
   );
 
   const shared = await exportBundle(page, work);
