@@ -20,6 +20,11 @@ const MIN_LEGIBLE_PX: f64 = 5.0;
 /// what the solver measured the label boxes with.
 const WORLD_FONT_SIZE: f64 = 8.0;
 
+/// World-space clearance the solver already lifted each label off its route by,
+/// matching `LabelConfig::gap`. The screen-space top-up tops THIS projected gap
+/// up to `LABEL_GAP`, so the two must agree (asserted in the tests below).
+const WORLD_GAP: f64 = 3.0;
+
 pub(super) fn draw_edge_labels(
     cx: &mut Cx2d,
     snapshot: &RenderSnapshot<'_>,
@@ -79,9 +84,14 @@ pub(super) fn draw_edge_labels(
 /// than it needs to be and the text lands on the arrowhead it was supposed to
 /// step past. Two corrections, both in screen px:
 ///
-/// * perpendicular to the route: top the projected gap back up to `LABEL_GAP`;
+/// * perpendicular to the route: top the projected gap back up to `LABEL_GAP`.
+///   Every label gets this, mid-route names included -- the stroke they ride
+///   alongside is screen-width at any zoom;
 /// * along the route, for a TERMINAL label only: step past the adornment drawn
 ///   at that end (`marker_extent` + `HEAD_GAP`), which has no world size at all.
+///   Only by however much of that the label does not ALREADY clear: a candidate
+///   that slid down the route is past the arrowhead on its own, and pushing it
+///   further would shove it out of the world rect the solver reserved for it.
 fn screen_clearance(
     center: DVec2,
     attach: (f64, f64),
@@ -90,38 +100,83 @@ fn screen_clearance(
     zoom: f64,
     marker_size: f64,
 ) -> DVec2 {
-    let Some(inward) = route_direction(&edge.points, slot) else {
-        return dvec2(0.0, 0.0);
-    };
     // World and screen axes differ only by a positive scale and a translation,
     // so a unit WORLD direction is a valid screen direction too, and the side
     // the solver picked reads the same in both spaces.
-    let perp = (LABEL_GAP - LABEL_GAP * zoom).max(0.0);
-    let (end, navigable) = match slot {
-        LabelSlot::TerminalFrom => (End::From, edge.from_end.navigable),
-        _ => (End::To, edge.to_end.navigable),
+    let Some(axis) = route_axis(&edge.points, attach, slot) else {
+        return dvec2(0.0, 0.0);
     };
-    let along = marker_extent(end_marker(edge.kind, end, navigable), marker_size) + HEAD_GAP;
-    let normal = dvec2(-inward.y, inward.x);
+    let perp = (LABEL_GAP - WORLD_GAP * zoom).max(0.0);
+    let along = match slot {
+        LabelSlot::MidRoute => 0.0,
+        LabelSlot::TerminalFrom | LabelSlot::TerminalTo => {
+            let (endpoint, end, navigable) = if slot == LabelSlot::TerminalFrom {
+                (edge.points[0], End::From, edge.from_end.navigable)
+            } else {
+                (
+                    edge.points[edge.points.len() - 1],
+                    End::To,
+                    edge.to_end.navigable,
+                )
+            };
+            let needed = marker_extent(end_marker(edge.kind, end, navigable), marker_size)
+                + HEAD_GAP
+                // Ground the step in what the slide already bought, in the same
+                // screen px the adornment is drawn in.
+                - (attach.0 - endpoint.0).hypot(attach.1 - endpoint.1) * zoom;
+            needed.max(0.0)
+        }
+    };
+    let normal = dvec2(-axis.y, axis.x);
     let offset = center - dvec2(attach.0, attach.1);
     let side = offset.x * normal.x + offset.y * normal.y;
     let sign = if side < 0.0 { -1.0 } else { 1.0 };
-    inward * along + normal * (sign * perp)
+    axis * along + normal * (sign * perp)
 }
 
-/// Unit route direction leading AWAY from the end a TERMINAL label belongs to.
-/// `None` for a mid-route label (which sits on an arbitrary leg of the route,
-/// so the terminal segment says nothing about the axis it clears on) or a
-/// degenerate polyline.
-fn route_direction(points: &[(f64, f64)], slot: LabelSlot) -> Option<DVec2> {
+/// Unit direction of the route leg the label clears against.
+///
+/// For a terminal it leads AWAY from the end the label belongs to, so it doubles
+/// as the direction the along-route step pushes. A mid-route label sits on an
+/// arbitrary leg, so its axis is the direction of the segment its attach point
+/// landed on -- the only thing that says which way "perpendicular to the stroke"
+/// points there. `None` for a degenerate polyline.
+fn route_axis(points: &[(f64, f64)], attach: (f64, f64), slot: LabelSlot) -> Option<DVec2> {
     if points.len() < 2 {
         return None;
     }
     let (a, b) = match slot {
         LabelSlot::TerminalFrom => (points[0], points[1]),
         LabelSlot::TerminalTo => (points[points.len() - 1], points[points.len() - 2]),
-        LabelSlot::MidRoute => return None,
+        LabelSlot::MidRoute => nearest_segment(points, attach)?,
     };
+    unit(a, b)
+}
+
+/// The segment of `points` the attach point lies on, as an ordered
+/// `(start, end)` pair. Solver attach points sit exactly ON the route, so this
+/// is a lookup; taking the NEAREST segment simply disambiguates a corner and
+/// keeps a rounded coordinate from falling through.
+fn nearest_segment(points: &[(f64, f64)], attach: (f64, f64)) -> Option<((f64, f64), (f64, f64))> {
+    let mut best: Option<(f64, usize)> = None;
+    for (index, segment) in points.windows(2).enumerate() {
+        let (a, b) = (segment[0], segment[1]);
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let length_sq = dx * dx + dy * dy;
+        if length_sq <= f64::EPSILON {
+            continue;
+        }
+        let t = (((attach.0 - a.0) * dx + (attach.1 - a.1) * dy) / length_sq).clamp(0.0, 1.0);
+        let distance = (a.0 + dx * t - attach.0).hypot(a.1 + dy * t - attach.1);
+        if best.map(|(d, _)| distance < d).unwrap_or(true) {
+            best = Some((distance, index));
+        }
+    }
+    best.map(|(_, index)| (points[index], points[index + 1]))
+}
+
+/// Unit vector from `a` to `b`, or `None` when the two coincide.
+fn unit(a: (f64, f64), b: (f64, f64)) -> Option<DVec2> {
     let d = dvec2(b.0 - a.0, b.1 - a.1);
     let length = d.x.hypot(d.y);
     if length <= f64::EPSILON {
@@ -214,9 +269,55 @@ mod tests {
 
     #[test]
     fn the_perpendicular_top_up_only_bites_when_zoomed_out() {
-        assert_eq!((LABEL_GAP - LABEL_GAP * 1.0).max(0.0), 0.0);
-        assert!((LABEL_GAP - LABEL_GAP * 0.25).max(0.0) > 0.0);
+        assert_eq!((LABEL_GAP - WORLD_GAP * 1.0).max(0.0), 0.0);
+        assert!((LABEL_GAP - WORLD_GAP * 0.25).max(0.0) > 0.0);
         // Never negative: zooming IN must not pull the label back onto the line.
-        assert_eq!((LABEL_GAP - LABEL_GAP * 4.0).max(0.0), 0.0);
+        assert_eq!((LABEL_GAP - WORLD_GAP * 4.0).max(0.0), 0.0);
+        // The top-up tops up the gap the SOLVER used; the two are independent
+        // constants in two crates, so they have to be pinned to each other.
+        assert_eq!(
+            WORLD_GAP,
+            waml::solve::label::LabelConfig::default().gap,
+            "the assumed world gap must be the gap the solver lifted by"
+        );
+    }
+
+    #[test]
+    fn a_mid_route_name_is_also_lifted_off_the_stroke() {
+        // The stroke is drawn screen-width whatever the zoom, so a relationship
+        // name riding a mid-route leg needs the same screen gap a terminal gets.
+        let attach = (110.0, 10.0);
+        let center = dvec2(110.0, 0.0);
+        let out = screen_clearance(center, attach, &edge(), LabelSlot::MidRoute, 0.25, 8.0);
+        assert!(out.y < 0.0, "lifted off the horizontal stroke: {out:?}");
+        assert_eq!(out.y, -(LABEL_GAP - WORLD_GAP * 0.25));
+        // Nothing to step past mid-route: the adornments are at the ends.
+        assert_eq!(out.x, 0.0);
+    }
+
+    #[test]
+    fn a_mid_route_name_on_a_vertical_leg_steps_aside() {
+        let mut edge = edge();
+        edge.points = vec![(20.0, 10.0), (100.0, 10.0), (100.0, 200.0)];
+        let attach = (100.0, 120.0);
+        let center = dvec2(140.0, 120.0);
+        let out = screen_clearance(center, attach, &edge, LabelSlot::MidRoute, 0.25, 8.0);
+        assert_eq!(out.y, 0.0, "a vertical leg clears sideways: {out:?}");
+        assert!(out.x > 0.0, "pushed right, away from the stroke: {out:?}");
+    }
+
+    #[test]
+    fn a_slid_terminal_label_is_not_pushed_past_its_own_box() {
+        // A candidate that already slid down the route is clear of the diamond
+        // on its own; stepping it a further 20px would walk it out of the world
+        // rect the solver reserved, and out of its non-overlap guarantee.
+        let attach = (100.0, 10.0);
+        let center = dvec2(120.0, 0.0);
+        let out = screen_clearance(center, attach, &edge(), LabelSlot::TerminalFrom, 1.0, 8.0);
+        assert_eq!(out.x, 0.0, "already past the adornment: {out:?}");
+        // Partly slid: only the shortfall is made up.
+        let attach = (25.0, 10.0);
+        let out = screen_clearance(center, attach, &edge(), LabelSlot::TerminalFrom, 1.0, 8.0);
+        assert_eq!(out.x, 2.0 * 8.0 + HEAD_GAP - 5.0);
     }
 }
