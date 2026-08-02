@@ -374,6 +374,16 @@ script_mod! {
                                     editor := MarkdownEditor{
                                         width: Fill
                                         height: Fill
+                                        scroll_bars: ScrollBars {
+                                            scroll_bar_y: ScrollBar {
+                                                draw_bg +: {
+                                                    size: 5.0
+                                                    color: atlas.text_dim
+                                                    color_hover: atlas.accent
+                                                    color_drag: atlas.accent
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 // Tool dock: left edge of the CENTER, vertically

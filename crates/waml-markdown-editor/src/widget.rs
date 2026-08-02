@@ -32,6 +32,10 @@ script_mod! {
     mod.widgets.MarkdownEditor = set_type_default() do mod.widgets.MarkdownEditorBase {
         width: Fill
         height: Fill
+        scroll_bars: ScrollBars {
+            show_scroll_x: false
+            show_scroll_y: true
+        }
         draw_text_sans +: {text_style: theme.font_regular}
         draw_text_sans_italic +: {text_style: theme.font_italic}
         draw_text_sans_semibold +: {text_style: theme.font_bold}
@@ -441,6 +445,8 @@ impl PaintEvidence {
 pub struct MarkdownEditor {
     #[deref]
     view: View,
+    #[live]
+    scroll_bars: ScrollBars,
     #[rust]
     controller: MarkdownEditorController,
     #[rust]
@@ -565,6 +571,11 @@ impl Widget for MarkdownEditor {
 }
 
 impl MarkdownEditor {
+    fn redraw(&mut self, cx: &mut Cx) {
+        self.scroll_bars.redraw(cx);
+        self.view.redraw(cx);
+    }
+
     pub fn handle_event_with_session(
         &mut self,
         cx: &mut Cx,
@@ -579,7 +590,9 @@ impl MarkdownEditor {
                 x: session.scroll().x,
                 y: frame.scroll_y,
             });
-            self.view.redraw(cx);
+            self.scroll_bars
+                .set_scroll_pos_no_clip(cx, dvec2(session.scroll().x, frame.scroll_y));
+            self.redraw(cx);
             if frame.active {
                 self.next_frame = cx.new_next_frame();
             }
@@ -594,7 +607,22 @@ impl MarkdownEditor {
                 return self.handle_input_with_session(cx, session, input);
             }
         }
-        let input = match event.hits(cx, self.view.area()) {
+        let scroll_actions = self
+            .scroll_bars
+            .handle_event(cx, event, &mut Scope::empty());
+        if !scroll_actions.is_empty() {
+            let scroll = self.scroll_bars.get_scroll_pos();
+            self.scroll_y = scroll.y;
+            session.set_scroll(ScrollState {
+                x: scroll.x,
+                y: scroll.y,
+            });
+            self.target_layout = None;
+            self.pending_cause = Some(LayoutChangeCause::ViewportResize);
+            self.redraw(cx);
+        }
+        let area = self.scroll_bars.area();
+        let input = match event.hits(cx, area) {
             Hit::TextInput(event) if !self.read_only => Some(if event.was_paste {
                 EditorInput::Paste(Arc::from(event.input.as_str()))
             } else {
@@ -626,8 +654,8 @@ impl MarkdownEditor {
             }
             Hit::KeyDown(event) => key_input(event),
             Hit::FingerDown(event) if event.is_primary_hit() => {
-                cx.set_key_focus(self.view.area());
-                let point = event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y);
+                cx.set_key_focus(area);
+                let point = event.abs - area.rect(cx).pos + dvec2(0.0, self.scroll_y);
                 self.pointer_drag_active = true;
                 Some(EditorInput::PointerDown(PointerGesture {
                     point,
@@ -642,13 +670,12 @@ impl MarkdownEditor {
                 }))
             }
             Hit::FingerMove(event) if self.pointer_drag_active => Some(EditorInput::PointerMove {
-                point: event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y),
+                point: event.abs - area.rect(cx).pos + dvec2(0.0, self.scroll_y),
             }),
             Hit::FingerUp(event) if self.pointer_drag_active => {
                 self.pointer_drag_active = false;
                 if event.was_tap() {
-                    let point =
-                        event.abs - self.view.area().rect(cx).pos + dvec2(0.0, self.scroll_y);
+                    let point = event.abs - area.rect(cx).pos + dvec2(0.0, self.scroll_y);
                     if event.modifiers.is_primary() {
                         if let (Some(installed), Some(layout)) =
                             (self.installed.as_ref(), self.frame_layout.as_ref())
@@ -680,15 +707,6 @@ impl MarkdownEditor {
             }
             _ => None,
         };
-        if let Event::Scroll(event) = event {
-            if self.view.area().rect(cx).contains(event.abs) && !event.handled_y.get() {
-                self.scroll_y = (self.scroll_y + event.scroll.y).max(0.0);
-                self.target_layout = None;
-                self.pending_cause = Some(LayoutChangeCause::ViewportResize);
-                self.view.redraw(cx);
-                event.handled_y.set(true);
-            }
-        }
         input.map_or(Ok(Vec::new()), |input| {
             self.handle_input_with_session(cx, session, input)
         })
@@ -701,6 +719,12 @@ impl MarkdownEditor {
         scope: &mut Scope,
         walk: Walk,
     ) -> Result<DrawStep, MarkdownEditorError> {
+        let requested_scroll = dvec2(session.scroll().x, session.scroll().y);
+        if self.scroll_bars.get_scroll_pos() != requested_scroll {
+            self.scroll_bars
+                .set_scroll_pos_no_clip(cx, requested_scroll);
+            self.scroll_y = requested_scroll.y;
+        }
         let viewport = cx.peek_walk_turtle(walk);
         let viewport_size = viewport.size;
         let layout = self.install_layout(cx, session, Some(viewport_size))?;
@@ -726,10 +750,12 @@ impl MarkdownEditor {
             session.ime(),
         )
         .map_err(MarkdownEditorError::Presentation)?;
+        let content_origin = viewport.pos - self.scroll_bars.get_scroll_pos();
         let commands = commands
             .iter()
-            .map(|command| command.translated(viewport.pos))
+            .map(|command| command.translated(content_origin))
             .collect::<Arc<[_]>>();
+        self.scroll_bars.begin(cx, walk, Layout::default());
         self.last_draw = DrawRecorder::default();
         self.paint_evidence.begin_frame();
         for layer in [
@@ -777,10 +803,19 @@ impl MarkdownEditor {
             }
             self.last_draw.set_last_primitive_count(primitive_count);
         }
-        if cx.has_key_focus(self.view.area()) && !self.read_only {
+        cx.turtle_mut()
+            .set_used(layout.content_size().x, layout.content_size().y);
+        self.scroll_bars.end(cx);
+        let scroll = self.scroll_bars.get_scroll_pos();
+        self.scroll_y = scroll.y;
+        session.set_scroll(ScrollState {
+            x: scroll.x,
+            y: scroll.y,
+        });
+        if cx.has_key_focus(self.scroll_bars.area()) && !self.read_only {
             self.show_ime(cx, session);
         }
-        Ok(self.view.draw_walk(cx, scope, walk))
+        Ok(DrawStep::done())
     }
 
     fn paint_command(&mut self, cx: &mut Cx2d, scope: &mut Scope, command: &DrawCommand) {
@@ -1067,7 +1102,7 @@ impl MarkdownEditor {
             }
         }
         let viewport_size =
-            resolved_layout_viewport(self.view.area().rect(cx).size, requested_viewport);
+            resolved_layout_viewport(self.scroll_bars.area().rect(cx).size, requested_viewport);
         self.fonts.sans_regular = Some(self.draw_text_sans.text_style.font_family.clone());
         self.fonts.sans_regular_italic =
             Some(self.draw_text_sans_italic.text_style.font_family.clone());
@@ -1191,11 +1226,11 @@ impl MarkdownEditor {
             actions.push(self.make_action(MarkdownEditorAction::SelectionChanged));
         }
         if response.request_redraw {
-            self.view.redraw(cx);
+            self.redraw(cx);
         }
         if let Some(point) = response.request_ime_at {
             self.last_ime_point = point;
-            cx.show_text_ime(self.view.area(), point);
+            cx.show_text_ime(self.scroll_bars.area(), point - dvec2(0.0, self.scroll_y));
         }
         Ok(actions)
     }
@@ -1218,7 +1253,7 @@ impl MarkdownEditor {
             return;
         };
         self.last_ime_point = point;
-        cx.show_text_ime(self.view.area(), point);
+        cx.show_text_ime(self.scroll_bars.area(), point - dvec2(0.0, self.scroll_y));
     }
 }
 
@@ -1279,13 +1314,13 @@ impl MarkdownEditorRef {
     pub fn set_key_focus(&self, cx: &mut Cx) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.has_focus = true;
-            cx.set_key_focus(inner.view.area());
+            cx.set_key_focus(inner.scroll_bars.area());
         }
     }
 
     pub fn redraw(&self, cx: &mut Cx) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.view.redraw(cx);
+            inner.redraw(cx);
         }
     }
 
@@ -1317,7 +1352,7 @@ impl MarkdownEditorRef {
                     inner.next_frame = NextFrame::default();
                 }
             }
-            inner.view.redraw(cx);
+            inner.redraw(cx);
         }
     }
 
@@ -1334,7 +1369,7 @@ impl MarkdownEditorRef {
             inner.installed = Some(presentation);
             inner.pending_cause = Some(cause);
             inner.target_layout = None;
-            inner.view.redraw(cx);
+            inner.redraw(cx);
         }
     }
 
@@ -1346,7 +1381,7 @@ impl MarkdownEditorRef {
             inner.frame_layout = None;
             inner.pending_cause = None;
             inner.next_frame = NextFrame::default();
-            inner.view.redraw(cx);
+            inner.redraw(cx);
         }
     }
 

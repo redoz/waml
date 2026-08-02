@@ -1120,6 +1120,96 @@ mod tests {
     }
 
     #[test]
+    fn mounted_markdown_editor_wheel_scroll_updates_session_state() {
+        use makepad_widgets::event::{ScrollEvent, ScrollPhase};
+        use std::cell::Cell;
+
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let editor = body.markdown_editor();
+        editor.set_paint_evidence_enabled(true);
+        let authored = (0..40)
+            .map(|index| format!("## Section {index}\n\nBody text for section {index}.\n\n"))
+            .collect::<String>();
+        let mut host = crate::editor_session::EditorSession::default();
+        host.replace(SourceBundle::try_from_pairs([("runbook.md", authored)]).unwrap())
+            .unwrap();
+        let mut view = source_view("runbook");
+        view.install_snapshot(
+            &mut cx,
+            &body,
+            &host.snapshot(),
+            HostSnapshotCause::InitialLoad,
+        );
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            panic!("the source view must be ready");
+        };
+        draw_markdown_widget_at(
+            &mut cx,
+            &ui,
+            &mut ready.session,
+            Rect {
+                pos: dvec2(20.0, 30.0),
+                size: dvec2(320.0, 120.0),
+            },
+        );
+        let first_text_y = editor
+            .test_painted_commands()
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::Text { rect, .. } => Some(rect.pos.y),
+                _ => None,
+            })
+            .expect("the first frame must paint text");
+
+        let event = Event::Scroll(ScrollEvent {
+            window_id: WindowId(0, 0),
+            scroll: dvec2(0.0, 80.0),
+            abs: dvec2(100.0, 80.0),
+            modifiers: KeyModifiers::default(),
+            handled_x: Cell::new(false),
+            handled_y: Cell::new(false),
+            is_mouse: true,
+            time: 0.0,
+            phase: ScrollPhase::Changed,
+        });
+        view.route_editor_event(&mut cx, &ui, &event);
+
+        let SourceViewState::Ready(ready) = &view.state else {
+            unreachable!();
+        };
+        assert!(ready.session.scroll().y > 0.0);
+        let scroll_y = ready.session.scroll().y;
+        let Event::Scroll(event) = event else {
+            unreachable!();
+        };
+        assert!(event.handled_y.get());
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            unreachable!();
+        };
+        draw_markdown_widget_at(
+            &mut cx,
+            &ui,
+            &mut ready.session,
+            Rect {
+                pos: dvec2(20.0, 30.0),
+                size: dvec2(320.0, 120.0),
+            },
+        );
+        let scrolled_text_y = editor
+            .test_painted_commands()
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::Text { rect, .. } => Some(rect.pos.y),
+                _ => None,
+            })
+            .expect("the scrolled frame must paint text");
+        assert!((first_text_y - scrolled_text_y - scroll_y).abs() < 0.001);
+    }
+
+    #[test]
     fn mounted_widget_draw_translates_every_painted_layer_and_embedded_state_once() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         cx.init_cx_os();
