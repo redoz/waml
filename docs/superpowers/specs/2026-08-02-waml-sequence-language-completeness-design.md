@@ -49,11 +49,12 @@ UML interchange metamodel.
    is a total order. WAML does not use UML weak sequencing as its default.
 2. **Concurrency is explicit.** A `par` fragment is the only new construct that removes
    order between branches. Each branch still has a total internal order.
-3. **Message intent uses words.** The canonical verbs are `calls`, `returns`, `sends`,
+3. **Message intent uses words.** The canonical verbs are `calls`, `returns`, `signals`,
    `creates`, and `destroys`. The `async` modifier applies only to `calls`. `returns` is
    WAML's readable spelling for the UML reply message sort.
-4. **Existing `sends` documents keep their meaning.** `sends` is the asynchronous
-   signal or event form. `calls ... async` is the new asynchronous operation-call form.
+4. **Signals are one-way.** `signals` is the canonical asynchronous Signal form and can
+   carry a command or an event. Existing `sends` documents keep the same meaning as a
+   compatibility spelling. `calls ... async` remains an operation call, not a signal.
 5. **Boundary endpoints are structural.** `outside` represents a found or lost message.
    Named gates use `@gate` inside an interaction and `ref@gate` around an interaction
    use. Found and lost are not extra message verbs.
@@ -80,7 +81,7 @@ coherent later visual form.
 | --- | --- | --- |
 | synchronous call | keep | `calls` |
 | asynchronous operation call | add | `calls <target> async` |
-| asynchronous signal | keep and clarify | `sends` |
+| asynchronous signal | keep with readable UML spelling | `signals` |
 | reply/operation return | keep with readable spelling | `returns` |
 | create message | keep | `creates` |
 | delete message | keep | `destroys` |
@@ -145,19 +146,21 @@ that character separates an interaction-use alias from a gate name.
 
 ### Message grammar
 
-Calls and returns have sentence-like forms that expose operation identity and correlation.
-Other message forms retain their current endpoint-first shape until their separate syntax
-review is complete.
+Calls, returns, and signals have sentence-like canonical forms. Calls and returns expose
+operation identity and correlation. Create and destroy messages retain their current
+endpoint-first shape until their separate syntax review is complete.
 
 The canonical grammar is:
 
 ```text
-message        := call-message | return-message | other-message
+message        := call-message | return-message | signal-message | other-message
 call-message   := "-" endpoint "calls" endpoint ("async")? operation? call-tag?
 return-message := "-" endpoint "returns" value? return-target? call-match?
+signal-message := "-" endpoint "signals" endpoint signal?
 other-message  := "-" endpoint other-verb endpoint (":" payload)?
 operation      := inline-code
 value          := inline-code
+signal         := inline-code
 call-tag       := "as" call-id
 return-target  := "to" endpoint
 call-match     := "for" call-id
@@ -165,7 +168,7 @@ call-id        := name
 endpoint       := lifeline-handle | "outside" | local-gate | use-gate
 local-gate     := "@" name
 use-gate       := use-alias "@" name
-other-verb     := "sends" | "creates" | "destroys"
+other-verb     := "creates" | "destroys"
 ```
 
 The `async` modifier occurs after the target and before the operation. It is valid only on
@@ -174,9 +177,12 @@ a `calls` message. `as` occurs after the operation. A return value occurs direct
 delimits operations and values, so `as`, `to`, and `for` inside those values are not
 grammar tokens.
 
-The existing colon form and the `replies` verb remain accepted compatibility spellings.
-They keep their existing meaning and lossless source representation. New editor actions
-and documentation emit the canonical forms above.
+`signals` is inherently asynchronous and therefore does not accept the `async` modifier.
+Its optional inline-code value names the command or event delivered to the target.
+
+The existing colon forms, `replies` verb, and `sends` verb remain accepted compatibility
+spellings. They keep their existing meaning and lossless source representation. New
+editor actions and documentation emit the canonical forms above.
 
 ### Message meaning
 
@@ -184,7 +190,7 @@ and documentation emit the canonical forms above.
 - customer calls order `submit()` as submission
 - order returns `accepted` for submission
 - order calls order async `recalculate()` as recalculation
-- order sends bus: `OrderPlaced`
+- order signals bus `OrderPlaced`
 - order creates worker: `OrderWorker`
 - order destroys worker
 ```
@@ -193,10 +199,16 @@ and documentation emit the canonical forms above.
 | --- | --- | --- | --- |
 | `calls` | synchronous operation call | yes | open activation on target |
 | `calls ... async` | asynchronous operation call | no | open activation on target |
-| `sends` | asynchronous signal or event | no | none |
+| `signals` | asynchronous one-way command or event | no | none |
 | `returns` | completion of a synchronous or asynchronous call | n/a | close matching activation |
 | `creates` | create target lifeline instance | n/a | start target stem at message |
 | `destroys` | destroy target lifeline instance | n/a | end target stem at message |
+
+`signals` delivers one asynchronous stimulus and has no operation-return relationship.
+The signal can describe a one-way command such as `StartJob` or an event such as
+`OrderPlaced`. A response is another independent `signals` message in the opposite
+direction. WAML does not correlate the two signals with `as` or `for`; a protocol-level
+correlation value belongs in the signal payload.
 
 A self message is valid when source and target are the same lifeline. A self `calls`
 message opens a nested activation. A later matched `returns` message closes it. The solver
@@ -248,8 +260,8 @@ invalid return stays in the declared model.
 `outside` is an anonymous endpoint at the interaction-frame boundary:
 
 ```markdown
-- outside sends order: `OrderImported`
-- order sends outside: `AuditRecord`
+- outside signals order `OrderImported`
+- order signals outside `AuditRecord`
 ```
 
 An `outside` source makes a found message. An `outside` target makes a lost message.
@@ -277,7 +289,7 @@ Conditional fragments keep the existing operand words:
 
 - opt
   - when `receipt requested`
-    - order sends bus: `ReceiptRequested`
+    - order signals bus `ReceiptRequested`
 
 - loop
   - when `an item remains`
@@ -307,7 +319,7 @@ Parallel and unconditional fragments use `branch` operands:
 
 - neg
   - branch
-    - order sends bus: `ChargeWithoutOrder`
+    - order signals bus `ChargeWithoutOrder`
 ```
 
 `par` requires two or more `branch` operands. A branch label is optional and is not a
@@ -422,6 +434,7 @@ The lossless syntax tree must add typed nodes for:
 - the `async` modifier on `calls` messages;
 - call identities introduced by `as`;
 - return values and the optional `to` and `for` clauses;
+- canonical `signals` messages while preserving legacy `sends` tokens;
 - boundary and gate endpoints;
 - the five new fragment heads;
 - `branch` operands and their optional labels;
@@ -478,9 +491,9 @@ resolve.
 The runtime replaces authored handles with typed identifiers. `SeqEdge.from` and
 `SeqEdge.to` must become endpoint references rather than unqualified lifeline strings.
 The message enum adds `AsyncCall`; an unmodified `calls` message maps to `SyncCall`, a
-`calls ... async` message maps to `AsyncCall`, and existing `Sends` maps to `AsyncSignal`.
-Serialization names must be explicit so an enum rename does not change external data by
-accident.
+`calls ... async` message maps to `AsyncCall`, and canonical `signals` plus legacy `Sends`
+map to `AsyncSignal`. Serialization names must be explicit so an enum rename does not
+change external data by accident.
 
 The semantic kind for canonical `returns` and legacy `replies` is `Reply`, matching UML.
 Each resolved call has a stable message identity plus its optional authored call identity.
@@ -516,9 +529,9 @@ interaction use. The parser must continue after:
 - a malformed `bind` line.
 
 The formatter emits the canonical forms in this document for new edits. It preserves
-valid existing colon-form calls and `replies` source, as well as existing `sends`,
-`creates`, `destroys`, `alt`, `opt`, and `loop` source. It must not rewrite `sends` to
-`calls ... async`, because the two forms have different meaning.
+valid existing colon-form calls, `replies`, and `sends` source, as well as existing
+`creates`, `destroys`, `alt`, `opt`, and `loop` source. It must not rewrite legacy `sends`
+to `calls ... async`, because the two forms have different meaning.
 
 Formatting is idempotent. Parse → format → parse must preserve the declared semantic
 model. Editing unrelated source must not normalize malformed interaction content that the
@@ -556,7 +569,8 @@ Every sequence document accepted before this change must still parse with the sa
 meaning. In particular:
 
 - `calls` remains synchronous;
-- `sends` remains asynchronous and does not open an activation;
+- legacy `sends` maps to the same `AsyncSignal` kind as canonical `signals` and does not
+  open an activation;
 - legacy `replies` maps to the same UML `Reply` kind as canonical `returns`;
 - untagged return matching retains the existing activation-stack result when that result
   is unambiguous;
@@ -602,7 +616,8 @@ The project is complete only when the whole language path agrees.
 - Every new construct is formatter-idempotent.
 - Parse → format → parse preserves the declared model.
 - Existing source verbs and fragments keep their spelling and meaning.
-- Legacy `replies` and colon-form calls retain their spelling and semantic kind.
+- Legacy `replies`, `sends`, and colon-form messages retain their spelling and semantic
+  kind.
 - Existing serialized `SequenceDoc` fixtures still decode.
 - New endpoint, fragment, and interaction-use values round-trip through serialization.
 
@@ -645,7 +660,7 @@ Examples of later editor questions are:
 - “Should Order wait for the response?” → `calls` or `calls ... async`.
 - “Could more than one Payment call be in flight?” → add `as` to calls and `for` to
   returns.
-- “Is this an operation call or an event notification?” → `calls ... async` or `sends`.
+- “Is this an operation call or a one-way signal?” → `calls ... async` or `signals`.
 - “Does this message enter from outside this diagram?” → `outside` source.
 - “Can these happen at the same time?” → separate `par` branches.
 - “Does this condition select an alternative, repeat work, or stop the interaction?” →
