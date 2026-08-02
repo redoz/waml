@@ -1,5 +1,5 @@
-use waml::ops::{apply, Op};
 use waml::bundle_envelope::split_bundle;
+use waml::ops::{apply, Op};
 
 fn base(path: &str) -> String {
     path.rsplit(['/', '\\'])
