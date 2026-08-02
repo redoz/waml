@@ -67,6 +67,25 @@ const EXCLUSIVE_ORDER: [ExclusiveHandler; 16] = [
     ExclusiveHandler::DocumentTabs,
 ];
 
+/// Map a `ConflictListAction::Delete` to the `Op::PlaceRm` that removes it
+/// from `diagram`'s `## Layout` section. Pure so it is unit-testable without
+/// a live `Cx`/`App`; `None` for any other action (nothing to remove).
+fn place_rm_for(
+    diagram: &str,
+    action: &crate::popup::conflict_list::ConflictListAction,
+) -> Option<waml::uml::Op> {
+    match action {
+        crate::popup::conflict_list::ConflictListAction::Delete { subject, reference } => {
+            Some(waml::uml::Op::PlacementRemove {
+                diagram: diagram.to_string(),
+                subject_slug: subject.clone(),
+                reference_slug: reference.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
 impl App {
     pub(super) fn handle_action_batch(&mut self, cx: &mut Cx, actions: &Actions) {
         for observer in OBSERVER_ORDER {
@@ -1124,6 +1143,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::navigation::DocumentLocator;
+    use crate::popup::conflict_list::ConflictListAction;
     use crate::popup::root::PopupRootAction;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -1324,5 +1344,74 @@ mod tests {
         assert_eq!(production.matches("PopupRequest::Select {").count(), 1);
         assert!(!production.contains("PopupRequest::MaxAttributesPicker"));
         assert!(!production.contains("PopupRequest::ElementPicker"));
+    }
+
+    #[test]
+    fn conflict_delete_maps_to_place_rm() {
+        let action = ConflictListAction::Delete {
+            subject: "order".to_string(),
+            reference: "payment-gateway".to_string(),
+        };
+        let op = place_rm_for("dia", &action);
+        assert_eq!(
+            op,
+            Some(waml::uml::Op::PlacementRemove {
+                diagram: "dia".to_string(),
+                subject_slug: "order".to_string(),
+                reference_slug: "payment-gateway".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn conflict_focus_never_maps_to_an_op() {
+        let action = ConflictListAction::Focus {
+            subject: "order".to_string(),
+            reference: "payment-gateway".to_string(),
+        };
+        assert_eq!(place_rm_for("dia", &action), None);
+        assert_eq!(place_rm_for("dia", &ConflictListAction::None), None);
+    }
+
+    // End-to-end at the ops layer (no live `Cx`/`App` needed): the mapped
+    // `Op::PlaceRm` removes ONLY the targeted placement from the re-serialized
+    // bundle, leaving an unrelated one intact. The solver's dropped/
+    // conflicts_with reporting is already covered by Task 1's `waml::ops`
+    // tests and `scene.rs`'s `project_conflicts` tests.
+    #[test]
+    fn conflict_delete_removes_only_the_targeted_placement() {
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "shop/dia.md".to_string(),
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\
+             - [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)\n\
+             - [Customer](./customer.md) below [Order](./order.md)\n"
+                .to_string(),
+        )])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
+        let action = ConflictListAction::Delete {
+            subject: "order".to_string(),
+            reference: "payment-gateway".to_string(),
+        };
+        let op = place_rm_for("dia", &action).expect("Delete maps to an Op");
+        let out = waml::edit::EditBatch::lower(
+            &waml::uml::Batch(vec![op]),
+            waml::edit::EditContext {
+                source: &source,
+                okf_analysis: prepared.okf(),
+                session_revision: prepared.revision(),
+                uml: prepared.uml(),
+            },
+        )
+        .unwrap();
+        let markdown = out.document_by_concept_id("shop/dia").unwrap().text();
+        assert!(
+            !markdown.contains("left of"),
+            "the deleted placement is gone: {markdown}"
+        );
+        assert!(
+            markdown.contains("below"),
+            "the OTHER placement survives: {markdown}"
+        );
     }
 }
