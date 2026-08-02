@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::source::BundlePath;
@@ -345,6 +346,7 @@ pub fn encode_bundle_envelope_with(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn production_nonce() -> Option<u128> {
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -353,4 +355,20 @@ fn production_nonce() -> Option<u128> {
     let counter = NONCE_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
     let process = u128::from(std::process::id());
     Some(time ^ process.rotate_left(47) ^ counter.rotate_left(89))
+}
+
+/// Nonces for `wasm32-unknown-unknown`, where neither a clock nor a process id
+/// exists: `SystemTime::now()` PANICS there rather than returning an error, and
+/// `std::process::id()` is equally unsupported. The browser editor encodes a
+/// bundle on every **Export WAML bundle...**, so the shared version above would
+/// take the whole app down.
+///
+/// The counter alone is sufficient. A nonce is not a secret and carries no
+/// entropy requirement: it only has to be a string that appears nowhere in the
+/// paths or bodies being wrapped, and `encode_bundle_envelope_with` already
+/// retries with the next one when it collides.
+#[cfg(target_arch = "wasm32")]
+fn production_nonce() -> Option<u128> {
+    let counter = NONCE_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
+    Some(counter.rotate_left(89) ^ 0x7761_6d6c_5f77_6173_6d5f_6e6f_6e63_6531)
 }
