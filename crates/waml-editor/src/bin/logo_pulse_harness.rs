@@ -1,11 +1,15 @@
 //! Splash-logo pulse compare harness: the `LogoMark` wordmark drawn once per
-//! animation `mode`, stacked, each free-running (`auto: true`) on the splash's
-//! light ground so the colour pulse reads in its real context.
+//! `variant`, stacked, each free-running (`auto: true`) on the splash's light
+//! ground so the colour pulse reads in its real context.
 //!
-//! Rows (see logo.rs `pixel`):
-//!   1 accent      2 close-encounters   3 bucket-palette
-//!   4 molten      5 neon               6 electric
-//!   7 per-segment desaturated-until-pulse
+//! Rows (see logo.rs `PULSE_VARIANTS`):
+//!   1 accent   2 per-segment desaturated-until-pulse
+//!
+//! The eight hard-coded shader modes were collapsed into two parameterised
+//! palette families, and the looks that survived selection are the three above.
+//! Gone: close-encounters and bucket-palette (the per-letter-blend family), and
+//! molten, neon and electric (the sweep+strike family, cut after side-by-side
+//! review -- which is why family 0 is now just a flat accent).
 //!
 //! Run: `cargo run -p waml-editor --bin logo_pulse_harness`
 //! No hot-reload in a bare `cargo run` -- edit `logo.rs`, rebuild, relaunch.
@@ -34,26 +38,20 @@ script_mod! {
                 // Splash ground is a light radial; a flat light clear is close
                 // enough to judge the pulse colours against.
                 pass.clear_color: vec4(0.93, 0.94, 0.96, 1.0)
-                window.inner_size: vec2(320, 1140)
-                window.title: "WAML pulse 1-7 (top->bottom)"
+                window.inner_size: vec2(320, 360)
+                window.title: "WAML pulse 1-2 (top->bottom)"
                 body +: {
                     padding: 28
                     flow: Down
                     spacing: 18.0
 
-                    // Rows top->bottom = modes 1..7:
-                    //   1 accent · 2 close-encounters · 3 bucket-palette
-                    //   4 molten · 5 neon · 6 electric
-                    //   7 per-segment desaturated-until-pulse
-                    // `mode` is the widget field (Rust drives the uniform);
-                    // clicking a row crossfades it to the next variant.
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 1.0 }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 2.0 }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 3.0 }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 4.0 }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 5.0 }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 6.0 }
-                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, mode: 7.0 }
+                    // Rows top->bottom = ACCENT · PER-SEGMENT. Both read
+                    // the same free-running clock, so they are phase-locked and
+                    // a single frame compares them fairly.
+                    // `variant` is the widget field (Rust turns it into the
+                    // palette uniforms); clicking a row crossfades to the next.
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, variant: 1.0 }
+                    mod.widgets.LogoMark{ width: 240.0, height: 137.0, auto: true, variant: 2.0 }
                 }
             }
         }

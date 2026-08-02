@@ -43,12 +43,23 @@ script_mod! {
         accent: uniform(atlas.accent)
         hover: uniform(0.0)
         time: uniform(0.0)
-        // Animation mode: 0 = hover shimmer (top-bar wordmark, the default so
-        // any plain instance is unchanged); 1..7 = always-on splash letter
-        // pulse variants (accent / Close Encounters / bucket-palette / the
-        // agent-authored molten / neon / electric sets / and per-segment
-        // desaturated-until-pulse). See `pixel`.
-        mode: uniform(0.0)
+        // Animation selector: 0 = hover shimmer (top-bar wordmark, the default
+        // so any plain instance is unchanged); 1 = the always-on splash letter
+        // pulse. Which pulse LOOK you get is no longer a mode number -- it is
+        // the palette bundle below, pushed by `draw_walk` from `PULSE_VARIANTS`.
+        pulse: uniform(0.0)
+        // Palette family: 0 = flat accent, 1 = one fixed hue per segment.
+        family: uniform(0.0)
+        // Ambient breathe + per-frame sparkle on the pulse level (0 = off).
+        flicker: uniform(0.0)
+
+        // -- family 1 (per-segment) parameters: one hue per bar, left to right --
+        seg_c1: uniform(vec4(1.0, 1.0, 1.0, 1.0))
+        seg_c2: uniform(vec4(1.0, 1.0, 1.0, 1.0))
+        seg_c3: uniform(vec4(1.0, 1.0, 1.0, 1.0))
+        seg_c4: uniform(vec4(1.0, 1.0, 1.0, 1.0))
+        seg_c5: uniform(vec4(1.0, 1.0, 1.0, 1.0))
+        seg_c6: uniform(vec4(1.0, 1.0, 1.0, 1.0))
         // Crossfade coverage scale (0..1), default 1 = solid. Only the splash
         // drives it below 1: on a logo click it draws the outgoing variant at
         // fade=1, then the incoming variant over it at fade=0->1, cross-
@@ -173,166 +184,70 @@ script_mod! {
             let bl5 = th5 + (1.0 - th5) * (amb + fl5)
             let bl6 = th6 + (1.0 - th6) * (amb + fl6)
 
-            // mode 2 palette: Close Encounters light-organ (per-letter hue,
-            // blended per segment by each contributing letter's live level; the
-            // acc*eps term settles idle bars to accent instead of black).
-            let ceW = vec3(0.90, 0.14, 0.11)
-            let ceA = vec3(0.96, 0.56, 0.12)
-            let ceM = vec3(0.18, 0.82, 0.38)
-            let ceL = vec3(0.47, 0.32, 0.96)
-            let eps = 0.0001
-            let ce1 = (ceW * lvW + acc * eps) / (lvW + eps)
-            let ce2 = (ceW * lvW + ceA * lvA + ceM * lvM + acc * eps) / (lvW + lvA + lvM + eps)
-            let ce3 = ce2
-            let ce4 = (ceW * lvW + ceM * lvM + acc * eps) / (lvW + lvM + eps)
-            let ce5 = (ceM * lvM + ceL * lvL + acc * eps) / (lvM + lvL + eps)
-            let ce6 = (ceL * lvL + acc * eps) / (lvL + eps)
+            // ============ PALETTE FAMILIES ============
+            // The eight hard-coded modes collapsed into two parameterised
+            // families, because every one of them reused the shared hero/dance
+            // LEVEL above and differed only in COLOUR. This is still the largest
+            // shader program in the app; the collapse took it from 27.8 KB of
+            // GLSL to 21.3 KB, and what remains is the six quad-SDF geometry
+            // blocks and the level math, not the palettes.
+            //
+            // Note the collapse did NOT measurably speed up the web cold boot
+            // (interleaved A/B put it inside the +-100 ms run-to-run noise on a
+            // ~1.6 s boot). The shader compile cost is spread evenly across all
+            // 172 programs rather than concentrated here, so shrinking one
+            // program by a quarter buys nothing you can measure. It is kept for
+            // the code-level win: eight looks' worth of dead palette math is
+            // gone from every pixel of every frame.
+            //
+            //   family 0  ACCENT: every bar rides the themed accent, so the
+            //             pulse reads as the wordmark breathing in one colour.
+            //   family 1  PER-SEGMENT: each bar owns one fixed hue regardless of
+            //             which letter drives it, greyscale at rest, so one
+            //             letter reads as several colours at once.
+            //
+            // Two other shapes were built and cut after side-by-side review: a
+            // per-letter blend (colour keyed to which LETTER lit a shared
+            // segment -- Close Encounters, bucket swatches) and a sweep+strike
+            // (a hue oscillation travelling across the wordmark with a colour
+            // struck in on the thump -- molten, neon, electric). Family 0 is
+            // what the sweep degenerates to once no look needs the travel, so
+            // its oscillators, strike and palette uniforms are all gone.
 
-            // mode 3 palette: our bucket swatches (Interface/UseCase/Package/
-            // Behavior = blue/amber/green/pink), same per-seg blend.
-            let pkW = vec3(0.078, 0.588, 0.863)
-            let pkA = vec3(0.902, 0.588, 0.078)
-            let pkM = vec3(0.235, 0.745, 0.353)
-            let pkL = vec3(0.922, 0.275, 0.471)
-            let pk1 = (pkW * lvW + acc * eps) / (lvW + eps)
-            let pk2 = (pkW * lvW + pkA * lvA + pkM * lvM + acc * eps) / (lvW + lvA + lvM + eps)
-            let pk3 = pk2
-            let pk4 = (pkW * lvW + pkM * lvM + acc * eps) / (lvW + lvM + eps)
-            let pk5 = (pkM * lvM + pkL * lvL + acc * eps) / (lvM + lvL + eps)
-            let pk6 = (pkL * lvL + acc * eps) / (lvL + eps)
-
-            // mode 7 palette: a FIXED bucket hue per SEGMENT (not mode 3's
-            // per-letter blend). Grey at rest is free -- the final mix(k,tc,lev)
-            // fades each segment to the grey ramp as its thump level -> 0, so no
-            // idle colour floor is added (that floor is exactly what keeps mode 3
-            // idling accent instead of grey; mode 7 omits it). As a letter thumps,
-            // each of its segments lights its OWN distinct hue, so the letter reads
-            // as several colours at once. Spectrum left->right across the 7
-            // AccentBucket swatches (inspector_panel.rs bucket_color): blue, cyan,
-            // green, amber, pink, indigo -- 6 distinct so every letter (W=1,2,3,4
-            // A=2,3  M=2,3,4,5  L=5,6) spans multiple hues.
-            let sg1 = vec3(0.078, 0.588, 0.863)
-            let sg2 = vec3(0.000, 0.706, 0.824)
-            let sg3 = vec3(0.235, 0.745, 0.353)
-            let sg4 = vec3(0.902, 0.588, 0.078)
-            let sg5 = vec3(0.922, 0.275, 0.471)
-            let sg6 = vec3(0.353, 0.431, 0.941)
-
-            // ============ PALETTE VARIANTS (modes 4-6) ============
-            // These reuse the shared hero/dance LEVEL above (th1..6), so every
-            // mode pulses on the same W->A->M->L-then-dance rhythm and loops
-            // seamlessly; they differ only in COLOUR. Hue oscillators are smooth
-            // functions of absolute time (no wrap seam -- the level->0 there masks
-            // them anyway). Bar x-centres: 0.16 0.32 0.47 0.62 0.75 0.89.
-
-            // ---- mode 4: MOLTEN: viscous magenta->violet ooze drifting toward
-            // accent, hot-gold core on the thump. ----
-            let q4Mag = vec3(0.95, 0.10, 0.52)
-            let q4Vio = vec3(0.36, 0.09, 0.82)
-            let q4Hot = vec3(1.00, 0.93, 0.70)
-            let a4lev1 = th1
-            let a4lev2 = th2
-            let a4lev3 = th3
-            let a4lev4 = th4
-            let a4lev5 = th5
-            let a4lev6 = th6
-            let q4a1 = 0.16 * 6.5 - self.time * 0.9
-            let q4a2 = 0.32 * 6.5 - self.time * 0.9
-            let q4a3 = 0.47 * 6.5 - self.time * 0.9
-            let q4a4 = 0.62 * 6.5 - self.time * 0.9
-            let q4a5 = 0.75 * 6.5 - self.time * 0.9
-            let q4a6 = 0.89 * 6.5 - self.time * 0.9
-            let q4B1 = mix(mix(q4Mag, q4Vio, 0.5 + 0.5 * sin(q4a1)), acc, (0.5 + 0.5 * sin(q4a1 * 0.6 + 2.1)) * 0.55)
-            let q4B2 = mix(mix(q4Mag, q4Vio, 0.5 + 0.5 * sin(q4a2)), acc, (0.5 + 0.5 * sin(q4a2 * 0.6 + 2.1)) * 0.55)
-            let q4B3 = mix(mix(q4Mag, q4Vio, 0.5 + 0.5 * sin(q4a3)), acc, (0.5 + 0.5 * sin(q4a3 * 0.6 + 2.1)) * 0.55)
-            let q4B4 = mix(mix(q4Mag, q4Vio, 0.5 + 0.5 * sin(q4a4)), acc, (0.5 + 0.5 * sin(q4a4 * 0.6 + 2.1)) * 0.55)
-            let q4B5 = mix(mix(q4Mag, q4Vio, 0.5 + 0.5 * sin(q4a5)), acc, (0.5 + 0.5 * sin(q4a5 * 0.6 + 2.1)) * 0.55)
-            let q4B6 = mix(mix(q4Mag, q4Vio, 0.5 + 0.5 * sin(q4a6)), acc, (0.5 + 0.5 * sin(q4a6 * 0.6 + 2.1)) * 0.55)
-            let a4c1 = mix(q4B1, q4Hot, th1 * th1)
-            let a4c2 = mix(q4B2, q4Hot, th2 * th2)
-            let a4c3 = mix(q4B3, q4Hot, th3 * th3)
-            let a4c4 = mix(q4B4, q4Hot, th4 * th4)
-            let a4c5 = mix(q4B5, q4Hot, th5 * th5)
-            let a4c6 = mix(q4B6, q4Hot, th6 * th6)
-
-            // ---- mode 5: NEON: magenta<->cyan chroma sweep, white-hot strike
-            // core on the thump. ----
-            let q5mag = vec3(1.00, 0.10, 0.70)
-            let q5cyn = vec3(0.12, 0.95, 1.00)
-            let q5cor = vec3(1.00, 0.88, 1.00)
-            let a5lev1 = th1
-            let a5lev2 = th2
-            let a5lev3 = th3
-            let a5lev4 = th4
-            let a5lev5 = th5
-            let a5lev6 = th6
-            let q5g1 = 0.5 + 0.5 * sin(self.time * 0.8 + 0.16 * 3.5)
-            let q5g2 = 0.5 + 0.5 * sin(self.time * 0.8 + 0.32 * 3.5)
-            let q5g3 = 0.5 + 0.5 * sin(self.time * 0.8 + 0.47 * 3.5)
-            let q5g4 = 0.5 + 0.5 * sin(self.time * 0.8 + 0.62 * 3.5)
-            let q5g5 = 0.5 + 0.5 * sin(self.time * 0.8 + 0.75 * 3.5)
-            let q5g6 = 0.5 + 0.5 * sin(self.time * 0.8 + 0.89 * 3.5)
-            let a5c1 = mix(mix(q5mag, q5cyn, q5g1), q5cor, th1 * th1 * th1 * 0.6)
-            let a5c2 = mix(mix(q5mag, q5cyn, q5g2), q5cor, th2 * th2 * th2 * 0.6)
-            let a5c3 = mix(mix(q5mag, q5cyn, q5g3), q5cor, th3 * th3 * th3 * 0.6)
-            let a5c4 = mix(mix(q5mag, q5cyn, q5g4), q5cor, th4 * th4 * th4 * 0.6)
-            let a5c5 = mix(mix(q5mag, q5cyn, q5g5), q5cor, th5 * th5 * th5 * 0.6)
-            let a5c6 = mix(mix(q5mag, q5cyn, q5g6), q5cor, th6 * th6 * th6 * 0.6)
-
-            // ---- mode 6: ELECTRIC: cyan corona (accent) -> cold-white crack on
-            // the thump. Flicker + violet spark dropped (too distracting). ----
-            let q6wht = vec3(0.86, 0.96, 1.00)
-            let a6lev1 = th1
-            let a6lev2 = th2
-            let a6lev3 = th3
-            let a6lev4 = th4
-            let a6lev5 = th5
-            let a6lev6 = th6
-            let q6r1 = clamp((th1 - 0.5) / 0.46, 0.0, 1.0)
-            let q6r2 = clamp((th2 - 0.5) / 0.46, 0.0, 1.0)
-            let q6r3 = clamp((th3 - 0.5) / 0.46, 0.0, 1.0)
-            let q6r4 = clamp((th4 - 0.5) / 0.46, 0.0, 1.0)
-            let q6r5 = clamp((th5 - 0.5) / 0.46, 0.0, 1.0)
-            let q6r6 = clamp((th6 - 0.5) / 0.46, 0.0, 1.0)
-            let a6c1 = mix(acc, q6wht, q6r1 * q6r1 * (3.0 - 2.0 * q6r1))
-            let a6c2 = mix(acc, q6wht, q6r2 * q6r2 * (3.0 - 2.0 * q6r2))
-            let a6c3 = mix(acc, q6wht, q6r3 * q6r3 * (3.0 - 2.0 * q6r3))
-            let a6c4 = mix(acc, q6wht, q6r4 * q6r4 * (3.0 - 2.0 * q6r4))
-            let a6c5 = mix(acc, q6wht, q6r5 * q6r5 * (3.0 - 2.0 * q6r5))
-            let a6c6 = mix(acc, q6wht, q6r6 * q6r6 * (3.0 - 2.0 * q6r6))
-
-            // -- per-mode selector weights (exactly one is 1; no `if` in DSL) --
-            let s05 = sign(self.mode - 0.5)
-            let s15 = sign(self.mode - 1.5)
-            let s25 = sign(self.mode - 2.5)
-            let s35 = sign(self.mode - 3.5)
-            let s45 = sign(self.mode - 4.5)
-            let s55 = sign(self.mode - 5.5)
-            let s65 = sign(self.mode - 6.5)
-            let s75 = sign(self.mode - 7.5)
-            let m0 = 0.5 - 0.5 * s05
-            let m1 = (0.5 + 0.5 * s05) * (0.5 - 0.5 * s15)
-            let m2 = (0.5 + 0.5 * s15) * (0.5 - 0.5 * s25)
-            let m3 = (0.5 + 0.5 * s25) * (0.5 - 0.5 * s35)
-            let m4 = (0.5 + 0.5 * s35) * (0.5 - 0.5 * s45)
-            let m5 = (0.5 + 0.5 * s45) * (0.5 - 0.5 * s55)
-            let m6 = (0.5 + 0.5 * s55) * (0.5 - 0.5 * s65)
-            let m7 = (0.5 + 0.5 * s65) * (0.5 - 0.5 * s75)
-            let seq = m1 + m2 + m3
+            // -- family 1: one fixed hue per segment --
+            let pg1 = vec3(self.seg_c1.x, self.seg_c1.y, self.seg_c1.z)
+            let pg2 = vec3(self.seg_c2.x, self.seg_c2.y, self.seg_c2.z)
+            let pg3 = vec3(self.seg_c3.x, self.seg_c3.y, self.seg_c3.z)
+            let pg4 = vec3(self.seg_c4.x, self.seg_c4.y, self.seg_c4.z)
+            let pg5 = vec3(self.seg_c5.x, self.seg_c5.y, self.seg_c5.z)
+            let pg6 = vec3(self.seg_c6.x, self.seg_c6.y, self.seg_c6.z)
 
             // -- resolve per-segment level + target colour, then recolor --
-            let lev1 = m0 * g1 + seq * bl1 + m4 * a4lev1 + m5 * a5lev1 + m6 * a6lev1 + m7 * th1
-            let lev2 = m0 * g2 + seq * bl2 + m4 * a4lev2 + m5 * a5lev2 + m6 * a6lev2 + m7 * th2
-            let lev3 = m0 * g3 + seq * bl3 + m4 * a4lev3 + m5 * a5lev3 + m6 * a6lev3 + m7 * th3
-            let lev4 = m0 * g4 + seq * bl4 + m4 * a4lev4 + m5 * a5lev4 + m6 * a6lev4 + m7 * th4
-            let lev5 = m0 * g5 + seq * bl5 + m4 * a4lev5 + m5 * a5lev5 + m6 * a6lev5 + m7 * th5
-            let lev6 = m0 * g6 + seq * bl6 + m4 * a4lev6 + m5 * a5lev6 + m6 * a6lev6 + m7 * th6
-            let tc1 = (m0 + m1) * acc + m2 * ce1 + m3 * pk1 + m4 * a4c1 + m5 * a5c1 + m6 * a6c1 + m7 * sg1
-            let tc2 = (m0 + m1) * acc + m2 * ce2 + m3 * pk2 + m4 * a4c2 + m5 * a5c2 + m6 * a6c2 + m7 * sg2
-            let tc3 = (m0 + m1) * acc + m2 * ce3 + m3 * pk3 + m4 * a4c3 + m5 * a5c3 + m6 * a6c3 + m7 * sg3
-            let tc4 = (m0 + m1) * acc + m2 * ce4 + m3 * pk4 + m4 * a4c4 + m5 * a5c4 + m6 * a6c4 + m7 * sg4
-            let tc5 = (m0 + m1) * acc + m2 * ce5 + m3 * pk5 + m4 * a4c5 + m5 * a5c5 + m6 * a6c5 + m7 * sg5
-            let tc6 = (m0 + m1) * acc + m2 * ce6 + m3 * pk6 + m4 * a4c6 + m5 * a5c6 + m6 * a6c6 + m7 * sg6
+            // `pulse` selects hover-shimmer (0) vs letter pulse (1); `flicker`
+            // adds the ambient breathe + per-frame sparkle that the old modes
+            // 1-3 carried and 4-7 did not; `family` picks the palette shape.
+            let pl1 = mix(th1, bl1, self.flicker)
+            let pl2 = mix(th2, bl2, self.flicker)
+            let pl3 = mix(th3, bl3, self.flicker)
+            let pl4 = mix(th4, bl4, self.flicker)
+            let pl5 = mix(th5, bl5, self.flicker)
+            let pl6 = mix(th6, bl6, self.flicker)
+            let lev1 = mix(g1, pl1, self.pulse)
+            let lev2 = mix(g2, pl2, self.pulse)
+            let lev3 = mix(g3, pl3, self.pulse)
+            let lev4 = mix(g4, pl4, self.pulse)
+            let lev5 = mix(g5, pl5, self.pulse)
+            let lev6 = mix(g6, pl6, self.pulse)
+            // Family 0 is plain accent and the hover shimmer is too, so the two
+            // selectors collapse into one weight: only a pulsing per-segment
+            // mark departs from accent at all.
+            let seg_w = self.family * self.pulse
+            let tc1 = mix(acc, pg1, seg_w)
+            let tc2 = mix(acc, pg2, seg_w)
+            let tc3 = mix(acc, pg3, seg_w)
+            let tc4 = mix(acc, pg4, seg_w)
+            let tc5 = mix(acc, pg5, seg_w)
+            let tc6 = mix(acc, pg6, seg_w)
             let kg1 = mix(k1, tc1, clamp(lev1, 0.0, 1.0))
             let kg2 = mix(k2, tc2, clamp(lev2, 0.0, 1.0))
             let kg3 = mix(k3, tc3, clamp(lev3, 0.0, 1.0))
@@ -524,6 +439,60 @@ pub enum LogoAction {
     Clicked(DVec2),
 }
 
+/// One splash pulse look, expressed purely as shader uniforms. The shader used
+/// to carry eight hard-coded modes selected by a branchless weight ladder, and
+/// it is the largest program in the app. Every mode shared the same hero/dance
+/// level math and differed only in colour, so the looks now live here as data
+/// and the shader compiles one copy of each of the two palette families.
+#[derive(Clone, Copy)]
+struct PulseVariant {
+    /// 0 = flat accent, 1 = one fixed hue per segment.
+    family: f32,
+    /// Ambient breathe + sparkle on the level.
+    flicker: f32,
+    /// Family 1's six per-bar hues, left to right.
+    seg: [[f32; 3]; 6],
+}
+
+/// Neutral bundle: every look overrides what it uses.
+const PULSE_REST: PulseVariant = PulseVariant {
+    family: 0.0,
+    flicker: 0.0,
+    seg: [[1.0, 1.0, 1.0]; 6],
+};
+
+/// The palette uniforms are `vec4`s (the shader reads `.xyz`); widen an opaque
+/// RGB triple to the four floats `set_uniform` wants.
+fn rgba(c: [f32; 3]) -> [f32; 4] {
+    [c[0], c[1], c[2], 1.0]
+}
+
+/// The splash pulse looks, in click-cycle order. Indexed 1-based by
+/// `LogoMark::variant` (0 means "no pulse").
+const PULSE_VARIANTS: &[PulseVariant] = &[
+    // ACCENT: the whole wordmark breathing in the themed accent. The only look
+    // that carries the ambient breathe + sparkle.
+    PulseVariant {
+        flicker: 1.0,
+        ..PULSE_REST
+    },
+    // PER-SEGMENT: each bar owns a fixed bucket hue (blue, cyan, green, amber,
+    // pink, indigo) and is grey until its letter thumps, so one letter reads as
+    // several colours at once.
+    PulseVariant {
+        family: 1.0,
+        seg: [
+            [0.078, 0.588, 0.863],
+            [0.000, 0.706, 0.824],
+            [0.235, 0.745, 0.353],
+            [0.902, 0.588, 0.078],
+            [0.922, 0.275, 0.471],
+            [0.353, 0.431, 0.941],
+        ],
+        ..PULSE_REST
+    },
+];
+
 /// The interactive top-bar wordmark. Unlike `WamlButton`/`Radial` (event-passive
 /// components driven by their parent), this is a self-routing `Widget`: it
 /// hit-tests its own drawn area and runs a `NextFrame` hover-shimmer loop. Note
@@ -552,12 +521,13 @@ pub struct LogoMark {
     #[live]
     auto: bool,
 
-    // Splash colour-pulse variant (1..7). `#[live]` so the start-screen sets the
-    // initial variant; clicking the splash advances it (1->7, wrapping) and this
-    // field drives the shader `mode` uniform from `draw_walk`. Non-splash
-    // instances leave it 0 (the hover-shimmer mode).
+    // Splash colour-pulse variant: 0 = none (the hover-shimmer wordmark), 1..N
+    // index `PULSE_VARIANTS` (1-based, so the default 0 stays "no pulse").
+    // `#[live]` so a caller can set the initial look; clicking an `auto` mark
+    // advances it, wrapping. `draw_walk` turns this into the shader's palette
+    // uniforms -- the shader itself has no notion of a variant number.
     #[live]
-    mode: f32,
+    variant: f32,
 
     // Pointer is over the mark.
     #[rust]
@@ -578,11 +548,11 @@ pub struct LogoMark {
     // Last drawn rect (absolute) -- exposed for the drag-query override.
     #[rust]
     rect: Rect,
-    // Click-crossfade state (splash/`auto` only): `prev_mode` is the outgoing
-    // variant held at full opacity while `fade_t` ramps 0->1 fading the new
-    // `mode` in over it; `fading` gates the two-pass draw in `draw_walk`.
+    // Click-crossfade state (splash/`auto` only): `prev_variant` is the outgoing
+    // look held at full opacity while `fade_t` ramps 0->1 fading the new
+    // `variant` in over it; `fading` gates the two-pass draw in `draw_walk`.
     #[rust]
-    prev_mode: f32,
+    prev_variant: f32,
     #[rust]
     fade_t: f32,
     #[rust]
@@ -659,8 +629,8 @@ impl Widget for LogoMark {
                     cx.set_cursor(MouseCursor::Hand);
                 }
                 Hit::FingerDown(fe) if fe.is_primary_hit() => {
-                    self.prev_mode = self.mode;
-                    self.mode = self.mode % 7.0 + 1.0;
+                    self.prev_variant = self.variant;
+                    self.variant = self.variant % PULSE_VARIANTS.len() as f32 + 1.0;
                     self.fade_t = 0.0;
                     self.fading = true;
                     self.last_time = cx.seconds_since_app_start();
@@ -727,17 +697,17 @@ impl Widget for LogoMark {
             // Two-pass crossfade: outgoing variant at full coverage, then the
             // incoming one over it at `fade_t`. The two share the identical W
             // silhouette, so this reads as a colour cross-dissolve with a solid,
-            // hole-free hull. Differing `mode`/`fade` uniforms make makepad break
-            // the batch into two draw calls (see draw_list.rs uniform compare).
-            self.draw_bg
-                .set_uniform(cx, live_id!(mode), &[self.prev_mode]);
+            // hole-free hull. Differing palette/`fade` uniforms make makepad
+            // break the batch into two draw calls (see draw_list.rs uniform
+            // compare).
+            self.push_variant(cx, self.prev_variant);
             self.draw_bg.set_uniform(cx, live_id!(fade), &[1.0]);
             self.draw_bg.draw_abs(cx, rect);
-            self.draw_bg.set_uniform(cx, live_id!(mode), &[self.mode]);
+            self.push_variant(cx, self.variant);
             self.draw_bg.set_uniform(cx, live_id!(fade), &[self.fade_t]);
             self.draw_bg.draw_abs(cx, rect);
         } else {
-            self.draw_bg.set_uniform(cx, live_id!(mode), &[self.mode]);
+            self.push_variant(cx, self.variant);
             self.draw_bg.set_uniform(cx, live_id!(fade), &[1.0]);
             self.draw_bg.draw_abs(cx, rect);
         }
@@ -761,6 +731,32 @@ impl LogoMark {
             LogoAction::Clicked(center) => Some(center),
             LogoAction::None => None,
         }
+    }
+
+    /// Push one variant's palette bundle as shader uniforms. `variant` is
+    /// 1-based into `PULSE_VARIANTS`; anything outside that range (notably the
+    /// default 0) means "no pulse" and only clears `pulse`, leaving the mark on
+    /// its hover shimmer. Called once per draw pass, so the two passes of a
+    /// click crossfade can carry different palettes.
+    fn push_variant(&mut self, cx: &mut Cx, variant: f32) {
+        let index = variant as usize;
+        let Some(v) = index
+            .checked_sub(1)
+            .and_then(|i| PULSE_VARIANTS.get(i))
+            .copied()
+        else {
+            self.draw_bg.set_uniform(cx, live_id!(pulse), &[0.0]);
+            return;
+        };
+        self.draw_bg.set_uniform(cx, live_id!(pulse), &[1.0]);
+        self.draw_bg.set_uniform(cx, live_id!(family), &[v.family]);
+        self.draw_bg.set_uniform(cx, live_id!(flicker), &[v.flicker]);
+        self.draw_bg.set_uniform(cx, live_id!(seg_c1), &rgba(v.seg[0]));
+        self.draw_bg.set_uniform(cx, live_id!(seg_c2), &rgba(v.seg[1]));
+        self.draw_bg.set_uniform(cx, live_id!(seg_c3), &rgba(v.seg[2]));
+        self.draw_bg.set_uniform(cx, live_id!(seg_c4), &rgba(v.seg[3]));
+        self.draw_bg.set_uniform(cx, live_id!(seg_c5), &rgba(v.seg[4]));
+        self.draw_bg.set_uniform(cx, live_id!(seg_c6), &rgba(v.seg[5]));
     }
 
     /// Push the latest FPS-heat colour + strength from `App`'s `FpsMeter`. No-op
