@@ -687,13 +687,9 @@ mod tests {
         let cases = [
             (
                 edge(
-                    EndpointRef::Lifeline {
-                        id: "caller".into(),
-                    },
+                    EndpointRef::Lifeline { id: "caller".into() },
                     MessageKind::SyncCall,
-                    Some(EndpointRef::Lifeline {
-                        id: "callee".into(),
-                    }),
+                    Some(EndpointRef::Lifeline { id: "callee".into() }),
                     Some("work()".into()),
                 ),
                 "<caller> calls <callee> work()",
@@ -702,31 +698,23 @@ mod tests {
                 edge(
                     EndpointRef::Outside,
                     MessageKind::AsyncSignal,
-                    Some(EndpointRef::Lifeline {
-                        id: "worker".into(),
-                    }),
+                    Some(EndpointRef::Lifeline { id: "worker".into() }),
                     Some("ready".into()),
                 ),
                 "outside signals <worker> ready",
             ),
             (
                 edge(
-                    EndpointRef::LocalGate {
-                        gate: "entry".into(),
-                    },
+                    EndpointRef::LocalGate { gate: "entry".into() },
                     MessageKind::AsyncCall,
-                    Some(EndpointRef::Lifeline {
-                        id: "worker".into(),
-                    }),
+                    Some(EndpointRef::Lifeline { id: "worker".into() }),
                     None,
                 ),
                 "@entry calls <worker>",
             ),
             (
                 edge(
-                    EndpointRef::Lifeline {
-                        id: "caller".into(),
-                    },
+                    EndpointRef::Lifeline { id: "caller".into() },
                     MessageKind::AsyncCall,
                     Some(EndpointRef::UseGate {
                         interaction_use: InteractionUseId("use0".into()),
@@ -738,13 +726,9 @@ mod tests {
             ),
             (
                 edge(
-                    EndpointRef::Lifeline {
-                        id: "callee".into(),
-                    },
+                    EndpointRef::Lifeline { id: "callee".into() },
                     MessageKind::Reply,
-                    Some(EndpointRef::Lifeline {
-                        id: "caller".into(),
-                    }),
+                    Some(EndpointRef::Lifeline { id: "caller".into() }),
                     Some("result".into()),
                 ),
                 "<callee> returns result to <caller>",
