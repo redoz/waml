@@ -65,8 +65,8 @@ fn valid_fixtures_keep_exact_canonical_bytes_and_are_idempotent() {
         ),
         (
             "sequence.md",
-            include_str!("fixtures/parser-platform/sequence.md"),
-            "---\ntype: uml.Sequence\ntitle: Checkout\n---\n\n# Checkout\n\n## Lifelines\n- [Buyer](./object.md)\n- [Order](./class.md)\n\n## Messages\n- Buyer calls Order: `submit()`\n",
+            "---\ntype: uml.Sequence\ntitle: Checkout\n---\n# Checkout\n\n## Lifelines\n\n- [Buyer](./object.md)\n- [Order](./class.md)\n\n## Messages\n\n- Buyer calls Order `submit()` as submission\n",
+            "---\ntype: uml.Sequence\ntitle: Checkout\n---\n\n# Checkout\n\n## Lifelines\n- [Buyer](./object.md)\n- [Order](./class.md)\n\n## Messages\n- Buyer calls Order `submit()` as submission\n",
         ),
     ];
     for (path, source, expected) in fixtures {
@@ -143,6 +143,34 @@ fn malformed_recovery_and_unclaimed_generic_source_are_not_rewritten() {
 }
 
 #[test]
+fn removed_sequence_spellings_are_not_rewritten_as_canonical_messages() {
+    let source = "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Messages\n- a sends b: `old`\n- a replies b: `old`\n- a calls b: `old`\n";
+    let candidate = prepared("sequence.md", source, 5);
+    let snapshot = candidate
+        .uml()
+        .syntax
+        .document(document(&candidate, "sequence.md"))
+        .unwrap();
+    let unsupported = snapshot
+        .syntax()
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == waml::uml::syntax::UmlSyntaxDiagnosticCode::UnsupportedSequenceForm
+        })
+        .count();
+    assert_eq!(unsupported, 3);
+
+    let action = Formatter
+        .format(
+            ActionContext::from_prepared(&candidate).unwrap(),
+            document(&candidate, "sequence.md"),
+        )
+        .unwrap();
+    assert!(action.changes[0].edits.is_empty());
+}
+
+#[test]
 fn noncanonical_claimed_families_match_exact_canonical_bytes() {
     let fixtures = [
         (
@@ -177,8 +205,8 @@ fn noncanonical_claimed_families_match_exact_canonical_bytes() {
         ),
         (
             "sequence.md",
-            "---\ntype: uml.Sequence\ntitle: Q\n---\n# Q\n\n## Messages\n\n- Buyer calls Order: `submit()`\n\n## Lifelines\n\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n",
-            "---\ntype: uml.Sequence\ntitle: Q\n---\n\n# Q\n\n## Lifelines\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n\n## Messages\n- Buyer calls Order: `submit()`\n",
+            "---\ntype: uml.Sequence\ntitle: Q\n---\n# Q\n\n## Messages\n\n- Buyer  calls Order `submit()`  as submission\n\n## Lifelines\n\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n",
+            "---\ntype: uml.Sequence\ntitle: Q\n---\n\n# Q\n\n## Lifelines\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n\n## Messages\n- Buyer calls Order `submit()` as submission\n",
         ),
     ];
     for (path, source, expected) in fixtures {

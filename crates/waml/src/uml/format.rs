@@ -336,9 +336,10 @@ fn section_order(title: &str) -> Option<u8> {
         "notes" => 5,
         "nodes" => 6,
         "lifelines" => 7,
-        "messages" => 8,
-        "members" => 9,
-        "layout" => 10,
+        "gates" => 8,
+        "messages" => 9,
+        "members" => 10,
+        "layout" => 11,
         _ => return None,
     })
 }
@@ -353,6 +354,7 @@ fn canonical_section(title: &str, raw: &str) -> String {
         "notes" => "Notes",
         "nodes" => "Nodes",
         "lifelines" => "Lifelines",
+        "gates" => "Gates",
         "messages" => "Messages",
         "members" => "Members",
         "layout" => "Layout",
