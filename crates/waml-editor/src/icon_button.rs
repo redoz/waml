@@ -240,7 +240,9 @@ impl IconButton {
     /// Drive the cross-fade opacity (1 = opaque), redrawing only on a change.
     pub fn set_fade(&mut self, cx: &mut Cx, fade: f64) {
         let fade = fade.clamp(0.0, 1.0);
-        if self.fade.is_none_or(|old| (old - fade).abs() > 0.001) {
+        // `map_or`, not `is_none_or`: the latter is newer than the workspace
+        // MSRV, and `clippy::incompatible_msrv` is an error under the gate.
+        if self.fade.map_or(true, |old| (old - fade).abs() > 0.001) {
             self.fade = Some(fade);
             self.view.redraw(cx);
         }
