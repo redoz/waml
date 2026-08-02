@@ -508,11 +508,60 @@ fn nearest_edge_point(rect: Rect, from: (f64, f64)) -> (f64, f64) {
 /// route is exempt: a displaced label has been pushed away from its own route,
 /// so sitting on ANY stroke -- including its own -- means being drawn on top of
 /// something.
+/// Kept as the reference implementation the prefiltered version is proven
+/// equivalent to; production code calls `hits_any_route_prefiltered`.
+#[cfg(test)]
 fn hits_any_route(rect: Rect, routes: &[Vec<(f64, f64)>]) -> bool {
     routes
         .iter()
         .flat_map(|points| points.windows(2))
         .any(|s| segment_hits_rect(s[0], s[1], rect))
+}
+
+/// Axis-aligned box containing every point of one route. `None` for a route
+/// with no points.
+fn route_bounds(points: &[(f64, f64)]) -> Option<Rect> {
+    let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+    let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for &(x, y) in points {
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    }
+    (min_x <= max_x).then_some(Rect {
+        x: min_x,
+        y: min_y,
+        w: max_x - min_x,
+        h: max_y - min_y,
+    })
+}
+
+/// `hits_any_route` with a precomputed per-route bounding box, so a rect far
+/// from a route costs one box test instead of one test per segment.
+///
+/// The ring search runs this up to `MAX_LEADER_RINGS * LEADER_STEPS` times per
+/// displaced label, and the reroute loop re-runs placement, so without the
+/// prefilter a large diagram pays segment-count work on every scene rebuild —
+/// i.e. on every keystroke.
+fn hits_any_route_prefiltered(
+    rect: Rect,
+    routes: &[Vec<(f64, f64)>],
+    bounds: &[Option<Rect>],
+) -> bool {
+    routes.iter().zip(bounds).any(|(points, bound)| {
+        // A zero-width or zero-height route box is a straight run, so overlap
+        // has to be tested inclusively -- `overlaps` treats touching as clear.
+        let near = bound.is_some_and(|b| {
+            rect.x <= b.x + b.w
+                && b.x <= rect.x + rect.w
+                && rect.y <= b.y + b.h
+                && b.y <= rect.y + rect.h
+        });
+        near && points
+            .windows(2)
+            .any(|s| segment_hits_rect(s[0], s[1], rect))
+    })
 }
 
 /// Axis-aligned box containing every hard obstacle and every route point.
@@ -598,6 +647,10 @@ pub fn place_with_leaders(
         .chain(out.placed.iter().map(|p| p.rect))
         .collect();
 
+    // Computed once for the whole residue: the ring search below tests
+    // thousands of candidate rects against these.
+    let bounds: Vec<Option<Rect>> = routes.iter().map(|p| route_bounds(p)).collect();
+
     for request in residue {
         let size = measure(&request.text, cfg);
         let Some(points) = routes.get(request.edge) else {
@@ -624,7 +677,7 @@ pub fn place_with_leaders(
                     w: size.w,
                     h: size.h,
                 };
-                if !collides(rect, &hard) && !hits_any_route(rect, routes) {
+                if !collides(rect, &hard) && !hits_any_route_prefiltered(rect, routes, &bounds) {
                     found = Some(rect);
                     break 'rings;
                 }
@@ -651,6 +704,37 @@ pub fn place_with_leaders(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_route_prefilter_answers_exactly_what_the_full_scan_does() {
+        // The prefilter is a speed optimisation on the ring search's hot test,
+        // so it has to be an exact equivalence, not an approximation. Sweep a
+        // grid that straddles both routes, their bounding boxes and the empty
+        // space beyond.
+        let routes = vec![
+            vec![(0.0, 50.0), (300.0, 50.0)],
+            vec![(120.0, 0.0), (120.0, 40.0), (200.0, 40.0)],
+        ];
+        let bounds: Vec<Option<Rect>> = routes.iter().map(|p| route_bounds(p)).collect();
+        let mut checked = 0;
+        for i in -4..24 {
+            for j in -4..14 {
+                let rect = Rect {
+                    x: i as f64 * 15.0,
+                    y: j as f64 * 8.0,
+                    w: 14.0,
+                    h: 7.0,
+                };
+                assert_eq!(
+                    hits_any_route_prefiltered(rect, &routes, &bounds),
+                    hits_any_route(rect, &routes),
+                    "prefilter disagreed at {rect:?}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 400, "the sweep must actually cover ground");
+    }
 
     #[test]
     fn a_label_measures_wider_than_it_is_tall_and_scales_with_text() {
