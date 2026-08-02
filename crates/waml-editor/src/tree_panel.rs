@@ -462,6 +462,8 @@ pub struct ProjectTree {
     /// enum.
     #[rust(DockState::Pinned)]
     dock: DockState,
+    #[rust(true)]
+    presentation_visible: bool,
     #[rust]
     header_rect: Rect,
     // Key of the row to highlight, mirroring the active doc tab. Set via
@@ -858,7 +860,7 @@ impl Widget for ProjectTree {
         // stamped as an empty rect, so `handle_event`'s `event.hits` can't keep
         // matching the last expanded rect and swallow clicks meant for the
         // canvas underneath.
-        if !crate::dock::body_visible(self.dock) {
+        if !self.presentation_visible {
             let mut fw = walk;
             fw.width = Size::Fixed(0.0);
             fw.height = Size::Fixed(0.0);
@@ -1098,6 +1100,14 @@ impl ProjectTree {
 
     pub fn close_dock(&mut self, cx: &mut Cx) {
         self.apply_dock(cx, DockEvent::Close);
+    }
+
+    pub fn set_presentation_visible(&mut self, cx: &mut Cx, visible: bool) {
+        if self.presentation_visible == visible {
+            return;
+        }
+        self.presentation_visible = visible;
+        self.view.redraw(cx);
     }
 
     /// The current dock state. Plan-specified symmetry accessor (mirrors
@@ -1374,6 +1384,17 @@ mod tests {
         cx.widget_tree_mark_dirty(WidgetUid(0));
         let panel = cx.with_vm(ProjectTree::script_new_with_default);
         (cx, panel)
+    }
+
+    #[test]
+    fn presentation_visibility_keeps_the_tree_drawable_after_its_dock_closes() {
+        let (mut cx, mut panel) = project_tree_test_context();
+
+        panel.close_dock(&mut cx);
+        panel.set_presentation_visible(&mut cx, true);
+
+        assert_eq!(panel.dock_state(), crate::dock::DockState::Flag);
+        assert!(panel.presentation_visible);
     }
 
     fn mounted_project_tree_test_context() -> (Cx, ProjectTree, FileTreeRef) {

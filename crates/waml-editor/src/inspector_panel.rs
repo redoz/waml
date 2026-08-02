@@ -373,6 +373,8 @@ pub struct Inspector {
     /// header's right-dock toggle is the only thing that ever changes it.
     #[rust]
     dock: DockState,
+    #[rust]
+    presentation_visible: bool,
 }
 
 // Panel geometry (px). Fixed line advances — no text measuring in this cut.
@@ -568,7 +570,7 @@ impl Widget for Inspector {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         // Flag rest state: zero pixels, nothing drawn -- mirrors
         // `tree_panel.rs`'s own Flag branch exactly.
-        if !crate::dock::body_visible(self.dock) {
+        if !self.presentation_visible {
             let mut fw = walk;
             fw.width = Size::Fixed(0.0);
             fw.height = Size::Fixed(0.0);
@@ -1020,6 +1022,14 @@ impl Inspector {
     /// no-op when already closed, so there is no redraw churn on tab switches.
     pub fn close_dock(&mut self, cx: &mut Cx) {
         self.apply_dock(cx, DockEvent::Close);
+    }
+
+    pub fn set_presentation_visible(&mut self, cx: &mut Cx, visible: bool) {
+        if self.presentation_visible == visible {
+            return;
+        }
+        self.presentation_visible = visible;
+        self.view.redraw(cx);
     }
 
     /// The current dock state. Plan-specified symmetry accessor (mirrors
@@ -1555,5 +1565,17 @@ mod tests {
     fn the_inspector_starts_collapsed() {
         use crate::dock::DockState;
         assert_eq!(DockState::default(), DockState::Flag);
+    }
+
+    #[test]
+    fn presentation_visibility_keeps_the_inspector_drawable_after_its_dock_closes() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.widget_tree_mark_dirty(WidgetUid(0));
+        let mut panel = cx.with_vm(Inspector::script_new_with_default);
+
+        panel.set_presentation_visible(&mut cx, true);
+
+        assert_eq!(panel.dock_state(), crate::dock::DockState::Flag);
+        assert!(panel.presentation_visible);
     }
 }
