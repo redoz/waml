@@ -98,7 +98,11 @@ pub const COLOR_GROUPS: &[(&str, &[ColorRow])] = &[
         "TEXT",
         &[
             cr!("text", Text, "Primary text"),
-            cr!("text_mid", TextMid, "Small annotation text (canvas edge labels)"),
+            cr!(
+                "text_mid",
+                TextMid,
+                "Small annotation text (canvas edge labels)"
+            ),
             cr!("text_dim", TextDim, "Secondary / meta text"),
         ],
     ),

@@ -19,7 +19,7 @@ pub(super) fn draw_edge_labels(
     draws.edge_label.font_scale = target_size / font_size;
 
     for edge in &snapshot.scene.edges {
-        for label in edge_end_labels(edge, &snapshot.scene.display) {
+        for label in edge_end_labels(edge, &snapshot.scene.display, snapshot.linework.marker_size) {
             draw_label(cx, viewport, draws, label);
         }
     }
@@ -31,7 +31,11 @@ fn draw_label(
     draws: &mut ClassDrawResources<'_>,
     label: EdgeLabel,
 ) {
-    let anchor = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, label.anchor);
+    // The clearance is deliberately NOT projected: adornments and stroke widths
+    // are drawn at a fixed screen size, so the nudge that clears them has to be
+    // fixed in screen px too.
+    let anchor =
+        edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, label.anchor) + label.offset;
     let measured = draws
         .edge_label
         .layout(cx, 0.0, 0.0, None, false, Align::default(), &label.text)
@@ -69,8 +73,8 @@ mod tests {
         let scaled = scaled_text_size(measured, 0.5);
         assert_eq!(scaled, dvec2(20.0, 10.0));
         assert_eq!(
-            aligned_text_pos(anchor, scaled, LabelAlign::Left),
-            dvec2(80.0, 100.0)
+            aligned_text_pos(anchor, scaled, LabelAlign::AboveCenter),
+            dvec2(90.0, 90.0)
         );
     }
 }

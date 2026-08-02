@@ -112,7 +112,8 @@ pub(super) fn draw(
         if let Some(label) = &edge.label {
             if let Some(placed) = crate::edge_labels::mid_route_label(&edge.points, label.clone()) {
                 let anchor =
-                    edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, placed.anchor);
+                    edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, placed.anchor)
+                        + placed.offset;
                 // Drawing at the raw anchor put the glyphs ON the route. Size
                 // the run and step it off the line the way the label asks.
                 let size = draws

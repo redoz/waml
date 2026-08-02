@@ -140,24 +140,29 @@ mod edge_labels_tests {
         labels.into_iter().map(|label| label.text).collect()
     }
 
+    /// Stand-in for the renderer's screen-space adornment size.
+    const MARKER: f64 = 8.0;
+
     #[test]
     fn relationship_cardinality_is_independent_and_never_synthesized() {
         let edge = ended_edge(None, Multiplicity::parse("0..*"));
         assert_eq!(
             texts(edge_end_labels(
                 &edge,
-                &display(CardinalityVisibility::Off, true)
+                &display(CardinalityVisibility::Off, true),
+                MARKER
             )),
             vec!["{0..*}"]
         );
         assert!(
-            edge_end_labels(&edge, &display(CardinalityVisibility::All, false)).is_empty(),
+            edge_end_labels(&edge, &display(CardinalityVisibility::All, false), MARKER).is_empty(),
             "the relationship toggle must be authoritative"
         );
         assert_eq!(
             texts(edge_end_labels(
                 &edge,
-                &display(CardinalityVisibility::All, true)
+                &display(CardinalityVisibility::All, true),
+                MARKER
             )),
             vec!["{0..*}"],
             "enabling relationship cardinality must not synthesize an implicit one"
@@ -171,7 +176,9 @@ mod edge_labels_tests {
             RelEnd::default(),
             RelEnd::default(),
         );
-        assert!(edge_end_labels(&edge, &display(CardinalityVisibility::All, true)).is_empty());
+        assert!(
+            edge_end_labels(&edge, &display(CardinalityVisibility::All, true), MARKER).is_empty()
+        );
     }
 
     #[test]
@@ -182,14 +189,17 @@ mod edge_labels_tests {
         let mut display = display(CardinalityVisibility::Off, false);
         display.show_roles = false;
         display.show_labels = false;
-        assert!(edge_end_labels(&edge, &display).is_empty());
+        assert!(edge_end_labels(&edge, &display, MARKER).is_empty());
 
         display.show_roles = true;
-        assert_eq!(texts(edge_end_labels(&edge, &display)), vec!["orders"]);
+        assert_eq!(
+            texts(edge_end_labels(&edge, &display, MARKER)),
+            vec!["orders"]
+        );
 
         display.show_labels = true;
         assert_eq!(
-            texts(edge_end_labels(&edge, &display)),
+            texts(edge_end_labels(&edge, &display, MARKER)),
             vec!["orders", "places"]
         );
     }
@@ -199,21 +209,27 @@ mod edge_labels_tests {
         let labels = edge_end_labels(
             &ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*")),
             &display(CardinalityVisibility::All, true),
+            MARKER,
         );
-        assert_eq!(labels[0].align, LabelAlign::Right);
-        assert!(labels[0].anchor.0 > 20.0);
-        assert_eq!(labels[1].align, LabelAlign::Left);
-        assert!(labels[1].anchor.0 < 100.0);
+        // Each end steps INWARD along the route, and clears it upward: an offset
+        // along the line alone would leave the text sitting on the stroke.
+        assert!(labels[0].offset.x > 0.0);
+        assert!(labels[1].offset.x < 0.0);
+        assert_eq!(labels[0].align, LabelAlign::AboveStart);
+        assert_eq!(labels[1].align, LabelAlign::AboveEnd);
+        assert!(labels[0].offset.y < 0.0 && labels[1].offset.y < 0.0);
     }
 
     #[test]
     fn vertical_terminal_labels_move_into_open_space() {
         let mut edge = ended_edge(Multiplicity::parse("1"), Multiplicity::parse("0..*"));
         edge.points = vec![(10.0, 20.0), (10.0, 100.0)];
-        let labels = edge_end_labels(&edge, &display(CardinalityVisibility::All, true));
-        assert_eq!(labels[0].align, LabelAlign::Below);
-        assert!(labels[0].anchor.1 > 20.0);
-        assert_eq!(labels[1].align, LabelAlign::Above);
-        assert!(labels[1].anchor.1 < 100.0);
+        let labels = edge_end_labels(&edge, &display(CardinalityVisibility::All, true), MARKER);
+        assert!(labels[0].offset.y > 0.0);
+        assert!(labels[1].offset.y < 0.0);
+        // A vertical route is cleared sideways instead.
+        assert_eq!(labels[0].align, LabelAlign::Right);
+        assert_eq!(labels[1].align, LabelAlign::Right);
+        assert!(labels[0].offset.x > 0.0 && labels[1].offset.x > 0.0);
     }
 }

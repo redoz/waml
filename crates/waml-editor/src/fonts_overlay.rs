@@ -71,7 +71,10 @@ pub const ROLES: [(&str, &str); 12] = [
     ("Caption", "IBM Plex Sans Regular · 11px · 1.2"),
     ("Label", "IBM Plex Sans Medium · 11px · 1.2"),
     ("Compact label", "IBM Plex Sans Medium · 10px · 1.2"),
-    ("Compact label italic", "IBM Plex Sans Medium Italic · 10px · 1.2"),
+    (
+        "Compact label italic",
+        "IBM Plex Sans Medium Italic · 10px · 1.2",
+    ),
     ("Menu", "IBM Plex Sans Regular · 10px · 1.2"),
     ("Eyebrow", "IBM Plex Sans SemiBold · 10px · 1.2"),
     ("Micro", "IBM Plex Sans Regular · 9px · 1.2"),
