@@ -207,3 +207,23 @@ fn parallel_branches_do_not_infer_returns_from_siblings() {
     assert_eq!(doc.edges[1].returns_call, None);
     assert_eq!(doc.edges[2].returns_call, Some(MessageId("m0".into())));
 }
+
+#[test]
+fn conditional_join_keeps_calls_that_can_remain_open() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "conditional.md",
+            "---\ntype: uml.Sequence\n---\n# Conditional\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()` as work\n- opt\n  - when `early`\n    - b returns `early` for work\n- b returns `later` for work\n",
+        ),
+    ]);
+    let doc = analysis
+        .projection
+        .interactions
+        .iter()
+        .find(|doc| doc.key == "conditional")
+        .unwrap();
+    assert_eq!(doc.edges[1].returns_call, Some(MessageId("m0".into())));
+    assert_eq!(doc.edges[2].returns_call, Some(MessageId("m0".into())));
+}

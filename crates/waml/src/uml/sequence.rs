@@ -276,7 +276,6 @@ pub(crate) fn lower(
         diagnostics,
     };
     let mut edges = Vec::new();
-    let mut edge_syntax = Vec::new();
     let mut root = Vec::new();
     let mut fragment_stack: Vec<(usize, usize)> = Vec::new();
     let mut operand_stack: Vec<(usize, usize)> = Vec::new();
@@ -401,7 +400,6 @@ pub(crate) fn lower(
                     },
                     returns_call: None,
                 });
-                edge_syntax.push(message);
                 add_child(
                     &mut nodes,
                     &operand_stack,
@@ -517,10 +515,11 @@ fn walk_return_items(
                 }
             }
             SeqChild::Fragment { node } => {
-                let Some(SeqNode::Fragment { operands, .. }) = node_by_id.get(node).copied() else {
+                let Some(SeqNode::Fragment { kind, operands, .. }) = node_by_id.get(node).copied() else {
                     continue;
                 };
                 if operands.len() == 1 {
+                    let incoming = open.clone();
                     if let Some(SeqNode::Operand { items, .. }) = node_by_id.get(&operands[0]).copied() {
                         walk_return_items(
                             items,
@@ -532,6 +531,9 @@ fn walk_return_items(
                             diagnostics,
                             path,
                         );
+                    }
+                    if matches!(kind, FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break) {
+                        open.extend(incoming);
                     }
                     continue;
                 }
