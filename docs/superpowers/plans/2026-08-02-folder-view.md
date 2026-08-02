@@ -16,8 +16,8 @@
 - **`docs/specs/OKF_SPEC.md` stays byte-identical.** Do not amend, extend, or reference-edit it. Deviations are recorded in `docs/specs/waml-okf-extensions.md` (new, created in Task 2).
 - **Exactly one new deviation family:** frontmatter keys in a non-root `index.md`. Only `profile`, `view`, and pass-through unknown keys. No new reserved filenames, no sidecar files, no nested index lists, no plain-text (non-link) index bullets, no profile FILE format.
 - **`view:` is always a plain YAML scalar**, never a nested mapping: `index`, `outline`, `markdown`, `member:./orders` (no space after the `member:` prefix). An unrecognized value is treated as ABSENT and falls through to the next resolution step — never an error.
-- **Tasks 1–5 are pure `crates/waml` model work.** They must not add any dependency on `waml-editor`, any UI type, or any file I/O. Keep them that way.
-- **makepad widget rules (Tasks 7–12):**
+- **Tasks 1–6 are pure `crates/waml` model work.** They must not add any dependency on `waml-editor`, any UI type, or any file I/O. Keep them that way.
+- **makepad widget rules (Tasks 8–13):**
   - Every NEW widget must be imported BY NAME in `crates/waml-editor/src/app.rs` `script_mod!` (lines 33–63) — there is no glob. An unregistered widget is silently dropped: no draw, no hit-test, and the gate stays GREEN. It must also get a `crate::<module>::script_mod(vm);` line in the boot list at `crates/waml-editor/src/app.rs:704-787`, and a child widget must be registered BEFORE its consumer.
   - Never reuse an existing makepad widget name. This plan introduces exactly one: `FolderIndex` (verified absent from `crates/` today).
   - The `script_mod` namespace must be assigned as ONE object literal, not field-by-field.
@@ -43,7 +43,13 @@ Confirmed by reading the files in this worktree at plan time:
 | `crates/waml/src/frontmatter.rs` | 257 | `pub fn render_frontmatter(fm: &Frontmatter) -> String` |
 | `crates/waml/src/model.rs` | 950 | `pub profile: String` — profile as *concept doc* frontmatter |
 | `crates/waml/src/seed.rs` | 9-29 | `kind_frontmatter` / `new_diagram_doc` emit `type: Diagram` + `profile: uml-domain` |
-| `crates/waml/src/ops/mod.rs` | 143 / 153 / 169 / 181 | `Op::NodeNew`, `Op::NodeSet`, `Op::PkgMove`, `Op::PkgReorder` |
+| `crates/waml/src/ops/mod.rs` | 143 / 153 / 169 / 181 | `Op::NodeNew`, `Op::NodeSet` (both UML-claim-gated), `Op::PkgMove`, `Op::PkgReorder` (OKF-substrate, ungated) |
+| `crates/waml/src/ops/mod.rs` | 6 / 219 / 225 | `type Bundle = Vec<(String, String)>`; `apply` (pairs in/out); `apply_source` (SourceBundle in/out) |
+| `crates/waml/src/okf.rs` | 5-8 | the hard one-way rule: `okf` must never import a UML type |
+| `crates/waml/src/okf/ops.rs` | 7-41 / 62-114 | OKF substrate `Op` enum and `lower_one_with_state` dispatch |
+| `crates/waml/src/okf/lower.rs` | 258 / 669 / 845 / 889 | `op_pkg_move`; `update_authored_index` (in-place, preserves frontmatter); the lone op-path `render_index` call; `op_pkg_insert` |
+| `crates/waml/src/uml/ops.rs` | 216-218 / 238 | the `"type is not claimed by UML"` refusal and `require_claimed` |
+| `crates/waml/src/compat.rs` | 156 | `Legacy::PkgMove` → `Step::Okf(okf::Op::ConceptMove)` — the substrate routing pattern |
 | `crates/waml-editor/src/tree_panel.rs` | 320-349 | `fn row_navigation` — a directory row always yields `NavigationTarget::Directory` |
 | `crates/waml-editor/src/tree_panel.rs` | 808-824 | `folder_clicked` → `ProjectTreeAction::Navigate` |
 | `crates/waml-editor/src/tree_panel.rs` | 1565 | `folder_clicked_emits_intent_without_mutation_then_one_command_closes_it` |
@@ -473,7 +479,7 @@ git commit -m "feat(okf): parse profile, view, and unknown keys from index front
 
   **Why this task is needed — and what it is NOT.** `render_index` runs on the op write path in exactly one place: `crates/waml/src/okf/lower.rs:845`, the guarded `else` branch of `write_package_index` where the index file **does not yet exist**. A newly created index must be able to carry declarations, and `reindex_source` (used by `crates/waml/tests/golden.rs:815-851` and any future full-rebuild path) must not drop them.
 
-  It is **not** true that Tasks 9–12 depend on this for correctness. For an index that already exists, the op write path is `update_authored_index` (`crates/waml/src/okf/lower.rs:669`), which edits `index.md` surgically: it rewrites the member ranges and the H1 and leaves the rest of the file — including any frontmatter block — untouched. `reindex_source` has no callers outside `crates/waml/src/index_md.rs`'s own tests, `crates/waml/tests/golden.rs`, and the `#[deprecated]` shim at `crates/waml/src/index_md.rs:136`. So do **not** blanket-append `&IndexFrontmatter::default()` to call sites as a safety measure: the `lower.rs:845` site takes `default()` because that branch has no parsed index to read declarations from, and that is the correct value there.
+  It is **not** true that Tasks 10–13 depend on this for correctness. For an index that already exists, the op write path is `update_authored_index` (`crates/waml/src/okf/lower.rs:669`), which edits `index.md` surgically: it rewrites the member ranges and the H1 and leaves the rest of the file — including any frontmatter block — untouched. `reindex_source` has no callers outside `crates/waml/src/index_md.rs`'s own tests, `crates/waml/tests/golden.rs`, and the `#[deprecated]` shim at `crates/waml/src/index_md.rs:136`. So do **not** blanket-append `&IndexFrontmatter::default()` to call sites as a safety measure: the `lower.rs:845` site takes `default()` because that branch has no parsed index to read declarations from, and that is the correct value there.
 
   The genuine ordering constraint is Steps 7–9 of this task: `Op::PkgRetitle` must move a frontmatter `title:` before Task 10 ships directory-row retitling.
 
@@ -1012,7 +1018,430 @@ git commit -m "feat(okf): resolved_profile and resolved_view queries on Bundle"
 
 ---
 
-### Task 6: Folder rows — the pure model behind the view
+### Task 6: OKF-substrate concept ops (`ConceptNew`, `ConceptSet`)
+
+**Files:**
+- Modify: `crates/waml/src/okf/ops.rs:6-41` (the `Op` enum) and `:62-114` (`lower_one_with_state`)
+- Modify: `crates/waml/src/okf/lower.rs` (two new `pub(crate) fn`s beside `op_pkg_move` at line 258)
+- Modify: `crates/waml/src/ops/mod.rs` (two legacy variants) and `crates/waml/src/compat.rs:120-160` (the mapping)
+- Test: inline `#[cfg(test)] mod tests` in `crates/waml/src/okf/ops.rs:116`
+
+**Why this task exists (decided — was Open question 3).** Outline must work in a
+folder with `profile: okf` or no profile at all, but there is no op that creates
+or mutates a plain OKF concept. `Op::NodeNew` lowers through
+`Op::ClassifierNew`, which hard-refuses anything `crate::uml::recognizes_type`
+does not claim (`crates/waml/src/uml/ops.rs:216-218`, `crates/waml/src/uml.rs:37-44`),
+and `Op::NodeSet` is gated the same way by `require_claimed`
+(`crates/waml/src/uml/ops.rs:238`).
+
+The fix is **option A: new ops on the OKF substrate**, not relaxing the UML
+guard. `crates/waml/src/okf.rs:5-8` states the hard rule: the `okf` module MUST
+NOT import any UML type and the dependency is one-way, so that a later
+`okf-core` crate split stays mechanical. Making the UML tier the thing that
+creates non-UML concepts inverts exactly that layering. (Making Outline
+UML-only was the other option and defeats the point: a `profile: okf` folder
+would get a read-only index and nothing else.)
+
+OKF `Concept.ty` is the **free-text `type` frontmatter field, explicitly NOT the
+UML `ElementType`** (`crates/waml/src/okf.rs:185`). These ops therefore take an
+arbitrary type **string** and must not touch `ElementType`, `crate::model`, or
+any UML classification — that would break the one-way rule this task exists to
+respect.
+
+**Files:** pure `crates/waml`. No `waml-editor`, no UI type, no file I/O.
+
+**Interfaces:**
+- Consumes: the existing OKF op machinery only — `crate::frontmatter::{FmValue, Frontmatter, render_frontmatter}` (`crates/waml/src/frontmatter.rs:257`), and the in-place edit helpers already in `crates/waml/src/okf/lower.rs`: `find_doc` (line 243), `join` (247), `document_title` (466), `frontmatter_value` (493).
+- Produces, on `crate::okf::Op` (`crates/waml/src/okf/ops.rs:7`), named to match the existing `ConceptMove` / `Index*` / `Directory*` convention in that enum:
+
+  ```rust
+    ConceptNew {
+        directory: DirectoryAddress,
+        slug: String,
+        /// The free-text OKF `type` frontmatter value. NOT an `ElementType`.
+        ty: String,
+        title: String,
+        description: Option<String>,
+    },
+    ConceptSet {
+        id: String,
+        title: Option<String>,
+        description: Option<String>,
+    },
+  ```
+
+  and the matching legacy variants on `crate::ops::Op` so the editor can keep
+  building single-enum batches:
+
+  ```rust
+    ConceptNew { dir: String, slug: String, ty: String, title: String, description: Option<String> },
+    ConceptSet { id: String, title: Option<String>, description: Option<String> },
+  ```
+
+  **Dispatch path, traced and verified.** `crate::ops::apply_source`
+  (`crates/waml/src/ops/mod.rs:225`) → `crate::compat::step_from_legacy` →
+  `Step::Okf(okf::Op::…)` → `crate::okf::ops::lower_one_with_state`
+  (`crates/waml/src/okf/ops.rs:62`) → `super::lower::op_concept_new` /
+  `op_concept_set`. This is exactly the route `Legacy::PkgMove` takes today
+  (`crates/waml/src/compat.rs:156` → `crates/waml/src/okf/ops.rs:68-70` →
+  `crates/waml/src/okf/lower.rs:258`), and it never enters `crates/waml/src/uml/`.
+  Document creation on this side is already precedented: `Op::BundleImport`
+  lowers to `op_pkg_insert` (`crates/waml/src/okf/lower.rs:889`), which pushes
+  documents with no UML involvement.
+
+  `Batch::lower` (`crates/waml/src/okf/ops.rs:48-56`) and `apply_step`
+  (`crates/waml/src/okf/lower.rs:142-182`) need **no** change: `apply_step`
+  already diffs the document set before and after each op and calls
+  `state.inserted(path)` for anything new, which is precisely what a
+  concept-creating op produces.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to the test module at `crates/waml/src/okf/ops.rs:116`. It already provides `context`, `apply_reversible`, and `assert_reversible` — use them, matching how the neighbouring op tests are written (lines 242-366):
+
+```rust
+#[test]
+fn concept_new_writes_a_free_text_type_with_no_uml_involvement() {
+    let source = SourceBundle::try_from_pairs([("sales/index.md", "# Sales\n")]).unwrap();
+
+    let applied = Batch(vec![Op::ConceptNew {
+        directory: DirectoryAddress::parse("/sales").unwrap(),
+        slug: "runbook".into(),
+        ty: "Runbook".into(),
+        title: "Runbook".into(),
+        description: None,
+    }])
+    .lower(context(&source))
+    .unwrap();
+
+    let text = applied
+        .to_pairs()
+        .into_iter()
+        .find(|(path, _)| path == "sales/runbook.md")
+        .expect("concept document written")
+        .1;
+    assert!(text.starts_with("---\ntype: Runbook\n"), "got: {text}");
+    assert!(text.contains("title: Runbook"), "got: {text}");
+    assert!(text.contains("\n# Runbook\n"), "got: {text}");
+
+    // The whole point: a type UML does not claim still creates cleanly.
+    let bundle = crate::okf::Bundle::parse(&applied).unwrap();
+    assert_eq!(bundle.concept("sales/runbook").unwrap().ty, "Runbook");
+}
+
+#[test]
+fn concept_new_accepts_an_empty_type_for_a_profileless_folder() {
+    let source = SourceBundle::try_from_pairs([("index.md", "# Root\n")]).unwrap();
+
+    let applied = Batch(vec![Op::ConceptNew {
+        directory: DirectoryAddress::parse("/").unwrap(),
+        slug: "untitled".into(),
+        ty: String::new(),
+        title: String::new(),
+        description: None,
+    }])
+    .lower(context(&source))
+    .unwrap();
+
+    let text = applied
+        .to_pairs()
+        .into_iter()
+        .find(|(path, _)| path == "untitled.md")
+        .expect("root concept written")
+        .1;
+    assert!(!text.contains("type:"), "an empty type emits no key: {text}");
+}
+
+#[test]
+fn concept_new_refuses_to_overwrite_an_existing_document() {
+    let source =
+        SourceBundle::try_from_pairs([("sales/order.md", "# Order\n")]).unwrap();
+
+    let result = Batch(vec![Op::ConceptNew {
+        directory: DirectoryAddress::parse("/sales").unwrap(),
+        slug: "order".into(),
+        ty: "Note".into(),
+        title: "Order".into(),
+        description: None,
+    }])
+    .lower(context(&source));
+
+    assert!(result.is_err());
+    assert_eq!(source.documents()[0].path().as_str(), "sales/order.md");
+}
+
+#[test]
+fn concept_set_retitles_a_concept_uml_does_not_claim() {
+    let source = SourceBundle::try_from_pairs([(
+        "sales/runbook.md",
+        "---\ntype: Runbook\ntitle: Runbook\n---\n# Runbook\n",
+    )])
+    .unwrap();
+
+    let applied = Batch(vec![Op::ConceptSet {
+        id: "sales/runbook".into(),
+        title: Some("Incident Runbook".into()),
+        description: None,
+    }])
+    .lower(context(&source))
+    .unwrap();
+
+    let text = applied.to_pairs().into_iter().next().unwrap().1;
+    assert!(text.contains("title: Incident Runbook"), "got: {text}");
+    assert!(text.contains("# Incident Runbook"), "H1 moves too: {text}");
+    assert!(text.contains("type: Runbook"), "type is untouched: {text}");
+
+    let bundle = crate::okf::Bundle::parse(&applied).unwrap();
+    assert_eq!(
+        bundle.concept("sales/runbook").unwrap().title.as_deref(),
+        Some("Incident Runbook")
+    );
+}
+
+#[test]
+fn concept_set_leaves_unmentioned_fields_alone() {
+    let source = SourceBundle::try_from_pairs([(
+        "sales/runbook.md",
+        "---\ntype: Runbook\ntitle: Runbook\ndescription: How to page.\n---\n# Runbook\n",
+    )])
+    .unwrap();
+
+    let applied = Batch(vec![Op::ConceptSet {
+        id: "sales/runbook".into(),
+        title: Some("Incident Runbook".into()),
+        description: None,
+    }])
+    .lower(context(&source))
+    .unwrap();
+
+    let text = applied.to_pairs().into_iter().next().unwrap().1;
+    assert!(
+        text.contains("description: How to page."),
+        "a None field is 'leave unchanged', not 'clear': {text}"
+    );
+}
+
+#[test]
+fn the_new_concept_ops_round_trip_reversibly() {
+    assert_reversible(
+        SourceBundle::try_from_pairs([(
+            "sales/runbook.md",
+            "---\ntype: Runbook\ntitle: Runbook\n---\n# Runbook\n",
+        )])
+        .unwrap(),
+        Batch(vec![Op::ConceptSet {
+            id: "sales/runbook".into(),
+            title: Some("Incident Runbook".into()),
+            description: None,
+        }]),
+        SourceBundle::try_from_pairs([(
+            "sales/runbook.md",
+            "---\ntype: Runbook\ntitle: Incident Runbook\n---\n# Incident Runbook\n",
+        )])
+        .unwrap(),
+    );
+}
+```
+
+And one test in `crates/waml/src/ops/mod.rs`'s test module proving the legacy front door reaches the same place:
+
+```rust
+#[test]
+fn legacy_concept_ops_lower_through_the_okf_substrate() {
+    let source =
+        crate::source::SourceBundle::try_from_pairs([("index.md", "# Root\n")]).unwrap();
+
+    let applied = crate::ops::apply_source(
+        &source,
+        &[Op::ConceptNew {
+            dir: String::new(),
+            slug: "runbook".into(),
+            ty: "Runbook".into(),
+            title: "Runbook".into(),
+            description: None,
+        }],
+    )
+    .unwrap();
+
+    assert!(applied
+        .to_pairs()
+        .iter()
+        .any(|(path, _)| path == "runbook.md"));
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cargo test -p waml concept_new concept_set legacy_concept_ops`
+Expected: FAIL — `no variant named 'ConceptNew' found for enum 'Op'`.
+
+- [ ] **Step 3: Add the OKF op variants and their dispatch**
+
+In `crates/waml/src/okf/ops.rs`, add `ConceptNew` and `ConceptSet` to the `Op` enum immediately after `ConceptMove` (line 8-11), with the shapes given in Interfaces above, then add two arms to `lower_one_with_state` (line 67) beside the existing `ConceptMove` arm:
+
+```rust
+        Op::ConceptNew {
+            directory,
+            slug,
+            ty,
+            title,
+            description,
+        } => super::lower::op_concept_new(
+            work,
+            &legacy_path(directory),
+            slug,
+            ty,
+            title,
+            description.as_deref(),
+        ),
+        Op::ConceptSet {
+            id,
+            title,
+            description,
+        } => super::lower::op_concept_set(
+            work,
+            state,
+            id,
+            title.as_deref(),
+            description.as_deref(),
+        ),
+```
+
+- [ ] **Step 4: Write the two lowering functions**
+
+In `crates/waml/src/okf/lower.rs`, beside `op_pkg_move` (line 258):
+
+```rust
+/// Create a concept document at `<directory>/<slug>.md`. `ty` is the free-text
+/// OKF `type` frontmatter value (`crates/waml/src/okf.rs:185`) — this module
+/// must never import `ElementType`, so nothing here classifies it. An empty
+/// `ty`, `title`, or `description` simply emits no key.
+pub(crate) fn op_concept_new(
+    work: &mut SourceBundle,
+    directory: &str,
+    slug: &str,
+    ty: &str,
+    title: &str,
+    description: Option<&str>,
+) -> Result<(), EditError> {
+    let path = join(directory, slug);
+    if work
+        .documents()
+        .iter()
+        .any(|document| document.path().as_str() == path)
+    {
+        return Err(EditError::at(
+            "concept.new",
+            format!("'{path}' already exists"),
+        ));
+    }
+    let mut entries: Vec<(String, crate::frontmatter::FmValue)> = Vec::new();
+    for (key, value) in [("type", ty), ("title", title)] {
+        if !value.is_empty() {
+            entries.push((
+                key.into(),
+                crate::frontmatter::FmValue::Str(value.to_owned()),
+            ));
+        }
+    }
+    if let Some(description) = description.filter(|d| !d.is_empty()) {
+        entries.push((
+            "description".into(),
+            crate::frontmatter::FmValue::Str(description.to_owned()),
+        ));
+    }
+    let mut source = String::new();
+    if !entries.is_empty() {
+        let block =
+            crate::frontmatter::render_frontmatter(&crate::frontmatter::Frontmatter { entries });
+        source.push_str("---\n");
+        source.push_str(&block);
+        source.push_str("\n---\n\n");
+    }
+    source.push_str(&format!("# {title}\n"));
+    work.push_document(path, source)
+        .map_err(|error| EditError::at("concept.new", error.to_string()))?;
+    Ok(())
+}
+
+/// Set a concept's title and/or description in place. `None` means "leave
+/// unchanged", never "clear". A title edit moves BOTH the frontmatter `title:`
+/// key (when present) and the H1, so the two never disagree — the same rule
+/// `update_authored_index` follows for an index.
+pub(crate) fn op_concept_set(
+    work: &mut SourceBundle,
+    state: &mut OkfLoweringState,
+    id: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+) -> Result<(), EditError> {
+    let idx = find_doc(work, id, "concept.set")?;
+    // Build the edit ranges with the shell machinery already used by
+    // `document_title` (line 466) and `frontmatter_value` (line 493): locate
+    // the frontmatter key's value span and the H1's content span, then splice.
+    // Insert a missing `title:` key only when the document already has a
+    // frontmatter block; otherwise the H1 alone carries the title.
+    // ... splice `title` and `description` and write the document back ...
+    let _ = (state, idx, title, description);
+    Ok(())
+}
+```
+
+`op_concept_set`'s body is the one place needing real work rather than transcription. Reuse the range-finding in `frontmatter_value` (line 493) — factor out a `frontmatter_value_range` helper if the existing function only returns the string — and apply the edits with the same descending-offset splice pattern `update_authored_index` uses at lines 703-712. Do not rewrite the whole document: an in-place splice is what keeps every other key and the body byte-identical.
+
+- [ ] **Step 5: Add the legacy variants and the compat mapping**
+
+In `crates/waml/src/ops/mod.rs`, add the two legacy variants (shapes in Interfaces) to `enum Op` next to `NodeNew` (line 143). In `crates/waml/src/compat.rs`, add two arms to `step_from_legacy` next to `Legacy::PkgMove` (line 156), using the module's existing `directory(&dir)?` helper (line 37):
+
+```rust
+            Legacy::ConceptNew {
+                dir,
+                slug,
+                ty,
+                title,
+                description,
+            } => Step::Okf(okf::Op::ConceptNew {
+                directory: directory(&dir)?,
+                slug,
+                ty,
+                title,
+                description,
+            }),
+            Legacy::ConceptSet {
+                id,
+                title,
+                description,
+            } => Step::Okf(okf::Op::ConceptSet {
+                id,
+                title,
+                description,
+            }),
+```
+
+These map to `Step::Okf`, never `Step::Uml` — that is the whole point of the task.
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `cargo test -p waml concept_new concept_set legacy_concept_ops`
+Expected: PASS. Any exhaustive `match` over `crate::ops::Op` or `crate::okf::Op` that now fails to compile (the DTO, CLI, and LSP callers `crates/waml/src/compat.rs:1` mentions) must get an arm — read each before filling it in.
+
+- [ ] **Step 7: Run the full gate**
+
+Run: `cargo test --workspace`
+Then: `cd editors/vscode && npm run build && npm run test && npm run lint`
+Expected: all green.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add crates/waml/src/okf/ops.rs crates/waml/src/okf/lower.rs \
+        crates/waml/src/ops/mod.rs crates/waml/src/compat.rs
+git commit -m "feat(okf): substrate ConceptNew and ConceptSet ops"
+```
+
+---
+
+### Task 7: Folder rows — the pure model behind the view
 
 **Files:**
 - Create: `crates/waml-editor/src/folder_rows.rs`
@@ -1225,7 +1654,7 @@ git commit -m "feat(editor): folder_rows model for the folder index view"
 
 ---
 
-### Task 7: `FolderIndex` widget and the folder document provider
+### Task 8: `FolderIndex` widget and the folder document provider
 
 **Files:**
 - Create: `crates/waml-editor/src/folder_index.rs` (the `FolderIndex` widget)
@@ -1236,7 +1665,7 @@ git commit -m "feat(editor): folder_rows model for the folder index view"
 - Test: inline tests in `crates/waml-editor/src/folder_documents.rs`, plus a script-gate test in `crates/waml-editor/src/folder_index.rs`
 
 **Interfaces:**
-- Consumes: `folder_rows` / `FolderRow` / `FolderRowTarget` (Task 6), `Bundle::resolved_view` (Task 5), `ViewSpec` (Task 1), the provider shape at `crates/waml-editor/src/okf_documents.rs:14-71`, `trait DocView` (`crates/waml-editor/src/doc_view.rs:372`).
+- Consumes: `folder_rows` / `FolderRow` / `FolderRowTarget` (Task 7), `Bundle::resolved_view` (Task 5), `ViewSpec` (Task 1), the provider shape at `crates/waml-editor/src/okf_documents.rs:14-71`, `trait DocView` (`crates/waml-editor/src/doc_view.rs:372`).
 - Produces:
   - widget `FolderIndex` (makepad) with `pub fn set_rows(&mut self, cx: &mut Cx, rows: &[FolderRow])` and `pub fn set_editable(&mut self, cx: &mut Cx, editable: bool)` — **one widget, two modes**; `editable` is wired but inert until Task 9.
   - `pub enum FolderIndexAction { RowClicked(FolderRowTarget) }`
@@ -1411,7 +1840,7 @@ impl FolderIndex {
     }
 
     /// `false` = `ViewSpec::Index` (read-only), `true` = `ViewSpec::Outline`.
-    /// Wired now, inert until Task 9: building the two modes as two widgets
+    /// Wired now, inert until Task 10: building the two modes as two widgets
     /// would produce two layouts that drift.
     pub fn set_editable(&mut self, cx: &mut Cx, editable: bool) {
         self.editable = editable;
@@ -1559,7 +1988,7 @@ git commit -m "feat(editor): FolderIndex widget and folder document provider"
 
 ---
 
-### Task 8: Tree row opens the folder; chevron folds it
+### Task 9: Tree row opens the folder; chevron folds it
 
 **Files:**
 - Modify: `crates/waml-editor/src/tree_panel.rs:320-349` (`row_navigation`), `:798-824` (hit handling), `:618-642` (`draw_row_chevron` — record the rect)
@@ -1568,7 +1997,7 @@ git commit -m "feat(editor): FolderIndex widget and folder document provider"
 - Test: inline tests in `crates/waml-editor/src/tree_panel.rs` and `crates/waml-editor/src/app/tests/navigation.rs`
 
 **Interfaces:**
-- Consumes: `open_folder`, `folder_tab_id` (Task 7), `Bundle::resolved_view` (Task 5).
+- Consumes: `open_folder`, `folder_tab_id` (Task 8), `Bundle::resolved_view` (Task 5).
 - Produces:
   - `ProjectTreeAction::ToggleFold(String)` — emitted only from a chevron hit.
   - `NavigationTarget::Directory` now OPENS the folder's resolved view as a tab instead of folding.
@@ -1772,7 +2201,7 @@ git commit -m "feat(editor): folder row opens its resolved view, chevron only fo
 
 ---
 
-### Task 9: Outline mode — Enter creates a concept
+### Task 10: Outline mode — Enter creates a concept
 
 **Files:**
 - Modify: `crates/waml-editor/src/folder_index.rs` (row focus + `KeyCode::Return` when `editable`)
@@ -1780,13 +2209,12 @@ git commit -m "feat(editor): folder row opens its resolved view, chevron only fo
 - Test: inline tests in `crates/waml-editor/src/folder_view.rs`
 
 **Interfaces:**
-- Consumes: `FolderIndex::set_editable` (Task 7), `waml::ops::Op::{NodeNew, PkgReorder}` (`crates/waml/src/ops/mod.rs:143,181`).
-- Produces: `FolderIndexAction::CreateAfter { index: usize }` and, in `FolderView::handle`, a `ViewOutcome` carrying an `EditIntent` whose op batch is `[Op::NodeNew { .. }, Op::PkgReorder { path, order }]`.
+- Consumes: `FolderIndex::set_editable` (Task 8), `waml::ops::Op::ConceptNew` (Task 6), `waml::ops::Op::PkgReorder` (`crates/waml/src/ops/mod.rs:181`).
+- Produces: `FolderIndexAction::CreateAfter { index: usize }` and, in `FolderView::handle`, a `ViewOutcome` carrying an `EditIntent` whose op batch is `[Op::ConceptNew { .. }, Op::PkgReorder { path, order }]`.
 
   **Every edit maps to an existing OKF op or a small composite of them. Nothing bypasses the model to write files directly.** `PkgReorder` is an OKF-substrate op (`crates/waml/src/compat.rs` → `crates/waml/src/okf/ops.rs`), so it edits `index.md` in place via `update_authored_index` and leaves the folder's `profile:`/`view:` alone.
 
-> **BLOCKED ON OPEN QUESTION 3 — do not start this task until it is answered.**
-> `Op::NodeNew` carries a UML `ElementType` (`crates/waml/src/ops/mod.rs:143`) and its lowering **hard-refuses a non-UML type**: `crates/waml/src/uml/ops.rs:216-218` returns `EditError::at("node.new", "type is not claimed by UML")` unless `crate::uml::recognizes_type(ty)` (`crates/waml/src/uml.rs:37-44`) accepts it, which it does only for `Uml(_)`, `Behavior(_)`, and `Diagram`. `ElementType::Unknown(_)` is rejected. There is today **no op that creates a plain OKF concept**, and Outline is meant to work in a folder with `profile: okf` or no profile at all. See Open question 3 for the options found. Do not resolve it by defaulting to `uml.Class` — that would silently make every outline row a UML class.
+  **Task 6 must land first.** The creating op is `Op::ConceptNew`, the OKF-substrate op added there — *not* `Op::NodeNew`, whose lowering hard-refuses any type UML does not claim (`crates/waml/src/uml/ops.rs:216-218`). An outline row is a plain OKF concept, so it is created on the substrate and its `type` is free text.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1824,11 +2252,11 @@ mod tests {
         .unwrap();
 
         assert!(
-            matches!(&ops[0], Op::NodeNew { dir, .. } if dir == "sales"),
+            matches!(&ops[0], Op::ConceptNew { dir, .. } if dir == "sales"),
             "new concept lands in the folder: {ops:?}"
         );
-        let Op::NodeNew { slug, .. } = &ops[0] else {
-            panic!("first op is NodeNew")
+        let Op::ConceptNew { slug, .. } = &ops[0] else {
+            panic!("first op is ConceptNew")
         };
         let Op::PkgReorder { path, order } = &ops[1] else {
             panic!("second op is PkgReorder: {ops:?}")
@@ -1888,11 +2316,17 @@ pub fn create_after_ops(
     let at = (position + 1).min(order.len());
     order.insert(at, new_id);
     Some(vec![
-        // The creating op — SEE OPEN QUESTION 3. `Op::NodeNew`'s `ty` is a UML
-        // `ElementType` and its lowering refuses anything `recognizes_type`
-        // does not claim, so this line cannot be written until the seam
-        // question is answered. Whatever the answer, it is ONE op here.
-        creating_op,
+        // The OKF-substrate creating op from Task 6. `ty` is the free-text
+        // OKF `type` frontmatter value, NOT a UML `ElementType`: an outline
+        // row in a `profile: okf` folder is a plain concept. Empty `ty` and
+        // `title` emit no keys, so a fresh row starts genuinely blank.
+        waml::ops::Op::ConceptNew {
+            dir: dir.clone(),
+            slug: slug.clone(),
+            ty: String::new(),
+            title: String::new(),
+            description: None,
+        },
         waml::ops::Op::PkgReorder {
             path: address.trim_start_matches('/').to_string(),
             order,
@@ -1903,7 +2337,7 @@ pub fn create_after_ops(
 
 `unique_slug` is a small local helper: `untitled`, `untitled-2`, … until no member id collides.
 
-Note there is **no** existing `Op::NodeNew` call site to copy from in the editor: `rg "Op::NodeNew" crates/` finds it only in `crates/waml/src/ops/mod.rs`'s own tests (lines 826, 844, 862, 1072, 1087). `creating_op` comes from the resolution of Open question 3.
+Note `dir` is moved into `Op::ConceptNew` above, so bind it with `.clone()` where the sketch shows, or reorder the two ops' construction. Do **not** reach for `Op::NodeNew` here: `rg "Op::NodeNew" crates/` finds it only in `crates/waml/src/ops/mod.rs`'s own tests (lines 826, 844, 862, 1072, 1087), and its lowering would refuse a non-UML type outright.
 
 - [ ] **Step 4: Wire the key**
 
@@ -1928,7 +2362,7 @@ git commit -m "feat(editor): outline mode creates a concept on Enter"
 
 ---
 
-### Task 10: Outline mode — typing a row retitles the concept
+### Task 11: Outline mode — typing a row retitles the concept
 
 **Files:**
 - Modify: `crates/waml-editor/src/folder_index.rs` (inline text entry on the focused row when `editable`)
@@ -1936,14 +2370,14 @@ git commit -m "feat(editor): outline mode creates a concept on Enter"
 - Test: inline tests in `crates/waml-editor/src/folder_view.rs`
 
 **Interfaces:**
-- Consumes: `waml::ops::Op::NodeSet` (`crates/waml/src/ops/mod.rs:153`), `Op::PkgRetitle` (`:188`).
+- Consumes: `waml::ops::Op::ConceptSet` (Task 6), `Op::PkgRetitle` (`crates/waml/src/ops/mod.rs:188`).
 - Produces: `FolderIndexAction::Retitle { index: usize, title: String }`, and `pub fn retitle_ops(bundle, address, position, title) -> Option<Vec<Op>>`.
 
   Retitle sets the H1 and the frontmatter `title`. **It is not a file rename** — the slug and path are untouched.
 
   Two different ops, because the two row kinds sit on opposite sides of the OKF/UML seam:
   - A **directory** row uses `Op::PkgRetitle`, an OKF-substrate op with no claim gate. It works for any folder — and it moves a frontmatter `title:` only because Task 3 Steps 6–9 made it. **Task 3 must land before this task.**
-  - A **concept** row uses `Op::NodeSet`, which lowers through `Op::ClassifierSet` and calls `require_claimed(state, work, id, "node.set")` (`crates/waml/src/uml/ops.rs:238`). A concept whose `type:` is not claimed by UML — the ordinary case in a `profile: okf` folder — **cannot be retitled by this op**. This is the same seam as Open question 3; the concept-row half of this task inherits that answer. The directory-row half does not and can ship regardless.
+  - A **concept** row uses `Op::ConceptSet`, the OKF-substrate op from Task 6. **Not** `Op::NodeSet`: that lowers through `Op::ClassifierSet` and calls `require_claimed(state, work, id, "node.set")` (`crates/waml/src/uml/ops.rs:238`), so a concept whose `type:` UML does not claim — the ordinary case in a `profile: okf` folder — cannot be retitled by it at all. **Task 6 must land before this task**, alongside Task 3.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1955,11 +2389,11 @@ fn retitling_a_concept_row_sets_the_title_and_not_the_filename() {
 
     assert_eq!(ops.len(), 1);
     match &ops[0] {
-        waml::ops::Op::NodeSet { slug, title, .. } => {
-            assert_eq!(slug, "sales/order", "the slug is untouched");
+        waml::ops::Op::ConceptSet { id, title, .. } => {
+            assert_eq!(id, "sales/order", "the id/path is untouched");
             assert_eq!(title.as_deref(), Some("Purchase Order"));
         }
-        other => panic!("expected NodeSet, got {other:?}"),
+        other => panic!("expected ConceptSet, got {other:?}"),
     }
 }
 
@@ -1992,8 +2426,9 @@ Expected: FAIL — `cannot find function 'retitle_ops'`.
 
 ```rust
 /// Retitle the row at `position`. A concept row sets the doc's H1 +
-/// frontmatter title (`NodeSet`); a directory row sets the child index's title
-/// (`PkgRetitle`). Neither renames a file.
+/// frontmatter title through the OKF substrate (`ConceptSet`); a directory row
+/// sets the child index's title (`PkgRetitle`). Neither renames a file, and
+/// neither touches the UML profile.
 pub fn retitle_ops(
     bundle: &waml::okf::Bundle,
     address: &str,
@@ -2003,13 +2438,10 @@ pub fn retitle_ops(
     let row = crate::folder_rows::folder_rows(bundle, address).into_iter().nth(position)?;
     Some(match row.target {
         crate::folder_rows::FolderRowTarget::Concept { concept_id } => {
-            vec![waml::ops::Op::NodeSet {
-                slug: concept_id,
+            vec![waml::ops::Op::ConceptSet {
+                id: concept_id,
                 title: Some(title.to_string()),
                 description: None,
-                stereotype: None,
-                abstract_: None,
-                ty: None,
             }]
         }
         crate::folder_rows::FolderRowTarget::Directory { address } => {
@@ -2042,7 +2474,7 @@ git commit -m "feat(editor): outline row typing retitles the concept"
 
 ---
 
-### Task 11: Outline mode — drag a row to reorder
+### Task 12: Outline mode — drag a row to reorder
 
 **Files:**
 - Modify: `crates/waml-editor/src/folder_index.rs` (drag state on the recorded row rects)
@@ -2138,7 +2570,7 @@ git commit -m "feat(editor): outline row drag reorders index members"
 
 ---
 
-### Task 12: Outline mode — Tab / Shift-Tab move a concept between directories
+### Task 13: Outline mode — Tab / Shift-Tab move a concept between directories
 
 **Files:**
 - Modify: `crates/waml-editor/src/folder_index.rs` (`KeyCode::Tab`, with and without shift, when `editable`)
@@ -2296,7 +2728,18 @@ pub fn outdent_ops(
 }
 ```
 
-If `Op::PkgMove` alone does not leave the destination index listing the member (check its implementation in `crates/waml/src/ops/mod.rs`), append a `PkgReorder` for the destination directory built the same way as in Task 9.
+**`Op::PkgMove` alone is not enough — verified.** `op_pkg_move`
+(`crates/waml/src/okf/lower.rs:258-279`) only renames the document; it edits
+neither index file. The *parsed* model still comes out consistent, because
+`parse_authored_index` filters the authored order against the directory's real
+contents (`crates/waml/src/okf/shell.rs:274-278`) and the destination's
+`default_member_order` picks the moved concept up automatically — which is why
+the assertions above pass. But the **source index.md text** is left holding a
+dangling `* [Order](./order.md)` link to a file that moved away.
+
+So append a `PkgReorder` for **both** directories — source and destination —
+built the same way as in Task 10, and add an assertion that the source
+`index.md` text no longer contains the moved member's href.
 
 Wire the keys in `folder_index.rs`: when `self.editable` and `KeyCode::Tab` arrives, emit `Indent` or `Outdent` depending on `modifiers.shift`.
 
@@ -2320,56 +2763,15 @@ git commit -m "feat(editor): outline Tab and Shift-Tab move a concept between di
 
 ## Open questions
 
-1. **Tab on a concept with no preceding sibling directory** (Task 12 only). Promote
-   `orders.md` to `orders/index.md`, or refuse? Task 12 ships REFUSE as the
+1. **Tab on a concept with no preceding sibling directory** (Task 13 only). Promote
+   `orders.md` to `orders/index.md`, or refuse? Task 13 ships REFUSE as the
    reversible option; the spec leaves this undecided and this plan does not
-   resolve it. It affects step 4 only and blocks nothing in Tasks 1–11.
-2. **`ViewSpec::Markdown` routing** (surfaced in Task 8, Step 4). An `index.md`
+   resolve it. It affects step 4 only and blocks nothing in Tasks 1–12.
+2. **`ViewSpec::Markdown` routing** (surfaced in Task 9, Step 4). An `index.md`
    is not addressable as a concept (`crates/waml-editor/src/documents.rs:190-200`
    excludes it), so opening it in the markdown editor may need a locator form
    that does not exist yet. If it does, fall back to the folder surface and
    raise it rather than adding a reserved path or a new locator kind unasked.
-3. **Creating and retitling a plain OKF concept — the OKF-substrate / UML-profile
-   seam.** Blocks Task 9 outright, and the concept-row half of Task 10. This is a
-   design question, not an implementation detail; it must be answered before
-   those tasks start.
-
-   **What is actually there.** `Op::NodeNew` (`crates/waml/src/ops/mod.rs:143`)
-   takes `ty: ElementType`. `ElementType` (`crates/waml/src/model.rs:772-777`) is
-   `Uml(UmlMetaclass) | Behavior(BehaviorKind) | Diagram | Unknown(String)`, and
-   `Unknown` **does** round-trip cleanly: `ElementType::parse` returns it for any
-   unrecognized string and `as_str` returns that string verbatim
-   (`crates/waml/src/model.rs:794-816`). OKF's own `Concept.ty`
-   (`crates/waml/src/okf.rs:185`) is explicitly "the free-text `type` frontmatter
-   field (NOT the UML `ElementType`)", so the substrate has no objection to an
-   arbitrary type.
-
-   **But the op refuses it.** `Op::NodeNew` lowers through `Op::ClassifierNew`,
-   which returns `EditError::at("node.new", "type is not claimed by UML")` unless
-   `crate::uml::recognizes_type(ty)` accepts it
-   (`crates/waml/src/uml/ops.rs:216-218`), and that function accepts only
-   `Uml(_)`, `Behavior(_)`, and `Diagram` — never `Unknown`
-   (`crates/waml/src/uml.rs:37-44`). `Op::NodeSet` is gated the same way via
-   `require_claimed` (`crates/waml/src/uml/ops.rs:238`). So today there is **no
-   op that creates or retitles a plain OKF concept**; every concept-creating path
-   in the codebase goes through the UML profile.
-
-   Options found, none chosen:
-   - **(a)** Relax `recognizes_type` / the `ClassifierNew` guard to admit
-     `ElementType::Unknown`. Smallest diff, but it widens what the UML profile
-     claims, which is the opposite of what the guard exists for.
-   - **(b)** Add an OKF-substrate `concept.new` / `concept.set` op pair beside
-     the existing `PkgMove`/`PkgReorder`/`PkgRetitle` OKF ops
-     (`crates/waml/src/okf/ops.rs`, `crates/waml/src/okf/lower.rs`), taking a
-     free-text `type` string. Honest to the layering — an OKF concept is a
-     substrate object — but it is new op surface and a new lowering path.
-   - **(c)** Make Outline UML-only for now: a folder whose resolved profile is
-     not `uml-domain` gets the read-only `Index` view and Enter/typing are inert.
-     Ships Tasks 9–12 for the `uml-domain` case with no model change, at the cost
-     of the `profile: okf` case the spec's outliner goal implies.
-
-   The plan does not pick one. Note that Tasks 11 and 12 are unaffected either
-   way: `PkgReorder` and `PkgMove` are OKF-substrate ops with no claim gate.
 
 ## Deliberately out of scope
 
