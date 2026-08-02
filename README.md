@@ -51,7 +51,11 @@ python -m http.server --directory site
 Open the served page and the editor boots that bundle. The site names it in a
 `waml-boot.txt` beside `index.html`, which the editor reads only when the URL
 asks for nothing — so the address bar stays at `/` and a `?bundle=` or `#w1.`
-link a visitor typed still wins.
+link a visitor typed still wins. The embedded
+`bundle.waml` is immutable — nothing writes back to it — but edits are not
+lost: the first one moves the whole model into the page's `#w1.` share URL, so
+a refresh or a copied link reopens the edited version, and **Export WAML
+bundle…** in the burger menu downloads the edited source as one `.waml` file.
 `--out` defaults to `./site` and refuses a non-empty directory unless you pass
 `--force`.
 
