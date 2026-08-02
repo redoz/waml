@@ -8,7 +8,7 @@ use super::wire::{Rect, Size};
 const LABEL_FONT: Font = Font::Sans;
 
 /// World-space height of a group's title strip, measured from the top of the
-/// group's rect. Treated as a hard obstacle by `place_labels`: a label may
+/// group's rect. Treated as a hard obstacle when placing labels: a label may
 /// not sit on top of the title text. The group's INTERIOR below this band is
 /// deliberately not an obstacle -- a group legitimately contains edges and
 /// their labels.
@@ -401,35 +401,6 @@ pub fn place(
     out
 }
 
-/// Last-resort placement for a request `place` could not fit: the best-scoring
-/// candidate IGNORING hard obstacles. Overlapping text beats a label that
-/// silently vanishes from the diagram, so the caller uses this rather than
-/// dropping the label. `None` only for a degenerate route with no candidates at
-/// all.
-pub fn fallback(
-    routes: &[Vec<(f64, f64)>],
-    request: &LabelRequest,
-    cfg: &LabelConfig,
-) -> Option<PlacedLabel> {
-    let points = routes.get(request.edge)?;
-    let size = measure(&request.text, cfg);
-    let mut best: Option<(f64, Candidate)> = None;
-    for c in candidates(points, request.slot, size, cfg) {
-        let score = score_candidate(&c, routes, request.edge);
-        if best.as_ref().map(|(b, _)| score < *b).unwrap_or(true) {
-            best = Some((score, c));
-        }
-    }
-    best.map(|(_, c)| PlacedLabel {
-        edge: request.edge,
-        slot: request.slot,
-        text: request.text.clone(),
-        rect: c.rect,
-        attach: c.attach,
-        leader: None,
-    })
-}
-
 fn score_candidate(c: &Candidate, routes: &[Vec<(f64, f64)>], own: usize) -> f64 {
     W_SLIDE * c.slide_cost
         + if c.side_is_canonical { 0.0 } else { W_SIDE }
@@ -740,20 +711,6 @@ mod tests {
         };
         assert!(segment_hits_rect((-10.0, 25.0), (110.0, 25.0 + 1e-9), rect));
         assert!(segment_hits_rect((50.0, -10.0), (50.0 + 1e-9, 60.0), rect));
-    }
-
-    #[test]
-    fn an_unplaceable_label_still_gets_a_last_resort_position() {
-        // Nothing fits, but the label must not vanish from the diagram.
-        let reqs = LabelRequest {
-            edge: 0,
-            slot: LabelSlot::MidRoute,
-            text: "places".into(),
-        };
-        let placed = fallback(&route_pair(), &reqs, &LabelConfig::default())
-            .expect("a real route always yields some candidate");
-        assert_eq!(placed.text, "places");
-        assert!(placed.rect.h > 0.0);
     }
 
     #[test]

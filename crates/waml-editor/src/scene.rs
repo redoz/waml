@@ -629,14 +629,14 @@ pub fn build_scene(
 
     // Requests index into `edges` (the scene's drawable edges), and `edges` is
     // NOT `solved.routes`: presence-filtering and the straight-polyline fallback
-    // above let the two lists desync. Hand `place_labels` the very polylines the
+    // above let the two lists desync. Hand placement the very polylines the
     // requests were built from, so a label can never be placed against another
     // edge's route.
     //
     // Rerouting is part of placement: an edge whose label fits nowhere asks the
     // router for a path that leaves room for it. `place_labels_with_reroute`
-    // disables itself when this list and the router's own route list have
-    // desynced, degrading to exactly `place_labels`.
+    // disables the reroute when this list and the router's own route list have
+    // desynced, degrading to a plain placement pass.
     let requests = crate::edge_labels::label_requests(&edges, &display);
     let mut routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
     let unresolved = waml::solve::place_labels_with_reroute(

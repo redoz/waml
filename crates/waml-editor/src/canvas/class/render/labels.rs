@@ -76,9 +76,9 @@ pub(super) fn draw_edge_labels(
         let (pos, leader_end) = nudged(screen.pos, leader_end, nudge);
         if let (Some(leader), Some(end)) = (label.leader, leader_end) {
             let start = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[0]);
-            draws
-                .edge
-                .draw_abs(cx, segment_quad(start, end, LEADER_THICKNESS));
+            for bar in leader_bars(start, end, LEADER_THICKNESS) {
+                draws.edge.draw_abs(cx, bar);
+            }
         }
         fill_rect(
             cx,
@@ -91,6 +91,26 @@ pub(super) fn draw_edge_labels(
         );
         draws.edge_label.draw_abs(cx, pos, &label.text);
     }
+}
+
+/// The bars that draw one leader, as an orthogonal L: along x from the route
+/// anchor, then along y into the label.
+///
+/// It cannot be ONE quad. The `EdgeLine` pen FILLS the rect it is handed (a
+/// per-segment AABB collapses to the bar itself only for an axis-aligned
+/// segment), and the ring search that finds a leader's target samples 16
+/// angles, so nearly every leader is diagonal -- one quad painted a solid
+/// opaque block from anchor to label, covering exactly the content the
+/// placement stage exists to keep clear. Two axis-aligned legs are hairlines by
+/// construction, and match the orthogonal routing the edges themselves use.
+/// A degenerate leg is dropped, so an axis-aligned leader is a single bar.
+fn leader_bars(start: DVec2, end: DVec2, thickness: f64) -> Vec<Rect> {
+    let corner = dvec2(end.x, start.y);
+    [(start, corner), (corner, end)]
+        .into_iter()
+        .filter(|(a, b)| (a.x - b.x).abs() > thickness || (a.y - b.y).abs() > thickness)
+        .map(|(a, b)| segment_quad(a, b, thickness))
+        .collect()
 }
 
 /// Apply the screen-space clearance top-up to everything that belongs to one
@@ -345,6 +365,34 @@ mod tests {
         let attach = (25.0, 10.0);
         let out = screen_clearance(center, attach, &edge(), LabelSlot::TerminalFrom, 1.0, 8.0);
         assert_eq!(out.x, 2.0 * 8.0 + HEAD_GAP - 5.0);
+    }
+
+    #[test]
+    fn a_diagonal_leader_draws_hairlines_not_a_filled_block() {
+        // The edge pen FILLS its quad, so a single AABB from anchor to label
+        // painted a solid opaque rectangle over everything between them.
+        let start = dvec2(100.0, 100.0);
+        let end = dvec2(180.0, 40.0);
+        let bars = leader_bars(start, end, LEADER_THICKNESS);
+        assert_eq!(bars.len(), 2, "an L, not one quad: {bars:?}");
+        for bar in &bars {
+            assert!(
+                bar.size.x <= LEADER_THICKNESS || bar.size.y <= LEADER_THICKNESS,
+                "every leg must be a hairline: {bar:?}"
+            );
+        }
+        // The L runs anchor -> corner -> label, so the legs meet and the far
+        // leg reaches the label end.
+        assert!(bars[0].pos.x <= start.x.min(end.x) + LEADER_THICKNESS);
+        assert!(bars[1].pos.y <= end.y.max(start.y));
+        assert!(bars[1].pos.y + bars[1].size.y >= end.y.min(start.y));
+    }
+
+    #[test]
+    fn an_axis_aligned_leader_is_a_single_bar() {
+        let bars = leader_bars(dvec2(0.0, 10.0), dvec2(60.0, 10.0), LEADER_THICKNESS);
+        assert_eq!(bars.len(), 1, "no degenerate second leg: {bars:?}");
+        assert_eq!(bars[0].size.y, LEADER_THICKNESS);
     }
 
     #[test]

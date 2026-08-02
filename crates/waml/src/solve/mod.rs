@@ -98,7 +98,7 @@ mod wire {
         pub flags: BTreeMap<String, FlagSet>,
         #[cfg_attr(feature = "serde", serde(default))]
         pub routes: Vec<Route>,
-        /// Labels placed in world space by `place_labels`. `default` so a
+        /// Labels placed in world space by `place_labels_with_reroute`. `default` so a
         /// payload serialized before labels existed still deserializes.
         #[cfg_attr(feature = "serde", serde(default))]
         pub labels: Vec<crate::solve::label::PlacedLabel>,
@@ -106,8 +106,8 @@ mod wire {
         /// DIFFERENT polyline than the first routing pass gave them -- edges,
         /// not rounds, so the number stays comparable across diagrams.
         /// `default` so a payload serialized before this existed still
-        /// deserializes; plain `place_labels` never reroutes, so this stays 0
-        /// unless the caller opts into the reroute path.
+        /// deserializes; a caller whose route list has desynced from the router's
+        /// own gets no reroute, so this stays 0 there.
         #[cfg_attr(feature = "serde", serde(default))]
         pub label_reroutes: usize,
         /// How many labels needed a leader line into free space because
@@ -289,7 +289,7 @@ pub fn solve_diagram_reported(
 /// Like `solve_diagram_reported`, but also factors each connected pair's
 /// terminal-label widths into the connected-gap floor (see
 /// `geometry::solve_with_rects_labeled`). `label_requests`' `edge` field
-/// indexes into `edges`, matching the convention `place_labels` uses against
+/// indexes into `edges`, matching the convention `place_labels_with_reroute` uses against
 /// `solved.routes`. Callers with no labels to size for (the wasm path,
 /// `flow.rs`) get exactly `solve_diagram_reported`'s behaviour via the empty
 /// wrapper above.
@@ -392,43 +392,7 @@ fn connected_label_widths(
     out
 }
 
-/// Place `requests` against the already-solved geometry, filling `solved.labels`.
-///
-/// `routes` is the polyline list `LabelRequest::edge` indexes into, and the
-/// caller passes it EXPLICITLY rather than letting this read `solved.routes`:
-/// a frontend may presence-filter or substitute routes (the editor falls back
-/// to a straight polyline when the ordered route stream desyncs), and resolving
-/// label indices against a different list than the one they were built from
-/// silently places labels on the wrong edge.
-///
-/// Kept separate from `solve_diagram_reported` on purpose: composing the label
-/// TEXT is display policy (which toggles are on, how a role and a multiplicity
-/// combine), and that belongs to the frontend. The solver only ever sees final
-/// strings, so the display model does not have to move into this crate.
-/// Returns the requests that could not be positioned at all (a degenerate
-/// route); labels that merely collided everywhere are still placed, at a
-/// degraded last-resort position.
-pub fn place_labels(
-    solved: &mut Solved,
-    routes: &[Vec<(f64, f64)>],
-    requests: &[label::LabelRequest],
-    cfg: &label::LabelConfig,
-) -> Vec<label::LabelRequest> {
-    let obstacles = label_obstacles(solved);
-    // A label that fits nowhere beside its route gets a leader line into free
-    // space instead of silently disappearing; only a truly degenerate route
-    // (no candidates at all) comes back unresolved.
-    let placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
-    solved.label_leaders = placement
-        .placed
-        .iter()
-        .filter(|p| p.leader.is_some())
-        .count();
-    solved.labels = placement.placed;
-    placement.unplaced
-}
-
-/// The hard-obstacle set `place_labels`/`place_labels_with_reroute` place
+/// The hard-obstacle set `place_labels_with_reroute` places
 /// against: every solved node, plus each group's title strip (its interior is
 /// not solid -- a group legitimately holds edges and their labels).
 fn label_obstacles(solved: &Solved) -> label::Obstacles {
@@ -487,9 +451,10 @@ fn placement_score(placement: &label::Placement) -> (usize, usize) {
     )
 }
 
-/// Like `place_labels`, but when a label will not fit beside its route, replays
+/// Place `requests` against the already-solved geometry, filling
+/// `solved.labels`, and when a label will not fit beside its route, replay
 /// the routing with `label_pressure` weighted on the offending edges so the
-/// router leaves room for them, then retries placement. Bounded to
+/// router leaves room for them, then retry placement. Bounded to
 /// `MAX_REROUTE_ROUNDS` rounds, and stops early once the blocked set stops
 /// changing (the router's inputs are then unchanged too, so the answer would
 /// be byte-identical) or once a round produces no new geometry.
@@ -501,12 +466,28 @@ fn placement_score(placement: &label::Placement) -> (usize, usize) {
 /// applies only to blocked edges (every other edge carries no label size), so
 /// an unblocked edge's own path is unchanged.
 ///
-/// `routes[i]` and `solved.routes[i]` must be the routes `routing` produced, in
-/// the router's own order. The router SKIPS edges (self-edges, group endpoints,
-/// endpoints missing from `routing.rects`), so `routing.edges` may be longer;
-/// `route::routable_edge_indices` supplies the mapping, and a length mismatch
-/// (a caller that substituted or filtered routes) disables rerouting rather
-/// than rerouting the wrong edge.
+/// `routes` is the polyline list `LabelRequest::edge` indexes into, and the
+/// caller passes it EXPLICITLY rather than letting this read `solved.routes`:
+/// a frontend may presence-filter or substitute routes (the editor falls back
+/// to a straight polyline when the ordered route stream desyncs), and resolving
+/// label indices against a different list than the one they were built from
+/// silently places labels on the wrong edge.
+///
+/// Composing the label TEXT stays with the caller on purpose: which toggles are
+/// on and how a role and a multiplicity combine is display policy. The solver
+/// only ever sees final strings, so the display model does not move into this
+/// crate.
+///
+/// Rerouting additionally requires that `routes[i]` and `solved.routes[i]` are
+/// the routes `routing` produced, in the router's own order. The router SKIPS
+/// edges (self-edges, group endpoints, endpoints missing from `routing.rects`),
+/// so `routing.edges` may be longer; `route::routable_edge_indices` supplies
+/// the mapping. Any desync -- a differing length, or an equal-length list whose
+/// polylines are not `solved.routes`' polylines (the editor substitutes a
+/// straight fallback WITHOUT advancing its cursor, which shifts the two lists
+/// against each other while keeping their lengths equal) -- disables rerouting
+/// rather than rerouting the wrong edge. Placement itself still happens, so a
+/// desynced caller degrades to a plain leader-line placement pass.
 ///
 /// Sets `solved.label_reroutes` to the number of edges whose polyline actually
 /// changed.
@@ -524,13 +505,16 @@ pub fn place_labels_with_reroute(
 
     // Route position -> index into `routing.edges`.
     let order = route::routable_edge_indices(routing.rects, routing.edges);
-    let aligned = order.len() == routes.len() && order.len() == solved.routes.len();
-    debug_assert!(
-        aligned,
-        "routes must be the routes `routing` produced: {} routes, {} routable edges",
-        routes.len(),
-        order.len()
-    );
+    // Element-wise, not just by length: a caller that substitutes a route in
+    // place keeps the lengths equal while shifting the two lists against each
+    // other, and a length-only guard would then reroute -- and overwrite --
+    // another edge's route from this edge's label.
+    let aligned = order.len() == routes.len()
+        && order.len() == solved.routes.len()
+        && routes
+            .iter()
+            .zip(&solved.routes)
+            .all(|(points, route)| *points == route.points);
 
     let cost = route::RouteCost {
         label_pressure: REROUTE_LABEL_PRESSURE,
@@ -626,6 +610,27 @@ mod tests {
 
     fn route_points(solved: &Solved) -> Vec<Vec<(f64, f64)>> {
         solved.routes.iter().map(|r| r.points.clone()).collect()
+    }
+
+    /// Placement WITHOUT the reroute stage -- exactly what
+    /// `place_labels_with_reroute` degrades to when it has no aligned routing
+    /// to replay. Test-only: production has ONE entry point, so this is not a
+    /// second public API with its own fallback semantics.
+    fn place_labels(
+        solved: &mut Solved,
+        routes: &[Vec<(f64, f64)>],
+        requests: &[label::LabelRequest],
+        cfg: &label::LabelConfig,
+    ) -> Vec<label::LabelRequest> {
+        let obstacles = label_obstacles(solved);
+        let placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
+        solved.label_leaders = placement
+            .placed
+            .iter()
+            .filter(|p| p.leader.is_some())
+            .count();
+        solved.labels = placement.placed;
+        placement.unplaced
     }
 
     fn nrect(x: f64, y: f64, w: f64, h: f64) -> Rect {
@@ -787,6 +792,40 @@ mod tests {
             c.solved.label_reroutes, 0,
             "one edge that never moves is zero reroutes, not one per round"
         );
+    }
+
+    #[test]
+    fn an_equal_length_but_shifted_route_list_disables_the_reroute() {
+        // The editor substitutes a straight fallback polyline IN PLACE without
+        // advancing its route cursor, so its list can be the same LENGTH as
+        // `solved.routes` while being element-wise shifted against it. A
+        // length-only guard rerouted anyway and overwrote `solved.routes[i]`
+        // from another edge's label. Degrade instead -- and never panic, which
+        // is what the debug build did.
+        let mut c = crowded_scene_where_one_label_cannot_fit();
+        let before = c.solved.routes.clone();
+        // A caller-substituted polyline: same count, different geometry.
+        c.routes[0] = vec![(20.0, 20.0), (420.0, 20.0)];
+        let substituted = c.routes.clone();
+        let requests = crowded_label_requests();
+
+        place_labels_with_reroute(
+            &mut c.solved,
+            &RoutingContext {
+                boxes: &c.boxes,
+                rects: &c.rects,
+                edges: &c.edges,
+                cfg: &SolveConfig::default(),
+            },
+            &mut c.routes,
+            &requests,
+            &crowded_label_config(),
+        );
+
+        assert_eq!(c.routes, substituted, "the caller's routes must stand");
+        assert_eq!(before, c.solved.routes, "no route may be overwritten");
+        assert_eq!(c.solved.label_reroutes, 0);
+        assert_eq!(c.solved.labels.len(), 1, "the label is still placed");
     }
 
     #[test]
