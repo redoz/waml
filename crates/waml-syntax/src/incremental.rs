@@ -824,9 +824,21 @@ pub(crate) fn reparse_okf_markdown_with_structure(
     }
 
     let windows = shell_windows(previous, &old)?;
-    let Some(window) = select_window(&windows, &map) else {
+    let Some(mut window) = select_window(&windows, &map) else {
         return full(FullReparseReason::UnsafeSynchronization);
     };
+    if window.kind == crate::shell::ShellWindowKind::Heading
+        && window.range.end() == old.len()
+        && matches!(new_text.shared().as_bytes().last(), Some(b' ' | b'\t'))
+    {
+        window.kind = crate::shell::ShellWindowKind::Tail;
+        window.last = previous
+            .root_green()
+            .children()
+            .len()
+            .checked_sub(1)
+            .ok_or(ParseError::WidthOverflow)?;
+    }
     if previous.diagnostics().iter().any(|diagnostic| {
         diagnostic.range.start() == diagnostic.range.end()
             && (diagnostic.range.start() == window.range.start()

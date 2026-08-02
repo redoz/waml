@@ -346,6 +346,30 @@ fn width_changes_before_reference_definition_update_destination_ranges() {
 }
 
 #[test]
+fn final_heading_edit_reassigns_trailing_whitespace_to_eof() {
+    let previous_text = "---\ntitle: test\n---\n\n# Modeldiv>\n\nuse [x][id]\n\n## xame: String\n";
+    let candidate = "---\ntitle: test\n---\n\n# Modeldiv>\n\nuse [x][id]\n\n## xame: ";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(previous_text),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(2),
+        source(candidate),
+        &[TextChange {
+            old_range: range(56, 63),
+            replacement: Arc::from(""),
+        }],
+    )
+    .unwrap();
+
+    assert_full_oracle(&update.snapshot, candidate);
+}
+
+#[test]
 fn minimized_edit_sequence_recovers_invalid_block_ranges() {
     let mut candidate = BASE.to_owned();
     let mut snapshot = parse_markdown(
