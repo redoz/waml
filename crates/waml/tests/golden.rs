@@ -1,4 +1,4 @@
-use waml::source::split_bundle;
+use waml::bundle_envelope::split_bundle;
 
 const FIXTURE: &str = include_str!("fixtures/orders-domain.md");
 
@@ -728,7 +728,9 @@ fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
 
 #[test]
 fn orders_domain_builds_the_expected_model() {
-    let bundle = split_bundle(FIXTURE);
+    let bundle = split_bundle(FIXTURE)
+        .expect("orders-domain envelope is valid")
+        .expect("orders-domain fixture is an envelope");
     let m = projection(&bundle);
 
     // Five classifiers, one diagram.
@@ -788,7 +790,9 @@ fn orders_domain_builds_the_expected_model() {
 
 #[test]
 fn every_doc_is_lossless_through_the_authoritative_shell() {
-    let bundle = split_bundle(FIXTURE);
+    let bundle = split_bundle(FIXTURE)
+        .expect("orders-domain envelope is valid")
+        .expect("orders-domain fixture is an envelope");
     let source = waml::source::SourceBundle::try_from_pairs(bundle.clone()).unwrap();
     let prepared = waml::analysis::prepare_candidate(source, None, 0).unwrap();
     for (path, text) in bundle {
@@ -865,7 +869,9 @@ fn nested_packages_round_trip_through_reindex() {
 
 #[test]
 fn orders_domain_has_no_diagnostics() {
-    let bundle = split_bundle(FIXTURE);
+    let bundle = split_bundle(FIXTURE)
+        .expect("orders-domain envelope is valid")
+        .expect("orders-domain fixture is an envelope");
     let diags = waml::validate::validate(&bundle);
     assert!(diags.is_empty(), "expected clean fixture, got: {diags:?}");
 }

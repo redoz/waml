@@ -1,4 +1,4 @@
-<!-- shop/order.md -->
+<!-- waml/1 part 7d91ac42f5e649c4a6cd939cfa60b920 shop/order.md -->
 ---
 type: uml.Class
 stereotype: [aggregateRoot, entity]
@@ -16,7 +16,7 @@ description: "A customer's placed order."
 - associates [Customer](./customer.md): 1 order to 1 customer
 - composes [OrderLine](./order-line.md): 1 to 1..* lines
 
-<!-- shop/order-line.md -->
+<!-- waml/1 part 7d91ac42f5e649c4a6cd939cfa60b920 shop/order-line.md -->
 ---
 type: uml.Class
 stereotype: entity
@@ -28,7 +28,7 @@ title: OrderLine
 - quantity: Int {1}
 - unitPrice: [Money](./money.md) {1}
 
-<!-- shop/customer.md -->
+<!-- waml/1 part 7d91ac42f5e649c4a6cd939cfa60b920 shop/customer.md -->
 ---
 type: uml.Class
 stereotype: [aggregateRoot, entity]
@@ -40,7 +40,7 @@ title: Customer
 - id: CustomerId {1}
 - name: String {1}
 
-<!-- shop/order-status.md -->
+<!-- waml/1 part 7d91ac42f5e649c4a6cd939cfa60b920 shop/order-status.md -->
 ---
 type: uml.Enum
 title: OrderStatus
@@ -53,7 +53,7 @@ title: OrderStatus
 - SHIPPED
 - CANCELLED
 
-<!-- shop/money.md -->
+<!-- waml/1 part 7d91ac42f5e649c4a6cd939cfa60b920 shop/money.md -->
 ---
 type: uml.DataType
 stereotype: valueObject
@@ -65,7 +65,7 @@ title: Money
 - amount: Decimal {1}
 - currency: CurrencyCode {1}
 
-<!-- shop/orders-domain.md -->
+<!-- waml/1 part 7d91ac42f5e649c4a6cd939cfa60b920 shop/orders-domain.md -->
 ---
 type: Diagram
 title: Orders Domain

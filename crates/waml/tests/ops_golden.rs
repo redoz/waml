@@ -1,5 +1,5 @@
 use waml::ops::{apply, Op};
-use waml::source::split_bundle;
+use waml::bundle_envelope::split_bundle;
 
 fn base(path: &str) -> String {
     path.rsplit(['/', '\\'])
@@ -13,7 +13,9 @@ fn base(path: &str) -> String {
 #[test]
 fn rename_on_orders_domain_fixture_rewrites_all_referrers() {
     let blob = include_str!("fixtures/orders-domain.md");
-    let bundle = split_bundle(blob);
+    let bundle = split_bundle(blob)
+        .expect("orders-domain envelope is valid")
+        .expect("orders-domain fixture is an envelope");
     // Pick a slug the fixture actually defines and references. `order-line` is
     // composed by `order` and appears in the diagram's members. If the fixture
     // used a different slug, this would need to be retargeted.
