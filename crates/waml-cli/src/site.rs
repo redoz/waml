@@ -3,8 +3,8 @@
 //! A site is the built editor plus one boot source: either a `bundle.waml`
 //! sitting next to it (`waml export site DIR`) or a live model server (the
 //! future `waml serve`). The two differ by exactly two things -- whether a
-//! bundle file is written, and what the generated `index.html` boots from --
-//! so they share one assembler rather than growing two writers that drift.
+//! bundle file is written, and what `waml-boot.txt` names -- so they share one
+//! assembler rather than growing two writers that drift.
 //!
 //! The whole site is built in memory before anything is written, so a failure
 //! part-way through cannot leave half a site on disk.
@@ -17,13 +17,13 @@ use std::path::Path;
 
 use crate::web_artifact::EmbeddedAsset;
 
-/// The placeholder `scripts/inject-runtime-shell.mjs` writes into the boot
-/// snippet of the generated `index.html`, replaced here with a real query.
+/// The file a site declares its boot source in, read by the editor at startup.
 ///
-/// Owned by that script: it is the single point where the built artifact and
-/// the assembler agree, and an artifact without it is rejected rather than
-/// silently shipped with an editor that boots to the start screen.
-pub(crate) const BOOT_QUERY_SENTINEL: &str = "__WAML_BOOT_QUERY__";
+/// It holds a query string (`?bundle=…` or `?api=…`) because that is the
+/// grammar the editor already parses for URLs. Writing it beside the editor,
+/// rather than pushing it into the address bar, keeps a visitor's URL clean.
+/// Must match `BOOT_CONFIG_FILE` in `crates/waml-editor/src/browser_boot.rs`.
+pub(crate) const BOOT_CONFIG_FILE: &str = "waml-boot.txt";
 
 /// Where an assembled site gets its model from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +44,6 @@ pub(crate) enum SiteError {
     DuplicatePath(String),
     UnsafePath(String),
     MissingIndex,
-    MissingBootSentinel,
     Decompress { path: String, message: String },
 }
 
@@ -61,11 +60,6 @@ impl fmt::Display for SiteError {
             Self::MissingIndex => {
                 f.write_str("the embedded web editor has no index.html to boot from")
             }
-            Self::MissingBootSentinel => write!(
-                f,
-                "the embedded index.html has no {BOOT_QUERY_SENTINEL} boot placeholder; \
-                 rebuild the artifact with scripts/inject-runtime-shell.mjs"
-            ),
             Self::Decompress { path, message } => {
                 write!(f, "cannot decompress the embedded {path}: {message}")
             }
@@ -98,19 +92,14 @@ pub(crate) fn assemble_site(
         }
     }
 
-    let index = files.get("index.html").ok_or(SiteError::MissingIndex)?;
-    let html = String::from_utf8(index.clone()).map_err(|_| SiteError::MissingBootSentinel)?;
-    if !html.contains(BOOT_QUERY_SENTINEL) {
-        return Err(SiteError::MissingBootSentinel);
+    if !files.contains_key("index.html") {
+        return Err(SiteError::MissingIndex);
     }
     let boot_query = match &source {
         SiteSource::Static(_) => format!("?bundle={BUNDLE_FILE}"),
         SiteSource::Api => "?api=/api".to_string(),
     };
-    files.insert(
-        "index.html".to_string(),
-        html.replace(BOOT_QUERY_SENTINEL, &boot_query).into_bytes(),
-    );
+    files.insert(BOOT_CONFIG_FILE.to_string(), boot_query.into_bytes());
 
     if let SiteSource::Static(bundle) = source {
         files.insert(BUNDLE_FILE.to_string(), bundle);
@@ -213,11 +202,11 @@ mod tests {
     }
 
     fn index_html() -> String {
-        format!("<!doctype html><script>boot('{BOOT_QUERY_SENTINEL}')</script>")
+        "<!doctype html><title>waml</title>".to_string()
     }
 
     #[test]
-    fn a_static_site_carries_the_editor_the_bundle_and_a_bundle_boot_url() {
+    fn a_static_site_carries_the_editor_the_bundle_and_a_bundle_boot_config() {
         let artifact = artifact(vec![
             asset("index.html", &index_html()),
             asset("waml-editor.wasm", "wasm bytes"),
@@ -227,9 +216,12 @@ mod tests {
 
         assert_eq!(site["waml-editor.wasm"], b"wasm bytes");
         assert_eq!(site[BUNDLE_FILE], b"bundle bytes");
-        let html = String::from_utf8(site["index.html"].clone()).unwrap();
-        assert!(html.contains("boot('?bundle=bundle.waml')"), "{html}");
-        assert!(!html.contains(BOOT_QUERY_SENTINEL), "{html}");
+        assert_eq!(site[BOOT_CONFIG_FILE], b"?bundle=bundle.waml");
+        // The address bar is the visitor's; the site says nothing in it.
+        assert_eq!(
+            String::from_utf8(site["index.html"].clone()).unwrap(),
+            index_html()
+        );
     }
 
     #[test]
@@ -239,8 +231,7 @@ mod tests {
         let site = assemble_site(&artifact, SiteSource::Api).unwrap();
 
         assert!(!site.contains_key(BUNDLE_FILE));
-        let html = String::from_utf8(site["index.html"].clone()).unwrap();
-        assert!(html.contains("boot('?api=/api')"), "{html}");
+        assert_eq!(site[BOOT_CONFIG_FILE], b"?api=/api");
     }
 
     #[test]
@@ -273,16 +264,6 @@ mod tests {
         assert_eq!(
             assemble_site(&artifact, SiteSource::Api).unwrap_err(),
             SiteError::MissingIndex
-        );
-    }
-
-    #[test]
-    fn an_unpatched_index_is_rejected() {
-        let artifact = artifact(vec![asset("index.html", "<!doctype html>")]);
-
-        assert_eq!(
-            assemble_site(&artifact, SiteSource::Api).unwrap_err(),
-            SiteError::MissingBootSentinel
         );
     }
 
