@@ -34,6 +34,7 @@ impl From<SourceError> for LoadError {
 
 /// Walk `dir` recursively, returning `(rel_path, contents)` for every `*.md`
 /// file, sorted by path. Paths use forward slashes so keys match bundle IDs.
+/// Dot-directories are skipped -- see [`collect`].
 pub fn read_bundle(dir: &Path) -> Result<SourceBundle, LoadError> {
     let mut out = Vec::new();
     collect(dir, dir, &mut out)?;
@@ -41,10 +42,25 @@ pub fn read_bundle(dir: &Path) -> Result<SourceBundle, LoadError> {
     Ok(SourceBundle::try_from_pairs(out)?)
 }
 
+/// Recursive half of [`read_bundle`].
+///
+/// Dot-directories are not descended into. A project loader's job is to read the
+/// model the user authored; a directory whose name starts with `.` is by
+/// convention tool state -- version control, editor state, caches -- and never
+/// model source. Markdown found there (a VCS template, a tool's own readme) is
+/// not a concept the user wrote, so pulling it into the bundle would invent
+/// documents and fail analysis on text nobody meant as a model.
 fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         if path.is_dir() {
+            let hidden = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'));
+            if hidden {
+                continue;
+            }
             collect(root, &path, out)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             let rel = path
@@ -117,6 +133,40 @@ mod tests {
         // Contents are the raw file text.
         let order = bundle.document_by_concept_id("order").unwrap();
         assert!(order.text().contains("title: Order"));
+    }
+
+    /// Dot-directories are tool state, not model source: `.waml/README.md` (this
+    /// editor's own project store) and anything under `.git/` must never reach
+    /// the bundle. `.git` was already being walked before this skip existed, so
+    /// this closes a latent bug, not just the `.waml` case.
+    #[test]
+    fn read_bundle_skips_dot_directories() {
+        let tmp = std::env::temp_dir().join(format!(
+            "waml-editor-load-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join(".waml")).unwrap();
+        std::fs::create_dir_all(tmp.join(".git")).unwrap();
+        std::fs::create_dir_all(tmp.join("shop")).unwrap();
+        std::fs::write(tmp.join("order.md"), "# Order").unwrap();
+        std::fs::write(tmp.join("shop/basket.md"), "# Basket").unwrap();
+        std::fs::write(tmp.join(".waml/README.md"), "# .waml\nnot model source").unwrap();
+        std::fs::write(tmp.join(".git/COMMIT_TEMPLATE.md"), "# nope").unwrap();
+
+        let bundle = read_bundle(&tmp);
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let paths: Vec<String> = bundle
+            .unwrap()
+            .documents()
+            .iter()
+            .map(|document| document.path().as_str().to_string())
+            .collect();
+        assert_eq!(paths, ["order.md", "shop/basket.md"]);
     }
 
     #[test]

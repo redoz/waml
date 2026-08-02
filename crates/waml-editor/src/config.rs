@@ -40,7 +40,11 @@ fn waml_dir() -> Option<PathBuf> {
 ///
 /// Missing (or unreadable) file -> `T::default()`. Malformed JSON -> back the bad
 /// file up to `<file>.bak`, then return `T::default()`. Never panics.
-fn load_from<T: DeserializeOwned + Default>(dir: &Path, file: &str) -> T {
+///
+/// Shared seam: `pub(crate)` because `project_settings` reuses it for the
+/// project-local `<project>/.waml/settings.json` rather than reimplementing the
+/// corrupt-file rescue. Keep it directory-injectable.
+pub(crate) fn load_from<T: DeserializeOwned + Default>(dir: &Path, file: &str) -> T {
     let path = dir.join(file);
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
@@ -59,7 +63,11 @@ fn load_from<T: DeserializeOwned + Default>(dir: &Path, file: &str) -> T {
 /// Atomically write `val` to `dir/<file>`: write a temp file in the same dir,
 /// then rename it over the target so a crash mid-write cannot leave a half file.
 /// Creates `dir` if absent. Returns the io error on failure.
-fn store_to<T: Serialize>(dir: &Path, file: &str, val: &T) -> io::Result<()> {
+///
+/// Shared seam: `pub(crate)` because `project_settings` reuses it for the
+/// project-local `<project>/.waml/settings.json` rather than reimplementing the
+/// atomic temp-write plus rename. Keep it directory-injectable.
+pub(crate) fn store_to<T: Serialize>(dir: &Path, file: &str, val: &T) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let json = serde_json::to_vec_pretty(val).map_err(io::Error::other)?;
     let tmp = dir.join(format!("{file}.tmp"));
