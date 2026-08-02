@@ -33,16 +33,19 @@ script_mod! {
         flow: Overlay
         clip_x: true
 
+        // The crumb sits UNDER the doc tabs, so it must never out-size them:
+        // tabs are `fonts.text_menu` (10 Regular), so the current segment takes
+        // the same 10 in Medium and the ancestors drop to 9.
         draw_ancestor +: {
             color: atlas.text_dim
-            text_style: fonts.text_menu
+            text_style: fonts.text_micro_italic
         }
         draw_current +: {
             color: atlas.text
-            text_style: fonts.text_label
+            text_style: fonts.text_compact_label_italic
         }
         draw_border +: { color: atlas.surface_border }
-        draw_separator: mod.draw.DocumentHeaderChevron{ color: atlas.text_dim }
+        draw_separator: mod.draw.DocumentHeaderChevron{ color: atlas.text }
 
         surface := View {
             width: Fill
@@ -78,8 +81,8 @@ script_mod! {
 pub const DOCUMENT_HEADER_H: f64 = 30.0;
 const HEADER_PAD_X: f64 = 8.0;
 const SEGMENT_PAD_X: f64 = 6.0;
-const SEPARATOR_SLOT_W: f64 = 16.0;
-const SEPARATOR_SIZE: f64 = 8.0;
+const SEPARATOR_SLOT_W: f64 = 12.0;
+const SEPARATOR_SIZE: f64 = 10.0;
 const TEXT_DY: f64 = 1.0;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -184,6 +187,9 @@ fn separator_rect(left_segment: Rect) -> Rect {
     }
 }
 
+/// `text_size` is the MEASURED line-box height, not `text_style.font_size`:
+/// font sizes are points, so centring off them left the label off-axis against
+/// the geometrically centred chevrons (see `separator_rect`).
 fn centered_text_y(row: Rect, text_size: f64) -> f64 {
     (row.pos.y + (row.size.y - text_size) * 0.5 + TEXT_DY).round()
 }
@@ -320,11 +326,14 @@ impl Widget for DocumentHeader {
                 } else {
                     &self.draw_ancestor
                 };
-                draw.layout(cx, 0.0, 0.0, None, false, Align::default(), &segment.title)
-                    .size_in_lpxs
-                    .width as f64
+                let size = draw
+                    .layout(cx, 0.0, 0.0, None, false, Align::default(), &segment.title)
+                    .size_in_lpxs;
+                (size.width as f64, size.height as f64)
             })
             .collect::<Vec<_>>();
+        let label_heights = label_widths.iter().map(|(_, h)| *h).collect::<Vec<_>>();
+        let label_widths = label_widths.iter().map(|(w, _)| *w).collect::<Vec<_>>();
         let right_button_width = if self.state.right_dock.is_some() {
             DOCUMENT_HEADER_H
         } else {
@@ -370,7 +379,7 @@ impl Widget for DocumentHeader {
             } else {
                 &mut self.draw_ancestor
             };
-            let y = centered_text_y(*rect, draw.text_style.font_size as f64);
+            let y = centered_text_y(*rect, label_heights[*index]);
             draw.draw_abs(cx, dvec2(rect.pos.x + SEGMENT_PAD_X, y), &segment.title);
             if position + 1 < self.state.segment_rects.len() {
                 self.draw_separator.draw_abs(cx, separator_rect(*rect));
@@ -527,12 +536,12 @@ mod tests {
         let layout = layout_header(260.0, &[20.0, 30.0], 0.0);
         assert_eq!(layout.segment_rects[0].1.pos.x, HEADER_PAD_X);
         assert_eq!(layout.segment_rects[0].1.size.x, 32.0);
-        assert_eq!(layout.segment_rects[1].1.pos.x, 56.0);
+        assert_eq!(layout.segment_rects[1].1.pos.x, 52.0);
         assert_eq!(layout.segment_rects[1].1.size.x, 42.0);
 
         let separator = separator_rect(layout.segment_rects[0].1);
-        assert_eq!(separator.pos.x, 44.0);
-        assert_eq!(separator.size, dvec2(8.0, 8.0));
+        assert_eq!(separator.pos.x, 41.0);
+        assert_eq!(separator.size, dvec2(10.0, 10.0));
         assert_eq!(layout.segment_rects[0].1.pos.x + SEGMENT_PAD_X, 14.0);
     }
 
@@ -628,7 +637,7 @@ mod tests {
         let with_button = layout_header(170.0, &[30.0, 30.0, 30.0], 30.0);
         assert_eq!(with_button.visible_indices, vec![1, 2]);
         assert_eq!(with_button.segment_rects[0].1.pos.x, HEADER_PAD_X);
-        assert_eq!(with_button.segment_rects[1].1.pos.x, 66.0);
+        assert_eq!(with_button.segment_rects[1].1.pos.x, 62.0);
     }
 
     #[test]

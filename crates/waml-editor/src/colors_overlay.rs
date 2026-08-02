@@ -25,6 +25,7 @@ pub enum Swatch {
     Shadow,
     Danger,
     Text,
+    TextMid,
     TextDim,
     LogoHi,
     LogoMid,
@@ -97,6 +98,7 @@ pub const COLOR_GROUPS: &[(&str, &[ColorRow])] = &[
         "TEXT",
         &[
             cr!("text", Text, "Primary text"),
+            cr!("text_mid", TextMid, "Small annotation text (canvas edge labels)"),
             cr!("text_dim", TextDim, "Secondary / meta text"),
         ],
     ),
@@ -176,6 +178,7 @@ script_mod! {
         draw_swatch_shadow         +: { color: atlas.shadow }
         draw_swatch_danger         +: { color: atlas.danger }
         draw_swatch_text           +: { color: atlas.text }
+        draw_swatch_text_mid       +: { color: atlas.text_mid }
         draw_swatch_text_dim       +: { color: atlas.text_dim }
         draw_swatch_logo_hi        +: { color: atlas.logo_hi }
         draw_swatch_logo_mid       +: { color: atlas.logo_mid }
@@ -280,6 +283,9 @@ pub struct ColorsOverlay {
     draw_swatch_text: DrawColor,
     #[redraw]
     #[live]
+    draw_swatch_text_mid: DrawColor,
+    #[redraw]
+    #[live]
     draw_swatch_text_dim: DrawColor,
     #[redraw]
     #[live]
@@ -380,6 +386,7 @@ impl ColorsOverlay {
             Swatch::Shadow => &mut self.draw_swatch_shadow,
             Swatch::Danger => &mut self.draw_swatch_danger,
             Swatch::Text => &mut self.draw_swatch_text,
+            Swatch::TextMid => &mut self.draw_swatch_text_mid,
             Swatch::TextDim => &mut self.draw_swatch_text_dim,
             Swatch::LogoHi => &mut self.draw_swatch_logo_hi,
             Swatch::LogoMid => &mut self.draw_swatch_logo_mid,
@@ -465,8 +472,8 @@ mod tests {
 
         assert_eq!(
             expected.len(),
-            27,
-            "expected 27 swatch tokens, got {}",
+            28,
+            "expected 28 swatch tokens, got {}",
             expected.len()
         );
         assert_eq!(

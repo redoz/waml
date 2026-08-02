@@ -88,7 +88,7 @@ pub(crate) fn namespace_key_ids(vm: &mut ScriptVm, ns: ScriptValue) -> Option<BT
 /// produced object back, so that failure class is caught semantically —
 /// unlike the deleted `include_str!` substring grep.
 #[test]
-fn mod_fonts_carries_exactly_the_ten_role_keys() {
+fn mod_fonts_carries_exactly_the_twelve_role_keys() {
     let mut vm = boot_test_vm();
     crate::fonts::script_mod(&mut vm);
 
@@ -106,9 +106,11 @@ fn mod_fonts_carries_exactly_the_ten_role_keys() {
         live_id!(text_caption),
         live_id!(text_label),
         live_id!(text_compact_label),
+        live_id!(text_compact_label_italic),
         live_id!(text_menu),
         live_id!(text_eyebrow),
         live_id!(text_micro),
+        live_id!(text_micro_italic),
         live_id!(text_mono),
     ]
     .into_iter()
@@ -116,6 +118,6 @@ fn mod_fonts_carries_exactly_the_ten_role_keys() {
 
     assert_eq!(
         keys, expected,
-        "mod.fonts key set drifted from the 10 declared role tokens"
+        "mod.fonts key set drifted from the 12 declared role tokens"
     );
 }

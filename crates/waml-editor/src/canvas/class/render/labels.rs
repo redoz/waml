@@ -11,7 +11,9 @@ pub(super) fn draw_edge_labels(
     draws: &mut ClassDrawResources<'_>,
 ) {
     let viewport = snapshot.viewport;
-    let target_size = (11.0 * viewport.camera.zoom).max(4.0) as f32;
+    // Edge text is annotation, not content: it reads well below the card type
+    // scale, and at 11 the multiplicity/role chips out-shouted the cards.
+    let target_size = (8.0 * viewport.camera.zoom).max(4.0) as f32;
     let font_size = font_raster_size(target_size);
     draws.edge_label.text_style.font_size = font_size;
     draws.edge_label.font_scale = target_size / font_size;

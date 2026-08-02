@@ -66,6 +66,10 @@ script_mod! {
 
         // Text.
         text: #x26313f
+        // Between `text` and `text_dim` (their per-channel midpoint): annotation
+        // text that must recede from the primary scale yet stay legible at the
+        // small canvas sizes where `text_dim` turns to mush (edge labels).
+        text_mid: #x586472
         text_dim: #x8a97a6
 
         // Wordmark logo (`logo.rs`) greyscale ramp: three luminance stops
@@ -139,6 +143,7 @@ script_mod! {
 
         // Text.
         text: #xd8dbe2
+        text_mid: #xc1cbd9
         text_dim: #xa9bcd0
 
         // Wordmark logo ramp: light silver, cool-tinted to match the palette,

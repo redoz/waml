@@ -284,7 +284,9 @@ script_mod! {
         // part of the same stroke.
         draw_marker: mod.draw.EdgeMarker{ color: atlas.text_dim }
         // Opaque label chip keeps terminal text legible over crossed edge runs.
-        draw_edge_label_bg +: { color: atlas.field_bg }
+        // It takes the CANVAS ground, not `field_bg`: a lighter-than-canvas chip
+        // reads as a widget on the diagram instead of a hole punched in the edge.
+        draw_edge_label_bg +: { color: atlas.canvas_ground }
         // Flat fill pen for card compartment dividers, the header accent wash, and
         // port nubs. The renderer pushes `color` (accent/dim + alpha) per draw.
         draw_rule +: { color: atlas.text_dim }
@@ -303,8 +305,10 @@ script_mod! {
                 line_spacing: 1.2
             }
         }
+        // `text_mid`, not `text_dim`: at the 8px annotation size a dim grey
+        // drops below legibility, while full `text` competes with the cards.
         draw_edge_label +: {
-            color: atlas.text_dim
+            color: atlas.text_mid
             text_style: TextStyle{
                 font_size: 11
                 font_family: FontFamily{

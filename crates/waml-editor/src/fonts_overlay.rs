@@ -37,9 +37,17 @@ script_mod! {
             color: atlas.text
             text_style: fonts.text_compact_label
         }
+        draw_sample_compact_label_italic +: {
+            color: atlas.text
+            text_style: fonts.text_compact_label_italic
+        }
         draw_sample_menu +:    { color: atlas.text, text_style: fonts.text_menu }
         draw_sample_eyebrow +: { color: atlas.text, text_style: fonts.text_eyebrow }
         draw_sample_micro +:   { color: atlas.text, text_style: fonts.text_micro }
+        draw_sample_micro_italic +: {
+            color: atlas.text
+            text_style: fonts.text_micro_italic
+        }
         draw_sample_mono +:    { color: atlas.text, text_style: fonts.text_mono }
     }
 }
@@ -56,16 +64,18 @@ const SAMPLE: &str = "The five boxing wizards jump quickly — 0123456789";
 
 /// (role name, spec line). ORDER matches the `draw_sample_*` match in `draw_rows`
 /// AND `mod.fonts`'s scale order. The coverage test locks this to the 10 roles.
-pub const ROLES: [(&str, &str); 10] = [
+pub const ROLES: [(&str, &str); 12] = [
     ("Title", "IBM Plex Sans Condensed SemiBold · 16px · 1.1"),
     ("Heading", "IBM Plex Sans SemiBold · 13px · 1.2"),
     ("Body", "IBM Plex Sans Regular · 12px · 1.2"),
     ("Caption", "IBM Plex Sans Regular · 11px · 1.2"),
     ("Label", "IBM Plex Sans Medium · 11px · 1.2"),
     ("Compact label", "IBM Plex Sans Medium · 10px · 1.2"),
+    ("Compact label italic", "IBM Plex Sans Medium Italic · 10px · 1.2"),
     ("Menu", "IBM Plex Sans Regular · 10px · 1.2"),
     ("Eyebrow", "IBM Plex Sans SemiBold · 10px · 1.2"),
     ("Micro", "IBM Plex Sans Regular · 9px · 1.2"),
+    ("Micro italic", "IBM Plex Sans Italic · 9px · 1.2"),
     ("Mono", "IBM Plex Mono Regular · 11px · 1.2"),
 ];
 
@@ -111,6 +121,9 @@ pub struct FontsOverlay {
     draw_sample_compact_label: DrawText,
     #[redraw]
     #[live]
+    draw_sample_compact_label_italic: DrawText,
+    #[redraw]
+    #[live]
     draw_sample_menu: DrawText,
     #[redraw]
     #[live]
@@ -118,6 +131,9 @@ pub struct FontsOverlay {
     #[redraw]
     #[live]
     draw_sample_micro: DrawText,
+    #[redraw]
+    #[live]
+    draw_sample_micro_italic: DrawText,
     #[redraw]
     #[live]
     draw_sample_mono: DrawText,
@@ -159,9 +175,13 @@ impl FontsOverlay {
                 3 => self.draw_sample_caption.draw_abs(cx, sy, SAMPLE),
                 4 => self.draw_sample_label.draw_abs(cx, sy, SAMPLE),
                 5 => self.draw_sample_compact_label.draw_abs(cx, sy, SAMPLE),
-                6 => self.draw_sample_menu.draw_abs(cx, sy, SAMPLE),
-                7 => self.draw_sample_eyebrow.draw_abs(cx, sy, SAMPLE),
-                8 => self.draw_sample_micro.draw_abs(cx, sy, SAMPLE),
+                6 => self
+                    .draw_sample_compact_label_italic
+                    .draw_abs(cx, sy, SAMPLE),
+                7 => self.draw_sample_menu.draw_abs(cx, sy, SAMPLE),
+                8 => self.draw_sample_eyebrow.draw_abs(cx, sy, SAMPLE),
+                9 => self.draw_sample_micro.draw_abs(cx, sy, SAMPLE),
+                10 => self.draw_sample_micro_italic.draw_abs(cx, sy, SAMPLE),
                 _ => self.draw_sample_mono.draw_abs(cx, sy, SAMPLE),
             }
         }
@@ -192,22 +212,24 @@ impl FontsOverlay {
 mod tests {
     use super::*;
     #[test]
-    fn roles_table_covers_the_10_mod_fonts_roles() {
-        // The 10 role tokens in mod.fonts, in scale order. If fonts.rs gains/loses
+    fn roles_table_covers_the_12_mod_fonts_roles() {
+        // The 12 role tokens in mod.fonts, in scale order. If fonts.rs gains/loses
         // a role, this list + ROLES must move together.
-        const CANON: [&str; 10] = [
+        const CANON: [&str; 12] = [
             "Title",
             "Heading",
             "Body",
             "Caption",
             "Label",
             "Compact label",
+            "Compact label italic",
             "Menu",
             "Eyebrow",
             "Micro",
+            "Micro italic",
             "Mono",
         ];
-        assert_eq!(ROLES.len(), 10);
+        assert_eq!(ROLES.len(), 12);
         for (i, (name, _)) in ROLES.iter().enumerate() {
             assert_eq!(*name, CANON[i], "role {i} drifted from the mod.fonts scale");
         }

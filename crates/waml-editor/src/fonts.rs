@@ -1,4 +1,4 @@
-//! Mode-independent chrome typography scale: 10 semantic `TextStyle` role
+//! Mode-independent chrome typography scale: 12 semantic `TextStyle` role
 //! tokens (family + size + weight + line-spacing) that every chrome widget
 //! references instead of an ad-hoc inline `font_size:`/`FontMember`. Mirrors
 //! `theme_atlas.rs`'s shape (a single top-level `script_mod!` block of named
@@ -92,6 +92,15 @@ script_mod! {
             line_spacing: 1.2
         }
 
+        // Italic cut of `text_compact_label`: the breadcrumb's current segment.
+        text_compact_label_italic: TextStyle{
+            font_size: 10
+            font_family: FontFamily{
+                latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-MediumItalic.ttf") asc: -0.1 desc: 0.0}
+            }
+            line_spacing: 1.2
+        }
+
         // Dense interactive menu/select/tab rows.
         text_menu: TextStyle{
             font_size: 10
@@ -115,6 +124,15 @@ script_mod! {
             font_size: 9
             font_family: FontFamily{
                 latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Regular.ttf") asc: -0.1 desc: 0.0}
+            }
+            line_spacing: 1.2
+        }
+
+        // Italic cut of `text_micro`: the breadcrumb's ancestor segments.
+        text_micro_italic: TextStyle{
+            font_size: 9
+            font_family: FontFamily{
+                latin := FontMember{res: crate_resource("self:resources/fonts/IBM_Plex_Sans/IBMPlexSans-Italic.ttf") asc: -0.1 desc: 0.0}
             }
             line_spacing: 1.2
         }
