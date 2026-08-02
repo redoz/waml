@@ -94,10 +94,10 @@ Each scenario applies to a document with the type `uml.Sequence`.
 #### SEQ-MSG-1 — a call makes a synchronous message
 
 **Given** a document with the lifelines `A` and `B`
-**And** the item `- calls B: fetch` below `A`
+**And** the item `- A calls B `fetch``
 **When** the tool analyses the document
 **Then** the model contains one message from `A` to `B`
-**And** the message kind is `calls`
+**And** the message kind is `SyncCall`
 **And** the tool reports no diagnostic
 
 #### SEQ-MSG-2 — a return matches an earlier call
@@ -118,20 +118,20 @@ Each scenario applies to a document with the type `uml.Sequence`.
 
 #### SEQ-MSG-4 — async is valid only after a call target
 
-**Given** the item `- calls B async: fetch`
+**Given** the item `- A calls B async `fetch``
 **When** the tool analyses the document
 **Then** the message is asynchronous
 **And** the tool reports no diagnostic
 
 #### SEQ-MSG-5 — async on another verb is an error
 
-**Given** the item `- signals B async: ping`
+**Given** the item `- A signals B async `ping``
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at the word `async`
 
 #### SEQ-MSG-6 — an old verb is not a message
 
-**Given** the item `- replies to A: result`
+**Given** the item `- B replies A `result``
 **When** the tool analyses the document
 **Then** the tool reports an unsupported sequence form
 **And** the model contains no message for that item
