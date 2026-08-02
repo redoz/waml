@@ -17,6 +17,19 @@ stale window can't show old code and compile errors surface at the terminal.
 | `mini` (default) | `crates/waml-editor/tests/fixtures/mini` | `pwsh run.ps1` |
 | `<path>` | Any fixture path | `pwsh run.ps1 <path>` |
 
+## Window title (mandatory)
+
+Every launch MUST carry `-Title <slug>`. Several editors run at the same time;
+an unlabelled window cannot be told apart. The slug is short kebab-case that
+names the work in progress, not the fixture:
+
+```
+pwsh run.ps1 -Title edge-routing-fix
+pwsh run.ps1 -Empty -Title start-screen-copy
+```
+
+Add `-Color <hex>` too when one task opens more than one window.
+
 `mini` is the only bundled fixture today. If the user names a preset that isn't
 `empty`/`mini` and isn't an existing path, tell them and list what's available
 (`crates/waml-editor/tests/fixtures/`) rather than guessing.
