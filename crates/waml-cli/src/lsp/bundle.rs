@@ -361,8 +361,28 @@ pub fn read_disk_documents(root: &Path) -> Vec<(PathBuf, String)> {
 mod tests {
     use super::*;
 
+    /// An absolute workspace root for the running platform.
+    ///
+    /// Most fixtures here treat their path as an opaque key, so a literal
+    /// `C:/workspace` is harmless for them. This one is different: it asserts on
+    /// `Url::from_file_path`, which requires a genuinely absolute path. On Linux
+    /// `C:/workspace` is *relative* -- no leading slash -- so URL construction
+    /// returned None, `definition` found no target, and the test unwrapped None.
+    fn workspace_root() -> PathBuf {
+        let root = if cfg!(windows) {
+            PathBuf::from("C:/workspace")
+        } else {
+            PathBuf::from("/workspace")
+        };
+        assert!(
+            root.is_absolute(),
+            "fixture root must be absolute on this platform: {root:?}"
+        );
+        root
+    }
+
     fn query_fixture() -> (LspAnalysisState, PathBuf, PathBuf) {
-        let root = PathBuf::from("C:/workspace");
+        let root = workspace_root();
         let order = root.join("order.md");
         let next = root.join("next.md");
         let order_text = "---\ntype: uml.Class\n---\n# 😀 Order\n\nSee [Next](./next.md).\n\n## Attributes\n- count: Number {0..42}\n";
