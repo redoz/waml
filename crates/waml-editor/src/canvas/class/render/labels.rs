@@ -70,13 +70,15 @@ pub(super) fn draw_edge_labels(
                 )
             })
             .unwrap_or_default();
-        let pos = screen.pos + nudge;
-        if let Some(leader) = label.leader {
-            let a = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[0]);
-            let b = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[1]);
+        let leader_end = label.leader.map(|leader| {
+            edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[1])
+        });
+        let (pos, leader_end) = nudged(screen.pos, leader_end, nudge);
+        if let (Some(leader), Some(end)) = (label.leader, leader_end) {
+            let start = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[0]);
             draws
                 .edge
-                .draw_abs(cx, segment_quad(a, b, LEADER_THICKNESS));
+                .draw_abs(cx, segment_quad(start, end, LEADER_THICKNESS));
         }
         fill_rect(
             cx,
@@ -89,6 +91,16 @@ pub(super) fn draw_edge_labels(
         );
         draws.edge_label.draw_abs(cx, pos, &label.text);
     }
+}
+
+/// Apply the screen-space clearance top-up to everything that belongs to one
+/// label: the box's top-left AND, when there is one, the leader line's far end.
+///
+/// They move TOGETHER on purpose. The leader points at the box as drawn, and
+/// nudging only the box left the leader ending on the un-nudged world rect --
+/// visibly short of (or inside) the box it points at wherever the nudge bites.
+fn nudged(pos: DVec2, leader_end: Option<DVec2>, nudge: DVec2) -> (DVec2, Option<DVec2>) {
+    (pos + nudge, leader_end.map(|end| end + nudge))
 }
 
 /// Screen-space top-up on a world-space placement.
@@ -333,5 +345,25 @@ mod tests {
         let attach = (25.0, 10.0);
         let out = screen_clearance(center, attach, &edge(), LabelSlot::TerminalFrom, 1.0, 8.0);
         assert_eq!(out.x, 2.0 * 8.0 + HEAD_GAP - 5.0);
+    }
+
+    #[test]
+    fn a_leader_follows_its_box_s_screen_clearance() {
+        // The leader was drawn to the UN-nudged world rect while the box moved,
+        // so at zoom < 1 it stopped short of (or ended inside) its own box.
+        let pos = dvec2(100.0, 50.0);
+        let end = dvec2(100.0, 60.0);
+        let nudge = dvec2(0.0, 6.0);
+        let (moved_pos, moved_end) = nudged(pos, Some(end), nudge);
+        assert_eq!(
+            moved_pos - pos,
+            moved_end.expect("a leader end") - end,
+            "box and leader end must move by the same offset"
+        );
+        assert_eq!(
+            nudged(pos, None, nudge).1,
+            None,
+            "no leader, nothing to move"
+        );
     }
 }

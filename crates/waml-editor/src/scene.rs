@@ -6,6 +6,7 @@ use waml::model::{CardinalityVisibility, Diagram, ElementType, Model, RelEnd, Re
 use waml::multiplicity::Multiplicity;
 use waml::solve::{
     route, solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
+    SolvedRouting,
 };
 
 use crate::diagram_display::ResolvedDiagramDisplay;
@@ -422,7 +423,7 @@ pub fn conflict_participants(c: &SceneConflict) -> Vec<String> {
 /// `solve_diagram`) so the wasm/web path stays unchanged — web keeps dagre.
 /// Node set is every sized member; undirected `model.edges` among them drive the
 /// stress solve, and an edgeless set falls back to `grid_pack`.
-fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
+fn stress_default(model: &Model, sizes: &SizeMap) -> (Solved, SolvedRouting) {
     use std::collections::{BTreeMap, BTreeSet};
 
     let keys: Vec<String> = sizes.keys().cloned().collect();
@@ -472,7 +473,7 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
     // yields no groups and routing degrades to pure leaf-obstacle avoidance.
     let routes = route::route(&[], &rect_map, &route_edges, &SolveConfig::default());
 
-    Solved {
+    let solved = Solved {
         nodes: keys.into_iter().zip(rects).collect(),
         groups: Vec::new(),
         flags: BTreeMap::new(),
@@ -480,7 +481,13 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> Solved {
         labels: Vec::new(),
         label_reroutes: 0,
         label_leaders: 0,
-    }
+    };
+    let routing = SolvedRouting {
+        boxes: Vec::new(),
+        rects: rect_map,
+        edges: route_edges.into_iter().map(|(s, t)| (s, t, None)).collect(),
+    };
+    (solved, routing)
 }
 
 /// Straight-line fallback route between two node centers, emitted as an
@@ -536,10 +543,11 @@ pub fn build_scene(
     // be sized to hold each pair's terminal labels. These requests index into
     // `model_edges`, which is the same list (same order) as `edges`.
     let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
-    let (mut solved, diags, dropped) = if use_stress_default(diagram) {
-        (stress_default(model, &sizes), Vec::new(), Vec::new())
+    let (mut solved, diags, dropped, routing) = if use_stress_default(diagram) {
+        let (solved, routing) = stress_default(model, &sizes);
+        (solved, Vec::new(), Vec::new(), routing)
     } else {
-        waml::solve::solve_diagram_reported_labeled(
+        waml::solve::solve_diagram_routed(
             diagram,
             &edges,
             &sizes,
@@ -594,7 +602,7 @@ pub fn build_scene(
     // route::route presence-filtered out, desyncing the stream) fall back to a
     // straight center-to-center polyline WITHOUT advancing the cursor, so later
     // edges stay aligned.
-    let mut edges = Vec::new();
+    let mut edges: Vec<SceneEdge> = Vec::new();
     let mut route_cursor = 0usize;
     for e in drawable_edges(model) {
         if let (Some(&source), Some(&target)) =
@@ -624,14 +632,25 @@ pub fn build_scene(
     // above let the two lists desync. Hand `place_labels` the very polylines the
     // requests were built from, so a label can never be placed against another
     // edge's route.
+    //
+    // Rerouting is part of placement: an edge whose label fits nowhere asks the
+    // router for a path that leaves room for it. `place_labels_with_reroute`
+    // disables itself when this list and the router's own route list have
+    // desynced, degrading to exactly `place_labels`.
     let requests = crate::edge_labels::label_requests(&edges, &display);
-    let routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
-    let unresolved = waml::solve::place_labels(
+    let mut routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
+    let unresolved = waml::solve::place_labels_with_reroute(
         &mut solved,
-        &routes,
+        &routing.context(&SolveConfig::default()),
+        &mut routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
     );
+    // A reroute moves polylines, and the scene draws from `edges`, not from
+    // `solved.routes`.
+    for (edge, points) in edges.iter_mut().zip(routes) {
+        edge.points = points;
+    }
     debug_assert!(
         unresolved.is_empty(),
         "edge labels with no position at all: {unresolved:?}"
@@ -1559,7 +1578,7 @@ mod tests {
             &model.diagrams[0],
             &std::collections::HashSet::new(),
         );
-        let solved = stress_default(&model, &sizes);
+        let (solved, _routing) = stress_default(&model, &sizes);
         // mini declares one associates edge order -> customer.
         assert_eq!(solved.routes.len(), 1);
         assert!(!solved.routes[0].points.is_empty());

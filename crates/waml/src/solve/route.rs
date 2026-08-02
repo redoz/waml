@@ -4,6 +4,11 @@
 use super::{Box, BoxId, Rect, Route, SolveConfig};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// One edge as `route_keyed_with` takes it: endpoints, the authored key the
+/// produced `Route` is tagged with, and the `(width, height)` of the label band
+/// the router should try to keep clear beside it (`None` when unlabelled).
+pub type KeyedEdge = (BoxId, BoxId, Option<String>, Option<(f64, f64)>);
+
 fn key_of(id: &BoxId) -> Option<String> {
     match id {
         BoxId::Node(k) => Some(k.clone()),
@@ -40,7 +45,7 @@ pub fn route_keyed(
     edges: &[(BoxId, BoxId, Option<String>)],
     cfg: &SolveConfig,
 ) -> Vec<Route> {
-    let keyed: Vec<(BoxId, BoxId, Option<String>, Option<f64>)> = edges
+    let keyed: Vec<KeyedEdge> = edges
         .iter()
         .map(|(s, t, key)| (s.clone(), t.clone(), key.clone(), None))
         .collect();
@@ -75,26 +80,60 @@ impl Default for RouteCost {
     }
 }
 
+/// The routing inputs an edge yields, or `None` when `route_keyed_with` emits
+/// no `Route` for it at all: a self-edge, a group-as-endpoint, or an endpoint
+/// missing from this diagram's rects. THE one place that skip rule lives, so
+/// `routable_edge_indices` can never drift out of step with the router.
+fn routable(
+    rects: &BTreeMap<BoxId, Rect>,
+    s: &BoxId,
+    t: &BoxId,
+) -> Option<(String, String, Rect, Rect)> {
+    if s == t {
+        return None; // self-edge: out of scope
+    }
+    let (source, target) = (key_of(s)?, key_of(t)?); // group-as-endpoint: out of scope
+    let (&src, &tgt) = (rects.get(s)?, rects.get(t)?); // endpoint not in this diagram
+    Some((source, target, src, tgt))
+}
+
+/// Indices into `edges` that `route_keyed_with` actually emits a `Route` for,
+/// in order: the route at position `i` came from `edges[indices[i]]`.
+///
+/// Callers that map a ROUTE position back to the edge it was built from need
+/// this: the router silently skips edges, so a route position is not an edge
+/// index and using one as the other reroutes (and overwrites) the wrong edge.
+pub fn routable_edge_indices(
+    rects: &BTreeMap<BoxId, Rect>,
+    edges: &[(BoxId, BoxId, Option<String>)],
+) -> Vec<usize> {
+    edges
+        .iter()
+        .enumerate()
+        .filter(|(_, (s, t, _))| routable(rects, s, t).is_some())
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// `route_keyed`, but with an explicit `RouteCost` rather than the legacy
 /// defaults. The seam `label_pressure` and future layout tuning hang off.
+///
+/// Each edge's fourth field is the size of the label band the router should try
+/// to keep clear beside it (`None` for an unlabelled edge). It is a full
+/// `(width, height)`: a label needs its HEIGHT of clearance beside a horizontal
+/// run but its WIDTH beside a vertical one.
 pub fn route_keyed_with(
     boxes: &[Box],
     rects: &BTreeMap<BoxId, Rect>,
-    edges: &[(BoxId, BoxId, Option<String>, Option<f64>)],
+    edges: &[KeyedEdge],
     _cfg: &SolveConfig,
     cost: &RouteCost,
 ) -> Vec<Route> {
     let membership = build_membership(boxes);
     let mut routes: Vec<Route> = Vec::new();
-    for (s, t, key, label_height) in edges {
-        if s == t {
-            continue; // self-edge: out of scope
-        }
-        let (Some(source), Some(target)) = (key_of(s), key_of(t)) else {
-            continue; // group-as-endpoint: out of scope
-        };
-        let (Some(&src), Some(&tgt)) = (rects.get(s), rects.get(t)) else {
-            continue; // endpoint not in this diagram
+    for (s, t, key, label_size) in edges {
+        let Some((source, target, src, tgt)) = routable(rects, s, t) else {
+            continue;
         };
         // Leaf rects are always obstacles; a group is an obstacle for THIS edge
         // only when neither endpoint is one of its (transitive) members.
@@ -107,7 +146,7 @@ pub fn route_keyed_with(
             .iter()
             .map(|o| inflate(o.rect, ROUTE_MARGIN))
             .collect();
-        let points = astar(&ovg, &srcv, &tgtv, goal, cost, &inflated, *label_height)
+        let points = astar(&ovg, &srcv, &tgtv, goal, cost, &inflated, *label_size)
             .unwrap_or_else(|| fallback_l(src, tgt));
         routes.push(Route {
             points,
@@ -532,15 +571,21 @@ fn interval_union_len(mut ivs: Vec<(f64, f64)>) -> f64 {
 /// label only needs one clear side. `inflated` is the same inflated obstacle
 /// list A* routes against, so "clear" here means the same margin the route
 /// itself keeps.
-fn band_blocked_fraction(inflated: &[Rect], a: P, b: P, height: f64) -> f64 {
-    if height <= 0.0 || inflated.is_empty() {
-        return 0.0;
-    }
+///
+/// `size` is the label's `(width, height)`, and the band's THICKNESS is picked
+/// per segment orientation: a label beside a horizontal run needs its height of
+/// clearance, but beside a vertical one it needs its (typically much larger)
+/// width. Using the height for both under-penalised every vertical run.
+fn band_blocked_fraction(inflated: &[Rect], a: P, b: P, size: (f64, f64)) -> f64 {
     let len = (b.0 - a.0).abs() + (b.1 - a.1).abs();
     if len < 1e-9 {
         return 0.0;
     }
     let horizontal = (a.1 - b.1).abs() < 1e-9;
+    let height = if horizontal { size.1 } else { size.0 };
+    if height <= 0.0 || inflated.is_empty() {
+        return 0.0;
+    }
     let (s0, s1) = if horizontal {
         (a.0.min(b.0), a.0.max(b.0))
     } else {
@@ -594,7 +639,7 @@ fn astar(
     goal: P,
     cost: &RouteCost,
     inflated: &[Rect],
-    label_height: Option<f64>,
+    label_size: Option<(f64, f64)>,
 ) -> Option<Vec<P>> {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
@@ -610,7 +655,8 @@ fn astar(
     };
     // Blocked-fraction is expensive (rect queries) and the same OVG edge is
     // relaxed many times during the search, so cache it per (v, w) pair.
-    let pressured = cost.label_pressure > 0.0 && label_height.is_some_and(|h| h > 0.0);
+    let pressured =
+        cost.label_pressure > 0.0 && label_size.is_some_and(|(w, h)| w > 0.0 || h > 0.0);
     let mut band_cache: BTreeMap<(usize, usize), f64> = BTreeMap::new();
 
     let mut srt = sources.to_vec();
@@ -643,7 +689,7 @@ fn astar(
                         inflated,
                         ovg.verts[v],
                         ovg.verts[w],
-                        label_height.unwrap_or(0.0),
+                        label_size.unwrap_or((0.0, 0.0)),
                     )
                 });
                 cost.label_pressure * frac * len
@@ -1399,15 +1445,36 @@ mod tests {
         (boxes, rects, edges)
     }
 
-    /// Tag every edge with `height` as its label band height.
-    fn labelled(
-        edges: &[(BoxId, BoxId)],
-        height: f64,
-    ) -> Vec<(BoxId, BoxId, Option<String>, Option<f64>)> {
+    /// Tag every edge with a square `height` x `height` label band.
+    fn labelled(edges: &[(BoxId, BoxId)], height: f64) -> Vec<KeyedEdge> {
         edges
             .iter()
-            .map(|(s, t)| (s.clone(), t.clone(), None, Some(height)))
+            .map(|(s, t)| (s.clone(), t.clone(), None, Some((height, height))))
             .collect()
+    }
+
+    #[test]
+    fn a_vertical_run_is_measured_against_the_label_width() {
+        // A label beside a vertical run needs its WIDTH of clearance, not its
+        // height. Measuring the band with the height under-penalised every
+        // vertical run, so pressure only ever steered horizontal ones.
+        let wide_and_short = (80.0, 10.0);
+        let vertical = ((0.0, 0.0), (0.0, 100.0));
+        // Both sit inside the label's width but well outside its height, so
+        // NEITHER side of the run has room -- a label only needs one.
+        let obstacle = [
+            nrect(20.0, 0.0, 40.0, 100.0),
+            nrect(-60.0, 0.0, 40.0, 100.0),
+        ];
+        assert_eq!(
+            band_blocked_fraction(&obstacle, vertical.0, vertical.1, (10.0, 10.0)),
+            0.0,
+            "a band narrower than the gap is clear"
+        );
+        assert!(
+            band_blocked_fraction(&obstacle, vertical.0, vertical.1, wide_and_short) > 0.9,
+            "the obstacle sits inside the label's width, so the band is blocked"
+        );
     }
 
     /// Minimum distance from any point of `points` to the nearer of the two
@@ -1452,7 +1519,7 @@ mod tests {
     #[test]
     fn an_unlabelled_edge_is_untouched_by_label_pressure() {
         let (boxes, rects, edges) = corridor_with_tight_and_roomy_paths();
-        let keyed: Vec<(BoxId, BoxId, Option<String>, Option<f64>)> = edges
+        let keyed: Vec<KeyedEdge> = edges
             .iter()
             .map(|(s, t)| (s.clone(), t.clone(), None, None))
             .collect();

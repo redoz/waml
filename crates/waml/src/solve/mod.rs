@@ -102,8 +102,9 @@ mod wire {
         /// payload serialized before labels existed still deserializes.
         #[cfg_attr(feature = "serde", serde(default))]
         pub labels: Vec<crate::solve::label::PlacedLabel>,
-        /// How many edges `place_labels_with_reroute` sent back through the
-        /// router because their label could not be placed on the first pass.
+        /// How many edges came back from `place_labels_with_reroute` with a
+        /// DIFFERENT polyline than the first routing pass gave them -- edges,
+        /// not rounds, so the number stays comparable across diagrams.
         /// `default` so a payload serialized before this existed still
         /// deserializes; plain `place_labels` never reroutes, so this stays 0
         /// unless the caller opts into the reroute path.
@@ -299,13 +300,62 @@ pub fn solve_diagram_reported_labeled(
     label_requests: &[label::LabelRequest],
     cfg: &SolveConfig,
 ) -> (Solved, Vec<Diagnostic>, Vec<DroppedPlacement>) {
+    let (solved, diags, dropped, _routing) =
+        solve_diagram_routed(diagram, edges, sizes, label_requests, cfg);
+    (solved, diags, dropped)
+}
+
+/// The routing inputs a solve fed the router, handed back so a caller can
+/// replay edges through it (`place_labels_with_reroute`) instead of rebuilding
+/// the box forest and rect map — which only the solver knows — for itself.
+pub struct SolvedRouting {
+    pub boxes: Vec<Box>,
+    pub rects: BTreeMap<BoxId, Rect>,
+    pub edges: Vec<(BoxId, BoxId, Option<String>)>,
+}
+
+impl SolvedRouting {
+    pub fn context<'a>(&'a self, cfg: &'a SolveConfig) -> RoutingContext<'a> {
+        RoutingContext {
+            boxes: &self.boxes,
+            rects: &self.rects,
+            edges: &self.edges,
+            cfg,
+        }
+    }
+}
+
+/// `solve_diagram_reported_labeled`, plus the routing inputs it used. Frontends
+/// that place edge labels want this one: without the routing context there is
+/// nothing to reroute against, so labels can only ever be placed against the
+/// routes the first pass happened to produce.
+pub fn solve_diagram_routed(
+    diagram: &crate::model::Diagram,
+    edges: &[(BoxId, BoxId)],
+    sizes: &SizeMap,
+    label_requests: &[label::LabelRequest],
+    cfg: &SolveConfig,
+) -> (
+    Solved,
+    Vec<Diagnostic>,
+    Vec<DroppedPlacement>,
+    SolvedRouting,
+) {
     let (scene, mut diags) = resolve::resolve(diagram);
     let label_widths = connected_label_widths(edges, label_requests);
     let (mut solved, rects, mut geo_diags, dropped) =
         geometry::solve_with_rects_labeled(&scene, edges, sizes, &label_widths, cfg);
     diags.append(&mut geo_diags);
     solved.routes = route::route(&scene.boxes, &rects, edges, cfg);
-    (solved, diags, dropped)
+    let routing = SolvedRouting {
+        boxes: scene.boxes,
+        edges: edges
+            .iter()
+            .map(|(s, t)| (s.clone(), t.clone(), None))
+            .collect(),
+        rects,
+    };
+    (solved, diags, dropped, routing)
 }
 
 /// Terminal-label width floor per connected pair.
@@ -422,17 +472,44 @@ pub struct RoutingContext<'a> {
     pub cfg: &'a SolveConfig,
 }
 
-/// Like `place_labels`, but when a request cannot be placed at all on the
-/// first pass, re-routes just the edge(s) it belongs to with `label_pressure`
-/// weighted so the router leaves room for the label, then retries placement.
-/// Bounded to `MAX_REROUTE_ROUNDS` rounds: a reroute that frees one label can
-/// block another, so this loop is not guaranteed to converge. Every edge that
-/// was NOT rerouted keeps its original polyline byte-identical -- rerouting
-/// is surgical, not global.
+/// How badly a placement went, smaller is better: labels with no route at all
+/// first, then labels that only fit via a leader line. The reroute loop keeps
+/// the best-scoring round rather than whatever the last round happened to
+/// produce, so a reroute that made placement WORSE is never kept.
+fn placement_score(placement: &label::Placement) -> (usize, usize) {
+    (
+        placement.unplaced.len(),
+        placement
+            .placed
+            .iter()
+            .filter(|p| p.leader.is_some())
+            .count(),
+    )
+}
+
+/// Like `place_labels`, but when a label will not fit beside its route, replays
+/// the routing with `label_pressure` weighted on the offending edges so the
+/// router leaves room for them, then retries placement. Bounded to
+/// `MAX_REROUTE_ROUNDS` rounds, and stops early once the blocked set stops
+/// changing (the router's inputs are then unchanged too, so the answer would
+/// be byte-identical) or once a round produces no new geometry.
 ///
-/// `routing.edges[i]` must correspond to `routes[i]` (and `solved.routes[i]`)
-/// -- `routing` is the exact routing inputs `routes` was built from.
-/// Sets `solved.label_reroutes` to the number of edges actually rerouted.
+/// The replay routes the WHOLE edge set, not just the blocked edges: `hub_spread`
+/// and parallel-edge `nudge` are cross-edge passes, and running them over a
+/// one-edge slice strips the rerouted edge of its hub spread and parallel
+/// separation, letting it land exactly on top of a sibling. Pressure still
+/// applies only to blocked edges (every other edge carries no label size), so
+/// an unblocked edge's own path is unchanged.
+///
+/// `routes[i]` and `solved.routes[i]` must be the routes `routing` produced, in
+/// the router's own order. The router SKIPS edges (self-edges, group endpoints,
+/// endpoints missing from `routing.rects`), so `routing.edges` may be longer;
+/// `route::routable_edge_indices` supplies the mapping, and a length mismatch
+/// (a caller that substituted or filtered routes) disables rerouting rather
+/// than rerouting the wrong edge.
+///
+/// Sets `solved.label_reroutes` to the number of edges whose polyline actually
+/// changed.
 pub fn place_labels_with_reroute(
     solved: &mut Solved,
     routing: &RoutingContext,
@@ -440,70 +517,107 @@ pub fn place_labels_with_reroute(
     requests: &[label::LabelRequest],
     cfg: &label::LabelConfig,
 ) -> Vec<label::LabelRequest> {
-    solved.label_reroutes = 0;
-    let mut placement = label::place(routes, requests, &label_obstacles(solved), cfg);
+    // Only the ROUTES move here, never the nodes or groups the labels dodge.
+    let obstacles = label_obstacles(solved);
+    let original: Vec<Vec<(f64, f64)>> = routes.to_vec();
+    let mut placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
+
+    // Route position -> index into `routing.edges`.
+    let order = route::routable_edge_indices(routing.rects, routing.edges);
+    let aligned = order.len() == routes.len() && order.len() == solved.routes.len();
+    debug_assert!(
+        aligned,
+        "routes must be the routes `routing` produced: {} routes, {} routable edges",
+        routes.len(),
+        order.len()
+    );
+
+    let cost = route::RouteCost {
+        label_pressure: REROUTE_LABEL_PRESSURE,
+        ..route::RouteCost::default()
+    };
+    let mut best_score = placement_score(&placement);
+    let mut best_routes = original.clone();
+    let mut best_solved_routes = solved.routes.clone();
+    let mut best_placement = placement.clone();
 
     let mut round = 0;
-    while round < MAX_REROUTE_ROUNDS && !placement.unplaced.is_empty() {
+    let mut prev_blocked: Option<BTreeSet<usize>> = None;
+    while aligned && round < MAX_REROUTE_ROUNDS && best_score > (0, 0) {
         round += 1;
-        let blocked: BTreeSet<usize> = placement.unplaced.iter().map(|r| r.edge).collect();
-
-        // The label band height to route room for on a blocked edge: the
-        // tallest of any request it carries, so one weight fits every slot.
-        let mut label_heights: BTreeMap<usize, f64> = BTreeMap::new();
-        for req in requests {
-            if blocked.contains(&req.edge) {
-                let h = label::measure(&req.text, cfg).h;
-                let slot = label_heights.entry(req.edge).or_insert(0.0);
-                *slot = slot.max(h);
-            }
-        }
-
-        let cost = route::RouteCost {
-            label_pressure: REROUTE_LABEL_PRESSURE,
-            ..route::RouteCost::default()
-        };
-        let mut rerouted_any = false;
-        for &edge_idx in &blocked {
-            let Some((s, t, key)) = routing.edges.get(edge_idx) else {
-                continue;
-            };
-            let keyed = [(
-                s.clone(),
-                t.clone(),
-                key.clone(),
-                label_heights.get(&edge_idx).copied(),
-            )];
-            let Some(new_route) =
-                route::route_keyed_with(routing.boxes, routing.rects, &keyed, routing.cfg, &cost)
-                    .into_iter()
-                    .next()
-            else {
-                continue;
-            };
-            if let Some(slot) = routes.get_mut(edge_idx) {
-                *slot = new_route.points.clone();
-            }
-            if let Some(slot) = solved.routes.get_mut(edge_idx) {
-                *slot = new_route;
-            }
-            solved.label_reroutes += 1;
-            rerouted_any = true;
-        }
-        if !rerouted_any {
+        // Route positions whose label did not simply fit: no home at all, or a
+        // home only reachable by a leader line.
+        let mut blocked: BTreeSet<usize> = placement.unplaced.iter().map(|r| r.edge).collect();
+        blocked.extend(
+            placement
+                .placed
+                .iter()
+                .filter(|p| p.leader.is_some())
+                .map(|p| p.edge),
+        );
+        // Same blocked set means identical router inputs, so an identical
+        // answer: stop instead of burning the round on a byte-for-byte redo.
+        if prev_blocked.as_ref() == Some(&blocked) {
             break;
         }
-        placement = label::place(routes, requests, &label_obstacles(solved), cfg);
+        prev_blocked = Some(blocked.clone());
+
+        // The label band to route room for on a blocked edge: the widest and
+        // tallest of any request it carries, so one weight fits every slot.
+        let mut label_sizes: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
+        for req in requests {
+            if blocked.contains(&req.edge) {
+                let size = label::measure(&req.text, cfg);
+                let slot = label_sizes.entry(req.edge).or_insert((0.0, 0.0));
+                slot.0 = slot.0.max(size.w);
+                slot.1 = slot.1.max(size.h);
+            }
+        }
+
+        let mut keyed: Vec<route::KeyedEdge> = routing
+            .edges
+            .iter()
+            .map(|(s, t, key)| (s.clone(), t.clone(), key.clone(), None))
+            .collect();
+        for (pos, &edge_idx) in order.iter().enumerate() {
+            keyed[edge_idx].3 = label_sizes.get(&pos).copied();
+        }
+
+        let replayed =
+            route::route_keyed_with(routing.boxes, routing.rects, &keyed, routing.cfg, &cost);
+        if replayed.len() != routes.len() {
+            break; // the router disagrees with `order`: leave the routes alone
+        }
+        let mut changed = false;
+        for (i, route) in replayed.into_iter().enumerate() {
+            changed |= routes[i] != route.points;
+            routes[i].clone_from(&route.points);
+            solved.routes[i] = route;
+        }
+        if !changed {
+            break;
+        }
+
+        placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
+        let score = placement_score(&placement);
+        if score < best_score {
+            best_score = score;
+            best_routes.clone_from_slice(routes);
+            best_solved_routes.clone_from(&solved.routes);
+            best_placement = placement.clone();
+        }
     }
 
-    let placement = label::place_with_leaders(routes, requests, &label_obstacles(solved), cfg);
-    solved.label_leaders = placement
-        .placed
+    routes.clone_from_slice(&best_routes);
+    solved.routes = best_solved_routes;
+    solved.label_reroutes = routes
         .iter()
-        .filter(|p| p.leader.is_some())
+        .zip(&original)
+        .filter(|(now, before)| now != before)
         .count();
-    solved.labels = placement.placed;
-    placement.unplaced
+    solved.label_leaders = best_score.1;
+    solved.labels = best_placement.placed;
+    best_placement.unplaced
 }
 
 #[cfg(test)]
@@ -546,6 +660,14 @@ mod tests {
     }
 
     fn crowded_scene_where_one_label_cannot_fit() -> Crowded {
+        crowded_scene(vec![(
+            BoxId::Node("a".into()),
+            BoxId::Node("b".into()),
+            None,
+        )])
+    }
+
+    fn crowded_scene(edges: Vec<(BoxId, BoxId, Option<String>)>) -> Crowded {
         let boxes = vec![
             leafbox("a"),
             leafbox("b"),
@@ -560,13 +682,7 @@ mod tests {
             BoxId::Node("squeeze".into()),
             nrect(180.0, 120.0, 40.0, 100.0),
         );
-        let edges: Vec<(BoxId, BoxId, Option<String>)> =
-            vec![(BoxId::Node("a".into()), BoxId::Node("b".into()), None)];
-        let plain_edges: Vec<(BoxId, BoxId)> = edges
-            .iter()
-            .map(|(s, t, _)| (s.clone(), t.clone()))
-            .collect();
-        let routes = route::route(&boxes, &rects, &plain_edges, &SolveConfig::default());
+        let routes = route::route_keyed(&boxes, &rects, &edges, &SolveConfig::default());
         let nodes: BTreeMap<String, Rect> = rects
             .iter()
             .map(|(id, r)| {
@@ -667,7 +783,119 @@ mod tests {
             &crowded_label_config(),
         );
 
-        assert!(c.solved.label_reroutes <= MAX_REROUTE_ROUNDS);
+        assert_eq!(
+            c.solved.label_reroutes, 0,
+            "one edge that never moves is zero reroutes, not one per round"
+        );
+    }
+
+    #[test]
+    fn the_reroute_counts_edges_not_rounds() {
+        // `label_reroutes` is documented as the number of edges actually
+        // rerouted. Counting one per (round x edge) reported rounds instead,
+        // and inflated the very instrumentation the reroute stage is judged by.
+        let mut c = crowded_scene_where_one_label_cannot_fit();
+        let requests = crowded_label_requests();
+        place_labels_with_reroute(
+            &mut c.solved,
+            &RoutingContext {
+                boxes: &c.boxes,
+                rects: &c.rects,
+                edges: &c.edges,
+                cfg: &SolveConfig::default(),
+            },
+            &mut c.routes,
+            &requests,
+            &crowded_label_config(),
+        );
+        assert!(
+            c.solved.label_reroutes <= c.routes.len(),
+            "at most one reroute per edge, got {}",
+            c.solved.label_reroutes
+        );
+    }
+
+    #[test]
+    fn a_reroute_maps_route_positions_back_through_the_router_s_skips() {
+        // The router SKIPS self-edges, so `routes[0]` here comes from
+        // `edges[1]`. Indexing the edge list with the route position rerouted
+        // the self-edge (a no-op) and the real blocked edge never moved.
+        let mut c = crowded_scene(vec![
+            (BoxId::Node("a".into()), BoxId::Node("a".into()), None), // skipped
+            (BoxId::Node("a".into()), BoxId::Node("b".into()), None),
+        ]);
+        assert_eq!(c.routes.len(), 1, "the self-edge yields no route");
+        let before = c.solved.routes.clone();
+        let requests = crowded_label_requests();
+
+        place_labels_with_reroute(
+            &mut c.solved,
+            &RoutingContext {
+                boxes: &c.boxes,
+                rects: &c.rects,
+                edges: &c.edges,
+                cfg: &SolveConfig::default(),
+            },
+            &mut c.routes,
+            &requests,
+            &crowded_label_config(),
+        );
+
+        assert_eq!(
+            c.solved.label_reroutes, 1,
+            "the real edge should have moved"
+        );
+        assert_ne!(before, c.solved.routes);
+    }
+
+    #[test]
+    fn a_reroute_keeps_parallel_edges_apart() {
+        // Rerouting a blocked edge on its own skips the cross-edge `hub_spread`
+        // and `nudge` passes, so the edge came back stripped of its parallel
+        // separation and landed exactly on top of its sibling.
+        let mut c = crowded_scene(vec![
+            (
+                BoxId::Node("a".into()),
+                BoxId::Node("b".into()),
+                Some("e1".into()),
+            ),
+            (
+                BoxId::Node("a".into()),
+                BoxId::Node("b".into()),
+                Some("e2".into()),
+            ),
+        ]);
+        let requests = vec![
+            label::LabelRequest {
+                edge: 0,
+                slot: label::LabelSlot::MidRoute,
+                text: "a rather long relationship label".into(),
+            },
+            label::LabelRequest {
+                edge: 1,
+                slot: label::LabelSlot::MidRoute,
+                text: "a rather long relationship label".into(),
+            },
+        ];
+
+        place_labels_with_reroute(
+            &mut c.solved,
+            &RoutingContext {
+                boxes: &c.boxes,
+                rects: &c.rects,
+                edges: &c.edges,
+                cfg: &SolveConfig::default(),
+            },
+            &mut c.routes,
+            &requests,
+            &crowded_label_config(),
+        );
+
+        assert_eq!(c.solved.routes.len(), 2);
+        assert_ne!(
+            c.solved.routes[0].points, c.solved.routes[1].points,
+            "two parallel edges must not share one polyline"
+        );
     }
 
     #[test]
