@@ -47,7 +47,7 @@ to-do list.
 | Goal | Status | MVP | Note |
 | --- | --- | --- | --- |
 | [Read a Bundle](read-a-bundle/) | partial | yes | Tree, preview tabs, document and diagram views, navigation history all exist. |
-| [Author in the Editor](author-in-the-editor/) | partial | yes | Model edits, save, undo, savepoints exist. Text authoring is the weak side. |
+| [Author in the Editor](author-in-the-editor/) | partial | yes | Model edits, save, undo, savepoints exist. Prose authoring and canvas ergonomics are the weak side. |
 | [Trust the Content](trust-the-content/) | partial | yes | Lossless syntax and broad tests exist. Diagnostics are not aggregated across layers. |
 | [UML](uml/) | partial | yes | Class and the behavior kinds render. The cut is incomplete in every kind. |
 | [Share and Publish](share-and-publish/) | partial | yes | Share link, wasm build, and Pages publish exist. |
