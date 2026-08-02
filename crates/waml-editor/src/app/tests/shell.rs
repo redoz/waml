@@ -464,23 +464,35 @@ fn mounted_tree_splitter_drag_past_collapse_flags_the_panel() {
         true,
     );
 
-    // Inside the sticky band (collapse 140 .. min 180): still open, held at min.
-    app.apply_splitter_drag(&mut cx, DockEdge::Left, 160.0);
+    // Driven off the constants, not literals: these thresholds are a feel to be
+    // retuned, and a test written in magic numbers would have to be rewritten
+    // (or would quietly stop testing the band) every time they move.
+    let l = crate::splitter::DockLimits::TREE;
+    let mid_band = (l.collapse + l.min) * 0.5;
+
+    // Inside the sticky band [collapse, min): still open, held at min.
+    app.apply_splitter_drag(&mut cx, DockEdge::Left, mid_band);
     assert_eq!(app.dock_states(&mut cx).0, DockState::Pinned);
-    assert_near(app.dock_widths.tree_w, crate::splitter::DockLimits::TREE.min);
+    assert_near(app.dock_widths.tree_w, l.min);
 
     // Past it: collapsed.
-    app.apply_splitter_drag(&mut cx, DockEdge::Left, 120.0);
+    app.apply_splitter_drag(&mut cx, DockEdge::Left, l.collapse - 20.0);
     assert_eq!(app.dock_states(&mut cx).0, DockState::Flag);
     // The width the panel will reopen at is the last OPEN one, not the
     // threshold it was dragged through.
-    assert_near(app.dock_widths.tree_w, crate::splitter::DockLimits::TREE.min);
+    assert_near(app.dock_widths.tree_w, l.min);
+    // While shut and still held, the panel shows springy give rather than
+    // sitting flush -- and never more than the cap.
+    assert!(app.dock_rubber.0 > 0.0);
+    assert!(app.dock_rubber.0 <= crate::splitter::RUBBER_MAX_W);
 
     // Hysteresis: a collapsed panel needs strictly more travel back out than it
     // took to close, and only then reopens.
-    app.apply_splitter_drag(&mut cx, DockEdge::Left, 190.0);
+    app.apply_splitter_drag(&mut cx, DockEdge::Left, l.reopen - 5.0);
     assert_eq!(app.dock_states(&mut cx).0, DockState::Flag);
     app.apply_splitter_drag(&mut cx, DockEdge::Left, 260.0);
     assert_eq!(app.dock_states(&mut cx).0, DockState::Pinned);
     assert_near(app.dock_widths.tree_w, 260.0);
+    // Reopening releases the spring.
+    assert_eq!(app.dock_rubber.0, 0.0);
 }

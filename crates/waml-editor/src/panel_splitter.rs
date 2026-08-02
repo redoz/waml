@@ -58,21 +58,42 @@ script_mod! {
         // inspector, whose splitter leads the panel), 1 = right (the tree,
         // whose splitter trails it). Pushed each `draw_walk` from `rule_edge`.
         //
-        // `sdf.rect` rather than `sdf.box(..., 0.0)`: a zero-radius box
-        // degenerates and floods the strip.
-        // `lit` lerps the rule from its resting theme colour to the accent; it
-        // is the only value Rust pushes, so no RGBA crosses the seam.
+        // The strip draws NOTHING at rest: `lit` fades the rule in from fully
+        // transparent, so only a hovered or dragged splitter is visible. The
+        // panel host already paints its own border on this exact seam, so a
+        // resting rule here lands beside it and reads as a doubled dark bar
+        // rather than as an affordance.
+        //
+        // `lit` and `edge` are the only values Rust pushes, so no RGBA crosses
+        // the seam.
+        //
+        // The strip paints the PANEL's own background, not nothing. It lives
+        // inside the panel host and the body beside it is sized `host -
+        // SPLITTER_W`, so a transparent strip is a 6px hole in the column that
+        // shows the dark window layer underneath -- which reads as a heavy
+        // black bar, the opposite of an invisible resting splitter. `field_bg`
+        // is exactly what `tree_panel` and the inspector fill themselves with,
+        // so at rest the strip is indistinguishable from its column. Only
+        // `lit` (hover/drag) reveals the 1px accent rule.
         draw_bg +: {
-            color: atlas.surface_border
+            color: atlas.field_bg
             accent: atlas.accent
             edge: uniform(0.0)
             lit: uniform(0.0)
             pixel: fn() {
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                // NO Sdf2d here. The panel beside this strip fills itself with
+                // a plain premultiplied `DrawColor` fill, and an SDF fill of
+                // the very same colour does not land on the same pixels: its
+                // coverage antialiases the strip's own outline, which is
+                // precisely the faint box the handle must not have at rest.
+                // Repeating the panel's fill verbatim makes the resting strip
+                // pixel-identical to the column it sits in.
+                let base = vec4(self.color.rgb * self.color.a, self.color.a)
+                let px = self.pos.x * self.rect_size.x
                 let x = mix(0.0, self.rect_size.x - 1.0, self.edge)
-                sdf.rect(x, 0.0, 1.0, self.rect_size.y)
-                sdf.fill(mix(self.color, self.accent, self.lit))
-                return sdf.result
+                let on = step(x, px) * step(px, x + 1.0) * self.lit
+                let rule = vec4(self.accent.rgb * self.accent.a, self.accent.a)
+                return mix(base, rule, on)
             }
         }
     }
@@ -139,6 +160,11 @@ impl Widget for PanelSplitter {
             Hit::FingerUp(_) => {
                 if self.dragging {
                     self.dragging = false;
+                    // A drag that ended away from the strip gets no HoverOut,
+                    // so release the cursor here too.
+                    if !self.hovered {
+                        cx.set_cursor(MouseCursor::Default);
+                    }
                     cx.widget_action(uid, PanelSplitterAction::Released);
                     self.view.redraw(cx);
                 }
@@ -149,6 +175,14 @@ impl Widget for PanelSplitter {
                 self.view.redraw(cx);
             }
             Hit::FingerHoverOut(_) => {
+                // Hand the cursor back explicitly. Makepad keeps the last
+                // cursor any widget set until another one sets its own, and the
+                // empty area below the tree's last row belongs to no widget --
+                // so leaving the strip downward kept ColResize showing until
+                // the pointer happened to cross a tree row.
+                if !self.dragging {
+                    cx.set_cursor(MouseCursor::Default);
+                }
                 self.hovered = false;
                 self.view.redraw(cx);
             }

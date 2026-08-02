@@ -351,7 +351,7 @@ impl App {
         );
         let tree_value = self.tree_motion.value();
         let inspector_value = self.inspector_motion.value();
-        let layout = crate::dock::responsive_layout(
+        let mut layout = crate::dock::responsive_layout(
             self.narrow,
             viewport_w,
             tree_value,
@@ -359,6 +359,18 @@ impl App {
             self.dock_widths.tree_w,
             self.dock_widths.inspector_w,
         );
+        // Springy give for a collapsed panel still under the finger. Applied to
+        // the SLOT as well as the body so the sliver pushes the canvas rather
+        // than floating over it, keeping the drag physically honest. Narrow
+        // mode reserves no slots and hides the splitters, so it has no give.
+        if !self.narrow {
+            let (tree_rubber, inspector_rubber) = self.dock_rubber;
+            layout.tree_body = crate::splitter::with_rubber(layout.tree_body, tree_rubber);
+            layout.left_slot = crate::splitter::with_rubber(layout.left_slot, tree_rubber);
+            layout.inspector_body =
+                crate::splitter::with_rubber(layout.inspector_body, inspector_rubber);
+            layout.right_slot = crate::splitter::with_rubber(layout.right_slot, inspector_rubber);
+        }
         if let Some(mut panel) = self
             .ui
             .widget(cx, ids!(project_tree))
@@ -492,6 +504,10 @@ impl App {
         // Persistence is on RELEASE only -- never per drag frame, which would
         // hammer the disk for the length of a gesture.
         if tree.released(actions) || inspector.released(actions) {
+            // The spring lets go with the finger: whatever sliver was being
+            // held out springs back flush, animated by the same DockMotion.
+            self.dock_rubber = (0.0, 0.0);
+            self.sync_dock_slots(cx);
             self.persist_dock_widths();
         }
     }
@@ -534,14 +550,23 @@ impl App {
             DockEdge::Left => widths.tree_w = w,
             DockEdge::Right => widths.inspector_w = w,
         };
+        let set_rubber = |rubber: &mut (f64, f64), r: f64| match edge {
+            DockEdge::Left => rubber.0 = r,
+            DockEdge::Right => rubber.1 = r,
+        };
         let event = match outcome {
             DragOutcome::Width(w) => {
                 set_width(&mut self.dock_widths, w);
+                set_rubber(&mut self.dock_rubber, 0.0);
                 None
             }
-            DragOutcome::Collapse => Some(DockEvent::Close),
+            DragOutcome::Collapse { rubber } => {
+                set_rubber(&mut self.dock_rubber, rubber);
+                Some(DockEvent::Close)
+            }
             DragOutcome::Reopen(w) => {
                 set_width(&mut self.dock_widths, w);
+                set_rubber(&mut self.dock_rubber, 0.0);
                 Some(DockEvent::Open)
             }
         };

@@ -573,6 +573,12 @@ pub struct App {
     /// `responsive_layout` used to be handed.
     #[rust]
     dock_widths: DockWidths,
+    /// Springy give, in px, currently shown by a collapsed-but-still-held
+    /// panel: `(tree, inspector)`. Non-zero only for the length of a drag that
+    /// has snapped the panel shut, and reset the moment the finger lifts or the
+    /// panel reopens. Not persisted -- it is gesture state, not a width.
+    #[rust]
+    dock_rubber: (f64, f64),
     #[rust(DockMotion::new(1.0))]
     tree_motion: DockMotion,
     #[rust]

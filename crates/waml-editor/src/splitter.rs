@@ -54,9 +54,9 @@ impl DockLimits {
     /// Limits for the left-docked Model tree. Default width is
     /// `crate::tree_panel::PROJECT_TREE_W`.
     pub const TREE: Self = Self {
-        min: 180.0,
-        collapse: 140.0,
-        reopen: 200.0,
+        min: 108.0,
+        collapse: 84.0,
+        reopen: 120.0,
     };
 
     /// Limits for the right-docked Inspector. Default width is
@@ -64,9 +64,9 @@ impl DockLimits {
     /// the inspector's rows are label + field pairs, which go unreadable sooner
     /// than a tree of names does.
     pub const INSPECTOR: Self = Self {
-        min: 220.0,
-        collapse: 170.0,
-        reopen: 240.0,
+        min: 132.0,
+        collapse: 102.0,
+        reopen: 144.0,
     };
 }
 
@@ -84,16 +84,63 @@ pub fn max_width(viewport_w: f64, other_slot_w: f64) -> f64 {
     (viewport_w - other_slot_w - MIN_CENTER_W).max(0.0)
 }
 
+/// Widest sliver a collapsed panel shows while the pointer is still down. Small
+/// on purpose: this reads as the panel straining against a magnet, not as a
+/// panel that is partly open.
+pub const RUBBER_MAX_W: f64 = 9.0;
+
+/// The springy give a collapsed-but-still-held panel shows for a pointer
+/// implying width `raw`, where `reopen` is the width that would let it go.
+///
+/// Proportional to how far the pointer has travelled back toward `reopen`, so
+/// the sliver grows under the finger and is widest just before the snap.
+/// Deliberately tied to `reopen` rather than linear in `raw` alone: the give
+/// always maps the *whole* remaining pull, whatever a panel's thresholds are.
+///
+/// The progress is CUBED, not linear. A linear ramp reads as elastic — the
+/// panel starts sliding open the instant you move. Cubing keeps the sliver
+/// near zero through most of the pull and lets it open up only close to the
+/// threshold, which reads as a magnet you have to break rather than a rubber
+/// band you are stretching.
+///
+/// Guards a non-positive `reopen` (no sensible progress to measure) and clamps
+/// both ends, so this is total for any pointer position, including one dragged
+/// past the far side of the window.
+fn rubber_give(raw: f64, reopen: f64) -> f64 {
+    if reopen <= 0.0 {
+        return 0.0;
+    }
+    let t = (raw.max(0.0) / reopen).clamp(0.0, 1.0);
+    t * t * t * RUBBER_MAX_W
+}
+
+/// Fold a panel's springy give into the width it will actually draw at.
+///
+/// `max`, not `body + rubber`: a panel that has just snapped shut is still
+/// animating its `DockMotion` toward zero for 180ms, and ADDING the sliver
+/// during that window would make the column bulge outward at the exact moment
+/// it is supposed to be shutting. Taking the larger instead lets the animation
+/// run and the sliver simply becomes the floor it settles onto.
+pub fn with_rubber(body_w: f64, rubber: f64) -> f64 {
+    body_w.max(rubber.max(0.0))
+}
+
 /// What one drag frame decided.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DragOutcome {
     /// Stay open at this width (already clamped to `[min, max]`).
     Width(f64),
-    /// Be collapsed. Returned both on the frame that crosses `collapse` and on
-    /// every subsequent frame that stays inside the collapsed band, so the
-    /// caller can treat it idempotently (`DockEvent::Close` is itself
-    /// idempotent).
-    Collapse,
+    /// Be collapsed, showing `rubber` px of springy give at the window edge.
+    ///
+    /// Returned on the frame that crosses `collapse` and on every subsequent
+    /// frame still inside the collapsed band, so the caller can treat the
+    /// collapse itself idempotently (`DockEvent::Close` is idempotent). The
+    /// payload is the iOS-overscroll part: while the finger is still down the
+    /// panel is magnetically held shut, but a fraction of the pointer's travel
+    /// leaks through as a sliver, so pulling outward visibly loads the spring
+    /// before it lets go at `reopen`. Zero once the pointer is at or past the
+    /// window edge.
+    Collapse { rubber: f64 },
     /// Come back open at this width (already clamped). Only ever returned from
     /// the collapsed state, and only past `reopen`.
     Reopen(f64),
@@ -129,10 +176,16 @@ pub fn drag(
         if raw > limits.reopen {
             DragOutcome::Reopen(clamped)
         } else {
-            DragOutcome::Collapse
+            DragOutcome::Collapse {
+                rubber: rubber_give(raw, limits.reopen),
+            }
         }
     } else if raw < limits.collapse {
-        DragOutcome::Collapse
+        // Crossing inward: the panel shuts NOW, and the sliver is measured from
+        // the same pointer position, so the snap does not also jump the edge.
+        DragOutcome::Collapse {
+            rubber: rubber_give(raw, limits.reopen),
+        }
     } else {
         // Note the sticky band: `collapse <= raw < min` clamps UP to `min`, so
         // the panel holds still while the pointer keeps closing in. Deliberate
@@ -173,16 +226,17 @@ mod tests {
 
     #[test]
     fn width_clamps_up_to_min_inside_the_sticky_band() {
-        // Between collapse (140) and min (180) the panel sticks at min while
-        // the pointer keeps travelling.
-        assert_eq!(
-            drag(DockEdge::Left, DockLimits::TREE, 160.0, WIDE, 0.0, false),
-            DragOutcome::Width(180.0)
-        );
-        assert_eq!(
-            drag(DockEdge::Left, DockLimits::TREE, 141.0, WIDE, 0.0, false),
-            DragOutcome::Width(180.0)
-        );
+        // Anywhere inside [collapse, min) the panel sticks at `min` while the
+        // pointer keeps travelling. Written against the constants rather than
+        // literals so retuning the feel cannot silently invalidate the test.
+        let l = DockLimits::TREE;
+        for x in [l.collapse, l.collapse + 1.0, l.min - 1.0] {
+            assert_eq!(
+                drag(DockEdge::Left, l, x, WIDE, 0.0, false),
+                DragOutcome::Width(l.min),
+                "pointer_x {x} must stick at min"
+            );
+        }
     }
 
     #[test]
@@ -196,14 +250,15 @@ mod tests {
 
     #[test]
     fn crossing_collapse_yields_collapse() {
-        assert_eq!(
-            drag(DockEdge::Left, DockLimits::TREE, 139.0, WIDE, 0.0, false),
-            DragOutcome::Collapse
-        );
+        let l = DockLimits::TREE;
+        assert!(matches!(
+            drag(DockEdge::Left, l, l.collapse - 1.0, WIDE, 0.0, false),
+            DragOutcome::Collapse { .. }
+        ));
         // The threshold itself is still open — only strictly below collapses.
         assert_eq!(
-            drag(DockEdge::Left, DockLimits::TREE, 140.0, WIDE, 0.0, false),
-            DragOutcome::Width(180.0)
+            drag(DockEdge::Left, l, l.collapse, WIDE, 0.0, false),
+            DragOutcome::Width(l.min)
         );
     }
 
@@ -211,25 +266,73 @@ mod tests {
     fn hysteresis_needs_more_travel_out_than_in() {
         let l = DockLimits::TREE;
         // Open -> below collapse -> shut.
-        assert_eq!(
-            drag(DockEdge::Left, l, 100.0, WIDE, 0.0, false),
-            DragOutcome::Collapse
-        );
+        assert!(matches!(
+            drag(DockEdge::Left, l, l.collapse - 40.0, WIDE, 0.0, false),
+            DragOutcome::Collapse { .. }
+        ));
         // Collapsed: anything up to and including `reopen` stays shut, and that
         // deliberately includes widths the OPEN panel would have honoured
         // (above collapse, at or above min).
-        for x in [100.0, 150.0, 180.0, 199.0, 200.0] {
-            assert_eq!(
-                drag(DockEdge::Left, l, x, WIDE, 0.0, true),
-                DragOutcome::Collapse,
+        for x in [20.0, l.collapse, l.min, l.reopen - 1.0, l.reopen] {
+            assert!(
+                matches!(
+                    drag(DockEdge::Left, l, x, WIDE, 0.0, true),
+                    DragOutcome::Collapse { .. }
+                ),
                 "pointer_x {x} must not reopen"
             );
         }
         // Strictly past `reopen` it comes back.
         assert_eq!(
-            drag(DockEdge::Left, l, 201.0, WIDE, 0.0, true),
-            DragOutcome::Reopen(201.0)
+            drag(DockEdge::Left, l, l.reopen + 1.0, WIDE, 0.0, true),
+            DragOutcome::Reopen(l.reopen + 1.0)
         );
+    }
+
+    #[test]
+    fn rubber_give_grows_toward_the_reopen_threshold() {
+        let l = DockLimits::TREE;
+        let give = |x: f64| match drag(DockEdge::Left, l, x, WIDE, 0.0, true) {
+            DragOutcome::Collapse { rubber } => rubber,
+            other => panic!("expected Collapse, got {other:?}"),
+        };
+        // Flush at the window edge, widest just before the snap, monotonic
+        // between: the spring loads smoothly under the finger.
+        assert_eq!(give(0.0), 0.0);
+        assert_eq!(give(l.reopen), RUBBER_MAX_W);
+        let samples = [0.0, l.reopen * 0.25, l.reopen * 0.5, l.reopen * 0.75];
+        assert!(samples
+            .windows(2)
+            .all(|pair| give(pair[0]) <= give(pair[1])));
+        // A pointer dragged off the far side of the panel cannot exceed the cap.
+        assert_eq!(give(-500.0), 0.0);
+    }
+
+    #[test]
+    fn rubber_never_exceeds_its_cap_for_any_pointer() {
+        for l in [DockLimits::TREE, DockLimits::INSPECTOR] {
+            for x in [-1000.0, 0.0, 50.0, 1000.0] {
+                if let DragOutcome::Collapse { rubber } =
+                    drag(DockEdge::Left, l, x, WIDE, 0.0, true)
+                {
+                    assert!(
+                        (0.0..=RUBBER_MAX_W).contains(&rubber),
+                        "rubber {rubber} out of range at {x}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn with_rubber_takes_the_larger_so_a_closing_panel_cannot_bulge() {
+        // Mid-close: the body is animating down through 60 and the sliver is
+        // 22. Adding them would widen the column while it is shutting.
+        assert_eq!(with_rubber(60.0, 22.0), 60.0);
+        // Settled shut: the sliver becomes the floor.
+        assert_eq!(with_rubber(0.0, 22.0), 22.0);
+        assert_eq!(with_rubber(0.0, 0.0), 0.0);
+        assert_eq!(with_rubber(280.0, -5.0), 280.0);
     }
 
     #[test]
@@ -253,7 +356,7 @@ mod tests {
         // ...and `drag` lifts that to `min` rather than inverting the clamp.
         assert_eq!(
             drag(DockEdge::Left, DockLimits::TREE, 400.0, 200.0, 0.0, false),
-            DragOutcome::Width(180.0)
+            DragOutcome::Width(DockLimits::TREE.min)
         );
     }
 
@@ -303,21 +406,21 @@ mod tests {
 
     #[test]
     fn right_edge_collapses_near_the_right_window_edge() {
-        // Pointer 100px from the right edge of a 1000px viewport => raw 100,
-        // below the inspector's collapse (170).
-        assert_eq!(
+        // Pointer 40px from the right edge of a 1000px viewport => raw 40,
+        // below the inspector's collapse.
+        assert!(matches!(
             drag(
                 DockEdge::Right,
                 DockLimits::INSPECTOR,
-                900.0,
+                960.0,
                 1000.0,
                 0.0,
                 false
             ),
-            DragOutcome::Collapse
-        );
-        // 250px in => raw 250, past reopen (240), so a collapsed inspector
-        // comes back.
+            DragOutcome::Collapse { .. }
+        ));
+        // 250px in => raw 250, past the inspector's reopen, so a collapsed
+        // inspector comes back.
         assert_eq!(
             drag(
                 DockEdge::Right,
