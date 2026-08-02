@@ -141,7 +141,7 @@ impl App {
                         tag: live_id!(burger),
                         anchor,
                         bounds,
-                        items: burger_menu_items(),
+                        items: burger_menu_items(!self.session.snapshot().source.is_empty()),
                         open: MenuOpen::Press(press),
                     },
                 );
@@ -248,6 +248,8 @@ impl App {
                 log!("New model: not yet implemented (template picker is a later slice)");
             } else if id == live_id!(open_model) {
                 self.open_model_via_picker(cx);
+            } else if id == live_id!(export_waml) {
+                self.export_current_bundle(cx);
             } else if id == live_id!(close_model) {
                 self.close_model(cx);
             }

@@ -52,11 +52,15 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
     ]
 }
 
-/// The burger (caption `menu_btn`) drop-down rows: Create, Open model, Close
-/// model. New/Open mirror the start screen's actions; Close returns to the
-/// start screen. Routed through `popup_root`; the committed ids are handled
-/// via the tag-filtered `closed` read in `handle_actions`.
-pub fn burger_menu_items() -> Vec<crate::popup::base::PopupItem> {
+/// The burger (caption `menu_btn`) drop-down rows: Create, Open model, Export
+/// WAML bundle, Close model. New/Open mirror the start screen's actions; Close
+/// returns to the start screen. Routed through `popup_root`; the committed ids
+/// are handled via the tag-filtered `closed` read in `handle_actions`.
+///
+/// `has_model` disables the rows that need a model to act on, rather than
+/// hiding them: a menu whose rows move depending on state is harder to use
+/// than one with a greyed row.
+pub fn burger_menu_items(has_model: bool) -> Vec<crate::popup::base::PopupItem> {
     use crate::icons::Icon;
     use crate::popup::base::PopupItem;
     vec![
@@ -77,12 +81,22 @@ pub fn burger_menu_items() -> Vec<crate::popup::base::PopupItem> {
             enabled: true,
         },
         PopupItem {
+            id: live_id!(export_waml),
+            label: "Export WAML bundle…".into(),
+            // The save glyph: this writes the model out of the editor. There
+            // is no download glyph in the catalog and the catalog order is an
+            // invariant, so do not add one for a single row.
+            icon: Some(Icon::Save),
+            danger: false,
+            enabled: has_model,
+        },
+        PopupItem {
             id: live_id!(close_model),
             label: "Close model".into(),
             // The door-closed glyph, drawn directly from the catalog.
             icon: Some(Icon::DoorClosed),
             danger: false,
-            enabled: true,
+            enabled: has_model,
         },
     ]
 }

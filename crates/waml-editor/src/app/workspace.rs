@@ -528,6 +528,26 @@ impl App {
         self.sync_dock_slots(cx);
     }
 
+    /// Write the model the session currently holds out as one `.waml` file.
+    ///
+    /// The live session source is exported, not the persisted one, so unsaved
+    /// edits and models that only ever existed in a share URL come with it.
+    pub(super) fn export_current_bundle(&mut self, cx: &mut Cx) {
+        let snapshot = self.session.snapshot();
+        let title = self
+            .open_dir
+            .as_deref()
+            .and_then(|dir| dir.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "model".to_owned());
+        let mut adapter = crate::bundle_export::PlatformBundleExport;
+        if let Err(error) =
+            crate::bundle_export::export_bundle(cx, &mut adapter, &title, snapshot.source.as_ref())
+        {
+            log!("failed to export the WAML bundle: {error}");
+        }
+    }
+
     /// Flush the current backing before closing it. A failed flush leaves the
     /// editor, source snapshots, and retry timer intact.
     pub(super) fn close_model(&mut self, cx: &mut Cx) -> bool {

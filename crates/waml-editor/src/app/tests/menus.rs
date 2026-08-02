@@ -70,7 +70,7 @@ fn logo_menu_items_preserve_the_complete_row_model() {
 
 #[test]
 fn burger_menu_items_preserve_the_complete_row_model() {
-    let items = burger_menu_items();
+    let items = burger_menu_items(true);
 
     assert_eq!(
         items
@@ -101,6 +101,13 @@ fn burger_menu_items_preserve_the_complete_row_model() {
                 true,
             ),
             (
+                live_id!(export_waml),
+                "Export WAML bundle…",
+                Some(Icon::Save),
+                false,
+                true,
+            ),
+            (
                 live_id!(close_model),
                 "Close model",
                 Some(Icon::DoorClosed),
@@ -108,6 +115,25 @@ fn burger_menu_items_preserve_the_complete_row_model() {
                 true,
             ),
         ]
+    );
+}
+
+#[test]
+fn model_commands_are_disabled_until_a_model_is_open() {
+    let items = burger_menu_items(false);
+
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| (item.id, item.enabled))
+            .collect::<Vec<_>>(),
+        vec![
+            (live_id!(new_model), true),
+            (live_id!(open_model), true),
+            (live_id!(export_waml), false),
+            (live_id!(close_model), false),
+        ],
+        "export and close need a model; create and open do not",
     );
 }
 

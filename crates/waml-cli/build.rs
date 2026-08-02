@@ -26,12 +26,22 @@ fn main() {
         return;
     }
 
+    // `--all-features` turns embed-web on for every workspace lint and test run,
+    // where no packaged artifact exists. That must not fail the build: emit an
+    // empty table so the binary still compiles and explains itself at runtime.
     let Some(dir) = env::var_os("WAML_WEB_EMBED_DIR") else {
-        panic!(
-            "the embed-web feature is enabled but WAML_WEB_EMBED_DIR is not set. \
-             Run `node scripts/package-web-artifact.mjs <artifact-dir> <embed-dir>` \
-             and point WAML_WEB_EMBED_DIR at <embed-dir>."
+        println!(
+            "cargo:warning=the embed-web feature is enabled but WAML_WEB_EMBED_DIR is not set; \
+             building without an embedded web editor. Run \
+             `node scripts/package-web-artifact.mjs <artifact-dir> <embed-dir>` and point \
+             WAML_WEB_EMBED_DIR at <embed-dir> to embed one."
         );
+        fs::write(
+            &generated,
+            "pub(crate) const EMBEDDED: &[EmbeddedAsset] = &[];\n",
+        )
+        .expect("write the empty embedded artifact table");
+        return;
     };
     let dir = PathBuf::from(dir);
     let manifest = dir.join("manifest.txt");
