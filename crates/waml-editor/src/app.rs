@@ -3058,9 +3058,9 @@ impl AppMain for App {
             }
         }
 
-        // Push each panel's DockState-driven slot width onto its reservation
-        // spacer every frame (including NextFrame, so the peek-timer's own
-        // dock transitions are picked up promptly).
+        // Push each panel's sampled motion slot width to its reservation
+        // spacer and body width to its host every frame. NextFrame samples
+        // active motion.
         self.sync_dock_slots(cx);
         // Same shape for the marker's row width: it is mounted zero-width, so
         // `App` is the only thing that knows how wide the title row is.

@@ -878,7 +878,7 @@ impl Widget for ProjectTree {
             while self.view.draw_walk(cx, scope, fw).step().is_some() {}
             return DrawStep::done();
         }
-        // Expanded (Pinned): restore header + body.
+        // Presentation-visible: restore the header and body.
         self.view.view(cx, ids!(header)).set_visible(cx, true);
         self.view.view(cx, ids!(tree_scroll)).set_visible(cx, true);
 

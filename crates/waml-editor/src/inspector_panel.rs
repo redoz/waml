@@ -592,11 +592,11 @@ impl Widget for Inspector {
         // `collapsed` = nothing selected: the frame still fills full height (like
         // the left Model panel), but the body content below the bar is suppressed.
         let collapsed = self.proj.is_none();
-        // Pinned always draws a full-height column flush to the window edge --
+        // When the presentation is visible, draw a full-height column flush to the window edge --
         // the DSL `height: Fill` carries through untouched, even with nothing
         // selected. Strip the docked-edge (right) margin + the top/bottom
         // margins so no window-bg frame shows; `right_slot` reserves the
-        // matching width (see `slot_width`).
+        // matching sampled width (see `slot_width`).
         let mut walk = walk;
         walk.margin.right = 0.0;
         walk.margin.top = 0.0;

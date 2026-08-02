@@ -206,8 +206,8 @@ pub fn narrow_entry_states(tree: DockState, inspector: DockState) -> (DockState,
     }
 }
 
-/// Whether the panel body (frame + contents) draws at all. `Flag` draws only
-/// the strip.
+/// Whether the logical state includes the panel body. Presentation visibility
+/// gates drawing.
 pub fn body_visible(state: DockState) -> bool {
     !matches!(state, DockState::Flag)
 }
