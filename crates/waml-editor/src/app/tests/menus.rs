@@ -17,6 +17,101 @@ fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) ->
 }
 
 #[test]
+fn logo_menu_items_preserve_the_complete_row_model() {
+    let items = logo_menu_items();
+
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| {
+                (
+                    item.id,
+                    item.label.as_str(),
+                    item.icon,
+                    item.danger,
+                    item.enabled,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                live_id!(properties),
+                "Properties",
+                Some(Icon::SlidersHorizontal),
+                false,
+                true,
+            ),
+            (live_id!(about), "About", Some(Icon::Info), false, true,),
+            (
+                live_id!(fonts),
+                "Fonts",
+                Some(Icon::Paintbrush),
+                false,
+                true,
+            ),
+            (
+                live_id!(icons),
+                "Icons",
+                Some(Icon::SquareMenu),
+                false,
+                true,
+            ),
+            (
+                live_id!(colors),
+                "Colors",
+                Some(Icon::Squircle),
+                false,
+                true,
+            ),
+            (live_id!(exit), "Exit", Some(Icon::CircleX), true, true,),
+        ]
+    );
+}
+
+#[test]
+fn burger_menu_items_preserve_the_complete_row_model() {
+    let items = burger_menu_items();
+
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| {
+                (
+                    item.id,
+                    item.label.as_str(),
+                    item.icon,
+                    item.danger,
+                    item.enabled,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                live_id!(new_model),
+                "Create",
+                Some(Icon::SquarePlus),
+                false,
+                true,
+            ),
+            (
+                live_id!(open_model),
+                "Open model",
+                Some(Icon::DoorOpen),
+                false,
+                true,
+            ),
+            (
+                live_id!(close_model),
+                "Close model",
+                Some(Icon::DoorClosed),
+                false,
+                true,
+            ),
+        ]
+    );
+}
+
+#[test]
 fn document_switcher_items_preserve_order_and_tab_identity() {
     let diagram = LiveId::from_str("diagram");
     let customer = LiveId::from_str("customer");
