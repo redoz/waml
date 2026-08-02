@@ -479,14 +479,18 @@ impl SequenceOperandSyntax {
     pub const BULLET_SLOT: usize = 0;
     pub const KEYWORD_SLOT: usize = 1;
     pub const GUARD_SLOT: usize = 2;
-    pub const RECOVERY_SLOT: usize = 3;
-    pub const NEWLINE_SLOT: usize = 4;
+    pub const BRANCH_LABEL_SLOT: usize = 3;
+    pub const RECOVERY_SLOT: usize = 4;
+    pub const NEWLINE_SLOT: usize = 5;
 
     pub fn keyword_token(&self) -> SyntaxToken<UmlLanguage> {
         required_token_at(&self.0, Self::KEYWORD_SLOT)
     }
     pub fn guard_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         present_slot_token_at(&self.0, Self::GUARD_SLOT, 0)
+    }
+    pub fn branch_label_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
+        present_slot_token_at(&self.0, Self::BRANCH_LABEL_SLOT, 0)
     }
 }
 behavior_syntax!(SequenceOperandSyntax, SequenceOperandSyntax::RECOVERY_SLOT);

@@ -439,6 +439,7 @@ fn sequence_items(
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> Vec<GreenElement<UmlLanguage>> {
     let mut items = Vec::new();
+    let mut fragment_indents = Vec::new();
     for (start, end) in lines_between(source, from, to) {
         if opaque_line(structure, start, end) {
             items.push(raw(f, text, start, end));
@@ -457,6 +458,27 @@ fn sequence_items(
             .trim_start()
             .strip_prefix("- ")
             .unwrap_or(line.trim_start());
+        if !malformed_indent {
+            while fragment_indents
+                .last()
+                .copied()
+                .map_or(false, |indent| indent >= leading)
+            {
+                fragment_indents.pop();
+            }
+        }
+        let nested_under_fragment = fragment_indents
+            .last()
+            .copied()
+            .map_or(false, |indent| leading > indent);
+        let operand_owned = fragment_indents
+            .last()
+            .copied()
+            .map_or(false, |indent| leading == indent + 2);
+        let fragment_head = matches!(
+            body,
+            "alt" | "opt" | "loop" | "par" | "break" | "critical" | "assert" | "neg"
+        );
         if unsupported_sequence_body(body) {
             items.push(recovery_line_at(
                 f,
@@ -479,16 +501,35 @@ fn sequence_items(
                 "sequence indentation must use pairs of spaces",
                 diags,
             ));
-        } else if matches!(body, "alt" | "opt" | "loop") {
+        } else if fragment_head {
+            fragment_indents.push(leading);
             items.push(sequence_fragment(f, text, source, start, end));
-        } else if body.starts_with("when ") || body == "else" {
+        } else if body == "when"
+            || body.starts_with("when ")
+            || body == "else"
+            || body.starts_with("else ")
+            || body == "branch"
+            || body.starts_with("branch ")
+        {
             items.push(sequence_operand(
                 f,
                 text,
                 source,
                 start,
                 end,
-                leading >= 2,
+                operand_owned,
+                diags,
+            ));
+        } else if nested_under_fragment && !canonical_message_body(body) {
+            items.push(recovery_line_at(
+                f,
+                text,
+                start,
+                end,
+                significant_start,
+                content_end,
+                UmlSyntaxDiagnosticCode::MalformedMessage,
+                "unknown sequence operand",
                 diags,
             ));
         } else {
@@ -1395,6 +1436,45 @@ fn sequence_operand(
             GreenElement::Token(f.missing_token(UmlSyntaxKind::GuardToken)),
         ));
     }
+    if &source[keyword..keyword_end] == "branch" {
+        let label = skip_ws(source, keyword_end, content_end);
+        if label == content_end {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::OperandBranchLabel,
+                GreenElement::Token(f.missing_token(UmlSyntaxKind::BranchLabelToken)),
+            ));
+            p = label;
+        } else if let Some(q) = scan_backtick(source, label, content_end) {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::OperandBranchLabel,
+                token(
+                    f,
+                    text,
+                    keyword_end,
+                    label,
+                    q,
+                    UmlSyntaxKind::BranchLabelToken,
+                ),
+            ));
+            p = q;
+        } else {
+            children.push(slot(
+                f,
+                UmlSyntaxKind::OperandBranchLabel,
+                missing_token(f, text, keyword_end, label, UmlSyntaxKind::BranchLabelToken),
+            ));
+            p = label;
+            valid = false;
+        }
+    } else {
+        children.push(slot(
+            f,
+            UmlSyntaxKind::OperandBranchLabel,
+            GreenElement::Token(f.missing_token(UmlSyntaxKind::BranchLabelToken)),
+        ));
+    }
     let recovery = if p < content_end {
         let recovery = skipped(
             f,
@@ -2142,8 +2222,14 @@ fn contains_unquoted_colon(source: &str, from: usize, to: usize) -> bool {
 
 fn unsupported_sequence_body(body: &str) -> bool {
     let body = body.trim();
-    body == "par"
-        || body.starts_with("par ")
+    body == "strict"
+        || body.starts_with("strict ")
+        || body == "seq"
+        || body.starts_with("seq ")
+        || body == "ignore"
+        || body.starts_with("ignore ")
+        || body == "consider"
+        || body.starts_with("consider ")
         || body == "coregion"
         || body.starts_with("coregion ")
         || body.contains(" coregion ")
@@ -2154,6 +2240,13 @@ fn unsupported_sequence_body(body: &str) -> bool {
         || body.ends_with("->")
         || body.starts_with("found ")
         || body.starts_with("lost ")
+}
+
+fn canonical_message_body(body: &str) -> bool {
+    matches!(
+        body.split_ascii_whitespace().nth(1),
+        Some("calls" | "returns" | "signals" | "creates" | "destroys")
+    )
 }
 
 fn behavior_bounds(source: &str, start: usize, end: usize) -> (usize, usize, usize) {
