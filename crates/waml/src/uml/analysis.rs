@@ -2941,27 +2941,26 @@ fn declared_message(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredMessag
                 expected: crate::uml::ExpectedSyntax::MessageTarget,
             })
     };
-    let signature_slot = direct_child(&node, syntax::UmlSyntaxKind::MessageSignature)
-        .expect("message has fixed signature occurrence");
-    let signature =
-        if field_from_token(&signature_slot, syntax::UmlSyntaxKind::SignatureToken).is_some() {
-            declared_expression_slot(signature_slot, syntax::UmlSyntaxKind::SignatureToken)
-        } else if node
-            .child_at(syntax::MessageSyntax::COLON_SLOT)
-            .and_then(SyntaxElement::into_token)
-            .is_some_and(|token| !token.flags().is_missing())
-        {
-            if has_recovery(&node) {
-                invalid_recovery(node.clone())
-            } else {
-                crate::uml::DeclaredField::Incomplete {
-                    syntax: signature_slot,
-                    expected: crate::uml::ExpectedSyntax::MessageTarget,
-                }
-            }
+    let value_slot = direct_child(&node, syntax::UmlSyntaxKind::MessageValue)
+        .expect("message has fixed value occurrence");
+    let signature = if field_from_token(&value_slot, syntax::UmlSyntaxKind::ValueToken).is_some() {
+        declared_expression_slot(value_slot, syntax::UmlSyntaxKind::ValueToken)
+    } else if node
+        .child_at(syntax::MessageSyntax::COLON_SLOT)
+        .and_then(SyntaxElement::into_token)
+        .is_some_and(|token| !token.flags().is_missing())
+    {
+        if has_recovery(&node) {
+            invalid_recovery(node.clone())
         } else {
-            crate::uml::DeclaredField::Absent
-        };
+            crate::uml::DeclaredField::Incomplete {
+                syntax: value_slot,
+                expected: crate::uml::ExpectedSyntax::MessageTarget,
+            }
+        }
+    } else {
+        crate::uml::DeclaredField::Absent
+    };
     crate::uml::DeclaredMessage {
         syntax,
         from,

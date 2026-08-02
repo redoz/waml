@@ -1859,7 +1859,9 @@ fn parse_other_message_tail(
 ) -> MessageTail {
     let target_start = skip_ws(source, verb_end, content_end);
     let target_end = scan_endpoint(source, target_start, content_end);
-    let target_valid = target_start < target_end && source.as_bytes()[target_start] != b'`';
+    let target = &source[target_start..target_end];
+    let target_valid =
+        target_start < target_end && target != "async" && source.as_bytes()[target_start] != b'`';
     children.push(slot(
         f,
         UmlSyntaxKind::MessageTarget,
@@ -1887,53 +1889,38 @@ fn parse_other_message_tail(
         target_start
     };
     let mut valid = target_valid;
+    children.push(missing_message_slot(
+        f,
+        UmlSyntaxKind::MessageValue,
+        UmlSyntaxKind::ValueToken,
+    ));
     let p = skip_ws(source, owned, content_end);
-    if p < content_end && source.as_bytes()[p] == b':' {
+    let colon = if p < content_end && source.as_bytes()[p] == b':' {
         let colon_end = p + 1;
         let value_start = skip_ws(source, colon_end, content_end);
-        let mut value_children = vec![token(
-            f,
-            text,
-            owned,
-            p,
-            colon_end,
-            UmlSyntaxKind::ColonToken,
-        )];
-        if let Some(value_end) = scan_backtick(source, value_start, content_end) {
-            value_children.push(token(
+        if scan_backtick(source, value_start, content_end) == Some(content_end) {
+            let colon = token_with_trailing_source(
                 f,
                 text,
+                owned,
+                p,
                 colon_end,
-                value_start,
-                value_end,
-                UmlSyntaxKind::ValueToken,
-            ));
-            owned = value_end;
+                content_end,
+                UmlSyntaxKind::ColonToken,
+            );
+            owned = content_end;
+            colon
         } else {
-            value_children.push(missing_token(
-                f,
-                text,
-                colon_end,
-                value_start,
-                UmlSyntaxKind::ValueToken,
-            ));
-            owned = value_start;
+            let colon = token(f, text, owned, p, colon_end, UmlSyntaxKind::ColonToken);
+            owned = colon_end;
             valid = false;
+            colon
         }
-        children.push(GreenElement::Node(
-            f.node(UmlSyntaxKind::MessageValue, value_children).unwrap(),
-        ));
     } else {
-        children.push(missing_message_slot(
-            f,
-            UmlSyntaxKind::MessageValue,
-            UmlSyntaxKind::ValueToken,
-        ));
-    }
+        GreenElement::Token(f.missing_token(UmlSyntaxKind::ColonToken))
+    };
     push_missing_call_and_return_slots(f, children);
-    children.push(GreenElement::Token(
-        f.missing_token(UmlSyntaxKind::ColonToken),
-    ));
+    children.push(colon);
     finish_message_tail(f, text, owned, content_end, valid)
 }
 
@@ -4112,6 +4099,43 @@ fn token(
     };
     GreenElement::Token(f.token(kind, slice(text, start, end), trivia, []).unwrap())
 }
+
+fn token_with_trailing_source(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    leading: usize,
+    start: usize,
+    end: usize,
+    trailing_end: usize,
+    kind: UmlSyntaxKind,
+) -> GreenElement<UmlLanguage> {
+    let leading_trivia = if leading < start {
+        vec![f
+            .trivia(TriviaKind::Whitespace, slice(text, leading, start))
+            .unwrap()]
+    } else {
+        vec![]
+    };
+    // Create/destroy payload syntax is retained until its separate review.
+    // The fixed colon slot owns those trailing bytes so source order stays exact.
+    let trailing_trivia = if end < trailing_end {
+        vec![f
+            .trivia(TriviaKind::Whitespace, slice(text, end, trailing_end))
+            .unwrap()]
+    } else {
+        vec![]
+    };
+    GreenElement::Token(
+        f.token(
+            kind,
+            slice(text, start, end),
+            leading_trivia,
+            trailing_trivia,
+        )
+        .unwrap(),
+    )
+}
+
 fn missing_token(
     f: &GreenFactory<UmlLanguage>,
     text: &SourceText,

@@ -411,7 +411,6 @@ impl MessageSyntax {
     pub const TARGET_SLOT: usize = 3;
     pub const ASYNC_SLOT: usize = 4;
     pub const VALUE_SLOT: usize = 5;
-    pub const SIGNATURE_SLOT: usize = Self::VALUE_SLOT;
     pub const AS_SLOT: usize = 6;
     pub const CALL_ID_SLOT: usize = 7;
     pub const TO_SLOT: usize = 8;
@@ -435,7 +434,7 @@ impl MessageSyntax {
         present_slot_token_at(&self.0, Self::ASYNC_SLOT, 0)
     }
     pub fn value_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        present_slot_token_kind_at(&self.0, Self::VALUE_SLOT, UmlSyntaxKind::ValueToken)
+        present_slot_token_at(&self.0, Self::VALUE_SLOT, 0)
     }
     pub fn as_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         present_token_at(&self.0, Self::AS_SLOT)
@@ -456,13 +455,7 @@ impl MessageSyntax {
         present_slot_token_at(&self.0, Self::RETURN_CALL_SLOT, 0)
     }
     pub fn colon_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        present_token_at(&self.0, Self::COLON_SLOT).or_else(|| {
-            node_at(&self.0, Self::VALUE_SLOT)
-                .and_then(|value| present_token_kind(&value, UmlSyntaxKind::ColonToken))
-        })
-    }
-    pub fn signature_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
-        self.value_token()
+        present_token_at(&self.0, Self::COLON_SLOT)
     }
 }
 behavior_syntax!(MessageSyntax, MessageSyntax::RECOVERY_SLOT);
@@ -535,26 +528,6 @@ fn present_slot_token_at(
     token_index: usize,
 ) -> Option<SyntaxToken<UmlLanguage>> {
     node_at(node, slot_index).and_then(|slot| present_token_at(&slot, token_index))
-}
-
-fn present_slot_token_kind_at(
-    node: &SyntaxNode<UmlLanguage>,
-    slot_index: usize,
-    kind: UmlSyntaxKind,
-) -> Option<SyntaxToken<UmlLanguage>> {
-    node_at(node, slot_index).and_then(|slot| present_token_kind(&slot, kind))
-}
-
-fn present_token_kind(
-    node: &SyntaxNode<UmlLanguage>,
-    kind: UmlSyntaxKind,
-) -> Option<SyntaxToken<UmlLanguage>> {
-    node.children().find_map(|element| match element {
-        SyntaxElement::Token(token) if token.kind() == kind && !token.flags().is_missing() => {
-            Some(token)
-        }
-        _ => None,
-    })
 }
 
 fn recovery_at(

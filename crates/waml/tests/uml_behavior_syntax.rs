@@ -96,7 +96,7 @@ fn sequence_nested_slots_project_supported_forms_and_diagnose_deferred_forms() {
     ]);
     let syntax = root(&analysis, "sequence.md");
     assert_eq!(count::<uml::LifelineSyntax>(syntax.clone()), 2);
-    assert_eq!(count::<uml::MessageSyntax>(syntax.clone()), 4);
+    assert_eq!(count::<uml::MessageSyntax>(syntax.clone()), 2);
     assert_eq!(count::<uml::SequenceOperandSyntax>(syntax.clone()), 3);
     assert_eq!(count::<uml::MessagesBlockSyntax>(syntax.clone()), 1);
     assert_eq!(written(&analysis, "sequence.md"), authored);
@@ -106,9 +106,24 @@ fn sequence_nested_slots_project_supported_forms_and_diagnose_deferred_forms() {
         .iter()
         .find(|s| s.key == "sequence")
         .unwrap();
-    assert_eq!(sequence.edges.len(), 4);
-    assert!(analysis.diagnostics.iter().any(|d| d.line == 22));
-    assert!(analysis.diagnostics.iter().any(|d| d.line == 23));
+    assert_eq!(sequence.edges.len(), 2);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("sequence.md").unwrap())
+        .unwrap();
+    let unsupported = analysis
+        .syntax
+        .document(id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::UnsupportedSequenceForm
+        })
+        .count();
+    assert_eq!(unsupported, 5);
 }
 
 #[test]
@@ -182,7 +197,7 @@ fn behavior_productions_expose_direct_fixed_slots() {
         ),
         (
             "sequence.md",
-            "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- order calls Order: `place()`\n- alt\n  - when `ready`\n    - order replies Order\n",
+            "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- order calls Order `place()`\n- alt\n  - when `ready`\n    - order returns to Order\n",
         ),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
     ]);
@@ -249,9 +264,12 @@ fn behavior_productions_expose_direct_fixed_slots() {
     let message = typed::<uml::MessageSyntax>(sequence_root.clone()).remove(0);
     assert_eq!(message.source_token().text().write_to_string(), "order");
     assert_eq!(message.verb_token().text().write_to_string(), "calls");
-    assert_eq!(message.target_token().text().write_to_string(), "Order");
     assert_eq!(
-        message.signature_token().unwrap().text().write_to_string(),
+        message.target_token().unwrap().text().write_to_string(),
+        "Order"
+    );
+    assert_eq!(
+        message.value_token().unwrap().text().write_to_string(),
         "`place()`"
     );
     let fragment = typed::<uml::SequenceFragmentSyntax>(sequence_root.clone()).remove(0);
@@ -277,7 +295,7 @@ fn behavior_productions_expose_direct_fixed_slots() {
 
 #[test]
 fn every_deferred_sequence_form_has_unsupported_code_and_exact_range() {
-    let authored = "---\ntype: uml.Sequence\n---\n# Deferred\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- par\n- order calls order\n- -> order: `found`\n- order sends ->\n- gate entry -> order\n- coregion order, Order\n";
+    let authored = "---\ntype: uml.Sequence\n---\n# Deferred\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- par\n- order calls order: `old`\n- -> order: `found`\n- order sends ->\n- gate entry -> order\n- coregion order, Order\n";
     let analysis = analyze([
         ("deferred.md", authored),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
@@ -297,7 +315,7 @@ fn every_deferred_sequence_form_has_unsupported_code_and_exact_range() {
     assert_eq!(unsupported.len(), 6);
     for spelling in [
         "- par",
-        "- order calls order",
+        "- order calls order: `old`",
         "- -> order: `found`",
         "- order sends ->",
         "- gate entry -> order",
@@ -320,7 +338,7 @@ fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() 
         ),
         (
             "sequence.md",
-            "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md)\n- [Order](./order.md) as order\n- [Order](./order.md) trailing\n\n## Messages\n- order calls Order\n- order calls Order: `place()`\n- order calls Order: broken\n- alt\n  - else\n  - when `ready`\n  - when broken\n",
+            "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md)\n- [Order](./order.md) as order\n- [Order](./order.md) trailing\n\n## Messages\n- order calls Order\n- order calls Order `place()`\n- order calls Order `broken\n- alt\n  - else\n  - when `ready`\n  - when broken\n",
         ),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
     ]);
@@ -449,23 +467,19 @@ fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() 
 
     let messages = typed::<uml::MessageSyntax>(sequence_root.clone());
     for message in &messages {
-        assert_eq!(message.syntax().children().count(), 8);
+        assert_eq!(message.syntax().children().count(), 15);
         assert_eq!(
             message
                 .syntax()
-                .child_at(uml::MessageSyntax::SIGNATURE_SLOT)
+                .child_at(uml::MessageSyntax::VALUE_SLOT)
                 .unwrap()
                 .kind(),
-            uml::syntax::UmlSyntaxKind::MessageSignature
+            uml::syntax::UmlSyntaxKind::MessageValue
         );
     }
-    assert!(messages[0].signature_token().is_none());
+    assert!(messages[0].value_token().is_none());
     assert_eq!(
-        messages[1]
-            .signature_token()
-            .unwrap()
-            .text()
-            .write_to_string(),
+        messages[1].value_token().unwrap().text().write_to_string(),
         "`place()`"
     );
     assert_eq!(messages[2].recovery().count(), 1);
@@ -663,11 +677,18 @@ fn required_behavior_accessors_return_indexed_missing_tokens_without_panicking()
         messages[0].verb_token().kind(),
         uml::syntax::UmlSyntaxKind::VerbToken
     );
-    assert_eq!(
-        messages[0].target_token().kind(),
-        uml::syntax::UmlSyntaxKind::TargetToken
-    );
-    for token in [messages[0].verb_token(), messages[0].target_token()] {
+    assert!(messages[0].target_token().is_none());
+    let target_slot = messages[0]
+        .syntax()
+        .child_at(uml::MessageSyntax::TARGET_SLOT)
+        .and_then(SyntaxElement::into_node)
+        .unwrap();
+    let target_token = target_slot
+        .child_at(0)
+        .and_then(SyntaxElement::into_token)
+        .unwrap();
+    assert_eq!(target_token.kind(), uml::syntax::UmlSyntaxKind::TargetToken);
+    for token in [messages[0].verb_token(), target_token] {
         assert!(token.flags().is_missing());
         assert_eq!(token.range().start().to_usize(), sender_at);
         assert_eq!(token.range().end().to_usize(), sender_at);

@@ -120,10 +120,48 @@ fn canonical_messages_have_fixed_lossless_slots() {
         messages[4].colon_token().unwrap().text().write_to_string(),
         ":"
     );
+    let colon_slot = messages[4]
+        .syntax()
+        .child_at(uml::MessageSyntax::COLON_SLOT)
+        .and_then(SyntaxElement::into_token)
+        .unwrap();
+    assert_eq!(colon_slot.kind(), uml::syntax::UmlSyntaxKind::ColonToken);
+    assert!(!colon_slot.flags().is_missing());
+    assert_eq!(colon_slot.text().write_to_string(), ":");
+    assert_eq!(written(&analysis, "s.md"), authored);
+}
+
+#[test]
+fn create_and_destroy_reject_async_as_the_target() {
+    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- a creates async: `Worker`\n- a destroys async\n- a creates worker: `Worker`\n";
+    let analysis = analyze([("s.md", authored)]);
+    let messages = typed::<uml::MessageSyntax>(root(&analysis, "s.md"));
+    assert_eq!(messages.len(), 3);
+    assert!(messages[0].target_token().is_none());
+    assert!(messages[1].target_token().is_none());
+    assert_eq!(messages[0].recovery().count(), 1);
+    assert_eq!(messages[1].recovery().count(), 1);
     assert_eq!(
-        messages[4].value_token().unwrap().text().write_to_string(),
-        "`OrderWorker`"
+        messages[2].target_token().unwrap().text().write_to_string(),
+        "worker"
     );
+    let document_id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("s.md").unwrap())
+        .unwrap();
+    let malformed = analysis
+        .syntax
+        .document(document_id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::MalformedMessage
+        })
+        .count();
+    assert_eq!(malformed, 2);
     assert_eq!(written(&analysis, "s.md"), authored);
 }
 

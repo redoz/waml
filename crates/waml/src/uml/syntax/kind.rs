@@ -128,13 +128,6 @@ pub enum UmlSyntaxKind {
     EndOfFileToken,
 }
 
-impl UmlSyntaxKind {
-    #[allow(non_upper_case_globals)]
-    pub const MessageSignature: Self = Self::MessageValue;
-    #[allow(non_upper_case_globals)]
-    pub const SignatureToken: Self = Self::ValueToken;
-}
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum UmlSyntaxDiagnosticCode {
     MissingColon,
