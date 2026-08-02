@@ -446,3 +446,67 @@ test("phase bookkeeping failures cannot alter compiler outcomes or leak rejectio
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(unhandled, []);
 });
+
+// The boot placeholder is the only contract between a built artifact and
+// `waml export site`, which refuses an artifact that does not carry exactly
+// one of them.
+const BOOT_QUERY_SENTINEL = "__WAML_BOOT_QUERY__";
+
+const bootSource = (html) => {
+    const match = html.match(/<script data-waml-boot-url>([\s\S]*?)<\/script>/);
+    assert.ok(match, "injected boot script should be a classic script");
+    return match[1];
+};
+
+const runBoot = (source, location) => {
+    const replaced = [];
+    vm.runInNewContext(source, {
+        location,
+        history: {
+            replaceState(_state, _title, url) {
+                replaced.push(url);
+            },
+        },
+    });
+    return replaced;
+};
+
+test("the generated index.html carries exactly one boot placeholder", async (t) => {
+    const { artifactDir, html } = await injectFixture();
+    t.after(() => rm(artifactDir, { recursive: true, force: true }));
+
+    assert.equal(html.split(BOOT_QUERY_SENTINEL).length - 1, 1);
+});
+
+test("an unreplaced boot placeholder leaves the url alone", async (t) => {
+    const { artifactDir, html } = await injectFixture();
+    t.after(() => rm(artifactDir, { recursive: true, force: true }));
+
+    const replaced = runBoot(bootSource(html), {
+        pathname: "/",
+        search: "",
+        hash: "",
+    });
+
+    assert.deepEqual(replaced, []);
+});
+
+test("a replaced boot placeholder rewrites only a bare url", async (t) => {
+    const { artifactDir, html } = await injectFixture();
+    t.after(() => rm(artifactDir, { recursive: true, force: true }));
+    const source = bootSource(html).replace(BOOT_QUERY_SENTINEL, "?bundle=bundle.waml");
+
+    assert.deepEqual(
+        runBoot(source, { pathname: "/site/", search: "", hash: "" }),
+        ["/site/?bundle=bundle.waml"],
+    );
+    // A share link or an explicit query is what the visitor asked for.
+    assert.deepEqual(
+        runBoot(source, { pathname: "/site/", search: "", hash: "#w1.abc" }),
+        [],
+    );
+    assert.deepEqual(
+        runBoot(source, { pathname: "/site/", search: "?api=/api", hash: "" }),
+        [],
+    );
+});

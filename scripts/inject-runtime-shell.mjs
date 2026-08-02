@@ -454,12 +454,44 @@ const RUNTIME_JS = `
         })();
         </script>`;
 
+// ---------------------------------------------------------------------------
+// Boot URL.
+//
+// `waml export site` (crates/waml-cli/src/site.rs) rewrites the placeholder
+// below to `?bundle=bundle.waml` or `?api=/api` -- it is the ONE contract
+// between a built artifact and the site assembler, which refuses an artifact
+// that does not carry it. A plain hosted build ships the placeholder unchanged
+// and boots from whatever URL the visitor arrived with.
+//
+// This must run before the wasm starts: makepad reads `location` once at
+// startup, so a later rewrite would be invisible to the editor. It also never
+// overwrites a URL the visitor typed -- a share link or an explicit query wins.
+// ---------------------------------------------------------------------------
+
+const BOOT_QUERY_SENTINEL = "__WAML_BOOT_QUERY__";
+const BOOT_JS = `<script data-waml-boot-url>
+        (function () {
+            var query = '${BOOT_QUERY_SENTINEL}';
+            if (query.charAt(0) !== '?') { return; }
+            if (location.search || location.hash) { return; }
+            history.replaceState(null, '', location.pathname + query);
+        })();
+        </script>`;
+
 const anchor = "<meta charset='utf-8'>";
 if (!html.includes(anchor)) {
   console.error(`inject-runtime-shell: could not find ${anchor} in ${indexPath}`);
   process.exit(1);
 }
-html = html.replace(anchor, `${anchor}${LOADER_CSS}${RUNTIME_JS}`);
+html = html.replace(anchor, `${anchor}${LOADER_CSS}${BOOT_JS}${RUNTIME_JS}`);
+
+const placeholders = html.split(BOOT_QUERY_SENTINEL).length - 1;
+if (placeholders !== 1) {
+  console.error(
+    `inject-runtime-shell: index.html must carry exactly one ${BOOT_QUERY_SENTINEL} placeholder, found ${placeholders}`,
+  );
+  process.exit(1);
+}
 
 writeFileSync(indexPath, html);
 console.log(

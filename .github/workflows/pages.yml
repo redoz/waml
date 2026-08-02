@@ -137,8 +137,25 @@ jobs:
         with:
           node-version: 22
 
+      # The widget fonts live in makepad's own resources tree and are named from
+      # makepad's DSL, so pruning them needs that checkout's sources. `cargo
+      # metadata` reports a real path for a git dependency, which is how
+      # cargo-makepad resolves the same directories.
+      - name: Locate the makepad sources
+        run: |
+          manifest=$(cargo metadata --format-version 1 \
+            | jq -r '.packages[] | select(.name=="makepad-widgets") | .manifest_path')
+          if [ -z "$manifest" ]; then
+            echo "::error::cargo metadata reports no makepad-widgets package"
+            exit 1
+          fi
+          echo "MAKEPAD_SRC=$(dirname "$manifest")/src" >> "$GITHUB_ENV"
+
       - name: Prune unreferenced fonts
-        run: node scripts/prune-web-fonts.mjs target/makepad-wasm-app/release/waml-editor
+        run: >
+          node scripts/prune-web-fonts.mjs
+          target/makepad-wasm-app/release/waml-editor
+          "$MAKEPAD_SRC"
 
       # cargo-makepad generates index.html and titles it after the crate, so the
       # tab icon and title have to be patched into the artifact rather than
@@ -167,13 +184,38 @@ jobs:
       - name: Verify the artifact is complete
         run: node scripts/verify-web-artifact.mjs target/makepad-wasm-app/release/waml-editor
 
+      # From here the site is assembled by the product itself rather than by
+      # hand: the verified artifact is compressed into the CLI, and
+      # `waml export site` writes the editor plus the docs bundle it boots.
+      # A site nobody can export locally is a site whose deploy path is only
+      # ever exercised here, which is how the last silent-blank-page shipped.
+      - name: Package the artifact for embedding
+        run: >
+          node scripts/package-web-artifact.mjs
+          target/makepad-wasm-app/release/waml-editor
+          target/web-embed
+
+      - name: Build the CLI with the editor embedded
+        env:
+          WAML_WEB_EMBED_DIR: target/web-embed
+        run: cargo build -p waml-cli --release --features embed-web
+
+      - name: Export the site
+        run: ./target/release/waml export site docs/waml --out target/pages
+
+      # The exported tree is what actually ships, so it -- not the artifact it
+      # was assembled from -- is what gets the completeness check.
+      - name: Verify the exported site
+        run: node scripts/verify-web-artifact.mjs target/pages
+
       - uses: actions/configure-pages@v6
 
-      # Layout emitted by cargo-makepad: index.html, waml-editor.wasm, the
-      # makepad_platform/* JS glue, and one resources/ tree per crate.
+      # `waml export site` output: the cargo-makepad layout (index.html,
+      # waml-editor.wasm, the makepad_platform/* JS glue, one resources/ tree
+      # per crate) plus the bundle.waml its index.html boots from.
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: target/makepad-wasm-app/release/waml-editor
+          path: target/pages
 
   deploy:
     name: deploy to Pages

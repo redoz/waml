@@ -7,34 +7,37 @@
 // nothing references. Bandwidth on a static host is the whole cost of this
 // project, so prune before upload.
 //
-// The keep-set is DERIVED from the source, never hardcoded: every font path in
-// the editor is a static string literal inside a `live_design!` block, so a
-// scan of `crates/waml-editor/src` is exact. If that ever stops being true the
-// script fails loudly (see the reference-count floor below) rather than
+// The keep-set is DERIVED from source, never hardcoded: every font path is a
+// static string literal inside a `live_design!`/`script_mod!` block, so a scan
+// of the source trees is exact. If a scan ever stops finding anything the
+// script fails loudly (see the reference-count floors below) rather than
 // silently shipping a build with missing glyphs.
 //
-// Only waml-editor's own resources are touched. makepad_widgets/resources is
-// left alone -- its files are referenced from makepad's own DSL, which this
-// scan does not cover.
+// Two resource trees are pruned, each against its own source tree:
+//   waml_editor/resources/fonts  <- crates/waml-editor/src
+//   makepad_widgets/resources    <- the makepad checkout, when given
+// makepad's tree is only pruned when its sources are available, because a
+// keep-set derived from a missing tree would delete every widget font.
 //
-// Usage: node scripts/prune-web-fonts.mjs <artifact-dir>
+// Usage: node scripts/prune-web-fonts.mjs <artifact-dir> [makepad-src-dir]
 
-import { readdirSync, readFileSync, statSync, unlinkSync, rmdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, rmdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const artifactDir = process.argv[2];
+const makepadSrcDir = process.argv[3];
 if (!artifactDir) {
-  console.error("usage: node scripts/prune-web-fonts.mjs <artifact-dir>");
+  console.error("usage: node scripts/prune-web-fonts.mjs <artifact-dir> [makepad-src-dir]");
   process.exit(1);
 }
 
 const SRC_DIR = "crates/waml-editor/src";
-const FONT_ROOT = join(artifactDir, "waml_editor/resources/fonts");
 
 // A build that referenced suspiciously few fonts almost certainly means the
 // scan broke (renamed macro, moved directory), not that the UI got simpler.
 // Shipping that silently would produce a blank-text editor in the browser.
 const MIN_EXPECTED_REFERENCES = 4;
+const MIN_EXPECTED_WIDGET_REFERENCES = 3;
 
 function walk(dir) {
   const out = [];
@@ -46,56 +49,99 @@ function walk(dir) {
   return out;
 }
 
-// Collect every `self:resources/fonts/<family>/<file>.ttf` named in the source.
-const referenced = new Set();
-const fontRef = /self:resources\/fonts\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.ttf)/g;
-for (const file of walk(SRC_DIR)) {
-  const text = readFileSync(file, "utf8");
-  for (const match of text.matchAll(fontRef)) referenced.add(match[1]);
+const posix = (path) => path.split("\\").join("/");
+
+// Collect every font path named in a source tree. `pattern` must capture the
+// path as it appears under the artifact's resource root.
+function scanReferences(srcDir, pattern) {
+  const referenced = new Set();
+  for (const file of walk(srcDir)) {
+    const text = readFileSync(file, "utf8");
+    for (const match of text.matchAll(pattern)) referenced.add(match[1]);
+  }
+  return referenced;
 }
 
-if (referenced.size < MIN_EXPECTED_REFERENCES) {
+/// Delete every font under `root` that no source tree names, then report.
+function prune(root, referenced, label) {
+  let kept = 0;
+  let kickedBytes = 0;
+  let kickedCount = 0;
+  for (const file of walk(root)) {
+    const rel = posix(relative(root, file));
+    // Only fonts are pruned: the same trees carry icons and shaders whose
+    // references this scan does not cover.
+    if (!/\.(ttf|otf)$/i.test(rel)) continue;
+    if (referenced.has(rel)) {
+      kept += 1;
+      continue;
+    }
+    kickedBytes += statSync(file).size;
+    kickedCount += 1;
+    unlinkSync(file);
+  }
+
+  // Tidy up directories that lost every file, so the artifact has no empty dirs.
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const dir = join(root, entry.name);
+    if (readdirSync(dir).length === 0) rmdirSync(dir);
+  }
+
+  // A referenced font that is not in the artifact means the app will 404 at
+  // runtime. Catch it here, where the log is readable, not in a browser console.
+  const present = new Set(walk(root).map((file) => posix(relative(root, file))));
+  const missing = [...referenced].filter((path) => !present.has(path));
+  if (missing.length > 0) {
+    console.error(
+      `prune-web-fonts: ${label}: referenced fonts missing from artifact:\n  ${missing.join("\n  ")}`,
+    );
+    process.exit(1);
+  }
+
+  const mb = (n) => (n / 1024 / 1024).toFixed(1);
+  console.log(
+    `prune-web-fonts: ${label}: kept ${kept} font file(s), removed ${kickedCount} (${mb(kickedBytes)} MB)`,
+  );
+}
+
+const editorFonts = scanReferences(
+  SRC_DIR,
+  /self:resources\/fonts\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.ttf)/g,
+);
+if (editorFonts.size < MIN_EXPECTED_REFERENCES) {
   console.error(
-    `prune-web-fonts: found only ${referenced.size} font references in ${SRC_DIR} ` +
+    `prune-web-fonts: found only ${editorFonts.size} font references in ${SRC_DIR} ` +
       `(expected at least ${MIN_EXPECTED_REFERENCES}). The scan is probably broken; ` +
       `refusing to prune.`,
   );
   process.exit(1);
 }
+prune(join(artifactDir, "waml_editor/resources/fonts"), editorFonts, "waml_editor");
 
-let kept = 0;
-let kickedBytes = 0;
-let kickedCount = 0;
-for (const file of walk(FONT_ROOT)) {
-  const rel = relative(FONT_ROOT, file).split("\\").join("/");
-  if (referenced.has(rel)) {
-    kept += 1;
-    continue;
+// makepad's widget fonts. Its DSL names them as bare files under `resources/`,
+// and waml's own source can reference them the same way, so both trees feed one
+// keep set.
+const widgetRoot = join(artifactDir, "makepad_widgets/resources");
+if (!makepadSrcDir) {
+  console.log(
+    "prune-web-fonts: no makepad source directory given; leaving makepad_widgets/resources intact",
+  );
+} else if (!existsSync(widgetRoot)) {
+  console.log("prune-web-fonts: the artifact has no makepad_widgets/resources; nothing to prune");
+} else {
+  const bare = /self:resources\/([A-Za-z0-9_.-]+\.(?:ttf|otf))/g;
+  const widgetFonts = new Set([
+    ...scanReferences(makepadSrcDir, bare),
+    ...scanReferences(SRC_DIR, bare),
+  ]);
+  if (widgetFonts.size < MIN_EXPECTED_WIDGET_REFERENCES) {
+    console.error(
+      `prune-web-fonts: found only ${widgetFonts.size} widget font references in ` +
+        `${makepadSrcDir} (expected at least ${MIN_EXPECTED_WIDGET_REFERENCES}). ` +
+        `The scan is probably broken; refusing to prune.`,
+    );
+    process.exit(1);
   }
-  kickedBytes += statSync(file).size;
-  kickedCount += 1;
-  unlinkSync(file);
+  prune(widgetRoot, widgetFonts, "makepad_widgets");
 }
-
-// Tidy up families that lost every file, so the artifact has no empty dirs.
-for (const family of readdirSync(FONT_ROOT, { withFileTypes: true })) {
-  if (!family.isDirectory()) continue;
-  const dir = join(FONT_ROOT, family.name);
-  if (readdirSync(dir).length === 0) rmdirSync(dir);
-}
-
-// A referenced font that is not in the artifact means the app will 404 at
-// runtime. Catch it here, where the log is readable, not in a browser console.
-const present = new Set(
-  walk(FONT_ROOT).map((f) => relative(FONT_ROOT, f).split("\\").join("/")),
-);
-const missing = [...referenced].filter((r) => !present.has(r));
-if (missing.length > 0) {
-  console.error(`prune-web-fonts: referenced fonts missing from artifact:\n  ${missing.join("\n  ")}`);
-  process.exit(1);
-}
-
-const mb = (n) => (n / 1024 / 1024).toFixed(1);
-console.log(
-  `prune-web-fonts: kept ${kept} font file(s), removed ${kickedCount} (${mb(kickedBytes)} MB)`,
-);
