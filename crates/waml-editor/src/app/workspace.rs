@@ -386,7 +386,6 @@ impl App {
 
         self.open_name = display_name;
 
-
         self.refresh_nav(cx, true);
 
         // Start with the requested/first supported diagram, otherwise the first

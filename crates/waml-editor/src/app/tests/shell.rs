@@ -77,7 +77,10 @@ fn narrow_leaves_the_toggle_leading_the_row() {
         tree_toggle_layout(true, true, TREE_W, TREE_W, LEAD),
         (true, 0.0)
     );
-    assert_eq!(tree_toggle_layout(true, true, 0.0, TREE_W, LEAD), (true, 0.0));
+    assert_eq!(
+        tree_toggle_layout(true, true, 0.0, TREE_W, LEAD),
+        (true, 0.0)
+    );
 }
 
 #[test]
