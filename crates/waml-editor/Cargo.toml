@@ -27,7 +27,7 @@ waml-markdown-editor = { path = "../waml-markdown-editor" }
 # folder toggles, plus app-owned Markdown vertical scroll snapshot/restore from
 # waml-history-scroll-anchors-current. rev is the reproducible pin; survives upstream
 # force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "60f88a7b82fe31e653463a46498d356c51a8023c" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "619d61bed518ffb587b8d39ade32179064225dd3" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }

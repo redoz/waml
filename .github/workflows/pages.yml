@@ -72,7 +72,7 @@ jobs:
         run: >
           cargo install cargo-makepad
           --git https://github.com/redoz/makepad.git
-          --rev 60f88a7b82fe31e653463a46498d356c51a8023c
+          --rev 619d61bed518ffb587b8d39ade32179064225dd3
           --locked
 
       # binaryen supplies the `wasm-opt` binary that the build step below invokes

@@ -21,5 +21,5 @@ tower-lsp = "0.20"
 url = "2.5"
 proptest = "=1.8.0"
 unicode-segmentation = "1.12"
-unicode-bidi = { git = "https://github.com/redoz/makepad.git", rev = "60f88a7b82fe31e653463a46498d356c51a8023c" }
+unicode-bidi = { git = "https://github.com/redoz/makepad.git", rev = "619d61bed518ffb587b8d39ade32179064225dd3" }
 
