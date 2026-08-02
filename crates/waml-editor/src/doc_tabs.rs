@@ -287,13 +287,19 @@ const CLOSE_HOVER_DY: f64 = 2.0;
 const ICON_SIZE: f64 = 15.0;
 /// Gap between the leading glyph and the tab label.
 const ICON_GAP: f64 = 6.0;
-/// Thickness of the active tab's top accent bar. Drawn WHOLE here: the strip
+/// Thickness of a KEPT tab's top accent bar. Drawn WHOLE here: the strip
 /// shares the caption's title line now, so the card's top edge is the window's
 /// own top edge and there is no rule above it to split the flag across. (The
 /// bar was 1px for one iteration, with `ChromeSeam` painting the second px
 /// where the card met it -- but the seam is the caption's BOTTOM edge, which
 /// the card's bottom meets, so that half landed under the tab, not over it.)
 const ACCENT_H: f64 = 3.0;
+/// How much of its own colour an INACTIVE tab's bar keeps, mixed toward the
+/// strip's background. Every tab carries a bar now -- the bar names *what* the
+/// document is, and only its strength names focus -- so the inactive one has to
+/// sit far enough back that the active tab still reads as selected at a glance,
+/// while staying identifiable as its bucket colour rather than collapsing to grey.
+const INACTIVE_ACCENT_STRENGTH: f64 = 0.4;
 /// Fraction of the row height a between-tabs divider spans, centred vertically.
 /// A short hairline reads as a separator; a full-bleed one reads as a grid and
 /// re-boxes the tabs the flat treatment just un-boxed.
@@ -350,6 +356,20 @@ fn draw_divider_line(draw: &mut DrawColor, cx: &mut Cx2d, x: f64, row: Rect, fra
             size: dvec2(1.0, dh),
         },
     );
+}
+
+/// `c` mixed toward `bg` until only `strength` of it is left. Used for the
+/// inactive tabs' bars: a straight alpha drop would let the strip's own fill
+/// show through unevenly where a hover wash sits under it, so the mix is done
+/// on opaque colour instead.
+pub(crate) fn mute_toward(c: Vec4, bg: Vec4, strength: f64) -> Vec4 {
+    let k = strength as f32;
+    Vec4 {
+        x: bg.x + (c.x - bg.x) * k,
+        y: bg.y + (c.y - bg.y) * k,
+        z: bg.z + (c.z - bg.z) * k,
+        w: c.w,
+    }
 }
 
 fn truncate_title(s: &str, max_chars: usize) -> String {
@@ -613,22 +633,6 @@ impl Widget for DocTabs {
                     size: dvec2(tab_rect.size.x.round(), tab_rect.size.y),
                 };
                 self.draw_tab.draw_abs(cx, card);
-                // The view's own colour when it named one, else the theme
-                // accent already sitting in the DSL default. Set-and-restore
-                // around the draw, same as the top rule's fade segments -- the
-                // field is the live default, not per-frame state.
-                let accent_default = self.draw_accent.color;
-                if let Some(c) = self.active_accent {
-                    self.draw_accent.color = c;
-                }
-                self.draw_accent.draw_abs(
-                    cx,
-                    Rect {
-                        pos: card.pos,
-                        size: dvec2(card.size.x, ACCENT_H),
-                    },
-                );
-                self.draw_accent.color = accent_default;
             } else {
                 // Press preview reuses the active card fill; hover is a
                 // lighter wash. Drawn under the divider + label.
@@ -684,6 +688,26 @@ impl Widget for DocTabs {
                     EDGE_DIVIDER_FRAC,
                 );
             }
+
+            // Top bar. EVERY tab carries one, in the colour its own document
+            // named -- the bar says *what* is open, and its strength says
+            // whether that document has focus. Drawn after the fill, hover wash
+            // and dividers so the full-height edge dividers don't cut across it.
+            //
+            // Set-and-restore around the draw, same as the seam's fade segments:
+            // `draw_accent.color` is the live DSL default, not per-frame state.
+            let accent_default = self.draw_accent.color;
+            self.draw_accent.color = self.tab_accent(tab, is_active, accent_default);
+            let bar_x0 = tab_rect.pos.x.round();
+            let bar_x1 = (tab_rect.pos.x + tab_rect.size.x).round();
+            self.draw_accent.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(bar_x0, tab_rect.pos.y.round()),
+                    size: dvec2(bar_x1 - bar_x0, ACCENT_H),
+                },
+            );
+            self.draw_accent.color = accent_default;
 
             // Leading per-kind glyph, vertically centered in the card. Pixel-
             // rounded like the tree rows so the SDF strokes land on whole device
@@ -812,6 +836,29 @@ impl DocTabs {
         ))
     }
 
+    /// The colour `tab`'s top bar paints with. The document names its own
+    /// (`DocumentPresentation::accent`); the ACTIVE tab prefers `active_accent`
+    /// on top of that, since that value folds in the live view's `tab_accent()`
+    /// fallback which the tab record alone cannot see. `fallback` is the DSL
+    /// default -- the theme accent -- for documents whose kind carries no bucket
+    /// colour of its own (a plain class, the diagram base).
+    ///
+    /// Inactive tabs get the same hue mixed back toward the strip, so the strip
+    /// reads as one legend of open documents with exactly one of them lit.
+    fn tab_accent(&self, tab: &DocTab, is_active: bool, fallback: Vec4) -> Vec4 {
+        let own = if is_active {
+            self.active_accent.or(tab.presentation.accent)
+        } else {
+            tab.presentation.accent
+        };
+        let c = own.unwrap_or(fallback);
+        if is_active {
+            c
+        } else {
+            mute_toward(c, self.draw_bg.color, INACTIVE_ACCENT_STRENGTH)
+        }
+    }
+
     /// The rect captured for `id` during the most recent draw, or the default
     /// rect when the tab is not currently visible.
     fn tab_rect(&self, id: LiveId) -> Rect {
@@ -885,6 +932,36 @@ impl DocTabs {
 mod tests {
     use crate::icons::Icon;
     use crate::tree::TreeKind;
+
+    /// The muted bar sits between the strip and the tab's own colour -- it must
+    /// neither reach the full swatch (which would flatten active vs inactive)
+    /// nor collapse onto the background (which would drop the bar entirely).
+    #[test]
+    fn muting_lands_strictly_between_the_background_and_the_colour() {
+        let bg = Vec4 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+            w: 1.0,
+        };
+        let c = crate::accent::bucket_color(crate::node_style::AccentBucket::Behavior);
+        let m = super::mute_toward(c, bg, super::INACTIVE_ACCENT_STRENGTH);
+        for (mc, (cc, bc)) in [m.x, m.y, m.z].iter().zip([
+            (c.x, bg.x),
+            (c.y, bg.y),
+            (c.z, bg.z),
+        ]) {
+            let (lo, hi) = if cc < bc { (cc, bc) } else { (bc, cc) };
+            assert!(*mc >= lo && *mc <= hi, "{mc} outside {lo}..{hi}");
+        }
+        assert_ne!((m.x, m.y, m.z), (c.x, c.y, c.z), "muted must differ from lit");
+        assert_ne!(
+            (m.x, m.y, m.z),
+            (bg.x, bg.y, bg.z),
+            "muted must not vanish into the strip"
+        );
+        assert_eq!(m.w, c.w, "muting is a mix, not an alpha drop");
+    }
 
     fn tab(key: &str, title: &str, category: TreeKind) -> DocTab {
         DocTab {
