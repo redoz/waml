@@ -38,6 +38,34 @@ script_mod! {
 
     mod.widgets.ProjectTreeBase = #(ProjectTree::register_widget(vm))
 
+    // Fold-chevron pen: two open stroke segments, rotated about the box center
+    // by `open` -- -90deg (pointing right) when collapsed, 0deg (down) when
+    // expanded. Registered as its own shader type so `open` rides the instance
+    // buffer (see `DrawChevron`), letting each row rotate independently.
+    set_type_default() do #(DrawChevron::script_shader(vm)){
+        ..mod.draw.DrawQuad
+        color: instance(#fff)
+        stroke_w: uniform(1.3)
+        pixel: fn() {
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let mx = self.rect_size.x * 0.5
+            let my = self.rect_size.y * 0.5
+            let a = mix(-1.5707963, 0.0, self.open)
+            let ca = cos(a)
+            let sa = sin(a)
+            let r = min(self.rect_size.x, self.rect_size.y) * 0.30
+            // Chevron in center-local space, apex down before rotation.
+            let x0 = (0.0 - r)
+            let y0 = (0.0 - 0.55 * r)
+            let y1 = 0.55 * r
+            sdf.move_to(mx + ca * x0 - sa * y0, my + sa * x0 + ca * y0)
+            sdf.line_to(mx - sa * y1, my + ca * y1)
+            sdf.line_to(mx + ca * r - sa * y0, my + sa * r + ca * y0)
+            sdf.stroke(self.color, self.stroke_w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.ProjectTree = set_type_default() do mod.widgets.ProjectTreeBase{
         width: Fill
         height: Fill
@@ -69,6 +97,12 @@ script_mod! {
         }
         draw_reveal: mod.draw.DrawColor{
             color: atlas.accent
+        }
+        // Fold affordance, drawn at the head of every EXPANDABLE row (packages /
+        // bundles). Leaf rows leave the slot empty but keep the indent, so the
+        // glyph column stays aligned down the whole tree.
+        draw_chevron +: {
+            color: atlas.text_dim
         }
         reveal_color: atlas.accent
         // Flat, opaque `field_bg` -- no ring, no corner radius, no divider. The
@@ -156,10 +190,11 @@ script_mod! {
         file_tree := FileTree {
             // Roomier rows + larger humanist type, and flat (no zebra striping)
             // so the panel reads as a calm modern sidebar, not a 90s list box.
-            // Left padding leaves room for the 14px glyph icon drawn (in
-            // immediate mode) at the start of each row; the icon ends at
-            // ICON_LEFT_MARGIN + ICON_SIZE = 20px, so padding.left 24 sits the
-            // label 4px past it.
+            // Left padding leaves room for the two immediate-mode marks drawn at
+            // the start of each row: the fold chevron (CHEVRON_LEFT_MARGIN 4 +
+            // CHEVRON_SIZE 10 = 14px) then the 14px glyph icon (ICON_LEFT_MARGIN
+            // 20 + ICON_SIZE = 34px), so padding.left 38 sits the label 4px past
+            // the glyph.
             node_height: 27.0
             auto_toggle_folders: false
 
@@ -177,7 +212,7 @@ script_mod! {
             }
 
             file_node +: {
-                padding: Inset{left: 24.0}
+                padding: Inset{left: 38.0}
                 indent_width: 10.0
                 // We render no git-status dots, but draw_file() still reserves
                 // the 6px dot slot (+3px margin) before every label -- a phantom
@@ -203,7 +238,7 @@ script_mod! {
             }
 
             folder_node +: {
-                padding: Inset{left: 24.0}
+                padding: Inset{left: 38.0}
                 indent_width: 10.0
                 // Same phantom-gap zeroing as file_node; folders also reserve a
                 // ~16px slot for the (transparent) built-in folder box via
@@ -296,7 +331,11 @@ impl IconSet {
 /// center the icon within each row.
 const ROW_HEIGHT: f64 = 27.0;
 const ICON_SIZE: f64 = 14.0;
-const ICON_LEFT_MARGIN: f64 = 6.0;
+const ICON_LEFT_MARGIN: f64 = 20.0;
+/// Fold-chevron box, drawn ahead of the row glyph on expandable rows only. Leaf
+/// rows leave the slot empty so both columns stay aligned down the tree.
+const CHEVRON_SIZE: f64 = 10.0;
+const CHEVRON_LEFT_MARGIN: f64 = 4.0;
 /// Per-depth x step for the overlay glyph. Must match the FileTree label's
 /// EFFECTIVE step, which is `indent_width` (10.0 in the DSL) plus the per-depth
 /// margins `indent_walk` tacks on (`left: depth*1.0`, `right: depth*4.0`) -- so
@@ -370,6 +409,23 @@ fn row_navigation(
     })
 }
 
+/// The fold chevron's pen. A dedicated draw struct (rather than a plain
+/// `DrawColor` with a script-declared field) because `open` must vary PER ROW:
+/// Rust-side `#[live]` fields ride the instance buffer, so every `draw_abs` in
+/// the row loop carries its own rotation, while a script-only field would be a
+/// uniform shared by the whole batch.
+#[derive(Script, ScriptHook)]
+#[repr(C)]
+pub struct DrawChevron {
+    #[deref]
+    draw_super: DrawQuad,
+    /// 0.0 = collapsed (chevron points right), 1.0 = expanded (points down).
+    /// Fed straight from the fork `FileTree`'s animated `folder_opened`, so the
+    /// arrow swings with the rows instead of on a second timer.
+    #[live]
+    open: f32,
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct ProjectTree {
     #[deref]
@@ -402,6 +458,8 @@ pub struct ProjectTree {
     draw_selection: DrawColor,
     #[live]
     draw_reveal: DrawColor,
+    #[live]
+    draw_chevron: DrawChevron,
     #[live]
     reveal_color: Vec4,
     /// Vestigial but load-bearing. Nothing draws with it since the scope title
@@ -649,6 +707,28 @@ fn draw_row_icon(
     );
 }
 
+/// Draw the fold chevron for an expandable row at `row_top`, rotated by `open`
+/// (0 collapsed / 1 expanded). Same pixel rounding as `draw_row_icon`: the
+/// chevron is a 1.3px stroke, so a subpixel origin would smear it.
+fn draw_row_chevron(
+    cx: &mut Cx2d,
+    draw_chevron: &mut DrawChevron,
+    row_top: Vec2d,
+    depth: usize,
+    open: f32,
+) {
+    let x = (row_top.x + CHEVRON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
+    let y = (row_top.y + (ROW_HEIGHT - CHEVRON_SIZE) / 2.0).round();
+    draw_chevron.open = open;
+    draw_chevron.draw_abs(
+        cx,
+        Rect {
+            pos: dvec2(x, y),
+            size: dvec2(CHEVRON_SIZE, CHEVRON_SIZE),
+        },
+    );
+}
+
 /// Paint the active-row highlight over the row at `row_top`, spanning the full
 /// tree width. Translucent, so it drops over the already-drawn row (bg + label)
 /// without hiding the text. Drawn before the glyph so the icon stays on top.
@@ -678,6 +758,7 @@ fn draw_nodes(
     nodes: &[TreeNode],
     icons: &mut IconSet,
     draw_selection: &mut DrawColor,
+    draw_chevron: &mut DrawChevron,
     depth: usize,
     color: Vec4,
     selected: Option<&str>,
@@ -708,6 +789,9 @@ fn draw_nodes(
                 reveal_was_drawn = true;
             }
             draw_row_icon(cx, icons, node.presentation.icon, row_top, depth, color);
+            // Rotation comes from the fork's own animated fold amount, so the
+            // chevron swings exactly with the rows rather than on a second timer.
+            draw_row_chevron(cx, draw_chevron, row_top, depth, ft.folder_opened(id));
             if opened {
                 reveal_was_drawn |= draw_nodes(
                     cx,
@@ -715,6 +799,7 @@ fn draw_nodes(
                     &node.children,
                     icons,
                     draw_selection,
+                    draw_chevron,
                     depth + 1,
                     color,
                     selected,
@@ -909,6 +994,7 @@ impl Widget for ProjectTree {
                     &self.tree.roots,
                     &mut self.icons,
                     &mut self.draw_selection,
+                    &mut self.draw_chevron,
                     0,
                     self.icon_color,
                     self.selected_key.as_deref(),

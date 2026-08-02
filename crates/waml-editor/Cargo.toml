@@ -10,8 +10,14 @@ description = "Native, read-only GPU viewer for WAML/OKF diagrams."
 [dependencies]
 waml = { path = "../waml", features = ["serde"] }
 waml-markdown-editor = { path = "../waml-markdown-editor" }
-# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch
-# fix/web-batched-shader-link, which stacks two web boot fixes on
+# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch `waml` -- the
+# single integration line every fork change lands on from here; it was cut at
+# the tip of fix/web-batched-shader-link, the richest lineage, and the other
+# waml-* branches are pre-rebase leftovers, so do NOT pin to them. Pin a SHA on
+# `waml`, never the branch name: a moving ref would drift builds silently.
+# `waml` adds a read-only accessor for FileTree's animated folder-open amount,
+# so the tree panel's fold chevron rotates off the real animation instead of a
+# second timer. Below it, fix/web-batched-shader-link stacks two web boot fixes on
 # fix/layout-params-wasm: web takes the shared DrawTextSlug helper instead of inlining the
 # curve solver into every text shader (~40s to ~9s), and web now issues every shader link
 # before querying any of them so ANGLE compiles them in parallel (~9s to ~1.8s) —
@@ -27,7 +33,7 @@ waml-markdown-editor = { path = "../waml-markdown-editor" }
 # folder toggles, plus app-owned Markdown vertical scroll snapshot/restore from
 # waml-history-scroll-anchors-current. rev is the reproducible pin; survives upstream
 # force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "619d61bed518ffb587b8d39ade32179064225dd3" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "2ad354041d545820fec6d2c8384071127adca387" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
