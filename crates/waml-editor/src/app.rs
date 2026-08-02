@@ -668,8 +668,9 @@ pub struct App {
     pending_fragment: Option<PendingFragment>,
     #[rust]
     pending_anchor_restore: Option<PendingAnchorRestore>,
-    /// URL of the in-flight `?bundle=` boot fetch, so its response can name it
-    /// in a failure message. `None` once the response (or error) is handled.
+    /// URL of the in-flight boot-bundle fetch -- asked for by the page URL or
+    /// by the site's own config -- so its response can name it in an error.
+    /// `None` once the response (or error) is handled.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     #[rust]
     pending_boot_bundle: Option<String>,
@@ -742,41 +743,68 @@ impl MatchEvent for App {
                 }
             }
             crate::browser_boot::BrowserBootSource::Bundle(url) => {
-                // The fetch lands in `handle_http_response`. Until it does the
-                // start screen holds the window -- never a blank one -- and it
-                // stays put if the fetch fails.
-                self.pending_boot_bundle = Some(url.clone());
                 self.show_start_screen(cx);
-                cx.http_request(
-                    live_id!(boot_bundle),
-                    HttpRequest::new(url, HttpMethod::GET),
-                );
+                self.start_boot_bundle_fetch(cx, url);
             }
             // `?api=` is selected for, but no live model server exists yet; the
             // URL is honoured as far as "not a bundle, not a share link".
-            crate::browser_boot::BrowserBootSource::Api { .. }
-            | crate::browser_boot::BrowserBootSource::Start => self.show_start_screen(cx),
+            crate::browser_boot::BrowserBootSource::Api { .. } => self.show_start_screen(cx),
+            // The URL names nothing, so ask the page's own site config. An
+            // exported site answers with the query it used to push into the
+            // address bar; a raw artifact answers 404 and the start screen is
+            // already up, so nothing more happens.
+            crate::browser_boot::BrowserBootSource::Start => {
+                self.show_start_screen(cx);
+                cx.http_request(
+                    live_id!(boot_config),
+                    HttpRequest::new(
+                        format!("./{}", crate::browser_boot::BOOT_CONFIG_FILE),
+                        HttpMethod::GET,
+                    ),
+                );
+            }
         }
     }
 
-    /// The `?bundle=` fetch came back. Anything other than a 2xx carrying a
-    /// valid envelope leaves the start screen up with the reason logged.
+    /// A boot fetch came back: either the site config or the bundle it named.
+    ///
+    /// Anything other than a 2xx carrying what was asked for leaves the start
+    /// screen up. The config's failures are quiet -- a build served straight
+    /// out of `cargo makepad wasm build` has no config file, and a 404 there is
+    /// the normal case, not a fault to report.
     #[cfg(target_arch = "wasm32")]
     fn handle_http_response(&mut self, cx: &mut Cx, request_id: LiveId, response: &HttpResponse) {
+        let ok = response.status_code >= 200 && response.status_code < 300;
+        let body = response.get_body().map(Vec::as_slice).unwrap_or(&[]);
+        if request_id == live_id!(boot_config) {
+            if !ok {
+                return;
+            }
+            let Ok(config) = std::str::from_utf8(body) else {
+                return;
+            };
+            match crate::browser_boot::select_site_boot(config) {
+                Ok(crate::browser_boot::BrowserBootSource::Bundle(url)) => {
+                    self.start_boot_bundle_fetch(cx, url)
+                }
+                Ok(_) => {}
+                Err(e) => log!("could not read this site's boot config: {e}"),
+            }
+            return;
+        }
         if request_id != live_id!(boot_bundle) {
             return;
         }
         let Some(url) = self.pending_boot_bundle.take() else {
             return;
         };
-        if response.status_code < 200 || response.status_code >= 300 {
+        if !ok {
             log!(
                 "{}",
                 crate::browser_boot::boot_fetch_error(&url, Some(response.status_code))
             );
             return;
         }
-        let body = response.get_body().map(Vec::as_slice).unwrap_or(&[]);
         match crate::browser_boot::decode_boot_bundle(body) {
             Ok(bundle) => {
                 self.open_bundle(cx, bundle, "exported".to_string(), None);
@@ -786,6 +814,9 @@ impl MatchEvent for App {
         }
     }
 
+    /// A boot fetch never produced a response. The config's failure is silent
+    /// on purpose (see `handle_http_response`); the bundle's is named, because
+    /// a site that promised a bundle and did not deliver one is a fault.
     #[cfg(target_arch = "wasm32")]
     fn handle_http_request_error(&mut self, _cx: &mut Cx, request_id: LiveId, _error: &HttpError) {
         if request_id != live_id!(boot_bundle) {
@@ -798,6 +829,18 @@ impl MatchEvent for App {
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
         self.handle_action_batch(cx, actions);
+    }
+}
+
+impl App {
+    /// Start the fetch of a Bundle Envelope v1 file, from either channel.
+    ///
+    /// The start screen holds the window until the answer lands -- never a
+    /// blank one -- and stays put if the fetch fails.
+    #[cfg(target_arch = "wasm32")]
+    fn start_boot_bundle_fetch(&mut self, cx: &mut Cx, url: String) {
+        self.pending_boot_bundle = Some(url.clone());
+        cx.http_request(live_id!(boot_bundle), HttpRequest::new(url, HttpMethod::GET));
     }
 }
 
