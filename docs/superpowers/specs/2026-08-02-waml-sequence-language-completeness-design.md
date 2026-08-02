@@ -25,7 +25,7 @@ UML interchange metamodel.
 
 1. Express the sequence behavior that teams commonly need in software design.
 2. Keep source text readable without knowledge of UML notation.
-3. Preserve all valid sequence documents that WAML accepts today.
+3. Define one canonical pre-1.0 syntax and convert the repository corpus to it atomically.
 4. Give each accepted construct one unambiguous semantic representation.
 5. Keep the lossless syntax tree, formatter, declared model, resolved model,
    diagnostics, and solver projections in agreement.
@@ -53,8 +53,7 @@ UML interchange metamodel.
    `creates`, and `destroys`. The `async` modifier applies only to `calls`. `returns` is
    WAML's readable spelling for the UML reply message sort.
 4. **Signals are one-way.** `signals` is the canonical asynchronous Signal form and can
-   carry a command or an event. Existing `sends` documents keep the same meaning as a
-   compatibility spelling. `calls ... async` remains an operation call, not a signal.
+   carry a command or an event. `calls ... async` remains an operation call, not a signal.
 5. **Boundary endpoints are structural.** `outside` represents a found or lost message.
    Named gates use `@gate` inside an interaction and `ref@gate` around an interaction
    use. Found and lost are not extra message verbs.
@@ -113,14 +112,14 @@ The current core model uses `SequenceDoc`, `SeqNode`, `SeqEdge`, and `SeqChild`.
 `FragmentKind` contains `Alt`, `Opt`, and `Loop`. The ordered `SequenceDoc.items` stream
 already makes document order the time order.
 
-The implementation must preserve these properties:
+The implementation must retain these semantic properties:
 
 - lifeline `title`, `ref`, `alias`, and `order` fields;
 - message source, target, optional signature, and source order;
 - nested combined fragments and their operand guards;
 - call/return activation derivation;
 - create and destroy stem boundaries;
-- lossless parse and print behavior for unchanged source.
+- lossless parse and print behavior for canonical source.
 
 The parser currently rejects self messages and has explicit unsupported paths for
 `par`, gates, found messages, and lost messages. These paths must become normal parsed
@@ -180,9 +179,9 @@ grammar tokens.
 `signals` is inherently asynchronous and therefore does not accept the `async` modifier.
 Its optional inline-code value names the command or event delivered to the target.
 
-The existing colon forms, `replies` verb, and `sends` verb remain accepted compatibility
-spellings. They keep their existing meaning and lossless source representation. New
-editor actions and documentation emit the canonical forms above.
+The parser accepts only the canonical forms above. In particular, `replies`, `sends`, and
+the old colon-form call syntax are not aliases. Repository documents that use them are
+converted in the same implementation change.
 
 ### Message meaning
 
@@ -434,7 +433,7 @@ The lossless syntax tree must add typed nodes for:
 - the `async` modifier on `calls` messages;
 - call identities introduced by `as`;
 - return values and the optional `to` and `for` clauses;
-- canonical `signals` messages while preserving legacy `sends` tokens;
+- canonical `signals` messages;
 - boundary and gate endpoints;
 - the five new fragment heads;
 - `branch` operands and their optional labels;
@@ -491,11 +490,9 @@ resolve.
 The runtime replaces authored handles with typed identifiers. `SeqEdge.from` and
 `SeqEdge.to` must become endpoint references rather than unqualified lifeline strings.
 The message enum adds `AsyncCall`; an unmodified `calls` message maps to `SyncCall`, a
-`calls ... async` message maps to `AsyncCall`, and canonical `signals` plus legacy `Sends`
-map to `AsyncSignal`. Serialization names must be explicit so an enum rename does not
-change external data by accident.
+`calls ... async` message maps to `AsyncCall`, and `signals` maps to `AsyncSignal`.
 
-The semantic kind for canonical `returns` and legacy `replies` is `Reply`, matching UML.
+The semantic kind for `returns` is `Reply`, matching UML.
 Each resolved call has a stable message identity plus its optional authored call identity.
 Each resolved return has `returns_call: Option<MessageId>`. Resolution fills this field
 with the exact call selected by `for` or by unambiguous inference. The resolved source and
@@ -528,10 +525,8 @@ interaction use. The parser must continue after:
 - a missing `ref` link or alias;
 - a malformed `bind` line.
 
-The formatter emits the canonical forms in this document for new edits. It preserves
-valid existing colon-form calls, `replies`, and `sends` source, as well as existing
-`creates`, `destroys`, `alt`, `opt`, and `loop` source. It must not rewrite legacy `sends`
-to `calls ... async`, because the two forms have different meaning.
+The formatter emits only the canonical forms in this document. It does not act as a
+migration layer for removed syntax.
 
 Formatting is idempotent. Parse → format → parse must preserve the declared semantic
 model. Editing unrelated source must not normalize malformed interaction content that the
@@ -563,24 +558,23 @@ Diagnostics are non-destructive. If enough data exists, invalid constructs remai
 declared model and in source-order projections. The resolved model omits only links that
 cannot be typed safely; it does not omit later valid siblings.
 
-## Backward compatibility
+## Pre-1.0 replacement policy
 
-Every sequence document accepted before this change must still parse with the same
-meaning. In particular:
+WAML is pre-1.0. This language change has no backward-compatibility layer.
 
-- `calls` remains synchronous;
-- legacy `sends` maps to the same `AsyncSignal` kind as canonical `signals` and does not
-  open an activation;
-- legacy `replies` maps to the same UML `Reply` kind as canonical `returns`;
-- untagged return matching retains the existing activation-stack result when that result
-  is unambiguous;
-- fragment ordering and guards remain unchanged;
-- documents do not need a `## Gates` section;
-- aliases and links keep their existing syntax.
+- The parser accepts `signals`, not `sends`.
+- The parser accepts `returns`, not `replies`.
+- Calls use the whitespace-delimited inline-code operation form, not the old colon form.
+- Internal enums and serialized shapes change directly. They do not retain deprecated
+  variants, serde aliases, or version adapters.
+- The formatter formats canonical syntax. It does not rewrite removed syntax.
+- Removed spellings can receive a focused unsupported-syntax diagnostic, but they do not
+  lower into the declared or resolved model.
+- All repository documentation, examples, fixtures, snapshots, goldens, and serialized
+  expectations are converted in the same implementation change.
 
-This project needs no source migration. Internal enum changes need explicit serde
-compatibility tests for existing serialized shapes. New enum variants must be additive.
-The formatter must not create new syntax in an unchanged old document.
+The implementation must not add a migration mode, compatibility feature flag, legacy
+parser branch, dual formatter path, or temporary semantic alias.
 
 ## Tests and acceptance criteria
 
@@ -593,8 +587,7 @@ The project is complete only when the whole language path agrees.
 - Self messages, found messages, lost messages, nested fragments, and nested references
   have focused snapshots.
 - Each malformed form has a recovery snapshot that proves later valid items survive.
-- Existing sequence snapshots remain unchanged unless a test intentionally exercises a
-  former unsupported path.
+- Sequence snapshots are updated to the canonical grammar in the same change.
 
 ### Semantic tests
 
@@ -615,10 +608,9 @@ The project is complete only when the whole language path agrees.
 
 - Every new construct is formatter-idempotent.
 - Parse → format → parse preserves the declared model.
-- Existing source verbs and fragments keep their spelling and meaning.
-- Legacy `replies`, `sends`, and colon-form messages retain their spelling and semantic
-  kind.
-- Existing serialized `SequenceDoc` fixtures still decode.
+- Canonical source verbs and fragments keep their spelling and meaning.
+- `replies`, `sends`, and colon-form calls do not parse as valid messages.
+- Serialized `SequenceDoc` fixtures are updated to the new shape.
 - New endpoint, fragment, and interaction-use values round-trip through serialization.
 
 ### Solver contract tests
@@ -632,7 +624,7 @@ runtime model without silent loss. Text goldens must prove:
 - new fragment frame kinds and nested operand order;
 - separate `par` branch order with a join after all branches;
 - interaction-use frames, lifeline bindings, and gate connections;
-- unchanged geometry semantics for existing documents.
+- unchanged geometry semantics after repository documents are converted.
 
 Visual polish belongs to the later editor project. A minimal stable geometric projection
 is sufficient for this language project.
@@ -645,7 +637,8 @@ The change is done when:
    interaction solver;
 2. all listed invalid examples produce local diagnostics without hiding later valid
    items;
-3. old sequence fixtures pass without source migration;
+3. every repository sequence document, sample, fixture, snapshot, golden, and serialized
+   expectation uses the canonical syntax, and no removed spelling remains;
 4. no deferred UML construct has a placeholder semantic variant;
 5. the full relevant Rust test suite and formatting checks pass.
 
@@ -679,6 +672,6 @@ this specification, then create a file-level plan for this dependency order:
 3. declared types and lowering;
 4. resolved/runtime types and validation;
 5. solver projections and goldens;
-6. compatibility and full-suite verification.
+6. repository corpus conversion and full-suite verification.
 
 Do not start the visual editor until this vertical slice is complete.
