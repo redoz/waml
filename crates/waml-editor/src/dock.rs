@@ -96,6 +96,75 @@ pub fn slot_width(state: DockState, body_w: f64) -> f64 {
     }
 }
 
+pub const DOCK_MOTION_SECS: f64 = 0.180;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DockMotion {
+    value: f64,
+    from: f64,
+    target: f64,
+    started_at: f64,
+    active: bool,
+}
+
+impl Default for DockMotion {
+    fn default() -> Self {
+        Self::new(0.0)
+    }
+}
+
+impl DockMotion {
+    pub fn new(value: f64) -> Self {
+        let value = value.clamp(0.0, 1.0);
+        Self {
+            value,
+            from: value,
+            target: value,
+            started_at: 0.0,
+            active: false,
+        }
+    }
+
+    pub fn request(&mut self, target: f64, now: f64) {
+        self.sample(now);
+        let target = target.clamp(0.0, 1.0);
+        if target == self.target {
+            return;
+        }
+        self.from = self.value;
+        self.target = target;
+        self.started_at = now;
+        self.active = self.from != self.target;
+    }
+
+    pub fn sample(&mut self, now: f64) -> f64 {
+        if !self.active {
+            return self.value;
+        }
+        let t = ((now - self.started_at) / DOCK_MOTION_SECS).clamp(0.0, 1.0);
+        let u = 1.0 - t;
+        let eased = 1.0 - u * u * u;
+        self.value = self.from + (self.target - self.from) * eased;
+        if t >= 1.0 {
+            self.value = self.target;
+            self.active = false;
+        }
+        self.value
+    }
+
+    pub fn value(&self) -> f64 {
+        self.value
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+}
+
+pub fn presentation_visible(value: f64) -> bool {
+    value > 0.0
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ResponsiveDockLayout {
     pub left_slot: f64,
@@ -107,30 +176,20 @@ pub struct ResponsiveDockLayout {
 pub fn responsive_layout(
     narrow: bool,
     viewport_w: f64,
-    tree: DockState,
-    inspector: DockState,
+    tree_value: f64,
+    inspector_value: f64,
     tree_w: f64,
     inspector_w: f64,
 ) -> ResponsiveDockLayout {
     let cap = viewport_w.max(0.0);
-    let tree_body = if tree == DockState::Pinned {
-        if narrow {
-            tree_w.min(cap)
-        } else {
-            tree_w
-        }
+    let tree_target = if narrow { tree_w.min(cap) } else { tree_w };
+    let inspector_target = if narrow {
+        inspector_w.min(cap)
     } else {
-        0.0
+        inspector_w
     };
-    let inspector_body = if inspector == DockState::Pinned {
-        if narrow {
-            inspector_w.min(cap)
-        } else {
-            inspector_w
-        }
-    } else {
-        0.0
-    };
+    let tree_body = tree_target * tree_value.clamp(0.0, 1.0);
+    let inspector_body = inspector_target * inspector_value.clamp(0.0, 1.0);
     ResponsiveDockLayout {
         left_slot: if narrow { 0.0 } else { tree_body },
         right_slot: if narrow { 0.0 } else { inspector_body },
@@ -285,15 +344,8 @@ mod tests {
     }
 
     #[test]
-    fn wide_and_narrow_layout_use_the_same_dock_states() {
-        let wide = responsive_layout(
-            false,
-            900.0,
-            DockState::Pinned,
-            DockState::Pinned,
-            280.0,
-            320.0,
-        );
+    fn wide_and_narrow_layout_use_the_same_final_widths() {
+        let wide = responsive_layout(false, 900.0, 1.0, 1.0, 280.0, 320.0);
         assert_eq!(
             wide,
             ResponsiveDockLayout {
@@ -303,14 +355,7 @@ mod tests {
                 inspector_body: 320.0,
             }
         );
-        let narrow = responsive_layout(
-            true,
-            390.0,
-            DockState::Pinned,
-            DockState::Flag,
-            280.0,
-            320.0,
-        );
+        let narrow = responsive_layout(true, 390.0, 1.0, 0.0, 280.0, 320.0);
         assert_eq!(
             narrow,
             ResponsiveDockLayout {
@@ -324,15 +369,84 @@ mod tests {
 
     #[test]
     fn narrow_body_width_is_capped_to_the_viewport() {
-        let layout = responsive_layout(
-            true,
-            240.0,
-            DockState::Pinned,
-            DockState::Flag,
-            280.0,
-            320.0,
-        );
+        let layout = responsive_layout(true, 240.0, 1.0, 0.0, 280.0, 320.0);
         assert_eq!(layout.tree_body, 240.0);
+    }
+
+    #[test]
+    fn wide_layout_interpolates_slots_and_bodies_together() {
+        assert_eq!(
+            responsive_layout(false, 900.0, 0.5, 0.25, 280.0, 320.0),
+            ResponsiveDockLayout {
+                left_slot: 140.0,
+                right_slot: 80.0,
+                tree_body: 140.0,
+                inspector_body: 80.0,
+            }
+        );
+    }
+
+    #[test]
+    fn narrow_layout_keeps_slots_zero_and_animates_capped_bodies() {
+        assert_eq!(
+            responsive_layout(true, 240.0, 0.5, 1.0, 280.0, 320.0),
+            ResponsiveDockLayout {
+                left_slot: 0.0,
+                right_slot: 0.0,
+                tree_body: 120.0,
+                inspector_body: 240.0,
+            }
+        );
+    }
+
+    #[test]
+    fn panel_content_stays_visible_until_motion_reaches_zero() {
+        assert!(presentation_visible(1.0));
+        assert!(presentation_visible(0.001));
+        assert!(!presentation_visible(0.0));
+    }
+
+    #[test]
+    fn dock_motion_has_exact_endpoints_and_completes_at_180_ms() {
+        let mut motion = DockMotion::new(0.0);
+        assert_eq!(motion.value(), 0.0);
+        motion.request(1.0, 0.0);
+        assert_eq!(motion.sample(0.0), 0.0);
+        assert!(motion.sample(0.179) < 1.0);
+        assert_eq!(motion.sample(0.180), 1.0);
+        assert!(!motion.is_active());
+    }
+
+    #[test]
+    fn dock_motion_is_monotonic_with_cubic_ease_out() {
+        let mut motion = DockMotion::new(0.0);
+        motion.request(1.0, 0.0);
+        let samples = [0.0, 0.03, 0.06, 0.09, 0.12, 0.15, 0.18].map(|time| motion.sample(time));
+        assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(samples[0], 0.0);
+        assert_eq!(samples[6], 1.0);
+        assert!(samples[3] > 0.5, "ease-out must lead linear interpolation");
+    }
+
+    #[test]
+    fn reversing_motion_starts_from_the_sampled_in_flight_value() {
+        let mut motion = DockMotion::new(0.0);
+        motion.request(1.0, 0.0);
+        let before_reverse = motion.sample(0.09);
+        motion.request(0.0, 0.09);
+        assert_eq!(motion.value(), before_reverse);
+        assert!(motion.sample(0.10) < before_reverse);
+        assert_eq!(motion.sample(0.27), 0.0);
+    }
+
+    #[test]
+    fn repeated_target_requests_do_not_restart_motion() {
+        let mut motion = DockMotion::new(0.0);
+        motion.request(1.0, 0.0);
+        let at_sixty_ms = motion.sample(0.06);
+        motion.request(1.0, 0.09);
+        assert!(motion.value() > at_sixty_ms);
+        assert_eq!(motion.sample(0.18), 1.0);
     }
 
     #[test]

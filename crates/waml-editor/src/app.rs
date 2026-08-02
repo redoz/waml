@@ -1583,8 +1583,16 @@ impl App {
         let layout = crate::dock::responsive_layout(
             self.narrow,
             viewport_w,
-            tree_state,
-            inspector_state,
+            if tree_state == crate::dock::DockState::Pinned {
+                1.0
+            } else {
+                0.0
+            },
+            if inspector_state == crate::dock::DockState::Pinned {
+                1.0
+            } else {
+                0.0
+            },
             crate::tree_panel::PROJECT_TREE_W,
             crate::inspector_panel::INSPECTOR_W,
         );
