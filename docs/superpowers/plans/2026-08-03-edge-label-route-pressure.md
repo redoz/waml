@@ -8,6 +8,8 @@
 
 **Tech Stack:** Rust, `waml` crate, `waml-editor` (makepad).
 
+> **Gate:** rust-only
+
 ## Prerequisite
 
 **This plan requires `docs/superpowers/plans/2026-08-02-edge-label-placement.md` to be fully landed first.** It builds directly on `solve::label::{place, Placement, LabelRequest, Obstacles, LabelConfig}` and on `Solved.labels`, none of which exist until that plan is done.
@@ -25,8 +27,8 @@ If that returns nothing, stop — this plan cannot be implemented yet.
 - The `waml` crate is pure and wasm-clean. No rendering backend, no platform APIs, no `Date`/RNG.
 - All routing and placement must stay deterministic: same input, same output.
 - **Existing route goldens must be byte-identical after Task 1.** That is the regression gate for the riskiest part of this work, and it is not negotiable — if they move, the refactor changed behaviour and must be fixed before proceeding.
-- The workspace gate is `cargo test --workspace` plus `cargo clippy --all-targets` with no new warnings. `dead_code` is a hard error.
-- Run `cargo fmt -p <crate>`, not `--all`.
+- The green gate is `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`. Note clippy runs with `-D warnings` across the whole workspace: any `dead_code` left behind is a hard build failure, not a warning.
+- The gate runs `cargo fmt --all --check`; run `cargo fmt --all` before committing.
 
 ---
 
@@ -118,16 +120,17 @@ Expected: only `route.rs` modified. If any golden fixture changed, the refactor 
 
 - [ ] **Step 8: Commit**
 
-```bash
-cargo fmt -p waml
-git add crates/waml/src/solve/route.rs
-git commit -m "refactor(solve): lift A* penalties into RouteCost
+Commit this unit. Suggested message:
+```text
+refactor(solve): lift A* penalties into RouteCost
 
 No behaviour change -- default weights are the previous literals, proven
 by every existing route golden being byte-identical. This is the seam
 label pressure and future layout tuning hang off, so it lands on its own
-where 'nothing moved' is a checkable claim."
+where 'nothing moved' is a checkable claim.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -217,17 +220,18 @@ If routing time on a realistic diagram more than doubles, do not tune the cache 
 Run: `cargo test --workspace 2>&1 | grep -E "^test result" | grep -v "0 failed"`
 Expected: no output. Existing goldens must still be unchanged, because `Default` still has `label_pressure: 0.0`.
 
-```bash
-cargo fmt -p waml
-git add crates/waml/src/solve/route.rs
-git commit -m "feat(solve): add a label_pressure term to the router
+Commit this unit. Suggested message:
+```text
+feat(solve): add a label_pressure term to the router
 
 Penalises OVG edges whose label-height band collides with a hard obstacle,
 so the router PREFERS paths with room for their labels rather than only
 being hard-blocked out of bad ones. Weighted zero by default and applied
 only to edges that carry a label, so nothing routes differently until it
-is deliberately switched on."
+is deliberately switched on.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -293,15 +297,17 @@ Expected: PASS, 2 tests.
 Run: `cargo test --workspace 2>&1 | grep -E "^test result" | grep -v "0 failed"`
 Expected: no output.
 
-```bash
-cargo fmt -p waml
-git commit -am "feat(solve): reroute edges whose labels could not be placed
+Commit this unit. Suggested message:
+```text
+feat(solve): reroute edges whose labels could not be placed
 
 Bounded to 2 rounds -- the loop is not guaranteed to converge, since a
 reroute that frees one label can block another. Only edges with a failed
 label are rerouted, so every other route stays byte-identical; the test
-asserts that rather than trusting it."
+asserts that rather than trusting it.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -454,7 +460,10 @@ Expected: PASS, 3 tests.
 
 In `crates/waml-editor/src/canvas/class/render/labels.rs`, when a placed label carries a leader, stroke the 2-point line from `attach` to the label rect using the existing edge stroke resources at hairline weight, before drawing the text.
 
-- [ ] **Step 6: Visual sign-off**
+- [ ] **Step 6: Visual sign-off (best-effort, NON-BLOCKING)**
+
+Same rules as the prerequisite plan's Task 7 Step 7: attempt once, never block or retry, and record the outcome —
+including failure to capture — in the commit body.
 
 Build a fixture dense enough to actually trigger a leader — several relationships converging on one node with long role names — and screenshot the native editor by pid, per the procedure in the prerequisite plan's Task 7. Confirm the leader visibly connects the displaced label to its route and that the label is fully readable.
 
@@ -462,17 +471,18 @@ If no leader triggers on any realistic fixture, say so plainly in the commit mes
 
 - [ ] **Step 7: Run the full gate and commit**
 
-```bash
-cargo fmt -p waml
-cargo fmt -p waml-editor
-git commit -am "feat(solve): leader lines for labels with nowhere to sit
+Commit this unit. Suggested message:
+```text
+feat(solve): leader lines for labels with nowhere to sit
 
 Expanding-ring search from the ideal anchor, first free position wins.
 Total by construction: obstacles are finite, so the ring always reaches
 empty space outside the content bbox -- which is why this needs no further
 fallback. Leaders are soft obstacles for later labels, since making them
-hard would cascade."
+hard would cascade.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -527,14 +537,16 @@ Put the totals in the commit message. If they are all zero on real diagrams, say
 
 - [ ] **Step 6: Commit**
 
-```bash
-cargo fmt -p waml
-git commit -am "feat(solve): report label reroute and leader counts
+Commit this unit. Suggested message:
+```text
+feat(solve): report label reroute and leader counts
 
 The objective function for whether route pressure and leader lines earn
 their complexity. Measured across the repo's fixtures: <fill in actual
-totals from Step 5>."
+totals from Step 5>.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -542,5 +554,4 @@ totals from Step 5>."
 
 - **Task 1 is the risk.** If existing route goldens move there, stop and find out why rather than re-baselining — that gate is the only thing standing between this plan and silently changing every diagram in the repo.
 - **Work in a git worktree, never the main checkout.** Verify `git rev-parse --show-toplevel` before editing.
-- **`cargo fmt -p <crate>`, not `--all`** — the repo has pre-existing drift in `colors_overlay.rs` and `fonts_overlay.rs`.
 - **A `waml-syntax` proptest is intermittently red at HEAD** for reasons unrelated to this work (incremental vs full parse on trailing whitespace after an ATX heading). Confirm by stashing and re-running before blaming your diff.

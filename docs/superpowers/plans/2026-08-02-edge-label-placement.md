@@ -8,6 +8,8 @@
 
 **Tech Stack:** Rust, `waml` crate (pure, wasm-clean, no rendering backend), `ttf-parser` via `waml::solve::sizing`, `waml-editor` (makepad) as the consuming frontend.
 
+> **Gate:** rust-only
+
 ## Global Constraints
 
 - The `waml` crate is pure and wasm-clean. No rendering backend, no platform APIs, no `Date`/RNG. All new code must hold this.
@@ -15,8 +17,8 @@
 - Label geometry is **world space**. The only screen-space behaviour that remains in the renderer is the adornment head clearance and the legibility cutoff.
 - Label font is `sizing::Font::Sans` at world size `8.0`. This matches the renderer's `target_size = 8.0 * zoom`.
 - Existing route goldens must not move in this plan. This plan does not touch `route.rs`.
-- The workspace gate is `cargo test --workspace` plus `cargo clippy --all-targets` with no new warnings. `dead_code` is promoted to a hard error by the gate, so do not leave unused variants or fields behind.
-- Run `cargo fmt -p <crate>` (not `--all`) before committing, to avoid sweeping up pre-existing formatting drift in unrelated files.
+- The green gate is `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`. Note clippy runs with `-D warnings` across the whole workspace: any `dead_code` left behind is a hard build failure, not a warning.
+- The gate runs `cargo fmt --all --check`, so the whole repo must be fmt-clean. Run `cargo fmt --all` before committing. (It is clean as of the plan's base commit.)
 
 ---
 
@@ -99,7 +101,31 @@ Raising a spacing floor moves every golden that has an unconnected placed pair. 
 
 Run: `cargo test -p waml 2>&1 | tail -40`
 
-For each failing golden, read the diff and confirm the only change is boxes moving further apart (never overlapping, never reordered). Then update the expected fixtures. Do **not** blanket-accept: if any golden shows a box *order* change or an overlap, stop and report it — that means the floor interacted with a constraint rather than just widening a gap.
+Re-baselining is allowed here, but only behind a machine-checkable invariant — "the diff looked fine" is not a
+gate an unattended run can honestly apply. Before updating any fixture, add this test so correctness is asserted
+rather than eyeballed:
+
+```rust
+#[test]
+fn raising_the_spacing_floor_never_makes_boxes_overlap() {
+    let (_solved, rects, _diags, _dropped) = solve_with_rects(
+        &two_box_scene_placed(Direction::LeftOf),
+        &[],
+        &two_box_sizes(),
+        &SolveConfig::default(),
+    );
+    let a = rects[&BoxId::Node("a".into())];
+    let b = rects[&BoxId::Node("b".into())];
+    assert!(a.x + a.w <= b.x, "a floor must separate boxes, never overlap them");
+}
+```
+
+`stress.rs` already has `output_has_no_overlaps_and_is_normalized` covering the other layout path; confirm it still
+passes rather than re-baselining it.
+
+Then update the expected fixtures and **record the number of golden files changed in the commit body**. If any
+golden fails in a way the two overlap assertions above do not explain, leave it failing and report it — that is a
+real interaction between the floor and a constraint, not a baseline that needs refreshing.
 
 - [ ] **Step 7: Run the full gate**
 
@@ -111,18 +137,18 @@ Expected: no new warnings.
 
 - [ ] **Step 8: Commit**
 
-```bash
-cargo fmt -p waml
-git add crates/waml/src/solve/geometry.rs
-git add -u
-git commit -m "fix(solve): floor unconnected neighbours at MIN_SEP
+Commit this unit. Suggested message:
+```text
+fix(solve): floor unconnected neighbours at MIN_SEP
 
 Connected pairs were floored at MIN_ASSOC (72) so their connector could
 carry adornments and a label; unconnected pairs fell through to the plain
 Medium margin (16). Unrelated boxes therefore read as a TIGHTER pair than
 related ones, which is backwards. Floors them at 40 -- clearly separated,
-still well under the connected floor so connectedness stays legible."
+still well under the connected floor so connectedness stays legible.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -240,17 +266,18 @@ Expected: PASS, 2 tests.
 
 - [ ] **Step 6: Commit**
 
-```bash
-cargo fmt -p waml
-git add crates/waml/src/solve/label.rs crates/waml/src/solve/mod.rs
-git commit -m "feat(solve): measure edge labels in world units
+Commit this unit. Suggested message:
+```text
+feat(solve): measure edge labels in world units
 
 First piece of moving label placement into the solver. Wraps the existing
 ttf-parser sizing in the label font and world size so no call site repeats
 the constants. Empty text still measures a full line height -- a zero-height
 rect is invisible to collision tests, which would silently stop an empty
-label from acting as an obstacle."
+label from acting as an obstacle.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -446,17 +473,18 @@ Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
-```bash
-cargo fmt -p waml
-git add crates/waml/src/solve/label.rs
-git commit -m "feat(solve): generate edge label placement candidates
+Commit this unit. Suggested message:
+```text
+feat(solve): generate edge label placement candidates
 
 Slide along the route x side of the stroke, as a small discrete set rather
 than a continuous optimisation, so placement stays deterministic and
 golden-testable. Terminal slots slide from their OWN endpoint and are
 bounded to a short band; slid further the text stops reading as belonging
-to that end. Every candidate clears the stroke by the configured gap."
+to that end. Every candidate clears the stroke by the configured gap.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -550,17 +578,18 @@ Expected: PASS, 10 tests.
 
 - [ ] **Step 5: Commit**
 
-```bash
-cargo fmt -p waml
-git add crates/waml/src/solve/label.rs
-git commit -m "feat(solve): hard and soft obstacle tests for label placement
+Commit this unit. Suggested message:
+```text
+feat(solve): hard and soft obstacle tests for label placement
 
 Cards and placed labels are hard; group TITLE BANDS are hard but group
 interiors are not, since a group legitimately contains edges and labels.
 Foreign strokes are soft and merely counted. Abutting exactly is not a
 collision -- that is what a spacing floor produces, and rejecting it would
-discard the best candidate."
+discard the best candidate.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -774,18 +803,19 @@ Expected: PASS, 15 tests.
 Run: `cargo test --workspace 2>&1 | grep -E "^test result" | grep -v "0 failed"`
 Expected: no output.
 
-```bash
-cargo fmt -p waml
-git add crates/waml/src/solve/label.rs
-git commit -m "feat(solve): score and assign edge label placements
+Commit this unit. Suggested message:
+```text
+feat(solve): score and assign edge label placements
 
 Greedy in a fixed order, with each placed label becoming a hard obstacle
 for the next -- which is what stops labels landing on each other. One
 retry pass covers the order-dependence: a label rejected early may fit
 once the rest have settled. Anything still unplaced comes back to the
 caller rather than being silently dropped; that count is the signal for
-whether the later reroute stage is worth its complexity."
+whether the later reroute stage is worth its complexity.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -895,16 +925,17 @@ Expected: PASS
 Run: `cargo test --workspace 2>&1 | grep -E "^test result" | grep -v "0 failed"`
 Expected: no output.
 
-```bash
-cargo fmt -p waml
-git add -u
-git commit -m "feat(solve): carry placed labels on Solved
+Commit this unit. Suggested message:
+```text
+feat(solve): carry placed labels on Solved
 
 place_labels stays a separate entry point rather than folding into
 solve_diagram_reported: composing label TEXT is display policy and belongs
 to the frontend, so the solver only ever sees final strings and the display
-model never has to move into this crate."
+model never has to move into this crate.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -989,18 +1020,26 @@ if 8.0 * viewport.camera.zoom < MIN_LEGIBLE_PX {
 Run: `cargo test -p waml-editor --bins 2>&1 | tail -5`
 Expected: PASS. Fix any test that asserted on the deleted anchor/offset/align API — those assertions are now the solver's, and the equivalent coverage lives in `label.rs`.
 
-- [ ] **Step 7: Visual sign-off**
+- [ ] **Step 7: Visual sign-off (best-effort, NON-BLOCKING)**
 
-Unit tests cannot see occlusion, which is the entire defect class this plan exists to fix. Capture the native editor and look at it.
+Unit tests cannot see occlusion, which is the entire defect class this plan exists to fix — so a look at the real
+canvas is worth having. But launching a GUI is not a reliable gate in an unattended run, and the capture procedure
+can steal foreground from the user's own editor. **Do not block this task on it and do not retry it.**
+
+Attempt once:
 
 ```bash
 # from the worktree root
 pwsh -File ./run.ps1 crates/waml-editor/tests/fixtures/mini -Title "LABELS"
 ```
 
-Then, in ONE PowerShell call so the user's own editor is never captured or killed by name, find the process whose `Path` is under this worktree, capture it by pid via `scripts/capture-window.ps1 -ProcessId <pid>`, and read the PNG.
+Then, in ONE PowerShell call so the user's own editor is never captured or killed by name, find the process whose
+`Path` is under this worktree, capture it by pid via `scripts/capture-window.ps1 -ProcessId <pid>`, read the PNG,
+and kill that pid.
 
-Confirm: no label overlaps a card; no two labels overlap each other; each terminal label sits clear of its adornment. Kill the process by pid when done.
+If it works, confirm: no label overlaps a card; no two labels overlap each other; each terminal label sits clear of
+its adornment. **Write what you saw into the commit body.** If the launch or capture fails, say so plainly in the
+commit body and move on — an unverified render is a known gap to hand back to the human, not a reason to stall.
 
 - [ ] **Step 8: Run the full gate and commit**
 
@@ -1010,16 +1049,17 @@ Expected: no output.
 Run: `cargo clippy -p waml-editor --all-targets 2>&1 | grep -E "^(warning|error)"`
 Expected: no new warnings.
 
-```bash
-cargo fmt -p waml-editor
-git add -u
-git commit -m "feat(editor): draw edge labels from solver placement
+Commit this unit. Suggested message:
+```text
+feat(editor): draw edge labels from solver placement
 
 edge_labels.rs stops deciding geometry and becomes an adapter: it composes
 label text (display policy) and reads back world rects. Adds a legibility
 cutoff -- below 5px drawn the text is unreadable, so skip it rather than
-paint illegible smears that still cost fill rate."
+paint illegible smears that still cost fill rate.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -1118,20 +1158,23 @@ Run: `cargo test --workspace 2>&1 | tail -40`
 
 Update layout goldens whose gaps widened. As in Task 1, confirm each diff is boxes moving apart, not reordering.
 
-Then repeat the Task 7 Step 7 screenshot procedure. This is the task whose effect should be plainly visible: the two terminal labels on the `Order`-`Customer` edge should both be fully readable with clear space between them.
+Then repeat the Task 7 Step 7 screenshot procedure — same best-effort, non-blocking rules. This is the task whose
+effect should be plainly visible: the two terminal labels on the `Order`-`Customer` edge should both be fully
+readable with clear space between them. Record what you saw, or that you could not look, in the commit body.
 
 - [ ] **Step 7: Commit**
 
-```bash
-cargo fmt -p waml
-git add -u
-git commit -m "feat(solve): size connected gaps to hold their terminal labels
+Commit this unit. Suggested message:
+```text
+feat(solve): size connected gaps to hold their terminal labels
 
 MIN_ASSOC's flat 72 was the real cause of unplaceable labels on short
 edges: two ~90px terminal labels cannot share a 72px gap, so no placement
 strategy could win and rerouting would only have papered over it. The
-floor now becomes max(72, from + to + slack)."
+floor now becomes max(72, from + to + slack).
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
@@ -1237,22 +1280,22 @@ Expected: PASS, 2 tests.
 Run: `cargo test --workspace 2>&1 | grep -E "^test result" | grep -v "0 failed"`
 Expected: no output.
 
-```bash
-cargo fmt -p waml
-git add -u
-git commit -m "feat(solve): make spacing floors tunable, honour group titles
+Commit this unit. Suggested message:
+```text
+feat(solve): make spacing floors tunable, honour group titles
 
 MIN_SEP/MIN_ASSOC move into SolveConfig so layout can be tuned without
 hunting constants, and StressConfig::gap reads its default from the same
 place so the two layout paths cannot drift apart. Group title bands become
 hard obstacles for labels; group INTERIORS deliberately do not, since a
-group legitimately contains edges and their labels."
+group legitimately contains edges and their labels.
 ```
+
+The harness appends the `Plan:` / `Plan-Tasks:` trailers and the attribution footer; do not write them by hand, and do not run `git commit` yourself if the harness commits for you.
 
 ---
 
 ## Notes for the implementer
 
 - **Work in a git worktree, never the main checkout.** Absolute paths in `Edit`/`Write` do not respect a worktree — verify `git rev-parse --show-toplevel` before editing, or you will silently edit `main` and the build will "pass" as baseline.
-- **`cargo fmt -p <crate>`, not `--all`.** The repo has pre-existing formatting drift in `colors_overlay.rs` and `fonts_overlay.rs`; `--all` sweeps them into your diff.
 - **The workspace gate is intermittently red from a pre-existing `waml-syntax` proptest bug** (incremental vs full parse disagree on trailing whitespace after an ATX heading). If that specific test fails, it is not your change. Confirm by stashing and re-running at HEAD.
