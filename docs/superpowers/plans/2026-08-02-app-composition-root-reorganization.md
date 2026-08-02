@@ -78,7 +78,7 @@ The high fan-out of `App` is expected for a composition root. This plan improves
 Run:
 
 ```powershell
-rtk cargo test -p waml-editor --lib app::tests
+rtk cargo test -p waml-editor app::tests
 ```
 
 Expected: PASS. Save the test count in the task report so the post-move run can be compared with it.
@@ -163,7 +163,7 @@ Run:
 
 ```powershell
 rtk cargo fmt --all
-rtk cargo test -p waml-editor --lib app::tests
+rtk cargo test -p waml-editor app::tests
 ```
 
 Expected: PASS with the same number of app tests as Step 1.
@@ -193,7 +193,7 @@ rtk git commit -m "refactor(editor): split app tests by concern"
 - [ ] **Step 1: Run the focused navigation characterization tests**
 
 ```powershell
-rtk cargo test -p waml-editor --lib app::tests::navigation
+rtk cargo test -p waml-editor app::tests::navigation
 rtk cargo test -p waml-editor global_history_chord_dispatches_before_the_widget_tree
 ```
 
@@ -246,8 +246,8 @@ Move the existing method bodies from `set_navigation_message` through `close_doc
 
 ```powershell
 rtk cargo fmt --all
-rtk cargo test -p waml-editor --lib app::tests::navigation
-rtk cargo test -p waml-editor --lib app::actions::tests
+rtk cargo test -p waml-editor app::tests::navigation
+rtk cargo test -p waml-editor app::actions::tests
 ```
 
 Expected: PASS.
@@ -276,7 +276,7 @@ rtk git commit -m "refactor(editor): extract app navigation"
 - [ ] **Step 1: Run the shell characterization tests**
 
 ```powershell
-rtk cargo test -p waml-editor --lib app::tests::shell
+rtk cargo test -p waml-editor app::tests::shell
 rtk cargo test -p waml-editor mounted_project_tree_state
 ```
 
@@ -318,7 +318,7 @@ use super::*;
 
 ```powershell
 rtk cargo fmt --all
-rtk cargo test -p waml-editor --lib app::tests::shell
+rtk cargo test -p waml-editor app::tests::shell
 rtk cargo test -p waml-editor breakpoint_
 ```
 
@@ -349,8 +349,8 @@ rtk git commit -m "refactor(editor): extract app shell layout"
 - [ ] **Step 1: Run menu and action-policy tests**
 
 ```powershell
-rtk cargo test -p waml-editor --lib app::tests::menus
-rtk cargo test -p waml-editor --lib app::actions::tests
+rtk cargo test -p waml-editor app::tests::menus
+rtk cargo test -p waml-editor app::actions::tests
 ```
 
 Expected: PASS.
@@ -376,8 +376,8 @@ Move `place_rm_for` unchanged from `app.rs` to `app/actions.rs`, above `impl App
 
 ```powershell
 rtk cargo fmt --all
-rtk cargo test -p waml-editor --lib app::tests::menus
-rtk cargo test -p waml-editor --lib app::actions::tests
+rtk cargo test -p waml-editor app::tests::menus
+rtk cargo test -p waml-editor app::actions::tests
 ```
 
 Expected: PASS.
@@ -407,7 +407,7 @@ rtk git commit -m "refactor(editor): extract app menu models"
 - [ ] **Step 1: Run workspace lifecycle characterization tests**
 
 ```powershell
-rtk cargo test -p waml-editor --lib app::tests::workspace
+rtk cargo test -p waml-editor app::tests::workspace
 rtk cargo test -p waml-editor failed_open_restores_the_previous_markdown_asset_root
 rtk cargo test -p waml-editor replacement_saves_old_document_before_loading_new_document
 ```
@@ -518,8 +518,8 @@ Replace repeated tab reopening loops with `self.prepare_open_documents()?` where
 
 ```powershell
 rtk cargo fmt --all
-rtk cargo test -p waml-editor --lib app::tests::workspace
-rtk cargo test -p waml-editor --lib app::actions::tests
+rtk cargo test -p waml-editor app::tests::workspace
+rtk cargo test -p waml-editor app::actions::tests
 ```
 
 Expected: PASS, including failed-open rollback and save-before-replace ordering.
@@ -550,9 +550,9 @@ rtk git commit -m "refactor(editor): extract app workspace lifecycle"
 - [ ] **Step 1: Run both ingress-path characterization suites**
 
 ```powershell
-rtk cargo test -p waml-editor --lib app::actions::tests
-rtk cargo test -p waml-editor --lib app::tests::navigation
-rtk cargo test -p waml-editor --lib app::tests::workspace
+rtk cargo test -p waml-editor app::actions::tests
+rtk cargo test -p waml-editor app::tests::navigation
+rtk cargo test -p waml-editor app::tests::workspace
 ```
 
 Expected: PASS.
@@ -622,8 +622,8 @@ Do not call `mark_dirty` or passive location restoration on this path.
 
 ```powershell
 rtk cargo fmt --all
-rtk cargo test -p waml-editor --lib app::actions::tests
-rtk cargo test -p waml-editor --lib app::tests
+rtk cargo test -p waml-editor app::actions::tests
+rtk cargo test -p waml-editor app::tests
 ```
 
 Expected: PASS.
