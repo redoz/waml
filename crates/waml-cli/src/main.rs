@@ -13,6 +13,7 @@ mod commands;
 mod io;
 mod lsp;
 mod ops_dto;
+mod web_artifact;
 
 #[derive(Parser)]
 #[command(name = "waml", about = "Tools for WAML documents")]
