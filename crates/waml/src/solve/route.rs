@@ -40,9 +40,9 @@ pub fn route_keyed(
     edges: &[(BoxId, BoxId, Option<String>)],
     cfg: &SolveConfig,
 ) -> Vec<Route> {
-    let keyed: Vec<(BoxId, BoxId, Option<String>)> = edges
+    let keyed: Vec<(BoxId, BoxId, Option<String>, Option<f64>)> = edges
         .iter()
-        .map(|(s, t, key)| (s.clone(), t.clone(), key.clone()))
+        .map(|(s, t, key)| (s.clone(), t.clone(), key.clone(), None))
         .collect();
     route_keyed_with(boxes, rects, &keyed, cfg, &RouteCost::default())
 }
@@ -80,13 +80,13 @@ impl Default for RouteCost {
 pub fn route_keyed_with(
     boxes: &[Box],
     rects: &BTreeMap<BoxId, Rect>,
-    edges: &[(BoxId, BoxId, Option<String>)],
+    edges: &[(BoxId, BoxId, Option<String>, Option<f64>)],
     _cfg: &SolveConfig,
     cost: &RouteCost,
 ) -> Vec<Route> {
     let membership = build_membership(boxes);
     let mut routes: Vec<Route> = Vec::new();
-    for (s, t, key) in edges {
+    for (s, t, key, label_height) in edges {
         if s == t {
             continue; // self-edge: out of scope
         }
@@ -103,7 +103,12 @@ pub fn route_keyed_with(
         obstacles.sort_by(|a, b| a.id.cmp(&b.id)); // deterministic order
         let (ovg, srcv, tgtv) = build_ovg(&obstacles, src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let points = astar(&ovg, &srcv, &tgtv, goal, cost).unwrap_or_else(|| fallback_l(src, tgt));
+        let inflated: Vec<Rect> = obstacles
+            .iter()
+            .map(|o| inflate(o.rect, ROUTE_MARGIN))
+            .collect();
+        let points = astar(&ovg, &srcv, &tgtv, goal, cost, &inflated, *label_height)
+            .unwrap_or_else(|| fallback_l(src, tgt));
         routes.push(Route {
             points,
             source,
@@ -496,12 +501,100 @@ fn simplify(pts: Vec<P>) -> Vec<P> {
     out
 }
 
+/// Sum, over a set of intervals clipped to `[s0, s1]`, of the length they
+/// cover -- a union, so overlapping obstacle intervals are not double-counted.
+fn interval_union_len(mut ivs: Vec<(f64, f64)>) -> f64 {
+    ivs.retain(|&(a, b)| b > a);
+    ivs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut total = 0.0;
+    let mut cur: Option<(f64, f64)> = None;
+    for (a, b) in ivs {
+        match cur {
+            None => cur = Some((a, b)),
+            Some((c0, c1)) => {
+                if a <= c1 {
+                    cur = Some((c0, c1.max(b)));
+                } else {
+                    total += c1 - c0;
+                    cur = Some((a, b));
+                }
+            }
+        }
+    }
+    if let Some((c0, c1)) = cur {
+        total += c1 - c0;
+    }
+    total
+}
+
+/// Fraction (0..=1) of segment `a..b` whose label band collides with a hard
+/// obstacle, taking the BETTER of the two sides a label could sit on -- a
+/// label only needs one clear side. `inflated` is the same inflated obstacle
+/// list A* routes against, so "clear" here means the same margin the route
+/// itself keeps.
+fn band_blocked_fraction(inflated: &[Rect], a: P, b: P, height: f64) -> f64 {
+    if height <= 0.0 || inflated.is_empty() {
+        return 0.0;
+    }
+    let len = (b.0 - a.0).abs() + (b.1 - a.1).abs();
+    if len < 1e-9 {
+        return 0.0;
+    }
+    let horizontal = (a.1 - b.1).abs() < 1e-9;
+    let (s0, s1) = if horizontal {
+        (a.0.min(b.0), a.0.max(b.0))
+    } else {
+        (a.1.min(b.1), a.1.max(b.1))
+    };
+    let y0 = a.1; // horizontal case: shared y; vertical case: shared x is a.0
+    let x0 = a.0;
+    let mut best = f64::INFINITY;
+    for sign in [-1.0f64, 1.0f64] {
+        let (band_lo, band_hi) = if horizontal {
+            if sign < 0.0 {
+                (y0 - height, y0)
+            } else {
+                (y0, y0 + height)
+            }
+        } else if sign < 0.0 {
+            (x0 - height, x0)
+        } else {
+            (x0, x0 + height)
+        };
+        let ivs: Vec<(f64, f64)> = inflated
+            .iter()
+            .filter(|r| {
+                if horizontal {
+                    r.y < band_hi && r.y + r.h > band_lo
+                } else {
+                    r.x < band_hi && r.x + r.w > band_lo
+                }
+            })
+            .map(|r| {
+                if horizontal {
+                    (r.x.max(s0), (r.x + r.w).min(s1))
+                } else {
+                    (r.y.max(s0), (r.y + r.h).min(s1))
+                }
+            })
+            .collect();
+        let blocked = interval_union_len(ivs);
+        let frac = (blocked / len).min(1.0);
+        if frac < best {
+            best = frac;
+        }
+    }
+    best
+}
+
 fn astar(
     ovg: &Ovg,
     sources: &[usize],
     targets: &[usize],
     goal: P,
     cost: &RouteCost,
+    inflated: &[Rect],
+    label_height: Option<f64>,
 ) -> Option<Vec<P>> {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
@@ -515,6 +608,10 @@ fn astar(
         let (x, y) = ovg.verts[v];
         (x - goal.0).abs() + (y - goal.1).abs()
     };
+    // Blocked-fraction is expensive (rect queries) and the same OVG edge is
+    // relaxed many times during the search, so cache it per (v, w) pair.
+    let pressured = cost.label_pressure > 0.0 && label_height.is_some_and(|h| h > 0.0);
+    let mut band_cache: BTreeMap<(usize, usize), f64> = BTreeMap::new();
 
     let mut srt = sources.to_vec();
     srt.sort_unstable();
@@ -539,7 +636,21 @@ fn astar(
         for &(w, len) in &ovg.adj[v] {
             let nd = dir_of(ovg.verts[v], ovg.verts[w]);
             let bend = if d != 0 && d != nd { cost.bend } else { 0.0 };
-            let ng = g + len * cost.length + bend;
+            let pressure = if pressured {
+                let key = (v.min(w), v.max(w));
+                let frac = *band_cache.entry(key).or_insert_with(|| {
+                    band_blocked_fraction(
+                        inflated,
+                        ovg.verts[v],
+                        ovg.verts[w],
+                        label_height.unwrap_or(0.0),
+                    )
+                });
+                cost.label_pressure * frac * len
+            } else {
+                0.0
+            };
+            let ng = g + len * cost.length + bend + pressure;
             let ns = state(w, nd);
             if ng + 1e-9 < dist[ns] {
                 dist[ns] = ng;
@@ -990,7 +1101,8 @@ mod tests {
         let tgt = r(300.0, 0.0, 100.0, 60.0);
         let (ovg, srcv, tgtv) = build_ovg(&[], src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let path = astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default()).expect("path exists");
+        let path =
+            astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default(), &[], None).expect("path exists");
         assert!(
             path.len() >= 2,
             "path has at least two points, got {path:?}"
@@ -1029,7 +1141,8 @@ mod tests {
         };
         let (ovg, srcv, tgtv) = build_ovg(std::slice::from_ref(&mid), src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let path = astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default()).expect("path exists");
+        let path =
+            astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default(), &[], None).expect("path exists");
         assert!(path.len() >= 4, "a detour has >= 4 points, got {path:?}");
         for w in path.windows(2) {
             assert!(
@@ -1248,7 +1361,7 @@ mod tests {
             &rects,
             &edges
                 .iter()
-                .map(|(s, t)| (s.clone(), t.clone(), None))
+                .map(|(s, t)| (s.clone(), t.clone(), None, None))
                 .collect::<Vec<_>>(),
             &SolveConfig::default(),
             &RouteCost::default(),
@@ -1257,6 +1370,110 @@ mod tests {
             legacy, via_cost,
             "default weights must not move a single point"
         );
+    }
+
+    /// A box + rects + edges triple with two viable detours around a central
+    /// obstacle: one ("below") is shorter but runs beside a second obstacle
+    /// that leaves no room for a label; the other ("above") is a little
+    /// longer but has open space on both sides.
+    fn corridor_with_tight_and_roomy_paths() -> BentCase {
+        let boxes = vec![
+            leafbox("a"),
+            leafbox("b"),
+            leafbox("wall"),
+            leafbox("squeeze"),
+        ];
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        rects.insert(BoxId::Node("a".into()), nrect(0.0, 0.0, 40.0, 40.0));
+        rects.insert(BoxId::Node("b".into()), nrect(400.0, 0.0, 40.0, 40.0));
+        // Forces a detour above y=-84 or below y=94 (both inflated boundaries
+        // equidistant in principle, but the below route is shorter here).
+        rects.insert(BoxId::Node("wall".into()), nrect(180.0, -60.0, 40.0, 130.0));
+        // Sits just past the below route's clearance, so a wide label band on
+        // that side collides with it while the above route stays open.
+        rects.insert(
+            BoxId::Node("squeeze".into()),
+            nrect(180.0, 120.0, 40.0, 100.0),
+        );
+        let edges = vec![(BoxId::Node("a".into()), BoxId::Node("b".into()))];
+        (boxes, rects, edges)
+    }
+
+    /// Tag every edge with `height` as its label band height.
+    fn labelled(
+        edges: &[(BoxId, BoxId)],
+        height: f64,
+    ) -> Vec<(BoxId, BoxId, Option<String>, Option<f64>)> {
+        edges
+            .iter()
+            .map(|(s, t)| (s.clone(), t.clone(), None, Some(height)))
+            .collect()
+    }
+
+    /// Minimum distance from any point of `points` to the nearer of the two
+    /// obstacles that box in `corridor_with_tight_and_roomy_paths`'s corridor.
+    fn clearance_beside(points: &[(f64, f64)]) -> f64 {
+        let obstacles = [
+            nrect(180.0, -60.0, 40.0, 130.0),
+            nrect(180.0, 120.0, 40.0, 100.0),
+        ];
+        let dist_to_rect = |p: (f64, f64), r: &Rect| -> f64 {
+            let dx = (r.x - p.0).max(0.0).max(p.0 - (r.x + r.w));
+            let dy = (r.y - p.1).max(0.0).max(p.1 - (r.y + r.h));
+            (dx * dx + dy * dy).sqrt()
+        };
+        points
+            .iter()
+            .flat_map(|&p| obstacles.iter().map(move |r| dist_to_rect(p, r)))
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    #[test]
+    fn label_pressure_steers_a_route_toward_room_for_its_label() {
+        let (boxes, rects, edges) = corridor_with_tight_and_roomy_paths();
+        let roomy = route_keyed_with(
+            &boxes,
+            &rects,
+            &labelled(&edges, 40.0),
+            &SolveConfig::default(),
+            &RouteCost {
+                label_pressure: 50.0,
+                ..RouteCost::default()
+            },
+        );
+        assert_eq!(roomy.len(), 1);
+        assert!(
+            clearance_beside(&roomy[0].points) >= 40.0,
+            "route should leave a label band's worth of room: {:?}",
+            roomy[0].points
+        );
+    }
+
+    #[test]
+    fn an_unlabelled_edge_is_untouched_by_label_pressure() {
+        let (boxes, rects, edges) = corridor_with_tight_and_roomy_paths();
+        let keyed: Vec<(BoxId, BoxId, Option<String>, Option<f64>)> = edges
+            .iter()
+            .map(|(s, t)| (s.clone(), t.clone(), None, None))
+            .collect();
+        let baseline = route_keyed_with(
+            &boxes,
+            &rects,
+            &keyed,
+            &SolveConfig::default(),
+            &RouteCost::default(),
+        );
+        let pressured = route_keyed_with(
+            &boxes,
+            &rects,
+            &keyed,
+            &SolveConfig::default(),
+            &RouteCost {
+                label_pressure: 50.0,
+                ..RouteCost::default()
+            },
+        );
+        assert_eq!(baseline, pressured, "no label means no pressure");
     }
 
     #[test]
