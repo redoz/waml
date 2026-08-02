@@ -12,7 +12,8 @@ knowledge of anything else on the canvas. Consequences:
 - Labels overlap each other on short edges.
 - Labels are painted before node cards, so any label that lands on a card is
   silently swallowed.
-- The web renderer would need its own copy of any fix.
+- A screen-space fix would change its own results with zoom, so the same diagram
+  would lay its labels out differently at 0.5x and at 2x.
 
 A prior commit (`75e129db`) fixed the narrower defect that labels sat *on* the
 stroke and inside the endpoint adornment. It moved clearance to be perpendicular
@@ -224,5 +225,3 @@ real evidence, not a reason to skip them silently.
 
 - Assignment beyond greedy + one retry pass.
 - Any change to how labels are *styled* (font, background chip, colour).
-- Web renderer adoption of the placed rects; the scene will carry them, wiring
-  the web frontend is separate work.
