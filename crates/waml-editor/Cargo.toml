@@ -10,10 +10,11 @@ description = "Native, read-only GPU viewer for WAML/OKF diagrams."
 [dependencies]
 waml = { path = "../waml", features = ["serde"] }
 waml-markdown-editor = { path = "../waml-markdown-editor" }
-# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch fix/web-slug-helper,
-# which stacks the web text-shader boot fix on fix/layout-params-wasm — web now takes the
-# shared DrawTextSlug helper instead of inlining the curve solver into every text shader,
-# cutting cold first-visit first-frame from ~40s to ~9s —
+# Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch
+# fix/web-batched-shader-link, which stacks two web boot fixes on
+# fix/layout-params-wasm: web takes the shared DrawTextSlug helper instead of inlining the
+# curve solver into every text shader (~40s to ~9s), and web now issues every shader link
+# before querying any of them so ANGLE compiles them in parallel (~9s to ~1.8s) —
 # which is the line rebased onto the newer upstream dev — NOT waml-scroll-occlusion, whose
 # remote tip is a pre-rebase leftover from 07-20 —
 # stacked on waml-fxc-opt, adds handled_x/handled_y scroll occlusion to hits() so overlays
@@ -26,7 +27,7 @@ waml-markdown-editor = { path = "../waml-markdown-editor" }
 # folder toggles, plus app-owned Markdown vertical scroll snapshot/restore from
 # waml-history-scroll-anchors-current. rev is the reproducible pin; survives upstream
 # force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "01ed72d87bac003a5dca45f887411bfe6c004ec1" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "60f88a7b82fe31e653463a46498d356c51a8023c" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
