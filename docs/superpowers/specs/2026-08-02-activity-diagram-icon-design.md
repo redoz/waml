@@ -8,27 +8,22 @@ icons used by the editor.
 
 ## Selected Design
 
-Use a compact vertical activity flow on Lucide's 24 by 24 grid:
+Use one large, centered outline diamond on Lucide's 24 by 24 grid. Use
+Lucide's two-unit stroke, round caps, and round joins. Keep the diamond inside
+the standard two-unit margin.
 
-1. A small filled start circle at the top.
-2. A large decision diamond in the center.
-3. A small end ring at the bottom.
-4. A centered transition line that connects all three nodes.
-
-Use Lucide's two-unit stroke, round caps, and round joins. Keep the outer
-geometry inside the standard two-unit margin. Do not add an action box, text,
-color, a container, or extra branches. The large diamond and simple vertical
-silhouette must remain clear at the editor's small icon sizes.
+Do not add nodes, connectors, text, color, a container, internal marks, or
+branches. The single geometric silhouette must remain clear at 12 to 16 px.
 
 ## Alternatives Considered
 
 - A branching flow shows activity semantics, but it becomes crowded at 16 px.
-- A start-action-decision-end stack has stronger UML detail, but its action box
-  makes every node too small at 16 px.
-- A start node and decision diamond alone are very clear, but they omit the
-  activity final node.
-- The selected start-decision-end stack preserves the original flow while it
-  gives the decision diamond enough space to remain distinct.
+- A start-action-decision-end stack has stronger UML detail, but its nodes and
+  connectors become unclear at small sizes.
+- A start-decision-end stack is simpler, but its small terminal nodes still
+  create visual noise.
+- The selected diamond is less literal, but it has the strongest silhouette
+  and the most consistent small-size rendering.
 
 ## Integration
 
@@ -40,6 +35,6 @@ and catalog mapping unchanged.
 ## Validation
 
 - Compare the icon with adjacent Lucide glyphs in the icon harness.
-- Check the icon at its normal editor size and at native HiDPI scale.
+- Check the icon at 12, 16, 20, and 24 px and at native HiDPI scale.
 - Confirm that the generated SDF has no clipped geometry or uneven strokes.
 - Run the icon catalog tests and the relevant editor checks.
