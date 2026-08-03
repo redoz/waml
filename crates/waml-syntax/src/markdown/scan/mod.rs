@@ -19,6 +19,12 @@
 //!   operations is load-bearing for its recovery path. Only [`ScanProfile::Tree`]
 //!   collects them; under [`ScanProfile::Shell`] the field is always empty,
 //!   because the shell mapper never reads it.
+//! * Range screening is the implementation's job, not the caller's: because the
+//!   inline and text events are filtered out here, only the implementation can
+//!   still see them. It must check every raw event's range and report
+//!   [`BlockScan::malformed_range`] if any of them is not a char-aligned slice
+//!   of `source`. Callers re-validate the block ranges they receive, but they
+//!   depend on this flag for the events they never see.
 
 mod pulldown;
 
@@ -174,6 +180,11 @@ pub(crate) enum ScanEvent {
 pub(crate) struct BlockScan {
     pub events: Vec<(ScanEvent, Range<usize>)>,
     pub reference_definitions: Vec<Range<usize>>,
+    /// Set when *any* raw event the implementation saw — including the inline
+    /// and text events this vocabulary drops — carried a range that was not a
+    /// char-aligned slice of `source`. Callers treat the whole scan as
+    /// untrustworthy and fall back to raw text.
+    pub malformed_range: bool,
 }
 
 #[cfg(test)]
@@ -312,6 +323,11 @@ mod tests {
 
     #[test]
     fn all_covers_every_kind() {
+        // Matching ordinals alone would still pass for a *short* `ALL`, which
+        // would silently thin the parity coverage `ALL` drives in block.rs. The
+        // length assertion is the half that catches an omitted variant; bump it
+        // deliberately when `ordinal`'s exhaustive match grows.
+        assert_eq!(ScanTagKind::ALL.len(), 15, "a variant is missing from ALL");
         for (index, kind) in ScanTagKind::ALL.iter().enumerate() {
             assert_eq!(kind.ordinal(), index, "ALL is out of step at {index}");
         }

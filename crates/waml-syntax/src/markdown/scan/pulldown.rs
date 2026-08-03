@@ -117,10 +117,18 @@ pub(crate) fn scan_blocks(
     };
 
     let mut events = Vec::new();
+    let mut malformed_range = false;
     // One slot per open tag. `None` marks a construct the vocabulary drops, so
     // its end is dropped too and the stream stays balanced.
     let mut open: Vec<Option<ScanTagKind>> = Vec::new();
     for (event, range) in parser.into_offset_iter() {
+        // Screen *every* raw event, including the inline and text events the
+        // vocabulary drops: a malformed range anywhere means the underlying
+        // parser disagrees with us about the source, and callers fall back to
+        // raw text rather than trust any of the stream.
+        if !range_is_well_formed(source, &range) {
+            malformed_range = true;
+        }
         match event {
             Event::Start(tag) => {
                 let mapped = start_tag(tag);
@@ -142,7 +150,16 @@ pub(crate) fn scan_blocks(
     BlockScan {
         events,
         reference_definitions,
+        malformed_range,
     }
+}
+
+/// Whether an event range is a usable, char-aligned slice of `source`.
+fn range_is_well_formed(source: &str, range: &std::ops::Range<usize>) -> bool {
+    range.start <= range.end
+        && range.end <= source.len()
+        && source.is_char_boundary(range.start)
+        && source.is_char_boundary(range.end)
 }
 
 /// Concatenates the text the parser decodes from `spelling`, entities resolved.
@@ -161,4 +178,24 @@ pub(crate) fn scan_is_inline_html(candidate: &str) -> bool {
     Parser::new(candidate).any(
         |event| matches!(event, Event::InlineHtml(html) | Event::Html(html) if html.as_ref() == candidate),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn well_formed_ranges_are_accepted() {
+        assert!(range_is_well_formed("héllo", &(0..6)));
+        assert!(range_is_well_formed("héllo", &(3..3)));
+    }
+
+    #[test]
+    fn malformed_ranges_are_rejected() {
+        // Inverted, past the end, and split across a multi-byte char.
+        let inverted = std::ops::Range { start: 3, end: 1 };
+        assert!(!range_is_well_formed("héllo", &inverted));
+        assert!(!range_is_well_formed("héllo", &(0..7)));
+        assert!(!range_is_well_formed("héllo", &(2..3)));
+    }
 }

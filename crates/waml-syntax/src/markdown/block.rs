@@ -73,6 +73,12 @@ fn parse_strict(
     let mut blocks = Vec::<BlockFrame>::new();
     // Offsets are relative to the scanned slice; re-base them onto `source`.
     let scan = scan_blocks(&source[event_start..end], dialect, ScanProfile::Tree);
+    // The seam filters inline and text events out, so only it can screen their
+    // ranges; a malformed one anywhere condemns the whole stream, exactly as
+    // when this loop still saw every event itself.
+    if scan.malformed_range {
+        return Err(BlockBuildError::MalformedEventRange);
+    }
     let mut reference_spans = Vec::new();
     for definition in &scan.reference_definitions {
         let span = (event_start + definition.start)..(event_start + definition.end);
