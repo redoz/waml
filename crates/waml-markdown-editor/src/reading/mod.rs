@@ -7,9 +7,18 @@
 //! same styles, the same decorations, highlighters and assets. Neither shares
 //! the other's layout engine, motion, selection, input or IME.
 
+pub mod bullet;
 pub mod model;
+pub mod widget;
 
+pub use bullet::{bullet_shape_for_level, BulletShape, DrawReadingBullet};
 pub use model::{
     build_reading_document, ReadingBlock, ReadingBlockKind, ReadingDocument, ReadingError,
     ReadingPiece,
 };
+pub use widget::{MarkdownViewer, MarkdownViewerRef, MarkdownViewerWidgetRefExt, SourceMap};
+
+pub fn script_mod(vm: &mut makepad_widgets::ScriptVm) -> makepad_widgets::ScriptValue {
+    bullet::script_mod(vm);
+    widget::script_mod(vm)
+}

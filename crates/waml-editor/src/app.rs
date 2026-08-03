@@ -403,6 +403,30 @@ script_mod! {
                                         }
                                     }
                                 }
+                                // Reading view: the concept surface. Mutually
+                                // exclusive with `markdown_surface`, which is
+                                // the raw-markdown editor.
+                                markdown_viewer_surface := View{
+                                    width: Fill
+                                    height: Fill
+                                    visible: false
+                                    show_bg: true
+                                    draw_bg +: {
+                                        color: atlas.surface
+                                        pixel: fn() {
+                                            return vec4(self.color.rgb * self.color.a, self.color.a)
+                                        }
+                                    }
+                                    flow: Down
+                                    viewer := MarkdownViewer{
+                                        width: Fill
+                                        height: Fill
+                                        draw_bullet +: { color: atlas.text }
+                                        flow_body +: {
+                                            font_color: atlas.text
+                                        }
+                                    }
+                                }
                                 // Tool dock: left edge of the CENTER, vertically
                                 // centered. Anchors to the real center rect now,
                                 // so it auto-tracks dock state (retired margin:304).

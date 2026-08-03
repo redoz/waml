@@ -68,6 +68,9 @@ pub fn live_design(cx: &mut Cx) {
 }
 
 pub(crate) fn register_script_mod(vm: &mut ScriptVm) -> ScriptValue {
+    // A child widget is dead and invisible unless its script_mod registers
+    // BEFORE its consumer's, so the bullet and the viewer go first.
+    crate::reading::script_mod(vm);
     script_mod(vm)
 }
 
