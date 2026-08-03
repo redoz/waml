@@ -10,6 +10,9 @@ mod parser_tests;
 mod projection;
 pub(crate) mod reference;
 pub(crate) mod reparse;
+// Consumers land in the following tasks; the allow is removed once they have.
+#[allow(dead_code)]
+pub(crate) mod scan;
 mod snapshot;
 
 pub use gfm::{HtmlTagFilter, TableAlignment, TaskListState};
