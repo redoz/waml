@@ -32,6 +32,13 @@ const WORLD_FONT_SIZE: f64 = 8.0;
 /// up to `LABEL_GAP`, so the two must agree (asserted in the tests below).
 const WORLD_GAP: f64 = 3.0;
 
+/// Fractions of the screen-space nudge tried, longest first, when the full
+/// nudge would push a label onto a card. Coarse on purpose: the nudge exists to
+/// buy clearance from a stroke or an adornment, and a card is a far worse thing
+/// to sit on than an arrowhead, so giving the step up entirely (the trailing
+/// 0.0) always beats landing on a node.
+const NUDGE_BACKOFFS: [f64; 5] = [1.0, 0.75, 0.5, 0.25, 0.0];
+
 pub(super) fn draw_edge_labels(
     cx: &mut Cx2d,
     snapshot: &RenderSnapshot<'_>,
@@ -48,6 +55,14 @@ pub(super) fn draw_edge_labels(
     let font_size = font_raster_size(target_size);
     draws.edge_label.text_style.font_size = font_size;
     draws.edge_label.font_scale = target_size / font_size;
+
+    // Screen rects of the cards the nudge below must not walk a label onto.
+    let cards: Vec<Rect> = snapshot
+        .scene
+        .nodes
+        .iter()
+        .map(|node| world_rect_to_screen(viewport, node.rect))
+        .collect();
 
     for label in &snapshot.scene.labels {
         let screen = world_rect_to_screen(viewport, label.rect);
@@ -70,6 +85,13 @@ pub(super) fn draw_edge_labels(
                 )
             })
             .unwrap_or_default();
+        // Clamp against the CHIP, not the bare text rect: the padded background
+        // is what actually covers a card.
+        let chip = Rect {
+            pos: screen.pos - dvec2(LABEL_PAD, LABEL_PAD),
+            size: screen.size + dvec2(LABEL_PAD * 2.0, LABEL_PAD * 2.0),
+        };
+        let nudge = clamped_nudge(chip, nudge, &cards);
         let leader_end = label.leader.map(|leader| {
             edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[1])
         });
@@ -111,6 +133,39 @@ fn leader_bars(start: DVec2, end: DVec2, thickness: f64) -> Vec<Rect> {
         .filter(|(a, b)| (a.x - b.x).abs() > thickness || (a.y - b.y).abs() > thickness)
         .map(|(a, b)| segment_quad(a, b, thickness))
         .collect()
+}
+
+/// Two screen rects overlap on both axes. Touching is clear.
+fn overlaps(a: Rect, b: Rect) -> bool {
+    a.pos.x < b.pos.x + b.size.x
+        && b.pos.x < a.pos.x + a.size.x
+        && a.pos.y < b.pos.y + b.size.y
+        && b.pos.y < a.pos.y + a.size.y
+}
+
+/// Shorten `nudge` until the label's drawn chip clears every card.
+///
+/// The solver guarantees its WORLD rects do not overlap a node. The nudge then
+/// moves the label off that rect to buy screen-space clearance the solver could
+/// not reserve (a constant-width stroke, an adornment with no world size at
+/// all), and an unclamped step is free to spend that reserve by walking the
+/// text onto a card -- which is what it did to the terminal labels on crowded
+/// diagrams. Backing off keeps the guarantee: at worst the nudge is dropped and
+/// the label sits exactly where the solver put it.
+fn clamped_nudge(chip: Rect, nudge: DVec2, cards: &[Rect]) -> DVec2 {
+    if nudge.x == 0.0 && nudge.y == 0.0 {
+        return nudge;
+    }
+    for scale in NUDGE_BACKOFFS {
+        let moved = Rect {
+            pos: chip.pos + nudge * scale,
+            size: chip.size,
+        };
+        if !cards.iter().any(|card| overlaps(moved, *card)) {
+            return nudge * scale;
+        }
+    }
+    dvec2(0.0, 0.0)
 }
 
 /// Apply the screen-space clearance top-up to everything that belongs to one
@@ -234,6 +289,60 @@ fn unit(a: (f64, f64), b: (f64, f64)) -> Option<DVec2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
+        Rect {
+            pos: dvec2(x, y),
+            size: dvec2(w, h),
+        }
+    }
+
+    #[test]
+    fn a_nudge_into_open_space_is_taken_in_full() {
+        let chip = rect(0.0, 0.0, 20.0, 10.0);
+        let nudge = dvec2(0.0, -16.0);
+        let cards = [rect(200.0, 200.0, 50.0, 50.0)];
+        assert_eq!(clamped_nudge(chip, nudge, &cards), nudge);
+    }
+
+    #[test]
+    fn a_nudge_that_would_land_on_a_card_is_shortened() {
+        // The card sits 16px above the chip, so the full step buries the label
+        // in it and only a partial step clears.
+        let chip = rect(0.0, 0.0, 20.0, 10.0);
+        let nudge = dvec2(0.0, -16.0);
+        let cards = [rect(-5.0, -20.0, 60.0, 12.0)];
+        let out = clamped_nudge(chip, nudge, &cards);
+        assert!(out.y > nudge.y, "the step must be shortened, got {out:?}");
+        let moved = Rect {
+            pos: chip.pos + out,
+            size: chip.size,
+        };
+        assert!(!overlaps(moved, cards[0]), "the clamped chip must be clear");
+    }
+
+    #[test]
+    fn a_nudge_with_no_clear_fraction_is_dropped_entirely() {
+        // A card covering every intermediate position leaves nowhere to stop,
+        // so the label falls back to the rect the solver reserved -- which the
+        // solver already proved clear.
+        let chip = rect(0.0, 0.0, 20.0, 10.0);
+        let nudge = dvec2(0.0, -16.0);
+        let cards = [rect(-50.0, -40.0, 200.0, 45.0)];
+        assert_eq!(clamped_nudge(chip, nudge, &cards), dvec2(0.0, 0.0));
+    }
+
+    #[test]
+    fn the_solver_position_is_never_judged_against_the_cards() {
+        // A zero nudge is returned untouched even when the chip overlaps a
+        // card: second-guessing the solver here would fight it, not help it.
+        let chip = rect(0.0, 0.0, 20.0, 10.0);
+        let cards = [rect(0.0, 0.0, 20.0, 10.0)];
+        assert_eq!(
+            clamped_nudge(chip, dvec2(0.0, 0.0), &cards),
+            dvec2(0.0, 0.0)
+        );
+    }
 
     #[test]
     fn the_drawn_font_never_outgrows_its_projected_box() {
