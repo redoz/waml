@@ -40,9 +40,16 @@ impl Default for LabelConfig {
 /// for empty text -- a zero-height rect is invisible to every collision test,
 /// which would silently stop an empty label from acting as an obstacle.
 pub fn measure(text: &str, cfg: &LabelConfig) -> Size {
+    // `font_size` is POINTS, the unit the renderer hands makepad, and makepad
+    // rasterizes it at `pts * PT_TO_LPX`. Measuring at the point value made
+    // every label box ~25% too narrow, so text that the placer had proved clear
+    // still ran under the neighbouring card -- the label was in the right place
+    // and simply longer than its own reservation. Every other measured surface
+    // in the solver already scales by this.
+    let lpx = cfg.font_size * sizing::PT_TO_LPX;
     Size {
-        w: sizing::text_width(text, cfg.font_size, LABEL_FONT),
-        h: sizing::line_height(cfg.font_size, LABEL_FONT),
+        w: sizing::text_width(text, lpx, LABEL_FONT),
+        h: sizing::line_height(lpx, LABEL_FONT),
     }
 }
 
