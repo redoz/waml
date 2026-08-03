@@ -52,6 +52,8 @@ pub enum TextRole {
     Body,
     SyntaxMarker,
     Heading(u8),
+    /// The literal `#` run of an ATX heading, sized like its heading.
+    HeadingMarker(u8),
     Emphasis,
     Strong,
     StrongEmphasis,
@@ -304,7 +306,7 @@ impl PresentationPlan {
             let PresentationItem::TextRun { range, role, .. } = item else {
                 continue;
             };
-            if let TextRole::Heading(level) = role {
+            if let TextRole::Heading(level) | TextRole::HeadingMarker(level) = role {
                 if !(1..=6).contains(level) {
                     return Err(PresentationError::UnsupportedHeadingLevel(*level));
                 }

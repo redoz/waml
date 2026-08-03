@@ -1,4 +1,4 @@
-TEXT 0..1 owner=1 ordinal=0 role=SyntaxMarker source=#
+TEXT 0..1 owner=1 ordinal=0 role=HeadingMarker(1) source=#
 TEXT 1..2 owner=1 ordinal=0 role=Whitespace source= 
 TEXT 2..9 owner=2 ordinal=0 role=Heading(1) source=Heading
 TEXT 9..10 owner=3 ordinal=0 role=Whitespace source= 
@@ -13,11 +13,11 @@ TEXT 21..27 owner=10 ordinal=0 role=Strong source=strong
 TEXT 27..29 owner=9 ordinal=1 role=SyntaxMarker source=**
 TEXT 29..30 owner=1 ordinal=0 role=LineBreak source=\n
 TEXT 30..31 owner=1 ordinal=1 role=LineBreak source=\n
-TEXT 31..33 owner=11 ordinal=0 role=SyntaxMarker source=##
+TEXT 31..33 owner=11 ordinal=0 role=HeadingMarker(2) source=##
 TEXT 33..34 owner=11 ordinal=0 role=Whitespace source= 
 TEXT 34..43 owner=11 ordinal=0 role=Heading(2) source=Heading 2
 TEXT 43..44 owner=11 ordinal=0 role=LineBreak source=\n
-TEXT 44..47 owner=12 ordinal=0 role=SyntaxMarker source=###
+TEXT 44..47 owner=12 ordinal=0 role=HeadingMarker(3) source=###
 TEXT 47..48 owner=12 ordinal=0 role=Whitespace source= 
 TEXT 48..55 owner=13 ordinal=0 role=Heading(3) source=Heading
 TEXT 55..56 owner=14 ordinal=0 role=Whitespace source= 
@@ -33,15 +33,15 @@ TEXT 73..81 owner=23 ordinal=0 role=StrongEmphasis source=emphasis
 TEXT 81..83 owner=20 ordinal=1 role=SyntaxMarker source=**
 TEXT 83..84 owner=19 ordinal=1 role=SyntaxMarker source=*
 TEXT 84..85 owner=12 ordinal=0 role=LineBreak source=\n
-TEXT 85..89 owner=24 ordinal=0 role=SyntaxMarker source=####
+TEXT 85..89 owner=24 ordinal=0 role=HeadingMarker(4) source=####
 TEXT 89..90 owner=24 ordinal=0 role=Whitespace source= 
 TEXT 90..99 owner=24 ordinal=0 role=Heading(4) source=Heading 4
 TEXT 99..100 owner=24 ordinal=0 role=LineBreak source=\n
-TEXT 100..105 owner=25 ordinal=0 role=SyntaxMarker source=#####
+TEXT 100..105 owner=25 ordinal=0 role=HeadingMarker(5) source=#####
 TEXT 105..106 owner=25 ordinal=0 role=Whitespace source= 
 TEXT 106..115 owner=25 ordinal=0 role=Heading(5) source=Heading 5
 TEXT 115..116 owner=25 ordinal=0 role=LineBreak source=\n
-TEXT 116..122 owner=26 ordinal=0 role=SyntaxMarker source=######
+TEXT 116..122 owner=26 ordinal=0 role=HeadingMarker(6) source=######
 TEXT 122..123 owner=26 ordinal=0 role=Whitespace source= 
 TEXT 123..132 owner=26 ordinal=0 role=Heading(6) source=Heading 6
 TEXT 132..133 owner=26 ordinal=0 role=LineBreak source=\n

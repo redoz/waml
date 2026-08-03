@@ -79,14 +79,14 @@ fn every_construct_compiles_to_its_exact_treatment() {
     let (snapshot, plan) = compile_fixture("presentation-all.md");
     assert_eq!(plan.validate_source_partition(), Ok(()));
 
-    // Headings: dim marker, level-tagged content.
+    // Headings: dim marker at the heading's own size, level-tagged content.
     assert_eq!(
         roles_for(&plan, &snapshot, "#"),
-        vec![TextRole::SyntaxMarker]
+        vec![TextRole::HeadingMarker(1)]
     );
     assert_eq!(
         roles_for(&plan, &snapshot, "######"),
-        vec![TextRole::SyntaxMarker]
+        vec![TextRole::HeadingMarker(6)]
     );
     assert_eq!(
         roles_for(&plan, &snapshot, "Heading 6"),

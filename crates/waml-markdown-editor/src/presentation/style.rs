@@ -35,11 +35,11 @@ impl PresentationSpacing {
     /// `(before, after)` margins of one heading level.
     pub fn heading_margins(&self, level: u8) -> (f64, f64) {
         match level {
-            1 => (20.0, 10.0),
-            2 => (18.0, 9.0),
-            3 => (16.0, 8.0),
-            4 => (14.0, 7.0),
-            _ => (12.0, 6.0),
+            1 => (12.0, 5.0),
+            2 => (10.0, 4.0),
+            3 => (9.0, 4.0),
+            4 => (8.0, 3.0),
+            _ => (7.0, 3.0),
         }
     }
 }
@@ -67,7 +67,7 @@ impl PresentationStyles {
 
     pub fn spacing(&self) -> PresentationSpacing {
         PresentationSpacing {
-            paragraph_after: 12.0,
+            paragraph_after: 6.0,
             quote_inset: 12.0,
             quote_rule: 3.0,
             quote_gap: 8.0,
@@ -105,20 +105,20 @@ impl PresentationStyles {
                 italic,
             };
         match role {
-            TextRole::Heading(level) => {
+            TextRole::Heading(level) | TextRole::HeadingMarker(level) => {
                 let size = match level {
-                    1 => 22.0,
-                    2 => 19.0,
-                    3 => 17.0,
+                    1 => 24.0,
+                    2 => 20.0,
+                    3 => 17.5,
                     4 => 15.5,
                     5 => 14.5,
-                    _ => 14.0,
+                    _ => 13.5,
                 };
-                sans(size, 1.20, WEIGHT_SEMIBOLD, false)
+                sans(size, 1.05, WEIGHT_SEMIBOLD, false)
             }
-            TextRole::Emphasis => sans(14.0, 1.35, WEIGHT_REGULAR, true),
-            TextRole::Strong => sans(14.0, 1.35, WEIGHT_SEMIBOLD, false),
-            TextRole::StrongEmphasis => sans(14.0, 1.35, WEIGHT_SEMIBOLD, true),
+            TextRole::Emphasis => sans(13.5, 1.12, WEIGHT_REGULAR, true),
+            TextRole::Strong => sans(13.5, 1.12, WEIGHT_SEMIBOLD, false),
+            TextRole::StrongEmphasis => sans(13.5, 1.12, WEIGHT_SEMIBOLD, true),
             TextRole::InlineCode
             | TextRole::CodeContent
             | TextRole::CodeToken(_)
@@ -126,14 +126,14 @@ impl PresentationStyles {
             | TextRole::CodeInfo
             | TextRole::Frontmatter => TextMetrics {
                 font: FONT_MONO,
-                font_size: 13.0,
-                line_spacing: 1.30,
+                font_size: 12.5,
+                line_spacing: 1.08,
                 weight: WEIGHT_REGULAR,
                 italic: false,
             },
             // Every other role, including roles added later, keeps body metrics
             // so its source range stays visible.
-            _ => sans(14.0, 1.35, WEIGHT_REGULAR, false),
+            _ => sans(13.5, 1.12, WEIGHT_REGULAR, false),
         }
     }
 
@@ -186,6 +186,16 @@ impl PresentationStyles {
                 font: FontRole::Heading,
                 size: FontSizeRole::Heading(level),
                 weight: FontWeightRole::SemiBold,
+                ..base
+            },
+            // Heading markers keep the heading's font and size and differ from
+            // the heading text only in color.
+            TextRole::HeadingMarker(level) => TextStyle {
+                font: FontRole::Heading,
+                size: FontSizeRole::Heading(level),
+                weight: FontWeightRole::SemiBold,
+                color: ColorRole::Marker,
+                active_color: ColorRole::ActiveMarker,
                 ..base
             },
             TextRole::Emphasis => TextStyle {

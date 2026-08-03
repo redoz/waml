@@ -36,40 +36,58 @@ fn balanced_metrics_and_document_inset_are_fixed() {
     );
     assert_eq!(
         styles.metrics(TextRole::Body),
-        metrics(FONT_SANS, 14.0, 1.35, WEIGHT_REGULAR, false)
+        metrics(FONT_SANS, 12.5, 1.20, WEIGHT_REGULAR, false)
     );
     assert_eq!(
         styles.metrics(TextRole::Heading(1)),
-        metrics(FONT_SANS, 22.0, 1.20, WEIGHT_SEMIBOLD, false)
+        metrics(FONT_SANS, 19.0, 1.10, WEIGHT_SEMIBOLD, false)
     );
     assert_eq!(
         styles.metrics(TextRole::Heading(6)),
-        metrics(FONT_SANS, 14.0, 1.20, WEIGHT_SEMIBOLD, false)
+        metrics(FONT_SANS, 12.5, 1.10, WEIGHT_SEMIBOLD, false)
     );
     assert_eq!(
         styles.metrics(TextRole::CodeContent),
-        metrics(FONT_MONO, 13.0, 1.30, WEIGHT_REGULAR, false)
+        metrics(FONT_MONO, 11.5, 1.15, WEIGHT_REGULAR, false)
     );
     assert_eq!(
         styles.metrics(TextRole::Emphasis),
-        metrics(FONT_SANS, 14.0, 1.35, WEIGHT_REGULAR, true)
+        metrics(FONT_SANS, 12.5, 1.20, WEIGHT_REGULAR, true)
     );
     assert_eq!(
         styles.metrics(TextRole::StrongEmphasis),
-        metrics(FONT_SANS, 14.0, 1.35, WEIGHT_SEMIBOLD, true)
+        metrics(FONT_SANS, 12.5, 1.20, WEIGHT_SEMIBOLD, true)
     );
+}
+
+#[test]
+fn a_heading_marker_matches_its_heading_metrics_and_differs_only_in_color() {
+    let styles = PresentationStyles::balanced();
+    for level in 1..=6 {
+        assert_eq!(
+            styles.metrics(TextRole::HeadingMarker(level)),
+            styles.metrics(TextRole::Heading(level))
+        );
+        let marker = styles.text_style(TextRole::HeadingMarker(level));
+        let heading = styles.text_style(TextRole::Heading(level));
+        assert_eq!(
+            (marker.font, marker.size, marker.weight),
+            (heading.font, heading.size, heading.weight)
+        );
+        assert_ne!(marker.color, heading.color);
+    }
 }
 
 #[test]
 fn heading_margins_and_block_spacing_follow_the_balanced_table() {
     let spacing = PresentationStyles::balanced().spacing();
-    assert_eq!(spacing.heading_margins(1), (20.0, 10.0));
-    assert_eq!(spacing.heading_margins(2), (18.0, 9.0));
-    assert_eq!(spacing.heading_margins(3), (16.0, 8.0));
-    assert_eq!(spacing.heading_margins(4), (14.0, 7.0));
-    assert_eq!(spacing.heading_margins(5), (12.0, 6.0));
-    assert_eq!(spacing.heading_margins(6), (12.0, 6.0));
-    assert_eq!(spacing.paragraph_after, 12.0);
+    assert_eq!(spacing.heading_margins(1), (12.0, 5.0));
+    assert_eq!(spacing.heading_margins(2), (10.0, 4.0));
+    assert_eq!(spacing.heading_margins(3), (9.0, 4.0));
+    assert_eq!(spacing.heading_margins(4), (8.0, 3.0));
+    assert_eq!(spacing.heading_margins(5), (7.0, 3.0));
+    assert_eq!(spacing.heading_margins(6), (7.0, 3.0));
+    assert_eq!(spacing.paragraph_after, 6.0);
     assert_eq!(spacing.quote_inset, 12.0);
     assert_eq!(spacing.quote_rule, 3.0);
     assert_eq!(spacing.quote_gap, 8.0);

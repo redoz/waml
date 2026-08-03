@@ -43,7 +43,7 @@ pub fn compile_presentation(
         if span.range.start() == span.range.end() {
             continue;
         }
-        let role = if let Some(role) = marker_role(span, snapshot, text) {
+        let role = if let Some(role) = marker_role(span, snapshot, text, &headings) {
             wrappers.observe_marker(span);
             role
         } else {
@@ -195,6 +195,7 @@ fn marker_role(
     span: &MarkdownSyntaxSpan,
     snapshot: &MarkdownSyntaxSnapshot,
     text: &SourceText,
+    headings: &[waml_syntax::MarkdownHeading],
 ) -> Option<TextRole> {
     if span.source_role != MarkdownSourceRole::SyntaxMarker {
         return None;
@@ -220,9 +221,16 @@ fn marker_role(
             }
         }
         MarkdownSemanticRole::Frontmatter => TextRole::Frontmatter,
+        // `#` runs read as part of the heading, so they carry the heading's
+        // metrics and only the marker colors set them apart.
+        MarkdownSemanticRole::Heading => headings
+            .iter()
+            .find(|heading| contains(heading.range, span.range))
+            .map_or(TextRole::SyntaxMarker, |heading| {
+                TextRole::HeadingMarker(heading.level)
+            }),
         MarkdownSemanticRole::Document
         | MarkdownSemanticRole::Paragraph
-        | MarkdownSemanticRole::Heading
         | MarkdownSemanticRole::ThematicBreak
         | MarkdownSemanticRole::IndentedCode
         | MarkdownSemanticRole::HtmlBlock
