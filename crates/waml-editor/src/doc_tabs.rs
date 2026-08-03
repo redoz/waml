@@ -946,15 +946,18 @@ mod tests {
         };
         let c = crate::accent::bucket_color(crate::node_style::AccentBucket::Behavior);
         let m = super::mute_toward(c, bg, super::INACTIVE_ACCENT_STRENGTH);
-        for (mc, (cc, bc)) in [m.x, m.y, m.z].iter().zip([
-            (c.x, bg.x),
-            (c.y, bg.y),
-            (c.z, bg.z),
-        ]) {
+        for (mc, (cc, bc)) in [m.x, m.y, m.z]
+            .iter()
+            .zip([(c.x, bg.x), (c.y, bg.y), (c.z, bg.z)])
+        {
             let (lo, hi) = if cc < bc { (cc, bc) } else { (bc, cc) };
             assert!(*mc >= lo && *mc <= hi, "{mc} outside {lo}..{hi}");
         }
-        assert_ne!((m.x, m.y, m.z), (c.x, c.y, c.z), "muted must differ from lit");
+        assert_ne!(
+            (m.x, m.y, m.z),
+            (c.x, c.y, c.z),
+            "muted must differ from lit"
+        );
         assert_ne!(
             (m.x, m.y, m.z),
             (bg.x, bg.y, bg.z),
