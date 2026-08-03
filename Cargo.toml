@@ -22,4 +22,10 @@ url = "2.5"
 proptest = "=1.8.0"
 unicode-segmentation = "1.12"
 unicode-bidi = { git = "https://github.com/redoz/makepad.git", rev = "62f515dc8b61b5daf2a5cf91049f33332cf8b096" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+brotli = "8"
+rand = "0.9"
+subtle = "2.6"
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+tempfile = "3"
 

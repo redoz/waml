@@ -18,11 +18,21 @@ default = []
 embed-web = []
 
 [dependencies]
-waml = { path = "../waml" }
+waml = { path = "../waml", features = ["serde"] }
 waml-ops-dto = { path = "../waml-ops-dto" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tower-lsp = { workspace = true }
-brotli = "7"
+axum = { workspace = true }
+rand = { workspace = true }
+subtle = { workspace = true }
+brotli = { workspace = true }
+
+[build-dependencies]
+brotli = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tempfile = { workspace = true }

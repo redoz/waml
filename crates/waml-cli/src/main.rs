@@ -13,6 +13,7 @@ mod commands;
 mod io;
 mod lsp;
 mod ops_dto;
+mod serve;
 mod site;
 mod web_artifact;
 
@@ -63,6 +64,28 @@ enum Command {
         /// on top of any we pass, and a repeated flag must not abort the server.
         #[arg(long, overrides_with = "stdio")]
         stdio: bool,
+    },
+    /// Serve the web editor and an ops API over a local directory.
+    ///
+    /// Binds loopback by default and mints a fresh access token per run; the
+    /// token is printed once, in the URL, and is required on every request.
+    /// Loopback is not access control — see the token flag docs.
+    Serve {
+        /// Directory to serve and edit.
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+        /// Port to bind. `0` picks an ephemeral port and prints it.
+        #[arg(long, default_value_t = 8099)]
+        port: u16,
+        /// Bind 0.0.0.0 instead of 127.0.0.1. Exposes the API to your network.
+        #[arg(long)]
+        bind_all: bool,
+        /// Serve only the API, without the embedded web editor.
+        #[arg(long)]
+        api_only: bool,
+        /// Do not open a browser on start.
+        #[arg(long)]
+        no_open: bool,
     },
     /// Rewrite documents in canonical form.
     Fmt {
@@ -456,6 +479,19 @@ fn main() {
             exit
         }
         Command::Lsp { stdio: _ } => lsp::run(),
+        Command::Serve {
+            dir,
+            port,
+            bind_all,
+            api_only,
+            no_open,
+        } => serve::run(serve::ServeArgs {
+            dir,
+            port,
+            bind_all,
+            api_only,
+            no_open,
+        }),
         Command::Node { action, common } => run_mutation(&common, node_dto(action)),
         Command::Attr { action, common } => run_mutation(&common, attr_dto(action)),
         Command::Value { action, common } => run_mutation(&common, value_dto(action)),
@@ -1033,6 +1069,55 @@ mod tests {
     fn parses_lsp_stdio_subcommand() {
         let cli = Cli::try_parse_from(["waml", "lsp", "--stdio"]).unwrap();
         assert!(matches!(cli.command, Command::Lsp { stdio: true }));
+    }
+
+    #[test]
+    fn parses_serve_defaults() {
+        let cli = Cli::parse_from(["waml", "serve"]);
+        match cli.command {
+            Command::Serve {
+                ref dir,
+                port,
+                bind_all,
+                api_only,
+                no_open,
+            } => {
+                assert_eq!(dir, std::path::Path::new("."));
+                assert_eq!(port, 8099);
+                assert!(!bind_all);
+                assert!(!api_only);
+                assert!(!no_open);
+            }
+            _ => panic!("expected Serve"),
+        }
+    }
+
+    #[test]
+    fn parses_serve_flags() {
+        let cli = Cli::parse_from([
+            "waml",
+            "serve",
+            "docs",
+            "--port",
+            "0",
+            "--bind-all",
+            "--api-only",
+            "--no-open",
+        ]);
+        match cli.command {
+            Command::Serve {
+                ref dir,
+                port,
+                bind_all,
+                api_only,
+                no_open,
+            } => {
+                assert_eq!(dir, std::path::Path::new("docs"));
+                assert_eq!(port, 0);
+                assert!(bind_all && api_only && no_open);
+            }
+            _ => panic!("expected Serve"),
+        }
     }
 
     #[test]
