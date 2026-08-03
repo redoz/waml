@@ -619,6 +619,18 @@ impl DocView for ClassDiagramView {
                             // The toggles never arrive as `Triggered`.
                             _ => {}
                         }
+                        // This branch returns early, so it can't fall through to
+                        // the `camera_changed` check below. The surface's own
+                        // action still arrives in a later batch (and covers the
+                        // glide); marking here just makes the button path
+                        // independent of that.
+                        out.statusbar_dirty = matches!(
+                            opt,
+                            crate::view_bar::ViewOption::ZoomIn
+                                | crate::view_bar::ViewOption::ZoomOut
+                                | crate::view_bar::ViewOption::FitToSize
+                                | crate::view_bar::ViewOption::FitToSelection
+                        );
                     }
                 } else {
                     log!("view bar: {action:?}");
@@ -635,6 +647,18 @@ impl DocView for ClassDiagramView {
                 }
             }
             return out;
+        }
+
+        // A camera move re-snaps the statusbar's zoom readout. Checked before
+        // the pointer intents and WITHOUT returning: a zoom can share a batch
+        // with a click, and the intent below still deserves its handling.
+        if body
+            .canvas(cx)
+            .borrow::<crate::canvas::ClassDiagramSurface>()
+            .and_then(|c| c.camera_changed(actions))
+            .is_some()
+        {
+            out.statusbar_dirty = true;
         }
 
         // Canvas pointer actions.

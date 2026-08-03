@@ -354,6 +354,10 @@ pub struct BehaviorSurface {
     selected: Option<BehaviorTarget>,
     #[rust]
     projection_stale: bool,
+    /// Last zoom percentage announced via `CameraChanged` (mirrors
+    /// `ClassDiagramSurface::announced_zoom_pct`).
+    #[rust]
+    announced_zoom_pct: Option<i32>,
     #[live(true)]
     interaction_enabled: bool,
 }
@@ -407,6 +411,10 @@ pub enum BehaviorSurfaceAction {
     /// 9): the surface has no context menu, so this is the read-only
     /// equivalent affordance that reaches the same navigation path.
     ViewSourceRequested(BehaviorTarget),
+    /// The camera's zoom percentage changed (mirrors
+    /// `ClassDiagramSurfaceAction::CameraChanged`). Not a pointer intent:
+    /// `surface_action` skips it, `camera_changed` reads it.
+    CameraChanged { zoom_pct: i32 },
 }
 
 impl Widget for BehaviorSurface {
@@ -692,11 +700,38 @@ impl BehaviorSurface {
     /// Convenience reader for `BehaviorDocView` (mirrors
     /// `ClassDiagramSurface::surface_action`).
     pub(crate) fn surface_action(&self, actions: &Actions) -> Option<BehaviorSurfaceAction> {
-        let item = actions.find_widget_action(self.widget_uid())?;
-        match item.cast() {
-            BehaviorSurfaceAction::None => None,
-            action => Some(action),
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .filter_map(|item| match item.cast() {
+                BehaviorSurfaceAction::None | BehaviorSurfaceAction::CameraChanged { .. } => None,
+                action => Some(action),
+            })
+            .next()
+    }
+
+    /// The zoom percentage this batch settled on, if the camera moved at all.
+    pub(crate) fn camera_changed(&self, actions: &Actions) -> Option<i32> {
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .filter_map(|item| match item.cast() {
+                BehaviorSurfaceAction::CameraChanged { zoom_pct } => Some(zoom_pct),
+                _ => None,
+            })
+            .last()
+    }
+
+    /// Emit `CameraChanged` when the displayed zoom percentage actually moved
+    /// (mirrors `ClassDiagramSurface::announce_zoom`).
+    fn announce_zoom(&mut self, cx: &mut Cx) {
+        let zoom_pct = self.zoom_pct();
+        if self.announced_zoom_pct == Some(zoom_pct) {
+            return;
         }
+        self.announced_zoom_pct = Some(zoom_pct);
+        cx.widget_action(
+            self.widget_uid(),
+            BehaviorSurfaceAction::CameraChanged { zoom_pct },
+        );
     }
 
     fn apply_viewport_effects(&mut self, cx: &mut Cx, effects: ViewportEffects) {
@@ -710,6 +745,7 @@ impl BehaviorSurface {
         if effects.redraw {
             self.draw_bg.redraw(cx);
         }
+        self.announce_zoom(cx);
     }
 }
 
@@ -783,6 +819,66 @@ mod tests {
         // it maps to is still INSIDE the node, so only containment can reject
         // it.
         assert_eq!(hover_target_at(&scene, snapshot, dvec2(100.0, 50.0)), None);
+    }
+
+    /// Every camera mutation funnels through `apply_viewport_effects`, so that
+    /// is where the statusbar's zoom readout is announced. A zoom must emit; a
+    /// second identical zoom percentage must not (a glide ticks at 144Hz).
+    #[test]
+    fn a_zoom_announces_once_per_distinct_percentage() {
+        use makepad_widgets::ScriptNew;
+        let mut vm = crate::script_gate::boot_test_vm();
+        let mut surface = BehaviorSurface::script_new(&mut vm);
+        surface.viewport.set_view_rect(Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(800.0, 600.0),
+        });
+        let uid = surface.widget_uid();
+        let cx = vm.cx_mut();
+
+        // `zoom_step` GLIDES: the camera only reaches the new zoom over the
+        // following ticks, so the readout has to follow the ticks, not the
+        // button press. Run the glide to its end.
+        surface.zoom_step(cx, crate::canvas::ZOOM_STEP);
+        let zoomed = cx.capture_actions(|cx| {
+            for step in 1..=64 {
+                let effects = surface
+                    .viewport
+                    .tick_camera(step as f64 * crate::canvas::viewport::CAMERA_TICK);
+                surface.apply_viewport_effects(cx, effects);
+            }
+        });
+        let announced: Vec<i32> = zoomed
+            .filter_widget_actions(uid)
+            .filter_map(|item| match item.cast() {
+                BehaviorSurfaceAction::CameraChanged { zoom_pct } => Some(zoom_pct),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            announced.last().copied(),
+            Some(surface.zoom_pct()),
+            "the last announcement must match where the camera settled"
+        );
+        assert_ne!(surface.zoom_pct(), 100, "the zoom must actually have moved");
+        // Announcements are deduplicated: far fewer than the 64 ticks driven.
+        assert!(
+            announced.len() < 32,
+            "one announcement per distinct percentage, got {}",
+            announced.len()
+        );
+
+        // Re-applying effects at an unchanged camera stays silent.
+        let quiet = cx.capture_actions(|cx| {
+            let effects = surface.viewport.zoom_step(1.0);
+            surface.apply_viewport_effects(cx, effects);
+        });
+        assert!(quiet
+            .filter_widget_actions(uid)
+            .all(|item| !matches!(
+                item.cast::<BehaviorSurfaceAction>(),
+                BehaviorSurfaceAction::CameraChanged { .. }
+            )));
     }
 
     /// A newly-installed scene must be FRAMED, not left at pan(0,0)/zoom 1; an

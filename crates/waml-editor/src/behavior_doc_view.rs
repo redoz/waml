@@ -920,7 +920,26 @@ impl DocView for BehaviorDocView {
                     crate::view_bar::ViewOption::FitToSelection => canvas.fit_to_selection(cx),
                     _ => {}
                 }
+                out.statusbar_dirty = matches!(
+                    opt,
+                    crate::view_bar::ViewOption::ZoomIn
+                        | crate::view_bar::ViewOption::ZoomOut
+                        | crate::view_bar::ViewOption::FitToSize
+                        | crate::view_bar::ViewOption::FitToSelection
+                );
             }
+        }
+
+        // A camera move re-snaps the statusbar's zoom readout (mirrors
+        // `ClassDiagramView`). Checked without returning: a zoom can share a
+        // batch with a selection, and that still deserves its handling.
+        if body
+            .behavior_canvas(cx)
+            .borrow::<crate::canvas::BehaviorSurface>()
+            .and_then(|c| c.camera_changed(actions))
+            .is_some()
+        {
+            out.statusbar_dirty = true;
         }
 
         // Element-picker: the SelectBox asked to open its flyout. Same relay as
@@ -974,7 +993,9 @@ impl DocView for BehaviorDocView {
                     out.view_source = Some(self.key.clone());
                     return out;
                 }
-                BehaviorSurfaceAction::None => {}
+                // `surface_action` never yields either of these; the camera
+                // readout is handled by the `camera_changed` check above.
+                BehaviorSurfaceAction::None | BehaviorSurfaceAction::CameraChanged { .. } => {}
             }
         }
 
@@ -1541,6 +1562,65 @@ mod tests {
             );
             assert!(outcome.edit.is_none());
         }
+    }
+
+    /// A camera move marks the statusbar dirty so the zoom readout follows the
+    /// canvas, and does it WITHOUT swallowing a pointer intent that shares the
+    /// batch -- the two travel the same widget-action channel.
+    #[test]
+    fn a_camera_change_marks_the_statusbar_dirty_without_eating_a_selection() {
+        use crate::doc_view::{BodyWidgets, ViewData};
+        use makepad_widgets::{Action, ActionsBuf, WidgetAction};
+
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = BodyWidgets::new(cx, &ui);
+        let canvas_uid = body.behavior_canvas(cx).widget_uid();
+
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "flow.md",
+            "---\ntype: Diagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
+        )])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+
+        fn widget_action(uid: WidgetUid, action: BehaviorSurfaceAction) -> Action {
+            Box::new(WidgetAction {
+                data: None,
+                action: Box::new(action),
+                widget_uid: uid,
+                group: None,
+            })
+        }
+
+        // Camera first, so a `find`-style reader would return it and drop the
+        // selection entirely.
+        let actions: ActionsBuf = vec![
+            widget_action(
+                canvas_uid,
+                BehaviorSurfaceAction::CameraChanged { zoom_pct: 173 },
+            ),
+            widget_action(
+                canvas_uid,
+                BehaviorSurfaceAction::ViewSourceRequested(BehaviorTarget::Message("m0".into())),
+            ),
+        ];
+        let mut view = BehaviorDocView::flow("flow".into());
+        let outcome = view.handle(
+            cx,
+            &body,
+            &actions,
+            ViewData {
+                source: &source,
+                okf_analysis: &okf_analysis,
+                uml_analysis: &uml_analysis,
+                revision,
+            },
+        );
+        assert!(outcome.statusbar_dirty, "the zoom readout must re-sync");
+        assert_eq!(outcome.view_source.as_deref(), Some("flow"));
     }
 
     /// `show_canvas` is a CLASS-diagram path: it must not re-enable the hidden

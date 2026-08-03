@@ -494,6 +494,12 @@ pub struct ClassDiagramSurface {
     selection: SelectionState,
     #[rust]
     projection_stale: bool,
+    /// Last zoom percentage announced via `CameraChanged`. Every camera
+    /// mutation funnels through `apply_viewport_effects`, so comparing here is
+    /// what keeps a pan (or a glide step too small to move the percentage)
+    /// from emitting an action per frame.
+    #[rust]
+    announced_zoom_pct: Option<i32>,
     #[live(true)]
     interaction_enabled: bool,
 }
@@ -544,6 +550,12 @@ pub enum ClassDiagramSurfaceAction {
     /// the drag is free to dwell on another target. (The canvas can't close a
     /// popup itself -- `PopupRoot` is the dismiss authority.)
     DialDismiss,
+    /// The camera's zoom percentage changed -- from a wheel notch, a pinch, a
+    /// view-bar one-shot, or a step of a glide. Carries the new value only so
+    /// the action is self-describing; the view re-reads live state via
+    /// `App::sync_statusbar`. NOT a pointer intent, so `surface_action` skips
+    /// it and `camera_changed` reads it instead.
+    CameraChanged { zoom_pct: i32 },
 }
 
 impl From<SurfaceIntent> for ClassDiagramSurfaceAction {
@@ -1122,12 +1134,31 @@ impl ClassDiagramSurface {
     }
 
     /// Convenience reader for `App` (mirrors `ToolDock::dock_action`).
+    ///
+    /// Filters rather than finds: a camera change can land in the same batch as
+    /// a pointer intent (a click that also settles a glide), and
+    /// `find_widget_action` would hand back whichever came first -- silently
+    /// swallowing the intent.
     pub fn surface_action(&self, actions: &Actions) -> Option<ClassDiagramSurfaceAction> {
-        let item = actions.find_widget_action(self.widget_uid())?;
-        match item.cast() {
-            ClassDiagramSurfaceAction::None => None,
-            action => Some(action),
-        }
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .filter_map(|item| match item.cast() {
+                ClassDiagramSurfaceAction::None
+                | ClassDiagramSurfaceAction::CameraChanged { .. } => None,
+                action => Some(action),
+            })
+            .next()
+    }
+
+    /// The zoom percentage this batch settled on, if the camera moved at all.
+    pub fn camera_changed(&self, actions: &Actions) -> Option<i32> {
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .filter_map(|item| match item.cast() {
+                ClassDiagramSurfaceAction::CameraChanged { zoom_pct } => Some(zoom_pct),
+                _ => None,
+            })
+            .last()
     }
 
     /// Current zoom as a whole-number percentage, for the statusbar mock.
@@ -1146,6 +1177,22 @@ impl ClassDiagramSurface {
         if effects.redraw {
             self.draw_bg.redraw(cx);
         }
+        self.announce_zoom(cx);
+    }
+
+    /// Emit `CameraChanged` when the displayed zoom percentage actually moved.
+    /// The statusbar used to be re-synced only on a tool-dock mode change, so
+    /// every zoom left it reading whatever percentage it was last told.
+    fn announce_zoom(&mut self, cx: &mut Cx) {
+        let zoom_pct = self.zoom_pct();
+        if self.announced_zoom_pct == Some(zoom_pct) {
+            return;
+        }
+        self.announced_zoom_pct = Some(zoom_pct);
+        cx.widget_action(
+            self.widget_uid(),
+            ClassDiagramSurfaceAction::CameraChanged { zoom_pct },
+        );
     }
 
     fn sync_selection_lift_timer(&mut self, cx: &mut Cx) {
