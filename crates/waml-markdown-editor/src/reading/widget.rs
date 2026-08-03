@@ -377,6 +377,14 @@ impl Widget for MarkdownViewer {
     }
 }
 
+/// The caret a source handoff should carry into the editor: the start of the
+/// reader's selection, or the top of the document when nothing is selected.
+/// Free-standing so it is testable without a live widget tree.
+pub fn caret_for_span(span: Option<TextRange>) -> TextSize {
+    span.map(|span| span.start())
+        .unwrap_or_else(|| TextSize::try_from_usize(0).expect("zero is always in range"))
+}
+
 impl MarkdownViewerRef {
     pub fn install_document(&self, cx: &mut Cx, document: Arc<ReadingDocument>, source: Arc<str>) {
         if let Some(mut inner) = self.borrow_mut() {
@@ -390,5 +398,10 @@ impl MarkdownViewerRef {
         let flow = flow.borrow()?;
         let (start, end) = flow.selection_range()?;
         inner.source_map.source_span(start..end)
+    }
+
+    /// The caret a source handoff carries into the editor.
+    pub fn caret_for_handoff(&self, cx: &Cx) -> TextSize {
+        caret_for_span(self.selected_source_span(cx))
     }
 }

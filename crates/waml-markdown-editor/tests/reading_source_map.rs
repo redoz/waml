@@ -83,3 +83,34 @@ fn clear_resets_the_map() {
     map.clear();
     assert!(map.is_empty());
 }
+
+#[test]
+fn a_handoff_caret_defaults_to_the_start_of_the_document() {
+    // No selection means the reader pressed the source toggle without
+    // pointing at anything; the editor opens at the top.
+    assert_eq!(waml_markdown_editor::reading::caret_for_span(None), size(0));
+}
+
+#[test]
+fn a_handoff_caret_is_the_start_of_the_selection() {
+    assert_eq!(
+        waml_markdown_editor::reading::caret_for_span(Some(range(9, 13))),
+        size(9),
+        "the editor opens where the reader was looking"
+    );
+}
+
+#[test]
+fn a_selection_that_spans_suppressed_punctuation_still_yields_one_source_span() {
+    // Renders "**bold** tail" as "bold" + " tail": the two `**` runs never
+    // reach the flow buffer, but a selection across the whole line must map
+    // back onto a contiguous source range that includes them.
+    let mut map = SourceMap::default();
+    map.push(0..4, Some(range(2, 6))); // "bold", source 2..6
+    map.push(4..9, Some(range(8, 13))); // " tail", source 8..13
+    assert_eq!(
+        map.source_span(0..9),
+        Some(range(2, 13)),
+        "the hidden `**` at 6..8 lies inside the span, not outside it"
+    );
+}
