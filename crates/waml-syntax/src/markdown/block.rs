@@ -1488,6 +1488,45 @@ fn diagnostic(
 mod tests {
     use super::*;
 
+    /// One representative tag per kind. The exhaustive match means a new
+    /// `ScanTagKind` cannot be added without deciding what it maps to here.
+    fn sample_tag(kind: ScanTagKind) -> ScanTag {
+        match kind {
+            ScanTagKind::Paragraph => ScanTag::Paragraph,
+            ScanTagKind::Heading => ScanTag::Heading { level: 1 },
+            ScanTagKind::BlockQuote => ScanTag::BlockQuote,
+            ScanTagKind::IndentedCodeBlock => ScanTag::IndentedCodeBlock,
+            ScanTagKind::FencedCodeBlock => ScanTag::FencedCodeBlock,
+            ScanTagKind::HtmlBlock => ScanTag::HtmlBlock,
+            ScanTagKind::List => ScanTag::List,
+            ScanTagKind::Item => ScanTag::Item,
+            ScanTagKind::Table => ScanTag::Table {
+                alignments: Vec::new(),
+            },
+            ScanTagKind::TableHead => ScanTag::TableHead,
+            ScanTagKind::TableRow => ScanTag::TableRow,
+            ScanTagKind::TableCell => ScanTag::TableCell,
+            ScanTagKind::FootnoteDefinition => ScanTag::FootnoteDefinition,
+            ScanTagKind::DefinitionList => ScanTag::DefinitionList,
+            ScanTagKind::DefinitionListDefinition => ScanTag::DefinitionListDefinition,
+        }
+    }
+
+    /// The frame stack pushes on `start_kind` and pops on `end_closes_block`.
+    /// If a kind ever opens without closing (or the reverse) the stack unwinds
+    /// out of step, so the two must agree over the whole vocabulary.
+    #[test]
+    fn end_closes_block_mirrors_start_kind() {
+        for &kind in ScanTagKind::ALL {
+            let opens = start_kind(&sample_tag(kind), "", &(0..0)).is_some();
+            assert_eq!(
+                opens,
+                end_closes_block(kind),
+                "{kind:?} opens a frame but does not close one (or the reverse)"
+            );
+        }
+    }
+
     #[test]
     fn malformed_scan_event_range_recovers_as_raw_text() {
         let source = "0\n\r\t\u{0800}";

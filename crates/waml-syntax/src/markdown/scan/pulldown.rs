@@ -103,13 +103,18 @@ pub(crate) fn scan_blocks(
 ) -> BlockScan {
     let parser = Parser::new_ext(source, options(dialect, profile));
 
-    // Must be read before `into_offset_iter` consumes the parser. Order is the
-    // parser's own; callers validate before sorting and that order matters.
-    let reference_definitions: Vec<std::ops::Range<usize>> = parser
-        .reference_definitions()
-        .iter()
-        .map(|(_, definition)| definition.span.clone())
-        .collect();
+    // Only the tree profile reads these, and collecting them clones a range per
+    // link reference, so the shell profile skips the work entirely. Must be read
+    // before `into_offset_iter` consumes the parser. Order is the parser's own;
+    // callers validate before sorting and that order matters.
+    let reference_definitions: Vec<std::ops::Range<usize>> = match profile {
+        ScanProfile::Tree => parser
+            .reference_definitions()
+            .iter()
+            .map(|(_, definition)| definition.span.clone())
+            .collect(),
+        ScanProfile::Shell => Vec::new(),
+    };
 
     let mut events = Vec::new();
     // One slot per open tag. `None` marks a construct the vocabulary drops, so

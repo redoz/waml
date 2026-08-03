@@ -16,7 +16,9 @@
 //!   indented/fenced code-block distinction.
 //! * [`BlockScan::reference_definitions`] is returned in implementation order,
 //!   unsorted. `block.rs` validates each span before sorting, and that order of
-//!   operations is load-bearing for its recovery path.
+//!   operations is load-bearing for its recovery path. Only [`ScanProfile::Tree`]
+//!   collects them; under [`ScanProfile::Shell`] the field is always empty,
+//!   because the shell mapper never reads it.
 
 mod pulldown;
 
@@ -64,6 +66,52 @@ pub(crate) enum ScanTagKind {
     FootnoteDefinition,
     DefinitionList,
     DefinitionListDefinition,
+}
+
+#[cfg(test)]
+impl ScanTagKind {
+    /// Every variant, for tests that must cover the whole vocabulary.
+    ///
+    /// When a variant is added, `ordinal` below stops compiling; extend this
+    /// list too, and `all_covers_every_kind` checks the two agree.
+    pub(crate) const ALL: &'static [ScanTagKind] = &[
+        Self::Paragraph,
+        Self::Heading,
+        Self::BlockQuote,
+        Self::IndentedCodeBlock,
+        Self::FencedCodeBlock,
+        Self::HtmlBlock,
+        Self::List,
+        Self::Item,
+        Self::Table,
+        Self::TableHead,
+        Self::TableRow,
+        Self::TableCell,
+        Self::FootnoteDefinition,
+        Self::DefinitionList,
+        Self::DefinitionListDefinition,
+    ];
+
+    /// Declaration index. The exhaustive match is the tripwire for [`Self::ALL`].
+    fn ordinal(self) -> usize {
+        match self {
+            Self::Paragraph => 0,
+            Self::Heading => 1,
+            Self::BlockQuote => 2,
+            Self::IndentedCodeBlock => 3,
+            Self::FencedCodeBlock => 4,
+            Self::HtmlBlock => 5,
+            Self::List => 6,
+            Self::Item => 7,
+            Self::Table => 8,
+            Self::TableHead => 9,
+            Self::TableRow => 10,
+            Self::TableCell => 11,
+            Self::FootnoteDefinition => 12,
+            Self::DefinitionList => 13,
+            Self::DefinitionListDefinition => 14,
+        }
+    }
 }
 
 /// A block tag opening, with the payload the consumers actually read.
@@ -250,6 +298,23 @@ mod tests {
             ScanProfile::Tree,
         );
         assert_eq!(scan.reference_definitions, vec![0..7]);
+    }
+
+    #[test]
+    fn the_shell_profile_does_not_collect_reference_definitions() {
+        let scan = scan_blocks(
+            "[l]: /u\n\ntext\n",
+            MarkdownDialect::WAML_DEFAULT,
+            ScanProfile::Shell,
+        );
+        assert!(scan.reference_definitions.is_empty());
+    }
+
+    #[test]
+    fn all_covers_every_kind() {
+        for (index, kind) in ScanTagKind::ALL.iter().enumerate() {
+            assert_eq!(kind.ordinal(), index, "ALL is out of step at {index}");
+        }
     }
 
     #[test]
