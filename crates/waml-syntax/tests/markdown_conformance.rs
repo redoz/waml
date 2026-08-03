@@ -1284,3 +1284,22 @@ fn gfm_extension_conformance() {
         );
     }
 }
+
+/// The conformance suites are the oracle for every parser change. If a fixture
+/// is trimmed or a loader silently stops matching, the suites keep passing
+/// while covering less. Pin the counts so shrinkage is a test failure.
+#[test]
+fn conformance_corpus_is_complete() {
+    assert_eq!(
+        commonmark_examples().len(),
+        652,
+        "CommonMark 0.31.2 fixture must keep all 652 examples; a smaller corpus \
+         means the conformance oracle shrank instead of the parser improving"
+    );
+    assert_eq!(
+        gfm_extension_examples().len(),
+        24,
+        "GFM 0.29 loader must keep all 24 examples from its five extension \
+         sections; a smaller corpus means the oracle shrank"
+    );
+}
