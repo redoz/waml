@@ -3,7 +3,7 @@
 //! This module names the events the tree builder and the shell mapper need,
 //! independently of any third-party parser. Exactly one implementation exists
 //! today ([`pulldown`]), and it is the only file in the tree permitted to
-//! reference `pulldown_cmark`; `tests/scan_seam.rs` enforces that.
+//! reference the underlying markdown crate; `tests/scan_seam.rs` enforces that.
 //!
 //! Contract notes for any future implementation:
 //!
@@ -22,8 +22,6 @@ mod pulldown;
 
 use std::ops::Range;
 
-// Consumers land in the following tasks; the allow is removed once they have.
-#[allow(unused_imports)]
 pub(crate) use pulldown::{scan_blocks, scan_is_inline_html, scan_text_entities};
 
 /// Which construct set the scan should recognise.
