@@ -7,10 +7,7 @@ param(
     [Parameter(Position = 0)]
     [string]$Fixture,
     [switch]$Empty,
-    # Optimized is the default; -Debug opts out. -Optimized kept so existing
-    # callers (and the /run skill) keep working -- it is now a no-op.
-    [switch]$Optimized,
-    [switch]$Debug,
+    [switch]$DebugBuild,
     # Per-agent window marker: badge text and wash colour, so several
     # concurrently-running editors can be told apart by eye.
     [string]$Title,
@@ -24,7 +21,7 @@ Set-Location $root
 # through both the explicit build and the run so they stay in lockstep.
 # [string[]] keeps the single-element case an array; a bare @(...) unwraps to a
 # scalar that @-splats character-by-character (a stray '-' cargo then rejects).
-$useRelease = -not $Debug
+$useRelease = -not $DebugBuild
 [string[]]$profileArgs = if ($useRelease) { '--release' } else { @() }
 
 [string[]]$markArgs = @()
