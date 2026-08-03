@@ -28,14 +28,14 @@ pub use snapshot::{
     MarkdownSyntaxSnapshot, MarkdownSyntaxSpan, MarkdownSyntaxUpdate, MarkdownTableCell,
 };
 
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
+use scan::{scan_blocks, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 
 use crate::{MarkdownDialect, SourceText, TextRange, TextSize};
 
 use crate::shell::ParseError;
 
 /// Maps CommonMark block structure without making any OKF-specific claims.
-/// Container depth is deliberately tracked independently of pulldown's event
+/// Container depth is deliberately tracked independently of the scan's event
 /// ranges: a heading inside a quote/list/code/HTML container must never become
 /// a shell boundary.
 /// Internal data used only to synchronize shell parsing before the syntax tree
@@ -73,21 +73,20 @@ pub(crate) fn shell_map(
     let mut opaque = Vec::new();
     let mut pending: Option<(u8, usize, usize)> = None;
 
-    for (event, offsets) in Parser::new_ext(source, structure_options(dialect)).into_offset_iter() {
+    for (event, offsets) in scan_blocks(source, dialect, ScanProfile::Shell).events {
         let start = offsets.start;
         let end = offsets.end;
         if start < frontmatter_end {
             continue;
         }
         match event {
-            Event::Start(tag) => match tag {
-                Tag::Heading { level, .. } => {
-                    let level = heading_level(level);
+            ScanEvent::Start(tag) => match tag {
+                ScanTag::Heading { level } => {
                     if dialect.waml_sections() && containers.is_empty() {
                         pending = Some((level, start, end));
                     }
                 }
-                Tag::Item => {
+                ScanTag::Item => {
                     if containers.len() == 1 {
                         let line_start = line_start(source, start);
                         let line_end = line_end(source, line_start).unwrap_or(len);
@@ -96,10 +95,8 @@ pub(crate) fn shell_map(
                     containers.push(start);
                     opaque_starts.push(None);
                 }
-                tag if protects(&tag) => {
-                    if matches!(&tag, Tag::CodeBlock(CodeBlockKind::Indented))
-                        && containers.is_empty()
-                    {
+                tag if protects(tag.kind()) => {
+                    if tag.kind() == ScanTagKind::IndentedCodeBlock && containers.is_empty() {
                         collect_tab_indented_items(
                             source,
                             start,
@@ -107,16 +104,18 @@ pub(crate) fn shell_map(
                             &mut tab_indented_item_lines,
                         )?;
                     }
-                    let is_opaque = opaque_container(&tag);
+                    let is_opaque = opaque_container(tag.kind());
                     containers.push(start);
                     opaque_starts.push(is_opaque.then_some(start));
                 }
                 _ => {}
             },
-            Event::End(end_tag) => match end_tag {
-                TagEnd::Heading(level) => {
+            ScanEvent::End(kind) => match kind {
+                // The scan's open-tag stack guarantees this end closes the
+                // heading that opened, so the level needs no re-check.
+                ScanTagKind::Heading => {
                     if let Some((expected, heading_start, heading_end)) = pending.take() {
-                        if expected == heading_level(level) && containers.is_empty() {
+                        if containers.is_empty() {
                             let heading_end = heading_end.max(end).min(len);
                             let text_start = heading_text_start(source, heading_start, heading_end);
                             let heading = ConfirmedHeading {
@@ -132,7 +131,7 @@ pub(crate) fn shell_map(
                         }
                     }
                 }
-                end_tag if protects_end(end_tag) => {
+                kind if protects(kind) => {
                     if let Some(container_start) = containers.pop() {
                         protected.push(range(container_start, end.max(container_start).min(len))?);
                     }
@@ -142,7 +141,7 @@ pub(crate) fn shell_map(
                 }
                 _ => {}
             },
-            _ => {}
+            ScanEvent::Rule => {}
         }
     }
     // Parser offsets are ordered, but sorting/merging makes this an explicit API
@@ -164,24 +163,6 @@ pub(crate) fn shell_map(
         opaque_ranges: opaque.into(),
         dialect,
     })
-}
-
-fn structure_options(dialect: MarkdownDialect) -> pulldown_cmark::Options {
-    // The existing shell structure contract still protects every construct
-    // that pulldown can identify. The syntax tree itself uses the narrower
-    // public profile above; this compatibility map is removed with the shell
-    // structure migration.
-    let mut options = pulldown_cmark::Options::all();
-    if !dialect.tables() {
-        options.remove(pulldown_cmark::Options::ENABLE_TABLES);
-    }
-    if !dialect.task_lists() {
-        options.remove(pulldown_cmark::Options::ENABLE_TASKLISTS);
-    }
-    if !dialect.strikethrough() {
-        options.remove(pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
-    }
-    options
 }
 
 fn normalize(mut ranges: Vec<TextRange>) -> Vec<TextRange> {
@@ -253,47 +234,28 @@ fn collect_tab_indented_items(
     Ok(())
 }
 
-fn protects(tag: &Tag<'_>) -> bool {
+/// Containers whose interior must never yield a shell boundary.
+///
+/// Serves both directions: the scan reports a precise end kind, so the same
+/// set decides which starts push a container and which ends pop one.
+fn protects(kind: ScanTagKind) -> bool {
     matches!(
-        tag,
-        Tag::BlockQuote(_)
-            | Tag::CodeBlock(_)
-            | Tag::HtmlBlock
-            | Tag::List(_)
-            | Tag::Item
-            | Tag::FootnoteDefinition(_)
-            | Tag::Table(_)
-            | Tag::DefinitionList
-            | Tag::DefinitionListDefinition
+        kind,
+        ScanTagKind::BlockQuote
+            | ScanTagKind::IndentedCodeBlock
+            | ScanTagKind::FencedCodeBlock
+            | ScanTagKind::HtmlBlock
+            | ScanTagKind::List
+            | ScanTagKind::Item
+            | ScanTagKind::FootnoteDefinition
+            | ScanTagKind::Table
+            | ScanTagKind::DefinitionList
+            | ScanTagKind::DefinitionListDefinition
     )
 }
 
-fn opaque_container(tag: &Tag<'_>) -> bool {
-    !matches!(tag, Tag::List(_) | Tag::Item)
-}
-fn protects_end(tag: TagEnd) -> bool {
-    matches!(
-        tag,
-        TagEnd::BlockQuote(_)
-            | TagEnd::CodeBlock
-            | TagEnd::HtmlBlock
-            | TagEnd::List(_)
-            | TagEnd::Item
-            | TagEnd::FootnoteDefinition
-            | TagEnd::Table
-            | TagEnd::DefinitionList
-            | TagEnd::DefinitionListDefinition
-    )
-}
-fn heading_level(level: HeadingLevel) -> u8 {
-    match level {
-        HeadingLevel::H1 => 1,
-        HeadingLevel::H2 => 2,
-        HeadingLevel::H3 => 3,
-        HeadingLevel::H4 => 4,
-        HeadingLevel::H5 => 5,
-        HeadingLevel::H6 => 6,
-    }
+fn opaque_container(kind: ScanTagKind) -> bool {
+    !matches!(kind, ScanTagKind::List | ScanTagKind::Item)
 }
 fn heading_text_start(source: &str, start: usize, end: usize) -> usize {
     let bytes = source.as_bytes();
