@@ -1,4 +1,4 @@
-use pulldown_cmark::Alignment;
+use super::scan::ScanAlignment;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TableAlignment {
     None,
@@ -20,12 +20,12 @@ pub(crate) const TABLE_ALIGNMENT: &str = "waml.markdown.gfm.table_alignment";
 pub(crate) const TASK_STATE: &str = "waml.markdown.gfm.task_state";
 pub(crate) const HTML_TAG_FILTER: &str = "waml.markdown.gfm.html_tag_filter";
 impl TableAlignment {
-    pub(crate) fn from_pulldown(value: Alignment) -> Self {
+    pub(crate) fn from_scan(value: ScanAlignment) -> Self {
         match value {
-            Alignment::None => Self::None,
-            Alignment::Left => Self::Left,
-            Alignment::Center => Self::Center,
-            Alignment::Right => Self::Right,
+            ScanAlignment::None => Self::None,
+            ScanAlignment::Left => Self::Left,
+            ScanAlignment::Center => Self::Center,
+            ScanAlignment::Right => Self::Right,
         }
     }
     pub(crate) const fn data(self) -> &'static str {

@@ -1,6 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use super::scan::{scan_blocks, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 
 use crate::{
     GreenElement, GreenFactory, GreenNode, GreenText, MarkdownDialect, OkfMarkdownLanguage,
@@ -15,20 +15,6 @@ pub(crate) struct BlockParse {
     pub inline_roots: Arc<[GreenNode<OkfMarkdownLanguage>]>,
     pub definitions: Arc<[TextRange]>,
     pub references: super::reference::MarkdownReferenceMap,
-}
-
-pub(crate) fn pulldown_options(dialect: MarkdownDialect) -> Options {
-    let mut options = Options::empty();
-    if dialect.tables() {
-        options.insert(Options::ENABLE_TABLES);
-    }
-    if dialect.strikethrough() {
-        options.insert(Options::ENABLE_STRIKETHROUGH);
-    }
-    if dialect.task_lists() {
-        options.insert(Options::ENABLE_TASKLISTS);
-    }
-    options
 }
 
 #[derive(Debug)]
@@ -85,19 +71,20 @@ fn parse_strict(
     };
     let mut stack = Vec::<BlockFrame>::new();
     let mut blocks = Vec::<BlockFrame>::new();
-    let parser = Parser::new_ext(&source[event_start..end], pulldown_options(dialect));
+    // Offsets are relative to the scanned slice; re-base them onto `source`.
+    let scan = scan_blocks(&source[event_start..end], dialect, ScanProfile::Tree);
     let mut reference_spans = Vec::new();
-    for (_, definition) in parser.reference_definitions().iter() {
-        let span = (event_start + definition.span.start)..(event_start + definition.span.end);
+    for definition in &scan.reference_definitions {
+        let span = (event_start + definition.start)..(event_start + definition.end);
         validate_event_range(source, event_start, end, &span)?;
         reference_spans.push(span);
     }
     reference_spans.sort_by_key(|definition| (definition.start, definition.end));
-    for (event, offsets) in parser.into_offset_iter() {
+    for (event, offsets) in scan.events {
         let mut offsets = (event_start + offsets.start)..(event_start + offsets.end);
         validate_event_range(source, event_start, end, &offsets)?;
         match event {
-            Event::Start(tag) => {
+            ScanEvent::Start(tag) => {
                 if let Some(kind) = start_kind(&tag, source, &offsets) {
                     let metadata = if kind == Kind::TableCell {
                         let column = stack.last().map_or(0, |parent| {
@@ -117,10 +104,10 @@ fn parse_strict(
                         None
                     };
                     let table_alignments = match &tag {
-                        Tag::Table(alignments) => alignments
+                        ScanTag::Table { alignments } => alignments
                             .iter()
                             .copied()
-                            .map(super::gfm::TableAlignment::from_pulldown)
+                            .map(super::gfm::TableAlignment::from_scan)
                             .collect(),
                         _ => Vec::new(),
                     };
@@ -146,8 +133,8 @@ fn parse_strict(
                     });
                 }
             }
-            Event::End(tag) => {
-                if end_kind(tag).is_some() {
+            ScanEvent::End(kind) => {
+                if end_closes_block(kind) {
                     let Some(mut frame) = stack.pop() else {
                         return Err(ParseError::StructuralInvariant {
                             reason: "CommonMark closed a block without an open frame".into(),
@@ -163,7 +150,7 @@ fn parse_strict(
                     }
                 }
             }
-            Event::Rule => {
+            ScanEvent::Rule => {
                 let frame = BlockFrame {
                     kind: Kind::ThematicBreak,
                     source_range: offsets.clone(),
@@ -178,7 +165,6 @@ fn parse_strict(
                     blocks.push(frame);
                 }
             }
-            _ => {}
         }
     }
     while let Some(mut frame) = stack.pop() {
@@ -505,45 +491,50 @@ fn frame_metadata(
     None
 }
 
-fn start_kind(tag: &Tag<'_>, source: &str, range: &Range<usize>) -> Option<Kind> {
+fn start_kind(tag: &ScanTag, source: &str, range: &Range<usize>) -> Option<Kind> {
     Some(match tag {
-        Tag::Paragraph => Kind::Paragraph,
-        Tag::Heading { level, .. } => {
-            if heading_is_setext(source, range, *level) {
+        ScanTag::Paragraph => Kind::Paragraph,
+        ScanTag::Heading { .. } => {
+            if heading_is_setext(source, range) {
                 Kind::SetextHeading
             } else {
                 Kind::AtxHeading
             }
         }
-        Tag::BlockQuote(_) => Kind::BlockQuote,
-        Tag::CodeBlock(CodeBlockKind::Indented) => Kind::IndentedCodeBlock,
-        Tag::CodeBlock(CodeBlockKind::Fenced(_)) => Kind::FencedCodeBlock,
-        Tag::HtmlBlock => Kind::HtmlBlock,
-        Tag::List(_) => Kind::List,
-        Tag::Item => Kind::ListItem,
-        Tag::Table(_) => Kind::Table,
-        Tag::TableHead => Kind::TableHead,
-        Tag::TableRow => Kind::TableRow,
-        Tag::TableCell => Kind::TableCell,
+        ScanTag::BlockQuote => Kind::BlockQuote,
+        ScanTag::IndentedCodeBlock => Kind::IndentedCodeBlock,
+        ScanTag::FencedCodeBlock => Kind::FencedCodeBlock,
+        ScanTag::HtmlBlock => Kind::HtmlBlock,
+        ScanTag::List => Kind::List,
+        ScanTag::Item => Kind::ListItem,
+        ScanTag::Table { .. } => Kind::Table,
+        ScanTag::TableHead => Kind::TableHead,
+        ScanTag::TableRow => Kind::TableRow,
+        ScanTag::TableCell => Kind::TableCell,
         _ => return None,
     })
 }
 
-fn end_kind(tag: TagEnd) -> Option<Kind> {
-    Some(match tag {
-        TagEnd::Paragraph => Kind::Paragraph,
-        TagEnd::Heading(_) => Kind::AtxHeading,
-        TagEnd::BlockQuote(_) => Kind::BlockQuote,
-        TagEnd::CodeBlock => Kind::FencedCodeBlock,
-        TagEnd::HtmlBlock => Kind::HtmlBlock,
-        TagEnd::List(_) => Kind::List,
-        TagEnd::Item => Kind::ListItem,
-        TagEnd::Table => Kind::Table,
-        TagEnd::TableHead => Kind::TableHead,
-        TagEnd::TableRow => Kind::TableRow,
-        TagEnd::TableCell => Kind::TableCell,
-        _ => return None,
-    })
+/// Whether this end closes a frame the tree builder opened.
+///
+/// Must mirror `start_kind`'s `None` cases exactly, or the frame stack unwinds
+/// out of step.
+fn end_closes_block(kind: ScanTagKind) -> bool {
+    matches!(
+        kind,
+        ScanTagKind::Paragraph
+            | ScanTagKind::Heading
+            | ScanTagKind::BlockQuote
+            | ScanTagKind::IndentedCodeBlock
+            | ScanTagKind::FencedCodeBlock
+            | ScanTagKind::HtmlBlock
+            | ScanTagKind::List
+            | ScanTagKind::Item
+            | ScanTagKind::Table
+            | ScanTagKind::TableHead
+            | ScanTagKind::TableRow
+            | ScanTagKind::TableCell
+    )
 }
 
 fn leaf_tokens(
@@ -1415,7 +1406,7 @@ fn validate_event_range(
     }
     Ok(())
 }
-fn heading_is_setext(source: &str, range: &Range<usize>, _level: HeadingLevel) -> bool {
+fn heading_is_setext(source: &str, range: &Range<usize>) -> bool {
     source[range.clone()]
         .trim_end_matches(['\r', '\n'])
         .rsplit_once('\n')
@@ -1498,7 +1489,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn malformed_pulldown_event_range_recovers_as_raw_text() {
+    fn malformed_scan_event_range_recovers_as_raw_text() {
         let source = "0\n\r\t\u{0800}";
         let text = SourceText::new(source).unwrap();
         match parse_strict(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()) {
