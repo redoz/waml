@@ -164,3 +164,34 @@ fn hidden_syntax_hides_a_link_destination_but_keeps_its_label() {
         "a reader sees the label; the destination and its punctuation are hidden"
     );
 }
+
+#[test]
+fn hidden_syntax_hides_frontmatter_metadata_but_keeps_the_prose_below_it() {
+    let source = "---
+type: uml.Class
+---
+# Class
+";
+    let (snapshot, plan) = compile(source, &PresentationStyles::hiding_syntax());
+
+    let visible = runs(&plan, &snapshot)
+        .into_iter()
+        .filter(|(_, _, hidden)| !hidden)
+        .map(|(slice, _, _)| slice)
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(
+        !visible.contains("type: uml.Class"),
+        "frontmatter is document metadata, not prose a reader should see"
+    );
+    assert!(
+        visible.contains("Class"),
+        "the prose below the frontmatter stays visible"
+    );
+    assert_eq!(
+        plan.validate_source_partition(),
+        Ok(()),
+        "hidden frontmatter still covers its source bytes"
+    );
+}

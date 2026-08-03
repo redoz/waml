@@ -156,6 +156,10 @@ pub struct ShapedCluster {
     pub row_top: f64,
     pub caret_offsets: Arc<[TextSize]>,
     pub glyphs: Arc<[ShapedGlyph]>,
+    /// Carried from the cluster's `ShapeSpan`. A hidden cluster contributes no
+    /// width and no height, so a line built only from hidden clusters collapses
+    /// rather than leaving a blank row.
+    pub hidden: bool,
 }
 
 /// Immutable renderer input retained from the shaping authority.
@@ -2417,6 +2421,9 @@ fn fallback_block(
         let start = block.source_range.start().to_usize() + relative;
         let end = start + character.len_utf8();
         shaped.push(ShapedCluster {
+            // This fallback path shapes a block's own source directly and has
+            // no span to inherit visibility from.
+            hidden: false,
             id: GeometryElementId {
                 layout: block.id,
                 cluster_ordinal: 0,
@@ -2529,16 +2536,27 @@ impl InlineComposer {
             self.flush_line();
             self.y = self.y.max(paragraph_start_y + row.row_top);
             for shaped in paragraph.clusters[row.cluster_range.clone()].iter() {
+                // The font-size floor keeps glyphless clusters at a sane
+                // height. A hidden cluster wants the opposite, so it seeds at
+                // zero and a line of nothing but hidden markers collapses.
+                let (ascender_floor, descender_floor) = if shaped.hidden {
+                    (0.0, 0.0)
+                } else {
+                    (
+                        shaped.metrics.font_size as f64 * 0.8,
+                        shaped.metrics.font_size as f64 * 0.2,
+                    )
+                };
                 let ascender = shaped
                     .glyphs
                     .iter()
                     .map(|glyph| glyph.ascender)
-                    .fold(shaped.metrics.font_size as f64 * 0.8, f64::max);
+                    .fold(ascender_floor, f64::max);
                 let descender = shaped
                     .glyphs
                     .iter()
                     .map(|glyph| glyph.descender.abs())
-                    .fold(shaped.metrics.font_size as f64 * 0.2, f64::max);
+                    .fold(descender_floor, f64::max);
                 let line_gap = shaped
                     .glyphs
                     .iter()

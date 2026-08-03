@@ -455,11 +455,19 @@ fn extract_clusters(
             // A hidden span keeps its clusters, and with them its caret stops,
             // row coverage, and font metrics. Only the advances go to zero, so
             // the marker occupies no width and nothing is painted for it.
+            // Vertical metrics go to zero too. Row height is the max over a
+            // line's clusters, so a line that is nothing but hidden markers -
+            // a code fence, a frontmatter line - collapses instead of leaving a
+            // blank row, while a mixed line like `# Title` keeps the height of
+            // its visible text.
             let (advance, glyphs) = if span.hidden {
                 let glyphs = glyphs
                     .into_iter()
                     .map(|glyph| ShapedGlyph {
                         advance: 0.0,
+                        ascender: 0.0,
+                        descender: 0.0,
+                        line_gap: 0.0,
                         ..glyph
                     })
                     .collect::<Vec<_>>();
@@ -468,6 +476,7 @@ fn extract_clusters(
                 (advance, glyphs)
             };
             clusters.push(ShapedCluster {
+                hidden: span.hidden,
                 id: GeometryElementId {
                     layout: span.id.layout,
                     cluster_ordinal: 0,

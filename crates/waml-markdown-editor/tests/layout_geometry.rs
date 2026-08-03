@@ -288,6 +288,7 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
     let mut shaper = FixedShaper(ShapedRun {
         clusters: Arc::from([
             ShapedCluster {
+                hidden: false,
                 id: GeometryElementId {
                     layout: run.id,
                     cluster_ordinal: 0,
@@ -306,6 +307,7 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
                 glyphs: Arc::from([glyph(501, 0.0, 17.0, 14.0)]),
             },
             ShapedCluster {
+                hidden: false,
                 id: GeometryElementId {
                     layout: run.id,
                     cluster_ordinal: 0,
@@ -324,6 +326,7 @@ fn renderer_ready_glyph_payload_survives_complex_clusters() {
                 glyphs: Arc::from([glyph(601, 0.0, 12.0, 14.0), glyph(602, 4.0, 0.0, 14.0)]),
             },
             ShapedCluster {
+                hidden: false,
                 id: GeometryElementId {
                     layout: run.id,
                     cluster_ordinal: 0,
@@ -2179,13 +2182,15 @@ fn test_row(
 ) -> ShapedRow {
     let source_start = clusters[start].source_range.start();
     let source_end = clusters[end - 1].source_range.end();
+    // Row metrics fold the glyphs, as the engine does, so a row of hidden
+    // clusters (whose glyph metrics are zero) collapses here too.
     let ascender = clusters[start..end]
         .iter()
-        .map(|cluster| cluster.metrics.font_size as f64 * 0.8)
+        .flat_map(|cluster| cluster.glyphs.iter().map(|glyph| glyph.ascender))
         .fold(0.0, f64::max);
     let descender = clusters[start..end]
         .iter()
-        .map(|cluster| cluster.metrics.font_size as f64 * 0.2)
+        .flat_map(|cluster| cluster.glyphs.iter().map(|glyph| glyph.descender.abs()))
         .fold(0.0, f64::max);
     ShapedRow {
         id: GeometryElementId {
@@ -2247,6 +2252,7 @@ impl GlyphCharacterShaper {
                 let start = run.range.start().to_usize() + relative;
                 let end = start + character.len_utf8();
                 ShapedCluster {
+                    hidden: false,
                     id: GeometryElementId {
                         layout: run.id,
                         cluster_ordinal: 0,
@@ -2302,7 +2308,7 @@ impl TextShaper for GlyphCharacterShaper {
                     id: span.run_id,
                     range: span.source_range,
                     metrics: span.metrics,
-                    hidden: false,
+                    hidden: span.hidden,
                 };
                 self.shape(request.source, &run, request.full_width)
                     .map(|shaped| (span.clone(), shaped))
@@ -2364,6 +2370,7 @@ impl MetricGlyphShaper {
         let descender = -(run.metrics.font_size as f64 * 0.2);
         Ok(ShapedRun {
             clusters: Arc::from([ShapedCluster {
+                hidden: false,
                 id: GeometryElementId {
                     layout: run.id,
                     cluster_ordinal: 0,
@@ -2415,7 +2422,7 @@ impl TextShaper for MetricGlyphShaper {
                     id: span.run_id,
                     range: span.source_range,
                     metrics: span.metrics,
-                    hidden: false,
+                    hidden: span.hidden,
                 };
                 self.shape(request.source, &run, request.full_width)
                     .map(|shaped| (span.clone(), shaped))
@@ -2439,6 +2446,7 @@ fn shaped_cluster(
     bidi_level: u8,
 ) -> ShapedCluster {
     ShapedCluster {
+        hidden: false,
         id: GeometryElementId {
             layout: layout_id,
             cluster_ordinal: 0,
@@ -2493,10 +2501,14 @@ impl FakeShaper {
         }
         let text = source.slice(run.range).unwrap();
         let mut clusters = Vec::new();
+        // A hidden run keeps its clusters but contributes no advance and no
+        // height, so a marker-only line collapses. Mirrors the makepad shaper.
+        let scale = if run.hidden { 0.0 } else { 1.0 };
         for (relative, character) in text.char_indices() {
             let start = run.range.start().to_usize() + relative;
             let end = start + character.len_utf8();
             clusters.push(ShapedCluster {
+                hidden: run.hidden,
                 id: GeometryElementId {
                     layout: run.id,
                     cluster_ordinal: 0,
@@ -2507,11 +2519,12 @@ impl FakeShaper {
                 },
                 source_range: range(start, end),
                 metrics: run.metrics,
-                advance: self
-                    .advance_override
-                    .get(&run.id.fragment_ordinal)
-                    .copied()
-                    .unwrap_or(run.metrics.font.0 as f64),
+                advance: scale
+                    * self
+                        .advance_override
+                        .get(&run.id.fragment_ordinal)
+                        .copied()
+                        .unwrap_or(run.metrics.font.0 as f64),
                 bidi_level: 0,
                 row_ordinal: 0,
                 row_top: 0.0,
@@ -2519,17 +2532,18 @@ impl FakeShaper {
                 glyphs: Arc::from([ShapedGlyph {
                     glyph_id: u16::try_from(character as u32).unwrap_or(0),
                     origin: dvec2(0.0, 0.0),
-                    advance: self
-                        .advance_override
-                        .get(&run.id.fragment_ordinal)
-                        .copied()
-                        .unwrap_or(run.metrics.font.0 as f64),
+                    advance: scale
+                        * self
+                            .advance_override
+                            .get(&run.id.fragment_ordinal)
+                            .copied()
+                            .unwrap_or(run.metrics.font.0 as f64),
                     paint_scale: 1.0,
                     font: None,
                     font_key: run.metrics.font,
                     font_size: run.metrics.font_size,
-                    ascender: run.metrics.font_size as f64 * 0.8,
-                    descender: -(run.metrics.font_size as f64 * 0.2),
+                    ascender: scale * run.metrics.font_size as f64 * 0.8,
+                    descender: -(scale * run.metrics.font_size as f64 * 0.2),
                     line_gap: 0.0,
                     baseline: run.metrics.font_size as f64 * 0.8,
                     offset: 0.0,
@@ -2539,8 +2553,8 @@ impl FakeShaper {
         }
         Ok(ShapedRun {
             clusters: clusters.into(),
-            ascender: run.metrics.font_size as f64 * 0.8,
-            descender: run.metrics.font_size as f64 * 0.2,
+            ascender: scale * run.metrics.font_size as f64 * 0.8,
+            descender: scale * run.metrics.font_size as f64 * 0.2,
             line_gap: 0.0,
         })
     }
@@ -2564,7 +2578,7 @@ impl TextShaper for FakeShaper {
                     id: span.run_id,
                     range: span.source_range,
                     metrics: span.metrics,
-                    hidden: false,
+                    hidden: span.hidden,
                 };
                 self.shape(request.source, &run, request.full_width)
                     .map(|shaped| (span.clone(), shaped))
@@ -3338,4 +3352,49 @@ mod fixtures {
             },
         )
     }
+}
+
+#[test]
+fn a_line_of_only_hidden_markers_collapses_while_a_mixed_line_keeps_its_height() {
+    let visible_height = {
+        let (document, presentation, mut shaper) = fixtures::paragraph();
+        LayoutEngine::default()
+            .layout(
+                &document,
+                &presentation,
+                LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+                LayoutInvalidation::Document,
+                &mut shaper,
+            )
+            .unwrap()
+            .visual_lines()[0]
+            .height()
+    };
+
+    let (mut document, presentation, mut shaper) = fixtures::paragraph();
+    let mut runs = document.text_runs.to_vec();
+    for run in runs.iter_mut() {
+        run.hidden = true;
+    }
+    document.text_runs = runs.into();
+    let hidden_height = LayoutEngine::default()
+        .layout(
+            &document,
+            &presentation,
+            LayoutViewport::new(400.0, 200.0, 0.0, 40.0),
+            LayoutInvalidation::Document,
+            &mut shaper,
+        )
+        .unwrap()
+        .visual_lines()[0]
+        .height();
+
+    assert!(
+        visible_height > 1.0,
+        "the baseline line has real height to collapse from"
+    );
+    assert!(
+        hidden_height < visible_height,
+        "a line of nothing but hidden markers - a code fence, a frontmatter          line - collapses instead of leaving a blank row          (visible {visible_height}, hidden {hidden_height})"
+    );
 }

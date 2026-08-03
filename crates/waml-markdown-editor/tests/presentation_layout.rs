@@ -422,6 +422,7 @@ impl waml_markdown_editor::layout::TextShaper for CountingShaper {
         let mut clusters = Vec::new();
         for (ordinal, span) in request.spans.iter().enumerate() {
             clusters.push(ShapedCluster {
+                hidden: false,
                 id: waml_markdown_editor::layout::GeometryElementId {
                     layout: request.paragraph_id.layout,
                     cluster_ordinal: 0x8000_0000 | ordinal as u32,

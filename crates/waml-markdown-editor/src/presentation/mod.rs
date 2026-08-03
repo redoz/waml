@@ -80,9 +80,10 @@ pub enum TextRole {
 impl TextRole {
     /// Whether this run is markdown punctuation rather than authored content.
     ///
-    /// These are the runs a reading view hides. `ListMarker` is deliberately
-    /// absent: an ordered number is content, and the compiler decides per item
-    /// whether an unordered marker hides in favour of a bullet decoration.
+    /// These are the runs a reading view hides. `Frontmatter` is included: it
+    /// is document metadata, not prose. `ListMarker` is deliberately absent -
+    /// an ordered number is content, and the compiler decides per item whether
+    /// an unordered marker hides in favour of a bullet decoration.
     pub fn is_syntax_marker(self) -> bool {
         matches!(
             self,
@@ -94,6 +95,7 @@ impl TextRole {
                 | Self::CodeInfo
                 | Self::LinkDestination
                 | Self::TableDelimiter
+                | Self::Frontmatter
         )
     }
 }
