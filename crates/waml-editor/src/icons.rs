@@ -3867,6 +3867,97 @@ script_mod! {
         }
     }
 
+
+    // File code: the file-text document outline with a chevron pair in place of
+    // the text rows. Faithful port of resources/icons/file-code.svg via
+    // scripts/gen-icon.py.
+    mod.draw.IconFileCode = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.4167, s * 0.5208)
+            sdf.line_to(s * 0.3333, s * 0.6250)
+            sdf.line_to(s * 0.4167, s * 0.7292)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.5208)
+            sdf.line_to(s * 0.6667, s * 0.6250)
+            sdf.line_to(s * 0.5833, s * 0.7292)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.0833)
+            sdf.line_to(s * 0.5833, s * 0.2917)
+            sdf.arc_to(s * 0.6250, s * 0.2917, s * 0.0417, 3.1416, 1.5708)
+            sdf.line_to(s * 0.8333, s * 0.3333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2500, s * 0.9167)
+            sdf.arc_to(s * 0.2500, s * 0.8333, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1667, s * 0.1667)
+            sdf.arc_to(s * 0.2500, s * 0.1667, s * 0.0833, 3.1416, 4.7124)
+            sdf.line_to(s * 0.5833, s * 0.0833)
+            sdf.arc_to(s * 0.5835, s * 0.1833, s * 0.1000, -1.5724, -0.7836)
+            sdf.line_to(s * 0.8038, s * 0.2623)
+            sdf.arc_to(s * 0.7333, s * 0.3332, s * 0.1000, -0.7884, 0.0016)
+            sdf.line_to(s * 0.8333, s * 0.8333)
+            sdf.arc_to(s * 0.7500, s * 0.8333, s * 0.0833, 0.0000, 1.5708)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // File code corner: the same document, opened at the lower-left so the
+    // chevron pair straddles its edge. Faithful port of
+    // resources/icons/file-code-corner.svg via scripts/gen-icon.py.
+    mod.draw.IconFileCodeCorner = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.5833, s * 0.0833)
+            sdf.line_to(s * 0.5833, s * 0.2917)
+            sdf.arc_to(s * 0.6250, s * 0.2917, s * 0.0417, 3.1416, 1.5708)
+            sdf.line_to(s * 0.8333, s * 0.3333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1667, s * 0.9167)
+            sdf.line_to(s * 0.7500, s * 0.9167)
+            sdf.arc_to(s * 0.7500, s * 0.8333, s * 0.0833, 1.5708, 0.0000)
+            sdf.line_to(s * 0.8333, s * 0.3333)
+            sdf.arc_to(s * 0.7333, s * 0.3332, s * 0.1000, 0.0016, -0.7872)
+            sdf.line_to(s * 0.6544, s * 0.1128)
+            sdf.arc_to(s * 0.5835, s * 0.1833, s * 0.1000, -0.7824, -1.5724)
+            sdf.line_to(s * 0.2500, s * 0.0833)
+            sdf.arc_to(s * 0.2500, s * 0.1667, s * 0.0833, -1.5708, -3.1416)
+            sdf.line_to(s * 0.1667, s * 0.3333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2083, s * 0.5000)
+            sdf.line_to(s * 0.0833, s * 0.6250)
+            sdf.line_to(s * 0.2083, s * 0.7500)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3750, s * 0.7500)
+            sdf.line_to(s * 0.5000, s * 0.6250)
+            sdf.line_to(s * 0.3750, s * 0.5000)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Plus: the bare cross. Faithful port of resources/icons/plus.svg via
+    // scripts/gen-icon.py.
+    mod.draw.IconPlus = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2083, s * 0.5000)
+            sdf.line_to(s * 0.7917, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.2083)
+            sdf.line_to(s * 0.5000, s * 0.7917)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -3990,6 +4081,9 @@ script_mod! {
         panel_right_open: mod.draw.IconPanelRightOpen{ color: atlas.accent }
         panel_right_close: mod.draw.IconPanelRightClose{ color: atlas.accent }
         folder_down: mod.draw.IconFolderDown{ color: atlas.accent }
+        file_code: mod.draw.IconFileCode{ color: atlas.accent }
+        file_code_corner: mod.draw.IconFileCodeCorner{ color: atlas.accent }
+        plus: mod.draw.IconPlus{ color: atlas.accent }
     }
 }
 
@@ -4233,6 +4327,12 @@ pub struct IconSet {
     pub panel_right_close: DrawColor,
     #[live]
     pub folder_down: DrawColor,
+    #[live]
+    pub file_code: DrawColor,
+    #[live]
+    pub file_code_corner: DrawColor,
+    #[live]
+    pub plus: DrawColor,
 }
 
 // Not every bin that `#[path]`-includes this file exercises the whole catalog
@@ -4362,6 +4462,9 @@ impl IconSet {
             Icon::PanelRightOpen => &mut self.panel_right_open,
             Icon::PanelRightClose => &mut self.panel_right_close,
             Icon::FolderDown => &mut self.folder_down,
+            Icon::FileCode => &mut self.file_code,
+            Icon::FileCodeCorner => &mut self.file_code_corner,
+            Icon::Plus => &mut self.plus,
         }
     }
 
@@ -4498,13 +4601,16 @@ pub enum Icon {
     PanelRightOpen,
     PanelRightClose,
     FolderDown,
+    FileCode,
+    FileCodeCorner,
+    Plus,
 }
 
 #[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 118] = [
+    pub const ALL: [Icon; 121] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4623,6 +4729,9 @@ impl Icon {
         Icon::PanelRightOpen,
         Icon::PanelRightClose,
         Icon::FolderDown,
+        Icon::FileCode,
+        Icon::FileCodeCorner,
+        Icon::Plus,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -4747,6 +4856,9 @@ impl Icon {
             Icon::PanelRightOpen => "panel-right-open",
             Icon::PanelRightClose => "panel-right-close",
             Icon::FolderDown => "folder-down",
+            Icon::FileCode => "file-code",
+            Icon::FileCodeCorner => "file-code-corner",
+            Icon::Plus => "plus",
         }
     }
 }
@@ -4756,8 +4868,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_118_entries() {
-        assert_eq!(Icon::ALL.len(), 118);
+    fn icon_all_has_121_entries() {
+        assert_eq!(Icon::ALL.len(), 121);
     }
 
     #[test]
@@ -4823,6 +4935,18 @@ mod tests {
         assert_eq!(Icon::FolderDown.label(), "folder-down");
     }
 
+    /// The source-view glyph pair plus the bare cross, appended after the
+    /// export glyph.
+    #[test]
+    fn file_code_and_plus_glyphs_close_the_catalog_with_lucide_slugs() {
+        assert_eq!(Icon::ALL[118], Icon::FileCode);
+        assert_eq!(Icon::ALL[119], Icon::FileCodeCorner);
+        assert_eq!(Icon::ALL[120], Icon::Plus);
+        assert_eq!(Icon::FileCode.label(), "file-code");
+        assert_eq!(Icon::FileCodeCorner.label(), "file-code-corner");
+        assert_eq!(Icon::Plus.label(), "plus");
+    }
+
     #[test]
     fn view_bar_glyphs_present_with_lucide_slugs() {
         assert_eq!(Icon::ZoomIn.label(), "zoom-in");
@@ -4842,7 +4966,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 118);
+        assert_eq!(seen.len(), 121);
     }
 
     #[test]

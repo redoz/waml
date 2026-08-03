@@ -904,7 +904,7 @@ mod tests {
     fn source_tab(key: &str, title: &str) -> DocTab {
         let mut tab = tab(key, title, TreeKind::OkfDocument);
         tab.id = crate::okf_documents::source_document_tab_id(key);
-        tab.presentation.icon = Icon::FileBraces;
+        tab.presentation.icon = Icon::FileCode;
         tab.kind = crate::view_history::DocumentKind::Source;
         tab
     }
@@ -1114,7 +1114,7 @@ mod tests {
         let id = open.open_preview(source_tab("customer", "Customer"));
         assert_eq!(open.tabs.len(), 1);
         assert_eq!(open.tabs[0].presentation.category, TreeKind::OkfDocument);
-        assert_eq!(open.tabs[0].presentation.icon.label(), "file-braces");
+        assert_eq!(open.tabs[0].presentation.icon.label(), "file-code");
         assert!(open.tabs[0].preview);
         assert_eq!(open.tabs[0].title, "Customer");
         assert_eq!(open.active, id);

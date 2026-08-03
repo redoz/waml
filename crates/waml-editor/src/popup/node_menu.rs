@@ -25,7 +25,7 @@ pub fn base_items() -> Vec<PopupItem> {
         PopupItem {
             id: live_id!(view_source),
             label: "View Source".into(),
-            icon: Some(Icon::Braces),
+            icon: Some(Icon::FileCode),
             danger: false,
             enabled: true,
         },

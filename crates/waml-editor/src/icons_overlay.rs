@@ -52,7 +52,8 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
     (
         "NODE MENU",
         &[
-            ie!(Braces, "View source"),
+            ie!(FileCode, "View source"),
+            ie!(FileCodeCorner, "View source -- open-edge variant, unwired"),
             ie!(Search, "Find in diagrams"),
             ie!(PackageOpen, "Open package (radial)"),
         ],
@@ -78,7 +79,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(Folder, "Folder / package node"),
             ie!(Funnel, "Filter chip"),
             ie!(FileText, "Generic OKF document"),
-            ie!(FileBraces, "Source document tab"),
+            ie!(Braces, "Data type kind"),
             ie!(SquareDashedTopSolid, "Classifier kind"),
             ie!(List, "Enumeration kind"),
             ie!(Workflow, "Process kind"),
@@ -129,6 +130,8 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
                 "Inspection panel — catalog glyph, no current call site"
             ),
             ie!(PanelLeft, "Retired static left-dock toggle"),
+            ie!(Plus, "Add / new -- catalog glyph, no current call site"),
+            ie!(FileBraces, "Retired source-document glyph"),
         ],
     ),
 ];
@@ -293,6 +296,11 @@ mod drift {
         // Was the tree panel's type-filter chip "All" lead; the chip is gone but
         // the glyph stays catalogued (catalog glyphs are pruned deliberately).
         Icon::Funnel,
+        // The open-edge source glyph and the bare cross, catalogued ahead of a
+        // call site.
+        Icon::FileCodeCorner,
+        Icon::Plus,
+        Icon::FileBraces,
     ];
 
     fn table_icons() -> Vec<Icon> {

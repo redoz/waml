@@ -88,7 +88,7 @@ pub fn open_source_with_asset_host(
 ) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
     let mut presentation = presentation(analysis, concept_id)?;
-    presentation.icon = Icon::FileBraces;
+    presentation.icon = Icon::FileCode;
     Some(OpenDocument {
         tab_id: source_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
@@ -174,6 +174,6 @@ mod tests {
         let source_document =
             open_source_with_asset_host(prepared.okf(), "runbook", &assets()).unwrap();
 
-        assert_eq!(source_document.presentation.icon, Icon::FileBraces);
+        assert_eq!(source_document.presentation.icon, Icon::FileCode);
     }
 }
