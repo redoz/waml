@@ -769,7 +769,7 @@ mod tests {
         fs::write(temp.0.join(".waml/README.md"), "# Not your model\n").unwrap();
         fs::write(temp.0.join(".waml/settings.json"), "{}").unwrap();
 
-        let bundle = read_bundle_rooted(&[temp.0.clone()], false).unwrap();
+        let bundle = read_bundle_rooted(std::slice::from_ref(&temp.0), false).unwrap();
         let keys: Vec<&str> = bundle.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(keys, ["order.md"]);
     }
