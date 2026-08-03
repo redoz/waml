@@ -1,6 +1,6 @@
 use std::{collections::HashMap, num::NonZeroU64, sync::Arc};
 
-use pulldown_cmark::{Event, Parser};
+use super::scan::{scan_is_inline_html, scan_text_entities};
 
 use crate::{
     GreenElement, GreenFactory, GreenNode, GreenText, MarkdownDialect, OkfMarkdownLanguage,
@@ -1347,12 +1347,7 @@ fn code_span_close(source: &str, mut at: usize, end: usize, wanted: usize) -> Op
 }
 
 pub(crate) fn decode_entity(spelling: &str) -> Option<String> {
-    let mut text = String::new();
-    for event in Parser::new(spelling) {
-        if let Event::Text(value) = event {
-            text.push_str(&value);
-        }
-    }
+    let text = scan_text_entities(spelling);
     (text != spelling && !text.is_empty()).then_some(text)
 }
 
@@ -1385,9 +1380,7 @@ fn is_raw_html(value: &str) -> bool {
         return true;
     }
     let candidate = format!("<{value}>");
-    Parser::new(&candidate).any(
-        |event| matches!(event, Event::InlineHtml(html) | Event::Html(html) if html.as_ref() == candidate),
-    )
+    scan_is_inline_html(&candidate)
 }
 
 struct ExtendedAutolink {
