@@ -207,7 +207,10 @@ pub fn current_line_bands(
 ///
 /// The width follows the widest label the document can produce rather than the
 /// widest one on screen, so scrolling never shifts the text sideways.
+///
+/// Four digits are always reserved so documents up to 9999 lines keep a stable
+/// gutter and the text never shifts as the line count grows.
 pub fn gutter_width(line_count: usize, digit_width: f64, gap: f64) -> f64 {
-    let digits = line_count.max(1).to_string().len().max(2) as f64;
+    let digits = line_count.max(1).to_string().len().max(4) as f64;
     digits * digit_width + gap
 }

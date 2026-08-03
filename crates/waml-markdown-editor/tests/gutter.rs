@@ -120,11 +120,12 @@ fn the_off_mode_reserves_nothing() {
 
 #[test]
 fn the_reserved_width_follows_the_document_not_the_visible_rows() {
-    let two = gutter_width(9, 6.0, 10.0);
-    let three = gutter_width(100, 6.0, 10.0);
-    // Single-digit documents still reserve two digits, so the first wrap past
-    // line 9 cannot shift the text sideways.
-    assert_eq!(gutter_width(1, 6.0, 10.0), two);
-    assert_eq!(two, 22.0);
-    assert_eq!(three, 28.0);
+    let four = gutter_width(9, 6.0, 10.0);
+    let five = gutter_width(10_000, 6.0, 10.0);
+    // Every document up to 9999 lines reserves the same four digits, so growing
+    // the line count cannot shift the text sideways.
+    assert_eq!(gutter_width(1, 6.0, 10.0), four);
+    assert_eq!(gutter_width(9999, 6.0, 10.0), four);
+    assert_eq!(four, 34.0);
+    assert_eq!(five, 40.0);
 }
