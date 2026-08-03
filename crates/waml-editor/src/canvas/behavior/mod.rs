@@ -414,7 +414,9 @@ pub enum BehaviorSurfaceAction {
     /// The camera's zoom percentage changed (mirrors
     /// `ClassDiagramSurfaceAction::CameraChanged`). Not a pointer intent:
     /// `surface_action` skips it, `camera_changed` reads it.
-    CameraChanged { zoom_pct: i32 },
+    CameraChanged {
+        zoom_pct: i32,
+    },
 }
 
 impl Widget for BehaviorSurface {
@@ -873,12 +875,10 @@ mod tests {
             let effects = surface.viewport.zoom_step(1.0);
             surface.apply_viewport_effects(cx, effects);
         });
-        assert!(quiet
-            .filter_widget_actions(uid)
-            .all(|item| !matches!(
-                item.cast::<BehaviorSurfaceAction>(),
-                BehaviorSurfaceAction::CameraChanged { .. }
-            )));
+        assert!(quiet.filter_widget_actions(uid).all(|item| !matches!(
+            item.cast::<BehaviorSurfaceAction>(),
+            BehaviorSurfaceAction::CameraChanged { .. }
+        )));
     }
 
     /// A newly-installed scene must be FRAMED, not left at pan(0,0)/zoom 1; an
