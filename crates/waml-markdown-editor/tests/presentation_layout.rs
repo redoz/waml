@@ -690,3 +690,23 @@ fn table_header_cells_share_a_row_with_increasing_column_origins() {
     assert!(left.rect.pos.x < center.rect.pos.x);
     assert!(center.rect.pos.x < right.rect.pos.x);
 }
+
+#[test]
+fn each_blank_source_line_gets_its_own_gap_fragment() {
+    // Merging a multi-line gap into one fragment gives two blank lines a single
+    // visual row: the second line loses its height and its gutter number.
+    let (_, document) = document_for("# Head\n\npara one\n\n\npara two\n");
+    let gaps = document
+        .blocks
+        .iter()
+        .filter(|block| block.source_range.start().to_usize() >= 17)
+        .filter(|block| block.source_range.end().to_usize() <= 19)
+        .map(|block| {
+            (
+                block.source_range.start().to_usize(),
+                block.source_range.end().to_usize(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(gaps, vec![(17, 18), (18, 19)]);
+}

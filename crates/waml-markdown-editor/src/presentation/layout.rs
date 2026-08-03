@@ -280,10 +280,28 @@ fn fragment_parent_owned_runs(
             fragment_ordinal: id.fragment_ordinal,
         }
     }));
+    // A gap that spans several source lines must not become one fragment: the
+    // paragraph composer gives a fragment a single visual row, so two blank
+    // lines merged into one fragment lose a row — and with it the line's
+    // number and its height. Every run ending a source line closes its
+    // fragment, so one blank line is one row.
+    let line_breaks = plan
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            PresentationItem::TextRun {
+                range,
+                role: TextRole::LineBreak,
+                ..
+            } => Some(*range),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let parsed_blocks_len = blocks.len();
     let mut active: Option<(LayoutElementId, waml_syntax::TextSize, usize)> = None;
 
     for run in text_runs {
+        let ends_line = line_breaks.contains(&run.range);
         let parent_id = run.id;
         if !parents.contains(&parent_id) {
             active = None;
@@ -298,7 +316,7 @@ fn fragment_parent_owned_runs(
                 fragment.spec.flow =
                     gap_fragment_flow(parent_flows.get(&parent_id), fragment.source_range);
                 run.id = fragment.id;
-                active = Some((parent_id, run.range.end(), fragment_index));
+                active = (!ends_line).then_some((parent_id, run.range.end(), fragment_index));
                 continue;
             }
         }
@@ -320,7 +338,7 @@ fn fragment_parent_owned_runs(
             },
         });
         run.id = fragment_id;
-        active = Some((parent_id, run.range.end(), fragment_index));
+        active = (!ends_line).then_some((parent_id, run.range.end(), fragment_index));
     }
 }
 
