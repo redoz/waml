@@ -36,27 +36,27 @@ fn balanced_metrics_and_document_inset_are_fixed() {
     );
     assert_eq!(
         styles.metrics(TextRole::Body),
-        metrics(FONT_SANS, 12.5, 1.20, WEIGHT_REGULAR, false)
+        metrics(FONT_SANS, 13.5, 1.12, WEIGHT_REGULAR, false)
     );
     assert_eq!(
         styles.metrics(TextRole::Heading(1)),
-        metrics(FONT_SANS, 19.0, 1.10, WEIGHT_SEMIBOLD, false)
+        metrics(FONT_SANS, 24.0, 1.05, WEIGHT_SEMIBOLD, false)
     );
     assert_eq!(
         styles.metrics(TextRole::Heading(6)),
-        metrics(FONT_SANS, 12.5, 1.10, WEIGHT_SEMIBOLD, false)
+        metrics(FONT_SANS, 13.5, 1.05, WEIGHT_SEMIBOLD, false)
     );
     assert_eq!(
         styles.metrics(TextRole::CodeContent),
-        metrics(FONT_MONO, 11.5, 1.15, WEIGHT_REGULAR, false)
+        metrics(FONT_MONO, 12.5, 1.08, WEIGHT_REGULAR, false)
     );
     assert_eq!(
         styles.metrics(TextRole::Emphasis),
-        metrics(FONT_SANS, 12.5, 1.20, WEIGHT_REGULAR, true)
+        metrics(FONT_SANS, 13.5, 1.12, WEIGHT_REGULAR, true)
     );
     assert_eq!(
         styles.metrics(TextRole::StrongEmphasis),
-        metrics(FONT_SANS, 12.5, 1.20, WEIGHT_SEMIBOLD, true)
+        metrics(FONT_SANS, 13.5, 1.12, WEIGHT_SEMIBOLD, true)
     );
 }
 
