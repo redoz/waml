@@ -123,7 +123,7 @@ impl ScanTagKind {
     ];
 
     /// Declaration index. The exhaustive match is the tripwire for [`Self::ALL`].
-    fn ordinal(self) -> usize {
+    const fn ordinal(self) -> usize {
         match self {
             Self::Paragraph => 0,
             Self::Heading => 1,
@@ -142,6 +142,12 @@ impl ScanTagKind {
             Self::DefinitionListDefinition => 14,
         }
     }
+
+    /// The variant count, derived from the last variant's ordinal so it moves
+    /// with the exhaustive match in [`Self::ordinal`] instead of sitting as a
+    /// second hand-maintained literal for `all_covers_every_kind` to drift
+    /// against.
+    const COUNT: usize = Self::DefinitionListDefinition.ordinal() + 1;
 }
 
 /// A block tag opening, with the payload the consumers actually read.
@@ -356,9 +362,16 @@ mod tests {
     fn all_covers_every_kind() {
         // Matching ordinals alone would still pass for a *short* `ALL`, which
         // would silently thin the parity coverage `ALL` drives in block.rs. The
-        // length assertion is the half that catches an omitted variant; bump it
-        // deliberately when `ordinal`'s exhaustive match grows.
-        assert_eq!(ScanTagKind::ALL.len(), 15, "a variant is missing from ALL");
+        // length assertion is the half that catches an omitted variant, and it
+        // is checked against `COUNT` — derived from `ordinal`'s exhaustive
+        // match — rather than a second hand-maintained literal, so a variant
+        // added to the enum without a matching `ALL` entry fails here instead
+        // of staying green.
+        assert_eq!(
+            ScanTagKind::ALL.len(),
+            ScanTagKind::COUNT,
+            "a variant is missing from ALL"
+        );
         for (index, kind) in ScanTagKind::ALL.iter().enumerate() {
             assert_eq!(kind.ordinal(), index, "ALL is out of step at {index}");
         }
