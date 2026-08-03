@@ -3,11 +3,11 @@
 //! `App` calls `route` once per event and `show_at` to open. Single active
 //! popup app-wide: `show_at` supersedes (dismisses) any open popup first.
 
+use crate::cursor;
 use crate::popup::base::{
     is_light_dismiss, is_primary_press, swallows_underlay, Popup, PopupItem, PopupResult,
     PopupVerdict,
 };
-use crate::cursor;
 use crate::popup::conflict_list::ConflictList;
 use crate::popup::menu::{MenuPopup, MENU_MAX_W, PAD_V, ROW_H};
 use crate::popup::presenter::Presenter;

@@ -27,8 +27,8 @@
 //! which `App` uses to promote the active preview tab to persisted.
 
 use crate::accent::bucket_color;
-use crate::cursor;
 use crate::attr_row::AttrRowViewWidgetRefExt;
+use crate::cursor;
 use crate::dock::{DockEvent, DockState};
 use crate::icons::{Icon, IconSet};
 use crate::inspector::{
