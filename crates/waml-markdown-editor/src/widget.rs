@@ -5,6 +5,7 @@ use makepad_widgets::{animator::Ease, shader::draw_text::FontFamily, text::geom:
 
 use crate::{
     edit::ProposedMarkdownEdit,
+    gutter::{current_line_bands, gutter_rows, gutter_width, LineNumberMode},
     input::{
         ControllerError, EditorInput, EditorKey, MarkdownEditorController, PointerGesture,
         ScrollAnchor, ScrollState, SelectionModifier,
@@ -57,6 +58,7 @@ script_mod! {
         inline_code_fill: #eceef1
         block_rule_color: #c7cbd1
         selection_color: #598ce647
+        current_line_fill: #00000009
         caret_color: #202124
     }
 }
@@ -170,7 +172,11 @@ impl WidgetFonts {
         if let Some(font) = font {
             draw.text_style.font_family = font.clone();
         }
-        draw.text_style.font_size = metrics.font_size;
+        // Makepad reads `font_size` as points and scales it by 96/72 on the way
+        // to logical pixels. Our metrics are already logical pixels, so undo
+        // that factor here — the shaper and the painter share this seam, so
+        // geometry and glyphs stay in step.
+        draw.text_style.font_size = metrics.font_size * 0.75;
         draw.text_style.line_spacing = metrics.line_spacing;
     }
 }
@@ -441,6 +447,16 @@ impl PaintEvidence {
     }
 }
 
+/// Gutter type is one size for every line, independent of the styles a line
+/// carries, so the numbers form a straight column.
+const GUTTER_FONT_SIZE: f32 = 11.0;
+/// Advance of one digit in the mono face at `GUTTER_FONT_SIZE`.
+const GUTTER_DIGIT_WIDTH: f64 = 6.6;
+const GUTTER_GAP: f64 = 10.0;
+/// Ascent of the mono face as a fraction of its size, matching the nominal
+/// ratio the shaper uses for an empty row.
+const GUTTER_ASCENT: f64 = 0.8;
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct MarkdownEditor {
     #[deref]
@@ -469,6 +485,8 @@ pub struct MarkdownEditor {
     pointer_drag_active: bool,
     #[rust]
     read_only: bool,
+    #[rust]
+    line_numbers: LineNumberMode,
     #[rust]
     reduced_motion: bool,
     #[rust]
@@ -529,6 +547,8 @@ pub struct MarkdownEditor {
     block_rule_color: Vec4,
     #[live]
     selection_color: Vec4,
+    #[live]
+    current_line_fill: Vec4,
     #[live]
     caret_color: Vec4,
     #[rust]
@@ -726,7 +746,10 @@ impl MarkdownEditor {
             self.scroll_y = requested_scroll.y;
         }
         let viewport = cx.peek_walk_turtle(walk);
-        let viewport_size = viewport.size;
+        let gutter = self.gutter_width(session);
+        // The gutter eats viewport width before wrapping is decided, so text
+        // never reflows when the mode is switched mid-session.
+        let viewport_size = dvec2((viewport.size.x - gutter).max(1.0), viewport.size.y);
         let layout = self.install_layout(cx, session, Some(viewport_size))?;
         let installed = self
             .installed
@@ -750,7 +773,7 @@ impl MarkdownEditor {
             session.ime(),
         )
         .map_err(MarkdownEditorError::Presentation)?;
-        let content_origin = viewport.pos - self.scroll_bars.get_scroll_pos();
+        let content_origin = viewport.pos + dvec2(gutter, 0.0) - self.scroll_bars.get_scroll_pos();
         let commands = commands
             .iter()
             .map(|command| command.translated(content_origin))
@@ -758,6 +781,7 @@ impl MarkdownEditor {
         self.scroll_bars.begin(cx, walk, Layout::default());
         self.last_draw = DrawRecorder::default();
         self.paint_evidence.begin_frame();
+        self.paint_current_line(cx, session, &layout, viewport, gutter);
         for layer in [
             DrawLayer::BlockBackground,
             DrawLayer::Selection,
@@ -803,6 +827,7 @@ impl MarkdownEditor {
             }
             self.last_draw.set_last_primitive_count(primitive_count);
         }
+        self.paint_gutter(cx, session, &layout, viewport.pos, gutter);
         cx.turtle_mut()
             .set_used(layout.content_size().x, layout.content_size().y);
         self.scroll_bars.end(cx);
@@ -816,6 +841,93 @@ impl MarkdownEditor {
             self.show_ime(cx, session);
         }
         Ok(DrawStep::done())
+    }
+
+    /// Logical pixels reserved on the left for line numbers, gap included.
+    fn gutter_width(&self, session: &MarkdownDocumentSession) -> f64 {
+        if self.line_numbers == LineNumberMode::Off {
+            return 0.0;
+        }
+        let snapshot = session.snapshot();
+        let text = snapshot.text();
+        let last_line = snapshot
+            .line_index()
+            .line_col(text, text.len())
+            .map_or(0, |at| at.line as usize);
+        gutter_width(last_line + 1, GUTTER_DIGIT_WIDTH, GUTTER_GAP)
+    }
+
+    /// Muted band behind every visual row of the cursor's source line. Drawn
+    /// before the layer loop so text, selection, and caret all sit on top, and
+    /// spanning gutter plus content so the number reads as part of the line.
+    fn paint_current_line(
+        &mut self,
+        cx: &mut Cx2d,
+        session: &MarkdownDocumentSession,
+        layout: &LayoutSnapshot,
+        viewport: Rect,
+        gutter: f64,
+    ) {
+        if self.read_only {
+            return;
+        }
+        let snapshot = session.snapshot();
+        let bands = current_line_bands(
+            layout,
+            snapshot.text(),
+            snapshot.line_index(),
+            session.selections().primary().cursor.offset,
+        );
+        let origin_y = viewport.pos.y - self.scroll_bars.get_scroll_pos().y;
+        self.draw_background.color = self.current_line_fill;
+        for (y, height) in bands {
+            self.draw_background.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(viewport.pos.x, origin_y + y),
+                    size: dvec2(viewport.size.x.max(gutter), height),
+                },
+            );
+        }
+    }
+
+    fn paint_gutter(
+        &mut self,
+        cx: &mut Cx2d,
+        session: &MarkdownDocumentSession,
+        layout: &LayoutSnapshot,
+        viewport_origin: DVec2,
+        gutter: f64,
+    ) {
+        if gutter <= 0.0 {
+            return;
+        }
+        let snapshot = session.snapshot();
+        let rows = gutter_rows(
+            layout,
+            snapshot.text(),
+            snapshot.line_index(),
+            session.selections().primary().cursor.offset,
+            self.line_numbers,
+        );
+        let origin_y = viewport_origin.y - self.scroll_bars.get_scroll_pos().y;
+        let right = viewport_origin.x + gutter - GUTTER_GAP;
+        self.draw_text_mono.text_style.font_size = GUTTER_FONT_SIZE * 0.75;
+        for row in rows {
+            self.draw_text_mono.color = if row.current {
+                self.body_color
+            } else {
+                self.marker_color
+            };
+            // Right-aligned on the fixed digit advance of the mono face.
+            let x = right - row.label.chars().count() as f64 * GUTTER_DIGIT_WIDTH;
+            // `draw_abs` takes the top of the text box, so back the digit's own
+            // ascent off the line's baseline: the two sit on one baseline even
+            // where the line is a heading in a much larger face.
+            let top = row.baseline - GUTTER_FONT_SIZE as f64 * GUTTER_ASCENT;
+            self.draw_text_mono
+                .draw_abs(cx, dvec2(x, origin_y + top), &row.label);
+        }
     }
 
     fn paint_command(&mut self, cx: &mut Cx2d, scope: &mut Scope, command: &DrawCommand) {
@@ -1206,10 +1318,27 @@ impl MarkdownEditor {
             None => self.install_layout(cx, session, None)?,
         };
         let old_selection = session.selections().clone();
-        let response = self
-            .controller
-            .handle(session, &layout, input)
-            .map_err(MarkdownEditorError::from)?;
+        let response = match self.controller.handle(session, &layout, input.clone()) {
+            Ok(response) => response,
+            // The frame layout trails the session by one frame right after an
+            // edit, and geometry-driven input (vertical motion, pointer hits)
+            // rejects it. Install the current layout and run the input once
+            // more rather than dropping the keystroke. When no fresh layout can
+            // be built — the presentation itself is stale — the original
+            // mismatch is still what the caller needs to see.
+            Err(ControllerError::Layout(stale @ LayoutError::RevisionMismatch { .. })) => {
+                let retried = self
+                    .install_layout(cx, session, None)
+                    .and_then(|layout| {
+                        self.controller
+                            .handle(session, &layout, input)
+                            .map_err(MarkdownEditorError::from)
+                    })
+                    .map_err(|_| MarkdownEditorError::ControllerLayout(stale));
+                retried?
+            }
+            Err(error) => return Err(MarkdownEditorError::from(error)),
+        };
         let mut actions: Vec<Action> = response
             .proposals
             .into_iter()
@@ -1331,6 +1460,25 @@ impl MarkdownEditorRef {
                 cx.hide_text_ime();
             }
         }
+    }
+
+    /// Off, absolute, or cursor-relative line numbers. Changing the mode
+    /// changes the reserved width, so the layout is rebuilt on the next draw.
+    pub fn set_line_numbers(&self, cx: &mut Cx, mode: LineNumberMode) {
+        if let Some(mut inner) = self.borrow_mut() {
+            if inner.line_numbers == mode {
+                return;
+            }
+            inner.line_numbers = mode;
+            inner.target_layout = None;
+            inner.pending_cause = Some(LayoutChangeCause::ViewportResize);
+            inner.redraw(cx);
+        }
+    }
+
+    pub fn line_numbers(&self) -> LineNumberMode {
+        self.borrow()
+            .map_or(LineNumberMode::Off, |inner| inner.line_numbers)
     }
 
     pub fn set_reduced_motion(&self, cx: &mut Cx, reduced_motion: bool) {
@@ -1477,6 +1625,12 @@ impl MarkdownEditorRef {
     pub fn test_painted_commands(&self) -> Vec<DrawCommand> {
         self.borrow()
             .map_or_else(Vec::new, |inner| inner.paint_evidence.commands().to_vec())
+    }
+
+    #[doc(hidden)]
+    pub fn test_gutter_width(&self, session: &MarkdownDocumentSession) -> f64 {
+        self.borrow()
+            .map_or(0.0, |inner| inner.gutter_width(session))
     }
 
     #[doc(hidden)]

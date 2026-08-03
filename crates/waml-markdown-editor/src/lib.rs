@@ -1,5 +1,6 @@
 pub mod document;
 pub mod edit;
+pub mod gutter;
 pub mod history;
 pub mod ime;
 pub mod input;

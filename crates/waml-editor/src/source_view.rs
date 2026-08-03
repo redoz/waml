@@ -4,6 +4,7 @@ use makepad_widgets::*;
 use waml::analysis::DocumentId;
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
+    gutter::LineNumberMode,
     layout::LayoutInvalidation,
     motion::LayoutChangeCause,
     presentation::{
@@ -106,6 +107,7 @@ fn presented_diagnostics_for(
 pub struct SourceView {
     key: String,
     read_only: bool,
+    line_numbers: LineNumberMode,
     fragment: Option<String>,
     state: SourceViewState,
     asset_lease: Option<MarkdownAssetLease>,
@@ -126,6 +128,7 @@ impl SourceView {
         SourceView {
             key,
             read_only: false,
+            line_numbers: LineNumberMode::Absolute,
             fragment: None,
             state: SourceViewState::Uninitialized,
             asset_lease: Some(EditorMarkdownAssetHost::open_lease(&assets)),
@@ -349,6 +352,16 @@ impl SourceView {
                 ready.diagnostics = diagnostics;
             }
             editor.set_read_only(cx, self.read_only);
+            // The source view is the editing surface, so it carries the
+            // gutter; read-only preview surfaces stay bare.
+            editor.set_line_numbers(
+                cx,
+                if self.read_only {
+                    LineNumberMode::Off
+                } else {
+                    self.line_numbers
+                },
+            );
             editor.install_presentation(cx, installed, layout_cause);
         }
     }
@@ -1331,9 +1344,12 @@ mod tests {
             ready.session.ime(),
         )
         .unwrap();
+        // The editable view reserves a line-number gutter, so painted content
+        // starts that far right of the mount.
+        let gutter = dvec2(editor.test_gutter_width(&ready.session), 0.0);
         let expected_commands = local_commands
             .iter()
-            .map(|command| command.translated(mounted.pos))
+            .map(|command| command.translated(mounted.pos + gutter))
             .collect::<Vec<_>>();
         let painted_commands = editor.test_painted_commands();
         assert_eq!(painted_commands, expected_commands);
@@ -1372,12 +1388,17 @@ mod tests {
             .collect::<Vec<_>>();
         let painted_glyph_origins = editor.test_painted_glyph_origins();
         assert!(!painted_glyph_origins.is_empty());
-        assert!(painted_glyph_origins.iter().all(|painted| {
-            local_glyph_origins.iter().any(|local| {
-                (painted.x - (local.x + mounted.pos.x)).abs() < 1.0e-4
-                    && (painted.y - (local.y + mounted.pos.y)).abs() < 1.0e-4
-            })
-        }));
+        // Line-number glyphs live left of the content and have no cluster in
+        // the layout, so only content glyphs are matched.
+        assert!(painted_glyph_origins
+            .iter()
+            .filter(|painted| painted.x >= mounted.pos.x + gutter.x)
+            .all(|painted| {
+                local_glyph_origins.iter().any(|local| {
+                    (painted.x - (local.x + mounted.pos.x + gutter.x)).abs() < 1.0e-4
+                        && (painted.y - (local.y + mounted.pos.y)).abs() < 1.0e-4
+                })
+            }));
     }
 
     #[test]

@@ -310,6 +310,9 @@ fn mounted_widget_reports_stale_layout_as_a_typed_error() {
             waml_markdown_editor::edit::HistoryGroup::isolated(),
         )
         .unwrap();
+    // The widget first tries to reinstall the layout; with a stale
+    // presentation behind it that recovery cannot succeed, and the original
+    // mismatch is what surfaces.
     let error = widget
         .handle_input_with_session(&mut cx, &mut session, EditorInput::Text(Arc::from("y")))
         .unwrap_err();
