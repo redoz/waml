@@ -452,6 +452,21 @@ fn extract_clusters(
                     color: glyph.color,
                 })
                 .collect::<Vec<_>>();
+            // A hidden span keeps its clusters, and with them its caret stops,
+            // row coverage, and font metrics. Only the advances go to zero, so
+            // the marker occupies no width and nothing is painted for it.
+            let (advance, glyphs) = if span.hidden {
+                let glyphs = glyphs
+                    .into_iter()
+                    .map(|glyph| ShapedGlyph {
+                        advance: 0.0,
+                        ..glyph
+                    })
+                    .collect::<Vec<_>>();
+                (0.0, glyphs)
+            } else {
+                (advance, glyphs)
+            };
             clusters.push(ShapedCluster {
                 id: GeometryElementId {
                     layout: span.id.layout,
@@ -881,6 +896,7 @@ mod tests {
             stable_ordinal: 0,
             source_range: run.range,
             metrics: run.metrics,
+            hidden: false,
         }];
         shaper
             .shape_paragraph(ParagraphShapeRequest {
@@ -943,6 +959,7 @@ mod tests {
                     weight: FontWeight(400),
                     italic: false,
                 },
+                hidden: false,
             }]),
             embedded_blocks: Arc::from([]),
         };
@@ -1021,6 +1038,7 @@ mod tests {
                     weight: FontWeight(400),
                     italic: false,
                 },
+                hidden: false,
             };
             let text = syntax.text().slice(run.range).unwrap().to_owned();
             let mut cx = Cx::new(Box::new(|_, _| {}));
@@ -1122,6 +1140,7 @@ mod tests {
                 weight: FontWeight(400),
                 italic: false,
             },
+            hidden: false,
         };
         let mut cx = Cx::new(Box::new(|_, _| {}));
         cx.with_vm(|vm| {
@@ -1190,6 +1209,7 @@ mod tests {
                 weight: FontWeight(400),
                 italic: false,
             },
+            hidden: false,
         };
         let paragraph_id = GeometryElementId {
             layout: run.id,
@@ -1204,6 +1224,7 @@ mod tests {
             stable_ordinal: 0,
             source_range: run.range,
             metrics: run.metrics,
+            hidden: false,
         }];
         let mut cx = Cx::new(Box::new(|_, _| {}));
         cx.with_vm(|vm| {
@@ -1264,6 +1285,7 @@ mod tests {
                 weight: FontWeight(400),
                 italic: false,
             },
+            hidden: false,
         };
         let text = syntax.text().slice(run.range).unwrap().to_owned();
         let mut cx = Cx::new(Box::new(|_, _| {}));

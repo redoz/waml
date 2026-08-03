@@ -1201,6 +1201,7 @@ fn quote_hanging_tree_aggregates_children_without_phantom_height() {
             id: original.id,
             range: range(marker.end().to_usize(), original.range.end().to_usize()),
             metrics: original.metrics,
+            hidden: false,
         },
     );
     document.blocks = blocks.into();
@@ -1292,11 +1293,13 @@ fn hanging_wrapped_multi_run_clusters_have_unique_block_ordinals() {
             id: original.id,
             range: range(original.range.start().to_usize(), marker_end),
             metrics: original.metrics,
+            hidden: false,
         },
         LayoutTextRun {
             id: original.id,
             range: range(marker_end, original.range.end().to_usize()),
             metrics: original.metrics,
+            hidden: false,
         },
     ]);
 
@@ -1543,6 +1546,7 @@ fn table_intrinsic_crosses_styles_and_includes_nested_embedded_width() {
             id: cell,
             range: range(cell_run.range.start().to_usize(), split),
             metrics: cell_run.metrics,
+            hidden: false,
         },
         LayoutTextRun {
             id: cell,
@@ -1551,6 +1555,7 @@ fn table_intrinsic_crosses_styles_and_includes_nested_embedded_width() {
                 italic: true,
                 ..cell_run.metrics
             },
+            hidden: false,
         },
         nested_run.clone(),
     ]);
@@ -1744,11 +1749,13 @@ fn hanging_splits_spanning_marker_run_and_aligns_mixed_metrics_baseline() {
                 font_size: 30.0,
                 ..original.metrics
             },
+            hidden: false,
         },
         LayoutTextRun {
             id: original.id,
             range: range(middle, original.range.end().to_usize()),
             metrics: original.metrics,
+            hidden: false,
         },
     ]);
     let mut shaper = MetricGlyphShaper;
@@ -1786,6 +1793,7 @@ fn adjacent_styled_paragraph_runs_share_one_inline_line() {
             id: original.id,
             range: range(start, start + 2),
             metrics: original.metrics,
+            hidden: false,
         },
         LayoutTextRun {
             id: original.id,
@@ -1794,6 +1802,7 @@ fn adjacent_styled_paragraph_runs_share_one_inline_line() {
                 italic: true,
                 ..original.metrics
             },
+            hidden: false,
         },
     ]);
 
@@ -1927,16 +1936,19 @@ fn hanging_runs_stay_clamped_and_content_advances_across_styles() {
             id: original.id,
             range: range(start, start + 1),
             metrics: original.metrics,
+            hidden: false,
         },
         LayoutTextRun {
             id: original.id,
             range: range(start + 1, start + 2),
             metrics: original.metrics,
+            hidden: false,
         },
         LayoutTextRun {
             id: original.id,
             range: range(start + 2, start + 3),
             metrics: original.metrics,
+            hidden: false,
         },
         LayoutTextRun {
             id: original.id,
@@ -1945,6 +1957,7 @@ fn hanging_runs_stay_clamped_and_content_advances_across_styles() {
                 italic: true,
                 ..original.metrics
             },
+            hidden: false,
         },
     ]);
 
@@ -2289,6 +2302,7 @@ impl TextShaper for GlyphCharacterShaper {
                     id: span.run_id,
                     range: span.source_range,
                     metrics: span.metrics,
+                    hidden: false,
                 };
                 self.shape(request.source, &run, request.full_width)
                     .map(|shaped| (span.clone(), shaped))
@@ -2401,6 +2415,7 @@ impl TextShaper for MetricGlyphShaper {
                     id: span.run_id,
                     range: span.source_range,
                     metrics: span.metrics,
+                    hidden: false,
                 };
                 self.shape(request.source, &run, request.full_width)
                     .map(|shaped| (span.clone(), shaped))
@@ -2549,6 +2564,7 @@ impl TextShaper for FakeShaper {
                     id: span.run_id,
                     range: span.source_range,
                     metrics: span.metrics,
+                    hidden: false,
                 };
                 self.shape(request.source, &run, request.full_width)
                     .map(|shaped| (span.clone(), shaped))
@@ -3209,6 +3225,7 @@ mod fixtures {
             id,
             range: range(content_start, content_start + split),
             metrics: base_metrics,
+            hidden: false,
         }];
         if split < text.len() {
             runs.push(LayoutTextRun {
@@ -3219,6 +3236,7 @@ mod fixtures {
                     italic: true,
                     ..base_metrics
                 },
+                hidden: false,
             });
         }
         let presentation = Arc::new(MarkdownDocumentSnapshot::new(syntax));
@@ -3298,6 +3316,7 @@ mod fixtures {
                     weight: FontWeight(400),
                     italic: false,
                 },
+                hidden: false,
             });
         }
         let presentation = Arc::new(MarkdownDocumentSnapshot::new(syntax));

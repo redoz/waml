@@ -84,6 +84,7 @@ fn text_item(
         range: range(bounds.start, bounds.end),
         role,
         style: PresentationStyles::balanced().text_style(role),
+        hidden: false,
     }
 }
 
@@ -860,5 +861,89 @@ fn link_activation_rejects_source_range_end() {
     assert_eq!(
         navigation_position(&plan, &frame.layout, dvec2(50.0, 20.0)),
         None
+    );
+}
+
+#[test]
+fn a_hidden_list_marker_draws_a_small_bullet_in_the_gutter_not_over_the_item() {
+    let source = "- alpha";
+    let styles = PresentationStyles::hiding_syntax();
+    let bullet_id = item_id(
+        2,
+        PresentationRole::Block(BlockDecorationRole::ListBullet),
+        0,
+    );
+    let plan = PresentationPlan {
+        revision: DocumentRevision::INITIAL,
+        source_len: t(source.len()),
+        items: Arc::from([
+            text_item(2, 0, 0..source.len(), TextRole::ListMarker),
+            PresentationItem::BlockDecoration {
+                id: bullet_id,
+                owner: owner(2),
+                source_range: range(0, 2),
+                kind: BlockDecorationKind::ListBullet { level: 0 },
+            },
+        ]),
+        links: Arc::from([]),
+        blocks: Arc::from([]),
+        diagnostics: Arc::from([]),
+    };
+    let block_rect = Rect {
+        pos: dvec2(24.0, 20.0),
+        size: dvec2(400.0, 44.0),
+    };
+    let layout = snapshot(
+        source.len(),
+        vec![cluster(2, 0, 0..source.len(), 36.0, TextRole::ListMarker)],
+        vec![BlockGeometry::new(
+            layout_id(2, 0),
+            range(0, source.len()),
+            block_rect,
+        )],
+    );
+    let frame = PresentationFrame {
+        revision: DocumentRevision::INITIAL,
+        layout,
+        active_owners: Arc::from([]),
+        diagnostics: Arc::from([]),
+        assets: Arc::new(EmbeddedAssetFrame {
+            revision: DocumentRevision::INITIAL,
+            items: Arc::from([]),
+        }),
+    };
+    let commands =
+        build_draw_commands(&frame, &plan, &styles, &selection(source, 0, 0), None).unwrap();
+    let bullet = commands
+        .iter()
+        .find_map(|command| match command {
+            DrawCommand::BlockBackground {
+                rect,
+                role: BlockDecorationRole::ListBullet,
+                ..
+            } => Some(*rect),
+            _ => None,
+        })
+        .expect("a hidden unordered marker draws a bullet");
+
+    let size = styles.spacing().list_bullet_size;
+    assert_eq!(
+        (bullet.size.x, bullet.size.y),
+        (size, size),
+        "the bullet is a small square, not the item's whole background"
+    );
+    assert!(
+        bullet.size.x < block_rect.size.x,
+        "the bullet never spans the list item"
+    );
+    assert!(
+        bullet.pos.x >= block_rect.pos.x
+            && bullet.pos.x + bullet.size.x
+                <= block_rect.pos.x + styles.spacing().list_marker_gap.max(size),
+        "the bullet sits in the hanging-marker gutter"
+    );
+    assert!(
+        bullet.pos.y >= block_rect.pos.y,
+        "the bullet stays inside its item"
     );
 }

@@ -48,6 +48,7 @@ fn run(
         range: range(bounds),
         role,
         style: style(),
+        hidden: false,
     }
 }
 

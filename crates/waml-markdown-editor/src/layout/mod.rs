@@ -55,6 +55,9 @@ pub struct LayoutTextRun {
     pub id: LayoutElementId,
     pub range: TextRange,
     pub metrics: TextMetrics,
+    /// Shaped with no glyphs and no advance. The run keeps its source range so
+    /// row coverage, caret mapping, and selection are unaffected.
+    pub hidden: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

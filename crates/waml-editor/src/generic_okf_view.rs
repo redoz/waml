@@ -28,9 +28,12 @@ impl GenericOkfView {
         concept_id: String,
         assets: crate::markdown_hosts::SharedMarkdownAssetHost,
     ) -> Self {
-        Self {
-            source: SourceView::new_read_only(concept_id, assets),
-        }
+        // Opening a concept is a reading action, so its markdown punctuation is
+        // hidden. Editing the markdown is a separate, explicit action, and the
+        // source itself is untouched: selection and copy still yield markdown.
+        let mut source = SourceView::new_read_only(concept_id, assets);
+        source.set_hide_syntax(true);
+        Self { source }
     }
 }
 
@@ -142,6 +145,15 @@ mod tests {
             ViewReconcilePolicy::RetainLiveState
         );
         assert_eq!(view.identity(), DocViewIdentity::GenericOkf);
+    }
+
+    #[test]
+    fn opening_a_concept_hides_markdown_syntax_so_editing_stays_an_explicit_action() {
+        let view = generic_view();
+        assert!(
+            view.source.hides_syntax(),
+            "a concept opens as prose to read, not as markdown to edit"
+        );
     }
 
     #[test]

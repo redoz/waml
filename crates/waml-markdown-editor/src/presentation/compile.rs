@@ -51,6 +51,19 @@ pub fn compile_presentation(
         };
         if role == TextRole::CodeContent {
             push_highlighted_content(&mut builder, span, &highlights);
+        } else if role == TextRole::ListMarker {
+            // An ordered number is content a reader needs; a bullet character
+            // is punctuation that a `ListBullet` decoration replaces.
+            let hidden = styles.hide_syntax && is_unordered_marker(text, span.range);
+            builder.push_text_hidden(span.range, role, span.owner, hidden);
+            if hidden {
+                let level = list_nesting_level(text, span.range);
+                builder.push_block(
+                    span.owner,
+                    span.range,
+                    BlockDecorationKind::ListBullet { level },
+                );
+            }
         } else {
             builder.push_text(span.range, role, span.owner);
         }
@@ -460,6 +473,33 @@ fn add_decorations(
     Ok(())
 }
 
+/// Whether a list marker is a bullet (`-`, `*`, `+`) rather than a number.
+fn is_unordered_marker(text: &SourceText, range: TextRange) -> bool {
+    text.slice(range)
+        .unwrap_or_default()
+        .trim_start()
+        .starts_with(['-', '*', '+'])
+}
+
+/// Nesting depth of a list item, taken from the marker's indent. Markdown
+/// indents each level by two or more columns, so halving the indent gives a
+/// stable depth for the shallow nesting a bullet shape distinguishes.
+fn list_nesting_level(text: &SourceText, range: TextRange) -> u8 {
+    let Ok(zero) = TextSize::try_from_usize(0) else {
+        return 0;
+    };
+    let Ok(prefix) = TextRange::new(zero, range.start()) else {
+        return 0;
+    };
+    let before = text.slice(prefix).unwrap_or_default();
+    let line_start = before.rfind('\n').map_or(0, |index| index + 1);
+    let indent = before[line_start..]
+        .chars()
+        .map(|character| if character == '\t' { 4 } else { 1 })
+        .sum::<usize>();
+    (indent / 2).min(u8::MAX as usize) as u8
+}
+
 struct PlanBuilder<'a> {
     styles: &'a PresentationStyles,
     items: Vec<PresentationItem>,
@@ -485,6 +525,19 @@ impl<'a> PlanBuilder<'a> {
     }
 
     fn push_text(&mut self, range: TextRange, role: TextRole, owner: SyntaxIdentity) {
+        let hidden = self.styles.hide_syntax && role.is_syntax_marker();
+        self.push_text_hidden(range, role, owner, hidden);
+    }
+
+    /// `push_text` for runs whose visibility the caller decides, such as a list
+    /// marker that hides only when it is a bullet rather than a number.
+    fn push_text_hidden(
+        &mut self,
+        range: TextRange,
+        role: TextRole,
+        owner: SyntaxIdentity,
+        hidden: bool,
+    ) {
         let presentation_role = PresentationRole::Text(role);
         let fragment_ordinal = self.next_ordinal(owner, presentation_role);
         self.items.push(PresentationItem::TextRun {
@@ -496,6 +549,7 @@ impl<'a> PlanBuilder<'a> {
             range,
             role,
             style: self.styles.text_style(role),
+            hidden,
         });
     }
 

@@ -26,6 +26,8 @@ pub struct PresentationSpacing {
     pub quote_rule: f64,
     pub quote_gap: f64,
     pub list_marker_gap: f64,
+    /// Side of the square bullet that stands in for a hidden list marker.
+    pub list_bullet_size: f64,
     pub code_padding: f64,
     pub cell_padding_x: f64,
     pub cell_padding_y: f64,
@@ -46,13 +48,22 @@ impl PresentationSpacing {
 
 /// Resolves a presentation text role into its style roles.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct PresentationStyles;
+pub struct PresentationStyles {
+    /// Hides markdown punctuation, for views that are read rather than edited.
+    /// Purely presentational: the source and its run coverage are unchanged.
+    pub hide_syntax: bool,
+}
 
 impl PresentationStyles {
     /// The balanced document style. Metrics are fixed logical values and do not
     /// depend on device pixel ratio.
     pub fn balanced() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// The balanced style with markdown punctuation hidden.
+    pub fn hiding_syntax() -> Self {
+        Self { hide_syntax: true }
     }
 
     /// Always 24 logical pixels on all four sides.
@@ -72,6 +83,7 @@ impl PresentationStyles {
             quote_rule: 3.0,
             quote_gap: 8.0,
             list_marker_gap: 8.0,
+            list_bullet_size: 5.0,
             code_padding: 12.0,
             cell_padding_x: 8.0,
             cell_padding_y: 6.0,

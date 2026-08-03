@@ -954,6 +954,7 @@ impl MarkdownEditor {
                     crate::presentation::BlockDecorationRole::TableGrid => self.block_rule_color,
                     crate::presentation::BlockDecorationRole::TableHeaderFill => self.table_fill,
                     crate::presentation::BlockDecorationRole::TaskCheckbox => self.quote_fill,
+                    crate::presentation::BlockDecorationRole::ListBullet => self.marker_color,
                     crate::presentation::BlockDecorationRole::ThematicRule => self.block_rule_color,
                 };
                 self.draw_background.draw_abs(cx, *rect);

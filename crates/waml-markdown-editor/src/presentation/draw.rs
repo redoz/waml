@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     BlockDecorationRole, ColorRole, EmbeddedAssetFrame, EmbeddedState, PresentationError,
-    PresentationItem, PresentationPlan, PresentationStyles,
+    PresentationItem, PresentationPlan, PresentationStyles, TextRole,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -228,6 +228,20 @@ pub fn build_draw_commands(
                     rect.pos.y += (rect.size.y - height) * 0.5;
                     rect.size.y = height;
                 }
+                // The block rect spans the whole list item, so the bullet takes
+                // a small square from the hanging-marker gutter, centred on the
+                // item's first line rather than on the item as a whole.
+                BlockDecorationRole::ListBullet => {
+                    let size = styles.spacing().list_bullet_size.min(rect.size.y);
+                    // `line_spacing` is a multiplier, so the first line's band
+                    // comes from the body font size.
+                    let metrics = styles.metrics(TextRole::Body);
+                    let band = (metrics.font_size as f64 * metrics.line_spacing.max(1.0) as f64)
+                        .min(rect.size.y);
+                    rect.pos.y += (band - size) * 0.5;
+                    rect.pos.x += (styles.spacing().list_marker_gap - size).max(0.0) * 0.5;
+                    rect.size = DVec2 { x: size, y: size };
+                }
                 _ => {}
             }
             commands.push(DrawCommand::BlockBackground {
@@ -248,18 +262,26 @@ pub fn build_draw_commands(
     }
 
     for cluster in frame.layout.glyph_clusters() {
-        let Some((owner, style)) = plan.items.iter().find_map(|item| match item {
+        let Some((owner, style, hidden)) = plan.items.iter().find_map(|item| match item {
             PresentationItem::TextRun {
-                id, range, style, ..
+                id,
+                range,
+                style,
+                hidden,
+                ..
             } if range.start() <= cluster.source_range.start()
                 && cluster.source_range.end() <= range.end() =>
             {
-                Some((id.owner, *style))
+                Some((id.owner, *style, *hidden))
             }
             _ => None,
         }) else {
             continue;
         };
+        // A hidden run's clusters exist for caret and coverage only.
+        if hidden {
+            continue;
+        }
         let active = frame.active_owners.contains(&owner);
         commands.push(DrawCommand::Text {
             id: cluster.id,

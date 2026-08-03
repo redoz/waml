@@ -20,7 +20,7 @@ fn compile_fixture(name: &str) -> (Arc<MarkdownSyntaxSnapshot>, Arc<Presentation
     .expect("the fixture parses");
     let plan = compile_presentation(
         &snapshot,
-        &PresentationStyles,
+        &PresentationStyles::balanced(),
         &HighlighterRegistry::default(),
     )
     .expect("the fixture compiles");
@@ -39,7 +39,7 @@ fn real_waml_frontmatter_compiles_into_a_complete_source_partition() {
 
     let plan = compile_presentation(
         &snapshot,
-        &PresentationStyles,
+        &PresentationStyles::balanced(),
         &HighlighterRegistry::default(),
     )
     .expect("frontmatter participates in presentation coverage");

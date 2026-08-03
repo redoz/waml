@@ -77,6 +77,27 @@ pub enum TextRole {
     LineBreak,
 }
 
+impl TextRole {
+    /// Whether this run is markdown punctuation rather than authored content.
+    ///
+    /// These are the runs a reading view hides. `ListMarker` is deliberately
+    /// absent: an ordered number is content, and the compiler decides per item
+    /// whether an unordered marker hides in favour of a bullet decoration.
+    pub fn is_syntax_marker(self) -> bool {
+        matches!(
+            self,
+            Self::SyntaxMarker
+                | Self::HeadingMarker(_)
+                | Self::TaskMarker
+                | Self::QuoteMarker
+                | Self::CodeFence
+                | Self::CodeInfo
+                | Self::LinkDestination
+                | Self::TableDelimiter
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum BlockDecorationRole {
     QuoteRule,
@@ -86,6 +107,7 @@ pub enum BlockDecorationRole {
     TableHeaderFill,
     TaskCheckbox,
     ThematicRule,
+    ListBullet,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -98,10 +120,19 @@ pub enum BlockDecorationKind {
     QuoteRule,
     InlineCodeFill,
     FencedCodeSurface,
-    TableGrid { columns: u32 },
+    TableGrid {
+        columns: u32,
+    },
     TableHeaderFill,
-    TaskCheckbox { checked: bool },
+    TaskCheckbox {
+        checked: bool,
+    },
     ThematicRule,
+    /// Stands in for a hidden unordered list marker. `level` is the item's
+    /// nesting depth, which selects the bullet shape.
+    ListBullet {
+        level: u8,
+    },
 }
 
 impl BlockDecorationKind {
@@ -114,6 +145,7 @@ impl BlockDecorationKind {
             Self::TableHeaderFill => BlockDecorationRole::TableHeaderFill,
             Self::TaskCheckbox { .. } => BlockDecorationRole::TaskCheckbox,
             Self::ThematicRule => BlockDecorationRole::ThematicRule,
+            Self::ListBullet { .. } => BlockDecorationRole::ListBullet,
         }
     }
 }
@@ -193,6 +225,9 @@ pub enum PresentationItem {
         range: TextRange,
         role: TextRole,
         style: TextStyle,
+        /// Drawn with no glyphs and no advance. The run keeps its source range,
+        /// so coverage, selection, and copy are unchanged.
+        hidden: bool,
     },
     BlockDecoration {
         id: PresentationItemId,

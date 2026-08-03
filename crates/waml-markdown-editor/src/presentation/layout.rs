@@ -98,10 +98,16 @@ pub fn build_layout_document(
         .items
         .iter()
         .filter_map(|item| match item {
-            PresentationItem::TextRun { range, role, .. } => Some(LayoutTextRun {
+            PresentationItem::TextRun {
+                range,
+                role,
+                hidden,
+                ..
+            } => Some(LayoutTextRun {
                 id: owning_block_id(*range, plan, &index_of_owner, &blocks, root_id),
                 range: *range,
                 metrics: styles.metrics(*role),
+                hidden: *hidden,
             }),
             _ => None,
         })

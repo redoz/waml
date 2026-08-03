@@ -50,6 +50,10 @@ pub struct ShapeSpan {
     pub stable_ordinal: u32,
     pub source_range: TextRange,
     pub metrics: TextMetrics,
+    /// The shaper must emit this span's clusters with zero advance and draw no
+    /// glyphs for them. Clusters still exist, so caret stops and row coverage
+    /// over the span's source range are unchanged.
+    pub hidden: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2087,6 +2091,7 @@ fn layout_block<S: TextShaper>(
                         range: TextRange::new(run.range.start(), before_end)
                             .expect("a hanging prefix stays inside its run"),
                         metrics: run.metrics,
+                        hidden: run.hidden,
                     },
                 );
             }
@@ -2101,6 +2106,7 @@ fn layout_block<S: TextShaper>(
                         range: TextRange::new(marker_start, marker_end)
                             .expect("a hanging marker stays ordered"),
                         metrics: run.metrics,
+                        hidden: run.hidden,
                     },
                 );
             }
@@ -2114,6 +2120,7 @@ fn layout_block<S: TextShaper>(
                         range: TextRange::new(content_start, run.range.end())
                             .expect("hanging content stays inside its run"),
                         metrics: run.metrics,
+                        hidden: run.hidden,
                     },
                 );
             }
@@ -2242,6 +2249,7 @@ fn shape_spans(runs: &[LayoutTextRun]) -> Vec<ShapeSpan> {
             stable_ordinal: ordinal as u32,
             source_range: run.range,
             metrics: run.metrics,
+            hidden: run.hidden,
         })
         .collect()
 }
