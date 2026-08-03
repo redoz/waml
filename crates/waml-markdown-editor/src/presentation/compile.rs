@@ -54,7 +54,7 @@ pub fn compile_presentation(
         } else if role == TextRole::ListMarker {
             // An ordered number is content a reader needs; a bullet character
             // is punctuation that a `ListBullet` decoration replaces.
-            let hidden = styles.hide_syntax && is_unordered_marker(text, span.range);
+            let hidden = is_unordered_marker(text, span.range);
             builder.push_text_hidden(span.range, role, span.owner, hidden);
             if hidden {
                 let level = list_nesting_level(text, span.range);
