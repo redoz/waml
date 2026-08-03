@@ -501,11 +501,18 @@ impl LayoutSnapshot {
 
     pub fn source_to_point(&self, position: TextPosition) -> Option<CaretGeometry> {
         let (stop, row) = self.find_owned_stop(position)?;
-        let height = row.map_or(0.0, |index| self.rows[index].rect.size.y);
+        // The caret spans its whole row. A stop sits at the top of its own
+        // cluster, and on a mixed-size row (a heading marker beside body-sized
+        // whitespace) a short cluster starts below the row, so anchoring to the
+        // stop would push a row-tall caret past the baseline.
+        let (top, height) = row.map_or((stop.point.y, 0.0), |index| {
+            let rect = self.rows[index].rect;
+            (rect.pos.y, rect.size.y)
+        });
         Some(CaretGeometry {
             position,
             rect: Rect {
-                pos: stop.point,
+                pos: dvec2(stop.point.x, top),
                 size: dvec2(1.0, height),
             },
         })
@@ -569,21 +576,35 @@ impl LayoutSnapshot {
     ) -> Option<(TextPosition, f64)> {
         let (stop, row) = self.find_owned_stop(position)?;
         let preferred_x = preferred_x.unwrap_or(stop.point.x);
-        let target = (row? as i64).checked_add(lines as i64)?;
-        if !(0..self.rows.len() as i64).contains(&target) {
-            return None;
+        let mut current = row? as i64;
+        let step = if lines < 0 { -1 } else { 1 };
+        // A row can hold no caret stop at all — a decoration-only row, or a
+        // lane whose clusters were dropped outside the shaped window. Such a
+        // row is skipped rather than ending the motion, so one keypress always
+        // reaches the next row the caret can actually sit on.
+        let mut remaining = lines.unsigned_abs();
+        let mut landing = None;
+        while remaining > 0 {
+            current += step;
+            if !(0..self.rows.len() as i64).contains(&current) {
+                break;
+            }
+            let row = &self.rows[current as usize];
+            let stop = self.lanes[row.lanes.clone()]
+                .iter()
+                .flat_map(|lane| self.stops_for_lane(lane))
+                .min_by(|left, right| {
+                    (left.point.x - preferred_x)
+                        .abs()
+                        .partial_cmp(&(right.point.x - preferred_x).abs())
+                        .unwrap_or(Ordering::Equal)
+                });
+            if let Some(stop) = stop {
+                landing = Some(stop);
+                remaining -= 1;
+            }
         }
-        let row = &self.rows[target as usize];
-        let stop = self.lanes[row.lanes.clone()]
-            .iter()
-            .flat_map(|lane| self.stops_for_lane(lane))
-            .min_by(|left, right| {
-                (left.point.x - preferred_x)
-                    .abs()
-                    .partial_cmp(&(right.point.x - preferred_x).abs())
-                    .unwrap_or(Ordering::Equal)
-            })?;
-        Some((stop.position, preferred_x))
+        Some((landing?.position, preferred_x))
     }
 
     /// Resolves a source position to the stop of the lane that owns it, with
