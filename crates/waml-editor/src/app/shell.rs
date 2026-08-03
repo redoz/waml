@@ -703,7 +703,19 @@ impl App {
             .widget(cx, ids!(agent_mark))
             .borrow_mut::<crate::agent_mark::AgentMark>()
         {
-            mark.set_marks(cx, badge, tint);
+            mark.set_marks(cx, badge.clone(), tint);
+        }
+        // Also the statusbar, which is where the mark is actually VISIBLE right
+        // now: the caption copy is drawn correctly but painted over by the tab
+        // row's `Size::Fill` children, which makepad defers past anything
+        // declared after them (see the note in `statusbar.rs`). Both are pushed
+        // so the caption one lights up on its own the day that is fixed.
+        if let Some(mut bar) = self
+            .ui
+            .widget(cx, ids!(statusbar))
+            .borrow_mut::<crate::statusbar::Statusbar>()
+        {
+            bar.set_agent_marks(cx, badge, tint);
         }
     }
 

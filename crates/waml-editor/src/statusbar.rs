@@ -25,8 +25,34 @@ script_mod! {
             color: atlas.text_dim
             text_style: fonts.text_label
         }
+        // Per-agent window marker (`--title` / `--color`), right-aligned in this
+        // strip. It belongs in the caption's title row and is mounted there too,
+        // but that row cannot show it: every seat in it is painted over by a
+        // `Size::Fill` sibling, which makepad defers past anything declared
+        // after it. The statusbar has no such sibling and is the last thing the
+        // body draws, so the mark is parked here until the caption's marker gets
+        // a pass of its own.
+        chip_fallback: atlas.selection
+        ink_fallback: atlas.text
+        draw_chip +: {
+            color: #0000
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 2.5)
+                sdf.fill(self.color)
+                return sdf.result
+            }
+        }
     }
 }
+
+/// Marker pill padding, and its gap from the strip's right edge.
+const CHIP_PAD_X: f64 = 6.0;
+const CHIP_PAD_Y: f64 = 2.0;
+const CHIP_RIGHT_GAP: f64 = 10.0;
+
+/// Inner width of a `--color`-only pill, which carries no text to size it.
+const SWATCH_W: f64 = 14.0;
 
 /// Pure so the join format is unit-tested without a `Cx`.
 pub fn status_line(
@@ -146,6 +172,20 @@ pub struct Statusbar {
     navigation_message: Option<String>,
     #[rust]
     solver_diagnostics: Option<String>,
+
+    #[redraw]
+    #[live]
+    draw_chip: DrawColor,
+    #[live]
+    chip_fallback: Vec4,
+    #[live]
+    ink_fallback: Vec4,
+    /// Badge text from `--title`; `None` draws no pill.
+    #[rust]
+    agent_badge: Option<String>,
+    /// Tint from `--color`; `None` falls back to `chip_fallback`.
+    #[rust]
+    agent_tint: Option<Vec4>,
 }
 
 impl Widget for Statusbar {
@@ -172,11 +212,75 @@ impl Widget for Statusbar {
         let text_y = rect.pos.y + rect.size.y * 0.5 - 6.0;
         self.draw_text
             .draw_abs(cx, dvec2(rect.pos.x + 12.0, text_y), &line);
+        self.draw_agent_mark(cx, rect, text_y);
         DrawStep::done()
     }
 }
 
 impl Statusbar {
+    /// Push the parsed `--title`/`--color` values in; called at startup and
+    /// again after a theme reload (which wipes `#[rust]` fields).
+    pub fn set_agent_marks(&mut self, cx: &mut Cx, badge: Option<String>, tint: Option<Vec4>) {
+        self.agent_badge = badge;
+        self.agent_tint = tint;
+        self.redraw(cx);
+    }
+
+    /// The marker pill, right-aligned in `rect`. Shares the status line's
+    /// baseline rather than centring on its own measured band: the strip is
+    /// 24px and the pill is only ever beside that one line, so seating them
+    /// together is what keeps the row from looking double-decked.
+    fn draw_agent_mark(&mut self, cx: &mut Cx2d, rect: Rect, text_y: f64) {
+        if self.agent_badge.is_none() && self.agent_tint.is_none() {
+            return;
+        }
+        let text = self.agent_badge.clone().unwrap_or_default();
+        let inner_w = if text.is_empty() {
+            SWATCH_W
+        } else {
+            self.draw_text
+                .layout(cx, 0.0, 0.0, None, false, Align::default(), &text)
+                .size_in_lpxs
+                .width as f64
+        };
+        let line_h = self
+            .draw_text
+            .layout(cx, 0.0, 0.0, None, false, Align::default(), "Hg")
+            .size_in_lpxs
+            .height as f64;
+
+        let chip = Rect {
+            pos: dvec2(
+                (rect.pos.x + rect.size.x - inner_w - CHIP_PAD_X * 2.0 - CHIP_RIGHT_GAP).round(),
+                (text_y - CHIP_PAD_Y).round(),
+            ),
+            size: dvec2(inner_w + CHIP_PAD_X * 2.0, line_h + CHIP_PAD_Y * 2.0),
+        };
+
+        let fill = self.agent_tint.unwrap_or(self.chip_fallback);
+        self.draw_chip.color = fill;
+        self.draw_chip.draw_abs(cx, chip);
+
+        if !text.is_empty() {
+            // Ink is picked against the FILL, not the strip: a `--color` pill is
+            // an arbitrary hue and the status ink would vanish on half of them.
+            //
+            // Set-and-restore around the draw. The status line shares this
+            // handle and its colour is the DSL default (`atlas.text_dim`), NOT
+            // `ink_fallback` -- restoring to the wrong one silently repaints the
+            // whole line a shade darker from the next frame on.
+            let line_ink = self.draw_text.color;
+            self.draw_text.color = if self.agent_tint.is_some() {
+                crate::agent_mark::label_ink(fill)
+            } else {
+                self.ink_fallback
+            };
+            self.draw_text
+                .draw_abs(cx, dvec2(chip.pos.x + CHIP_PAD_X, text_y), &text);
+            self.draw_text.color = line_ink;
+        }
+    }
+
     pub fn set_state(
         &mut self,
         cx: &mut Cx,
