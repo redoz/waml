@@ -23,6 +23,7 @@
 //! `self.text` each `draw_walk` -- both settable per instance as root props (the
 //! same way the retired `WamlButton` carried a `#[live] text`).
 
+use crate::cursor;
 use makepad_widgets::*;
 
 script_mod! {
@@ -136,11 +137,12 @@ impl Widget for ActionLink {
                 cx.widget_action(uid, ActionLinkAction::Clicked);
             }
             Hit::FingerHoverIn(_) => {
-                cx.set_cursor(MouseCursor::Hand);
+                cursor::hover_in(cx, MouseCursor::Hand);
                 self.hovered = true;
                 self.view.redraw(cx);
             }
             Hit::FingerHoverOut(_) => {
+                cursor::hover_out(cx);
                 self.hovered = false;
                 self.view.redraw(cx);
             }

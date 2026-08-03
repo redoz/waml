@@ -839,6 +839,10 @@ impl Popup for RadialPopup {
         self.mark.close();
         self.release_primary = false;
     }
+
+    fn hovers_item(&self) -> bool {
+        self.mark.armed().is_some()
+    }
 }
 
 /// Map the marking machine's outcome to a surface verdict. `None` (still open) =

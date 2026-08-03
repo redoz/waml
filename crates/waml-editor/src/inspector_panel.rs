@@ -27,6 +27,7 @@
 //! which `App` uses to promote the active preview tab to persisted.
 
 use crate::accent::bucket_color;
+use crate::cursor;
 use crate::attr_row::AttrRowViewWidgetRefExt;
 use crate::dock::{DockEvent, DockState};
 use crate::icons::{Icon, IconSet};
@@ -543,6 +544,18 @@ impl Widget for Inspector {
                     }
                 }
             }
+            // Only the field rects are click-to-edit; the rest of the column is
+            // read-only text, so the cursor tracks the pointer WITHIN the panel
+            // (`HoverOver`), not just its entry.
+            Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
+                let p = fe.abs - hit_off;
+                if self.field_rects.iter().any(|(_, rect)| rect.contains(p)) {
+                    cursor::hover_in(cx, MouseCursor::Text);
+                } else {
+                    cursor::hover_out(cx);
+                }
+            }
+            Hit::FingerHoverOut(_) => cursor::hover_out(cx),
             Hit::KeyFocusLost(_) => {
                 self.commit_edit(cx, uid);
             }

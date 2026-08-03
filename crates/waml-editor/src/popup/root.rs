@@ -7,6 +7,7 @@ use crate::popup::base::{
     is_light_dismiss, is_primary_press, swallows_underlay, Popup, PopupItem, PopupResult,
     PopupVerdict,
 };
+use crate::cursor;
 use crate::popup::conflict_list::ConflictList;
 use crate::popup::menu::{MenuPopup, MENU_MAX_W, PAD_V, ROW_H};
 use crate::popup::presenter::Presenter;
@@ -453,6 +454,40 @@ impl PopupRoot {
                     .map(|mut c| c.handle(cx, ev))
                     .unwrap_or(PopupVerdict::Ignored),
             };
+            // Cursor while a surface owns the screen. The widget the pointer
+            // came from set the standing cursor (a canvas `Grab`, a button's
+            // `Hand`) and gets no hover-out under the overlay, so the authority
+            // has to state it every pointer move: `Hand` over an armed item,
+            // released everywhere else on the surface.
+            if matches!(ev, Event::MouseMove(_)) {
+                let hovers = match kind {
+                    ActiveKind::Menu => self
+                        .body
+                        .widget(cx, ids!(menu))
+                        .borrow::<MenuPopup>()
+                        .is_some_and(|m| m.hovers_item()),
+                    ActiveKind::Radial => self
+                        .body
+                        .widget(cx, ids!(radial))
+                        .borrow::<RadialPopup>()
+                        .is_some_and(|r| r.hovers_item()),
+                    ActiveKind::Select => self
+                        .body
+                        .widget(cx, ids!(select))
+                        .borrow::<SelectFlyout>()
+                        .is_some_and(|s| s.hovers_item()),
+                    ActiveKind::Conflict => self
+                        .body
+                        .widget(cx, ids!(conflict))
+                        .borrow::<ConflictList>()
+                        .is_some_and(|c| c.hovers_item()),
+                };
+                if hovers {
+                    cursor::hover_in(cx, MouseCursor::Hand);
+                } else {
+                    cursor::hover_out(cx);
+                }
+            }
             // Arm-change notification, emitted BEFORE any close so a preview
             // opener sees the last hover even on the committing event. Only the
             // radial reports an armed item today.
@@ -505,6 +540,10 @@ impl PopupRoot {
                     }
                 }
             }
+            // The surface's `Hand` dies with it: the widget underneath gets no
+            // hover-in from a pointer that never moved, so nothing else would
+            // take the cursor back.
+            cursor::hover_out(cx);
             cx.widget_action(self.widget_uid(), PopupRootAction::Closed { tag, result });
             self.armed_slot = None;
             self.active = None;

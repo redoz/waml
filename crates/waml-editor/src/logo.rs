@@ -23,6 +23,7 @@
 //! resolves against script scope, not the object's siblings.) Recolor via the
 //! `k1..k6` constants.
 
+use crate::cursor;
 use makepad_widgets::*;
 
 script_mod! {
@@ -626,8 +627,9 @@ impl Widget for LogoMark {
         if self.auto {
             match event.hits(cx, self.draw_bg.area()) {
                 Hit::FingerHoverIn(_) | Hit::FingerHoverOver(_) => {
-                    cx.set_cursor(MouseCursor::Hand);
+                    cursor::hover_in(cx, MouseCursor::Hand);
                 }
+                Hit::FingerHoverOut(_) => cursor::hover_out(cx),
                 Hit::FingerDown(fe) if fe.is_primary_hit() => {
                     self.prev_variant = self.variant;
                     self.variant = self.variant % PULSE_VARIANTS.len() as f32 + 1.0;
@@ -647,7 +649,7 @@ impl Widget for LogoMark {
             let uid = self.widget_uid();
             match event.hits_with_capture_overload(cx, self.draw_bg.area(), true) {
                 Hit::FingerHoverIn(_) | Hit::FingerHoverOver(_) => {
-                    cx.set_cursor(MouseCursor::Hand);
+                    cursor::hover_in(cx, MouseCursor::Hand);
                     if !self.hovered {
                         self.hovered = true;
                         let now = cx.seconds_since_app_start();
@@ -657,6 +659,7 @@ impl Widget for LogoMark {
                     }
                 }
                 Hit::FingerHoverOut(_) => {
+                    cursor::hover_out(cx);
                     if self.hovered {
                         self.hovered = false;
                         self.last_time = cx.seconds_since_app_start();

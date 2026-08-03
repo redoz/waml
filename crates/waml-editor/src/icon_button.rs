@@ -17,6 +17,7 @@
 //! (the burger's down-menu model, kept for the later caption migration); hover
 //! drives the wash and the Hand cursor.
 
+use crate::cursor;
 use crate::icons::{Icon, IconSet};
 use makepad_widgets::*;
 
@@ -170,12 +171,15 @@ impl Widget for IconButton {
             }
             Hit::FingerHoverIn(_) => {
                 if !self.dim {
-                    cx.set_cursor(MouseCursor::Hand);
+                    cursor::hover_in(cx, MouseCursor::Hand);
                 }
                 self.hovered = true;
                 self.view.redraw(cx);
             }
             Hit::FingerHoverOut(_) => {
+                if !self.dim {
+                    cursor::hover_out(cx);
+                }
                 self.hovered = false;
                 self.view.redraw(cx);
             }

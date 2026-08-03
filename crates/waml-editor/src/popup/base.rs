@@ -50,6 +50,13 @@ pub trait Popup {
     /// Return to the closed state WITHOUT emitting (the authority emits the
     /// `Closed` action). Called on any light-dismiss / supersede.
     fn reset(&mut self);
+    /// Is the pointer currently marking an activatable item? The authority
+    /// reads this to pick the cursor -- a popup is drawn over the widget the
+    /// pointer came from, and that widget's cursor (a canvas `Grab`, a button's
+    /// `Hand`) would otherwise stand while the surface is open.
+    fn hovers_item(&self) -> bool {
+        false
+    }
 }
 
 /// True for events that collapse transient UI regardless of pointer position:

@@ -17,6 +17,7 @@ use crate::canvas::viewport::{
     InitialFit, TimerCommand as ViewportTimerCommand, TouchPair, ViewportController,
     ViewportEffects,
 };
+use crate::cursor;
 use crate::inspector::Subject;
 use crate::popup::base::PopupItem;
 use crate::scene::{bounding_box, Scene};
@@ -636,7 +637,7 @@ impl Widget for ClassDiagramSurface {
                     &mut self.placement,
                 );
                 self.apply_interaction_effects(cx, effects);
-                cx.set_cursor(MouseCursor::Grabbing);
+                cursor::hover_in(cx, MouseCursor::Grabbing);
             }
             Hit::FingerMove(fe) => {
                 let effects = self.interaction.pointer_move(
@@ -658,7 +659,9 @@ impl Widget for ClassDiagramSurface {
                     &mut self.placement,
                 );
                 self.apply_interaction_effects(cx, effects);
-                cx.set_cursor(MouseCursor::Grab);
+                // A drag released off the surface gets no `FingerHoverOut`, so
+                // `Grab` would follow the pointer over the panels.
+                cursor::drag_end(cx, fe.is_over, MouseCursor::Grab);
             }
             Hit::FingerUp(fe) => {
                 let effects = self.interaction.pointer_up(
@@ -670,9 +673,10 @@ impl Widget for ClassDiagramSurface {
                     &mut self.placement,
                 );
                 self.apply_interaction_effects(cx, effects);
-                cx.set_cursor(MouseCursor::Grab);
+                cursor::drag_end(cx, fe.is_over, MouseCursor::Grab);
             }
-            Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Grab),
+            Hit::FingerHoverIn(_) => cursor::hover_in(cx, MouseCursor::Grab),
+            Hit::FingerHoverOut(_) => cursor::hover_out(cx),
             Hit::FingerScroll(fs) => {
                 let scroll = if fs.scroll.y.abs() > f64::EPSILON {
                     fs.scroll.y

@@ -1,3 +1,4 @@
+use crate::cursor;
 use makepad_widgets::*;
 
 script_mod! {
@@ -178,12 +179,15 @@ impl Widget for ToggleControl {
             }
             Hit::FingerHoverIn(_) => {
                 if self.enabled {
-                    cx.set_cursor(MouseCursor::Hand);
+                    cursor::hover_in(cx, MouseCursor::Hand);
                 }
                 self.hovered = true;
                 self.draw_track_off.redraw(cx);
             }
             Hit::FingerHoverOut(_) => {
+                if self.enabled {
+                    cursor::hover_out(cx);
+                }
                 self.hovered = false;
                 self.draw_track_off.redraw(cx);
             }
@@ -380,11 +384,14 @@ impl Widget for SegmentedControl {
                     .find(|(_, rect)| rect.contains(fe.abs))
                     .map(|(id, _)| *id);
                 if self.enabled {
-                    cx.set_cursor(MouseCursor::Hand);
+                    cursor::hover_in(cx, MouseCursor::Hand);
                 }
                 self.draw_bg.redraw(cx);
             }
             Hit::FingerHoverOut(_) => {
+                if self.enabled {
+                    cursor::hover_out(cx);
+                }
                 self.hovered = None;
                 self.draw_bg.redraw(cx);
             }

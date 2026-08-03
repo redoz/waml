@@ -685,6 +685,19 @@ impl MarkdownEditor {
                 return self.handle_input_with_session(cx, session, EditorInput::Cut);
             }
             Hit::KeyDown(event) => key_input(event),
+            // Makepad holds whatever cursor a widget last set until another one
+            // speaks, so the text surface has to claim `Text` on entry AND hand
+            // it back on exit -- otherwise the caret follows the pointer out
+            // over the chrome. Claimed read-only too: the selection/copy
+            // gestures work there.
+            Hit::FingerHoverIn(_) => {
+                cx.set_cursor(MouseCursor::Text);
+                None
+            }
+            Hit::FingerHoverOut(_) => {
+                cx.set_cursor(MouseCursor::Default);
+                None
+            }
             Hit::FingerDown(event) if event.is_primary_hit() => {
                 cx.set_key_focus(area);
                 let point = event.abs - area.rect(cx).pos + dvec2(0.0, self.scroll_y);

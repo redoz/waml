@@ -9,6 +9,7 @@
 //! overlay) and simply draws nothing but background when hidden -- lower
 //! risk than overlay compositing for a mock.
 
+use crate::cursor;
 use crate::frame::SurfaceExt;
 use makepad_widgets::*;
 
@@ -135,7 +136,8 @@ impl Widget for SelectionToolbar {
                     }
                 }
             }
-            Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Hand),
+            Hit::FingerHoverIn(_) => cursor::hover_in(cx, MouseCursor::Hand),
+            Hit::FingerHoverOut(_) => cursor::hover_out(cx),
             _ => {}
         }
     }

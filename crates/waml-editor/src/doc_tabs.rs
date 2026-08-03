@@ -6,6 +6,7 @@
 //! tracked positions, click regions captured during `draw_walk` and hit-tested
 //! against on `FingerUp`).
 
+use crate::cursor;
 use crate::document::DocumentPresentation;
 use crate::icons::IconSet;
 use makepad_widgets::*;
@@ -547,7 +548,7 @@ impl Widget for DocTabs {
                 }
             }
             Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
-                cx.set_cursor(MouseCursor::Hand);
+                cursor::hover_in(cx, MouseCursor::Hand);
                 let id = self.tab_at(fe.abs);
                 let close = self.close_at(fe.abs);
                 if self.hovered != id || self.close_hovered != close {
@@ -556,15 +557,20 @@ impl Widget for DocTabs {
                     self.draw_bg.redraw(cx);
                 }
             }
-            Hit::FingerHoverOut(_)
+            Hit::FingerHoverOut(_) => {
+                // The cursor is released unconditionally -- the redraw below is
+                // the only part that is worth guarding on state actually having
+                // changed.
+                cursor::hover_out(cx);
                 if self.hovered != LiveId::default()
                     || self.close_hovered != LiveId::default()
-                    || self.pressed != LiveId::default() =>
-            {
-                self.hovered = LiveId::default();
-                self.close_hovered = LiveId::default();
-                self.pressed = LiveId::default();
-                self.draw_bg.redraw(cx);
+                    || self.pressed != LiveId::default()
+                {
+                    self.hovered = LiveId::default();
+                    self.close_hovered = LiveId::default();
+                    self.pressed = LiveId::default();
+                    self.draw_bg.redraw(cx);
+                }
             }
             _ => {}
         }

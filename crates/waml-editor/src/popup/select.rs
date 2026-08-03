@@ -500,6 +500,10 @@ impl Popup for SelectFlyout {
         self.thumb_drag = None;
         self.mark.close();
     }
+
+    fn hovers_item(&self) -> bool {
+        self.mark.armed().is_some()
+    }
 }
 
 fn map_outcome(o: MarkOutcome) -> PopupVerdict {

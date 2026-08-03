@@ -385,6 +385,10 @@ impl Popup for ConflictList {
         self.dividers.clear();
         self.armed = ConflictHit::None;
     }
+
+    fn hovers_item(&self) -> bool {
+        self.armed != ConflictHit::None
+    }
 }
 
 #[cfg(test)]

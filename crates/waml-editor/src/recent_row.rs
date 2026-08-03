@@ -26,6 +26,7 @@
 
 use makepad_widgets::*;
 
+use crate::cursor;
 use crate::icons::{Icon, IconSet};
 
 script_mod! {
@@ -244,8 +245,9 @@ impl Widget for RecentRowView {
                 cx.widget_action(uid, RecentRowViewAction::Clicked);
             }
             Hit::FingerHoverIn(_) => {
-                cx.set_cursor(MouseCursor::Hand);
+                cursor::hover_in(cx, MouseCursor::Hand);
             }
+            Hit::FingerHoverOut(_) => cursor::hover_out(cx),
             _ => {}
         }
     }

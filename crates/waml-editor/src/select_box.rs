@@ -7,6 +7,7 @@
 //! `docs/superpowers/specs/2026-07-22-select-box-flyout-design.md`.
 #![allow(dead_code)]
 
+use crate::cursor;
 use crate::icons::{Icon, IconSet};
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
@@ -137,8 +138,10 @@ impl Widget for SelectBox {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         self.view.handle_event(cx, event, scope);
         let uid = self.widget_uid();
-        if let Hit::FingerUp(fe) = event.hits(cx, self.view.area()) {
-            if self.enabled && fe.is_primary_hit() {
+        match event.hits(cx, self.view.area()) {
+            Hit::FingerHoverIn(_) if self.enabled => cursor::hover_in(cx, MouseCursor::Hand),
+            Hit::FingerHoverOut(_) if self.enabled => cursor::hover_out(cx),
+            Hit::FingerUp(fe) if self.enabled && fe.is_primary_hit() => {
                 // A hit on `view.area()` already means the press landed on the
                 // box — NO `box_rect.contains` guard (that rect is pre-alignment;
                 // the panel is right-aligned → event abs never matches → dead
@@ -159,6 +162,7 @@ impl Widget for SelectBox {
                     },
                 );
             }
+            _ => {}
         }
     }
 

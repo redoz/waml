@@ -17,6 +17,8 @@
 use makepad_widgets::*;
 
 // Pulled in by path (the editor crate has no lib target).
+#[path = "../cursor.rs"]
+mod cursor;
 #[path = "../icons.rs"]
 mod icons;
 #[path = "../logo.rs"]

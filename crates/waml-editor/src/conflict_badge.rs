@@ -4,6 +4,7 @@
 //! `app.rs`). A `#[deref] View` with a red `draw_bg` and a `Label`; a
 //! `FingerDown` on its area emits `Clicked`.
 
+use crate::cursor;
 use crate::icons::{Icon, IconSet};
 use makepad_widgets::*;
 
@@ -67,7 +68,8 @@ impl Widget for ConflictBadge {
         let uid = self.widget_uid();
         match event.hits(cx, self.view.area()) {
             Hit::FingerDown(_) => cx.widget_action(uid, ConflictBadgeAction::Clicked),
-            Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Hand),
+            Hit::FingerHoverIn(_) => cursor::hover_in(cx, MouseCursor::Hand),
+            Hit::FingerHoverOut(_) => cursor::hover_out(cx),
             _ => {}
         }
     }

@@ -12,6 +12,7 @@
 //! is drawn in `draw_walk` over the reserved `icon_slot` gutter, the same
 //! immediate-over-turtle idiom `select_box.rs` uses for its caret.
 
+use crate::cursor;
 use crate::icons::{Icon, IconSet};
 use crate::inspector::ElementKind;
 use makepad_widgets::*;
@@ -127,11 +128,12 @@ impl Widget for RefCardView {
                 cx.widget_action(uid, RefCardViewAction::Clicked);
             }
             Hit::FingerHoverIn(_) => {
-                cx.set_cursor(MouseCursor::Hand);
+                cursor::hover_in(cx, MouseCursor::Hand);
                 self.hovered = true;
                 self.view.redraw(cx);
             }
             Hit::FingerHoverOut(_) => {
+                cursor::hover_out(cx);
                 self.hovered = false;
                 self.view.redraw(cx);
             }

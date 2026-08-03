@@ -32,6 +32,7 @@
 //! [`PanelSplitterAction`], and `app/shell.rs` feeds that to
 //! [`crate::splitter::drag`].
 
+use crate::cursor;
 use makepad_widgets::*;
 
 /// Width of the hit strip. The 1px rule lives inside it, at the inner edge.
@@ -156,7 +157,7 @@ impl Widget for PanelSplitter {
         match event.hits(cx, self.view.area()) {
             Hit::FingerDown(fe) if fe.is_primary_hit() => {
                 self.dragging = true;
-                cx.set_cursor(MouseCursor::ColResize);
+                cursor::hover_in(cx, MouseCursor::ColResize);
                 cx.widget_action(uid, PanelSplitterAction::Dragged(fe.abs.x));
                 self.view.redraw(cx);
             }
@@ -170,15 +171,13 @@ impl Widget for PanelSplitter {
                     self.dragging = false;
                     // A drag that ended away from the strip gets no HoverOut,
                     // so release the cursor here too.
-                    if !self.hovered {
-                        cx.set_cursor(MouseCursor::Default);
-                    }
+                    cursor::drag_end(cx, self.hovered, MouseCursor::ColResize);
                     cx.widget_action(uid, PanelSplitterAction::Released);
                     self.view.redraw(cx);
                 }
             }
             Hit::FingerHoverIn(_) => {
-                cx.set_cursor(MouseCursor::ColResize);
+                cursor::hover_in(cx, MouseCursor::ColResize);
                 self.hovered = true;
                 self.view.redraw(cx);
             }
@@ -189,7 +188,7 @@ impl Widget for PanelSplitter {
                 // so leaving the strip downward kept ColResize showing until
                 // the pointer happened to cross a tree row.
                 if !self.dragging {
-                    cx.set_cursor(MouseCursor::Default);
+                    cursor::hover_out(cx);
                 }
                 self.hovered = false;
                 self.view.redraw(cx);

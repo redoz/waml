@@ -1,3 +1,4 @@
+use crate::cursor;
 use crate::icon_button::{IconButtonAction, IconButtonWidgetRefExt};
 use crate::icons::Icon;
 use crate::navigation::{BreadcrumbSegment, NavigationTarget};
@@ -302,13 +303,19 @@ impl Widget for DocumentHeader {
                     cx.widget_action(self.widget_uid(), action);
                 }
             }
-            Hit::FingerHoverIn(fe) => {
+            // `HoverOver` as well as `HoverIn`: only some of the header is
+            // actionable (the breadcrumb segments), so the cursor has to track
+            // the pointer *within* the widget, not just its entry.
+            Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
                 let event_rect = self.view.area().rect(cx);
                 let hit_offset = event_rect.pos - self.draw_rect.pos;
                 if self.state.action_at(fe.abs - hit_offset).is_some() {
-                    cx.set_cursor(MouseCursor::Hand);
+                    cursor::hover_in(cx, MouseCursor::Hand);
+                } else {
+                    cursor::hover_out(cx);
                 }
             }
+            Hit::FingerHoverOut(_) => cursor::hover_out(cx),
             _ => {}
         }
     }

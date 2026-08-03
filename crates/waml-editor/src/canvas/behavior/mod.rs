@@ -11,6 +11,7 @@ use crate::canvas::viewport::{
     InitialFit, TimerCommand as ViewportTimerCommand, ViewportController, ViewportEffects,
     ViewportSnapshot,
 };
+use crate::cursor;
 use hit::BehaviorTarget;
 use makepad_widgets::*;
 use render::{BehaviorDrawResources, BehaviorPalette};
@@ -448,7 +449,7 @@ impl Widget for BehaviorSurface {
                 self.apply_viewport_effects(cx, effects);
                 self.pointer_down_abs = Some(fe.abs);
                 self.viewport.begin_pan(fe.abs);
-                cx.set_cursor(MouseCursor::Grabbing);
+                cursor::hover_in(cx, MouseCursor::Grabbing);
             }
             Hit::FingerMove(fe) => {
                 if self.viewport.pan_to(fe.abs) {
@@ -481,14 +482,17 @@ impl Widget for BehaviorSurface {
                     };
                     cx.widget_action(self.widget_uid(), action);
                 }
-                cx.set_cursor(MouseCursor::Grab);
+                // A pan released off the surface gets no `FingerHoverOut`, so
+                // `Grab` would follow the pointer over the panels.
+                cursor::drag_end(cx, fe.is_over, MouseCursor::Grab);
             }
-            Hit::FingerUp(_fe) => {
+            Hit::FingerUp(fe) => {
                 self.viewport.end_pan();
                 self.pointer_down_abs = None;
-                cx.set_cursor(MouseCursor::Grab);
+                cursor::drag_end(cx, fe.is_over, MouseCursor::Grab);
             }
-            Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Grab),
+            Hit::FingerHoverIn(_) => cursor::hover_in(cx, MouseCursor::Grab),
+            Hit::FingerHoverOut(_) => cursor::hover_out(cx),
             Hit::FingerScroll(fs) => {
                 let scroll = if fs.scroll.y.abs() > f64::EPSILON {
                     fs.scroll.y

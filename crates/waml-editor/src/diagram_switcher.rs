@@ -21,6 +21,7 @@
 //! Hand-rolled immediate-mode widget, same `draw_abs`/rect-hit-test
 //! convention as `doc_tabs.rs`/`tool_dock.rs`/`selection_toolbar.rs`.
 
+use crate::cursor;
 use makepad_widgets::*;
 
 script_mod! {
@@ -105,7 +106,8 @@ impl Widget for DiagramSwitcher {
             Hit::FingerUp(fe) if fe.is_primary_hit() => {
                 cx.widget_action(uid, DiagramSwitcherAction::Clicked);
             }
-            Hit::FingerHoverIn(_) => cx.set_cursor(MouseCursor::Hand),
+            Hit::FingerHoverIn(_) => cursor::hover_in(cx, MouseCursor::Hand),
+            Hit::FingerHoverOut(_) => cursor::hover_out(cx),
             _ => {}
         }
     }

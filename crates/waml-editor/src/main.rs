@@ -19,6 +19,7 @@ mod cli;
 mod colors_overlay;
 mod config;
 mod conflict_badge;
+mod cursor;
 mod diagram_display;
 mod diagram_properties;
 mod diagram_switcher;

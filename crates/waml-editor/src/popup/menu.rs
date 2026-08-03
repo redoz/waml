@@ -652,6 +652,10 @@ impl Popup for MenuPopup {
         self.open_marking = None;
         self.mark.close();
     }
+
+    fn hovers_item(&self) -> bool {
+        self.mark.armed().is_some()
+    }
 }
 
 fn map_outcome(o: MarkOutcome) -> PopupVerdict {
