@@ -425,6 +425,114 @@ fn minimized_edit_sequence_recovers_invalid_block_ranges() {
     assert!(recovered_with_full_fallback);
 }
 
+#[test]
+fn multibyte_edit_into_reference_definition_updates_backlinks() {
+    // Shrunk from randomized_full_and_incremental_snapshots_agree with
+    // edits = [(109, 122, 243), (168, 170, 194)]. The second edit replaces the
+    // two ASCII bytes " /" in "[id]: /one" with the two-byte "é", producing
+    // "[id]:éone". The incremental path must notice the definition changed and
+    // reresolve its backlinks, not keep the stale "/one" destination.
+    let mut candidate = BASE.to_owned();
+    let mut snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(&candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let mut revision = DocumentRevision::INITIAL;
+    for (start, end, replacement) in [(109, 122, "[n][id]"), (35, 37, "é")] {
+        let replacement: Arc<str> = Arc::from(replacement);
+        candidate.replace_range(start..end, &replacement);
+        revision = revision.checked_next().unwrap();
+        let update = reparse_markdown(
+            &snapshot,
+            revision,
+            source(&candidate),
+            &[TextChange {
+                old_range: range(start, end),
+                replacement,
+            }],
+        )
+        .unwrap();
+        assert_full_oracle(&update.snapshot, &candidate);
+        snapshot = update.snapshot;
+    }
+}
+
+#[test]
+fn window_reparse_keeps_reference_link_resolution() {
+    // Shrunk from randomized_full_and_incremental_snapshots_agree with
+    // edits = [(251, 50, 45), (29, 234, 169), (75, 226, 91), (56, 169, 84)].
+    // The final one-byte deletion at the document start must not reparse the
+    // later paragraph without reference definitions in scope; the resolved
+    // "[n][id]" link has to survive as a Link node.
+    let mut candidate = BASE.to_owned();
+    let mut snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(&candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let mut revision = DocumentRevision::INITIAL;
+    for (start, end, replacement) in [
+        (50, 112, "x"),
+        (0, 29, "x"),
+        (25, 26, "[n][id]"),
+        (0, 1, ""),
+    ] {
+        let replacement: Arc<str> = Arc::from(replacement);
+        candidate.replace_range(start..end, &replacement);
+        revision = revision.checked_next().unwrap();
+        let update = reparse_markdown(
+            &snapshot,
+            revision,
+            source(&candidate),
+            &[TextChange {
+                old_range: range(start, end),
+                replacement,
+            }],
+        )
+        .unwrap();
+        assert_full_oracle(&update.snapshot, &candidate);
+        snapshot = update.snapshot;
+    }
+}
+
+#[test]
+fn edit_in_sibling_line_keeps_reference_link_in_window() {
+    // Shrunk from randomized_full_and_incremental_snapshots_agree with
+    // edits = [(17, 155, 3), (8, 152, 37)]. The first edit breaks the
+    // frontmatter close fence and leaves a resolved "[n][id]" link inside the
+    // resulting paragraph. The second edit touches only that paragraph's first
+    // line, so the shell window covers the link but not its definition; the
+    // reparse must fall back to a full parse instead of dropping the Link.
+    let mut candidate = BASE.to_owned();
+    let mut snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(&candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let mut revision = DocumentRevision::INITIAL;
+    for (start, end, replacement) in [(16, 17, "[n][id]"), (7, 8, "x")] {
+        let replacement: Arc<str> = Arc::from(replacement);
+        candidate.replace_range(start..end, &replacement);
+        revision = revision.checked_next().unwrap();
+        let update = reparse_markdown(
+            &snapshot,
+            revision,
+            source(&candidate),
+            &[TextChange {
+                old_range: range(start, end),
+                replacement,
+            }],
+        )
+        .unwrap();
+        assert_full_oracle(&update.snapshot, &candidate);
+        snapshot = update.snapshot;
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
     #[test]

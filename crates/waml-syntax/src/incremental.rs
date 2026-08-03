@@ -849,6 +849,15 @@ pub(crate) fn reparse_okf_markdown_with_structure(
     let Some(new_range) = expanded_window_range(window.range, &map) else {
         return full(FullReparseReason::UnsafeSynchronization);
     };
+    if crate::markdown::reparse::window_reparse_may_lose_reference_resolution(
+        &old,
+        previous.root_green(),
+        window.range,
+        &new_text,
+        new_range,
+    )? {
+        return full(FullReparseReason::UnsafeSynchronization);
+    }
     let parsed_window = match crate::shell::parse_window(
         &new_text,
         &new_structure,

@@ -469,17 +469,24 @@ pub fn reparse_markdown(
 }
 
 fn backlink_ranges(queries: &MarkdownSyntaxQueries, label: &str) -> Vec<TextRange> {
-    queries
-        .reference_backlinks(label)
-        .iter()
-        .filter_map(|owner| {
-            queries
-                .links()
-                .find(|link| link.identity == *owner)
-                .map(|link| link.source_range)
-                .or_else(|| queries.image(*owner).map(|image| image.source_range))
-        })
-        .collect()
+    // A backlink owner identity belongs to the inline run's owning block, so a
+    // single owner can cover several reference links to the same label. Collect
+    // every matching link, not just the first, or later links keep a stale
+    // destination when their shared definition changes.
+    let owners = queries.reference_backlinks(label);
+    let mut ranges: Vec<TextRange> = queries
+        .links()
+        .filter(|link| owners.contains(&link.identity))
+        .map(|link| link.source_range)
+        .collect();
+    for owner in owners.iter() {
+        if let Some(range) = queries.image(*owner).map(|image| image.source_range) {
+            if !ranges.contains(&range) {
+                ranges.push(range);
+            }
+        }
+    }
+    ranges
 }
 
 fn source_backed_green_uses(

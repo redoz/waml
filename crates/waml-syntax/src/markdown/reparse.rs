@@ -25,7 +25,25 @@ pub(crate) fn change_touches_reference_definition(
     changes.iter().zip(map.segments()).any(|(change, segment)| {
         intersecting_lines(old.shared(), change.old_range).any(line_is_definition)
             || intersecting_lines(new.shared(), segment.new).any(line_is_definition)
+            || trailing_paragraph_lines(old.shared(), change.old_range).any(line_is_definition)
+            || trailing_paragraph_lines(new.shared(), segment.new).any(line_is_definition)
     })
+}
+
+/// Lines following the edited lines up to the first blank line.
+///
+/// An edit can promote or demote a definition-shaped line it never touches:
+/// deleting the only text of a paragraph's opening line turns the next line
+/// from a paragraph continuation into a real reference definition. Scan the
+/// rest of that paragraph run so such promotions still count as touching a
+/// definition.
+fn trailing_paragraph_lines(source: &str, range: TextRange) -> impl Iterator<Item = &str> {
+    let end = range.end().to_usize().min(source.len());
+    let line_end = source[end..].find('\n').map_or(source.len(), |at| end + at);
+    source[line_end..]
+        .split_terminator('\n')
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
 }
 
 /// Returns true when an edited line can add, remove, or join a reference use.
@@ -45,6 +63,38 @@ pub(crate) fn change_may_affect_reference_use(
             .flat_map(reference_labels)
             .any(|label| references.definitions.contains_key(&label))
     }))
+}
+
+/// Returns true when reparsing a shell window could resolve a reference use
+/// differently from a full parse.
+///
+/// A window reparse resolves reference links only against definitions inside
+/// the window. Any line in the window (old or new) that uses a label whose
+/// definition lies outside the window would therefore lose (or change) its
+/// resolution, so the caller must fall back to a full parse. The edited-lines
+/// guard alone is not enough: the selected window regularly spans lines the
+/// edit never touched.
+pub(crate) fn window_reparse_may_lose_reference_resolution(
+    old: &SourceText,
+    old_root: &GreenNode<OkfMarkdownLanguage>,
+    old_window: TextRange,
+    new: &SourceText,
+    new_window: TextRange,
+) -> Result<bool, ParseError> {
+    let references = MarkdownReferenceMap::from_tree(old.shared(), old_root, 0)?;
+    if references.definitions.is_empty() {
+        return Ok(false);
+    }
+    let defined_outside = |label: &Arc<str>| {
+        references.definitions.get(label).is_some_and(|definition| {
+            definition.source_range.start() < old_window.start()
+                || definition.source_range.end() > old_window.end()
+        })
+    };
+    Ok(intersecting_lines(old.shared(), old_window)
+        .chain(intersecting_lines(new.shared(), new_window))
+        .flat_map(reference_labels)
+        .any(|label| defined_outside(&label)))
 }
 
 fn intersecting_lines(source: &str, range: TextRange) -> impl Iterator<Item = &str> {
