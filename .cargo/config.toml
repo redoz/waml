@@ -1,0 +1,6 @@
+[env]
+# The editor's widget structs are large by value in debug builds (every `#[live]`
+# `DrawColor`/`DrawText` is inlined), so a mounted-widget test tree overflows
+# libtest's default 2 MiB thread stack. Raise it for every cargo-launched
+# process; release builds are unaffected in practice.
+RUST_MIN_STACK = "16777216"
