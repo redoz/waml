@@ -213,10 +213,7 @@ impl MotionController {
                         .clamp(0.0, layout.max_scroll_y(self.viewport_height)),
                 )
             })
-            .map(|scroll_y| {
-                self.last_scroll_y.set(scroll_y);
-                scroll_y
-            })
+            .inspect(|&scroll_y| self.last_scroll_y.set(scroll_y))
             // No anchor resolved, so this frame has nothing to say about scroll
             // and must leave it where it is. Reporting 0.0 here would jump the
             // reader to the top of the document.

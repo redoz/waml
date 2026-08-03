@@ -1253,7 +1253,7 @@ impl MarkdownEditor {
         // caller that claimed nothing has no cache worth trusting.
         let width_changed = self
             .last_layout_width
-            .is_none_or(|width| width.to_bits() != viewport_size.x.to_bits());
+            .map_or(true, |width| width.to_bits() != viewport_size.x.to_bits());
         self.last_layout_width = Some(viewport_size.x);
         let invalidation = match self.pending_invalidation.take() {
             _ if width_changed => LayoutInvalidation::ViewportWidth,
