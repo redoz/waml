@@ -21,12 +21,21 @@ pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(Strin
 }
 
 /// Recursively collect `.md` files under the given files/directories.
+///
+/// Dot-directories are skipped during the walk: they hold tool state, not model
+/// content. The editor writes `<project>/.waml/README.md` on open, and reading
+/// that back as a document would silently add a phantom node to the model.
+/// A dot-directory named directly on the command line is still descended into,
+/// since that is an explicit request rather than an incidental discovery.
 pub fn collect_md(paths: &[PathBuf]) -> std::io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for p in paths {
         if p.is_dir() {
             for entry in fs::read_dir(p)? {
                 let path = entry?.path();
+                if path.is_dir() && is_dot_dir(&path) {
+                    continue;
+                }
                 out.extend(collect_md(&[path])?);
             }
         } else if p.extension().and_then(|e| e.to_str()) == Some("md") {
@@ -35,6 +44,12 @@ pub fn collect_md(paths: &[PathBuf]) -> std::io::Result<Vec<PathBuf>> {
     }
     out.sort();
     Ok(out)
+}
+
+fn is_dot_dir(p: &Path) -> bool {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with('.'))
 }
 
 fn path_key(p: &Path) -> String {
@@ -741,6 +756,22 @@ mod tests {
                 "payment-gateway.md"
             ]
         );
+    }
+
+    /// `.waml/` is editor state, not model content. The editor drops a README
+    /// there on open, and picking it up would add a phantom document to every
+    /// bundle read from a project that has ever been opened in the editor.
+    #[test]
+    fn rooted_read_skips_editor_state_directories() {
+        let temp = TempDir::new();
+        fs::write(temp.0.join("order.md"), "# Order\n").unwrap();
+        fs::create_dir_all(temp.0.join(".waml")).unwrap();
+        fs::write(temp.0.join(".waml/README.md"), "# Not your model\n").unwrap();
+        fs::write(temp.0.join(".waml/settings.json"), "{}").unwrap();
+
+        let bundle = read_bundle_rooted(&[temp.0.clone()], false).unwrap();
+        let keys: Vec<&str> = bundle.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(keys, ["order.md"]);
     }
 
     /// The same model shared from a different working directory must encode
