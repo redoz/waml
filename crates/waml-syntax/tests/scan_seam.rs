@@ -79,10 +79,10 @@ fn the_seam_file_actually_uses_the_dependency() {
 fn only_the_seam_file_references_the_dependency() {
     let root = repo_root();
     let mut sources = Vec::new();
-    rust_sources(&root.join("crates/waml-syntax/src/markdown"), &mut sources);
+    rust_sources(&root.join("crates/waml-syntax/src"), &mut sources);
     assert!(
         sources.len() > 5,
-        "the markdown source walk found only {} files, so the guard is not \
+        "the waml-syntax source walk found only {} files, so the guard is not \
          actually scanning anything",
         sources.len()
     );
