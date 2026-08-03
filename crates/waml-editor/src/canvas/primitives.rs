@@ -6,8 +6,14 @@ const FONT_RASTER_SIZES: &[f32] = &[
 ];
 
 pub(in crate::canvas) fn font_raster_size(target_size: f32) -> f32 {
+    // Below the ladder, snap to whole points instead of passing the zoomed size
+    // through raw. A continuous size means every zoom value asks the atlas for
+    // a font size it has never rasterized -- and card body text lives entirely
+    // in this range, so a zoom notch (or any frame of a zoom glide) paid a full
+    // re-rasterization of every glyph on screen. Whole-point rungs bound that to
+    // 28 cached sizes, and the <=0.5pt remainder rides `font_scale` as usual.
     if target_size <= FONT_RASTER_SIZES[0] {
-        return target_size.max(4.0);
+        return target_size.max(4.0).round();
     }
 
     FONT_RASTER_SIZES
@@ -140,10 +146,36 @@ mod tests {
     }
 
     #[test]
-    fn font_raster_size_keeps_small_text_exact() {
+    fn font_raster_size_snaps_small_text_to_whole_points() {
         assert_eq!(font_raster_size(4.0), 4.0);
-        assert_eq!(font_raster_size(17.25), 17.25);
+        assert_eq!(font_raster_size(17.25), 17.0);
+        assert_eq!(font_raster_size(17.75), 18.0);
         assert_eq!(font_raster_size(32.0), 32.0);
+    }
+
+    #[test]
+    fn font_raster_size_never_falls_below_the_four_point_floor() {
+        assert_eq!(font_raster_size(0.0), 4.0);
+        assert_eq!(font_raster_size(1.2), 4.0);
+    }
+
+    #[test]
+    fn a_zoom_sweep_lands_on_a_bounded_set_of_raster_sizes() {
+        // The point of the ladder: a continuous zoom range must not produce a
+        // continuous set of font sizes, or every frame re-rasterizes.
+        let mut zoom = 0.05_f32;
+        let mut sizes = std::collections::BTreeSet::new();
+        while zoom <= 20.0 {
+            for base_pt in [10.0_f32, 12.0, 14.0] {
+                sizes.insert(font_raster_size(base_pt * zoom).to_bits());
+            }
+            zoom *= 1.01;
+        }
+        assert!(
+            sizes.len() < 64,
+            "a full zoom sweep should reuse rungs, got {} distinct sizes",
+            sizes.len()
+        );
     }
 
     #[test]
