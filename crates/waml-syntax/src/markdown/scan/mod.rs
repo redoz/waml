@@ -9,16 +9,20 @@
 //!
 //! * Offsets in [`BlockScan::events`] are byte ranges **relative to the `source`
 //!   passed in**. Callers that scan a slice re-base them themselves.
-//! * Inline-level constructs are not reported. An implementation that cannot
-//!   report a construct must omit its start *and* its end, so the event stream
-//!   stays balanced.
+//! * Inline-level constructs are not reported *by the block scan*. An
+//!   implementation that cannot report a construct must omit its start *and*
+//!   its end, so the event stream stays balanced. The two inline helpers
+//!   ([`scan_text_entities`], [`scan_is_inline_html`]) are the only inline-level
+//!   entry points, and each is specified on its own re-export below.
 //! * [`ScanEvent::End`] names the exact kind that opened, including the
 //!   indented/fenced code-block distinction.
 //! * [`BlockScan::reference_definitions`] is returned in implementation order,
 //!   unsorted. `block.rs` validates each span before sorting, and that order of
 //!   operations is load-bearing for its recovery path. Only [`ScanProfile::Tree`]
-//!   collects them; under [`ScanProfile::Shell`] the field is always empty,
-//!   because the shell mapper never reads it.
+//!   collects them; under [`ScanProfile::Shell`] the field is `None`, because
+//!   the shell mapper never reads it. `None` is distinct from "collected and
+//!   there were none", so a consumer that reads it under the wrong profile
+//!   sees the omission instead of an empty list.
 //! * Range screening is the implementation's job, not the caller's: because the
 //!   inline and text events are filtered out here, only the implementation can
 //!   still see them. It must check every raw event's range and report
@@ -30,6 +34,26 @@ mod pulldown;
 
 use std::ops::Range;
 
+// The seam's entry points. `scan_blocks` is specified by the types below; the
+// two inline helpers have no types of their own, so their contracts live here.
+//
+// * `fn scan_text_entities(spelling: &str) -> String`
+//
+//   Decodes `spelling` as inline Markdown *text* and returns the concatenation
+//   of the text it yields, with character references (`&amp;`, `&#38;`, ...)
+//   resolved. Everything that is not text — emphasis markers, code spans, raw
+//   HTML — contributes nothing, so the result may be shorter than the input and
+//   is empty when `spelling` holds no text at all. Input that decodes to itself
+//   (no entities, no markup) is returned unchanged. Never fails: an
+//   implementation that cannot decode an entity leaves it spelled out.
+//
+// * `fn scan_is_inline_html(candidate: &str) -> bool`
+//
+//   Whether `candidate` — angle brackets included — is exactly one raw inline
+//   HTML tag and nothing else. `true` only when the implementation recognises
+//   HTML whose spelling equals the whole of `candidate`; a tag with leading or
+//   trailing text, or text alone, is `false`. Purely a classification: it never
+//   allocates a result the caller must interpret and never fails.
 pub(crate) use pulldown::{scan_blocks, scan_is_inline_html, scan_text_entities};
 
 /// Which construct set the scan should recognise.
@@ -179,7 +203,11 @@ pub(crate) enum ScanEvent {
 #[derive(Debug, Default)]
 pub(crate) struct BlockScan {
     pub events: Vec<(ScanEvent, Range<usize>)>,
-    pub reference_definitions: Vec<Range<usize>>,
+    /// The link reference definitions, or `None` when the profile does not
+    /// collect them. [`ScanProfile::Shell`] always yields `None`; a consumer
+    /// that reads the field under that profile has to face the omission rather
+    /// than mistake it for a document with no definitions.
+    pub reference_definitions: Option<Vec<Range<usize>>>,
     /// Set when *any* raw event the implementation saw — including the inline
     /// and text events this vocabulary drops — carried a range that was not a
     /// char-aligned slice of `source`. Callers treat the whole scan as
@@ -308,17 +336,20 @@ mod tests {
             MarkdownDialect::WAML_DEFAULT,
             ScanProfile::Tree,
         );
-        assert_eq!(scan.reference_definitions, vec![0..7]);
+        let expected: Vec<Range<usize>> = vec![Range { start: 0, end: 7 }];
+        assert_eq!(scan.reference_definitions, Some(expected));
     }
 
     #[test]
     fn the_shell_profile_does_not_collect_reference_definitions() {
+        // `None`, not an empty `Vec`: the source below *has* a definition, so an
+        // empty list would be indistinguishable from a wrong answer.
         let scan = scan_blocks(
             "[l]: /u\n\ntext\n",
             MarkdownDialect::WAML_DEFAULT,
             ScanProfile::Shell,
         );
-        assert!(scan.reference_definitions.is_empty());
+        assert_eq!(scan.reference_definitions, None);
     }
 
     #[test]

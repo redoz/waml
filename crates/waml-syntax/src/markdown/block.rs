@@ -80,7 +80,11 @@ fn parse_strict(
         return Err(BlockBuildError::MalformedEventRange);
     }
     let mut reference_spans = Vec::new();
-    for definition in &scan.reference_definitions {
+    let definitions = scan
+        .reference_definitions
+        .as_deref()
+        .expect("ScanProfile::Tree collects reference definitions");
+    for definition in definitions {
         let span = (event_start + definition.start)..(event_start + definition.end);
         validate_event_range(source, event_start, end, &span)?;
         reference_spans.push(span);

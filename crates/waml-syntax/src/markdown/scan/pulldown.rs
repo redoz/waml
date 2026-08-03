@@ -107,13 +107,15 @@ pub(crate) fn scan_blocks(
     // link reference, so the shell profile skips the work entirely. Must be read
     // before `into_offset_iter` consumes the parser. Order is the parser's own;
     // callers validate before sorting and that order matters.
-    let reference_definitions: Vec<std::ops::Range<usize>> = match profile {
-        ScanProfile::Tree => parser
-            .reference_definitions()
-            .iter()
-            .map(|(_, definition)| definition.span.clone())
-            .collect(),
-        ScanProfile::Shell => Vec::new(),
+    let reference_definitions: Option<Vec<std::ops::Range<usize>>> = match profile {
+        ScanProfile::Tree => Some(
+            parser
+                .reference_definitions()
+                .iter()
+                .map(|(_, definition)| definition.span.clone())
+                .collect(),
+        ),
+        ScanProfile::Shell => None,
     };
 
     let mut events = Vec::new();
