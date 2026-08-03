@@ -759,6 +759,22 @@ impl LayoutEngine {
         let mut intrinsics = vec![IntrinsicSize::default(); document.blocks.len()];
         let mut intrinsic_memo = vec![None; document.blocks.len()];
         let mut table_intrinsics_ready = vec![false; document.blocks.len()];
+        // Every still-valid table intrinsic is restored before the first width
+        // plan, not just the ones this scroll position happens to measure. The
+        // plan is what stamps each block's `width_key`, and a block is only
+        // reusable at the key it was cached under: seeding from the window
+        // alone would hand out a different key on every scroll, miss the whole
+        // measurement cache, and leave off-window blocks at their one-line
+        // estimate — so content height would move with the scroll position and
+        // the max-scroll clamp would fight the wheel.
+        seed_cached_table_intrinsics(
+            document,
+            &layout_index,
+            &self.table_intrinsics,
+            &mut intrinsics,
+            &mut intrinsic_memo,
+            &mut table_intrinsics_ready,
+        );
         let mut widths = WidthPlan::new(document, &hierarchy, viewport.width, &intrinsics);
         let mut block_data = Vec::with_capacity(document.blocks.len());
         let mut measurements = Vec::with_capacity(document.blocks.len());
@@ -1582,6 +1598,41 @@ fn visible_indices(
             (rect.pos.y + rect.size.y >= visible_min && rect.pos.y <= visible_max).then_some(index)
         })
         .collect()
+}
+
+/// Restores every cached table intrinsic whose subtree fingerprint still
+/// matches, marking those tables ready so the hydration loop neither
+/// remeasures them nor revises their widths mid-pass.
+///
+/// This runs before the first `WidthPlan`, so widths — and the `width_key`
+/// every block's measurement cache is keyed on — do not depend on which part
+/// of the document the viewport is over.
+fn seed_cached_table_intrinsics(
+    document: &LayoutDocument,
+    layout_index: &DocumentLayoutIndex,
+    cache: &HashMap<LayoutElementId, CachedTableIntrinsics>,
+    sizes: &mut [IntrinsicSize],
+    memo: &mut [Option<IntrinsicSize>],
+    ready: &mut [bool],
+) {
+    for (table, block) in document.blocks.iter().enumerate() {
+        if !matches!(block.spec.flow, super::BlockFlow::Table) {
+            continue;
+        }
+        let Some(cached) = cache
+            .get(&block.id)
+            .filter(|cached| cached.fingerprint == layout_index.subtree_fingerprints[table])
+        else {
+            continue;
+        };
+        for (cell_id, size) in &cached.cells {
+            if let Some(index) = layout_index.block_indices.get(cell_id) {
+                sizes[*index] = *size;
+                memo[*index] = Some(*size);
+            }
+        }
+        ready[table] = true;
+    }
 }
 
 fn measure_table_intrinsics<S: TextShaper>(

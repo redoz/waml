@@ -479,6 +479,17 @@ pub struct MarkdownEditor {
     motion: MotionController,
     #[rust]
     pending_cause: Option<LayoutChangeCause>,
+    /// What actually changed since the last layout. A scroll must not claim the
+    /// document changed: `Document` invalidates every block, so the measurement
+    /// cache would miss on every wheel tick and off-window blocks would fall
+    /// back to their one-line estimate — making content height a function of
+    /// scroll position.
+    #[rust]
+    pending_invalidation: Option<LayoutInvalidation>,
+    /// Content width the installed layout was built at, so a real width change
+    /// is still told apart from a scroll.
+    #[rust]
+    last_layout_width: Option<f64>,
     #[rust]
     next_frame: NextFrame,
     #[rust]
@@ -639,6 +650,7 @@ impl MarkdownEditor {
             });
             self.target_layout = None;
             self.pending_cause = Some(LayoutChangeCause::ViewportResize);
+            self.pending_invalidation = Some(LayoutInvalidation::Viewport);
             self.redraw(cx);
         }
         let area = self.scroll_bars.area();
@@ -1237,6 +1249,17 @@ impl MarkdownEditor {
                 .font_family
                 .clone(),
         );
+        // A width change reflows every block whatever the caller claimed, and a
+        // caller that claimed nothing has no cache worth trusting.
+        let width_changed = self
+            .last_layout_width
+            .is_none_or(|width| width.to_bits() != viewport_size.x.to_bits());
+        self.last_layout_width = Some(viewport_size.x);
+        let invalidation = match self.pending_invalidation.take() {
+            _ if width_changed => LayoutInvalidation::ViewportWidth,
+            Some(invalidation) => invalidation,
+            None => LayoutInvalidation::Document,
+        };
         self.text_layout_cache.retain_revision(installed.revision);
         let mut shaper = MakepadTextShaper {
             cx,
@@ -1255,7 +1278,7 @@ impl MarkdownEditor {
                     viewport_size.y.max(1.0),
                     self.scroll_y,
                 ),
-                LayoutInvalidation::Document,
+                invalidation,
                 &mut shaper,
             )
             .map_err(MarkdownEditorError::Layout)?;
@@ -1472,6 +1495,7 @@ impl MarkdownEditorRef {
             inner.line_numbers = mode;
             inner.target_layout = None;
             inner.pending_cause = Some(LayoutChangeCause::ViewportResize);
+            inner.pending_invalidation = Some(LayoutInvalidation::ViewportWidth);
             inner.redraw(cx);
         }
     }
@@ -1516,6 +1540,7 @@ impl MarkdownEditorRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.installed = Some(presentation);
             inner.pending_cause = Some(cause);
+            inner.pending_invalidation = Some(LayoutInvalidation::Document);
             inner.target_layout = None;
             inner.redraw(cx);
         }
@@ -1528,6 +1553,8 @@ impl MarkdownEditorRef {
             inner.previous_layout = None;
             inner.frame_layout = None;
             inner.pending_cause = None;
+            inner.pending_invalidation = None;
+            inner.last_layout_width = None;
             inner.next_frame = NextFrame::default();
             inner.redraw(cx);
         }

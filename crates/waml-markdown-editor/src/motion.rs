@@ -4,7 +4,7 @@
 //! selection, diagnostics, images, caret, and IME can never disagree about
 //! where they are in a frame.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{cell::Cell, collections::BTreeMap, sync::Arc};
 
 use makepad_widgets::{animator::Ease, Play, Rect};
 use waml_syntax::TextChange;
@@ -96,6 +96,11 @@ pub struct MotionController {
     anchor: Option<ScrollAnchor>,
     viewport_height: f64,
     last_cut: Option<MotionCutReason>,
+    /// Scroll the last anchored frame resolved to. An anchor only resolves
+    /// while its caret is inside the laid-out window, so scrolling away from
+    /// the caret loses it — and holding here is what keeps that from reading
+    /// as "scroll to the top".
+    last_scroll_y: Cell<f64>,
 }
 
 impl MotionController {
@@ -208,7 +213,18 @@ impl MotionController {
                         .clamp(0.0, layout.max_scroll_y(self.viewport_height)),
                 )
             })
-            .unwrap_or(0.0);
+            .map(|scroll_y| {
+                self.last_scroll_y.set(scroll_y);
+                scroll_y
+            })
+            // No anchor resolved, so this frame has nothing to say about scroll
+            // and must leave it where it is. Reporting 0.0 here would jump the
+            // reader to the top of the document.
+            .unwrap_or_else(|| {
+                self.last_scroll_y
+                    .get()
+                    .min(layout.max_scroll_y(self.viewport_height))
+            });
         MotionFrame {
             layout,
             scroll_y,
