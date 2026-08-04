@@ -148,30 +148,45 @@ fn text_face(metrics: TextMetrics) -> TextFace {
     }
 }
 
+impl TextFace {
+    const COUNT: usize = 8;
+
+    /// Index into `WidgetFonts::faces` / the `#[live] DrawText` fields. Kept as
+    /// an explicit match (rather than a `#[repr(usize)]` cast) so a new variant
+    /// fails to compile here instead of silently reading the wrong slot.
+    fn index(self) -> usize {
+        match self {
+            TextFace::SansRegular => 0,
+            TextFace::SansRegularItalic => 1,
+            TextFace::SansSemibold => 2,
+            TextFace::SansSemiboldItalic => 3,
+            TextFace::MonoRegular => 4,
+            TextFace::MonoRegularItalic => 5,
+            TextFace::MonoSemibold => 6,
+            TextFace::MonoSemiboldItalic => 7,
+        }
+    }
+
+    const ALL: [TextFace; TextFace::COUNT] = [
+        TextFace::SansRegular,
+        TextFace::SansRegularItalic,
+        TextFace::SansSemibold,
+        TextFace::SansSemiboldItalic,
+        TextFace::MonoRegular,
+        TextFace::MonoRegularItalic,
+        TextFace::MonoSemibold,
+        TextFace::MonoSemiboldItalic,
+    ];
+}
+
 #[derive(Default)]
 struct WidgetFonts {
-    sans_regular: Option<FontFamily>,
-    sans_regular_italic: Option<FontFamily>,
-    sans_semibold: Option<FontFamily>,
-    sans_semibold_italic: Option<FontFamily>,
-    mono_regular: Option<FontFamily>,
-    mono_regular_italic: Option<FontFamily>,
-    mono_semibold: Option<FontFamily>,
-    mono_semibold_italic: Option<FontFamily>,
+    faces: [Option<FontFamily>; TextFace::COUNT],
 }
 
 impl WidgetFonts {
     fn configure_face(&self, face: TextFace, metrics: TextMetrics, draw: &mut DrawText) {
-        let font = match face {
-            TextFace::SansRegular => self.sans_regular.as_ref(),
-            TextFace::SansRegularItalic => self.sans_regular_italic.as_ref(),
-            TextFace::SansSemibold => self.sans_semibold.as_ref(),
-            TextFace::SansSemiboldItalic => self.sans_semibold_italic.as_ref(),
-            TextFace::MonoRegular => self.mono_regular.as_ref(),
-            TextFace::MonoRegularItalic => self.mono_regular_italic.as_ref(),
-            TextFace::MonoSemibold => self.mono_semibold.as_ref(),
-            TextFace::MonoSemiboldItalic => self.mono_semibold_italic.as_ref(),
-        };
+        let font = self.faces[face.index()].as_ref();
         if let Some(font) = font {
             draw.text_style.font_family = font.clone();
         }
@@ -1334,6 +1349,22 @@ impl MarkdownEditor {
             .map(|block| (block.id, block.rect))
     }
 
+    /// Single source of truth for the `TextFace` -> `#[live] DrawText` field
+    /// mapping; used by both the font-population loop and (indirectly, via
+    /// `self.fonts`) `configure_face` at draw time.
+    fn draw_text_for(&self, face: TextFace) -> &DrawText {
+        match face {
+            TextFace::SansRegular => &self.draw_text_sans,
+            TextFace::SansRegularItalic => &self.draw_text_sans_italic,
+            TextFace::SansSemibold => &self.draw_text_sans_semibold,
+            TextFace::SansSemiboldItalic => &self.draw_text_sans_semibold_italic,
+            TextFace::MonoRegular => &self.draw_text_mono,
+            TextFace::MonoRegularItalic => &self.draw_text_mono_italic,
+            TextFace::MonoSemibold => &self.draw_text_mono_semibold,
+            TextFace::MonoSemiboldItalic => &self.draw_text_mono_semibold_italic,
+        }
+    }
+
     fn install_layout(
         &mut self,
         cx: &mut Cx,
@@ -1359,28 +1390,17 @@ impl MarkdownEditor {
         }
         let viewport_size =
             resolved_layout_viewport(self.scroll_bars.area().rect(cx).size, requested_viewport);
-        self.fonts.sans_regular = Some(self.draw_text_sans.text_style.font_family.clone());
-        self.fonts.sans_regular_italic =
-            Some(self.draw_text_sans_italic.text_style.font_family.clone());
-        self.fonts.sans_semibold =
-            Some(self.draw_text_sans_semibold.text_style.font_family.clone());
-        self.fonts.sans_semibold_italic = Some(
-            self.draw_text_sans_semibold_italic
-                .text_style
-                .font_family
-                .clone(),
-        );
-        self.fonts.mono_regular = Some(self.draw_text_mono.text_style.font_family.clone());
-        self.fonts.mono_regular_italic =
-            Some(self.draw_text_mono_italic.text_style.font_family.clone());
-        self.fonts.mono_semibold =
-            Some(self.draw_text_mono_semibold.text_style.font_family.clone());
-        self.fonts.mono_semibold_italic = Some(
-            self.draw_text_mono_semibold_italic
-                .text_style
-                .font_family
-                .clone(),
-        );
+        // Populate once: the `#[live] DrawText` fields don't change between
+        // installs on this widget (no live-apply hook re-fires them), so
+        // re-cloning all eight `FontFamily`s on every install — including pure
+        // invalidation-driven reinstalls — is wasted work. Refresh only when
+        // the cache is empty.
+        if self.fonts.faces.iter().all(Option::is_none) {
+            for face in TextFace::ALL {
+                self.fonts.faces[face.index()] =
+                    Some(self.draw_text_for(face).text_style.font_family.clone());
+            }
+        }
         // A width change reflows every block whatever the caller claimed, and a
         // caller that claimed nothing has no cache worth trusting.
         let width_changed = self
@@ -1617,6 +1637,37 @@ mod abs_to_layout_point_tests {
         let gutter = gutter_width(100, GUTTER_DIGIT_WIDTH, GUTTER_GAP);
         let new = abs_to_layout_point(abs, origin, gutter, scroll_y);
         assert_eq!(new, abs - origin - dvec2(gutter, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod text_face_index_tests {
+    use super::*;
+    use crate::layout::FontWeight;
+    use crate::presentation::style::FONT_SANS;
+
+    #[test]
+    fn all_metric_combinations_round_trip_through_index() {
+        let mut seen = [false; TextFace::COUNT];
+        for is_mono in [false, true] {
+            for is_bold in [false, true] {
+                for is_italic in [false, true] {
+                    let metrics = TextMetrics {
+                        font: if is_mono { FONT_MONO } else { FONT_SANS },
+                        font_size: 16.0,
+                        weight: FontWeight(if is_bold { 700 } else { 400 }),
+                        italic: is_italic,
+                        line_spacing: 1.0,
+                    };
+                    let face = text_face(metrics);
+                    let index = face.index();
+                    assert!(index < TextFace::COUNT, "index {index} out of range");
+                    assert!(!seen[index], "face {face:?} collided at index {index}");
+                    seen[index] = true;
+                }
+            }
+        }
+        assert!(seen.iter().all(|&hit| hit), "not every index was reached");
     }
 }
 
