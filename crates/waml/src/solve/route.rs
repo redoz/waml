@@ -130,16 +130,38 @@ pub fn route_keyed_with(
     cost: &RouteCost,
 ) -> Vec<Route> {
     let membership = build_membership(boxes);
+    // P-3: the full obstacle candidate list (every leaf + every group, sorted
+    // by id) is invariant across edges, so build it ONCE per solve and mask it
+    // per edge instead of walking `rects` and re-sorting for every edge. A
+    // filtered subsequence of a sorted list is sorted, so the per-edge result
+    // is byte-identical to the old build-then-sort.
+    let mut all_obstacles: Vec<Obstacle> = rects
+        .iter()
+        .map(|(id, r)| Obstacle {
+            id: id.clone(),
+            rect: *r,
+        })
+        .collect();
+    all_obstacles.sort_by(|a, b| a.id.cmp(&b.id)); // deterministic order
     let mut routes: Vec<Route> = Vec::new();
     for (s, t, key, label_size) in edges {
         let Some((source, target, src, tgt)) = routable(rects, s, t) else {
             continue;
         };
-        // Leaf rects are always obstacles; a group is an obstacle for THIS edge
-        // only when neither endpoint is one of its (transitive) members.
-        let mut obstacles = leaf_obstacles(rects, &[s.clone(), t.clone()]);
-        obstacles.extend(group_obstacles(rects, &membership, s, t));
-        obstacles.sort_by(|a, b| a.id.cmp(&b.id)); // deterministic order
+        // Leaf rects are always obstacles (except this edge's endpoints); a
+        // group is an obstacle for THIS edge only when neither endpoint is one
+        // of its (transitive) members.
+        let obstacles: Vec<Obstacle> = all_obstacles
+            .iter()
+            .filter(|o| match &o.id {
+                BoxId::Node(_) => o.id != *s && o.id != *t,
+                BoxId::Group(_) => {
+                    !membership.is_member(&o.id, s) && !membership.is_member(&o.id, t)
+                }
+                BoxId::Inline(_) => false, // never an obstacle (matches leaf/group_obstacles)
+            })
+            .cloned()
+            .collect();
         let (ovg, srcv, tgtv) = build_ovg(&obstacles, src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
         let inflated: Vec<Rect> = obstacles
@@ -195,7 +217,10 @@ fn build_membership(boxes: &[Box]) -> Membership {
 }
 
 /// Group rects that block THIS edge: a group is an obstacle only when neither
-/// endpoint is one of its (transitive) members.
+/// endpoint is one of its (transitive) members. (Production now applies this
+/// rule as a mask over the per-solve `all_obstacles` list — see
+/// `route_keyed_with`; kept as the executable spec the tests assert against.)
+#[cfg(test)]
 fn group_obstacles(
     rects: &BTreeMap<BoxId, Rect>,
     membership: &Membership,
@@ -273,30 +298,81 @@ fn strictly_inside(r: &Rect, x: f64, y: f64) -> bool {
 /// width, so it would never report a crossing even when the point sits deep inside
 /// the rect's interior on that axis.
 fn segment_blocked(inflated: &[Rect], a: P, b: P) -> bool {
+    inflated.iter().any(|r| segment_cuts(r, a, b))
+}
+
+/// The single-rect body of `segment_blocked`: does the axis-aligned segment
+/// (a..b) pass through THIS inflated rect's interior? Split out so the slab
+/// index can prune to candidate rects and still apply the exact same predicate.
+fn segment_cuts(r: &Rect, a: P, b: P) -> bool {
     let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
     let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
     let degenerate_x = (x1 - x0).abs() < 1e-9;
     let degenerate_y = (y1 - y0).abs() < 1e-9;
-    inflated.iter().any(|r| {
-        let x_overlap = if degenerate_x {
-            x0 > r.x + 1e-9 && x0 < r.x + r.w - 1e-9
-        } else {
-            let ox0 = r.x.max(x0);
-            let ox1 = (r.x + r.w).min(x1);
-            (ox1 - ox0) > 1e-9
-        };
-        let y_overlap = if degenerate_y {
-            y0 > r.y + 1e-9 && y0 < r.y + r.h - 1e-9
-        } else {
-            let oy0 = r.y.max(y0);
-            let oy1 = (r.y + r.h).min(y1);
-            (oy1 - oy0) > 1e-9
-        };
-        // Positive overlap on BOTH axes => the segment cuts the interior.
-        x_overlap && y_overlap
-    })
+    let x_overlap = if degenerate_x {
+        x0 > r.x + 1e-9 && x0 < r.x + r.w - 1e-9
+    } else {
+        let ox0 = r.x.max(x0);
+        let ox1 = (r.x + r.w).min(x1);
+        (ox1 - ox0) > 1e-9
+    };
+    let y_overlap = if degenerate_y {
+        y0 > r.y + 1e-9 && y0 < r.y + r.h - 1e-9
+    } else {
+        let oy0 = r.y.max(y0);
+        let oy1 = (r.y + r.h).min(y1);
+        (oy1 - oy0) > 1e-9
+    };
+    // Positive overlap on BOTH axes => the segment cuts the interior.
+    x_overlap && y_overlap
 }
 
+/// One-axis slab decomposition over the inflated obstacle spans (P-3).
+///
+/// `bounds` is the sorted, exactly-deduped list of every span endpoint; gap `g`
+/// is the half-open interval `[bounds[g], bounds[g+1])`, and `active[g]` lists
+/// the spans covering that whole gap. `candidates(x)` returns a SUPERSET of
+/// the spans strictly containing `x` (proof: a span with `lo + 1e-9 < x` and
+/// `hi - 1e-9 > x` has `lo <= bounds[pos-1]` and `hi >= bounds[pos]`, because
+/// `lo`/`hi` are themselves bounds, so it covers `x`'s gap). Callers MUST
+/// re-apply the exact per-rect predicate to each candidate — the index only
+/// prunes, it never decides, so results stay byte-identical to a linear scan.
+struct SlabIndex {
+    bounds: Vec<f64>,
+    active: Vec<Vec<usize>>,
+}
+
+impl SlabIndex {
+    fn new(spans: &[(f64, f64)]) -> Self {
+        let mut bounds: Vec<f64> = spans.iter().flat_map(|&(a, b)| [a, b]).collect();
+        bounds.sort_by(f64::total_cmp);
+        bounds.dedup(); // exact dedup: the superset proof needs lo/hi ∈ bounds verbatim
+        let gaps = bounds.len().saturating_sub(1);
+        let mut active: Vec<Vec<usize>> = vec![Vec::new(); gaps];
+        for (i, &(lo, hi)) in spans.iter().enumerate() {
+            let g0 = bounds.partition_point(|b| *b < lo);
+            let g1 = bounds.partition_point(|b| *b < hi);
+            for slot in &mut active[g0..g1] {
+                slot.push(i);
+            }
+        }
+        SlabIndex { bounds, active }
+    }
+
+    /// Indices of spans that could strictly contain `x` (superset; see above).
+    fn candidates(&self, x: f64) -> &[usize] {
+        let pos = self.bounds.partition_point(|b| *b <= x);
+        if pos == 0 || pos > self.active.len() {
+            return &[];
+        }
+        &self.active[pos - 1]
+    }
+}
+
+/// (Production now applies this rule as a mask over the per-solve
+/// `all_obstacles` list — see `route_keyed_with`; kept as the executable spec
+/// the tests assert against.)
+#[cfg(test)]
 fn leaf_obstacles(rects: &BTreeMap<BoxId, Rect>, exclude: &[BoxId]) -> Vec<Obstacle> {
     let mut out: Vec<Obstacle> = rects
         .iter()
@@ -354,12 +430,38 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
     let xs = axis_coords(xs);
     let ys = axis_coords(ys);
 
+    // P-3: slab indexes over the inflated obstacle spans. Every containment /
+    // blocking query below prunes through these to a candidate superset and
+    // then re-applies the EXACT original per-rect predicate, so the graph is
+    // byte-identical to the old all-rects linear scans — just without the
+    // O(N) rect walk per grid point / per segment.
+    let x_spans: Vec<(f64, f64)> = inflated.iter().map(|r| (r.x, r.x + r.w)).collect();
+    let y_spans: Vec<(f64, f64)> = inflated.iter().map(|r| (r.y, r.y + r.h)).collect();
+    let x_slab = SlabIndex::new(&x_spans);
+    let y_slab = SlabIndex::new(&y_spans);
+    // Exact-equivalent fast `segment_blocked` for the axis-aligned segments the
+    // OVG uses. A degenerate axis means a fixed coordinate: prune by that
+    // coordinate's slab, then run the full per-rect test on the candidates.
+    let seg_blocked = |a: P, b: P| -> bool {
+        let degenerate_x = (a.0 - b.0).abs() < 1e-9;
+        let degenerate_y = (a.1 - b.1).abs() < 1e-9;
+        let idxs = if degenerate_x {
+            x_slab.candidates(a.0.min(b.0))
+        } else if degenerate_y {
+            y_slab.candidates(a.1.min(b.1))
+        } else {
+            return segment_blocked(&inflated, a, b); // never hit: OVG is orthogonal
+        };
+        idxs.iter().any(|&i| segment_cuts(&inflated[i], a, b))
+    };
+
     // Grid intersections that are not strictly inside any inflated obstacle.
     let mut verts: Vec<P> = Vec::new();
     let mut at: BTreeMap<(usize, usize), usize> = BTreeMap::new();
     for (xi, &x) in xs.iter().enumerate() {
+        let col = x_slab.candidates(x);
         for (yi, &y) in ys.iter().enumerate() {
-            if inflated.iter().any(|r| strictly_inside(r, x, y)) {
+            if col.iter().any(|&i| strictly_inside(&inflated[i], x, y)) {
                 continue;
             }
             at.insert((xi, yi), verts.len());
@@ -370,7 +472,7 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
     let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); verts.len()];
     let connect = |verts: &Vec<P>, adj: &mut Vec<Vec<(usize, f64)>>, i: usize, j: usize| {
         let (a, b) = (verts[i], verts[j]);
-        if segment_blocked(&inflated, a, b) {
+        if seg_blocked(a, b) {
             return;
         }
         let len = (a.0 - b.0).abs() + (a.1 - b.1).abs();
@@ -401,6 +503,24 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
             }
         }
     }
+
+    // P-3: grid vertices bucketed by row / column so `attach` can wire a stub
+    // by looking only at the vertices that share its axis line, instead of
+    // scanning every vertex per candidate. Alignment uses a < 1e-9 tolerance,
+    // so `near` collects every axis line within that window (superset) and the
+    // exact per-vertex aligned test still decides.
+    let grid_len = verts.len();
+    let mut col_verts: Vec<Vec<usize>> = vec![Vec::new(); xs.len()];
+    let mut row_verts: Vec<Vec<usize>> = vec![Vec::new(); ys.len()];
+    for (&(xi, yi), &vi) in &at {
+        col_verts[xi].push(vi);
+        row_verts[yi].push(vi);
+    }
+    let near = |coords: &[f64], v: f64| -> std::ops::Range<usize> {
+        let lo = coords.partition_point(|c| *c < v - 1e-9);
+        let hi = coords.partition_point(|c| *c <= v + 1e-9);
+        lo..hi
+    };
 
     // Free-perimeter attachment candidates for one endpoint box. Each candidate
     // is an on-border point `p` on side S paired with a mandatory perpendicular
@@ -468,13 +588,29 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
             adj[bi].push((si, ROUTE_MARGIN));
             adj[si].push((bi, ROUTE_MARGIN));
             // Only the stub joins the grid; never wire into an on-border vertex.
-            for gi in 0..si {
+            // P-3: instead of scanning every vertex, collect the SUPERSET of
+            // possibly-aligned ones — grid vertices on an axis line within the
+            // alignment tolerance of the stub, plus every attach-added vertex
+            // so far — sorted ascending so the adjacency push order (and thus
+            // A* tie-breaking) is identical to the old `0..si` scan. The exact
+            // aligned test below still decides.
+            let mut cand: Vec<usize> = Vec::new();
+            for xi in near(&xs, stub.0) {
+                cand.extend_from_slice(&col_verts[xi]);
+            }
+            for yi in near(&ys, stub.1) {
+                cand.extend_from_slice(&row_verts[yi]);
+            }
+            cand.extend(grid_len..si);
+            cand.sort_unstable();
+            cand.dedup();
+            for gi in cand {
                 if on_border.contains(&gi) {
                     continue;
                 }
                 let g = verts[gi];
                 let aligned = (g.0 - stub.0).abs() < 1e-9 || (g.1 - stub.1).abs() < 1e-9;
-                if aligned && !segment_blocked(&inflated, stub, g) {
+                if aligned && !seg_blocked(stub, g) {
                     let len = (g.0 - stub.0).abs() + (g.1 - stub.1).abs();
                     adj[si].push((gi, len));
                     adj[gi].push((si, len));
@@ -1961,5 +2097,416 @@ mod tests {
             obs.iter().any(|o| o.id == BoxId::Group(0)),
             "g0 must remain an obstacle: membership is by child list, not rect overlap"
         );
+    }
+
+    // ---- P-3 equivalence: the slab-indexed OVG build must be byte-identical
+    // ---- to the pre-optimization linear-scan build.
+
+    /// Verbatim copy of `build_ovg` as it was BEFORE the P-3 slab-index
+    /// optimization (linear scans everywhere). The equivalence tests below
+    /// assert the optimized build produces the exact same graph — vertices,
+    /// adjacency (including push ORDER, which A* tie-breaking depends on),
+    /// and attach candidates — so routes cannot have moved.
+    fn build_ovg_reference(
+        obstacles: &[Obstacle],
+        src: Rect,
+        tgt: Rect,
+    ) -> (Ovg, Vec<usize>, Vec<usize>) {
+        let inflated: Vec<Rect> = obstacles
+            .iter()
+            .map(|o| inflate(o.rect, ROUTE_MARGIN))
+            .collect();
+
+        let mut xs = vec![
+            src.x,
+            src.x + src.w,
+            src.x + src.w / 2.0,
+            tgt.x,
+            tgt.x + tgt.w,
+            tgt.x + tgt.w / 2.0,
+        ];
+        let mut ys = vec![
+            src.y,
+            src.y + src.h,
+            src.y + src.h / 2.0,
+            tgt.y,
+            tgt.y + tgt.h,
+            tgt.y + tgt.h / 2.0,
+        ];
+        for r in &inflated {
+            xs.push(r.x);
+            xs.push(r.x + r.w);
+            ys.push(r.y);
+            ys.push(r.y + r.h);
+        }
+        let xs = axis_coords(xs);
+        let ys = axis_coords(ys);
+
+        let mut verts: Vec<P> = Vec::new();
+        let mut at: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+        for (xi, &x) in xs.iter().enumerate() {
+            for (yi, &y) in ys.iter().enumerate() {
+                if inflated.iter().any(|r| strictly_inside(r, x, y)) {
+                    continue;
+                }
+                at.insert((xi, yi), verts.len());
+                verts.push((x, y));
+            }
+        }
+
+        let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); verts.len()];
+        let connect = |verts: &Vec<P>, adj: &mut Vec<Vec<(usize, f64)>>, i: usize, j: usize| {
+            let (a, b) = (verts[i], verts[j]);
+            if segment_blocked(&inflated, a, b) {
+                return;
+            }
+            let len = (a.0 - b.0).abs() + (a.1 - b.1).abs();
+            adj[i].push((j, len));
+            adj[j].push((i, len));
+        };
+        for yi in 0..ys.len() {
+            let mut prev: Option<usize> = None;
+            for xi in 0..xs.len() {
+                if let Some(&idx) = at.get(&(xi, yi)) {
+                    if let Some(p) = prev {
+                        connect(&verts, &mut adj, p, idx);
+                    }
+                    prev = Some(idx);
+                }
+            }
+        }
+        for xi in 0..xs.len() {
+            let mut prev: Option<usize> = None;
+            for yi in 0..ys.len() {
+                if let Some(&idx) = at.get(&(xi, yi)) {
+                    if let Some(p) = prev {
+                        connect(&verts, &mut adj, p, idx);
+                    }
+                    prev = Some(idx);
+                }
+            }
+        }
+
+        let attach = |verts: &mut Vec<P>,
+                      adj: &mut Vec<Vec<(usize, f64)>>,
+                      on_border: &mut BTreeSet<usize>,
+                      bx: Rect|
+         -> Vec<usize> {
+            let mut cands: Vec<(P, Side)> = Vec::new();
+            for &y in &ys {
+                if y >= bx.y + CORNER_INSET - 1e-9 && y <= bx.y + bx.h - CORNER_INSET + 1e-9 {
+                    cands.push(((bx.x, y), Side::Left));
+                    cands.push(((bx.x + bx.w, y), Side::Right));
+                }
+            }
+            for &x in &xs {
+                if x >= bx.x + CORNER_INSET - 1e-9 && x <= bx.x + bx.w - CORNER_INSET + 1e-9 {
+                    cands.push(((x, bx.y), Side::Top));
+                    cands.push(((x, bx.y + bx.h), Side::Bottom));
+                }
+            }
+            cands.push(((bx.x, bx.y + bx.h / 2.0), Side::Left));
+            cands.push(((bx.x + bx.w, bx.y + bx.h / 2.0), Side::Right));
+            cands.push(((bx.x + bx.w / 2.0, bx.y), Side::Top));
+            cands.push(((bx.x + bx.w / 2.0, bx.y + bx.h), Side::Bottom));
+            cands.sort_by(|(pa, sa), (pb, sb)| {
+                pa.0.total_cmp(&pb.0)
+                    .then(pa.1.total_cmp(&pb.1))
+                    .then(side_disc(*sa).cmp(&side_disc(*sb)))
+            });
+            cands.dedup_by(|(pa, sa), (pb, sb)| {
+                (pa.0 - pb.0).abs() < 1e-9 && (pa.1 - pb.1).abs() < 1e-9 && sa == sb
+            });
+
+            let mut idxs = Vec::new();
+            for (pt, side) in cands {
+                let bi = verts.len();
+                verts.push(pt);
+                adj.push(Vec::new());
+                on_border.insert(bi);
+                let nrm = outward_normal(side);
+                let stub = (pt.0 + ROUTE_MARGIN * nrm.0, pt.1 + ROUTE_MARGIN * nrm.1);
+                let si = verts.len();
+                verts.push(stub);
+                adj.push(Vec::new());
+                adj[bi].push((si, ROUTE_MARGIN));
+                adj[si].push((bi, ROUTE_MARGIN));
+                for gi in 0..si {
+                    if on_border.contains(&gi) {
+                        continue;
+                    }
+                    let g = verts[gi];
+                    let aligned = (g.0 - stub.0).abs() < 1e-9 || (g.1 - stub.1).abs() < 1e-9;
+                    if aligned && !segment_blocked(&inflated, stub, g) {
+                        let len = (g.0 - stub.0).abs() + (g.1 - stub.1).abs();
+                        adj[si].push((gi, len));
+                        adj[gi].push((si, len));
+                    }
+                }
+                idxs.push(bi);
+            }
+            idxs
+        };
+
+        let mut on_border: BTreeSet<usize> = BTreeSet::new();
+        let srcv = attach(&mut verts, &mut adj, &mut on_border, src);
+        let tgtv = attach(&mut verts, &mut adj, &mut on_border, tgt);
+        (Ovg { verts, adj }, srcv, tgtv)
+    }
+
+    /// Verbatim copy of the pre-P-3 `route_keyed_with` edge loop: per-edge
+    /// obstacle rebuild + reference OVG build, feeding the SAME `astar`,
+    /// `hub_spread` and `nudge`.
+    fn route_keyed_with_reference(
+        boxes: &[Box],
+        rects: &BTreeMap<BoxId, Rect>,
+        edges: &[KeyedEdge],
+        cost: &RouteCost,
+    ) -> Vec<Route> {
+        let membership = build_membership(boxes);
+        let mut routes: Vec<Route> = Vec::new();
+        for (s, t, key, label_size) in edges {
+            let Some((source, target, src, tgt)) = routable(rects, s, t) else {
+                continue;
+            };
+            let mut obstacles = leaf_obstacles(rects, &[s.clone(), t.clone()]);
+            obstacles.extend(group_obstacles(rects, &membership, s, t));
+            obstacles.sort_by(|a, b| a.id.cmp(&b.id));
+            let (ovg, srcv, tgtv) = build_ovg_reference(&obstacles, src, tgt);
+            let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
+            let inflated: Vec<Rect> = obstacles
+                .iter()
+                .map(|o| inflate(o.rect, ROUTE_MARGIN))
+                .collect();
+            let points = astar(&ovg, &srcv, &tgtv, goal, cost, &inflated, *label_size)
+                .unwrap_or_else(|| fallback_l(src, tgt));
+            routes.push(Route {
+                points,
+                source,
+                target,
+                key: key.clone(),
+            });
+        }
+        hub_spread(&mut routes, rects);
+        nudge(&mut routes);
+        routes
+    }
+
+    /// Deterministic LCG so the random-scene tests need no dependency.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+        fn range(&mut self, lo: i64, hi: i64) -> f64 {
+            (lo + (self.next() % (hi - lo) as u64) as i64) as f64
+        }
+    }
+
+    /// A pseudo-random scene: `n` leaf boxes (some snapped to a shared grid so
+    /// coordinates coincide and exercise the dedup/tolerance paths, and boxes
+    /// may overlap so the `fallback_l` path is exercised too), one group over
+    /// the first few, and `m` edges (some parallel duplicates, some labelled).
+    fn random_scene(
+        seed: u64,
+        n: usize,
+        m: usize,
+    ) -> (Vec<Box>, BTreeMap<BoxId, Rect>, Vec<KeyedEdge>) {
+        let mut rng = Lcg(seed);
+        let mut boxes: Vec<Box> = Vec::new();
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        for i in 0..n {
+            let k = format!("n{i}");
+            boxes.push(leafbox(&k));
+            let snap = rng.next() % 2 == 0;
+            let (x, y) = if snap {
+                (rng.range(0, 8) * 220.0, rng.range(0, 8) * 160.0)
+            } else {
+                (rng.range(0, 1600), rng.range(0, 1200))
+            };
+            rects.insert(
+                BoxId::Node(k),
+                nrect(x, y, 60.0 + rng.range(0, 80), 40.0 + rng.range(0, 40)),
+            );
+        }
+        let members: Vec<BoxId> = (0..n.min(3))
+            .map(|i| BoxId::Node(format!("n{i}")))
+            .collect();
+        boxes.push(groupbox(0, members));
+        rects.insert(BoxId::Group(0), nrect(-40.0, -40.0, 700.0, 500.0));
+        let mut edges: Vec<KeyedEdge> = Vec::new();
+        for e in 0..m {
+            let a = (rng.next() as usize) % n;
+            let b = (rng.next() as usize) % n;
+            let label = if rng.next() % 3 == 0 {
+                Some((30.0 + rng.range(0, 60), 14.0))
+            } else {
+                None
+            };
+            edges.push((
+                BoxId::Node(format!("n{a}")),
+                BoxId::Node(format!("n{b}")),
+                Some(format!("e{e}")),
+                label,
+            ));
+        }
+        (boxes, rects, edges)
+    }
+
+    /// Non-overlapping jittered grid of leaf boxes with chained + long-range
+    /// edges: no edge ever needs the centre-to-centre `fallback_l`, so the
+    /// border/orthogonality invariants must hold on every route. Per-node
+    /// jitter keeps every axis coordinate distinct — a snapped grid dedups to
+    /// a handful of axis lines and hides the router's real cost.
+    fn grid_scene(n: usize, m: usize) -> (Vec<Box>, BTreeMap<BoxId, Rect>, Vec<KeyedEdge>) {
+        let mut boxes = Vec::new();
+        let mut rects: BTreeMap<BoxId, Rect> = BTreeMap::new();
+        let cols = (n as f64).sqrt().ceil() as usize;
+        for i in 0..n {
+            let k = format!("n{i}");
+            boxes.push(leafbox(&k));
+            let (cx, cy) = (i % cols, i / cols);
+            let (jx, jy) = ((i * 7 % 40) as f64, (i * 13 % 40) as f64);
+            rects.insert(
+                BoxId::Node(k),
+                nrect(cx as f64 * 260.0 + jx, cy as f64 * 180.0 + jy, 100.0, 60.0),
+            );
+        }
+        let mut rng = Lcg(0xC0FFEE);
+        let mut edges: Vec<KeyedEdge> = Vec::new();
+        for e in 0..m {
+            let a = if e < n - 1 { e } else { (rng.next() as usize) % n };
+            let b = if e < n - 1 { e + 1 } else { (rng.next() as usize) % n };
+            if a == b {
+                continue;
+            }
+            let label = if e % 3 == 0 { Some((48.0, 14.0)) } else { None };
+            edges.push((
+                BoxId::Node(format!("n{a}")),
+                BoxId::Node(format!("n{b}")),
+                Some(format!("e{e}")),
+                label,
+            ));
+        }
+        (boxes, rects, edges)
+    }
+
+    #[test]
+    fn p3_optimized_ovg_is_byte_identical_to_reference() {
+        for seed in 0..40u64 {
+            let mut rng = Lcg(seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1));
+            let n = 3 + (rng.next() as usize) % 14;
+            let (_boxes, rects, _edges) = random_scene(seed + 1000, n, 0);
+            let ids: Vec<BoxId> = rects.keys().cloned().collect();
+            // Pick two distinct leaf endpoints; everything else is an obstacle.
+            let leaves: Vec<&BoxId> = ids.iter().filter(|i| matches!(i, BoxId::Node(_))).collect();
+            let (s, t) = (leaves[0].clone(), leaves[leaves.len() - 1].clone());
+            let mut obstacles = leaf_obstacles(&rects, &[s.clone(), t.clone()]);
+            obstacles.push(Obstacle {
+                id: BoxId::Group(0),
+                rect: rects[&BoxId::Group(0)],
+            });
+            obstacles.sort_by(|a, b| a.id.cmp(&b.id));
+            let (src, tgt) = (rects[&s], rects[&t]);
+            let (fast, fs, ft) = build_ovg(&obstacles, src, tgt);
+            let (refr, rs, rt) = build_ovg_reference(&obstacles, src, tgt);
+            assert_eq!(fast.verts, refr.verts, "verts differ (seed {seed})");
+            assert_eq!(fast.adj, refr.adj, "adjacency differs (seed {seed})");
+            assert_eq!(fs, rs, "src attach candidates differ (seed {seed})");
+            assert_eq!(ft, rt, "tgt attach candidates differ (seed {seed})");
+        }
+    }
+
+    #[test]
+    fn p3_optimized_routes_are_identical_to_reference_on_random_multi_edge_scenes() {
+        let cfg = SolveConfig::default();
+        for seed in 0..12u64 {
+            let (boxes, rects, edges) = random_scene(seed * 7 + 3, 10, 16);
+            let cost = RouteCost {
+                label_pressure: if seed % 2 == 0 { 0.0 } else { 50.0 },
+                ..RouteCost::default()
+            };
+            let fast = route_keyed_with(&boxes, &rects, &edges, &cfg, &cost);
+            let refr = route_keyed_with_reference(&boxes, &rects, &edges, &cost);
+            assert_eq!(fast, refr, "routes diverged from reference (seed {seed})");
+        }
+    }
+
+    /// Golden structural invariants on a stable multi-edge fixture: endpoints
+    /// land ON their box borders, every segment orthogonal — the properties
+    /// P-3 must not regress even if a future change legitimately moves routes.
+    #[test]
+    fn p3_multi_edge_fixture_keeps_endpoint_and_orthogonality_invariants() {
+        let (boxes, rects, edges) = grid_scene(12, 20);
+        let out = route_keyed_with(
+            &boxes,
+            &rects,
+            &edges,
+            &SolveConfig::default(),
+            &RouteCost::default(),
+        );
+        assert!(!out.is_empty());
+        for rt in &out {
+            for w in rt.points.windows(2) {
+                assert!(
+                    (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6,
+                    "{}->{} diagonal segment {:?}->{:?}",
+                    rt.source,
+                    rt.target,
+                    w[0],
+                    w[1]
+                );
+            }
+            let src_bx = rects[&BoxId::Node(rt.source.clone())];
+            let tgt_bx = rects[&BoxId::Node(rt.target.clone())];
+            assert!(
+                !sides_on(&src_bx, rt.points[0]).is_empty(),
+                "{}->{} source endpoint off border: {:?}",
+                rt.source,
+                rt.target,
+                rt.points[0]
+            );
+            assert!(
+                !sides_on(&tgt_bx, *rt.points.last().unwrap()).is_empty(),
+                "{}->{} target endpoint off border: {:?}",
+                rt.source,
+                rt.target,
+                rt.points.last()
+            );
+        }
+    }
+
+    /// P-3 timing evidence. Run manually with
+    /// `cargo test -p waml --release --lib p3_router_scales -- --ignored --nocapture`.
+    /// Prints optimized vs pre-change (reference) wall time on the same scenes
+    /// and asserts the outputs match while measuring.
+    #[test]
+    #[ignore = "perf measurement, run manually"]
+    fn p3_router_scales_on_large_diagrams() {
+        use std::time::Instant;
+        let cfg = SolveConfig::default();
+        let cost = RouteCost::default();
+
+        for (n, m) in [(60, 120), (200, 400)] {
+            let (boxes, rects, edges) = grid_scene(n, m);
+            let t0 = Instant::now();
+            let fast = route_keyed_with(&boxes, &rects, &edges, &cfg, &cost);
+            let fast_ms = t0.elapsed().as_secs_f64() * 1e3;
+            let t1 = Instant::now();
+            let refr = route_keyed_with_reference(&boxes, &rects, &edges, &cost);
+            let ref_ms = t1.elapsed().as_secs_f64() * 1e3;
+            assert_eq!(fast, refr);
+            println!(
+                "P-3 {n} nodes / {m} edges: optimized {fast_ms:.1} ms, reference {ref_ms:.1} ms"
+            );
+            assert!(
+                fast_ms < 60_000.0,
+                "{n}-node/{m}-edge solve took {fast_ms:.0} ms (> 60 s bound)"
+            );
+        }
     }
 }
