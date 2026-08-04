@@ -962,12 +962,9 @@ impl ProjectTree {
     /// The panel has no controls of its own now; every caller comes in through
     /// [`ProjectTree::toggle_dock`] below.
     fn apply_dock(&mut self, cx: &mut Cx, ev: DockEvent) {
-        let next = crate::dock::next(self.dock, ev);
-        if next == self.dock {
-            return;
+        if crate::dock::apply(&mut self.dock, ev) {
+            self.view.redraw(cx);
         }
-        self.dock = next;
-        self.view.redraw(cx);
     }
 
     /// Expand <-> collapse, driven by the caption bar's tree toggle. Binary by

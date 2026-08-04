@@ -1008,12 +1008,9 @@ impl Inspector {
     /// Apply a dock event: transition + redraw. No-op if the state is
     /// unchanged. Mirrors `ProjectTree::apply_dock` exactly.
     fn apply_dock(&mut self, cx: &mut Cx, ev: DockEvent) {
-        let next = crate::dock::next(self.dock, ev);
-        if next == self.dock {
-            return;
+        if crate::dock::apply(&mut self.dock, ev) {
+            self.view.redraw(cx);
         }
-        self.dock = next;
-        self.view.redraw(cx);
     }
 
     /// Expand <-> collapse, driven by the active document header's right-dock

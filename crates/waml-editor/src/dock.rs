@@ -80,6 +80,18 @@ pub fn next(state: DockState, ev: DockEvent) -> DockState {
     }
 }
 
+/// Apply `ev` to `state` in place. Returns `true` when the state changed --
+/// the caller's cue to redraw. The single shim behind both dock panels'
+/// `apply_dock` (they were byte-identical copies before).
+pub fn apply(state: &mut DockState, ev: DockEvent) -> bool {
+    let next = next(*state, ev);
+    if next == *state {
+        return false;
+    }
+    *state = next;
+    true
+}
+
 /// Flag-strip width (px). The slot always reserves at least this much, so the
 /// flag never occludes the canvas corner.
 #[cfg_attr(not(test), allow(dead_code))]
