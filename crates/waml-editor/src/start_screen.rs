@@ -64,6 +64,25 @@ script_mod! {
                 flow: Down
                 spacing: 18.0
 
+                // One-line failure notice ("could not open ..."), hidden until
+                // `set_notice` reveals it. This is the start screen's only
+                // error surface: the statusbar lives inside `main_column`,
+                // which is hidden while this screen is up, so an open/boot
+                // failure reported only there would be invisible.
+                notice_host := View {
+                    width: Fill
+                    height: Fit
+                    visible: false
+                    notice := Label {
+                        width: Fill
+                        text: ""
+                        draw_text +: {
+                            color: atlas.danger
+                            text_style: fonts.text_label
+                        }
+                    }
+                }
+
                 actions := View {
                     width: Fill
                     height: Fit
@@ -283,6 +302,18 @@ impl StartScreen {
     /// Replace the rendered recents. `App` calls this before showing the screen.
     pub fn set_recents(&mut self, cx: &mut Cx, rows: Vec<RecentRow>) {
         self.rows = cap_recent_rows(rows);
+        self.view.redraw(cx);
+    }
+
+    /// Show or clear the one-line failure notice above the action links.
+    /// `None` hides the host row entirely so the column keeps its spacing.
+    pub fn set_notice(&mut self, cx: &mut Cx, message: Option<&str>) {
+        self.view
+            .label(cx, ids!(notice))
+            .set_text(cx, message.unwrap_or(""));
+        self.view
+            .view(cx, ids!(notice_host))
+            .set_visible(cx, message.is_some());
         self.view.redraw(cx);
     }
 

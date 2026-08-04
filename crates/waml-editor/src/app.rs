@@ -783,8 +783,10 @@ impl MatchEvent for App {
                         self.show_editor(cx);
                     }
                     Err(e) => {
-                        log!("could not open the model in this link: {e}");
+                        let message = format!("could not open the model in this link: {e}");
+                        log!("{message}");
                         self.show_start_screen(cx);
+                        self.report_action_error(cx, &message);
                     }
                 }
             }
@@ -793,8 +795,15 @@ impl MatchEvent for App {
                 self.start_boot_bundle_fetch(cx, url);
             }
             // `?api=` is selected for, but no live model server exists yet; the
-            // URL is honoured as far as "not a bundle, not a share link".
-            crate::browser_boot::BrowserBootSource::Api { .. } => self.show_start_screen(cx),
+            // URL is honoured as far as "not a bundle, not a share link". Say
+            // so: a visitor handed an `?api=` URL must not land on the start
+            // screen with no trace of why nothing opened.
+            crate::browser_boot::BrowserBootSource::Api { .. } => {
+                let message = "live model server URLs (?api=) are not supported yet";
+                log!("{message}");
+                self.show_start_screen(cx);
+                self.report_action_error(cx, message);
+            }
             // The URL names nothing, so ask the page's own site config. An
             // exported site answers with the query it used to push into the
             // address bar; a raw artifact answers 404 and the start screen is
@@ -853,10 +862,9 @@ impl MatchEvent for App {
             return;
         };
         if !ok {
-            log!(
-                "{}",
-                crate::browser_boot::boot_fetch_error(&url, Some(response.status_code))
-            );
+            let message = crate::browser_boot::boot_fetch_error(&url, Some(response.status_code));
+            log!("{message}");
+            self.report_action_error(cx, &message);
             return;
         }
         // Same guard as the config response above: a model opened by hand
@@ -870,7 +878,11 @@ impl MatchEvent for App {
                 self.open_bundle(cx, bundle, "exported".to_string(), None);
                 self.show_editor(cx);
             }
-            Err(e) => log!("could not open {url}: {e}"),
+            Err(e) => {
+                let message = format!("could not open {url}: {e}");
+                log!("{message}");
+                self.report_action_error(cx, &message);
+            }
         }
     }
 
@@ -878,12 +890,14 @@ impl MatchEvent for App {
     /// on purpose (see `handle_http_response`); the bundle's is named, because
     /// a site that promised a bundle and did not deliver one is a fault.
     #[cfg(target_arch = "wasm32")]
-    fn handle_http_request_error(&mut self, _cx: &mut Cx, request_id: LiveId, _error: &HttpError) {
+    fn handle_http_request_error(&mut self, cx: &mut Cx, request_id: LiveId, _error: &HttpError) {
         if request_id != live_id!(boot_bundle) {
             return;
         }
         if let Some(url) = self.pending_boot_bundle.take() {
-            log!("{}", crate::browser_boot::boot_fetch_error(&url, None));
+            let message = crate::browser_boot::boot_fetch_error(&url, None);
+            log!("{message}");
+            self.report_action_error(cx, &message);
         }
     }
 

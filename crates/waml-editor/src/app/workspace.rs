@@ -94,6 +94,25 @@ pub(super) fn browser_save_fragment(ticket: &SaveTicket) -> (String, SaveComplet
 }
 
 impl App {
+    /// Surface a failed user gesture (open, export, boot) in the GUI, on
+    /// whichever screen is up: the statusbar's feedback line (the channel save
+    /// errors already use) while the editor is shown, and the start screen's
+    /// notice row while it is not -- the statusbar lives inside `main_column`,
+    /// which the start screen hides. `log!` remains the caller's job where a
+    /// console trace is also wanted; this is the user-visible half.
+    pub(super) fn report_action_error(&mut self, cx: &mut Cx, message: &str) {
+        self.set_navigation_message(cx, Some(message));
+        if !self.editor_shown {
+            if let Some(mut screen) = self
+                .ui
+                .widget(cx, ids!(start_screen))
+                .borrow_mut::<crate::start_screen::StartScreen>()
+            {
+                screen.set_notice(cx, Some(message));
+            }
+        }
+    }
+
     pub(super) fn ensure_markdown_asset_host(
         &mut self,
         policy: crate::markdown_hosts::MarkdownAssetPolicy,
@@ -290,6 +309,7 @@ impl App {
                 self.save_feedback.finish_save(&Ok(()));
                 self.sync_save_error(cx);
                 log!("{error}");
+                self.report_action_error(cx, &error);
                 return false;
             }
         };
@@ -308,7 +328,10 @@ impl App {
         let asset_policy = match crate::markdown_hosts::MarkdownAssetPolicy::native(&next_root) {
             Ok(policy) => policy,
             Err(error) => {
-                log!("failed to canonicalize Markdown asset root {next_root:?}: {error}");
+                let message =
+                    format!("failed to canonicalize Markdown asset root {next_root:?}: {error}");
+                log!("{message}");
+                self.report_action_error(cx, &message);
                 return false;
             }
         };
@@ -371,7 +394,9 @@ impl App {
         let change = match self.session.replace(files) {
             Ok(change) => change,
             Err(error) => {
-                log!("failed to analyze replacement bundle: {error}");
+                let message = format!("failed to analyze replacement bundle: {error}");
+                log!("{message}");
+                self.report_action_error(cx, &message);
                 return false;
             }
         };
@@ -472,6 +497,9 @@ impl App {
             .widget(cx, ids!(start_screen))
             .borrow_mut::<crate::start_screen::StartScreen>()
         {
+            // A successful open retires any failure notice a previous attempt
+            // left behind, so the next start-screen reveal starts clean.
+            screen.set_notice(cx, None);
             screen.set_visible(cx, false);
         }
     }
@@ -532,7 +560,9 @@ impl App {
         if let Err(error) =
             crate::bundle_export::export_bundle(cx, &mut adapter, &title, snapshot.source.as_ref())
         {
-            log!("failed to export the WAML bundle: {error}");
+            let message = format!("failed to export the WAML bundle: {error}");
+            log!("{message}");
+            self.report_action_error(cx, &message);
         }
     }
 
