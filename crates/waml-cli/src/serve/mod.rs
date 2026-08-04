@@ -9,6 +9,10 @@ use std::path::PathBuf;
 #[allow(dead_code)]
 pub mod paths;
 
+// Consumed by Task 6 (the routes' guard layer).
+#[allow(dead_code)]
+pub mod guard;
+
 /// Everything `run` needs, decoupled from clap so tests can build one.
 ///
 /// `bind_all`/`api_only`/`no_open` are wired up by later tasks; `#[allow]`
