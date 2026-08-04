@@ -362,7 +362,14 @@ impl DocumentHost {
         let body = BodyWidgets::new(cx, ui);
         match reconciliation {
             ActiveReconciliation::Retained => {
-                if let Some(view) = self.views.get_mut(&self.tabs.active) {
+                if !self.tabs.active_tab().is_some_and(|tab| tab.resolved) {
+                    // This very event tombstoned the active tab (or there is
+                    // no active tab). Syncing the stale view would leave the
+                    // canvas of a deleted/renamed document interactive while
+                    // the tab draws dimmed -- run the shared resolved-gate in
+                    // `sync_active`, which disables interaction instead.
+                    self.sync_active(cx, ui, session);
+                } else if let Some(view) = self.views.get_mut(&self.tabs.active) {
                     let snapshot = session.snapshot();
                     if external_replacement {
                         view.sync_external_replacement(cx, &body, &snapshot);
@@ -1099,6 +1106,73 @@ mod tests {
         let second_tab = host.tabs().iter().find(|tab| tab.id == second_id).unwrap();
         assert!(second_tab.resolved, "tab must revive once resolved again");
         let _ = first_id;
+    }
+
+    #[test]
+    fn tombstoning_the_active_tab_skips_the_stale_view_sync_on_the_same_event() {
+        let lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let mut host = DocumentHost::default();
+        host.apply_command(DocumentCommand::Open {
+            document: prepared_with_identity(
+                "order",
+                NavCategory::Class,
+                DocViewIdentity::ClassifierPreview(NavCategory::Class),
+                Rc::new(Cell::new(0)),
+                lifecycle.clone(),
+            ),
+            persistent: true,
+        });
+
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        // The session change that tombstones the ACTIVE tab: its locator no
+        // longer resolves, so `prepared` carries `None` for it.
+        host.after_session_change(
+            &mut cx,
+            &WidgetRef::empty(),
+            &EditorSession::default(),
+            SessionChange {
+                revision: 1,
+                source_changed: false,
+                okf_changed: false,
+                uml_changed: true,
+                navigation_changed: false,
+                conflicts_changed: false,
+                affected_documents: std::sync::Arc::from([]),
+                affected_diagrams: std::sync::Arc::from([]),
+            },
+            vec![None],
+        );
+
+        assert!(
+            !host.active_tab().unwrap().resolved,
+            "active tab must be tombstoned"
+        );
+        // The stale view must NOT be synced on the tombstoning event: syncing
+        // re-enables canvas interaction, so the deleted/renamed document's
+        // canvas would stay interactive while the tab draws dimmed. The
+        // shared resolved-gate in `sync_active` must run instead.
+        assert_eq!(lifecycle.borrow().after_session_change, 0);
+        assert_eq!(lifecycle.borrow().sync, 0);
+
+        // Same invariant on the external-replacement path.
+        host.after_external_replacement(
+            &mut cx,
+            &WidgetRef::empty(),
+            &EditorSession::default(),
+            SessionChange {
+                revision: 2,
+                source_changed: false,
+                okf_changed: false,
+                uml_changed: true,
+                navigation_changed: false,
+                conflicts_changed: false,
+                affected_documents: std::sync::Arc::from([]),
+                affected_diagrams: std::sync::Arc::from([]),
+            },
+            vec![None],
+        );
+        assert_eq!(lifecycle.borrow().after_session_change, 0);
+        assert_eq!(lifecycle.borrow().sync, 0);
     }
 
     #[test]
