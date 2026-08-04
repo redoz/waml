@@ -126,6 +126,11 @@ pub struct OkfAnalysis {
     pub markdown: MarkdownSyntaxSet,
     pub bundle: okf::Bundle,
     code_syntax: Arc<BTreeMap<SyntaxIdentity, WamlCodeSyntaxSnapshot>>,
+    /// Documents excluded from this analysis because their shell failed
+    /// (path -> rendered error). One bad document quarantines itself instead
+    /// of making the whole bundle unopenable; consumers surface these as
+    /// per-document diagnostics.
+    pub quarantined: Arc<BTreeMap<BundlePath, Arc<str>>>,
 }
 
 impl OkfAnalysis {
@@ -703,6 +708,12 @@ trait PreparationHooks {
     fn markdown_reparsed(&mut self, _document: DocumentId) {}
 
     fn markdown_promoted(&mut self, _document: DocumentId) {}
+
+    /// Test seam: inject a shell failure for `path` (the organic causes —
+    /// a 4 GiB document or a parser invariant — are impractical in a test).
+    fn shell_failure(&mut self, _path: &BundlePath) -> Option<ParseError> {
+        None
+    }
 }
 struct NoopPreparationHooks;
 impl PreparationHooks for NoopPreparationHooks {
@@ -1143,6 +1154,10 @@ fn analyze_okf_inner(
         .transpose()?;
     let mut documents = BTreeMap::new();
     let mut paths = BTreeMap::new();
+    // Shell-failed documents are quarantined (path -> error rendering) instead
+    // of failing the whole bundle; the rest of the bundle stays analyzable and
+    // the failure surfaces as a per-document entry on the analysis.
+    let mut quarantined: BTreeMap<BundlePath, Arc<str>> = BTreeMap::new();
     let mut next_id = previous_catalog.map_or(0, |catalog| catalog.next_document_id);
     for source_document in source.documents() {
         let path = source_document.path().clone();
@@ -1166,22 +1181,38 @@ fn analyze_okf_inner(
                             }
                         })
                     })?;
-                Arc::new(version(
+                match version(
                     prior.id(),
                     revision,
                     path.clone(),
                     source_document.text_arc().clone(),
-                )?)
+                ) {
+                    Ok(version) => Arc::new(version),
+                    // Quarantine: one oversize document must not make the
+                    // whole bundle unopenable.
+                    Err(error @ AnalysisError::SourceTooLarge { .. }) => {
+                        quarantined.insert(path, format!("{error}").into());
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             None => {
                 let id = DocumentId(next_id);
                 next_id += 1;
-                Arc::new(version(
+                match version(
                     id,
                     DocumentRevision::new(1),
                     path.clone(),
                     source_document.text_arc().clone(),
-                )?)
+                ) {
+                    Ok(version) => Arc::new(version),
+                    Err(error @ AnalysisError::SourceTooLarge { .. }) => {
+                        quarantined.insert(path, format!("{error}").into());
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
         };
         paths.insert(path, version.id());
@@ -1196,52 +1227,99 @@ fn analyze_okf_inner(
     let markdown_updates = validate_promoted_markdown_updates(previous, &candidate, promoted)?;
     hooks.before(AnalysisStage::Shell)?;
     let mut markdown_documents = BTreeMap::new();
+    let mut shell_failed = Vec::new();
     for document in candidate.documents.values() {
-        let snapshot = match recovered
-            .as_ref()
-            .filter(|(recovered, _, _)| *recovered == document.id())
-        {
-            Some((_, _, snapshot)) => snapshot.clone(),
-            None => match markdown_updates.get(&document.id()) {
-                Some(update) => {
-                    hooks.markdown_promoted(document.id());
-                    update.snapshot.clone()
-                }
-                None => {
-                    match previous.and_then(|analysis| analysis.markdown.document(document.id())) {
-                        Some(previous_snapshot)
-                            if previous_snapshot.revision() == document.revision() =>
-                        {
-                            previous_snapshot.clone()
-                        }
-                        Some(previous_snapshot) => {
-                            let snapshot = reparse_markdown(
-                                previous_snapshot,
-                                document.revision(),
-                                document.text().clone(),
-                                &single_text_change(previous_snapshot.text(), document.text()),
-                            )
-                            .map_err(|source| shell_error(document.path().clone(), source))?
-                            .snapshot;
-                            hooks.markdown_reparsed(document.id());
-                            snapshot
+        let computed = (|| -> Result<Arc<MarkdownSyntaxSnapshot>, AnalysisError> {
+            if let Some(source) = hooks.shell_failure(document.path()) {
+                return Err(shell_error(document.path().clone(), source));
+            }
+            Ok(
+                match recovered
+                    .as_ref()
+                    .filter(|(recovered, _, _)| *recovered == document.id())
+                {
+                    Some((_, _, snapshot)) => snapshot.clone(),
+                    None => match markdown_updates.get(&document.id()) {
+                        Some(update) => {
+                            hooks.markdown_promoted(document.id());
+                            update.snapshot.clone()
                         }
                         None => {
-                            let snapshot = parse_markdown(
-                                document.revision(),
-                                document.text().clone(),
-                                MarkdownDialect::WAML_DEFAULT,
-                            )
-                            .map_err(|source| shell_error(document.path().clone(), source))?;
-                            hooks.markdown_parsed(document.id());
-                            snapshot
+                            match previous
+                                .and_then(|analysis| analysis.markdown.document(document.id()))
+                            {
+                                Some(previous_snapshot)
+                                    if previous_snapshot.revision() == document.revision() =>
+                                {
+                                    previous_snapshot.clone()
+                                }
+                                Some(previous_snapshot) => {
+                                    let snapshot = reparse_markdown(
+                                        previous_snapshot,
+                                        document.revision(),
+                                        document.text().clone(),
+                                        &single_text_change(
+                                            previous_snapshot.text(),
+                                            document.text(),
+                                        ),
+                                    )
+                                    .map_err(|source| shell_error(document.path().clone(), source))?
+                                    .snapshot;
+                                    hooks.markdown_reparsed(document.id());
+                                    snapshot
+                                }
+                                None => {
+                                    let snapshot = parse_markdown(
+                                        document.revision(),
+                                        document.text().clone(),
+                                        MarkdownDialect::WAML_DEFAULT,
+                                    )
+                                    .map_err(|source| {
+                                        shell_error(document.path().clone(), source)
+                                    })?;
+                                    hooks.markdown_parsed(document.id());
+                                    snapshot
+                                }
+                            }
                         }
-                    }
-                }
-            },
+                    },
+                },
+            )
+        })();
+        let snapshot = match computed {
+            Ok(snapshot) => snapshot,
+            // Quarantine a shell-failed document: surface it as a
+            // per-document entry instead of refusing the whole bundle. A
+            // structural invariant break stays fatal — it is a code bug, not
+            // a property of one document.
+            Err(error @ (AnalysisError::Shell { .. } | AnalysisError::SourceTooLarge { .. })) => {
+                quarantined.insert(document.path().clone(), format!("{error}").into());
+                shell_failed.push(document.id());
+                continue;
+            }
+            Err(error) => return Err(error),
         };
         markdown_documents.insert(document.id(), snapshot);
     }
+    let candidate = if shell_failed.is_empty() {
+        candidate
+    } else {
+        // Rebuild the catalog without the quarantined documents so every
+        // downstream consumer sees a consistent catalog/markdown pair.
+        let mut documents = (*candidate.documents).clone();
+        let mut paths = (*candidate.paths).clone();
+        for id in &shell_failed {
+            if let Some(document) = documents.remove(id) {
+                paths.remove(document.path());
+            }
+        }
+        Arc::new(DocumentCatalog {
+            session_revision,
+            documents: Arc::new(documents),
+            paths: Arc::new(paths),
+            next_document_id: candidate.next_document_id,
+        })
+    };
     hooks.before(AnalysisStage::Okf)?;
     let markdown = MarkdownSyntaxSet {
         catalog: candidate.clone(),
@@ -1253,6 +1331,7 @@ fn analyze_okf_inner(
         markdown,
         bundle,
         code_syntax: Arc::new(BTreeMap::new()),
+        quarantined: Arc::new(quarantined),
     })
 }
 
@@ -1539,6 +1618,41 @@ mod tests {
                 Some(DocumentId(1))
             );
         }
+    }
+
+    struct QuarantineHooks {
+        fail_path: BundlePath,
+    }
+
+    impl PreparationHooks for QuarantineHooks {
+        fn before(&mut self, _: AnalysisStage) -> Result<(), AnalysisError> {
+            Ok(())
+        }
+        fn shell_failure(&mut self, path: &BundlePath) -> Option<ParseError> {
+            (path == &self.fail_path).then(|| ParseError::SourceTooLarge { bytes: usize::MAX })
+        }
+    }
+
+    #[test]
+    fn shell_failed_document_is_quarantined_not_fatal() {
+        let source =
+            SourceBundle::try_from_pairs([("good.md", "# good"), ("huge.md", "# huge")]).unwrap();
+        let mut hooks = QuarantineHooks {
+            fail_path: BundlePath::parse("huge.md").unwrap(),
+        };
+        let analysis = analyze_okf_inner(&source, None, 1, &[], None, &mut hooks).unwrap();
+
+        // The failed document is excluded from the catalog and surfaced as a
+        // per-document entry; the rest of the bundle stays analyzable.
+        let huge = BundlePath::parse("huge.md").unwrap();
+        assert!(analysis.catalog.id_for_path(&huge).is_none());
+        assert!(analysis.quarantined.contains_key(&huge));
+        assert!(analysis.quarantined[&huge].contains("SourceTooLarge"));
+
+        let good = BundlePath::parse("good.md").unwrap();
+        let good_id = analysis.catalog.id_for_path(&good).expect("good survives");
+        assert!(analysis.markdown_snapshot(good_id).is_some());
+        assert_eq!(analysis.quarantined.len(), 1);
     }
 
     #[test]
