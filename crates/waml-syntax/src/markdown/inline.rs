@@ -48,6 +48,7 @@ pub(crate) fn apply(
             backlinks: HashMap::new(),
             dialect,
             diagnostics: Vec::new(),
+            depth_diagnostic_emitted: false,
         };
         let mut at = start;
         let root = rebuild(&mut context, root, &mut at)?;
@@ -74,6 +75,10 @@ struct InlineContext<'a> {
     backlinks: HashMap<Arc<str>, Vec<SyntaxIdentity>>,
     dialect: MarkdownDialect,
     diagnostics: Vec<TreeDiagnostic<Diagnostic>>,
+    /// Set the first time `parse_inlines` hits `MD_MAX_INLINE_DEPTH`, so only
+    /// one diagnostic is emitted per document even if the cap bites many
+    /// times (e.g. 10,000 nested emphasis markers).
+    depth_diagnostic_emitted: bool,
 }
 
 fn rebuild(
@@ -86,7 +91,7 @@ fn rebuild(
     if node.kind() == Kind::Paragraph {
         *at = end;
         let owner = SyntaxIdentity::fresh()?;
-        let children = parse_inlines(context, start, end, owner, true)?;
+        let children = parse_inlines(context, start, end, owner, true, 0)?;
         let rebuilt = semantic_with_identity(Kind::Paragraph, children, owner, Vec::new())?;
         context.inline_roots.push(rebuilt.clone());
         return Ok(rebuilt);
@@ -129,6 +134,7 @@ fn rebuild(
                         token_end,
                         owner,
                         true,
+                        0,
                     )?);
                     *at = token_end;
                 }
@@ -174,7 +180,14 @@ fn rebuild(
                 GreenElement::Token(token) if token.kind() == Kind::TextToken => {
                     let token_start = *at;
                     let token_end = token_start + token.width().to_usize();
-                    children.extend(parse_inlines(context, token_start, token_end, owner, true)?);
+                    children.extend(parse_inlines(
+                        context,
+                        token_start,
+                        token_end,
+                        owner,
+                        true,
+                        0,
+                    )?);
                     *at = token_end;
                 }
                 GreenElement::Token(token) => {
@@ -268,9 +281,39 @@ fn parse_inlines(
     end: usize,
     owner: SyntaxIdentity,
     allow_links: bool,
+    depth: usize,
 ) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
     let source = context.text.shared();
-    let brackets = bracket_matches(context, start, end, allow_links);
+    // Beyond `MD_MAX_INLINE_DEPTH`, stop matching strikethrough, emphasis,
+    // and link delimiters: their arms below recurse into `parse_inlines`, so
+    // leaving them empty here demotes the delimiters to plain text instead
+    // of growing the recursion further. Emit one diagnostic the first time
+    // this bites, spanning the delimiter that was demoted.
+    let capped = depth >= super::MD_MAX_INLINE_DEPTH;
+    if capped && !context.depth_diagnostic_emitted {
+        context.depth_diagnostic_emitted = true;
+        context.diagnostics.push(TreeDiagnostic {
+            code: Diagnostic::NestingDepthExceeded,
+            range: TextRange::new(
+                TextSize::try_from_usize(start)
+                    .map_err(|_| ParseError::SourceTooLarge { bytes: start })?,
+                TextSize::try_from_usize(end)
+                    .map_err(|_| ParseError::SourceTooLarge { bytes: end })?,
+            )
+            .map_err(|_| ParseError::StructuralInvariant {
+                reason: "invalid inline nesting-depth range".into(),
+            })?,
+            severity: crate::SyntaxSeverity::Error,
+            message: Arc::from(
+                "Markdown inline nesting exceeds the supported depth of 32; deeper structure is treated as plain text.",
+            ),
+        });
+    }
+    let brackets = if capped {
+        Vec::new()
+    } else {
+        bracket_matches(context, start, end, allow_links)
+    };
     let crosses_link_label = |pair: &EmphasisPair| {
         brackets.iter().any(|bracket| {
             let open_inside = pair.open > bracket.open && pair.open < bracket.label_end;
@@ -278,11 +321,15 @@ fn parse_inlines(
             open_inside != close_inside
         })
     };
-    let emphasis: Vec<_> = emphasis_pairs(source, start, end)
-        .into_iter()
-        .filter(|pair| !crosses_link_label(pair))
-        .collect();
-    let strikethrough = if context.dialect.strikethrough() {
+    let emphasis: Vec<_> = if capped {
+        Vec::new()
+    } else {
+        emphasis_pairs(source, start, end)
+            .into_iter()
+            .filter(|pair| !crosses_link_label(pair))
+            .collect()
+    };
+    let strikethrough = if !capped && context.dialect.strikethrough() {
         strikethrough_pairs(source, start, end)
             .into_iter()
             .filter(|pair| !crosses_link_label(pair))
@@ -308,6 +355,7 @@ fn parse_inlines(
                 pair.close,
                 owner,
                 allow_links,
+                depth + 1,
             )?);
             children.push(tok(
                 context.text,
@@ -334,6 +382,7 @@ fn parse_inlines(
                 pair.close,
                 owner,
                 allow_links,
+                depth + 1,
             )?);
             children.push(tok(
                 context.text,
@@ -567,7 +616,7 @@ fn parse_inlines(
             }
         }
         if let Some(matched) = brackets.iter().find(|matched| matched.start == at) {
-            let parsed = parse_link(context, *matched, end, owner, allow_links)?;
+            let parsed = parse_link(context, *matched, end, owner, allow_links, depth + 1)?;
             flush(context.text, plain, at, &mut out)?;
             out.push(GreenElement::Node(parsed.node));
             at = parsed.end;
@@ -763,6 +812,7 @@ fn parse_link(
     end: usize,
     owner: SyntaxIdentity,
     allow_links: bool,
+    depth: usize,
 ) -> Result<ParsedLink, ParseError> {
     let source = context.text.shared();
     let BracketMatch {
@@ -851,6 +901,7 @@ fn parse_link(
         label_end,
         owner,
         image && allow_links,
+        depth,
     )?);
     children.push(tok(
         context.text,
@@ -1757,4 +1808,84 @@ pub(crate) fn owner_annotation() -> &'static str {
 }
 pub(crate) fn entity_value_annotation() -> &'static str {
     ENTITY_VALUE_ANNOTATION
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{parse_markdown, DocumentRevision, OkfSyntaxDiagnosticCode as Diagnostic};
+
+    /// A hostile paragraph of 10,000 `*` markers on each side of a single
+    /// word peels off nested `Emphasis`/`StrongEmphasis` pairs from the
+    /// single delimiter run, exactly like CommonMark's own nesting rule; the
+    /// depth must not overflow the stack (bounded by `MD_MAX_INLINE_DEPTH`),
+    /// must still round-trip the exact source, and must record exactly one
+    /// nesting-depth diagnostic.
+    #[test]
+    fn deeply_nested_emphasis_is_capped_with_one_diagnostic() {
+        let depth = 10_000;
+        let source = "*".repeat(depth) + "x" + &"*".repeat(depth) + "\n";
+        let snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            crate::SourceText::new(&source).unwrap(),
+            crate::MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(snapshot.tree().write_to_string(), source);
+        assert_eq!(
+            snapshot
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded)
+                .count(),
+            1
+        );
+    }
+
+    /// Same shape, but with strikethrough delimiters, which recurse through
+    /// the same `parse_inlines` cap. Each `~~` must be its own delimiter run
+    /// (strikethrough requires a run of exactly 2), so openers and closers
+    /// are separated by a letter and built up on a stack via CommonMark's
+    /// strikethrough flanking rules rather than by concatenating runs.
+    #[test]
+    fn deeply_nested_strikethrough_is_capped_with_one_diagnostic() {
+        let depth = 10_000;
+        let source = "y".to_string() + &" ~~a".repeat(depth) + "x" + &"a~~ ".repeat(depth) + "\n";
+        let snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            crate::SourceText::new(&source).unwrap(),
+            crate::MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(snapshot.tree().write_to_string(), source);
+        assert_eq!(
+            snapshot
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded)
+                .count(),
+            1
+        );
+    }
+
+    /// A document nested to exactly one below the cap must be unaffected: no
+    /// diagnostic, and the source still round-trips exactly. A single run of
+    /// `2 * depth` emphasis markers peels off one `StrongEmphasis` pair per
+    /// two markers consumed, so `depth` levels need `2 * depth` markers on
+    /// each side.
+    #[test]
+    fn nested_emphasis_below_cap_is_unaffected() {
+        let depth = super::super::MD_MAX_INLINE_DEPTH - 1;
+        let source = "*".repeat(depth * 2) + "x" + &"*".repeat(depth * 2) + "\n";
+        let snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            crate::SourceText::new(&source).unwrap(),
+            crate::MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(snapshot.tree().write_to_string(), source);
+        assert!(!snapshot
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded));
+    }
 }

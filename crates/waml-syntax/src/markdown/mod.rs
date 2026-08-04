@@ -37,6 +37,14 @@ use scan::{scan_blocks, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 /// parser runs on (wasm's default ~1 MB, with large recursive frames).
 pub(crate) const MD_MAX_CONTAINER_DEPTH: usize = 64;
 
+/// Maximum inline nesting depth (emphasis, strikethrough, link labels, ...)
+/// `inline.rs::parse_inlines` will recurse into. Beyond this, the
+/// strikethrough/emphasis/link arms are skipped so the delimiters flush as
+/// plain text instead of recursing again — independent of
+/// `MD_MAX_CONTAINER_DEPTH` since inline nesting is unbounded even inside a
+/// single paragraph.
+pub(crate) const MD_MAX_INLINE_DEPTH: usize = 32;
+
 use crate::{MarkdownDialect, SourceText, TextRange, TextSize};
 
 use crate::shell::ParseError;
