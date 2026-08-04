@@ -186,6 +186,10 @@ impl EditorMarkdownAssetHost {
         }
     }
 
+    // Production code drives the host through `MarkdownAssetLease`; the
+    // direct-lease entry points below survive as this module's test seam
+    // (2026-08-04, review M-8 -- the unused wrappers were deleted then).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn bind_item(&mut self, item: PresentationItemId, document: BundlePath) {
         self.documents
             .entry(DIRECT_LEASE)
@@ -193,14 +197,7 @@ impl EditorMarkdownAssetHost {
             .insert(item, document);
     }
 
-    pub fn bind_presentation(&mut self, plan: &PresentationPlan, document: BundlePath) {
-        self.reconcile_presentation(plan, document);
-    }
-
-    pub fn reconcile_presentation(&mut self, plan: &PresentationPlan, document: BundlePath) {
-        self.reconcile_lease(DIRECT_LEASE, plan, document);
-    }
-
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn unbind_document(&mut self, document: &BundlePath) {
         self.unbind_lease_document(DIRECT_LEASE, document);
     }
@@ -342,6 +339,9 @@ impl EditorMarkdownAssetHost {
 }
 
 impl MarkdownAssetLease {
+    /// Test seam: assertions key the host's internal maps by lease id
+    /// (2026-08-04, review M-8).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn id(&self) -> MarkdownAssetLeaseId {
         self.id
     }
@@ -356,10 +356,6 @@ impl MarkdownAssetLease {
         self.shared
             .borrow_mut()
             .unbind_lease_document(self.id, document);
-    }
-
-    pub fn close(self) {
-        // Consuming the lease runs `Drop`, which retires only this view.
     }
 }
 

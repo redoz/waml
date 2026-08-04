@@ -45,7 +45,10 @@ mod inspector_panel;
 mod load;
 mod logo;
 mod markdown_analysis;
-#[allow(dead_code)] // Task 7 host API is mounted by the view integration after its focused review.
+// Dead-code checked on native (the gate target); the wasm build never reaches
+// the native filesystem plumbing in here (2026-08-04, review M-8 -- this
+// replaced an unconditional module-wide `#[allow(dead_code)]`).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod markdown_hosts;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_save;
