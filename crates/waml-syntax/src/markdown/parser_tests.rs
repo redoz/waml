@@ -102,6 +102,20 @@ fn malformed_and_unclosed_frontmatter_recovers_without_losing_bytes() {
 }
 
 #[test]
+fn block_scalar_header_with_trailing_junk_stays_a_plain_value() {
+    // `|` followed by whitespace and a non-comment character is not a valid
+    // block scalar header; the value must stay a plain scalar and the tree
+    // must keep every byte.
+    let source = "---\ntype: |\t\u{a1}\n---\n# Unclaimed\n";
+    let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
+    let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
+    assert_shell_invariants("block_scalar_trailing_junk", source, &shell);
+    assert!(!leaf_tokens(&shell.tree.root())
+        .iter()
+        .any(|token| token.kind() == OkfMarkdownSyntaxKind::FrontmatterBlockScalarHeaderToken));
+}
+
+#[test]
 fn thematic_rule_without_plausible_frontmatter_stays_markdown() {
     let source = "---\nnot a key value\n\n# Real title\n";
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();

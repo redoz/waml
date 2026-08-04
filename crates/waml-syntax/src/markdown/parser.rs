@@ -1486,7 +1486,8 @@ fn is_fence_line(source: &str, line: Line) -> bool {
 /// a YAML block scalar, returns the length of the header run — the `|`/`>`
 /// indicator plus an optional chomping modifier (`+`/`-`) and an optional
 /// explicit indentation digit — not including any trailing whitespace or
-/// comment. Shared by the classifier's close-fence scan and the builder's
+/// comment. Anything else after the header (past whitespace) means the line
+/// is a plain scalar, not a block scalar header. Shared by the classifier's close-fence scan and the builder's
 /// value-position handling so they cannot drift.
 fn block_scalar_header_len(content: &str) -> Option<usize> {
     let bytes = content.as_bytes();
@@ -1501,8 +1502,12 @@ fn block_scalar_header_len(content: &str) -> Option<usize> {
     if bytes.get(at).is_some_and(u8::is_ascii_digit) {
         at += 1;
     }
-    match bytes.get(at) {
-        None | Some(b' ') | Some(b'\t') | Some(b'#') => Some(at),
+    let mut rest = at;
+    while matches!(bytes.get(rest), Some(b' ') | Some(b'\t')) {
+        rest += 1;
+    }
+    match bytes.get(rest) {
+        None | Some(b'#') => Some(at),
         _ => None,
     }
 }
