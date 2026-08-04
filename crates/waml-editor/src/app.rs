@@ -720,6 +720,11 @@ pub struct App {
     pending_fragment: Option<PendingFragment>,
     #[rust]
     pending_anchor_restore: Option<PendingAnchorRestore>,
+    /// Monotonic counter stamped onto each `PendingAnchorRestore` so a second
+    /// rapid history traversal can tell whether its deferred restore was
+    /// superseded before `apply_pending_anchor_restore` ran.
+    #[rust]
+    anchor_restore_generation: u64,
     /// URL of the in-flight boot-bundle fetch -- asked for by the page URL or
     /// by the site's own config -- so its response can name it in an error.
     /// `None` once the response (or error) is handled.

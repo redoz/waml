@@ -196,4 +196,13 @@ impl ViewHistory {
     pub fn current(&self) -> Option<&ViewLocation> {
         self.cursor.and_then(|cursor| self.entries.get(cursor))
     }
+
+    /// Window into the raw entry list, primarily for tests asserting an
+    /// intermediate (non-current) entry's anchor without a traversal. Cheap
+    /// enough to leave available outside `cfg(test)`: the lib crate's own
+    /// `cfg(test)` does not cover the `waml-editor` binary crate's tests,
+    /// which depend on this crate as an ordinary dependency.
+    pub fn entry_at(&self, index: usize) -> Option<&ViewLocation> {
+        self.entries.get(index)
+    }
 }

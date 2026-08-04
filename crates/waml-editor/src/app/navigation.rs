@@ -10,6 +10,9 @@ pub(super) struct PendingFragment {
 pub(super) struct PendingAnchorRestore {
     pub(super) document: crate::navigation::DocumentLocator,
     pub(super) anchor: ViewAnchor,
+    /// Stamped from `App::anchor_restore_generation` when this restore was
+    /// scheduled, so a later traversal that supersedes it can be detected.
+    pub(super) generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -351,6 +354,14 @@ impl App {
         let _ = self
             .documents
             .restore_active_anchor(cx, &self.ui, &self.session, &pending.anchor);
+        // A newer traversal may have scheduled its own pending restore (and
+        // already refreshed history for the entry it targets) while this one
+        // was still deferred. Applying this stale restore's anchor is still
+        // correct for the view itself, but refreshing history with it would
+        // clobber the newer entry with this superseded generation's anchor.
+        if pending.generation != self.anchor_restore_generation {
+            return;
+        }
         if let Some(current) = self.documents.capture_active_location(cx, &self.ui) {
             self.view_history.refresh_current(current);
         }
@@ -417,8 +428,20 @@ impl App {
             return true;
         }
         if matches!(cause, TransitionCause::HistoryTraversal) {
-            if let Some(departing) = departing.clone() {
-                self.view_history.refresh_current(departing);
+            // Skip the refresh when a restore for the departing document is
+            // still pending: the departing view's captured anchor is
+            // pre-restore stale (the deferred restore from the first
+            // traversal has not applied yet), and refreshing history with it
+            // would corrupt the entry that restore is about to write.
+            let departing_is_pending_restore = self
+                .pending_anchor_restore
+                .as_ref()
+                .zip(departing.as_ref())
+                .is_some_and(|(pending, departing)| pending.document == departing.document);
+            if !departing_is_pending_restore {
+                if let Some(departing) = departing.clone() {
+                    self.view_history.refresh_current(departing);
+                }
             }
         }
         let assets = self
@@ -437,9 +460,11 @@ impl App {
             TransitionCause::HistoryTraversal | TransitionCause::UndoRedoReveal
         ) && !matches!(location.anchor, ViewAnchor::None)
         {
+            self.anchor_restore_generation = self.anchor_restore_generation.wrapping_add(1);
             self.pending_anchor_restore = Some(PendingAnchorRestore {
                 document: location.document.clone(),
                 anchor: location.anchor.clone(),
+                generation: self.anchor_restore_generation,
             });
             cx.redraw_all();
         }

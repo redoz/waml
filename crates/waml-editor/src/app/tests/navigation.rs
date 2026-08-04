@@ -1866,3 +1866,105 @@ fn document_header_source_generic_start_source_sequence_has_no_stale_state() {
     assert_eq!(mounted_inspector_state(&cx, &app), DockState::Flag);
     app.sync_dock_slots(&mut cx);
 }
+
+#[test]
+fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry() {
+    let (mut cx, mut app) = navigation_app_with_active_order();
+    for concept_id in ["sales/customer", "sales/next"] {
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary(concept_id),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+    }
+    assert_eq!(app.view_history.len(), 3);
+
+    // First Back: sales/next -> sales/customer. This schedules a deferred
+    // anchor restore for sales/customer and leaves entry[1] (sales/customer)
+    // as-is.
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+    assert_eq!(
+        app.documents.active_tab().unwrap().concept_id,
+        "sales/customer"
+    );
+    let pending_after_first = app
+        .pending_anchor_restore
+        .clone()
+        .expect("HistoryTraversal with a non-None anchor schedules a deferred restore");
+    assert_eq!(pending_after_first.document.concept_id, "sales/customer");
+    let entry_after_first = app
+        .view_history
+        .entry_at(1)
+        .cloned()
+        .expect("sales/customer entry exists at index 1");
+
+    // Second Back, with no intervening Draw to apply the first restore:
+    // sales/customer -> sales/order. Departing sales/customer must NOT be
+    // refreshed into history from its pre-restore-stale capture, because a
+    // restore for sales/customer is still pending.
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+    assert_eq!(
+        app.documents.active_tab().unwrap().concept_id,
+        "sales/order"
+    );
+    assert_eq!(
+        app.view_history.entry_at(1),
+        Some(&entry_after_first),
+        "the intermediate sales/customer entry must be untouched by the second traversal"
+    );
+
+    // The second traversal supersedes the first pending restore with a new
+    // one (for sales/order) at a newer generation.
+    let pending_after_second = app
+        .pending_anchor_restore
+        .clone()
+        .expect("second HistoryTraversal schedules its own deferred restore");
+    assert_eq!(pending_after_second.document.concept_id, "sales/order");
+    assert!(pending_after_second.generation > pending_after_first.generation);
+    assert_eq!(
+        pending_after_second.generation,
+        app.anchor_restore_generation
+    );
+}
+
+#[test]
+fn pumping_a_draw_applies_the_latest_pending_restore_and_refreshes_its_entry() {
+    let (mut cx, mut app) = navigation_app_with_active_order();
+    for concept_id in ["sales/customer", "sales/next"] {
+        assert!(app.transition_to_location(
+            &mut cx,
+            ViewLocation {
+                document: crate::navigation::DocumentLocator::primary(concept_id),
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        ));
+    }
+
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+    assert_eq!(
+        app.documents.active_tab().unwrap().concept_id,
+        "sales/order"
+    );
+    let scheduled_generation = app
+        .pending_anchor_restore
+        .as_ref()
+        .expect("a restore is pending after two rapid traversals")
+        .generation;
+    assert_eq!(scheduled_generation, app.anchor_restore_generation);
+
+    // Simulate the deferred Draw that `app/event.rs` drives.
+    app.apply_pending_anchor_restore(&mut cx);
+
+    assert!(app.pending_anchor_restore.is_none());
+    let refreshed = app
+        .view_history
+        .entry_at(0)
+        .cloned()
+        .expect("sales/order entry exists at index 0");
+    assert_eq!(refreshed.document.concept_id, "sales/order");
+}
