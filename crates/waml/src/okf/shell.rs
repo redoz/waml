@@ -238,29 +238,36 @@ fn project(documents: Vec<ShellDocument<'_>>) -> Result<Bundle, BundleError> {
     concepts.sort_by(|left, right| left.id.cmp(&right.id));
     logs.sort_by(|left, right| left.directory.cmp(&right.directory));
 
+    // `addresses` (a BTreeSet) and `concepts` (sorted above) are iterated in address/id
+    // order, so grouping into these maps in one pass each yields already-sorted groups —
+    // no per-entry re-sort is needed, matching the old per-address filter's output order.
+    let mut children_by_parent: BTreeMap<DirectoryAddress, Vec<DirectoryAddress>> =
+        BTreeMap::new();
+    for address in &addresses {
+        if let Some(parent) = address.parent() {
+            children_by_parent
+                .entry(parent)
+                .or_default()
+                .push(address.clone());
+        }
+    }
+    let mut concepts_by_parent: BTreeMap<DirectoryAddress, Vec<String>> = BTreeMap::new();
+    for concept in &concepts {
+        if let Ok(parent) = DirectoryAddress::concept_parent(&concept.id) {
+            concepts_by_parent
+                .entry(parent)
+                .or_default()
+                .push(concept.id.clone());
+        }
+    }
+
     let mut directories: Vec<Directory> = addresses
         .iter()
-        .map(|address| {
-            let mut child_directories: Vec<_> = addresses
-                .iter()
-                .filter(|candidate| candidate.parent().as_ref() == Some(address))
-                .cloned()
-                .collect();
-            child_directories.sort();
-            let mut direct_concepts: Vec<_> = concepts
-                .iter()
-                .filter(|concept| {
-                    DirectoryAddress::concept_parent(&concept.id).as_ref() == Ok(address)
-                })
-                .map(|concept| concept.id.clone())
-                .collect();
-            direct_concepts.sort();
-            Directory {
-                address: address.clone(),
-                parent: address.parent(),
-                child_directories,
-                concepts: direct_concepts,
-            }
+        .map(|address| Directory {
+            address: address.clone(),
+            parent: address.parent(),
+            child_directories: children_by_parent.get(address).cloned().unwrap_or_default(),
+            concepts: concepts_by_parent.get(address).cloned().unwrap_or_default(),
         })
         .collect();
     directories.sort_by(|left, right| left.address.cmp(&right.address));
