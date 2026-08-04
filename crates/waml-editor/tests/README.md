@@ -1,8 +1,12 @@
 # waml-editor tests
 
-`waml-editor` is a **binary-only** crate (no `lib.rs`), so its unit tests live
-inline in `src/*.rs` behind `#[cfg(test)]` and run as the bin's unit-test
-harness. There is no `--lib` target.
+`waml-editor` is primarily a binary crate: most unit tests live inline in
+`src/*.rs` behind `#[cfg(test)]` and run as the bin's unit-test harness. A
+small `lib.rs` additionally exports `editor_history` and `view_history`, and
+the five integration files in `tests/` (`editor_history.rs`,
+`view_history.rs`, `history_integration.rs`, `markdown_authority.rs`,
+`markdown_integration.rs`) test against those two modules plus
+filesystem-level fixtures. Everything else in `src/` stays bin-private.
 
 ## Unit tests (no GPU)
 
@@ -16,9 +20,15 @@ round-trip. No GPU required.
 
 ## Visual verification (verification of record)
 
-```bash
-cargo run -p waml-editor -- crates/waml-editor/tests/fixtures/mini
+```powershell
+./run.ps1    # stages fixtures/mini to target/run-fixture-mini and launches it
 ```
+
+Committed fixtures under `tests/fixtures/` are **read-only inputs**: the
+editor writes layout back into the loaded bundle, so always launch a staged
+copy (`run.ps1` does this automatically for any fixture under
+`tests/fixtures/`; a bare `cargo run -p waml-editor -- <fixture>` does not,
+and will dirty the committed files).
 
 Opens the native GPU window. The window is a resizable `Splitter`: the left
 pane is the `ProjectTree` panel (a `FileTree` showing the `Mini` bundle's root
@@ -219,15 +229,13 @@ Final verification before integration:
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`:
   0 errors; only the two existing duplicate-package Cargo notices.
-- `cargo test --workspace -- --skip randomized_full_and_incremental_snapshots_agree --skip valid_edit_sequences_match_full_parse`:
-  2013 passed, 4 ignored, 2 filtered out across 79 suites.
+- `cargo test --workspace`: green, unfiltered.
 - `editors/vscode`: `pnpm run build` passed, `pnpm test` passed 14 tests,
   and `pnpm run lint` passed.
 
-An unfiltered `cargo test --workspace` was also run. It reproduced only the
-documented pre-existing `waml-syntax` incremental property defect:
-`randomized_full_and_incremental_snapshots_agree` retains the trailing space of
-`# Mod: ` as heading whitespace, while the full parse attaches it to EOF. The
-isolated property rerun reproduced the same mismatch and minimal edit sequence
-`[(127, 213, 85), (113, 164, 200), (35, 208, 160)]`. No rollout claim treats
-that run as green.
+The `waml-syntax` incremental property defect that once forced a `--skip`
+filter on `randomized_full_and_incremental_snapshots_agree` and
+`valid_edit_sequences_match_full_parse` (reparse windows swallowing trailing
+end-of-file whitespace) was fixed in commit `10f66dc9`. Run the workspace gate
+unfiltered — those two property tests are the ones that catch this crate's
+hardest bug class, and a red there is a *new* defect, not the documented one.
