@@ -5,6 +5,7 @@ mod class;
 mod geometry;
 mod linework;
 pub(crate) mod primitives;
+mod stale_badge;
 mod viewport;
 
 pub(crate) use behavior::hit::BehaviorTarget;
