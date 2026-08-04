@@ -460,6 +460,35 @@ const GUTTER_GAP: f64 = 10.0;
 /// ratio the shaper uses for an empty row.
 const GUTTER_ASCENT: f64 = 0.8;
 
+/// The layout/motion pipeline: everything a document swap or a full
+/// invalidation must reset together. Reset by whole-struct replacement
+/// (`LayoutPipeline::default()`) rather than by field enumeration, so a new
+/// field can never be left out of the reset the way `draw_commands_cache`,
+/// `scroll_y`, and `motion` were before this struct existed (see issue 33).
+#[derive(Default)]
+struct LayoutPipeline {
+    installed: Option<Arc<InstalledPresentation>>,
+    target_layout: Option<Arc<LayoutSnapshot>>,
+    previous_layout: Option<Arc<LayoutSnapshot>>,
+    frame_layout: Option<Arc<LayoutSnapshot>>,
+    motion: MotionController,
+    pending_cause: Option<LayoutChangeCause>,
+    /// What actually changed since the last layout. A scroll must not claim the
+    /// document changed: `Document` invalidates every block, so the measurement
+    /// cache would miss on every wheel tick and off-window blocks would fall
+    /// back to their one-line estimate — making content height a function of
+    /// scroll position.
+    pending_invalidation: Option<LayoutInvalidation>,
+    /// Content width the installed layout was built at, so a real width change
+    /// is still told apart from a scroll.
+    last_layout_width: Option<f64>,
+    next_frame: NextFrame,
+    /// Cached base draw-command list + per-layer visit plan (P-6); see
+    /// `cached_draw_commands`. Invalidated by exactly the same events as the
+    /// rest of the pipeline, so it lives here rather than as a sibling field.
+    draw_commands_cache: Option<DrawCommandsCache>,
+}
+
 #[derive(Script, ScriptHook, Widget)]
 pub struct MarkdownEditor {
     #[deref]
@@ -471,30 +500,7 @@ pub struct MarkdownEditor {
     #[rust]
     layout_engine: LayoutEngine,
     #[rust]
-    installed: Option<Arc<InstalledPresentation>>,
-    #[rust]
-    target_layout: Option<Arc<LayoutSnapshot>>,
-    #[rust]
-    previous_layout: Option<Arc<LayoutSnapshot>>,
-    #[rust]
-    frame_layout: Option<Arc<LayoutSnapshot>>,
-    #[rust]
-    motion: MotionController,
-    #[rust]
-    pending_cause: Option<LayoutChangeCause>,
-    /// What actually changed since the last layout. A scroll must not claim the
-    /// document changed: `Document` invalidates every block, so the measurement
-    /// cache would miss on every wheel tick and off-window blocks would fall
-    /// back to their one-line estimate — making content height a function of
-    /// scroll position.
-    #[rust]
-    pending_invalidation: Option<LayoutInvalidation>,
-    /// Content width the installed layout was built at, so a real width change
-    /// is still told apart from a scroll.
-    #[rust]
-    last_layout_width: Option<f64>,
-    #[rust]
-    next_frame: NextFrame,
+    pipeline: LayoutPipeline,
     #[rust]
     pointer_drag_active: bool,
     #[rust]
@@ -575,10 +581,6 @@ pub struct MarkdownEditor {
     last_draw: DrawRecorder,
     #[rust]
     paint_evidence: PaintEvidence,
-    /// Cached base draw-command list + per-layer visit plan (P-6); see
-    /// `cached_draw_commands`.
-    #[rust]
-    draw_commands_cache: Option<DrawCommandsCache>,
 }
 
 /// The draw layers in paint order -- the single sequence `draw_walk` runs.
@@ -680,9 +682,9 @@ impl MarkdownEditor {
         event: &Event,
         session: &mut MarkdownDocumentSession,
     ) -> Result<Vec<Action>, MarkdownEditorError> {
-        if let Some(frame_event) = self.next_frame.is_event(event) {
-            let frame = self.motion.sample(frame_event.time);
-            self.frame_layout = Some(frame.layout.clone());
+        if let Some(frame_event) = self.pipeline.next_frame.is_event(event) {
+            let frame = self.pipeline.motion.sample(frame_event.time);
+            self.pipeline.frame_layout = Some(frame.layout.clone());
             self.scroll_y = frame.scroll_y;
             session.set_scroll(ScrollState {
                 x: session.scroll().x,
@@ -692,7 +694,7 @@ impl MarkdownEditor {
                 .set_scroll_pos_no_clip(cx, dvec2(session.scroll().x, frame.scroll_y));
             self.redraw(cx);
             if frame.active {
-                self.next_frame = cx.new_next_frame();
+                self.pipeline.next_frame = cx.new_next_frame();
             }
         }
         if self.has_focus {
@@ -715,9 +717,9 @@ impl MarkdownEditor {
                 x: scroll.x,
                 y: scroll.y,
             });
-            self.target_layout = None;
-            self.pending_cause = Some(LayoutChangeCause::ViewportResize);
-            self.pending_invalidation = Some(LayoutInvalidation::Viewport);
+            self.pipeline.target_layout = None;
+            self.pipeline.pending_cause = Some(LayoutChangeCause::ViewportResize);
+            self.pipeline.pending_invalidation = Some(LayoutInvalidation::Viewport);
             self.redraw(cx);
         }
         let area = self.scroll_bars.area();
@@ -728,7 +730,7 @@ impl MarkdownEditor {
                 EditorInput::Text(Arc::from(event.input.as_str()))
             }),
             Hit::TextCopy(event) => {
-                let layout = match self.frame_layout.as_ref() {
+                let layout = match self.pipeline.frame_layout.as_ref() {
                     Some(layout) => layout.clone(),
                     None => self.install_layout(cx, session, None)?,
                 };
@@ -740,7 +742,7 @@ impl MarkdownEditor {
                 return Ok(Vec::new());
             }
             Hit::TextCut(event) => {
-                let layout = match self.frame_layout.as_ref() {
+                let layout = match self.pipeline.frame_layout.as_ref() {
                     Some(layout) => layout.clone(),
                     None => self.install_layout(cx, session, None)?,
                 };
@@ -796,9 +798,10 @@ impl MarkdownEditor {
                     let point =
                         abs_to_layout_point(event.abs, area.rect(cx).pos, gutter, self.scroll_y);
                     if event.modifiers.is_primary() {
-                        if let (Some(installed), Some(layout)) =
-                            (self.installed.as_ref(), self.frame_layout.as_ref())
-                        {
+                        if let (Some(installed), Some(layout)) = (
+                            self.pipeline.installed.as_ref(),
+                            self.pipeline.frame_layout.as_ref(),
+                        ) {
                             if let Some(position) =
                                 navigation_position(&installed.plan, layout, point)
                             {
@@ -851,6 +854,7 @@ impl MarkdownEditor {
         let viewport_size = dvec2((viewport.size.x - gutter).max(1.0), viewport.size.y);
         let layout = self.install_layout(cx, session, Some(viewport_size))?;
         let installed = self
+            .pipeline
             .installed
             .as_ref()
             .ok_or(MarkdownEditorError::MissingLayoutDocument)?
@@ -937,11 +941,15 @@ impl MarkdownEditor {
     ) -> Result<(Arc<[DrawCommand]>, Arc<[Vec<usize>; DRAW_LAYERS.len()]>), MarkdownEditorError>
     {
         let reusable = session.ime().is_none()
-            && self.draw_commands_cache.as_ref().is_some_and(|cache| {
-                Arc::ptr_eq(&cache.installed, installed)
-                    && Arc::ptr_eq(&cache.layout, layout)
-                    && cache.selections == *session.selections()
-            });
+            && self
+                .pipeline
+                .draw_commands_cache
+                .as_ref()
+                .is_some_and(|cache| {
+                    Arc::ptr_eq(&cache.installed, installed)
+                        && Arc::ptr_eq(&cache.layout, layout)
+                        && cache.selections == *session.selections()
+                });
         if !reusable {
             let frame = PresentationFrame {
                 revision: installed.revision,
@@ -961,7 +969,7 @@ impl MarkdownEditor {
             )
             .map_err(MarkdownEditorError::Presentation)?;
             let plan = Arc::new(layer_plan(&commands));
-            self.draw_commands_cache = Some(DrawCommandsCache {
+            self.pipeline.draw_commands_cache = Some(DrawCommandsCache {
                 installed: installed.clone(),
                 layout: layout.clone(),
                 selections: session.selections().clone(),
@@ -970,6 +978,7 @@ impl MarkdownEditor {
             });
         }
         let cache = self
+            .pipeline
             .draw_commands_cache
             .as_ref()
             .expect("cache installed just above");
@@ -1311,8 +1320,8 @@ impl MarkdownEditor {
     }
 
     fn embedded_at(&self, point: DVec2) -> Option<(LayoutElementId, Rect)> {
-        let layout = self.frame_layout.as_ref()?;
-        let document = &self.installed.as_ref()?.layout_document;
+        let layout = self.pipeline.frame_layout.as_ref()?;
+        let document = &self.pipeline.installed.as_ref()?.layout_document;
         layout.blocks()[layout.visible_block_range()]
             .iter()
             .find(|block| {
@@ -1332,6 +1341,7 @@ impl MarkdownEditor {
         requested_viewport: Option<DVec2>,
     ) -> Result<Arc<LayoutSnapshot>, MarkdownEditorError> {
         let installed = self
+            .pipeline
             .installed
             .as_ref()
             .ok_or(MarkdownEditorError::MissingLayoutDocument)?
@@ -1342,8 +1352,8 @@ impl MarkdownEditor {
                 session: session.local_revision(),
             });
         }
-        if self.pending_cause.is_none() {
-            if let Some(layout) = self.frame_layout.as_ref() {
+        if self.pipeline.pending_cause.is_none() {
+            if let Some(layout) = self.pipeline.frame_layout.as_ref() {
                 return Ok(layout.clone());
             }
         }
@@ -1374,10 +1384,11 @@ impl MarkdownEditor {
         // A width change reflows every block whatever the caller claimed, and a
         // caller that claimed nothing has no cache worth trusting.
         let width_changed = self
+            .pipeline
             .last_layout_width
             .map_or(true, |width| width.to_bits() != viewport_size.x.to_bits());
-        self.last_layout_width = Some(viewport_size.x);
-        let invalidation = match self.pending_invalidation.take() {
+        self.pipeline.last_layout_width = Some(viewport_size.x);
+        let invalidation = match self.pipeline.pending_invalidation.take() {
             _ if width_changed => LayoutInvalidation::ViewportWidth,
             Some(invalidation) => invalidation,
             None => LayoutInvalidation::Document,
@@ -1405,16 +1416,18 @@ impl MarkdownEditor {
             )
             .map_err(MarkdownEditorError::Layout)?;
         let layout = Arc::new(layout);
-        self.previous_layout = self.target_layout.replace(layout.clone());
-        self.motion.set_viewport_height(viewport_size.y.max(1.0));
-        let cause = self.pending_cause.take().unwrap_or_else(|| {
-            if self.frame_layout.is_some() {
+        self.pipeline.previous_layout = self.pipeline.target_layout.replace(layout.clone());
+        self.pipeline
+            .motion
+            .set_viewport_height(viewport_size.y.max(1.0));
+        let cause = self.pipeline.pending_cause.take().unwrap_or_else(|| {
+            if self.pipeline.frame_layout.is_some() {
                 LayoutChangeCause::ViewportResize
             } else {
                 LayoutChangeCause::InitialLoad
             }
         });
-        let anchor = self.frame_layout.as_deref().and_then(|on_screen| {
+        let anchor = self.pipeline.frame_layout.as_deref().and_then(|on_screen| {
             derive_motion_scroll_anchor(
                 on_screen,
                 &layout,
@@ -1422,11 +1435,12 @@ impl MarkdownEditor {
                 self.scroll_y,
             )
         });
-        let frame = self.motion.commit(
+        let frame = self.pipeline.motion.commit(
             cx.seconds_since_app_start(),
-            self.frame_layout
+            self.pipeline
+                .frame_layout
                 .clone()
-                .or_else(|| self.previous_layout.clone()),
+                .or_else(|| self.pipeline.previous_layout.clone()),
             layout,
             cause,
             self.reduced_motion,
@@ -1437,9 +1451,9 @@ impl MarkdownEditor {
                 ..MotionConfig::default()
             },
         );
-        self.frame_layout = Some(frame.layout.clone());
+        self.pipeline.frame_layout = Some(frame.layout.clone());
         if frame.active {
-            self.next_frame = cx.new_next_frame();
+            self.pipeline.next_frame = cx.new_next_frame();
         }
         Ok(frame.layout)
     }
@@ -1458,7 +1472,7 @@ impl MarkdownEditor {
         {
             return Ok(Vec::new());
         }
-        let layout = match self.frame_layout.as_ref() {
+        let layout = match self.pipeline.frame_layout.as_ref() {
             Some(layout) => layout.clone(),
             None => self.install_layout(cx, session, None)?,
         };
@@ -1519,7 +1533,7 @@ impl MarkdownEditor {
     }
 
     fn show_ime(&mut self, cx: &mut Cx, session: &MarkdownDocumentSession) {
-        let Some(point) = self.frame_layout.as_ref().and_then(|layout| {
+        let Some(point) = self.pipeline.frame_layout.as_ref().and_then(|layout| {
             layout
                 .source_to_point(session.selections().primary().cursor)
                 .map(|caret| caret.rect.pos)
@@ -1667,9 +1681,9 @@ impl MarkdownEditorRef {
                 return;
             }
             inner.line_numbers = mode;
-            inner.target_layout = None;
-            inner.pending_cause = Some(LayoutChangeCause::ViewportResize);
-            inner.pending_invalidation = Some(LayoutInvalidation::ViewportWidth);
+            inner.pipeline.target_layout = None;
+            inner.pipeline.pending_cause = Some(LayoutChangeCause::ViewportResize);
+            inner.pipeline.pending_invalidation = Some(LayoutInvalidation::ViewportWidth);
             inner.redraw(cx);
         }
     }
@@ -1683,9 +1697,9 @@ impl MarkdownEditorRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.reduced_motion = reduced_motion;
             if reduced_motion {
-                if let Some(target) = inner.target_layout.clone() {
-                    let previous = inner.frame_layout.clone();
-                    let frame = inner.motion.commit(
+                if let Some(target) = inner.pipeline.target_layout.clone() {
+                    let previous = inner.pipeline.frame_layout.clone();
+                    let frame = inner.pipeline.motion.commit(
                         cx.seconds_since_app_start(),
                         previous,
                         target,
@@ -1694,8 +1708,8 @@ impl MarkdownEditorRef {
                         None,
                         MotionConfig::default(),
                     );
-                    inner.frame_layout = Some(frame.layout);
-                    inner.next_frame = NextFrame::default();
+                    inner.pipeline.frame_layout = Some(frame.layout);
+                    inner.pipeline.next_frame = NextFrame::default();
                 }
             }
             inner.redraw(cx);
@@ -1712,34 +1726,33 @@ impl MarkdownEditorRef {
             return;
         }
         if let Some(mut inner) = self.borrow_mut() {
-            inner.installed = Some(presentation);
-            inner.pending_cause = Some(cause);
-            inner.pending_invalidation = Some(LayoutInvalidation::Document);
-            inner.target_layout = None;
+            inner.pipeline.installed = Some(presentation);
+            inner.pipeline.pending_cause = Some(cause);
+            inner.pipeline.pending_invalidation = Some(LayoutInvalidation::Document);
+            inner.pipeline.target_layout = None;
             inner.redraw(cx);
         }
     }
 
     pub fn clear_presentation(&self, cx: &mut Cx) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.installed = None;
-            inner.target_layout = None;
-            inner.previous_layout = None;
-            inner.frame_layout = None;
-            inner.pending_cause = None;
-            inner.pending_invalidation = None;
-            inner.last_layout_width = None;
-            inner.next_frame = NextFrame::default();
+            // Whole-struct replacement, not field enumeration: every pipeline
+            // field -- including `draw_commands_cache`, which drifted out of
+            // the old hand-written reset (issue 33) -- is guaranteed cleared.
+            inner.pipeline = LayoutPipeline::default();
+            inner.scroll_y = 0.0;
             inner.redraw(cx);
         }
     }
 
     pub fn target_layout(&self) -> Option<Arc<LayoutSnapshot>> {
-        self.borrow().and_then(|inner| inner.target_layout.clone())
+        self.borrow()
+            .and_then(|inner| inner.pipeline.target_layout.clone())
     }
 
     pub fn frame_layout(&self) -> Option<Arc<LayoutSnapshot>> {
-        self.borrow().and_then(|inner| inner.frame_layout.clone())
+        self.borrow()
+            .and_then(|inner| inner.pipeline.frame_layout.clone())
     }
 
     pub fn proposed_edit(actions: &Actions) -> Option<ProposedMarkdownEdit> {
@@ -1791,8 +1804,8 @@ impl MarkdownEditorRef {
     #[doc(hidden)]
     pub fn test_set_layout(&self, layout: Arc<LayoutSnapshot>) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.target_layout = Some(layout.clone());
-            inner.frame_layout = Some(layout);
+            inner.pipeline.target_layout = Some(layout.clone());
+            inner.pipeline.frame_layout = Some(layout);
         }
     }
 
@@ -1960,5 +1973,114 @@ mod viewport_tests {
         assert_ne!(walk.abs_pos, Some(rect.pos - current_turtle_origin));
         assert!(matches!(walk.width, Size::Fixed(value) if value == 96.0));
         assert!(matches!(walk.height, Size::Fixed(value) if value == 48.0));
+    }
+}
+
+#[cfg(test)]
+mod layout_pipeline_tests {
+    use super::*;
+    use crate::{
+        layout::LayoutDocument,
+        presentation::{EmbeddedAssetFrame, PresentationPlan, PresentationStyles},
+        selection::SelectionSet,
+    };
+    use waml_syntax::{DocumentRevision, TextSize};
+
+    fn empty_layout_document(revision: DocumentRevision) -> Arc<LayoutDocument> {
+        Arc::new(LayoutDocument {
+            revision,
+            content_insets: Default::default(),
+            blocks: Arc::from([]),
+            text_runs: Arc::from([]),
+            embedded_blocks: Arc::from([]),
+        })
+    }
+
+    fn installed_presentation() -> Arc<InstalledPresentation> {
+        let revision = DocumentRevision::INITIAL;
+        InstalledPresentation::new(
+            Arc::new(PresentationPlan {
+                revision,
+                source_len: TextSize::new(0),
+                items: Arc::from([]),
+                links: Arc::from([]),
+                blocks: Arc::from([]),
+                diagnostics: Arc::from([]),
+            }),
+            Arc::new(PresentationStyles::balanced()),
+            empty_layout_document(revision),
+            Arc::from([]),
+            Arc::new(EmbeddedAssetFrame {
+                revision,
+                items: Arc::from([]),
+            }),
+        )
+        .expect("minimal presentation validates")
+    }
+
+    fn layout_snapshot() -> Arc<LayoutSnapshot> {
+        Arc::new(LayoutSnapshot::from_parts_for_test(
+            DocumentRevision::INITIAL,
+            dvec2(0.0, 0.0),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    /// Every pipeline field -- including `draw_commands_cache`, the field
+    /// that drifted out of the old hand-enumerated `clear_presentation`
+    /// (issue 33) -- must come back to its default value after a whole-struct
+    /// reset. This is the mechanism `clear_presentation` now relies on: a
+    /// field added to `LayoutPipeline` in the future is reset by construction,
+    /// never by remembering to touch a fifth or sixth call site.
+    #[test]
+    fn default_reset_clears_every_pipeline_field() {
+        let installed = installed_presentation();
+        let layout = layout_snapshot();
+
+        let mut pipeline = LayoutPipeline {
+            installed: Some(installed.clone()),
+            target_layout: Some(layout.clone()),
+            previous_layout: Some(layout.clone()),
+            frame_layout: Some(layout.clone()),
+            motion: MotionController::default(),
+            pending_cause: Some(LayoutChangeCause::ViewportResize),
+            pending_invalidation: Some(LayoutInvalidation::Document),
+            last_layout_width: Some(640.0),
+            next_frame: NextFrame::default(),
+            draw_commands_cache: Some(DrawCommandsCache {
+                installed,
+                layout: layout.clone(),
+                selections: SelectionSet::caret_in_text(
+                    DocumentRevision::INITIAL,
+                    &waml_syntax::SourceText::new(String::new()).unwrap(),
+                    TextSize::new(0),
+                )
+                .expect("empty caret selection"),
+                commands: Arc::from([]),
+                plan: Arc::new(Default::default()),
+            }),
+        };
+
+        assert!(pipeline.installed.is_some());
+        assert!(pipeline.target_layout.is_some());
+        assert!(pipeline.previous_layout.is_some());
+        assert!(pipeline.frame_layout.is_some());
+        assert!(pipeline.pending_cause.is_some());
+        assert!(pipeline.pending_invalidation.is_some());
+        assert!(pipeline.last_layout_width.is_some());
+        assert!(pipeline.draw_commands_cache.is_some());
+
+        pipeline = LayoutPipeline::default();
+
+        assert!(pipeline.installed.is_none());
+        assert!(pipeline.target_layout.is_none());
+        assert!(pipeline.previous_layout.is_none());
+        assert!(pipeline.frame_layout.is_none());
+        assert!(pipeline.pending_cause.is_none());
+        assert!(pipeline.pending_invalidation.is_none());
+        assert!(pipeline.last_layout_width.is_none());
+        assert!(pipeline.draw_commands_cache.is_none());
     }
 }
