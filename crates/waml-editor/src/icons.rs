@@ -4335,10 +4335,6 @@ pub struct IconSet {
     pub plus: DrawColor,
 }
 
-// Not every bin that `#[path]`-includes this file exercises the whole catalog
-// API (e.g. `logo_harness` touches only `moon`), so per-bin dead-code analysis
-// flags these as unused; the main `waml-editor` bin uses them.
-#[allow(dead_code)]
 impl IconSet {
     /// The one place a glyph maps to its `DrawColor` shader. Field order ==
     /// `Icon::ALL` order (the load-bearing order invariant).

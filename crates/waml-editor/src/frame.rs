@@ -33,65 +33,46 @@ use makepad_widgets::*;
 /// fit-zoom. Screen-space CAD mode deliberately bypasses it. Both
 /// [`surface_bleed`]'s caller and the shader use the same effective zoom, or
 /// the padded quad and the drawn shadow disagree.
-///
-/// `allow(dead_code)` here and on the two items below: `node_editor_harness`
-/// pulls this module in by `#[path]` for its `script_mod` alone and never calls
-/// `draw_surface_abs`, so the whole Rust-side seam is genuinely unreferenced in
-/// that binary even though the editor uses all of it.
-#[allow(dead_code)]
 pub const SURFACE_SHADOW_ZOOM_FLOOR: f64 = 0.35;
 
 /// Master scale and CSS radius for the resting accent bloom. These values are
 /// repeated in the shader because the script VM cannot read Rust constants.
-#[allow(dead_code)]
 pub const SURFACE_GLOW: f64 = 0.4;
-#[allow(dead_code)]
 pub const SURFACE_BLOOM_PX: f64 = 14.0;
 
 /// Selected canvas-node depth and bloom values. Rust uses them to size the
 /// padded quad; the shader uses the matching literals to draw the material.
-#[allow(dead_code)]
 pub const SURFACE_SEL_DEPTH_Y: f64 = 8.0;
-#[allow(dead_code)]
 pub const SURFACE_SEL_DEPTH_BLUR: f64 = 22.0;
-#[allow(dead_code)]
 pub const SURFACE_SEL_DEPTH_A: f64 = 0.14;
-#[allow(dead_code)]
 pub const SURFACE_SEL_BLOOM_PX: f64 = 26.0;
-#[allow(dead_code)]
 pub const SURFACE_SEL_BLOOM_A: f64 = 0.28;
 
 /// Total CSS border thickness in logical pixels at zoom 1.0.
-#[allow(dead_code)]
 pub const SURFACE_BORDER_PX: f64 = 1.5;
 
 /// Round a logical coordinate to the device-pixel grid.
-#[allow(dead_code)]
 pub fn surface_snap(value: f64, dpi: f64) -> f64 {
     (value * dpi).round() / dpi
 }
 
 /// Round padding up so snapping cannot clip an outside-the-box layer.
-#[allow(dead_code)]
 pub fn surface_snap_up(value: f64, dpi: f64) -> f64 {
     (value * dpi).ceil() / dpi
 }
 
 /// Mirror the shader's selected-value mix for padding calculations.
-#[allow(dead_code)]
 pub fn surface_lift(base: f64, selected_value: f64, selected: f64) -> f64 {
     base + (selected_value - base) * selected.clamp(0.0, 1.0)
 }
 
 /// Mirror the shader's material-zoom mix for padding calculations.
-#[allow(dead_code)]
 pub fn surface_material_zoom(zoom: f64, screen_space: f64) -> f64 {
     let floored = zoom.max(SURFACE_SHADOW_ZOOM_FLOOR);
     floored + (zoom - floored) * screen_space.clamp(0.0, 1.0)
 }
 
 /// Whether a surface rectangle can safely carry padded material geometry.
-#[allow(dead_code)]
 pub fn surface_rect_has_area(width: f64, height: f64) -> bool {
     width > 0.0 && height > 0.0
 }
@@ -102,7 +83,6 @@ pub fn surface_rect_has_area(width: f64, height: f64) -> bool {
 /// `depth_blur + depth_y` covers the downward-offset shadow's far edge;
 /// `bloom_px` is the un-offset halo radius; `+ 2.0` is antialias slack. `zoom`
 /// is the effective material zoom and must match what the shader scales by.
-#[allow(dead_code)]
 pub fn surface_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64 {
     ((depth_blur + depth_y).max(bloom_px) * zoom).max(0.0) + 2.0
 }
@@ -110,7 +90,6 @@ pub fn surface_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) ->
 /// The generic seam: draw an `AccentFrame`-derived pen at `rect`, padding the
 /// drawn quad so the depth shadow and bloom have room to fall outside the
 /// surface.
-#[allow(dead_code)]
 pub trait SurfaceExt {
     /// Reads the pen's own knob uniforms, computes the bleed, pushes it, and
     /// draws the inflated quad. `rect` stays the TRUE surface rect -- the frame

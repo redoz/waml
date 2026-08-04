@@ -13,10 +13,6 @@
 //! release landed off the widget (see [`drag_end`]) -- a drag that ends
 //! outside gets no `FingerHoverOut`.
 
-// The logo harnesses pull this file in by `#[path]` and use only the hover
-// pair, so `drag_end` reads as dead there.
-#![allow(dead_code)]
-
 use makepad_widgets::*;
 
 /// Claim `cursor` while the pointer is over this widget.
