@@ -16,9 +16,31 @@ mod reversible;
 
 pub use batch::{apply, Batch, Invalidation, InvalidationSink, Step};
 
-pub type EditError = crate::ops::OpError;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditError {
+    pub index: usize,
+    pub op: String,
+    pub selector: Option<String>,
+    pub reason: String,
+}
 
-impl fmt::Display for crate::ops::OpError {
+impl EditError {
+    pub(crate) fn at(op: &str, reason: impl Into<String>) -> EditError {
+        EditError {
+            index: 0,
+            op: op.to_string(),
+            selector: None,
+            reason: reason.into(),
+        }
+    }
+
+    pub(crate) fn with_sel(mut self, sel: String) -> EditError {
+        self.selector = Some(sel);
+        self
+    }
+}
+
+impl fmt::Display for EditError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
@@ -28,7 +50,7 @@ impl fmt::Display for crate::ops::OpError {
     }
 }
 
-impl std::error::Error for crate::ops::OpError {}
+impl std::error::Error for EditError {}
 
 #[derive(Clone, Copy)]
 pub struct EditContext<'a> {

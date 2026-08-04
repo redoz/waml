@@ -1,10 +1,76 @@
-use super::{DiagramDisplaySet, FieldEdit, NameSpec, RelationshipSelector, Selector};
+use super::{RelationshipSelector, Selector};
 use crate::edit::{EditBatch, EditContext, EditError};
 use crate::layout::Direction;
-use crate::model::{ElementType, RelEnd, RelationshipKind, Visibility};
+use crate::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
 use crate::multiplicity::Multiplicity;
 use crate::okf::DirectoryAddress;
 use crate::source::SourceBundle;
+
+/// How a relationship's name is given on an op (a `Ref`'s title is resolved at apply time).
+#[derive(Debug, Clone, PartialEq)]
+pub enum NameSpec {
+    Label(String),
+    Ref(String), // target slug
+}
+
+/// Intent for editing an optional authored field.
+///
+/// `Unchanged` preserves the current value, `Clear` removes it, and `Set`
+/// replaces it. On serde wire boundaries an omitted field defaults to
+/// `Unchanged`, an explicit `null` is `Clear`, and a value is `Set`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum FieldEdit<T> {
+    #[default]
+    Unchanged,
+    Clear,
+    Set(T),
+}
+
+impl<T> FieldEdit<T> {
+    pub fn is_unchanged(&self) -> bool {
+        matches!(self, Self::Unchanged)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<T: serde::Serialize> serde::Serialize for FieldEdit<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Unchanged | Self::Clear => serializer.serialize_none(),
+            Self::Set(value) => value.serialize(serializer),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for FieldEdit<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(
+            match <Option<T> as serde::Deserialize>::deserialize(deserializer)? {
+                Some(value) => Self::Set(value),
+                None => Self::Clear,
+            },
+        )
+    }
+}
+
+/// A fully-specified display block. The panel always holds a resolved
+/// display, so every non-nullable field is present; nullable fields use
+/// their own absent state (`None` ⇒ omit the key).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagramDisplaySet {
+    pub show_attributes: bool,
+    pub show_type: bool,
+    pub show_attribute_visibility: bool,
+    pub cardinality: CardinalityVisibility,
+    pub max_attributes: Option<u32>,
+    pub show_roles: bool,
+    pub show_cardinality: bool,
+    pub show_labels: bool,
+    pub show_stereotype: bool,
+    pub stereotype_filter: Option<Vec<String>>,
+    pub stereotype_colors: Vec<String>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {

@@ -10,9 +10,8 @@ mod repair;
 pub mod selector;
 pub(crate) mod sequence;
 pub mod syntax;
-pub use crate::ops::{DiagramDisplaySet, FieldEdit, NameSpec};
 pub use format::{ActionContext, FormatError, Formatter};
-pub use ops::{Batch, Op};
+pub use ops::{Batch, DiagramDisplaySet, FieldEdit, NameSpec, Op};
 pub use repair::repair_actions;
 pub use selector::{RelationshipSelector, Selector};
 
