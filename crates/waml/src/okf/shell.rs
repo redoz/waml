@@ -241,8 +241,7 @@ fn project(documents: Vec<ShellDocument<'_>>) -> Result<Bundle, BundleError> {
     // `addresses` (a BTreeSet) and `concepts` (sorted above) are iterated in address/id
     // order, so grouping into these maps in one pass each yields already-sorted groups —
     // no per-entry re-sort is needed, matching the old per-address filter's output order.
-    let mut children_by_parent: BTreeMap<DirectoryAddress, Vec<DirectoryAddress>> =
-        BTreeMap::new();
+    let mut children_by_parent: BTreeMap<DirectoryAddress, Vec<DirectoryAddress>> = BTreeMap::new();
     for address in &addresses {
         if let Some(parent) = address.parent() {
             children_by_parent
