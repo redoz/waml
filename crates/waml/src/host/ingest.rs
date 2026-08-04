@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct IngestOptions {
     /// Follow symlinks and NTFS junctions into their targets. When `false`
-    /// (the default), a link is skipped rather than recursed into.
+    /// (the default), a link is not recursed into or read; a skipped link
+    /// whose target is a directory or a `.md` file is recorded as an
+    /// [`IngestErrorKind::LinkSkipped`] error.
     pub follow_links: bool,
     /// Skip dot-directories (`.git`, `.waml`, ...) discovered *during* the
     /// walk. A dot-directory passed directly as a root is still descended
@@ -46,6 +48,9 @@ pub enum IngestErrorKind {
     /// Following links led back to a directory already on the current walk
     /// path.
     LinkCycle,
+    /// A link to a directory or a `.md` file was skipped because
+    /// `follow_links` is disabled, so content behind it was not ingested.
+    LinkSkipped,
     /// A link's resolved target lies outside every ingest root.
     EscapesRoot,
     /// A file exceeded `max_file_bytes`.
@@ -70,6 +75,7 @@ impl std::fmt::Display for IngestError {
             IngestErrorKind::ReadFile => "could not read file",
             IngestErrorKind::NotUtf8 => "not valid UTF-8",
             IngestErrorKind::LinkCycle => "link cycle detected",
+            IngestErrorKind::LinkSkipped => "link skipped (follow_links is disabled)",
             IngestErrorKind::EscapesRoot => "link target escapes the ingest root",
             IngestErrorKind::TooLarge => "file exceeds the maximum size",
             IngestErrorKind::Metadata => "could not read metadata",
@@ -101,6 +107,7 @@ pub fn ingest_markdown(roots: &[PathBuf], options: &IngestOptions) -> Ingested {
         .filter_map(|root| fs::canonicalize(root).ok())
         .collect();
     let mut visited: BTreeSet<String> = BTreeSet::new();
+    let mut walk_path: Vec<String> = Vec::new();
 
     for root in roots {
         walk(
@@ -109,6 +116,7 @@ pub fn ingest_markdown(roots: &[PathBuf], options: &IngestOptions) -> Ingested {
             options,
             &canonical_roots,
             &mut visited,
+            &mut walk_path,
             &mut files,
             &mut errors,
         );
@@ -125,6 +133,7 @@ fn walk(
     options: &IngestOptions,
     canonical_roots: &[PathBuf],
     visited: &mut BTreeSet<String>,
+    walk_path: &mut Vec<String>,
     files: &mut Vec<(PathBuf, String)>,
     errors: &mut Vec<IngestError>,
 ) {
@@ -140,11 +149,34 @@ fn walk(
         }
     };
 
-    let is_link = is_reparse_point(&metadata);
+    // `is_symlink` covers symlinks on every platform and NTFS junctions
+    // (mount points) on Windows, but deliberately NOT other reparse tags:
+    // a OneDrive/cloud-placeholder or dedup reparse point on an ordinary
+    // file is not a link and must still be read as a regular file.
+    let is_link = metadata.file_type().is_symlink();
+    let mut entered_directory_link = false;
     if is_link {
         if !options.follow_links {
-            // A link that is never followed is not an error: it simply
-            // is not descended into or read.
+            // A link whose target would otherwise have been ingested — a
+            // directory or a `.md` file — is recorded, never silently
+            // dropped. A link to anything else was never ingestible, so
+            // skipping it loses nothing and is not an error.
+            let target_would_be_ingested = match fs::metadata(path) {
+                Ok(target) => {
+                    target.is_dir()
+                        || (target.is_file()
+                            && path.extension().and_then(|extension| extension.to_str())
+                                == Some("md"))
+                }
+                Err(_) => false,
+            };
+            if target_would_be_ingested {
+                errors.push(IngestError {
+                    path: path.to_path_buf(),
+                    kind: IngestErrorKind::LinkSkipped,
+                    detail: None,
+                });
+            }
             return;
         }
         let Ok(canonical) = fs::canonicalize(path) else {
@@ -167,7 +199,9 @@ fn walk(
             return;
         }
         let key = canonical.to_string_lossy().into_owned();
-        if !visited.insert(key) {
+        if walk_path.contains(&key) {
+            // The link leads back to a directory already on the current
+            // walk path: a true cycle.
             errors.push(IngestError {
                 path: path.to_path_buf(),
                 kind: IngestErrorKind::LinkCycle,
@@ -175,40 +209,50 @@ fn walk(
             });
             return;
         }
+        if !visited.insert(key.clone()) {
+            // A second, distinct link to a target already ingested earlier
+            // in the walk (a diamond, not a cycle): dedup, not an error.
+            return;
+        }
+        if path.is_dir() {
+            walk_path.push(key);
+            entered_directory_link = true;
+        }
     }
 
     if metadata.is_dir() || (is_link && path.is_dir()) {
-        if !is_root && options.skip_dot_dirs && is_dot_dir(path) {
-            return;
-        }
-        let entries = match fs::read_dir(path) {
-            Ok(entries) => entries,
-            Err(error) => {
-                errors.push(IngestError {
-                    path: path.to_path_buf(),
-                    kind: IngestErrorKind::ReadDir,
-                    detail: Some(error.to_string()),
-                });
-                return;
-            }
-        };
-        for entry in entries {
-            match entry {
-                Ok(entry) => walk(
-                    &entry.path(),
-                    false,
-                    options,
-                    canonical_roots,
-                    visited,
-                    files,
-                    errors,
-                ),
+        if is_root || !options.skip_dot_dirs || !is_dot_dir(path) {
+            match fs::read_dir(path) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(entry) => walk(
+                                &entry.path(),
+                                false,
+                                options,
+                                canonical_roots,
+                                visited,
+                                walk_path,
+                                files,
+                                errors,
+                            ),
+                            Err(error) => errors.push(IngestError {
+                                path: path.to_path_buf(),
+                                kind: IngestErrorKind::ReadDir,
+                                detail: Some(error.to_string()),
+                            }),
+                        }
+                    }
+                }
                 Err(error) => errors.push(IngestError {
                     path: path.to_path_buf(),
                     kind: IngestErrorKind::ReadDir,
                     detail: Some(error.to_string()),
                 }),
             }
+        }
+        if entered_directory_link {
+            walk_path.pop();
         }
         return;
     }
@@ -247,18 +291,6 @@ fn walk(
             detail: None,
         }),
     }
-}
-
-#[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    metadata.is_symlink() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
-    metadata.is_symlink()
 }
 
 fn is_dot_dir(path: &Path) -> bool {

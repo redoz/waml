@@ -72,7 +72,7 @@ fn unix_symlink_cycle_terminates_and_is_reported_when_followed() {
 
 #[cfg(unix)]
 #[test]
-fn unix_symlink_cycle_is_a_clean_skip_by_default() {
+fn unix_skipped_directory_symlink_is_recorded_by_default() {
     use std::os::unix::fs::symlink;
 
     let temp = TempDir::new();
@@ -81,11 +81,79 @@ fn unix_symlink_cycle_is_a_clean_skip_by_default() {
     fs::write(root.join("order.md"), "# Order\n").unwrap();
     symlink(&root, root.join("loop")).unwrap();
 
-    // Default options do not follow links at all.
+    // Default options do not follow links, but a link that would otherwise
+    // have been ingested (a directory or a `.md` file) must be recorded,
+    // never silently dropped.
     let result = ingest_markdown(std::slice::from_ref(&root), &IngestOptions::default());
 
-    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.errors[0].kind, IngestErrorKind::LinkSkipped);
+    assert_eq!(result.errors[0].path, root.join("loop"));
     assert_eq!(result.files.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_skipped_markdown_file_symlink_is_recorded_by_default() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new();
+    let root = temp.0.join("root");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("order.md"), "# Order\n").unwrap();
+    symlink(root.join("order.md"), root.join("alias.md")).unwrap();
+    // A link to a non-markdown file would never have been ingested, so
+    // skipping it is not a loss and is not recorded.
+    fs::write(root.join("notes.txt"), "notes").unwrap();
+    symlink(root.join("notes.txt"), root.join("notes-alias.txt")).unwrap();
+
+    let result = ingest_markdown(std::slice::from_ref(&root), &IngestOptions::default());
+
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.errors[0].kind, IngestErrorKind::LinkSkipped);
+    assert_eq!(result.errors[0].path, root.join("alias.md"));
+    assert_eq!(result.files.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_two_symlinks_to_one_shared_directory_are_not_a_cycle() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new();
+    let root = temp.0.join("root");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join("shared")).unwrap();
+    fs::write(root.join("shared/target.md"), "# Target\n").unwrap();
+    // A diamond: two distinct links to the same shared directory. Neither is
+    // on its own walk path, so neither is a cycle; the second visit is an
+    // already-ingested dedup skip, not an error.
+    symlink(root.join("shared"), root.join("link1")).unwrap();
+    symlink(root.join("shared"), root.join("link2")).unwrap();
+
+    let options = IngestOptions {
+        follow_links: true,
+        ..IngestOptions::default()
+    };
+    let result = ingest_markdown(std::slice::from_ref(&root), &options);
+
+    assert!(
+        !result
+            .errors
+            .iter()
+            .any(|error| error.kind == IngestErrorKind::LinkCycle),
+        "a diamond is not a cycle: {:?}",
+        result.errors
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(
+        result
+            .files
+            .iter()
+            .any(|(path, _)| path.file_name().unwrap() == "target.md"),
+        "the shared target must be ingested: {:?}",
+        result.files
+    );
 }
 
 #[cfg(unix)]
@@ -170,6 +238,67 @@ fn windows_junction_cycle_terminates_and_is_reported_when_followed() {
     assert!(
         !result.files.is_empty(),
         "the real file must still be reachable and ingested: {:?}",
+        result.files
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_skipped_junction_is_recorded_by_default() {
+    let temp = TempDir::new();
+    let root = temp.0.join("root");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("order.md"), "# Order\n").unwrap();
+    let link = root.join("loop");
+
+    if !try_make_junction(&link, &root) {
+        eprintln!("skipping: this environment cannot create NTFS junctions (mklink /J failed)");
+        return;
+    }
+
+    // Default options do not follow links, but a link that would otherwise
+    // have been ingested (a directory or a `.md` file) must be recorded,
+    // never silently dropped.
+    let result = ingest_markdown(std::slice::from_ref(&root), &IngestOptions::default());
+
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.errors[0].kind, IngestErrorKind::LinkSkipped);
+    assert_eq!(result.errors[0].path, link);
+    assert_eq!(result.files.len(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_two_junctions_to_one_shared_directory_are_not_a_cycle() {
+    let temp = TempDir::new();
+    let root = temp.0.join("root");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join("shared")).unwrap();
+    fs::write(root.join("shared/target.md"), "# Target\n").unwrap();
+
+    if !try_make_junction(&root.join("link1"), &root.join("shared"))
+        || !try_make_junction(&root.join("link2"), &root.join("shared"))
+    {
+        eprintln!("skipping: this environment cannot create NTFS junctions (mklink /J failed)");
+        return;
+    }
+
+    let options = IngestOptions {
+        follow_links: true,
+        ..IngestOptions::default()
+    };
+    let result = ingest_markdown(std::slice::from_ref(&root), &options);
+
+    // A diamond: two distinct links to the same shared directory. Neither is
+    // on its own walk path, so neither is a cycle; the second visit is an
+    // already-ingested dedup skip, not an error.
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(
+        result
+            .files
+            .iter()
+            .any(|(path, _)| path.file_name().unwrap() == "target.md"),
+        "the shared target must be ingested: {:?}",
         result.files
     );
 }
