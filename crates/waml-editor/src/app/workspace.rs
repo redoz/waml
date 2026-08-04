@@ -287,6 +287,15 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     fn save_backend(&mut self, cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveOutcome, String> {
         if let Some(api) = self.api_backend.clone() {
+            // One save in flight at a time: a second POST while the first is
+            // pending would overwrite `pending_api_save` (the first response
+            // then completes the WRONG ticket, the second's is dropped) and
+            // would post the same stale `api.revision`. Defer through the
+            // debounce; it re-arms itself here until the response lands.
+            if self.pending_api_save.is_some() {
+                self.schedule_save(cx);
+                return Ok(SaveOutcome::Pending);
+            }
             self.start_api_save(cx, api, ticket.clone());
             return Ok(SaveOutcome::Pending);
         }
@@ -392,9 +401,28 @@ impl App {
     /// from what the session has, using each document's own tracked revision
     /// as the base -- exactly what `replace_external_document` already
     /// guards against a concurrent local edit with.
+    ///
+    /// A structural change -- a document another client created or deleted on
+    /// the server -- cannot be expressed as per-document replacements, so it
+    /// reopens the fetched bundle wholesale (stated in the log, since that
+    /// discards any local edits still unsaved after the conflict).
+    ///
+    /// Returns `true` when the fetched bundle is now what the session holds
+    /// structurally; the caller only adopts the server's revision then.
     #[cfg(target_arch = "wasm32")]
-    pub(super) fn reload_from_bundle(&mut self, cx: &mut Cx, bundle: waml::source::SourceBundle) {
+    pub(super) fn reload_from_bundle(
+        &mut self,
+        cx: &mut Cx,
+        bundle: waml::source::SourceBundle,
+    ) -> bool {
         let snapshot = self.session.snapshot();
+        if bundle_paths_differ(&snapshot.source, &bundle) {
+            log!(
+                "server bundle changed structurally after a save conflict; \
+                 reopening it (unsaved local edits are discarded)"
+            );
+            return self.open_bundle(cx, bundle, self.open_name.clone(), None);
+        }
         let mut changes = Vec::new();
         for document in bundle.documents() {
             let Some(id) = snapshot.okf_analysis.catalog.id_for_path(document.path()) else {
@@ -413,6 +441,7 @@ impl App {
                 log!("could not reload a document after a save conflict: {error}");
             }
         }
+        true
     }
 
     /// Read `dir` from disk and populate the editor. Returns `false` if a
@@ -834,6 +863,27 @@ impl App {
             size: dvec2(sz.x, sz.y),
         }
     }
+}
+
+/// True when `incoming` names a different set of document paths than
+/// `current`: a document another client created or deleted on the server,
+/// which the per-document `replace_external_document` ingress cannot
+/// represent (it can only rewrite documents both sides already have).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))] // wasm conflict-reload + tests
+pub(super) fn bundle_paths_differ(
+    current: &waml::source::SourceBundle,
+    incoming: &waml::source::SourceBundle,
+) -> bool {
+    fn paths(
+        bundle: &waml::source::SourceBundle,
+    ) -> std::collections::BTreeSet<&waml::source::BundlePath> {
+        bundle
+            .documents()
+            .iter()
+            .map(|document| document.path())
+            .collect()
+    }
+    paths(current) != paths(incoming)
 }
 
 /// Humanize a recent's `opened_at` (unix seconds) as a coarse relative stamp
