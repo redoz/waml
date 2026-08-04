@@ -8,42 +8,13 @@
 //! relaunch. Shader/DSL errors surface at GPU runtime in stdout as `[E] ...`.
 
 use makepad_widgets::*;
-
-// Pulled in by path (the editor crate has no lib target). `frame` supplies the
-// shared `mod.draw.AccentFrame` the widget's pane/card/inset surfaces reuse.
-#[path = "../frame.rs"]
-mod frame;
-#[path = "../theme_atlas.rs"]
-mod theme_atlas;
-// The reusable node-render path the preview draws through. All makepad-free; the
-// widget builds a `scene::SceneNode` and renders it via `card::measure`. This bin
-// exercises only a slice of each module (the real app uses the rest), so silence
-// dead-code here rather than in the shared source.
-#[allow(dead_code)]
-#[path = "../card/mod.rs"]
-mod card;
-#[path = "../diagram_display.rs"]
-mod diagram_display;
-#[allow(dead_code)]
-#[path = "../edge_labels.rs"]
-mod edge_labels;
-#[allow(dead_code)]
-#[path = "../inspector.rs"]
-mod inspector;
-#[allow(dead_code)]
-#[path = "../load.rs"]
-mod load;
-#[path = "../node_design_editor.rs"]
-mod node_design_editor;
-#[allow(dead_code)]
-#[path = "../node_style.rs"]
-mod node_style;
-#[allow(dead_code)]
-#[path = "../scene.rs"]
-mod scene;
-#[allow(dead_code)]
-#[path = "../sizing.rs"]
-mod sizing;
+// Pulled in from the lib target. `frame` supplies the shared
+// `mod.draw.AccentFrame` the widget's pane/card/inset surfaces reuse.
+// `node_design_editor` itself reaches the reusable node-render path (`card`,
+// `diagram_display`, `edge_labels`, `inspector`, `load`, `node_style`,
+// `scene`, `sizing`) through the lib, so this bin needs only what it names
+// directly.
+use waml_editor::{frame, node_design_editor, theme_atlas};
 
 app_main!(App);
 
@@ -93,9 +64,9 @@ impl MatchEvent for App {
 impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         makepad_widgets::script_mod(vm);
-        crate::theme_atlas::script_mod(vm);
-        crate::frame::script_mod(vm);
-        crate::node_design_editor::script_mod(vm);
+        theme_atlas::script_mod(vm);
+        frame::script_mod(vm);
+        node_design_editor::script_mod(vm);
         self::script_mod(vm)
     }
 

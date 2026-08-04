@@ -15,18 +15,8 @@
 //! Shader errors surface at GPU runtime in stdout as `[E] ...icons.rs:LINE`.
 
 use makepad_widgets::*;
-
-// Pulled in by path (the editor crate has no lib target).
-#[path = "../cursor.rs"]
-mod cursor;
-#[path = "../icons.rs"]
-mod icons;
-#[path = "../logo.rs"]
-mod logo;
-#[path = "../theme_atlas.rs"]
-mod theme_atlas;
-
-use icons::IconSet;
+use waml_editor::icons::{self, IconSet};
+use waml_editor::{logo, theme_atlas};
 
 app_main!(App);
 
@@ -216,9 +206,9 @@ impl MatchEvent for App {
 impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         makepad_widgets::script_mod(vm);
-        crate::theme_atlas::script_mod(vm);
-        crate::logo::script_mod(vm);
-        crate::icons::script_mod(vm);
+        theme_atlas::script_mod(vm);
+        logo::script_mod(vm);
+        icons::script_mod(vm);
         self::script_mod(vm)
     }
 

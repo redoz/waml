@@ -1,21 +1,16 @@
 //! Dev-only harness for authoring the tree/doc-tab kind glyphs (`icons.rs`).
 //!
 //! Renders every icon at a few real display sizes plus a large zoom cell, on
-//! the Atlas surface, with a light/dark toggle (Space). It pulls the SHARED
-//! shader source via `#[path]` (no lib split), so editing `icons.rs` while this
-//! is running hot-reloads the DSL and the glyphs update live.
+//! the Atlas surface, with a light/dark toggle (Space). It imports the SHARED
+//! modules from the lib target, so editing `icons.rs` while this is running
+//! hot-reloads the DSL and the glyphs update live.
 //!
 //! Run: `cargo run -p waml-editor --bin icon_harness`
 //! Not wired into the shipping editor.
 
 use makepad_widgets::*;
-
-#[path = "../icons.rs"]
-mod icons;
-#[path = "../theme_atlas.rs"]
-mod theme_atlas;
-
-use icons::{Icon, IconSet};
+use waml_editor::icons::{self, Icon, IconSet};
+use waml_editor::theme_atlas;
 
 script_mod! {
     use mod.prelude.widgets.*
@@ -177,8 +172,8 @@ impl MatchEvent for IconHarness {}
 impl AppMain for IconHarness {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         makepad_widgets::script_mod(vm);
-        crate::theme_atlas::script_mod(vm);
-        crate::icons::script_mod(vm);
+        theme_atlas::script_mod(vm);
+        icons::script_mod(vm);
         self::script_mod(vm)
     }
 

@@ -30,10 +30,7 @@ use waml_markdown_editor::{
     widget::{MarkdownEditorRef, MarkdownEditorWidgetRefExt},
 };
 
-#[path = "../fonts.rs"]
-mod fonts;
-#[path = "../theme_atlas.rs"]
-mod theme_atlas;
+use waml_editor::{fonts, theme_atlas};
 
 const PRESENTATION_ALL: &str =
     include_str!("../../../waml-markdown-editor/tests/fixtures/presentation-all.md");
@@ -648,8 +645,8 @@ impl MatchEvent for App {
 impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         makepad_widgets::script_mod(vm);
-        crate::theme_atlas::script_mod(vm);
-        crate::fonts::script_mod(vm);
+        theme_atlas::script_mod(vm);
+        fonts::script_mod(vm);
         waml_markdown_editor::script_mod(vm);
         self::script_mod(vm)
     }
