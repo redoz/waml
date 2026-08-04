@@ -188,6 +188,49 @@ fn endless_associates_requires_ends_only_between_classifiers() {
 }
 
 #[test]
+fn composes_with_no_ends_is_flagged_and_dropped() {
+    let class =
+        "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- composes [Line](./line.md)\n";
+    let found = diagnostics([
+        ("c/order.md", class),
+        ("c/line.md", "---\ntype: uml.Class\n---\n# Line\n"),
+    ]);
+    exact(
+        &found,
+        DiagCode::MalformedRelationship,
+        "'composes' requires ': <near> to <far>' multiplicity ends",
+    );
+}
+
+#[test]
+fn composes_with_one_end_is_flagged_and_dropped() {
+    let class = "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- composes [Line](./line.md): 1 to\n";
+    let found = diagnostics([
+        ("c/order.md", class),
+        ("c/line.md", "---\ntype: uml.Class\n---\n# Line\n"),
+    ]);
+    exact(
+        &found,
+        DiagCode::MalformedRelationship,
+        "'composes' relationship has only one multiplicity end; both a near and a far end are required",
+    );
+}
+
+#[test]
+fn non_ended_kind_with_ends_is_flagged_and_dropped() {
+    let class = "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- depends [Line](./line.md): 1 to 1\n";
+    let found = diagnostics([
+        ("c/order.md", class),
+        ("c/line.md", "---\ntype: uml.Class\n---\n# Line\n"),
+    ]);
+    exact(
+        &found,
+        DiagCode::MalformedRelationship,
+        "'depends' does not take multiplicity ends",
+    );
+}
+
+#[test]
 fn unresolved_instance_links_is_warn_only_and_precise() {
     let instance = "---\ntype: uml.InstanceSpecification\n---\n# order-42\n\n## Relationships\n- links [line-42](../missing/line-42.md)\n";
     let found = diagnostics([("objects/order-42.md", instance)]);

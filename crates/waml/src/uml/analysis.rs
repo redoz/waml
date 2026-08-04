@@ -1045,6 +1045,35 @@ fn validate_declared_semantics(
                     )?);
                 }
             }
+            let end_verdict =
+                relationship_end_verdict(*kind, &relationship.from_end, &relationship.to_end);
+            let end_message = match end_verdict {
+                EndVerdict::Ok => None,
+                EndVerdict::EndsRequired => Some(format!(
+                    "'{}' requires ': <near> to <far>' multiplicity ends",
+                    kind.as_str()
+                )),
+                EndVerdict::OneEnded => Some(format!(
+                    "'{}' relationship has only one multiplicity end; both a near and a far end are required",
+                    kind.as_str()
+                )),
+                EndVerdict::EndsForbidden => Some(format!(
+                    "'{}' does not take multiplicity ends",
+                    kind.as_str()
+                )),
+            };
+            if let Some(message) = end_message {
+                if let Some(token) = relationship.syntax.target_token() {
+                    diagnostics.push(declared_diagnostic_range(
+                        context,
+                        path,
+                        token.range(),
+                        crate::diagnostic::DiagCode::MalformedRelationship,
+                        message,
+                        false,
+                    )?);
+                }
+            }
         }
     }
 
@@ -1465,6 +1494,70 @@ fn directed_cycle(graph: &BTreeMap<String, Vec<String>>) -> bool {
     })
 }
 
+/// Verdict for a relationship's `: <near> to <far>` ends, shared by admission
+/// (`declared_projection`, which drops on non-`Ok`) and diagnostics
+/// (`validate_declared_semantics`, which reports on non-`Ok`). Neither
+/// re-derives the rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EndVerdict {
+    /// Ends match what `kind` requires: both present when ended, both absent
+    /// when unended (or, for `associates`, absent on either side is also
+    /// tolerated — the classifier-vs-communication-link distinction is a
+    /// diagnostic-only concern layered on top, not an admission rule).
+    Ok,
+    /// An ended kind (`aggregates`/`composes`) declared with neither end.
+    EndsRequired,
+    /// A non-ended kind declared with at least one end.
+    EndsForbidden,
+    /// Exactly one of the two ends is present.
+    OneEnded,
+}
+
+fn relationship_end_verdict(
+    kind: crate::model::RelationshipKind,
+    from_end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>,
+    to_end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>,
+) -> EndVerdict {
+    // Anything short of a fully-parsed `Valid` end (`Absent`, `Incomplete` when
+    // the grammar expected a colon it did not find, or `Invalid`) counts as
+    // "no end given" here — the ends verdict only distinguishes given vs not.
+    let present = |end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>| {
+        matches!(end, crate::uml::DeclaredField::Valid { .. })
+    };
+    let (from_present, to_present) = (present(from_end), present(to_end));
+    let neither_present = !from_present && !to_present;
+    if kind == crate::model::RelationshipKind::Associates {
+        if neither_present || (from_present && to_present) {
+            EndVerdict::Ok
+        } else {
+            EndVerdict::OneEnded
+        }
+    } else if kind.is_ended() {
+        // aggregates / composes
+        if from_present && to_present {
+            EndVerdict::Ok
+        } else if neither_present {
+            EndVerdict::EndsRequired
+        } else {
+            EndVerdict::OneEnded
+        }
+    } else {
+        // Non-ended kinds forbid a colon entirely; the lowering pass marks
+        // both ends `Invalid` (not `Absent`) when a colon was present but the
+        // kind does not take ends, so check for a truly absent colon rather
+        // than reusing `neither_present` (which would also be true for two
+        // `Invalid` ends and hide a forbidden-ends declaration as `Ok`).
+        let truly_absent = |end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>| {
+            matches!(end, crate::uml::DeclaredField::Absent)
+        };
+        if truly_absent(from_end) && truly_absent(to_end) {
+            EndVerdict::Ok
+        } else {
+            EndVerdict::EndsForbidden
+        }
+    }
+}
+
 fn declared_projection(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
@@ -1735,33 +1828,9 @@ fn declared_projection(
             else {
                 continue;
             };
-            let ends_valid = match kind {
-                crate::model::RelationshipKind::Aggregates
-                | crate::model::RelationshipKind::Composes => matches!(
-                    (&relationship.from_end, &relationship.to_end),
-                    (
-                        crate::uml::DeclaredField::Valid { .. },
-                        crate::uml::DeclaredField::Valid { .. }
-                    )
-                ),
-                crate::model::RelationshipKind::Associates => matches!(
-                    (&relationship.from_end, &relationship.to_end),
-                    (
-                        crate::uml::DeclaredField::Absent,
-                        crate::uml::DeclaredField::Absent
-                    ) | (
-                        crate::uml::DeclaredField::Valid { .. },
-                        crate::uml::DeclaredField::Valid { .. }
-                    )
-                ),
-                _ => matches!(
-                    (&relationship.from_end, &relationship.to_end),
-                    (
-                        crate::uml::DeclaredField::Absent,
-                        crate::uml::DeclaredField::Absent
-                    )
-                ),
-            };
+            let ends_valid =
+                relationship_end_verdict(*kind, &relationship.from_end, &relationship.to_end)
+                    == EndVerdict::Ok;
             if !ends_valid
                 || matches!(
                     relationship.name,
