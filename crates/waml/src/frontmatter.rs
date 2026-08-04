@@ -562,4 +562,86 @@ mod tests {
 
         assert_eq!(parsed, fm.entries[0].1);
     }
+
+    use proptest::prelude::*;
+
+    fn fm_value_strategy() -> impl Strategy<Value = FmValue> {
+        let leaf = prop_oneof![
+            any::<bool>().prop_map(FmValue::Bool),
+            // Finite, non-NaN, and re-parseable: round through the renderer's own
+            // formatting so 1.0 vs 1 formatting differences don't fail spuriously.
+            // Exclude -0.0: `total_cmp`-based PartialEq distinguishes it from
+            // 0.0, but the renderer emits "0" for both.
+            (-1.0e9f64..1.0e9)
+                .prop_map(|n| (n * 1000.0).round() / 1000.0)
+                .prop_map(|n| if n == 0.0 { 0.0 } else { n })
+                .prop_map(FmValue::Num),
+            // Printable ASCII plus some unicode; includes strings that LOOK like
+            // bools, numbers, lists, quotes, backslashes — the quoting stress cases.
+            prop_oneof![
+                "[ -~]{0,24}",
+                "(true|false|null|~|yes|NO|on|off)",
+                "-?[0-9]{1,6}(\\.[0-9]{1,3})?",
+                "\\[[a-z, ]{0,10}\\]?",
+                "[\"'\\\\#:>|&*!%@`,\\-\\[\\]{} ]{1,8}",
+                "\\PC{0,12}",
+            ]
+            .prop_map(FmValue::Str),
+        ];
+        leaf.prop_recursive(4, 48, 8, |inner| {
+            prop::collection::vec(inner, 0..6)
+                // MANDATORY EXCLUSIONS — see the note below. Today's flow-list
+                // parser splits on EVERY comma, quote- and nesting-blind, and the
+                // writer never quotes list items. These shapes CANNOT round-trip
+                // against current code. Task 8 makes flow parsing quote-aware and
+                // nesting-aware and DELETES this filter as its first act.
+                .prop_filter(
+                    "Task 8 removes: flow list items cannot carry , [ ] \" \\ or be empty/nested",
+                    |list| {
+                        !list.iter().any(|item| match item {
+                            FmValue::Str(s) => {
+                                s.is_empty()
+                                    || s.contains(',')
+                                    || s.contains('[')
+                                    || s.contains(']')
+                                    || s.contains('"')
+                                    || s.contains('\\')
+                            }
+                            // A nested list re-parses through the same comma splitter,
+                            // so any multi-item inner list flattens. Single-item and
+                            // empty inner lists survive.
+                            FmValue::List(inner) => inner.len() > 1,
+                            _ => false,
+                        })
+                    },
+                )
+                .prop_map(FmValue::List)
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// THE writer contract: parse_value(render_value(v)) == v, for every value.
+        #[test]
+        fn rendered_value_reparses_identically(v in fm_value_strategy()) {
+            let rendered = render_value(&v);
+            prop_assert_eq!(parse_value(&rendered), v.clone(), "rendered as {:?}", rendered);
+        }
+
+        /// Entry-level contract: a whole rendered frontmatter reparses line by line.
+        #[test]
+        fn rendered_frontmatter_entries_reparse(
+            entries in prop::collection::vec(("[a-z][a-z0-9_]{0,8}", fm_value_strategy()), 0..5)
+        ) {
+            let fm = Frontmatter { entries: entries.clone() };
+            let rendered = render_frontmatter(&fm);
+            for (line, (key, value)) in rendered.lines().zip(&fm.entries) {
+                let value_text = line.strip_prefix(&format!("{key}: "))
+                    .or_else(|| line.strip_prefix(&format!("{key}:")))
+                    .unwrap_or("");
+                prop_assert_eq!(&parse_value(value_text), value, "line {:?}", line);
+            }
+        }
+    }
 }
