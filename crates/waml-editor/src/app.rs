@@ -962,10 +962,14 @@ impl MatchEvent for App {
                         .find(|(name, _)| name.eq_ignore_ascii_case("x-waml-revision"))
                         .and_then(|(_, values)| values.first())
                         .and_then(|value| value.parse::<u64>().ok());
-                    if let (Some(revision), Some(api)) = (revision, self.api_backend.as_mut()) {
-                        api.revision = revision;
+                    // Adopt the server's revision only once the fetched bundle
+                    // has actually been applied; a failed structural reopen
+                    // must not present a stale bundle as current.
+                    if self.reload_from_bundle(cx, bundle) {
+                        if let (Some(revision), Some(api)) = (revision, self.api_backend.as_mut()) {
+                            api.revision = revision;
+                        }
                     }
-                    self.reload_from_bundle(cx, bundle);
                 }
                 Err(error) => log!("could not reload {}: {error}", api.base),
             }

@@ -1,9 +1,35 @@
 use super::*;
 use crate::app::workspace::{
-    browser_save_fragment, close_after_save, prevent_quit_after_failed_save, replace_after_save,
-    restore_markdown_asset_host_after_open, should_flush_save, BackingTransitionError,
-    SaveFeedback,
+    browser_save_fragment, bundle_paths_differ, close_after_save, prevent_quit_after_failed_save,
+    replace_after_save, restore_markdown_asset_host_after_open, should_flush_save,
+    BackingTransitionError, SaveFeedback,
 };
+
+#[test]
+fn conflict_reload_detects_server_side_creates_and_deletes() {
+    let bundle = |pairs: &[(&str, &str)]| {
+        waml::source::SourceBundle::try_from_pairs(pairs.iter().copied()).unwrap()
+    };
+    let current = bundle(&[("a.md", "# A\n"), ("b.md", "# B\n")]);
+
+    // Same paths, different text: representable per-document, not structural.
+    assert!(!bundle_paths_differ(
+        &current,
+        &bundle(&[("a.md", "# A changed\n"), ("b.md", "# B\n")])
+    ));
+    // A document created on the server.
+    assert!(bundle_paths_differ(
+        &current,
+        &bundle(&[("a.md", "# A\n"), ("b.md", "# B\n"), ("c.md", "# C\n")])
+    ));
+    // A document deleted on the server.
+    assert!(bundle_paths_differ(&current, &bundle(&[("a.md", "# A\n")])));
+    // A rename is a create plus a delete.
+    assert!(bundle_paths_differ(
+        &current,
+        &bundle(&[("a.md", "# A\n"), ("renamed.md", "# B\n")])
+    ));
+}
 
 #[test]
 fn failed_open_restores_the_previous_markdown_asset_root() {
