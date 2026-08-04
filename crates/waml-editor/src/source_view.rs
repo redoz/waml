@@ -107,9 +107,6 @@ fn presented_diagnostics_for(
 pub struct SourceView {
     key: String,
     read_only: bool,
-    /// Hides markdown punctuation, for views that are read rather than edited.
-    /// Independent of `read_only`: it changes presentation only.
-    hide_syntax: bool,
     line_numbers: LineNumberMode,
     fragment: Option<String>,
     state: SourceViewState,
@@ -131,7 +128,6 @@ impl SourceView {
         SourceView {
             key,
             read_only: false,
-            hide_syntax: false,
             line_numbers: LineNumberMode::Absolute,
             fragment: None,
             state: SourceViewState::Uninitialized,
@@ -143,15 +139,6 @@ impl SourceView {
         let mut view = Self::new_with_asset_host(key, assets);
         view.read_only = true;
         view
-    }
-
-    /// Hides markdown punctuation. Callers that present authored prose for
-    /// reading, such as the OKF concept view, set this; editing views do not.
-    /// The source and the session are unchanged, so selection and copy still
-    /// yield the original markdown.
-    #[cfg(test)]
-    pub fn set_hide_syntax(&mut self, hide_syntax: bool) {
-        self.hide_syntax = hide_syntax;
     }
 
     pub(crate) fn resolve_document(
@@ -173,13 +160,8 @@ impl SourceView {
         highlighters: &HighlighterRegistry,
         mut assets: EmbeddedAssets,
         asset_host: Option<(&mut MarkdownAssetLease, &waml::source::BundlePath)>,
-        hide_syntax: bool,
     ) -> Result<CompiledPresentation, String> {
-        let styles = Arc::new(if hide_syntax {
-            PresentationStyles::hiding_syntax()
-        } else {
-            PresentationStyles::balanced()
-        });
+        let styles = Arc::new(PresentationStyles::balanced());
         let plan = compile_presentation(syntax, &styles, highlighters)
             .map_err(|error| format!("presentation compile failed: {error:?}"))?;
         if let Some((host, path)) = asset_host {
@@ -228,9 +210,6 @@ impl SourceView {
             &HighlighterRegistry::default(),
             EmbeddedAssets::default(),
             None,
-            // The missing-source message is a fixed sentence, not authored
-            // markdown, so its presentation never depends on the view's mode.
-            false,
         ) {
             Ok((_, _, _, installed)) => {
                 editor.install_presentation(cx, installed, LayoutChangeCause::ExternalReplacement)
@@ -360,7 +339,6 @@ impl SourceView {
                 &highlighters,
                 retained_assets,
                 Some((asset_lease, &path)),
-                self.hide_syntax,
             ) else {
                 self.set_missing(cx, &editor);
                 return;
@@ -1072,7 +1050,6 @@ mod tests {
             &HighlighterRegistry::default(),
             EmbeddedAssets::default(),
             None,
-            false,
         )
         .expect("the ready fixture must compile");
         view.install_snapshot(&mut cx, &body, &ready, HostSnapshotCause::InitialLoad);
@@ -1486,59 +1463,5 @@ mod tests {
         };
         assert_eq!(ready.session.selections(), &retained_selection);
         assert_eq!(*ready.session.scroll_state(), retained_scroll);
-    }
-
-    #[test]
-    fn hide_syntax_reaches_the_compiled_presentation_without_touching_the_source() {
-        let ready = source_session().snapshot();
-        let (_, syntax) = SourceView::resolve_document(&ready, "shop/order")
-            .expect("the ready fixture must resolve");
-
-        let hidden_runs = |hide_syntax: bool| {
-            let (plan, _, _, _) = SourceView::compile(
-                &syntax,
-                Arc::from([]),
-                &HighlighterRegistry::default(),
-                EmbeddedAssets::default(),
-                None,
-                hide_syntax,
-            )
-            .expect("the ready fixture must compile");
-            let hidden = plan
-                .items
-                .iter()
-                .filter(|item| {
-                    matches!(
-                        item,
-                        waml_markdown_editor::presentation::PresentationItem::TextRun {
-                            hidden: true,
-                            ..
-                        }
-                    )
-                })
-                .count();
-            (hidden, plan.source_len)
-        };
-
-        let mut view = source_view("shop/order");
-        assert!(!view.hide_syntax, "an editing view starts fully revealed");
-        view.set_hide_syntax(true);
-        assert!(
-            view.hide_syntax,
-            "the setter is what a reading host calls, and it feeds `compile`"
-        );
-
-        let (editing, editing_len) = hidden_runs(false);
-        let (reading, reading_len) = hidden_runs(true);
-
-        assert_eq!(editing, 0, "the editing view hides no markers");
-        assert!(
-            reading > 0,
-            "the reading view hides its markdown punctuation"
-        );
-        assert_eq!(
-            editing_len, reading_len,
-            "hiding is presentational: the source is byte-for-byte the same"
-        );
     }
 }

@@ -48,22 +48,18 @@ impl PresentationSpacing {
 
 /// Resolves a presentation text role into its style roles.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct PresentationStyles {
-    /// Hides markdown punctuation, for views that are read rather than edited.
-    /// Purely presentational: the source and its run coverage are unchanged.
-    pub hide_syntax: bool,
-}
+pub struct PresentationStyles;
 
 impl PresentationStyles {
     /// The balanced document style. Metrics are fixed logical values and do not
     /// depend on device pixel ratio.
+    ///
+    /// There is exactly one style table. Whether markdown punctuation is drawn
+    /// is a property of the SURFACE, not of the plan: the editor styles raw
+    /// markdown, the reading view renders it. A `hide_syntax` flag here would
+    /// be a second answer to that question.
     pub fn balanced() -> Self {
-        Self::default()
-    }
-
-    /// The balanced style with markdown punctuation hidden.
-    pub fn hiding_syntax() -> Self {
-        Self { hide_syntax: true }
+        Self
     }
 
     /// Always 24 logical pixels on all four sides.

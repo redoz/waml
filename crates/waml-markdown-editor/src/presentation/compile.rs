@@ -53,10 +53,10 @@ pub fn compile_presentation(
             push_highlighted_content(&mut builder, span, &highlights);
         } else if role == TextRole::ListMarker {
             // An ordered number is content a reader needs; a bullet character
-            // is punctuation that a `ListBullet` decoration replaces.
-            let hidden = is_unordered_marker(text, span.range);
-            builder.push_text_hidden(span.range, role, span.owner, hidden);
-            if hidden {
+            // is punctuation. The decoration records which it is; whether
+            // either is DRAWN is the surface's decision, not the plan's.
+            builder.push_text(span.range, role, span.owner);
+            if is_unordered_marker(text, span.range) {
                 let level = list_nesting_level(text, span.range);
                 builder.push_block(
                     span.owner,
@@ -525,19 +525,6 @@ impl<'a> PlanBuilder<'a> {
     }
 
     fn push_text(&mut self, range: TextRange, role: TextRole, owner: SyntaxIdentity) {
-        let hidden = self.styles.hide_syntax && role.is_syntax_marker();
-        self.push_text_hidden(range, role, owner, hidden);
-    }
-
-    /// `push_text` for runs whose visibility the caller decides, such as a list
-    /// marker that hides only when it is a bullet rather than a number.
-    fn push_text_hidden(
-        &mut self,
-        range: TextRange,
-        role: TextRole,
-        owner: SyntaxIdentity,
-        hidden: bool,
-    ) {
         let presentation_role = PresentationRole::Text(role);
         let fragment_ordinal = self.next_ordinal(owner, presentation_role);
         self.items.push(PresentationItem::TextRun {
@@ -549,7 +536,7 @@ impl<'a> PlanBuilder<'a> {
             range,
             role,
             style: self.styles.text_style(role),
-            hidden,
+            hidden: false,
         });
     }
 

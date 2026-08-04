@@ -867,7 +867,7 @@ fn link_activation_rejects_source_range_end() {
 #[test]
 fn a_hidden_list_marker_draws_a_small_bullet_in_the_gutter_not_over_the_item() {
     let source = "- alpha";
-    let styles = PresentationStyles::hiding_syntax();
+    let styles = PresentationStyles::balanced();
     let bullet_id = item_id(
         2,
         PresentationRole::Block(BlockDecorationRole::ListBullet),
