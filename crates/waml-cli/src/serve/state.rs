@@ -136,6 +136,85 @@ impl ServeState {
         self.prepared = validated;
         Ok(changed_pairs)
     }
+
+    /// Apply a set of baseline-guarded document writes (`POST
+    /// /api/documents`): revision-checked, each write's `baseline` checked
+    /// against the in-memory document (a mismatch is a conflict, not a
+    /// merge), candidate revalidated before anything lands. `baseline: None`
+    /// means "this is a new file".
+    #[allow(dead_code)] // consumed by Task 6
+    pub fn apply_documents(
+        &mut self,
+        at: u64,
+        writes: &[DocumentWrite],
+    ) -> Result<(), ApplyFailure> {
+        let current = self.revision();
+        if at != current {
+            return Err(ApplyFailure::Stale { current });
+        }
+
+        for write in writes {
+            paths::safe_join(&self.root, &write.path).map_err(ApplyFailure::Io)?;
+        }
+
+        let old_pairs = self.prepared.source().to_pairs();
+        let old_map: std::collections::BTreeMap<&str, &str> = old_pairs
+            .iter()
+            .map(|(p, c)| (p.as_str(), c.as_str()))
+            .collect();
+
+        for write in writes {
+            let existing = old_map.get(write.path.as_str());
+            let matches = match (&write.baseline, existing) {
+                (None, None) => true,
+                (Some(baseline), Some(text)) => baseline == text,
+                _ => false,
+            };
+            if !matches {
+                return Err(ApplyFailure::Stale { current });
+            }
+        }
+
+        let mut new_map: std::collections::BTreeMap<String, String> = old_pairs
+            .iter()
+            .map(|(p, c)| (p.clone(), c.clone()))
+            .collect();
+        for write in writes {
+            new_map.insert(write.path.clone(), write.desired.clone());
+        }
+        let new_pairs: Vec<(String, String)> = new_map.into_iter().collect();
+
+        let candidate_source = SourceBundle::try_from_pairs(new_pairs.clone())
+            .map_err(|error| ApplyFailure::Invalid(error.to_string()))?;
+        let validated = prepare_candidate(
+            candidate_source,
+            Some(PreviousAnalyses {
+                okf: self.prepared.okf(),
+                uml: self.prepared.uml(),
+            }),
+            current + 1,
+        )
+        .map_err(|error| ApplyFailure::Invalid(error.to_string()))?;
+
+        let new_pairs = validated.source().to_pairs();
+        io::write_back(&self.root, &old_pairs, &new_pairs).map_err(|error| {
+            ApplyFailure::Io(format!("could not write bundle changes: {error}"))
+        })?;
+
+        self.prepared = validated;
+        Ok(())
+    }
+}
+
+/// One document write in a `POST /api/documents` request. `baseline: None`
+/// means the caller believes this is a new file; the server's bundle is the
+/// authority for the check either way.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(dead_code)] // consumed by Task 6
+pub struct DocumentWrite {
+    pub path: String,
+    pub baseline: Option<String>,
+    pub desired: String,
 }
 
 /// Why an `apply_ops`/`apply_documents` call did not land.
@@ -298,5 +377,121 @@ mod tests {
             Ok(_) => panic!("expected load to fail on a malformed envelope"),
         };
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn a_document_write_lands_byte_exactly() {
+        let dir = fixture();
+        let mut state = ServeState::load(dir.path()).unwrap();
+        let baseline = std::fs::read_to_string(dir.path().join("order.md")).unwrap();
+        let desired = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\nUnformatted   text\n";
+
+        state
+            .apply_documents(
+                0,
+                &[DocumentWrite {
+                    path: "order.md".into(),
+                    baseline: Some(baseline),
+                    desired: desired.to_string(),
+                }],
+            )
+            .unwrap();
+
+        let written = std::fs::read_to_string(dir.path().join("order.md")).unwrap();
+        assert_eq!(written, desired);
+        assert_eq!(state.revision(), 1);
+    }
+
+    #[test]
+    fn a_write_whose_candidate_fails_validation_writes_nothing() {
+        let dir = fixture();
+        let before = std::fs::read(dir.path().join("order.md")).unwrap();
+        let mut state = ServeState::load(dir.path()).unwrap();
+
+        let error = match state.apply_documents(
+            0,
+            &[
+                DocumentWrite {
+                    path: "a\\b.md".into(),
+                    baseline: None,
+                    desired: "# One\n".to_string(),
+                },
+                DocumentWrite {
+                    path: "a/b.md".into(),
+                    baseline: None,
+                    desired: "# Two\n".to_string(),
+                },
+            ],
+        ) {
+            Err(ApplyFailure::Invalid(message)) => message,
+            other => panic!("expected an Invalid failure, got {other:?}"),
+        };
+        assert!(!error.is_empty());
+
+        assert_eq!(state.revision(), 0);
+        let after = std::fs::read(dir.path().join("order.md")).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn a_baseline_mismatch_is_a_conflict() {
+        let dir = fixture();
+        let mut state = ServeState::load(dir.path()).unwrap();
+
+        let current = match state.apply_documents(
+            0,
+            &[DocumentWrite {
+                path: "order.md".into(),
+                baseline: Some("stale text that does not match".to_string()),
+                desired: "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            }],
+        ) {
+            Err(ApplyFailure::Stale { current }) => current,
+            other => panic!("expected a Stale failure, got {other:?}"),
+        };
+        assert_eq!(current, 0);
+        assert_eq!(state.revision(), 0);
+    }
+
+    #[test]
+    fn a_new_file_write_with_no_baseline_is_accepted() {
+        let dir = fixture();
+        let mut state = ServeState::load(dir.path()).unwrap();
+        let desired = "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n";
+
+        state
+            .apply_documents(
+                0,
+                &[DocumentWrite {
+                    path: "customer.md".into(),
+                    baseline: None,
+                    desired: desired.to_string(),
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(state.revision(), 1);
+        let written = std::fs::read_to_string(dir.path().join("customer.md")).unwrap();
+        assert_eq!(written, desired);
+    }
+
+    #[test]
+    fn a_confined_path_is_enforced_on_documents_too() {
+        let dir = fixture();
+        let mut state = ServeState::load(dir.path()).unwrap();
+
+        let error = match state.apply_documents(
+            0,
+            &[DocumentWrite {
+                path: "../x.md".into(),
+                baseline: None,
+                desired: "# Escape\n".to_string(),
+            }],
+        ) {
+            Err(ApplyFailure::Io(message)) => message,
+            other => panic!("expected an Io failure, got {other:?}"),
+        };
+        assert!(!error.is_empty());
+        assert_eq!(state.revision(), 0);
     }
 }
