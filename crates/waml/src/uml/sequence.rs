@@ -726,6 +726,17 @@ pub(crate) fn lower(
         let is_graph_link = use_graph
             .get(&concept.concept_id)
             .is_some_and(|links| links.contains(&(declared_use_index, target.clone())));
+        // `interaction_use_graph` applies the same admission rules as the
+        // diagnosed checks above, so a use that survived every diagnostic must
+        // also be an edge in the graph. The demotion below is a silent drop —
+        // no diagnostic names it — so assert the two copies agree rather than
+        // letting a drift hide an unreported interaction use.
+        debug_assert!(
+            !valid_use || is_graph_link,
+            "interaction use '{alias}' passed every diagnosed check but is \
+             absent from the interaction-use graph: the graph copy and the \
+             diagnosed copy have drifted",
+        );
         if valid_use && !is_graph_link {
             valid_use = false;
         }
@@ -1175,23 +1186,25 @@ fn walk_return_items(
                     }
                     outcomes.push(branch);
                 }
-                // A lone-operand `alt` (a single guarded branch, no `else`)
-                // does NOT readmit the incoming open-call set here — this
-                // matches the pre-existing behaviour of this walker, which
-                // differs from `repeated_deletes`/`walk` below (both always
-                // readmit an else-less `alt`'s incoming state regardless of
-                // operand count). That divergence pre-dates this refactor;
-                // preserved rather than silently unified.
-                let readmits = matches!(
-                    kind,
-                    FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
-                ) || (operands.len() > 1 && *kind == FragmentKind::Alt && !has_else);
+                // This walker's readmit rule is operand-count dependent, unlike
+                // `repeated_deletes`/`walk` below, which both apply
+                // `fragment_readmits_incoming` for every operand count. Here a
+                // lone operand readmits only for the zero-times kinds
+                // (`opt`/`loop`/`break`) — never for an else-less `alt` — while
+                // any other operand count readmits only for an else-less `alt`,
+                // never for the zero-times kinds. That divergence pre-dates the
+                // fragment-fold refactor; preserved rather than silently
+                // unified.
+                let readmits = fragment_readmits_incoming(*kind, has_else)
+                    && (*kind == FragmentKind::Alt) != (operands.len() == 1);
                 if readmits {
                     outcomes.push(open.clone());
                 }
-                if !outcomes.is_empty() {
-                    *open = merge_union(outcomes);
-                }
+                // Unconditional, including for an operand-less fragment: an
+                // authored fragment with no operands wipes the open-call set
+                // unless it readmits, matching this walker's pre-refactor
+                // behaviour.
+                *open = merge_union(outcomes);
             }
             SeqChild::InteractionUse { .. } => {}
         }

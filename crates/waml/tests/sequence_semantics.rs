@@ -356,6 +356,48 @@ fn conditional_join_keeps_calls_that_can_remain_open() {
     assert_eq!(doc.edges[2].returns_call, Some(MessageId("m0".into())));
 }
 
+/// A multi-operand `opt` is malformed (`InvalidFragmentOperands`) but still
+/// lowers, and the return walker must NOT readmit the incoming open-call set
+/// for it: only the lone-operand `opt`/`loop`/`break` shape readmits. If the
+/// incoming call were readmitted the trailing return would find a match and no
+/// `UnmatchedReturn` would be reported.
+#[test]
+fn a_multi_operand_opt_does_not_readmit_the_incoming_open_calls() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "multi.md",
+            "---\ntype: uml.Sequence\n---\n# Multi\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()`\n- opt\n  - when `x`\n    - b returns `first`\n  - when `y`\n    - b returns `second`\n- b returns `third`\n",
+        ),
+    ]);
+    diagnostic(
+        &analysis,
+        DiagCode::UnmatchedReturn,
+        "return has no eligible preceding call",
+    );
+}
+
+/// An operand-less fragment is malformed but still lowers. It contributes no
+/// branch outcome, so unless the fragment readmits its incoming state the
+/// open-call set is wiped — the trailing return then has nothing to match.
+#[test]
+fn an_operand_less_fragment_wipes_the_open_calls() {
+    let analysis = analyze([
+        ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+        (
+            "empty.md",
+            "---\ntype: uml.Sequence\n---\n# Empty\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()`\n- critical\n- b returns `late`\n",
+        ),
+    ]);
+    diagnostic(
+        &analysis,
+        DiagCode::UnmatchedReturn,
+        "return has no eligible preceding call",
+    );
+}
+
 #[test]
 fn interaction_use_resolves_without_flattening() {
     let analysis = analyze([
