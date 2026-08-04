@@ -61,6 +61,83 @@ special-cased alongside it.
 internals makes them invisible in the tree panel; they remain reachable by path
 and by search, but not by browsing.
 
+## The chain resolves surfaces too
+
+A chain answers two questions, not one:
+
+- **what rows exist** under this container
+- **which surface renders** a given target
+
+A `DocView` stays exactly what it is today — a renderer. What changes is that it
+is no longer chosen by hardcoded wiring; the chain chooses it.
+
+```rust
+pub struct Row {
+    // ...
+    pub target: RowTarget,
+    /// None ⇒ default resolution, by document type. Middleware may override.
+    pub surface: Option<SurfaceId>,
+}
+
+pub trait Projection {
+    // ...
+    /// Which surface renders this container's own tab.
+    fn surface(&self, ctx: &ProjectionCtx<'_>, next: Next<'_>) -> SurfaceId;
+}
+```
+
+This is why `markdown` and `member:` are **not middleware**, though an earlier
+draft of this design listed them as such. Neither projects rows:
+
+- `view: markdown` resolves this folder's own target to the markdown surface.
+- `view: member:./orders` resolves this folder's target to that member's target
+  and that member's resolved surface.
+
+Both are resolution outcomes. Treating them as projection stages made two
+different axes share one vocabulary.
+
+The root view is **total on both axes**: it owns every unclaimed row *and* the
+default surface resolution. A middleware that declines to answer either question
+falls through to it by the same rule.
+
+The encapsulation case is then coherent end to end. A middleware that owns a
+subtree also owns how its internals render if you do reach them, rather than
+owning the listing while the surface is decided somewhere else.
+
+### Costs
+
+- **A named surface registry.** `SurfaceId -> DocView`, where the wiring is
+  concrete today. This is the same shape as `script_mod!` widget registration,
+  and it has the same failure mode: a surface missing from the registry is
+  silently unreachable. It needs the same gate treatment
+  (`crates/waml-editor/src/script_gate.rs`), not a runtime discovery.
+- **Virtual rows must name a surface.** There is no document to infer one from,
+  so `surface: None` is legal only for rows with a real target.
+- **Default resolution stays total.** An unknown `SurfaceId` degrades to the
+  document-type default and emits a diagnostic. Never a blank tab.
+
+### Scope
+
+Land the mechanism — surface is chain-resolved, defaulting to document type —
+and register exactly the surfaces that exist today: markdown reading, source,
+canvas, and the folder listing. No speculative format registry.
+
+"Adding a new format is easy" is a property to demonstrate the first time one is
+actually needed, not a claim the design makes about itself. The seam earns its
+generality when a second real consumer disagrees with it.
+
+### Intended second consumer
+
+UML is the expected proof. A `uml-domain` profile would bind three things a
+profile is already the hook for: a chain (a package projects its classes as rows,
+`references/` hidden), surface resolution (a class concept opens the canvas, the
+package opens the projected listing), and rules (legal element types, child
+templates — the deferred profile system).
+
+That binding is **not designed here**. It is named so that the seam is built
+knowing what will lean on it, and so that the first consumer to disagree can
+correct it before a second one calcifies it.
+
 ## Descent
 
 Descent is an explicit value in the context, not an implicit walk. A middleware
@@ -278,6 +355,7 @@ than falling back.
 | bad or missing params | the param key |
 | middleware returns `Err` | document-level |
 | depth cap or cycle guard | document-level, names the folder that tripped it |
+| unknown `SurfaceId` | the resolution site; degrades to the type default |
 
 Surfaced in two places, from the same diagnostics:
 
@@ -304,10 +382,17 @@ wanted, so deferring costs nothing.
 
 ### v1 set
 
-- `index` — the root view. Terminal listing, real hrefs, full edit support.
-- `member:<href>` — delegate the folder's tab to one member's own view.
-- `markdown` — raw `index.md` in the markdown editor.
+Middleware:
+
+- `index` — the root view. Terminal listing, real hrefs, full edit support,
+  default surface resolution.
 - `hide` — params `hide: [glob, ...]`; drops matching rows, forwards ops.
+
+Surface resolutions (not middleware — see "The chain resolves surfaces too"):
+
+- `markdown` — this folder's target renders in the markdown surface.
+- `member:<href>` — this folder's target is that member, at that member's
+  resolved surface.
 
 `hide` is the cheapest proof that a non-identity chain works end to end, and is
 immediately useful for `references/`. `kanban`, `gallery`, `group-by`, and an
@@ -363,11 +448,13 @@ with its strict-consumer degradation.
 4. **Folder surface, read-only** — render the projected rows; tree row-versus-
    chevron split; diagnostics strip and tree marker. Folders open for the first
    time.
-5. **`hide`** — the first non-identity middleware. Proves projection and op
+5. **Surface registry** — `SurfaceId -> DocView`, gate-checked like
+   `script_mod!`; default resolution by document type; register today's surfaces
+   only. Then `markdown` and `member:` fall out as resolutions.
+6. **`hide`** — the first non-identity middleware. Proves projection and op
    forwarding on a working surface.
-6. **Editing** — `apply` on the root view: Enter, retitle, Tab/Shift-Tab,
+7. **Editing** — `apply` on the root view: Enter, retitle, Tab/Shift-Tab,
    drag-reorder, bullet-zoom. Forwarding through `hide` verified.
-7. **`member:` and `markdown`.**
 
 Steps 1–3 are headless. Step 4 is useful alone. Editing lands on a surface that
 already works rather than arriving with it.
@@ -396,6 +483,11 @@ Headless, in `waml`:
 - An unresolvable path falls back to its nearest resolvable prefix.
 - Every declared capability is accepted by `apply` — property test over all rows
   of every fixture chain.
+- Surface resolution is total: a row with `surface: None` and a real target
+  resolves to its document-type default.
+- An unknown `SurfaceId` degrades to the type default and emits a diagnostic
+  rather than yielding a blank tab.
+- A virtual row with `surface: None` is rejected at construction.
 - `apply` on the root view produces the expected OKF op batch and leaves both
   affected `index.md` files consistent.
 
