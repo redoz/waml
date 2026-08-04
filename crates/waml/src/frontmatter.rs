@@ -296,10 +296,15 @@ fn decode_quoted_string(value: &str) -> String {
 /// Splits a flow sequence's inner text (`[...]` with the brackets already
 /// stripped) on top-level commas, quote-aware and bracket-depth-aware. A
 /// quote character only opens a quoted scalar when it is the FIRST
-/// significant byte of an item — matching YAML, where a quote elsewhere
+/// significant byte of an ITEM — matching YAML, where a quote elsewhere
 /// inside a plain (unquoted) scalar is just a literal character, not a
-/// delimiter. A comma inside `'...'`, `"..."`, or a nested `[...]` does not
-/// split.
+/// delimiter. An item boundary is the start of the string, right after a
+/// (non-splitting) comma at any depth, or right after a `[` that opens a
+/// nested list — that last case matters: without it, a quoted scalar that is
+/// the first item of a NESTED list (e.g. `["[", ...]`) is not recognized as
+/// quoted, so a `[`/`]` byte inside it is wrongly counted toward bracket
+/// depth instead of being skipped as quoted content. A comma inside
+/// `'...'`, `"..."`, or a nested `[...]` does not split.
 fn split_flow_items(s: &str) -> Vec<&str> {
     if s.trim().is_empty() {
         return Vec::new();
@@ -309,8 +314,12 @@ fn split_flow_items(s: &str) -> Vec<&str> {
     let mut start = 0usize;
     let mut depth: i32 = 0;
     let mut i = 0usize;
+    let mut at_item_start = true;
     while i < bytes.len() {
-        let at_item_start = bytes[start..i].iter().all(|&b| b == b' ');
+        if bytes[i] == b' ' {
+            i += 1;
+            continue;
+        }
         if at_item_start && (bytes[i] == b'\'' || bytes[i] == b'"') {
             let quote = bytes[i];
             i += 1;
@@ -329,24 +338,36 @@ fn split_flow_items(s: &str) -> Vec<&str> {
                 }
                 i += 1;
             }
+            at_item_start = false;
             continue;
         }
         match bytes[i] {
             b'[' => {
                 depth += 1;
                 i += 1;
+                at_item_start = true;
             }
             b']' => {
                 depth -= 1;
                 i += 1;
+                at_item_start = false;
             }
             b',' if depth <= 0 => {
                 items.push(&s[start..i]);
                 start = i + 1;
                 i += 1;
+                at_item_start = true;
+            }
+            b',' => {
+                // A comma inside a nested bracket does not split the outer
+                // sequence, but it does start a new item of the nested one —
+                // a quote right after it must still be recognized as opening.
+                i += 1;
+                at_item_start = true;
             }
             _ => {
                 i += 1;
+                at_item_start = false;
             }
         }
     }
@@ -723,28 +744,66 @@ fn apply_chomp(body: String, chomp: Chomp) -> String {
 /// own bracket form), so this never panics on anything `parse_value` can
 /// produce — including the nested-bracket case (`x: [a, [b]]`).
 /// True when a bare `s` would `parse_value` back as something other than the
-/// same `Str` — the only cases where quoting is required. A comma is NOT listed:
-/// a top-level scalar with a comma is safe bare (only bracketed values split),
-/// and a *list item* with a comma is unrepresentable either way (the parser
-/// splits list items on every comma, quote-blind), so quoting it wouldn't help.
+/// same `Str`, or would otherwise confuse the writer's own line/flow
+/// structure — the cases where quoting is required. A bare comma is NOT
+/// listed: a top-level scalar with a comma is safe bare (only bracketed
+/// values split on commas); [`flow_item_needs_quote`] adds it back for list
+/// items, where a comma DOES need escaping.
 fn scalar_needs_quote(s: &str) -> bool {
-    s.is_empty()
-        || s != s.trim()
-        // Would reparse as a non-string type: covers true/false, null/~/empty,
-        // and every numeric form the classifier accepts (hex, octal, .inf,
-        // .nan, exponents) — replaces the old NUM_RE / literal true|false checks.
-        || waml_syntax::classify_bare_scalar(s) != FrontmatterScalarKind::Str
-        || (s.starts_with('[') && s.ends_with(']'))
-        || s.starts_with('"')
-        // A leading `'` would be read back as opening a single-quoted
-        // scalar (Task 8 generalizes this into the full structural-leader
-        // set; this one is load-bearing now because an unquoted leading `'`
-        // swallows the rest of a flow list's comma splitting).
-        || s.starts_with('\'')
-        || s.contains('"')
+    if s.is_empty() || s != s.trim() {
+        return true;
+    }
+    // Would reparse as a non-string type: covers true/false, null/~/empty,
+    // and every numeric form the classifier accepts (hex, octal, .inf,
+    // .nan, exponents).
+    if waml_syntax::classify_bare_scalar(s) != FrontmatterScalarKind::Str {
+        return true;
+    }
+    // Structural first character: any of these would be read as opening a
+    // flow collection, a comment, an anchor/alias/tag/directive, a block
+    // scalar header, or a quoted scalar.
+    let first = s.chars().next().expect("non-empty checked above");
+    if matches!(
+        first,
+        '#' | '['
+            | ']'
+            | '{'
+            | '}'
+            | '&'
+            | '*'
+            | '!'
+            | '|'
+            | '>'
+            | '%'
+            | '@'
+            | '`'
+            | '"'
+            | '\''
+            | ','
+    ) {
+        return true;
+    }
+    // A leading `- ` (or bare `-`) reads as a block sequence dash.
+    if s == "-" || s.starts_with("- ") {
+        return true;
+    }
+    // Would open a mapping or a comment mid-scalar, or confuse the writer's
+    // own quoted forms, escapes, or line structure.
+    s.contains(": ")
+        || s.ends_with(':')
+        || s.contains(" #")
         || s.contains('\\')
         || s.contains('\n')
         || s.contains('\r')
+        || s.contains('\t')
+}
+
+/// A list item needs quoting whenever a bare scalar would ([`scalar_needs_quote`]),
+/// or when it carries a byte the flow splitter treats as structural — `,`
+/// (the item separator) or `[`/`]` (nested-bracket boundaries) — even though
+/// those bytes are safe in a top-level bare scalar.
+fn flow_item_needs_quote(s: &str) -> bool {
+    scalar_needs_quote(s) || s.contains(',') || s.contains('[') || s.contains(']')
 }
 
 fn render_value(v: &FmValue) -> String {
@@ -779,7 +838,7 @@ fn render_value_at(v: &FmValue, depth: usize) -> String {
             }
             let inner = items
                 .iter()
-                .map(|item| render_value_at(item, depth + 1))
+                .map(|item| render_flow_item(item, depth + 1))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("[{inner}]")
@@ -796,7 +855,12 @@ fn render_value_at(v: &FmValue, depth: usize) -> String {
 /// Renders a map's entries as a two-space-indented block mapping, one
 /// `key: value` (or `key:` + nested block) line per entry. An empty nested
 /// map renders as `key:` with no value — the reader maps that back to
-/// `Null`, an asymmetry Task 8 pins with a named test.
+/// `Null`, a deliberate asymmetry pinned by `empty_map_renders_and_reparses_as_null`.
+///
+/// This is the flowless bare-`Map` renderer `render_value_at`'s `Map` arm
+/// falls back to (a `Map` value reached without a carrying key — not a path
+/// `render_frontmatter` itself takes, which always goes through
+/// [`render_entry`] so a nested map's key sits on its own line).
 fn render_map_block(entries: &[(String, FmValue)], indent: usize) -> String {
     if indent >= MAX_VALUE_DEPTH {
         return String::new();
@@ -823,23 +887,149 @@ fn render_map_block(entries: &[(String, FmValue)], indent: usize) -> String {
     out
 }
 
-fn render_top_entry(out: &mut String, key: &str, value: &FmValue) {
+/// A list item, in flow-sequence position: a bare scalar quotes when
+/// [`flow_item_needs_quote`] says so (adds `,`/`[`/`]` to the top-level
+/// scalar rule); any other shape (nested list, or a bare number/bool/null)
+/// renders through the ordinary value renderer, since a nested flow list is
+/// unambiguous inside brackets and a `Map` item never reaches here — a list
+/// containing a `Map` renders as a block sequence instead, in [`render_entry`].
+fn render_flow_item(item: &FmValue, depth: usize) -> String {
+    match item {
+        FmValue::Str(s) => {
+            if flow_item_needs_quote(s) {
+                format!("\"{}\"", escape_quoted_string(s))
+            } else {
+                s.clone()
+            }
+        }
+        other => render_value_at(other, depth),
+    }
+}
+
+/// Renders one `key: value` line (recursing into indented block form for
+/// nested maps and sequences of maps). `indent` is the two-space indent
+/// LEVEL the key itself sits at.
+///
+/// The sequence-of-maps check below is DIRECT-child only (`matches!(item,
+/// Map(_))`, not "contains a `Map` anywhere"): a `List` item that is itself
+/// a nested `List` containing a `Map` (list-of-list-of-map) has no block
+/// form the current parser reads back — a bare `-` with nothing after it,
+/// followed by a more-indented `-` continuation, does not open a nested
+/// sequence the way `key:` does. That combination is excluded from what the
+/// writer will attempt (see `representable_value` in the tests below);
+/// widening the parser to accept it is future work, not this task's.
+fn render_entry(out: &mut String, key: &str, value: &FmValue, indent: usize) {
+    if indent >= MAX_VALUE_DEPTH {
+        return;
+    }
+    let pad = "  ".repeat(indent);
     match value {
-        FmValue::Map(entries) if entries.is_empty() => {
-            out.push_str(&format!("{key}:\n"));
-        }
         FmValue::Map(entries) => {
-            out.push_str(&format!("{key}:\n"));
-            out.push_str(&render_map_block(entries, 1));
+            out.push_str(&format!("{pad}{key}:\n"));
+            // An empty map has no block form and no flow form; the reader
+            // maps a valueless key back to `Null`, so this deliberately
+            // round-trips as Null rather than Map([]).
+            for (k, v) in entries {
+                render_entry(out, k, v, indent + 1);
+            }
         }
-        other => out.push_str(&format!("{key}: {}\n", render_value(other))),
+        FmValue::List(items) if items.iter().any(|item| matches!(item, FmValue::Map(_))) => {
+            out.push_str(&format!("{pad}{key}:\n"));
+            for item in items {
+                render_block_sequence_item(out, item, indent + 1);
+            }
+        }
+        other => {
+            out.push_str(&format!(
+                "{pad}{key}: {}\n",
+                render_value_at(other, indent + 1)
+            ));
+        }
+    }
+}
+
+/// Renders one `- ` block-sequence item at `indent`. A `Map` item shares its
+/// first entry's line with the dash (`- name: Ana`); a nested container
+/// under that first key drops to `indent + 2` (past both the dash and the
+/// key). Any other item shape (including a nested `List`, whether or not it
+/// carries a `Map` — see `render_entry`'s doc comment) is a single
+/// `- <flow value>` line.
+fn render_block_sequence_item(out: &mut String, item: &FmValue, indent: usize) {
+    if indent >= MAX_VALUE_DEPTH {
+        return;
+    }
+    let pad = "  ".repeat(indent);
+    match item {
+        FmValue::Map(entries) => {
+            if entries.is_empty() {
+                out.push_str(&format!("{pad}-\n"));
+                return;
+            }
+            for (i, (k, v)) in entries.iter().enumerate() {
+                if i == 0 {
+                    match v {
+                        // A `Map` always gets its own block (even empty —
+                        // that intentionally round-trips as `Null`, the
+                        // same asymmetry `render_entry` has and the
+                        // strategy normalizes away for generated values).
+                        // A `List` only needs a block when it directly
+                        // holds a `Map` (a sequence of maps); an empty or
+                        // scalar-only list has a perfectly good flow form
+                        // and must NOT be treated as a nested container —
+                        // that would emit a valueless key with nothing
+                        // after it, silently turning `List([])` into `Null`.
+                        FmValue::Map(_) => {
+                            out.push_str(&format!("{pad}- {k}:\n"));
+                            render_nested_under(out, v, indent + 2);
+                        }
+                        FmValue::List(items)
+                            if items.iter().any(|item| matches!(item, FmValue::Map(_))) =>
+                        {
+                            out.push_str(&format!("{pad}- {k}:\n"));
+                            render_nested_under(out, v, indent + 2);
+                        }
+                        scalar => {
+                            out.push_str(&format!("{pad}- {k}: {}\n", render_value(scalar)));
+                        }
+                    }
+                } else {
+                    render_entry(out, k, v, indent + 1);
+                }
+            }
+        }
+        other => out.push_str(&format!("{pad}- {}\n", render_value_at(other, indent + 1))),
+    }
+}
+
+/// Renders a `Map`'s entries or a `List`'s items at `indent`, with no
+/// carrying key of their own — used only for the container that sits under a
+/// block-sequence item's first key (`- name:\n    <nested here>`).
+fn render_nested_under(out: &mut String, value: &FmValue, indent: usize) {
+    if indent >= MAX_VALUE_DEPTH {
+        return;
+    }
+    match value {
+        FmValue::Map(entries) => {
+            for (k, v) in entries {
+                render_entry(out, k, v, indent);
+            }
+        }
+        FmValue::List(items) => {
+            for item in items {
+                render_block_sequence_item(out, item, indent);
+            }
+        }
+        other => {
+            let pad = "  ".repeat(indent);
+            out.push_str(&format!("{pad}{}\n", render_value_at(other, indent)));
+        }
     }
 }
 
 pub fn render_frontmatter(fm: &Frontmatter) -> String {
     let mut out = String::new();
     for (k, v) in &fm.entries {
-        render_top_entry(&mut out, k, v);
+        render_entry(&mut out, k, v, 0);
     }
     if out.ends_with('\n') {
         out.pop();
@@ -1143,6 +1333,37 @@ mod tests {
     }
 
     #[test]
+    fn hash_after_space_is_safe_quoted_at_top_level_but_not_yet_inside_a_flow_list() {
+        // A quoted top-level scalar containing " #" round-trips fine: the
+        // tokenizer only special-cases whitespace-then-# for BARE (unquoted)
+        // scalars, and correctly stays inside a quoted run.
+        let fm = Frontmatter {
+            entries: vec![("a".into(), FmValue::Str(" #".into()))],
+        };
+        let rendered = render_frontmatter(&fm);
+        let source = format!("---\n{rendered}\n---\n");
+        assert_eq!(parse_frontmatter_for_test(&source), fm);
+
+        // KNOWN PARSER GAP (waml-syntax, not this crate): the flow-sequence
+        // token scan (`[...]`) is not quote-aware for the same whitespace-#
+        // cutoff, so `["  #"]` truncates the token mid-quote. Documented and
+        // excluded from the round-trip proptest by `flow_avoids_hash_bug`
+        // rather than silently narrowing the generator's comment; a future
+        // task should make the bracket-run scan quote-aware and delete this
+        // exclusion.
+        let fm2 = Frontmatter {
+            entries: vec![("a".into(), FmValue::List(vec![FmValue::Str(" #".into())]))],
+        };
+        let rendered2 = render_frontmatter(&fm2);
+        let source2 = format!("---\n{rendered2}\n---\n");
+        assert_ne!(
+            parse_frontmatter_for_test(&source2),
+            fm2,
+            "if this now passes, the parser gap is fixed — remove flow_avoids_hash_bug's exclusion"
+        );
+    }
+
+    #[test]
     fn nan_num_compares_equal_to_itself() {
         // `total_cmp`-based Eq: a NaN (unreachable from input today) must not
         // read as perpetually "changed".
@@ -1188,6 +1409,79 @@ mod tests {
     }
 
     #[test]
+    fn sequence_of_maps_renders_as_block_sequence() {
+        let fm = Frontmatter {
+            entries: vec![(
+                "authors".into(),
+                FmValue::List(vec![FmValue::Map(vec![
+                    ("name".into(), FmValue::Str("Ana".into())),
+                    ("team".into(), FmValue::Str("platform".into())),
+                ])]),
+            )],
+        };
+        let rendered = render_frontmatter(&fm);
+        assert_eq!(rendered, "authors:\n  - name: Ana\n    team: platform");
+        let source = format!("---\n{rendered}\n---\n");
+        assert_eq!(parse_frontmatter_for_test(&source), fm);
+    }
+
+    #[test]
+    fn existing_documents_render_byte_identical() {
+        // Compatibility pin: scalar-only lists stay flow, not block.
+        let fm = Frontmatter {
+            entries: vec![
+                ("type".into(), FmValue::Str("uml.Class".into())),
+                (
+                    "stereotype".into(),
+                    FmValue::List(vec![
+                        FmValue::Str("aggregateRoot".into()),
+                        FmValue::Str("entity".into()),
+                    ]),
+                ),
+            ],
+        };
+        assert_eq!(
+            render_frontmatter(&fm),
+            "type: uml.Class\nstereotype: [aggregateRoot, entity]"
+        );
+    }
+
+    #[test]
+    fn norway_no_longer_needs_quoting_but_new_structurals_do() {
+        assert!(!scalar_needs_quote("NO"));
+        assert!(!scalar_needs_quote("yes"));
+        for s in [
+            "null", "~", ".inf", "-.inf", ".nan", "0x1A", "0o17", "1e3", "- item", "#x", "[x",
+            "{a}", "&a", "*a", "!t", "|", ">f", "%v", "@a", "`c", "'q", "\"q", "a: b", "a #b",
+            "key:",
+        ] {
+            assert!(scalar_needs_quote(s), "{s:?} must quote");
+        }
+        assert!(
+            !scalar_needs_quote("a:b"),
+            "colon without space is safe in YAML"
+        );
+        assert!(!scalar_needs_quote("2026-08-04"));
+    }
+
+    #[test]
+    fn flow_list_items_quote_commas_and_brackets() {
+        let fm = Frontmatter {
+            entries: vec![(
+                "items".into(),
+                FmValue::List(vec![
+                    FmValue::Str("a,b".into()),
+                    FmValue::Str("[nested]".into()),
+                    FmValue::Str("plain".into()),
+                ]),
+            )],
+        };
+        let rendered = render_frontmatter(&fm);
+        let value_text = rendered.strip_prefix("items: ").unwrap();
+        assert_eq!(parse_value(value_text), fm.entries[0].1);
+    }
+
+    #[test]
     fn empty_map_renders_and_reparses_as_null() {
         let fm = Frontmatter {
             entries: vec![("meta".into(), FmValue::Map(vec![]))],
@@ -1225,72 +1519,180 @@ mod tests {
             ]
             .prop_map(FmValue::Str),
         ];
-        // NOTE: `Map` is not yet part of this recursive strategy. Adding a
-        // `Map` arm here (as a list item AND as an entry-level value) requires
-        // the entry-level round-trip property below to reparse through the
-        // full document tree (a Map entry cannot be checked as a single
-        // rendered line) and requires sequence-of-map block rendering — both
-        // are Task 8's job, landing together with the strategy addition so
-        // the two never go out of sync. Task 7 lands `Map`-capable reading
-        // and writing (see the tests above), pinned by targeted unit tests
-        // instead of the shared property strategy.
+        // Flow-list parsing is now quote-aware and nesting-aware
+        // (`split_flow_items`), and the writer quotes any list item that
+        // needs it (`flow_item_needs_quote`), so items may freely carry `,`
+        // `[` `]` `"` `\` or be empty, and inner lists may hold more than one
+        // item. `Map` is a value shape too — as a list item it forces the
+        // whole list to a block sequence (`render_entry`'s `List` arm), and
+        // as an entry value it renders as a block mapping — neither is
+        // expressible as a single flow-value string, which is why the
+        // entry-level property below reparses through the full document tree
+        // instead of splitting the rendered text line by line.
         leaf.prop_recursive(4, 48, 8, |inner| {
-            // NOTE: the filter runs on the Vec<FmValue>, BEFORE the prop_map wraps
-            // it in FmValue::List. Filtering after the wrap does not compile —
-            // `iter()` is not available on `&FmValue`.
-            prop::collection::vec(inner, 0..6)
-                // MANDATORY EXCLUSIONS — see the note below. Today's flow-list
-                // parser splits on EVERY comma, quote- and nesting-blind, and the
-                // writer never quotes list items. These shapes CANNOT round-trip
-                // against current code. Task 8 makes flow parsing quote-aware and
-                // nesting-aware and DELETES this filter as its first act.
-                .prop_filter(
-                    "Task 8 removes: flow list items cannot carry , [ ] \" \\ or be empty/nested",
-                    |list| {
-                        !list.iter().any(|item| match item {
-                            FmValue::Str(s) => {
-                                s.is_empty()
-                                    || s.contains(',')
-                                    || s.contains('[')
-                                    || s.contains(']')
-                                    || s.contains('"')
-                                    || s.contains('\\')
-                            }
-                            // A nested list re-parses through the same comma splitter,
-                            // so any multi-item inner list flattens. Single-item and
-                            // empty inner lists survive.
-                            FmValue::List(inner) => inner.len() > 1,
-                            _ => false,
-                        })
-                    },
-                )
-                .prop_map(FmValue::List)
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(FmValue::List),
+                prop::collection::vec(("[a-z][a-z0-9_]{0,8}", inner), 0..4).prop_map(FmValue::Map),
+            ]
         })
+        // An empty `Map` has no representable form (block form needs at
+        // least one entry, there is no flow-map syntax): the writer emits a
+        // valueless `key:` line, which the reader maps back to `Null`. Fold
+        // that asymmetry into the generator so the round-trip properties
+        // assert what actually round-trips, rather than special-casing every
+        // assertion site — pinned separately by
+        // `empty_map_renders_and_reparses_as_null`.
+        .prop_map(normalize_empty_maps)
+    }
+
+    /// Recursively replaces every empty `Map` (at any depth: a value, a list
+    /// item, or a nested map's value) with `Null` — see the comment on
+    /// [`fm_value_strategy`].
+    fn normalize_empty_maps(v: FmValue) -> FmValue {
+        match v {
+            FmValue::Map(entries) if entries.is_empty() => FmValue::Null,
+            FmValue::Map(entries) => FmValue::Map(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| (k, normalize_empty_maps(v)))
+                    .collect(),
+            ),
+            FmValue::List(items) => {
+                FmValue::List(items.into_iter().map(normalize_empty_maps).collect())
+            }
+            other => other,
+        }
+    }
+
+    /// True if `v` holds a `Map` anywhere in its tree, including nested
+    /// inside a `List`. Only [`render_entry`]'s block forms (a `Map` under a
+    /// carrying key, or a direct sequence of maps) can render a `Map`: the
+    /// flow-sequence form (`render_flow_item`) has no way to embed a
+    /// multi-line block mapping inside `[...]`.
+    fn value_contains_map(v: &FmValue) -> bool {
+        match v {
+            FmValue::Map(_) => true,
+            FmValue::List(items) => items.iter().any(value_contains_map),
+            _ => false,
+        }
+    }
+
+    /// True when every `Map` in `v`'s tree (at any depth) has distinct keys.
+    /// A duplicate key inside a nested map collapses to last-wins on reparse
+    /// (`map_entries_from_mapping`, same as the top level) — a different,
+    /// already-covered contract, not this property's.
+    fn keys_unique(v: &FmValue) -> bool {
+        match v {
+            FmValue::Map(entries) => {
+                let mut seen = std::collections::HashSet::new();
+                entries.iter().all(|(k, _)| seen.insert(k.clone()))
+                    && entries.iter().all(|(_, v)| keys_unique(v))
+            }
+            FmValue::List(items) => items.iter().all(keys_unique),
+            _ => true,
+        }
+    }
+
+    /// True unless `v` contains a `Str` with " #" (space then `#`) somewhere
+    /// that will render INSIDE a flow `[...]` run. KNOWN PARSER GAP: the
+    /// bracket-run token scan is not quote-aware for the whitespace-`#`
+    /// comment cutoff the way the top-level bare-scalar scan is — see
+    /// `hash_after_space_is_safe_quoted_at_top_level_but_not_yet_inside_a_flow_list`.
+    /// `in_flow` tracks whether the CURRENT value renders inside brackets:
+    /// true for every item of a flow (non-block) `List`; false for a
+    /// top-level value, a `Map` entry's value, or a block-sequence item —
+    /// each of those starts its own rendering context, which is flow again
+    /// only if it is itself a flow `List`.
+    fn flow_avoids_hash_bug(v: &FmValue, in_flow: bool) -> bool {
+        match v {
+            FmValue::Str(s) => !in_flow || !s.contains(" #"),
+            FmValue::List(items) => {
+                let is_block = items.iter().any(|item| matches!(item, FmValue::Map(_)));
+                items
+                    .iter()
+                    .all(|item| flow_avoids_hash_bug(item, !is_block))
+            }
+            FmValue::Map(entries) => entries.iter().all(|(_, v)| flow_avoids_hash_bug(v, false)),
+            _ => true,
+        }
+    }
+
+    /// True when `v` is a shape the current writer+parser combo round-trips.
+    /// A `Map` may sit under a key (any depth, via `render_entry`'s
+    /// recursion) or as a DIRECT `List` item (a block sequence of maps,
+    /// mixed with non-`Map` items freely). What is NOT representable: a
+    /// `Map` nested inside a `List` that is itself a `List` item — e.g.
+    /// list-of-list-of-map — because the parser has no block form for a
+    /// bare `-` opening a nested sequence (see `render_entry`'s comment).
+    fn representable_value(v: &FmValue) -> bool {
+        match v {
+            FmValue::Map(entries) => entries.iter().all(|(_, v)| representable_value(v)),
+            FmValue::List(items) => items.iter().all(|item| match item {
+                FmValue::Map(entries) => entries.iter().all(|(_, v)| representable_value(v)),
+                // A non-Map list item renders as a flow value (even under a
+                // block-sequence key, per `render_block_sequence_item`'s
+                // fallback arm), so it must not carry a `Map` anywhere.
+                other => !value_contains_map(other) && representable_value(other),
+            }),
+            _ => true,
+        }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(1024))]
 
-        /// THE writer contract: parse_value(render_value(v)) == v, for every value.
+        /// THE writer contract for standalone values: parse_value(render_value(v)) == v.
+        /// `Map` is excluded here — a nested map only has a representable
+        /// rendering under a carrying key (a block form), never as a single
+        /// value string; its round-trip is covered by
+        /// `rendered_frontmatter_entries_reparse` below instead.
         #[test]
-        fn rendered_value_reparses_identically(v in fm_value_strategy()) {
+        fn rendered_value_reparses_identically(
+            v in fm_value_strategy()
+                .prop_filter(
+                    "Map (at any depth) is only representable under a key; see rendered_frontmatter_entries_reparse",
+                    |v| !value_contains_map(v),
+                )
+                .prop_filter(
+                    "known parser gap: a quoted flow-list item containing ' #' truncates (see flow_avoids_hash_bug)",
+                    |v| flow_avoids_hash_bug(v, false),
+                )
+        ) {
             let rendered = render_value(&v);
             prop_assert_eq!(parse_value(&rendered), v.clone(), "rendered as {:?}", rendered);
         }
 
-        /// Entry-level contract: a whole rendered frontmatter reparses line by line.
+        /// Entry-level contract: a whole rendered frontmatter reparses, through
+        /// the real document tree (block mappings/sequences are multi-line
+        /// forms a per-line split cannot recover), back to the same entries.
         #[test]
         fn rendered_frontmatter_entries_reparse(
             entries in prop::collection::vec(("[a-z][a-z0-9_]{0,8}", fm_value_strategy()), 0..5)
+                // Duplicate top-level keys collapse to last-wins on reparse
+                // (by design — see `map_entries_from_mapping`), which is a
+                // different, already-covered contract; keep this property to
+                // documents with distinct keys.
+                .prop_filter("keys must be unique for this property", |entries| {
+                    let mut seen = std::collections::HashSet::new();
+                    entries.iter().all(|(k, _)| seen.insert(k.clone()))
+                })
+                .prop_filter(
+                    "list-of-list-of-map has no writer block form yet (see representable_value)",
+                    |entries| entries.iter().all(|(_, v)| representable_value(v)),
+                )
+                .prop_filter("nested map keys must be unique too", |entries| {
+                    entries.iter().all(|(_, v)| keys_unique(v))
+                })
+                .prop_filter(
+                    "known parser gap: a quoted flow-list item containing ' #' truncates (see flow_avoids_hash_bug)",
+                    |entries| entries.iter().all(|(_, v)| flow_avoids_hash_bug(v, false)),
+                )
         ) {
             let fm = Frontmatter { entries: entries.clone() };
             let rendered = render_frontmatter(&fm);
-            for (line, (key, value)) in rendered.lines().zip(&fm.entries) {
-                let value_text = line.strip_prefix(&format!("{key}: "))
-                    .or_else(|| line.strip_prefix(&format!("{key}:")))
-                    .unwrap_or("");
-                prop_assert_eq!(&parse_value(value_text), value, "line {:?}", line);
-            }
+            let source = format!("---\n{rendered}\n---\n");
+            let parsed = parse_frontmatter_for_test(&source);
+            prop_assert_eq!(parsed, fm, "rendered as {:?}", rendered);
         }
     }
 }
