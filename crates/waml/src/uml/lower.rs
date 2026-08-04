@@ -191,6 +191,47 @@ impl UmlLoweringState {
     }
 }
 
+impl crate::edit::InvalidationSink for UmlLoweringState {
+    fn absorb(&mut self, event: &crate::edit::Invalidation) -> Result<(), EditError> {
+        use crate::edit::Invalidation;
+        match event {
+            Invalidation::TextChanged(path) => self.invalidate_text(path),
+            Invalidation::Inserted { id, path } => match id {
+                Some(id) => self.inserted_concept(id.clone(), path.clone())?,
+                None => self.invalidate_text(path),
+            },
+            Invalidation::Removed { id, path } => {
+                if let Some(id) = id {
+                    self.removed_concept(id);
+                }
+                self.invalidate_text(path);
+            }
+            Invalidation::Renamed {
+                id_from,
+                id_to,
+                from,
+                to,
+            } => match (id_from, id_to) {
+                (Some(from_id), Some(to_id)) => {
+                    self.renamed_concept(from_id, to_id.clone(), to.clone())?;
+                }
+                (Some(from_id), None) => {
+                    self.removed_concept(from_id);
+                    self.invalidate_text(to);
+                }
+                (None, Some(to_id)) => {
+                    self.inserted_concept(to_id.clone(), to.clone())?;
+                }
+                (None, None) => {
+                    self.invalidate_text(from);
+                    self.invalidate_text(to);
+                }
+            },
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

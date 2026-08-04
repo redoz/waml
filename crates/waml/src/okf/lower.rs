@@ -74,7 +74,22 @@ impl OkfLoweringState {
         self.touched_shell.remove(&to);
         Ok(())
     }
+}
 
+impl crate::edit::InvalidationSink for OkfLoweringState {
+    fn absorb(&mut self, event: &crate::edit::Invalidation) -> Result<(), EditError> {
+        use crate::edit::Invalidation;
+        match event {
+            Invalidation::TextChanged(path) => self.invalidate_text(path),
+            Invalidation::Inserted { path, .. } => self.inserted(path.clone())?,
+            Invalidation::Removed { path, .. } => self.removed(path),
+            Invalidation::Renamed { from, to, .. } => self.renamed(from, to.clone())?,
+        }
+        Ok(())
+    }
+}
+
+impl OkfLoweringState {
     fn shell<'a>(
         &'a mut self,
         candidate: &SourceBundle,

@@ -1,3 +1,8 @@
+//! The `edit` module is the crate's public edit surface: [`Step`]/[`Batch`]/
+//! [`apply`] compose OKF and UML domain operations into one mixed
+//! transaction, propagating structural changes between the two domains
+//! through the [`Invalidation`]/[`InvalidationSink`] seam.
+
 use reversible::{DeltaBatch, SourceDelta};
 use std::sync::Arc;
 
@@ -6,7 +11,10 @@ use crate::{analysis::OkfAnalysis, host, uml};
 use std::fmt;
 use waml_syntax::{ChangeMap, DocumentRevision, FullReparseReason, SourceText, TextChange};
 
+mod batch;
 mod reversible;
+
+pub use batch::{apply, Batch, Invalidation, InvalidationSink, Step};
 
 pub type EditError = crate::ops::OpError;
 

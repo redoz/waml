@@ -7,7 +7,7 @@ fn uml_lowering_call_path_has_no_legacy_parser_or_serializer_authority() {
         ),
         ("uml/ops.rs", include_str!("../src/uml/ops.rs")),
         ("uml/rename.rs", include_str!("../src/uml/rename.rs")),
-        ("compat.rs", include_str!("../src/compat.rs")),
+        ("edit/batch.rs", include_str!("../src/edit/batch.rs")),
     ] {
         for prohibited in [
             concat!("parse_", "document"),
