@@ -102,9 +102,7 @@ fn classify_frontmatter(
         .find(|heading| heading.level <= 2 && heading.range.start().to_usize() >= open.end)
         .map(|heading| heading.range.start().to_usize())
         .unwrap_or(source.len());
-    let close = lines(source, open.end, boundary)
-        .map(|(start, end)| line_at(source, start, end))
-        .find(|line| is_fence_line(source, *line));
+    let close = frontmatter_close_fence_line(source, open.end, boundary);
     let recovered = close.is_none();
     let entries_end = close.map_or(boundary, |line| line.start);
     if recovered && !plausible_unclosed_frontmatter(source, open.end, entries_end) {
@@ -1282,11 +1280,11 @@ fn slice(text: &SourceText, start: usize, end: usize) -> Result<GreenText, Parse
 }
 
 #[derive(Clone, Copy)]
-struct Line {
-    start: usize,
-    significant_end: usize,
-    newline_start: usize,
-    end: usize,
+pub(crate) struct Line {
+    pub(crate) start: usize,
+    pub(crate) significant_end: usize,
+    pub(crate) newline_start: usize,
+    pub(crate) end: usize,
 }
 
 fn line_at(source: &str, start: usize, cap: usize) -> Line {
@@ -1333,6 +1331,80 @@ fn is_fence_line(source: &str, line: Line) -> bool {
         source[line.start..line.significant_end].trim(),
         "---" | "..."
     )
+}
+
+/// If `content` (the text at a value position, right after `key:`/`- `) opens
+/// a YAML block scalar, returns the length of the header run — the `|`/`>`
+/// indicator plus an optional chomping modifier (`+`/`-`) and an optional
+/// explicit indentation digit — not including any trailing whitespace or
+/// comment. Shared by the classifier's close-fence scan and the builder's
+/// value-position handling so they cannot drift.
+fn block_scalar_header_len(content: &str) -> Option<usize> {
+    let bytes = content.as_bytes();
+    match bytes.first() {
+        Some(b'|') | Some(b'>') => {}
+        _ => return None,
+    }
+    let mut at = 1;
+    if matches!(bytes.get(at), Some(b'+') | Some(b'-')) {
+        at += 1;
+    }
+    if bytes.get(at).is_some_and(u8::is_ascii_digit) {
+        at += 1;
+    }
+    match bytes.get(at) {
+        None | Some(b' ') | Some(b'\t') | Some(b'#') => Some(at),
+        _ => None,
+    }
+}
+
+/// A cheap line-shape scan (no tree needed): does a value position hold a
+/// block scalar header?
+fn line_opens_block_scalar(content: &str) -> bool {
+    block_scalar_header_len(content).is_some()
+}
+
+/// The block-scalar-aware close-fence search, shared by `classify_frontmatter`
+/// and `incremental.rs`'s `frontmatter_fences` so an edit inside a literal
+/// block cannot compare fences that were found by two different scans. A
+/// `---`/`...` line more indented than the parent of an open block scalar is
+/// content, never a fence.
+pub(crate) fn frontmatter_close_fence_line(
+    source: &str,
+    open_end: usize,
+    boundary: usize,
+) -> Option<Line> {
+    let mut skip_deeper_than: Option<usize> = None;
+    for (start, end) in lines(source, open_end, boundary) {
+        let line = line_at(source, start, end);
+        let blank = line.start == line.significant_end;
+        let (indent, indent_end, _has_tab) =
+            leading_indent(source, line.start, line.significant_end);
+        if let Some(skip_indent) = skip_deeper_than {
+            if blank || indent > skip_indent {
+                continue;
+            }
+            skip_deeper_than = None;
+        }
+        if blank {
+            continue;
+        }
+        if is_fence_line(source, line) {
+            return Some(line);
+        }
+        if let Some(key) = parse_mapping_key(source, indent_end, line.significant_end) {
+            let value_start = skip_horizontal(source, key.colon + 1, line.significant_end);
+            if line_opens_block_scalar(&source[value_start..line.significant_end]) {
+                skip_deeper_than = Some(indent);
+            }
+        } else if is_dash_at(source, indent_end, line.significant_end) {
+            let after_dash = skip_horizontal(source, indent_end + 1, line.significant_end);
+            if line_opens_block_scalar(&source[after_dash..line.significant_end]) {
+                skip_deeper_than = Some(indent);
+            }
+        }
+    }
+    None
 }
 fn skip_horizontal(source: &str, mut at: usize, end: usize) -> usize {
     while at < end && matches!(source.as_bytes()[at], b' ' | b'\t') {

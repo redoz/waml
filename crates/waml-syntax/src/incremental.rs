@@ -1305,19 +1305,17 @@ fn frontmatter_fences(
     if source[start..open_end].trim() != "---" {
         return None;
     }
-    let significant_end = source[..end].trim_end_matches(['\r', '\n']).len();
-    let close_start = source[..significant_end]
-        .rfind('\n')
-        .map_or(start, |at| at + 1);
-    let close = matches!(source[close_start..end].trim(), "---" | "...")
-        .then(|| {
+    // The same scan the classifier uses to find the close fence: a `---`
+    // more indented than an open block scalar's parent is content, never a
+    // fence, so this side must not compare against a mismatched line.
+    let close =
+        crate::shell::frontmatter_close_fence_line(source, open_end, end).and_then(|close_line| {
             TextRange::new(
-                TextSize::try_from_usize(close_start).ok()?,
+                TextSize::try_from_usize(close_line.start).ok()?,
                 frontmatter.end(),
             )
             .ok()
-        })
-        .flatten();
+        });
     Some((open, close))
 }
 fn same_ranges(old: &[TextRange], new: &[TextRange], map: &ChangeMap) -> bool {

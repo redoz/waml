@@ -53,6 +53,13 @@ pub(crate) fn frontmatter_range(
 ) -> Result<Option<TextRange>, ParseError> {
     crate::markdown::parser::frontmatter_range(text, structure)
 }
+pub(crate) fn frontmatter_close_fence_line(
+    source: &str,
+    open_end: usize,
+    boundary: usize,
+) -> Option<crate::markdown::parser::Line> {
+    crate::markdown::parser::frontmatter_close_fence_line(source, open_end, boundary)
+}
 pub(crate) fn parse_window(
     text: &SourceText,
     structure: &crate::markdown::ShellStructure,
