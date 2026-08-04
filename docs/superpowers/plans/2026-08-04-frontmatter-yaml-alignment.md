@@ -39,16 +39,22 @@ Standalone fix the user wants available separately; depends on nothing else in t
 
 - [ ] **Step 1: Write two failing tests**
 
-In the presentation test module (grep for where `block_kind` / compiled blocks are asserted; follow that harness style — compile a document and inspect blocks):
+There is NO test module inside `compile.rs`. Presentation tests are integration
+tests: `crates/waml-markdown-editor/tests/presentation_constructs.rs` and
+`presentation_layout.rs`. Add these there, following the local harness — each
+file has its own small helper that parses a source string and calls
+`compile_presentation(&snapshot, &styles, &HighlighterRegistry::default())`.
+Read the neighbouring helper and reuse it verbatim; the shapes below are
+illustrative, not literal API.
 
 ```rust
 #[test]
 fn frontmatter_compiles_to_its_own_code_block() {
     // Use the same compile-a-document helper the neighbouring tests use.
     let source = "---\ntype: uml.Class\n---\n\nBody paragraph.\n";
-    let compiled = compile_test_document(source); // existing helper in this module
+    let plan = /* local helper: compile_presentation(...) */ compile(source);
     assert!(
-        compiled.blocks.iter().any(|b| b.kind == PresentationBlockKind::Code
+        plan.blocks.iter().any(|b| b.kind == PresentationBlockKind::Code
             /* and the block's range covers the frontmatter region 0..len("---\ntype: uml.Class\n---\n") */),
         "frontmatter must be its own Code block, not folded into the root paragraph"
     );
@@ -135,6 +141,28 @@ fn fm_value_strategy() -> impl Strategy<Value = FmValue> {
     ];
     leaf.prop_recursive(4, 48, 8, |inner| {
         prop::collection::vec(inner, 0..6).prop_map(FmValue::List)
+            // MANDATORY EXCLUSIONS — see the note below. Today's flow-list
+            // parser splits on EVERY comma, quote- and nesting-blind, and the
+            // writer never quotes list items. These shapes CANNOT round-trip
+            // against current code. Task 8 makes flow parsing quote-aware and
+            // nesting-aware and DELETES this filter as its first act.
+            .prop_filter("Task 8 removes: flow list items cannot carry , [ ] \" \\ or be empty/nested", |list| {
+                !list.iter().any(|item| match item {
+                    FmValue::Str(s) => {
+                        s.is_empty()
+                            || s.contains(',')
+                            || s.contains('[')
+                            || s.contains(']')
+                            || s.contains('"')
+                            || s.contains('\\')
+                    }
+                    // A nested list re-parses through the same comma splitter,
+                    // so any multi-item inner list flattens. Single-item and
+                    // empty inner lists survive.
+                    FmValue::List(inner) => inner.len() > 1,
+                    _ => false,
+                })
+            })
     })
 }
 
@@ -165,7 +193,31 @@ proptest! {
 }
 ```
 
-NOTE: never commit a `proptest-regressions` file (repo rule). If the strategy finds a real pre-existing round-trip bug in current code (possible — e.g. a `Str` whose rendered bare form re-parses differently), do NOT silently narrow the strategy: minimize the case, and either fix it in this task if it is a one-line `scalar_needs_quote` gap (e.g. adding a missing character to the quote predicate), or record it as an explicit `#[ignore]`d named regression test with a comment pointing at Task 8, and constrain the strategy with a comment naming the exclusion. Prefer the fix.
+NOTE: never commit a `proptest-regressions` file (repo rule).
+
+**Why the exclusions above are mandatory, not a smell.** This task's job is to
+install the tripwire BEFORE the writer changes, so it must be green against
+CURRENT code. Current code has round-trip holes that are already documented in
+the source: `parse_value_at` (`frontmatter.rs:246`) splits flow lists on every
+comma with no quote or nesting awareness and filters empty items, and
+`scalar_needs_quote` (`frontmatter.rs:316`) never quotes list items — its own
+doc comment states a comma-bearing list item is unrepresentable. Those are
+pre-existing defects that **Task 8 fixes**; they are not this task's to chase,
+and an unfiltered strategy fails on all of them within a few dozen cases.
+
+So: the filter is the honest statement of what today's writer guarantees. Each
+excluded shape must carry a comment naming Task 8. Task 8 Step 1 deletes the
+`prop_filter` and the tests must then pass — that deletion is Task 8's red-to-green
+proof.
+
+If the strategy finds a round-trip failure OUTSIDE these excluded shapes, that
+is a genuine unknown bug: minimize it, and either fix it here if it is a
+one-line `scalar_needs_quote` gap, or record it as an `#[ignore]`d named
+regression test pointing at Task 8. Do NOT widen the filter to hide it.
+
+Also exclude `-0.0` from the `Num` strategy (`.prop_map(|n| if n == 0.0 { 0.0 } else { n })`):
+`FmValue`'s `PartialEq` compares via `total_cmp` (`frontmatter.rs:28`), which
+distinguishes `-0.0` from `0.0`, while the renderer emits `0` for both.
 
 - [ ] **Step 2: Run it**
 
@@ -253,19 +305,11 @@ Run: `cargo test -p waml-syntax scalar` — Expected: compile error, module miss
 
 - [ ] **Step 3: Implement**
 
+**No `regex`.** `waml-syntax`'s only dependency today is `pulldown-cmark`, and
+this classifier does not justify widening it. Hand-rolled character scans; the
+table test is the contract, so a scan that passes it is correct by construction.
+
 ```rust
-use regex::Regex;
-use std::sync::LazyLock;
-
-static INT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[-+]?[0-9]+$").unwrap());
-static HEX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^0x[0-9a-fA-F]+$").unwrap());
-static OCT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^0o[0-7]+$").unwrap());
-static FLOAT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$").unwrap());
-
 pub fn classify_bare_scalar(s: &str) -> FrontmatterScalarKind {
     use FrontmatterScalarKind::*;
     match s {
@@ -274,17 +318,61 @@ pub fn classify_bare_scalar(s: &str) -> FrontmatterScalarKind {
         ".inf" | "-.inf" | "+.inf" | ".nan" => return Number,
         _ => {}
     }
-    if INT_RE.is_match(s) || HEX_RE.is_match(s) || OCT_RE.is_match(s) || FLOAT_RE.is_match(s) {
-        // FLOAT_RE admits a bare exponent-less int too; that is fine, both are Number.
-        // Guard the degenerate forms the regex union would admit: "." and "e"-only
-        // are excluded by the regexes themselves (\.[0-9]+ needs a digit).
+    if is_int(s) || is_hex(s) || is_oct(s) || is_float(s) {
         return Number;
     }
     Str
 }
-```
 
-Check: `waml-syntax/Cargo.toml` must have `regex` as a dependency — grep for it; if absent, add `regex.workspace = true` (it is already a workspace dep via `waml`). If the crate deliberately avoids `regex`, implement the four matchers as hand-rolled `fn is_int(s)/is_hex(s)/is_oct(s)/is_float(s)` character scans instead — behaviour per the table is what is pinned, not the mechanism.
+/// `[-+]?[0-9]+`
+fn is_int(s: &str) -> bool {
+    let digits = s.strip_prefix(['-', '+']).unwrap_or(s);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `0x[0-9a-fA-F]+` — no sign, per the 1.2 core schema.
+fn is_hex(s: &str) -> bool {
+    s.strip_prefix("0x")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// `0o[0-7]+`
+fn is_oct(s: &str) -> bool {
+    s.strip_prefix("0o")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| (b'0'..=b'7').contains(&b)))
+}
+
+/// `[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?`
+///
+/// Rejects the degenerate forms a careless scan admits: bare `.`, bare `e`,
+/// `1e` with no exponent digits, and an empty mantissa.
+fn is_float(s: &str) -> bool {
+    let body = s.strip_prefix(['-', '+']).unwrap_or(s);
+    let (mantissa, exponent) = match body.split_once(['e', 'E']) {
+        Some((m, e)) => {
+            let digits = e.strip_prefix(['-', '+']).unwrap_or(e);
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return false;
+            }
+            (m, true)
+        }
+        None => (body, false),
+    };
+    let _ = exponent;
+    match mantissa.split_once('.') {
+        // ".5" — fraction required
+        Some(("", frac)) => !frac.is_empty() && frac.bytes().all(|b| b.is_ascii_digit()),
+        // "1." / "1.5" — fraction optional
+        Some((int, frac)) => {
+            !int.is_empty()
+                && int.bytes().all(|b| b.is_ascii_digit())
+                && frac.bytes().all(|b| b.is_ascii_digit())
+        }
+        // "1e3" — only valid without a dot when an exponent was present
+        None => !mantissa.is_empty() && mantissa.bytes().all(|b| b.is_ascii_digit()),
+    }
+}
+```
 
 - [ ] **Step 4: Run test + gate**
 
@@ -396,6 +484,24 @@ c: still parsed
 
 Then register all six in the `FIXTURES` array in `parser_tests.rs` via the `fixture!("...")` macro, with EMPTY `.golden` files for now.
 
+**CRITICAL — registering a fixture without a shape arm PANICS the harness
+before any golden can be dumped.** `shell_fixtures_are_exact_bounded_progressing_and_golden`
+(`parser_tests.rs:216`) calls `assert_fixture_shape(fixture.name, …)` at line
+222 — INSIDE the loop, BEFORE the `WAML_DUMP_SHELL_GOLDENS` dump block at line
+225. `assert_fixture_shape` ends in `_ => unreachable!("fixture table is exhaustive")`
+(`parser_tests.rs:324`). So a new fixture name with no `match` arm panics on the
+FIRST new fixture, the dump loop never runs, and the bless flow this step depends
+on produces nothing.
+
+Therefore, in this SAME step, add a `match` arm to `assert_fixture_shape` for
+each of the six new fixture names, asserting the diagnostic codes that fixture
+should produce (empty for the clean ones; `MalformedFrontmatterEntry` /
+`FrontmatterNotClean` / the new codes for the malformed ones). Follow the shape
+of the existing arms — e.g. `"clean_lf" | "missing_type" | "unknown_type" => { assert!(codes.is_empty(), …) }`.
+Only then run the bless flow.
+
+The same requirement applies to every fixture Task 5 registers.
+
 Add a focused unit test in `parser.rs`'s test module (beside `frontmatter_classifier_drives_full_and_window_consumption`) asserting the tree shape for the nested-map fixture: parse `"---\na:\n  b: 1\n---\n"`, walk to `Frontmatter` → child `FrontmatterMapping` → entry `a` whose value child is a `FrontmatterMapping` containing entry `b` with `FrontmatterValue` text `1`. Assert `render_to_string` of the root equals the source byte-for-byte.
 
 - [ ] **Step 2: Run to verify failures**
@@ -461,7 +567,7 @@ Also update `plausible_unclosed_frontmatter` (parser.rs ~line 333): a line that 
 
 - [ ] **Step 5: Bless goldens and make everything green**
 
-Run: `WAML_DUMP_SHELL_GOLDENS='' cargo test -p waml-syntax shell_fixtures 2>&1` (env var dumps actuals per the harness), READ each dumped golden and verify by hand it matches the shape contract above (nested nodes, comments as tokens, BadTokens exactly where intended), then write the six `.golden` files. Existing goldens for old fixtures (`malformed_clean`, `broken-frontmatter`, `clean_lf`, …) will change where the tree shape changed — re-bless ONLY after reading each diff and confirming it is the intended reshaping (entry list → mapping node) and not a lost byte. `git diff` the goldens in the commit body if any surprises.
+Run: `WAML_DUMP_SHELL_GOLDENS='' cargo test -p waml-syntax shell_fixtures 2>&1` (env var dumps actuals per the harness), READ each dumped golden and verify by hand it matches the shape contract above (nested nodes, comments as tokens, BadTokens exactly where intended), then write the six `.golden` files. Existing goldens for old fixtures (`malformed_clean`, `clean_lf`, `missing_type`, `unknown_type`, `unclosed_h2`, the `*_eof_spaces` pair — note there is NO `broken-frontmatter` shell fixture; that name is a fuzz seed under `fuzz/seeds/parse_write/`) will change where the tree shape changed — re-bless ONLY after reading each diff and confirming it is the intended reshaping (entry list → mapping node) and not a lost byte. `git diff` the goldens in the commit body if any surprises.
 
 `cargo test --workspace` — fix fallout: `crates/waml/src/frontmatter.rs::parse_closed_syntax` reads `FrontmatterEntry` as direct children of `Frontmatter`; make it also descend through one `FrontmatterMapping` level (top-level entries only for now — full nested reading is Task 7):
 
@@ -544,7 +650,7 @@ next: after-blank
 ---
 ```
 
-Unit test for the incremental side, in `incremental.rs`'s test module (or `low_level_tests.rs`, wherever `same_frontmatter_fences` is exercised — grep first): an edit inside the literal block of `fm_fence_inside_block_scalar`-shaped source must NOT be classified as `FrontmatterBoundaryChanged` due to fence mismatch, and must not produce a tree different from a full parse (the existing full-vs-incremental harness in `tests/properties.rs`/`markdown_incremental.rs` style).
+Unit test for the incremental side. `same_frontmatter_fences` is exercised only from inside `crates/waml-syntax/src/incremental.rs` — its sibling test module is `crates/waml-syntax/src/incremental/low_level_tests.rs` (a module of `incremental.rs`, NOT a `tests/` file); put it there alongside the existing `FullReparseReason::FrontmatterBoundaryChanged` cases: an edit inside the literal block of `fm_fence_inside_block_scalar`-shaped source must NOT be classified as `FrontmatterBoundaryChanged` due to fence mismatch, and must not produce a tree different from a full parse (the existing full-vs-incremental harness in `tests/properties.rs`/`markdown_incremental.rs` style).
 
 - [ ] **Step 2: Run to verify failures**
 
@@ -772,12 +878,39 @@ Run: `cargo test -p waml frontmatter` — Expected: FAIL/compile errors (`Null`,
 1. Add `Null` and `Map` variants; extend `PartialEq` (Null == Null; Map compares entry vectors). Extend the serde `Serialize` derive coverage: `Null` serializes as unit (`serializer.serialize_unit()` — with `untagged`-style derive on `Serialize` this needs `Map` to serialize as a map preserving order: add a manual `Serialize` arm or a small newtype mirroring the `Frontmatter` impl at line 52). Extend the seed visitor with `visit_unit`, `visit_none`, and `visit_map` (depth-capped, `next_entry_seed` with `FmValueSeed { depth: depth + 1 }` for values).
 2. `parse_value`: bare path routes through `waml_syntax::classify_bare_scalar`; delete the local `NUM_RE`-based bool/num logic (keep `NUM_RE` only if the writer still needs it until Task 8 — prefer moving all numeric checks to the classifier now and deleting `NUM_RE`). Number conversion: `0x`/`0o` via `i64::from_str_radix(&s[2..], 16|8)` (on overflow → `Str`, never panic), `.inf`/`.nan` mapped explicitly, else `f64::parse` (failure → `Str`). Flow `[…]`: replace the naive `split(',')` with a quote-aware, bracket-depth-aware splitter (single fn `split_flow_items(&str) -> Vec<&str>` walking chars, tracking `in_single`/`in_double`/`depth`); items are `parse_value_at(item.trim(), depth+1)`; keep the `MAX_VALUE_DEPTH` cap and the existing empty-item filter EXCEPT that a genuinely empty flow `[]` is `List(vec![])`. Single-quoted: strip quotes, `''` → `'`, always `Str`. Double-quoted: `decode_quoted_string` gains `\t`, `\0`, `\uXXXX` (invalid `\u` sequence: keep verbatim, matching the existing unknown-escape behaviour; the `InvalidEscapeSequence` DIAGNOSTIC is emitted by the parser side — add the `InvalidEscapeSequence` variant to `OkfSyntaxDiagnosticCode` in `kind.rs` now and emit it in the builder where a `FrontmatterQuotedValueToken`'s content contains an unknown or malformed escape; one small parser test for it).
 3. `parse_closed_syntax`: full recursive walk. `fn value_of_entry(entry: &SyntaxNode<...>) -> Option<FmValue>`: nested `FrontmatterMapping` child → `Map` (recurse entries, skip incomplete ones — existing behaviour, duplicate keys: last wins at each level); `FrontmatterSequence` child → `List` (each `FrontmatterSequenceItem`'s value the same way); `FrontmatterBlockScalarHeaderToken` present → assemble from the entry's `FrontmatterValue` content tokens: strip the detected indent (indent of first non-blank content line, or the explicit digit + parent indent), `|` joins with `\n`, `>` folds single newlines to spaces keeping blank lines as `\n`, chomping: default clip = single trailing `\n`, `-` strips all, `+` keeps all → `Str`; `FrontmatterQuotedValueToken` → decoded `Str`; missing/absent value token → `Null`; bare `FrontmatterValue` → `parse_value`. Depth-cap the recursion with `MAX_VALUE_DEPTH` (hostile deep nesting in the tree must not overflow — return `None` for the entry past the cap). No unwraps.
-4. Extend the Task 2 strategy's leaf set with `Just(FmValue::Null)` — the round-trip proptest MUST now fail if the writer doesn't handle `Null`… but the writer changes are Task 8. To keep this task green: add `Null`/`Map` rendering as the MINIMAL correct forms in `render_value_at` right here (Null → empty string in entry position is Task 8's business; for now render `Null` as `null`?). STOP — do not half-implement the writer here. Instead: do NOT touch the strategy in this task; `render_value_at` gets exhaustive-match arms that keep compiling (`FmValue::Null => "null".to_string()` and `FmValue::Map(_) => unreachable-by-strategy` is a placeholder that would violate the no-panic rule). Correct resolution: give `render_value_at` real, simple arms now — `Null => "null".to_string()`, `Map(entries) => temporary flow-less fallback rendering as a quoted-empty is WRONG`. The honest minimal arm that satisfies "no panic, no corruption": render `Map` via the SAME block renderer Task 8 specifies — which means the small `render_entry` function moves INTO this task if the compiler forces exhaustiveness. Decision: implement `render_value_at`'s two new arms as `Null => "null".into()` and `Map => render_map_flowless(entries)` where `render_map_flowless` produces the Task 8 block form (it is ~15 lines; see Task 8 Step 3 for the exact code) — Task 8 then owns `scalar_needs_quote`, sequence-of-maps, and the proptest extension. Update the Task 2 strategy for `Null` only (`Map` strategy arrives in Task 8 with the entry-level renderer test).
+4. **Keep this task green — the writer must not lag the reader.** Rerouting
+   `parse_value` through the 1.2 classifier changes what bare text means, so
+   `scalar_needs_quote` MUST move in the same commit or the round-trip breaks:
+   `Str("null")` would render bare and reparse as `Null`, and `Str(".inf")` as
+   `Num`. That is silent document corruption, and the Task 2 proptest correctly
+   goes red on it.
+
+   Therefore, in THIS task:
+
+   - **Move the classifier clause of `scalar_needs_quote` here.** Add
+     `classify_bare_scalar(s) != FrontmatterScalarKind::Str` as a quoting
+     condition, and delete the old `NUM_RE` / `"true"` / `"false"` conditions it
+     subsumes. Task 8 keeps the rest: the structural-first-character set, `: `
+     and ` #` containment, and `flow_item_needs_quote`.
+   - **Add the two `render_value_at` arms:** `Null => "null".to_string()`, and
+     `Map(entries) => render_map_block(entries, indent)` — the block-mapping
+     renderer specified in Task 8 Step 3. It is ~15 lines; write it here, and
+     Task 8 uses it as-is rather than rewriting it. No panic arm, no placeholder.
+   - **Extend the Task 2 strategy with `Just(FmValue::Null)` and a `Map` arm**
+     inside `prop_recursive` (same exclusion filter applies to map values).
+     Because `scalar_needs_quote` moved with the reader, this is green here.
+
+   Task 8 then owns exactly: the structural-character quoting rules, flow-item
+   quoting, sequence-of-maps fallback, and deleting Task 2's `prop_filter`.
 5. Scan in-repo fixtures and seeds for documents carrying a trailing `# comment` inside a frontmatter value (`grep -rn "#" --include="*.md" crates/*/tests/fixtures fuzz/seeds | grep -B0 ":"` then eyeball): the spec says comment stripping changing those values is the fix working — list any affected fixture in the commit body.
 
 - [ ] **Step 4: Gate and commit**
 
-Run: `cargo test --workspace` — Expected: PASS, including the Task 2 proptest with `Null` in the strategy.
+Run: `cargo test --workspace` — Expected: PASS, including the Task 2 proptest
+now carrying `Null` and `Map`. If `Str("null")`-shaped or `Str(".inf")`-shaped
+cases fail, the `scalar_needs_quote` classifier clause from Step 4 was not
+moved into this task — move it; do not defer it to Task 8 and do not narrow
+the strategy.
 
 ```bash
 git add crates/waml crates/waml-syntax
@@ -797,7 +930,20 @@ key wins. The wire form gains unit->Null and map->Map, depth-capped."
 
 ### Task 8: Writer — 1.2-core quoting, block mappings, flow sequences, proptest extended to Map/Null
 
-The proptest from Task 2 (already covering `Null`) is extended to `Map` FIRST, red, then the writer makes it green. This is the load-bearing task; nothing ships if `parse_value(render_value(v)) != v`.
+This is the load-bearing task; nothing ships if `parse_value(render_value(v)) != v`.
+
+**Starting point after Task 7** (do not re-do its work): `FmValue::{Map,Null}`
+exist, `scalar_needs_quote` already routes bare scalars through
+`classify_bare_scalar`, `render_value_at` already has `Null` and `Map` arms with
+the block-mapping renderer, and the Task 2 strategy already carries `Null` and
+`Map`. The workspace is GREEN entering this task.
+
+**What makes it red first:** Step 1 deletes the `prop_filter` that Task 2
+installed — the one excluding commas, brackets, quotes, backslashes, empties,
+and multi-item nested lists from flow-list items. Those exclusions named this
+task in their comment; removing them exposes the pre-existing flow-list holes,
+and the rest of this task closes them. That deletion IS this task's red-to-green
+proof.
 
 **Files:**
 - Modify: `crates/waml/src/frontmatter.rs` (`scalar_needs_quote`, `render_value_at`, `render_frontmatter`, new `render_entry`; tests)
@@ -806,15 +952,21 @@ The proptest from Task 2 (already covering `Null`) is extended to `Map` FIRST, r
 - Consumes: `classify_bare_scalar` (Task 3), `FmValue::{Map,Null}` (Task 7).
 - Produces: `render_frontmatter(&Frontmatter) -> String` unchanged in signature; nested maps render as two-space-indented block mappings; sequences render flow `[a, b]` / `[]` EXCEPT a sequence containing any `Map` item, which renders as a block sequence; strings with newlines stay double-quoted `\n`-escaped (never `|`); block scalars are never emitted.
 
-- [ ] **Step 1: Extend the proptest strategy (failing)**
+- [ ] **Step 1: Delete the Task 2 exclusions (failing)**
 
-In `fm_value_strategy`'s `prop_recursive` closure add:
+FIRST, delete the `prop_filter` block Task 2 attached to the `List` arm of
+`fm_value_strategy` — the one whose comment names this task. Nothing else in
+the strategy needs the exclusions any more; the rest of this task is what makes
+their absence safe. Expect the proptest to go red on comma-bearing, bracketed,
+quoted, empty, and nested-list items. That red is the point.
+
+The `Map` arm was added in Task 7; it is already present in `prop_recursive`:
 
 ```rust
 prop::collection::vec(("[a-z][a-z0-9_]{0,8}", inner.clone()), 0..4).prop_map(FmValue::Map),
 ```
 
-And change the round-trip property to go through the ENTRY level for `Map` values (a nested map is only expressible as a block form under a key, not as a standalone value string): rework `rendered_frontmatter_entries_reparse` into the authoritative property — render the whole `Frontmatter`, then re-parse the rendered text through the full document path (wrap in `---\n…\n---\n`, parse with `waml_syntax`, `parse_closed_syntax`) and `prop_assert_eq!` the resulting `Frontmatter` equals the input. Keep the value-level `rendered_value_reparses_identically` property restricted to non-Map values (filter with `prop_filter` or a strategy without the Map arm). Also add named unit tests:
+Then change the round-trip property to go through the ENTRY level for `Map` values (a nested map is only expressible as a block form under a key, not as a standalone value string): rework `rendered_frontmatter_entries_reparse` into the authoritative property — render the whole `Frontmatter`, then re-parse the rendered text through the full document path (wrap in `---\n…\n---\n`, parse with `waml_syntax`, `parse_closed_syntax`) and `prop_assert_eq!` the resulting `Frontmatter` equals the input. Keep the value-level `rendered_value_reparses_identically` property restricted to non-Map values (filter with `prop_filter` or a strategy without the Map arm). Also add named unit tests:
 
 ```rust
 #[test]
@@ -869,7 +1021,12 @@ fn norway_no_longer_needs_quoting_but_new_structurals_do() {
 
 - [ ] **Step 2: Run to verify failures**
 
-Run: `cargo test -p waml frontmatter` — Expected: FAIL (old quote rules, `Map` flow-less fallback formatting mismatch, `null` bare string now reparses as Null → the proptest itself should be red for `Str("null")`-shaped strings if Task 7 left `scalar_needs_quote` untouched — that red is exactly the corruption this task fixes).
+Run: `cargo test -p waml frontmatter` — Expected: FAIL, and specifically on the
+shapes Step 1 just un-excluded: flow-list items containing `,` `[` `]` `"` `\`,
+empty items, and multi-item nested lists. `Str("null")`-shaped cases must NOT
+fail — Task 7 already moved the `scalar_needs_quote` classifier clause. If they
+do fail, Task 7 was implemented incorrectly; fix it there rather than patching
+around it here.
 
 - [ ] **Step 3: Implement**
 
