@@ -299,6 +299,69 @@ mod tests {
     use crate::edit::EditBatch;
 
     #[test]
+    fn malformed_legacy_directories_return_errors_instead_of_panicking() {
+        // Mirrors what the legacy bridge's `directory()` helper surfaced for a
+        // path-escaping directory: `okf::DirectoryAddress::parse` itself rejects it.
+        assert!(okf::DirectoryAddress::parse("/../escape").is_err());
+    }
+
+    #[test]
+    fn malformed_legacy_import_bundle_returns_error() {
+        // Mirrors the legacy bridge's `pkg.insert` mapping: a bundle with a
+        // duplicate path is rejected by `SourceBundle::try_from_pairs`.
+        let result = SourceBundle::try_from_pairs([
+            ("a.md".to_string(), "# A".to_string()),
+            ("a.md".to_string(), "# Duplicate".to_string()),
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn legacy_directory_rename_preserves_combined_move_and_rename() {
+        let source = SourceBundle::try_from_pairs([(
+            "domains/sales/order.md",
+            "---\ntype: uml.Class\n---\n# Order\n",
+        )])
+        .unwrap();
+        let batch = Batch::new(vec![Step::Okf(okf::Op::DirectoryMove {
+            directory: okf::DirectoryAddress::parse("/domains/sales").unwrap(),
+            to_parent: okf::DirectoryAddress::parse("/archive").unwrap(),
+            name: Some("commerce".into()),
+        })]);
+        let changed = crate::edit::apply(&source, &batch).unwrap();
+        assert!(changed
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "archive/commerce/order.md"));
+    }
+
+    #[test]
+    fn combined_rename_ignores_occupied_intermediate_destination() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "domains/sales/order.md",
+                "---\ntype: uml.Class\n---\n# Order\n",
+            ),
+            ("archive/sales/existing.md", "# Existing\n"),
+        ])
+        .unwrap();
+        let batch = Batch::new(vec![Step::Okf(okf::Op::DirectoryMove {
+            directory: okf::DirectoryAddress::parse("/domains/sales").unwrap(),
+            to_parent: okf::DirectoryAddress::parse("/archive").unwrap(),
+            name: Some("commerce".into()),
+        })]);
+        let changed = crate::edit::apply(&source, &batch).unwrap();
+        assert!(changed
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "archive/commerce/order.md"));
+        assert!(changed
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "archive/sales/existing.md"));
+    }
+
+    #[test]
     fn mixed_okf_uml_batch_round_trips_as_one_transaction() {
         let source = SourceBundle::try_from_pairs([(
             "sales/order.md",

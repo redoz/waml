@@ -1,5 +1,16 @@
 use waml::bundle_envelope::split_bundle;
-use waml::ops::{apply, Op};
+use waml::edit::{apply, Batch, EditError, Step};
+use waml::okf::{self, DirectoryAddress};
+use waml::source::SourceBundle;
+use waml::uml;
+
+type Pairs = Vec<(String, String)>;
+
+fn apply_pairs(bundle: &[(String, String)], steps: Vec<Step>) -> Result<Pairs, EditError> {
+    let source =
+        SourceBundle::try_from_pairs(bundle.iter().cloned()).expect("golden fixture is valid");
+    apply(&source, &Batch::new(steps)).map(|bundle| bundle.to_pairs())
+}
 
 fn base(path: &str) -> String {
     path.rsplit(['/', '\\'])
@@ -24,12 +35,12 @@ fn rename_on_orders_domain_fixture_rewrites_all_referrers() {
         "fixture defines order-line"
     );
 
-    let out = apply(
+    let out = apply_pairs(
         &bundle,
-        &[Op::NodeRename {
+        vec![Step::Uml(uml::Op::ClassifierRename {
             from: "order-line".into(),
             to: "line-item".into(),
-        }],
+        })],
     )
     .unwrap();
 
@@ -80,12 +91,12 @@ fn legacy_retitle_preserves_unknown_index_markdown_and_crlf() {
         ("sales/order.md".to_owned(), "# Order\r\n".to_owned()),
     ];
 
-    let out = apply(
+    let out = apply_pairs(
         &bundle,
-        &[Op::PkgRetitle {
-            path: "sales".into(),
+        vec![Step::Okf(okf::Op::IndexRetitle {
+            directory: DirectoryAddress::parse("/sales").unwrap(),
             title: "Sales Domain".into(),
-        }],
+        })],
     )
     .unwrap();
 
@@ -121,12 +132,12 @@ fn uml_rename_preserves_unknown_and_malformed_text_byte_for_byte() {
         ),
     ];
 
-    let out = apply(
+    let out = apply_pairs(
         &bundle,
-        &[Op::NodeRename {
+        vec![Step::Uml(uml::Op::ClassifierRename {
             from: "order-line".into(),
             to: "line-item".into(),
-        }],
+        })],
     )
     .unwrap();
     let order = &out.iter().find(|(path, _)| path == "order.md").unwrap().1;
