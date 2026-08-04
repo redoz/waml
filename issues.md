@@ -63,6 +63,45 @@ Measure performance before adding more incremental-parser complexity. Treat
 the remaining architectural cleanup as work that should make future features
 more fun, not as an emergency rewrite.
 
+## P1 — Incremental reparse can publish a tree that is not the published source
+
+Found 2026-08-04 while implementing the frontmatter YAML alignment plan. **Not
+caused by that change** — verified by replaying the seed at `dac9764c`, the
+commit before the plan's first commit (`9ce823f7`), where it fails identically.
+
+`randomized_full_and_incremental_snapshots_agree`
+(`crates/waml-syntax/tests/properties.rs`) fails for a specific 6-edit sequence
+with:
+
+```
+StructuralInvariant { reason: "Markdown snapshot tree does not own the published source" }
+```
+
+That is the incremental reparse publishing a snapshot whose tree text does not
+equal the source it claims to describe. Every consumer downstream — spans,
+diagnostics, the editor's coloring and hit-testing, the LSP — reads positions
+out of a tree that disagrees with the buffer.
+
+Reproduce (the seed file is deliberately NOT committed, per the repo rule
+against `proptest-regressions`; recreate it to replay):
+
+```
+crates/waml-syntax/tests/properties.proptest-regressions
+cc d993b095ce3216268e454865b33514e3954a283aee22dc6bb0fe74b2c24d4d81 # shrinks to edits = [(51, 139, 32), (94, 46, 1), (139, 60, 1), (153, 144, 33), (73, 35, 60), (19, 13, 0)]
+```
+
+Frequency: 100% with that seed, and 0 failures across 3 × 512 fresh cases
+without it — so a normal gate run is green and this will not block CI. It is
+rare, not absent; the shrunk case is six edits, so the trigger is a specific
+accumulation of reparse windows rather than any single edit.
+
+Note this is a *different* property from
+`frontmatter_interior_edits_full_and_incremental_agree`, which passes.
+
+Prior art: [[waml-syntax-incremental-proptest-bug]] was the same class of
+defect (reparse windows swallowing trailing EOF whitespace, fixed in
+`10f66dc9`) — worth reading before diagnosing this one.
+
 ## P1 — Shell and frontmatter diagnostics disappear at public boundaries
 
 Evidence:
