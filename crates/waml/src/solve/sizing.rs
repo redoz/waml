@@ -83,6 +83,16 @@ pub fn line_height(font_size: f64, font: Font) -> f64 {
     ascent(font_size, font) + descent(font_size, font)
 }
 
+// SYNC GUARD (review finding M-9): the constants below hard-code numerics of
+// the makepad fork's text layouter and of `waml-editor`'s `mod.fonts` chrome
+// roles. This crate is headless and must not depend on makepad, so there is no
+// compile-time or test-time parity check — if either source changes, sized
+// boxes silently drift from drawn glyphs. When touching text metrics, re-check:
+//   - PT_TO_LPX      against makepad's LPXS_PER_INCH / PTS_PER_INCH
+//   - CHROME_*_EM    against the FontMember asc/desc fudges in mod.fonts
+//   - CHROME_LINE_SPACING against the chrome roles' line_spacing
+// and `drawn_metrics` against makepad_draw's layouter formula.
+
 /// The em fudges every behavior-canvas chrome text role carries
 /// (`FontMember{asc: -0.1 desc: 0.0}` in `waml-editor`'s `mod.fonts`). makepad
 /// ADDS these to the face's own ascender/descender in ems before scaling, so a
