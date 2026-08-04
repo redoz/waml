@@ -765,6 +765,24 @@ mod tests {
     }
 
     #[test]
+    fn authored_index_dedupes_duplicates_and_drops_stale_members() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root\n\n* [Real](./real.md)\n* [Real again](./real.md)\n* [Ghost](./ghost.md)\n",
+            ),
+            ("real.md", "# Real\n"),
+        ])
+        .unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+        let index = bundle.index("/").unwrap();
+
+        // "real" listed twice authored-side collapses to one entry; "ghost" has no
+        // backing concept (not in default_order) so it is dropped, not fabricated.
+        assert_eq!(index.members, ["real"]);
+    }
+
+    #[test]
     fn title_falls_back_to_first_h1_when_frontmatter_title_absent() {
         // No `title:` frontmatter → concept.title resolves to the H1 text.
         let c = project(

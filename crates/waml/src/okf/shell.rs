@@ -277,14 +277,17 @@ fn project(documents: Vec<ShellDocument<'_>>) -> Result<Bundle, BundleError> {
         let default_order = default_member_order(directory, &concepts);
         match authored_indexes.remove(&directory.address) {
             Some(mut authored) => {
+                let default_set: BTreeSet<&str> =
+                    default_order.iter().map(String::as_str).collect();
+                let mut seen: BTreeSet<String> = BTreeSet::new();
                 let mut members = Vec::new();
                 for member in authored.authored_order {
-                    if default_order.contains(&member) && !members.contains(&member) {
+                    if default_set.contains(member.as_str()) && seen.insert(member.clone()) {
                         members.push(member);
                     }
                 }
                 for member in default_order {
-                    if !members.contains(&member) {
+                    if seen.insert(member.clone()) {
                         members.push(member);
                     }
                 }
@@ -554,10 +557,10 @@ fn default_member_order(directory: &Directory, concepts: &[Concept]) -> Vec<Stri
         members.push((label.to_lowercase(), child.to_string()));
     }
     for id in &directory.concepts {
-        let concept = concepts
-            .iter()
-            .find(|concept| concept.id == *id)
+        let index = concepts
+            .binary_search_by(|concept| concept.id.as_str().cmp(id.as_str()))
             .expect("directory concept exists");
+        let concept = &concepts[index];
         let label = concept
             .title
             .as_deref()
