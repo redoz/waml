@@ -5,6 +5,10 @@
 
 use std::path::PathBuf;
 
+// Consumed by Tasks 4-6 (apply_ops/apply_documents confinement, routes).
+#[allow(dead_code)]
+pub mod paths;
+
 /// Everything `run` needs, decoupled from clap so tests can build one.
 ///
 /// `bind_all`/`api_only`/`no_open` are wired up by later tasks; `#[allow]`
