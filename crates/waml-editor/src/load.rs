@@ -1,6 +1,7 @@
 //! Load an OKF directory into its source-authoritative bundle.
 
 use std::path::Path;
+use waml::host::ingest::{ingest_markdown, IngestOptions};
 use waml::source::{SourceBundle, SourceError};
 
 #[derive(Debug)]
@@ -34,15 +35,6 @@ impl From<SourceError> for LoadError {
 
 /// Walk `dir` recursively, returning `(rel_path, contents)` for every `*.md`
 /// file, sorted by path. Paths use forward slashes so keys match bundle IDs.
-/// Dot-directories are skipped -- see [`collect`].
-pub fn read_bundle(dir: &Path) -> Result<SourceBundle, LoadError> {
-    let mut out = Vec::new();
-    collect(dir, dir, &mut out)?;
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(SourceBundle::try_from_pairs(out)?)
-}
-
-/// Recursive half of [`read_bundle`].
 ///
 /// Dot-directories are not descended into. A project loader's job is to read the
 /// model the user authored; a directory whose name starts with `.` is by
@@ -50,28 +42,30 @@ pub fn read_bundle(dir: &Path) -> Result<SourceBundle, LoadError> {
 /// model source. Markdown found there (a VCS template, a tool's own readme) is
 /// not a concept the user wrote, so pulling it into the bundle would invent
 /// documents and fail analysis on text nobody meant as a model.
-fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            let hidden = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with('.'));
-            if hidden {
-                continue;
-            }
-            collect(root, &path, out)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+///
+/// Delegates to the shared hardened walker (`waml::host::ingest`); the first
+/// `IngestError` fails the load, matching the previous fail-fast behavior.
+pub fn read_bundle(dir: &Path) -> Result<SourceBundle, LoadError> {
+    let ingested = ingest_markdown(
+        std::slice::from_ref(&dir.to_path_buf()),
+        &IngestOptions::default(),
+    );
+    if let Some(error) = ingested.errors.into_iter().next() {
+        return Err(LoadError::Io(std::io::Error::other(error.to_string())));
+    }
+    let out: Vec<(String, String)> = ingested
+        .files
+        .into_iter()
+        .map(|(path, text)| {
             let rel = path
-                .strip_prefix(root)
+                .strip_prefix(dir)
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            out.push((rel, std::fs::read_to_string(&path)?));
-        }
-    }
-    Ok(())
+            (rel, text)
+        })
+        .collect();
+    Ok(SourceBundle::try_from_pairs(out)?)
 }
 
 /// Load and analyze an OKF directory for tests that exercise projection-only
