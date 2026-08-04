@@ -703,8 +703,26 @@ fn finalize_pending_with_null(
     Ok(())
 }
 
+/// The outcome of pushing one mapping entry / sequence item: whether it
+/// needed recovery, and — when it opened a block scalar and consumed extra
+/// lines directly off the shared iterator — the new consumed-end offset the
+/// caller's loop must adopt in place of the single line it saw.
+struct EntryOutcome {
+    malformed: bool,
+    consumed_end: Option<usize>,
+}
+
+impl EntryOutcome {
+    fn clean(malformed: bool) -> Self {
+        Self {
+            malformed,
+            consumed_end: None,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-fn push_mapping_entry(
+fn push_mapping_entry<I: Iterator<Item = (usize, usize)>>(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
     source: &str,
@@ -712,8 +730,9 @@ fn push_mapping_entry(
     key_leading_start: usize,
     key: FmKeyMatch,
     stack: &mut [FmFrame],
+    it: &mut std::iter::Peekable<I>,
     diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
-) -> Result<bool, ParseError> {
+) -> Result<EntryOutcome, ParseError> {
     let mut malformed = false;
     let mut children = vec![
         GreenElement::Token(token_with_leading(
@@ -748,6 +767,23 @@ fn push_mapping_entry(
     frame.seen_keys.push(key_text);
 
     let value_start = skip_horizontal(source, key.colon + 1, line.significant_end);
+    if let Some(header_len) = block_scalar_header_len(&source[value_start..line.significant_end]) {
+        let parent_indent = key.key_start - line.start;
+        return open_block_scalar(
+            factory,
+            text,
+            source,
+            line,
+            parent_indent,
+            key.colon + 1,
+            value_start,
+            header_len,
+            children,
+            false,
+            it,
+            stack,
+        );
+    }
     let starts_comment =
         value_start < line.significant_end && source.as_bytes()[value_start] == b'#';
     if value_start == line.significant_end || starts_comment {
@@ -773,7 +809,7 @@ fn push_mapping_entry(
             trailer,
             insert_at,
         });
-        return Ok(malformed);
+        return Ok(EntryOutcome::clean(malformed));
     }
 
     let scan = scan_value(source, value_start, line.significant_end);
@@ -843,19 +879,105 @@ fn push_mapping_entry(
         OkfMarkdownSyntaxKind::FrontmatterEntry,
         children,
     )?));
-    Ok(malformed)
+    Ok(EntryOutcome::clean(malformed))
+}
+
+/// Consumes a value-position block scalar header (`|`/`>` + modifiers) and
+/// every content line indented deeper than `parent_indent` (or blank)
+/// directly off the shared line iterator, then wraps the whole entry.
+/// Shared by `push_mapping_entry` and `push_sequence_item` so a `- |` item
+/// and a `key: |` entry behave identically.
+#[allow(clippy::too_many_arguments)]
+fn open_block_scalar<I: Iterator<Item = (usize, usize)>>(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    text: &SourceText,
+    source: &str,
+    line: Line,
+    parent_indent: usize,
+    header_leading_start: usize,
+    value_start: usize,
+    header_len: usize,
+    mut children: Vec<GreenElement<OkfMarkdownLanguage>>,
+    is_sequence_item: bool,
+    it: &mut std::iter::Peekable<I>,
+    stack: &mut [FmFrame],
+) -> Result<EntryOutcome, ParseError> {
+    let header_end = value_start + header_len;
+    children.push(GreenElement::Token(token_with_leading(
+        factory,
+        text,
+        header_leading_start,
+        value_start,
+        header_end,
+        OkfMarkdownSyntaxKind::FrontmatterBlockScalarHeaderToken,
+    )?));
+    let after_header = skip_horizontal(source, header_end, line.significant_end);
+    if after_header < line.significant_end && source.as_bytes()[after_header] == b'#' {
+        children.push(GreenElement::Token(token_with_leading(
+            factory,
+            text,
+            header_end,
+            after_header,
+            line.significant_end,
+            OkfMarkdownSyntaxKind::FrontmatterCommentToken,
+        )?));
+    }
+    if line.newline_start < line.end {
+        children.push(GreenElement::Token(newline_token(factory, text, line)?));
+    }
+    let mut consumed_end = structured_end(line);
+    while let Some(&(cstart, cend)) = it.peek() {
+        let cline = line_at(source, cstart, cend);
+        let blank = cline.start == cline.significant_end;
+        if !blank {
+            let (cindent, _, _) = leading_indent(source, cline.start, cline.significant_end);
+            if cindent <= parent_indent {
+                break;
+            }
+        }
+        it.next();
+        children.push(GreenElement::Token(token_with_leading(
+            factory,
+            text,
+            cline.start,
+            cline.start,
+            cline.significant_end,
+            OkfMarkdownSyntaxKind::FrontmatterValue,
+        )?));
+        if cline.newline_start < cline.end {
+            children.push(GreenElement::Token(newline_token(factory, text, cline)?));
+        }
+        consumed_end = structured_end(cline);
+    }
+    let wrap_kind = if is_sequence_item {
+        OkfMarkdownSyntaxKind::FrontmatterSequenceItem
+    } else {
+        OkfMarkdownSyntaxKind::FrontmatterEntry
+    };
+    stack
+        .last_mut()
+        .expect("stack is never empty")
+        .children
+        .push(GreenElement::Node(identified_node(
+            factory, wrap_kind, children,
+        )?));
+    Ok(EntryOutcome {
+        malformed: false,
+        consumed_end: Some(consumed_end),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn push_sequence_item(
+fn push_sequence_item<I: Iterator<Item = (usize, usize)>>(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
     source: &str,
     line: Line,
     indent_end: usize,
     stack: &mut Vec<FmFrame>,
+    it: &mut std::iter::Peekable<I>,
     diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
-) -> Result<bool, ParseError> {
+) -> Result<EntryOutcome, ParseError> {
     let dash = GreenElement::Token(token_with_leading(
         factory,
         text,
@@ -865,6 +987,23 @@ fn push_sequence_item(
         OkfMarkdownSyntaxKind::FrontmatterDashToken,
     )?);
     let after_dash = skip_horizontal(source, indent_end + 1, line.significant_end);
+    if let Some(header_len) = block_scalar_header_len(&source[after_dash..line.significant_end]) {
+        let parent_indent = indent_end - line.start;
+        return open_block_scalar(
+            factory,
+            text,
+            source,
+            line,
+            parent_indent,
+            indent_end + 1,
+            after_dash,
+            header_len,
+            vec![dash],
+            true,
+            it,
+            stack,
+        );
+    }
     if after_dash == line.significant_end {
         let mut children = vec![
             dash,
@@ -889,7 +1028,7 @@ fn push_sequence_item(
                 OkfMarkdownSyntaxKind::FrontmatterSequenceItem,
                 children,
             )?));
-        return Ok(false);
+        return Ok(EntryOutcome::clean(false));
     }
     if let Some(key) = parse_mapping_key(source, after_dash, line.significant_end) {
         let parent = stack.last_mut().expect("stack is never empty");
@@ -912,6 +1051,7 @@ fn push_sequence_item(
             indent_end + 1,
             key,
             stack,
+            it,
             diagnostics,
         );
     }
@@ -981,7 +1121,7 @@ fn push_sequence_item(
             OkfMarkdownSyntaxKind::FrontmatterSequenceItem,
             children,
         )?));
-    Ok(malformed)
+    Ok(EntryOutcome::clean(malformed))
 }
 
 /// Builds the single `FrontmatterMapping` node that sits between the fences,
@@ -1000,7 +1140,8 @@ fn build_frontmatter_mapping(
     let mut entries_consumed_end = from;
     let mut stack: Vec<FmFrame> = vec![FmFrame::new(FmContainerKind::Mapping, 0)];
 
-    for (start, end) in lines(source, from, to) {
+    let mut it = lines(source, from, to).peekable();
+    while let Some((start, end)) = it.next() {
         let line = line_at(source, start, end);
         entries_consumed_end = structured_end(line);
 
@@ -1121,21 +1262,25 @@ fn build_frontmatter_mapping(
         }
 
         if is_dash_at(source, indent_end, line.significant_end) {
-            let malformed = push_sequence_item(
+            let outcome = push_sequence_item(
                 factory,
                 text,
                 source,
                 line,
                 indent_end,
                 &mut stack,
+                &mut it,
                 diagnostics,
             )?;
-            clean = clean && !malformed;
+            clean = clean && !outcome.malformed;
+            if let Some(end) = outcome.consumed_end {
+                entries_consumed_end = end;
+            }
             continue;
         }
 
         if let Some(key) = parse_mapping_key(source, indent_end, line.significant_end) {
-            let malformed = push_mapping_entry(
+            let outcome = push_mapping_entry(
                 factory,
                 text,
                 source,
@@ -1143,9 +1288,13 @@ fn build_frontmatter_mapping(
                 line.start,
                 key,
                 &mut stack,
+                &mut it,
                 diagnostics,
             )?;
-            clean = clean && !malformed;
+            clean = clean && !outcome.malformed;
+            if let Some(end) = outcome.consumed_end {
+                entries_consumed_end = end;
+            }
         } else {
             clean = false;
             diagnostics.push(diagnostic(

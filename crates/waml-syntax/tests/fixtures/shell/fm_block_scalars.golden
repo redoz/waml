@@ -1,0 +1,47 @@
+N root Root 0..122
+N root/0 Frontmatter 0..122
+T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
+T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
+N root/0/2 FrontmatterMapping 4..118
+N root/0/2/0 FrontmatterEntry 4..26
+T root/0/2/0/0 FrontmatterKey 4..7 missing=false leading="" text="lit" trailing=""
+T root/0/2/0/1 ColonToken 7..8 missing=false leading="" text=":" trailing=""
+T root/0/2/0/2 FrontmatterBlockScalarHeaderToken 8..10 missing=false leading=" " text="|" trailing=""
+T root/0/2/0/3 NewlineToken 10..11 missing=false leading="" text="\n" trailing=""
+T root/0/2/0/4 FrontmatterValue 11..17 missing=false leading="" text="  kept" trailing=""
+T root/0/2/0/5 NewlineToken 17..18 missing=false leading="" text="\n" trailing=""
+T root/0/2/0/6 FrontmatterValue 18..25 missing=false leading="" text="  lines" trailing=""
+T root/0/2/0/7 NewlineToken 25..26 missing=false leading="" text="\n" trailing=""
+N root/0/2/1 FrontmatterEntry 26..50
+T root/0/2/1/0 FrontmatterKey 26..30 missing=false leading="" text="clip" trailing=""
+T root/0/2/1/1 ColonToken 30..31 missing=false leading="" text=":" trailing=""
+T root/0/2/1/2 FrontmatterBlockScalarHeaderToken 31..33 missing=false leading=" " text=">" trailing=""
+T root/0/2/1/3 NewlineToken 33..34 missing=false leading="" text="\n" trailing=""
+T root/0/2/1/4 FrontmatterValue 34..42 missing=false leading="" text="  folded" trailing=""
+T root/0/2/1/5 NewlineToken 42..43 missing=false leading="" text="\n" trailing=""
+T root/0/2/1/6 FrontmatterValue 43..49 missing=false leading="" text="  text" trailing=""
+T root/0/2/1/7 NewlineToken 49..50 missing=false leading="" text="\n" trailing=""
+N root/0/2/2 FrontmatterEntry 50..74
+T root/0/2/2/0 FrontmatterKey 50..55 missing=false leading="" text="strip" trailing=""
+T root/0/2/2/1 ColonToken 55..56 missing=false leading="" text=":" trailing=""
+T root/0/2/2/2 FrontmatterBlockScalarHeaderToken 56..59 missing=false leading=" " text="|-" trailing=""
+T root/0/2/2/3 NewlineToken 59..60 missing=false leading="" text="\n" trailing=""
+T root/0/2/2/4 FrontmatterValue 60..73 missing=false leading="" text="  no trailing" trailing=""
+T root/0/2/2/5 NewlineToken 73..74 missing=false leading="" text="\n" trailing=""
+N root/0/2/3 FrontmatterEntry 74..100
+T root/0/2/3/0 FrontmatterKey 74..78 missing=false leading="" text="keep" trailing=""
+T root/0/2/3/1 ColonToken 78..79 missing=false leading="" text=":" trailing=""
+T root/0/2/3/2 FrontmatterBlockScalarHeaderToken 79..82 missing=false leading=" " text="|+" trailing=""
+T root/0/2/3/3 NewlineToken 82..83 missing=false leading="" text="\n" trailing=""
+T root/0/2/3/4 FrontmatterValue 83..98 missing=false leading="" text="  trailing kept" trailing=""
+T root/0/2/3/5 NewlineToken 98..99 missing=false leading="" text="\n" trailing=""
+T root/0/2/3/6 FrontmatterValue 99..99 missing=false leading="" text="" trailing=""
+T root/0/2/3/7 NewlineToken 99..100 missing=false leading="" text="\n" trailing=""
+N root/0/2/4 FrontmatterEntry 100..118
+T root/0/2/4/0 FrontmatterKey 100..104 missing=false leading="" text="next" trailing=""
+T root/0/2/4/1 ColonToken 104..105 missing=false leading="" text=":" trailing=""
+T root/0/2/4/2 FrontmatterValue 105..117 missing=false leading=" " text="after-blank" trailing=""
+T root/0/2/4/3 NewlineToken 117..118 missing=false leading="" text="\n" trailing=""
+T root/0/3 FrontmatterCloseFence 118..121 missing=false leading="" text="---" trailing=""
+T root/0/4 NewlineToken 121..122 missing=false leading="" text="\n" trailing=""
+T root/1 EndOfFileToken 122..122 missing=true leading="" text="" trailing=""

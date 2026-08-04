@@ -55,6 +55,8 @@ const FIXTURES: &[Fixture] = &[
     fixture!("fm_comments"),
     fixture!("fm_quotes"),
     fixture!("fm_indent_errors"),
+    fixture!("fm_block_scalars"),
+    fixture!("fm_fence_inside_block_scalar"),
 ];
 
 #[test]
@@ -349,6 +351,9 @@ fn assert_fixture_shape(name: &str, source: &str, shell: &ShellParse) {
                 codes.contains(&OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent),
                 "invalid indent: {name}"
             );
+        }
+        "fm_block_scalars" | "fm_fence_inside_block_scalar" => {
+            assert!(codes.is_empty(), "clean block-scalar frontmatter: {name}");
         }
         _ => unreachable!("fixture table is exhaustive"),
     }

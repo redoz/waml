@@ -110,6 +110,7 @@ pub enum OkfMarkdownSyntaxKind {
     FrontmatterDashToken,
     FrontmatterQuotedValueToken,
     FrontmatterCommentToken,
+    FrontmatterBlockScalarHeaderToken,
     BlockQuoteMarkerToken,
     ListMarkerToken,
     TaskListMarkerToken,

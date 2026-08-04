@@ -163,6 +163,28 @@ fn frontmatter_creation_at_zero_is_named() {
 }
 
 #[test]
+fn edit_inside_block_scalar_literal_stays_incremental() {
+    // Shaped after fm_fence_inside_block_scalar.md: the literal block's own
+    // "---" line must not be mistaken for the frontmatter close fence by
+    // either side of `same_frontmatter_fences`.
+    let previous = "---\ndescription: |\n  ---\nkey: value\n---\n\nBody.\n";
+    let start = previous.find("  ---").unwrap() + 2;
+    let next = "---\ndescription: |\n  xxx\nkey: value\n---\n\nBody.\n";
+    let outcome = exact_oracle(
+        previous,
+        next,
+        &[TextChange {
+            old_range: range(start, start + 3),
+            replacement: Arc::from("xxx"),
+        }],
+    );
+    assert!(
+        matches!(outcome, ReparseOutcome::Incremental { .. }),
+        "an edit fully inside the literal block's content must not force a full reparse"
+    );
+}
+
+#[test]
 fn unchanged_input_reuses_root_green() {
     let source = text("body\n");
     let previous = parse_okf_markdown(source.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
