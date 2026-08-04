@@ -49,6 +49,12 @@ const FIXTURES: &[Fixture] = &[
     escaped_fixture!("heading_eof_spaces"),
     escaped_fixture!("closed_frontmatter_eof_spaces"),
     escaped_fixture!("unclosed_frontmatter_eof_spaces"),
+    fixture!("fm_nested_map"),
+    fixture!("fm_block_seq_scalars"),
+    fixture!("fm_block_seq_maps"),
+    fixture!("fm_comments"),
+    fixture!("fm_quotes"),
+    fixture!("fm_indent_errors"),
 ];
 
 #[test]
@@ -319,6 +325,29 @@ fn assert_fixture_shape(name: &str, source: &str, shell: &ShellParse) {
                     .map(|trivia| trivia.text.write_to_string())
                     .collect::<String>(),
                 "   "
+            );
+        }
+        "fm_nested_map" | "fm_block_seq_scalars" | "fm_block_seq_maps" | "fm_comments" => {
+            assert!(codes.is_empty(), "clean nested frontmatter: {name}");
+        }
+        "fm_quotes" => {
+            assert!(
+                codes.contains(&OkfSyntaxDiagnosticCode::UnterminatedQuotedScalar),
+                "unterminated quote: {name}"
+            );
+            assert!(
+                codes.contains(&OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry),
+                "mapping-lookalike bare value: {name}"
+            );
+        }
+        "fm_indent_errors" => {
+            assert!(
+                codes.contains(&OkfSyntaxDiagnosticCode::TabInFrontmatterIndent),
+                "tab indent: {name}"
+            );
+            assert!(
+                codes.contains(&OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent),
+                "invalid indent: {name}"
             );
         }
         _ => unreachable!("fixture table is exhaustive"),

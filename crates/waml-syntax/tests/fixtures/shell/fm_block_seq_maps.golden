@@ -1,0 +1,34 @@
+N root Root 0..63
+N root/0 Frontmatter 0..63
+T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
+T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
+N root/0/2 FrontmatterMapping 4..59
+N root/0/2/0 FrontmatterEntry 4..59
+T root/0/2/0/0 FrontmatterKey 4..11 missing=false leading="" text="authors" trailing=""
+T root/0/2/0/1 ColonToken 11..12 missing=false leading="" text=":" trailing=""
+T root/0/2/0/2 NewlineToken 12..13 missing=false leading="" text="\n" trailing=""
+N root/0/2/0/3 FrontmatterSequence 13..59
+N root/0/2/0/3/0 FrontmatterSequenceItem 13..46
+T root/0/2/0/3/0/0 FrontmatterDashToken 13..16 missing=false leading="  " text="-" trailing=""
+N root/0/2/0/3/0/1 FrontmatterMapping 16..46
+N root/0/2/0/3/0/1/0 FrontmatterEntry 16..27
+T root/0/2/0/3/0/1/0/0 FrontmatterKey 16..21 missing=false leading=" " text="name" trailing=""
+T root/0/2/0/3/0/1/0/1 ColonToken 21..22 missing=false leading="" text=":" trailing=""
+T root/0/2/0/3/0/1/0/2 FrontmatterValue 22..26 missing=false leading=" " text="Ana" trailing=""
+T root/0/2/0/3/0/1/0/3 NewlineToken 26..27 missing=false leading="" text="\n" trailing=""
+N root/0/2/0/3/0/1/1 FrontmatterEntry 27..46
+T root/0/2/0/3/0/1/1/0 FrontmatterKey 27..35 missing=false leading="    " text="team" trailing=""
+T root/0/2/0/3/0/1/1/1 ColonToken 35..36 missing=false leading="" text=":" trailing=""
+T root/0/2/0/3/0/1/1/2 FrontmatterValue 36..45 missing=false leading=" " text="platform" trailing=""
+T root/0/2/0/3/0/1/1/3 NewlineToken 45..46 missing=false leading="" text="\n" trailing=""
+N root/0/2/0/3/1 FrontmatterSequenceItem 46..59
+T root/0/2/0/3/1/0 FrontmatterDashToken 46..49 missing=false leading="  " text="-" trailing=""
+N root/0/2/0/3/1/1 FrontmatterMapping 49..59
+N root/0/2/0/3/1/1/0 FrontmatterEntry 49..59
+T root/0/2/0/3/1/1/0/0 FrontmatterKey 49..54 missing=false leading=" " text="name" trailing=""
+T root/0/2/0/3/1/1/0/1 ColonToken 54..55 missing=false leading="" text=":" trailing=""
+T root/0/2/0/3/1/1/0/2 FrontmatterValue 55..58 missing=false leading=" " text="Bo" trailing=""
+T root/0/2/0/3/1/1/0/3 NewlineToken 58..59 missing=false leading="" text="\n" trailing=""
+T root/0/3 FrontmatterCloseFence 59..62 missing=false leading="" text="---" trailing=""
+T root/0/4 NewlineToken 62..63 missing=false leading="" text="\n" trailing=""
+T root/1 EndOfFileToken 63..63 missing=true leading="" text="" trailing=""

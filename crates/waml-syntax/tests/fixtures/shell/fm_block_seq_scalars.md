@@ -1,0 +1,5 @@
+---
+stereotype:
+  - aggregateRoot
+  - entity
+---

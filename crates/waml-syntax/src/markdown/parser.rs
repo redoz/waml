@@ -711,6 +711,7 @@ fn push_mapping_entry(
     text: &SourceText,
     source: &str,
     line: Line,
+    key_leading_start: usize,
     key: FmKeyMatch,
     stack: &mut [FmFrame],
     diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
@@ -720,7 +721,7 @@ fn push_mapping_entry(
         GreenElement::Token(token_with_leading(
             factory,
             text,
-            line.start,
+            key_leading_start,
             key.key_start,
             key.key_end,
             key.key_kind,
@@ -905,7 +906,16 @@ fn push_sequence_item(
             FmContainerKind::Mapping,
             after_dash - line.start,
         ));
-        return push_mapping_entry(factory, text, source, line, key, stack, diagnostics);
+        return push_mapping_entry(
+            factory,
+            text,
+            source,
+            line,
+            indent_end + 1,
+            key,
+            stack,
+            diagnostics,
+        );
     }
 
     let mut malformed = false;
@@ -1127,8 +1137,16 @@ fn build_frontmatter_mapping(
         }
 
         if let Some(key) = parse_mapping_key(source, indent_end, line.significant_end) {
-            let malformed =
-                push_mapping_entry(factory, text, source, line, key, &mut stack, diagnostics)?;
+            let malformed = push_mapping_entry(
+                factory,
+                text,
+                source,
+                line,
+                line.start,
+                key,
+                &mut stack,
+                diagnostics,
+            )?;
             clean = clean && !malformed;
         } else {
             clean = false;

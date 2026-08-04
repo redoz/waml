@@ -1,0 +1,22 @@
+N root Root 0..83
+N root/0 Frontmatter 0..83
+T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
+T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
+N root/0/2 FrontmatterMapping 4..79
+N root/0/2/0 FrontmatterEntry 4..24
+T root/0/2/0/0 FrontmatterCommentToken 4..23 missing=false leading="" text="# a leading comment" trailing=""
+T root/0/2/0/1 NewlineToken 23..24 missing=false leading="" text="\n" trailing=""
+N root/0/2/1 FrontmatterEntry 24..56
+T root/0/2/1/0 FrontmatterKey 24..29 missing=false leading="" text="title" trailing=""
+T root/0/2/1/1 ColonToken 29..30 missing=false leading="" text=":" trailing=""
+T root/0/2/1/2 FrontmatterValue 30..36 missing=false leading=" " text="Order" trailing=""
+T root/0/2/1/3 FrontmatterCommentToken 36..55 missing=false leading=" " text="# trailing comment" trailing=""
+T root/0/2/1/4 NewlineToken 55..56 missing=false leading="" text="\n" trailing=""
+N root/0/2/2 FrontmatterEntry 56..79
+T root/0/2/2/0 FrontmatterKey 56..59 missing=false leading="" text="tag" trailing=""
+T root/0/2/2/1 ColonToken 59..60 missing=false leading="" text=":" trailing=""
+T root/0/2/2/2 FrontmatterQuotedValueToken 60..78 missing=false leading=" " text="\"not # a comment\"" trailing=""
+T root/0/2/2/3 NewlineToken 78..79 missing=false leading="" text="\n" trailing=""
+T root/0/3 FrontmatterCloseFence 79..82 missing=false leading="" text="---" trailing=""
+T root/0/4 NewlineToken 82..83 missing=false leading="" text="\n" trailing=""
+T root/1 EndOfFileToken 83..83 missing=true leading="" text="" trailing=""

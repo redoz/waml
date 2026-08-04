@@ -1,0 +1,21 @@
+N root Root 0..49
+N root/0 Frontmatter 0..49
+T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
+T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
+N root/0/2 FrontmatterMapping 4..45
+N root/0/2/0 FrontmatterEntry 4..45
+T root/0/2/0/0 FrontmatterKey 4..14 missing=false leading="" text="stereotype" trailing=""
+T root/0/2/0/1 ColonToken 14..15 missing=false leading="" text=":" trailing=""
+T root/0/2/0/2 NewlineToken 15..16 missing=false leading="" text="\n" trailing=""
+N root/0/2/0/3 FrontmatterSequence 16..45
+N root/0/2/0/3/0 FrontmatterSequenceItem 16..34
+T root/0/2/0/3/0/0 FrontmatterDashToken 16..19 missing=false leading="  " text="-" trailing=""
+T root/0/2/0/3/0/1 FrontmatterValue 19..33 missing=false leading=" " text="aggregateRoot" trailing=""
+T root/0/2/0/3/0/2 NewlineToken 33..34 missing=false leading="" text="\n" trailing=""
+N root/0/2/0/3/1 FrontmatterSequenceItem 34..45
+T root/0/2/0/3/1/0 FrontmatterDashToken 34..37 missing=false leading="  " text="-" trailing=""
+T root/0/2/0/3/1/1 FrontmatterValue 37..44 missing=false leading=" " text="entity" trailing=""
+T root/0/2/0/3/1/2 NewlineToken 44..45 missing=false leading="" text="\n" trailing=""
+T root/0/3 FrontmatterCloseFence 45..48 missing=false leading="" text="---" trailing=""
+T root/0/4 NewlineToken 48..49 missing=false leading="" text="\n" trailing=""
+T root/1 EndOfFileToken 49..49 missing=true leading="" text="" trailing=""

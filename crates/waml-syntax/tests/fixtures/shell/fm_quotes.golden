@@ -1,0 +1,31 @@
+N root Root 0..98
+N root/0 Frontmatter 0..98
+T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
+T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
+N root/0/2 FrontmatterMapping 4..94
+N root/0/2/0 FrontmatterEntry 4..28
+T root/0/2/0/0 FrontmatterKey 4..10 missing=false leading="" text="single" trailing=""
+T root/0/2/0/1 ColonToken 10..11 missing=false leading="" text=":" trailing=""
+T root/0/2/0/2 FrontmatterQuotedValueToken 11..27 missing=false leading=" " text="\'it\'\'s literal\'" trailing=""
+T root/0/2/0/3 NewlineToken 27..28 missing=false leading="" text="\n" trailing=""
+N root/0/2/1 FrontmatterEntry 28..50
+T root/0/2/1/0 FrontmatterKey 28..34 missing=false leading="" text="double" trailing=""
+T root/0/2/1/1 ColonToken 34..35 missing=false leading="" text=":" trailing=""
+T root/0/2/1/2 FrontmatterQuotedValueToken 35..49 missing=false leading=" " text="\"line\\nbreak\"" trailing=""
+T root/0/2/1/3 NewlineToken 49..50 missing=false leading="" text="\n" trailing=""
+N root/0/2/2 FrontmatterEntry 50..70
+T root/0/2/2/0 FrontmatterKey 50..62 missing=false leading="" text="unterminated" trailing=""
+T root/0/2/2/1 ColonToken 62..63 missing=false leading="" text=":" trailing=""
+T root/0/2/2/2 FrontmatterQuotedValueToken 63..69 missing=false leading=" " text="\"oops" trailing=""
+T root/0/2/2/3 NewlineToken 69..70 missing=false leading="" text="\n" trailing=""
+N root/0/2/3 FrontmatterEntry 70..94
+T root/0/2/3/0 FrontmatterKey 70..87 missing=false leading="" text="mapping_lookalike" trailing=""
+T root/0/2/3/1 ColonToken 87..88 missing=false leading="" text=":" trailing=""
+T root/0/2/3/2 FrontmatterValue 88..93 missing=false leading=" " text="a: b" trailing=""
+T root/0/2/3/3 NewlineToken 93..94 missing=false leading="" text="\n" trailing=""
+T root/0/3 FrontmatterCloseFence 94..97 missing=false leading="" text="---" trailing=""
+T root/0/4 NewlineToken 97..98 missing=false leading="" text="\n" trailing=""
+T root/1 EndOfFileToken 98..98 missing=true leading="" text="" trailing=""
+D UnterminatedQuotedScalar 64..69
+D MalformedFrontmatterEntry 89..93
+D FrontmatterNotClean 4..94
