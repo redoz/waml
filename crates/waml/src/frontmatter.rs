@@ -1,13 +1,12 @@
-use regex::Regex;
-use std::sync::LazyLock;
-use waml_syntax::{OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxElement, SyntaxNode};
+use waml_syntax::{
+    FrontmatterScalarKind, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxElement, SyntaxNode,
+};
 
-static NUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^-?\d+(\.\d+)?$").unwrap());
-
-/// Maximum `List` nesting depth accepted from any input path (authored
+/// Maximum `List`/`Map` nesting depth accepted from any input path (authored
 /// frontmatter text and the serde wire form alike). Frontmatter is untrusted —
-/// a hostile `[[[[…]]]]` value must produce a value or an error, never a
-/// stack overflow. Real frontmatter nests one or two levels deep.
+/// a hostile `[[[[…]]]]` or deeply nested `{"a":{"a":…}}` value must produce a
+/// value or an error, never a stack overflow. Real frontmatter nests one or
+/// two levels deep.
 const MAX_VALUE_DEPTH: usize = 32;
 
 #[derive(Debug, Clone)]
@@ -17,25 +16,33 @@ pub enum FmValue {
     // Ordering matters for untagged-style deserialize: a JSON string only
     // matches `Str`, a bool only `Bool`, a number only `Num`, an array only
     // `List` (see the manual `Deserialize` impl below, which also depth-caps).
+    // `Null` and `Map` are handled by a manual `Serialize` impl, not this
+    // derive, since a `Vec<(String, FmValue)>` would otherwise serialize as
+    // an array of pairs rather than a JSON object.
+    Null,
     Str(String),
     Bool(bool),
     Num(f64),
     List(Vec<FmValue>),
+    Map(Vec<(String, FmValue)>),
 }
 
 // Manual impl instead of a derive: `Num(f64)` under a derived `PartialEq`
 // makes `NaN != NaN`, which would break change detection if a NaN ever got in.
-// Both admission paths (NUM_RE, JSON) exclude NaN today, so `total_cmp` keeps
-// the derive's behaviour for normal numbers while staying a sound equivalence
-// if that ever changes. (The one visible shift: `-0.0 != 0.0` under
-// `total_cmp` — an authored `-0` vs `0` now reads as a change, which is fine.)
+// Both admission paths (the classifier, JSON) exclude NaN today except via the
+// explicit `.nan` token, so `total_cmp` keeps the derive's behaviour for
+// normal numbers while staying a sound equivalence if that ever changes. (The
+// one visible shift: `-0.0 != 0.0` under `total_cmp` — an authored `-0` vs
+// `0` now reads as a change, which is fine.)
 impl PartialEq for FmValue {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (FmValue::Null, FmValue::Null) => true,
             (FmValue::Str(a), FmValue::Str(b)) => a == b,
             (FmValue::Bool(a), FmValue::Bool(b)) => a == b,
             (FmValue::Num(a), FmValue::Num(b)) => a.total_cmp(b) == std::cmp::Ordering::Equal,
             (FmValue::List(a), FmValue::List(b)) => a == b,
+            (FmValue::Map(a), FmValue::Map(b)) => a == b,
             _ => false,
         }
     }
@@ -61,7 +68,8 @@ impl serde::Serialize for Frontmatter {
 }
 
 /// Depth-carrying seed so the wire form obeys [`MAX_VALUE_DEPTH`] too — the
-/// derived untagged impl recursed without bound on a hostile `[[[[…]]]]`.
+/// derived untagged impl recursed without bound on a hostile `[[[[…]]]]` or
+/// `{"a":{"a":…}}`.
 #[cfg(feature = "serde")]
 struct FmValueSeed {
     depth: usize,
@@ -77,7 +85,13 @@ impl<'de> serde::de::DeserializeSeed<'de> for FmValueSeed {
         impl<'de> serde::de::Visitor<'de> for V {
             type Value = FmValue;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a frontmatter value (string, bool, number, or array)")
+                f.write_str("a frontmatter value (null, string, bool, number, array, or object)")
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<FmValue, E> {
+                Ok(FmValue::Null)
+            }
+            fn visit_none<E: serde::de::Error>(self) -> Result<FmValue, E> {
+                Ok(FmValue::Null)
             }
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<FmValue, E> {
                 Ok(FmValue::Str(v.to_owned()))
@@ -113,6 +127,24 @@ impl<'de> serde::de::DeserializeSeed<'de> for FmValueSeed {
                     items.push(item);
                 }
                 Ok(FmValue::List(items))
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut m: M,
+            ) -> Result<FmValue, M::Error> {
+                if self.depth >= MAX_VALUE_DEPTH {
+                    return Err(serde::de::Error::custom(
+                        "frontmatter value nests too deeply",
+                    ));
+                }
+                let mut entries = Vec::new();
+                while let Some(key) = m.next_key::<String>()? {
+                    let value = m.next_value_seed(FmValueSeed {
+                        depth: self.depth + 1,
+                    })?;
+                    entries.push((key, value));
+                }
+                Ok(FmValue::Map(entries))
             }
         }
         d.deserialize_any(V { depth: self.depth })
@@ -206,12 +238,19 @@ fn escape_quoted_string(value: &str) -> String {
             '\\' => escaped.push_str("\\\\"),
             '"' => escaped.push_str("\\\""),
             '\n' => escaped.push_str("\\n"),
+            '\t' => escaped.push_str("\\t"),
+            '\0' => escaped.push_str("\\0"),
             _ => escaped.push(character),
         }
     }
     escaped
 }
 
+/// Decodes a double-quoted scalar's inner text (no surrounding quotes).
+/// Understands `\\ \" \n \r \t \0` and `\uXXXX`; an unrecognized escape is
+/// kept verbatim (backslash and the following character/digits preserved) —
+/// the parser side flags this with `InvalidEscapeSequence` but the model
+/// never panics on it.
 fn decode_quoted_string(value: &str) -> String {
     let mut decoded = String::with_capacity(value.len());
     let mut characters = value.chars();
@@ -225,6 +264,25 @@ fn decode_quoted_string(value: &str) -> String {
             Some('"') => decoded.push('"'),
             Some('n') => decoded.push('\n'),
             Some('r') => decoded.push('\r'),
+            Some('t') => decoded.push('\t'),
+            Some('0') => decoded.push('\0'),
+            Some('u') => {
+                let hex: String = characters.clone().take(4).collect();
+                if hex.chars().count() == 4 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    if let Some(decoded_char) =
+                        u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+                    {
+                        decoded.push(decoded_char);
+                        for _ in 0..4 {
+                            characters.next();
+                        }
+                        continue;
+                    }
+                }
+                // Malformed/unknown \u escape: keep verbatim.
+                decoded.push('\\');
+                decoded.push('u');
+            }
             Some(other) => {
                 decoded.push('\\');
                 decoded.push(other);
@@ -233,6 +291,67 @@ fn decode_quoted_string(value: &str) -> String {
         }
     }
     normalize_line_endings(&decoded)
+}
+
+/// Splits a flow sequence's inner text (`[...]` with the brackets already
+/// stripped) on top-level commas, quote-aware and bracket-depth-aware. A
+/// quote character only opens a quoted scalar when it is the FIRST
+/// significant byte of an item — matching YAML, where a quote elsewhere
+/// inside a plain (unquoted) scalar is just a literal character, not a
+/// delimiter. A comma inside `'...'`, `"..."`, or a nested `[...]` does not
+/// split.
+fn split_flow_items(s: &str) -> Vec<&str> {
+    if s.trim().is_empty() {
+        return Vec::new();
+    }
+    let bytes = s.as_bytes();
+    let mut items = Vec::new();
+    let mut start = 0usize;
+    let mut depth: i32 = 0;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let at_item_start = bytes[start..i].iter().all(|&b| b == b' ');
+        if at_item_start && (bytes[i] == b'\'' || bytes[i] == b'"') {
+            let quote = bytes[i];
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == quote {
+                    if quote == b'\'' && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                if quote == b'"' && bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        match bytes[i] {
+            b'[' => {
+                depth += 1;
+                i += 1;
+            }
+            b']' => {
+                depth -= 1;
+                i += 1;
+            }
+            b',' if depth <= 0 => {
+                items.push(&s[start..i]);
+                start = i + 1;
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    items.push(&s[start..]);
+    items
 }
 
 pub(crate) fn parse_value(s: &str) -> FmValue {
@@ -247,26 +366,55 @@ fn parse_value_at(s: &str, depth: usize) -> FmValue {
         if depth >= MAX_VALUE_DEPTH {
             return FmValue::Str(s.to_string());
         }
-        let items = inner
-            .split(',')
-            .map(|x| parse_value_at(x.trim(), depth + 1))
-            .filter(|v| !matches!(v, FmValue::Str(s) if s.is_empty()))
+        let items = split_flow_items(inner)
+            .into_iter()
+            .map(|item| parse_value_at(item.trim(), depth + 1))
             .collect();
         return FmValue::List(items);
     }
-    if let Some(inner) = s.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
-        return FmValue::Str(decode_quoted_string(inner));
-    }
-    if NUM_RE.is_match(s) {
-        if let Ok(n) = s.parse::<f64>() {
-            return FmValue::Num(n);
+    if s.len() >= 2 {
+        if let Some(inner) = s.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+            return FmValue::Str(decode_quoted_string(inner));
+        }
+        if let Some(inner) = s.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')) {
+            return FmValue::Str(inner.replace("''", "'"));
         }
     }
-    match s {
-        "true" => FmValue::Bool(true),
-        "false" => FmValue::Bool(false),
-        other => FmValue::Str(other.to_string()),
+    bare_scalar_value(s)
+}
+
+/// Classifies a bare (unquoted) scalar via the shared YAML 1.2 core
+/// classifier and converts it to the matching `FmValue`. `classify_bare_scalar`
+/// already validated the numeric shape, so the `unwrap_or` fallbacks below are
+/// defensive only — never reachable from a string the classifier called
+/// `Number`.
+fn bare_scalar_value(s: &str) -> FmValue {
+    match waml_syntax::classify_bare_scalar(s) {
+        FrontmatterScalarKind::Null => FmValue::Null,
+        FrontmatterScalarKind::Bool => FmValue::Bool(s == "true"),
+        FrontmatterScalarKind::Number => FmValue::Num(parse_core_number(s)),
+        FrontmatterScalarKind::Str => FmValue::Str(s.to_string()),
     }
+}
+
+/// Converts a scalar the classifier already confirmed is `Number`-shaped:
+/// hex/octal integers, `.inf`/`-.inf`/`+.inf`/`.nan`, or a plain decimal.
+fn parse_core_number(s: &str) -> f64 {
+    match s {
+        ".inf" | "+.inf" => return f64::INFINITY,
+        "-.inf" => return f64::NEG_INFINITY,
+        ".nan" => return f64::NAN,
+        _ => {}
+    }
+    if let Some(hex) = s.strip_prefix("0x") {
+        return i64::from_str_radix(hex, 16)
+            .map(|n| n as f64)
+            .unwrap_or(0.0);
+    }
+    if let Some(oct) = s.strip_prefix("0o") {
+        return i64::from_str_radix(oct, 8).map(|n| n as f64).unwrap_or(0.0);
+    }
+    s.parse::<f64>().unwrap_or(0.0)
 }
 
 pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Option<Frontmatter> {
@@ -281,44 +429,20 @@ pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Opt
         return None;
     }
 
-    let mut frontmatter = Frontmatter::default();
     let entry_parent = node
         .children()
         .filter_map(SyntaxElement::into_node)
         .find(|n| n.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping);
-    let entries: Box<dyn Iterator<Item = SyntaxElement<OkfMarkdownLanguage>>> = match &entry_parent
-    {
-        Some(mapping) => Box::new(mapping.children()),
-        None => Box::new(node.children()),
+    let entries = match &entry_parent {
+        Some(mapping) => map_entries_from_mapping(mapping, 0),
+        None => Vec::new(),
     };
-    for entry in entries.filter_map(SyntaxElement::into_node) {
-        if entry.kind() != OkfMarkdownSyntaxKind::FrontmatterEntry {
-            continue;
-        }
-        let mut key = None;
-        let mut value = None;
-        for token in entry.children().filter_map(SyntaxElement::into_token) {
-            match token.kind() {
-                OkfMarkdownSyntaxKind::FrontmatterKey => key = Some(token.text().write_to_string()),
-                OkfMarkdownSyntaxKind::FrontmatterValue if !token.flags().is_missing() => {
-                    value = Some(token.text().write_to_string())
-                }
-                OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken => {
-                    value = Some(decode_quoted_scalar(&token.text().write_to_string()))
-                }
-                _ => {}
-            }
-        }
-        if let (Some(key), Some(value)) = (key, value) {
-            frontmatter.entries.push((key, parse_value(&value)));
-        }
-    }
-    Some(frontmatter)
+    Some(Frontmatter { entries })
 }
 
-/// Minimal single/double-quoted scalar decoding for the top-level reader.
-/// Full escape-sequence decoding lands with the value reader in a later task
-/// — this only strips the surrounding quotes and undoes the `''` escape.
+/// Minimal single/double-quoted scalar decoding for a token straight off the
+/// tree (still carries its surrounding quotes, unlike the value-position
+/// strings `parse_value`/`decode_quoted_string` are handed).
 fn decode_quoted_scalar(raw: &str) -> String {
     let bytes = raw.as_bytes();
     if bytes.len() < 2 {
@@ -340,6 +464,260 @@ fn decode_quoted_scalar(raw: &str) -> String {
     }
 }
 
+/// Reads every `FrontmatterEntry` child of a `FrontmatterMapping` node into
+/// ordered `(key, value)` pairs, last-duplicate-wins in place (matching
+/// `Frontmatter::get`'s first-match lookup — a repeated key updates the
+/// value at its FIRST position rather than appending a second entry).
+/// Depth-capped like every other value reader: a hostile tree past the cap
+/// reads as an empty map rather than recursing without bound.
+fn map_entries_from_mapping(
+    mapping: &SyntaxNode<OkfMarkdownLanguage>,
+    depth: usize,
+) -> Vec<(String, FmValue)> {
+    if depth >= MAX_VALUE_DEPTH {
+        return Vec::new();
+    }
+    let mut entries: Vec<(String, FmValue)> = Vec::new();
+    for element in mapping.children() {
+        let Some(entry) = element.into_node() else {
+            continue;
+        };
+        if entry.kind() != OkfMarkdownSyntaxKind::FrontmatterEntry {
+            continue;
+        }
+        let mut children = entry.children();
+        let Some(key_element) = children.next() else {
+            continue;
+        };
+        let Some(key_token) = key_element.into_token() else {
+            continue;
+        };
+        let key_text = match key_token.kind() {
+            OkfMarkdownSyntaxKind::FrontmatterKey => key_token.text().write_to_string(),
+            OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken => {
+                decode_quoted_scalar(&key_token.text().write_to_string())
+            }
+            // Comment-only / blank-line entries, or a `BadToken` recovery
+            // entry: no key to read.
+            _ => continue,
+        };
+        let rest: Vec<_> = children.collect();
+        let rest_after_colon = if matches!(
+            rest.first(),
+            Some(SyntaxElement::Token(t)) if t.kind() == OkfMarkdownSyntaxKind::ColonToken
+        ) {
+            &rest[1..]
+        } else {
+            &rest[..]
+        };
+        let value = value_from_elements(rest_after_colon, depth + 1).unwrap_or(FmValue::Null);
+        if let Some(existing) = entries.iter_mut().find(|(k, _)| *k == key_text) {
+            existing.1 = value;
+        } else {
+            entries.push((key_text, value));
+        }
+    }
+    entries
+}
+
+/// Reads every `FrontmatterSequenceItem` child of a `FrontmatterSequence`
+/// node into an ordered `Vec<FmValue>`.
+fn list_items_from_sequence(
+    sequence: &SyntaxNode<OkfMarkdownLanguage>,
+    depth: usize,
+) -> Vec<FmValue> {
+    if depth >= MAX_VALUE_DEPTH {
+        return Vec::new();
+    }
+    let mut items = Vec::new();
+    for element in sequence.children() {
+        let Some(item) = element.into_node() else {
+            continue;
+        };
+        if item.kind() != OkfMarkdownSyntaxKind::FrontmatterSequenceItem {
+            continue;
+        }
+        let mut children = item.children();
+        let Some(dash_element) = children.next() else {
+            continue;
+        };
+        if !matches!(
+            &dash_element,
+            SyntaxElement::Token(t) if t.kind() == OkfMarkdownSyntaxKind::FrontmatterDashToken
+        ) {
+            continue;
+        }
+        let rest: Vec<_> = children.collect();
+        items.push(value_from_elements(&rest, depth + 1).unwrap_or(FmValue::Null));
+    }
+    items
+}
+
+/// Reads the value alternatives that can follow a key/colon or a dash in the
+/// tree: a nested `FrontmatterMapping`/`FrontmatterSequence` node, a block
+/// scalar (header token + content lines), a quoted scalar token, or a bare
+/// `FrontmatterValue` token. `None` only when nothing recognizable is present
+/// (the caller treats that as `Null`, matching an empty/missing value).
+fn value_from_elements(
+    elements: &[SyntaxElement<OkfMarkdownLanguage>],
+    depth: usize,
+) -> Option<FmValue> {
+    if depth >= MAX_VALUE_DEPTH {
+        return Some(FmValue::Null);
+    }
+    for element in elements {
+        if let SyntaxElement::Node(n) = element {
+            match n.kind() {
+                OkfMarkdownSyntaxKind::FrontmatterMapping => {
+                    return Some(FmValue::Map(map_entries_from_mapping(n, depth)));
+                }
+                OkfMarkdownSyntaxKind::FrontmatterSequence => {
+                    return Some(FmValue::List(list_items_from_sequence(n, depth)));
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(header_index) = elements.iter().position(|element| {
+        matches!(
+            element,
+            SyntaxElement::Token(t)
+                if t.kind() == OkfMarkdownSyntaxKind::FrontmatterBlockScalarHeaderToken
+        )
+    }) {
+        let SyntaxElement::Token(header_token) = &elements[header_index] else {
+            unreachable!("position() found a token");
+        };
+        let header_text = header_token.text().write_to_string();
+        let content_lines: Vec<String> = elements[header_index + 1..]
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Token(t)
+                    if t.kind() == OkfMarkdownSyntaxKind::FrontmatterValue
+                        && !t.flags().is_missing() =>
+                {
+                    Some(t.text().write_to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        return Some(FmValue::Str(decode_block_scalar(
+            &header_text,
+            &content_lines,
+        )));
+    }
+    for element in elements {
+        if let SyntaxElement::Token(t) = element {
+            if t.kind() == OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken {
+                return Some(FmValue::Str(decode_quoted_scalar(
+                    &t.text().write_to_string(),
+                )));
+            }
+        }
+    }
+    for element in elements {
+        if let SyntaxElement::Token(t) = element {
+            if t.kind() == OkfMarkdownSyntaxKind::FrontmatterValue && !t.flags().is_missing() {
+                return Some(parse_value(&t.text().write_to_string()));
+            }
+        }
+    }
+    Some(FmValue::Null)
+}
+
+enum Chomp {
+    Clip,
+    Strip,
+    Keep,
+}
+
+/// Assembles a block scalar's decoded string from its header (`|`/`>` plus
+/// chomping modifiers) and its content lines (each the FULL source line,
+/// including its own leading whitespace — the builder does not fold that
+/// into leading trivia for block-scalar content). The strip width is the
+/// indentation of the first non-blank content line; an explicit indentation
+/// indicator digit (`|2`) is not separately honored — real content always
+/// has a first non-blank line whose own indentation already reflects it.
+fn decode_block_scalar(header_text: &str, content_lines: &[String]) -> String {
+    let literal = header_text.starts_with('|');
+    let mut chomp = Chomp::Clip;
+    for c in header_text.chars().skip(1) {
+        match c {
+            '-' => chomp = Chomp::Strip,
+            '+' => chomp = Chomp::Keep,
+            _ => {}
+        }
+    }
+    let base_indent = content_lines
+        .iter()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start_matches(' ').len())
+        .unwrap_or(0);
+    let stripped: Vec<String> = content_lines
+        .iter()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                strip_leading_spaces(line, base_indent).to_string()
+            }
+        })
+        .collect();
+    let body = if literal {
+        stripped
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>()
+    } else {
+        fold_block_lines(&stripped)
+    };
+    apply_chomp(body, chomp)
+}
+
+fn strip_leading_spaces(line: &str, count: usize) -> &str {
+    // Each stripped char is a single ASCII space (1 byte), so the byte
+    // offset doubles as the stripped-count check — no separate counter.
+    let mut byte_index = 0;
+    while byte_index < count && line.as_bytes().get(byte_index) == Some(&b' ') {
+        byte_index += 1;
+    }
+    &line[byte_index..]
+}
+
+/// YAML folded-scalar folding: a single newline between two non-blank lines
+/// becomes a space; a blank line stays a literal newline.
+fn fold_block_lines(lines: &[String]) -> String {
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if line.is_empty() {
+            out.push('\n');
+            continue;
+        }
+        out.push_str(line);
+        match lines.get(i + 1) {
+            Some(next) if next.is_empty() => out.push('\n'),
+            Some(_) => out.push(' '),
+            None => out.push('\n'),
+        }
+    }
+    out
+}
+
+fn apply_chomp(body: String, chomp: Chomp) -> String {
+    match chomp {
+        Chomp::Keep => body,
+        Chomp::Strip => body.trim_end_matches('\n').to_string(),
+        Chomp::Clip => {
+            let trimmed = body.trim_end_matches('\n');
+            if body.ends_with('\n') {
+                format!("{trimmed}\n")
+            } else {
+                trimmed.to_string()
+            }
+        }
+    }
+}
+
 /// Render any `FmValue` in its canonical form. Total over parsed input: a
 /// `List` renders each item recursively (so a nested `List` renders in its
 /// own bracket form), so this never panics on anything `parse_value` can
@@ -352,11 +730,17 @@ fn decode_quoted_scalar(raw: &str) -> String {
 fn scalar_needs_quote(s: &str) -> bool {
     s.is_empty()
         || s != s.trim()
-        || s == "true"
-        || s == "false"
-        || NUM_RE.is_match(s)
+        // Would reparse as a non-string type: covers true/false, null/~/empty,
+        // and every numeric form the classifier accepts (hex, octal, .inf,
+        // .nan, exponents) — replaces the old NUM_RE / literal true|false checks.
+        || waml_syntax::classify_bare_scalar(s) != FrontmatterScalarKind::Str
         || (s.starts_with('[') && s.ends_with(']'))
         || s.starts_with('"')
+        // A leading `'` would be read back as opening a single-quoted
+        // scalar (Task 8 generalizes this into the full structural-leader
+        // set; this one is load-bearing now because an unquoted leading `'`
+        // swallows the rest of a flow list's comma splitting).
+        || s.starts_with('\'')
         || s.contains('"')
         || s.contains('\\')
         || s.contains('\n')
@@ -369,6 +753,7 @@ fn render_value(v: &FmValue) -> String {
 
 fn render_value_at(v: &FmValue, depth: usize) -> String {
     match v {
+        FmValue::Null => "null".to_string(),
         FmValue::Num(n) => {
             if n.fract() == 0.0 {
                 format!("{}", *n as i64)
@@ -399,20 +784,94 @@ fn render_value_at(v: &FmValue, depth: usize) -> String {
                 .join(", ");
             format!("[{inner}]")
         }
+        // Bare block-mapping text, used only when a `Map` appears as a value
+        // outside `render_frontmatter`'s own entry rendering (debug/test
+        // paths) — `render_frontmatter` itself renders a `Map` entry via
+        // `render_top_entry`/`render_map_block` with the key on its own line.
+        // The full key-carrying nested/sequence-of-maps writer is Task 8's.
+        FmValue::Map(entries) => render_map_block(entries, depth),
+    }
+}
+
+/// Renders a map's entries as a two-space-indented block mapping, one
+/// `key: value` (or `key:` + nested block) line per entry. An empty nested
+/// map renders as `key:` with no value — the reader maps that back to
+/// `Null`, an asymmetry Task 8 pins with a named test.
+fn render_map_block(entries: &[(String, FmValue)], indent: usize) -> String {
+    if indent >= MAX_VALUE_DEPTH {
+        return String::new();
+    }
+    let pad = "  ".repeat(indent);
+    let mut out = String::new();
+    for (k, v) in entries {
+        match v {
+            FmValue::Map(inner) if inner.is_empty() => {
+                out.push_str(&format!("{pad}{k}:\n"));
+            }
+            FmValue::Map(inner) => {
+                out.push_str(&format!("{pad}{k}:\n"));
+                out.push_str(&render_map_block(inner, indent + 1));
+            }
+            other => {
+                out.push_str(&format!(
+                    "{pad}{k}: {}\n",
+                    render_value_at(other, indent + 1)
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn render_top_entry(out: &mut String, key: &str, value: &FmValue) {
+    match value {
+        FmValue::Map(entries) if entries.is_empty() => {
+            out.push_str(&format!("{key}:\n"));
+        }
+        FmValue::Map(entries) => {
+            out.push_str(&format!("{key}:\n"));
+            out.push_str(&render_map_block(entries, 1));
+        }
+        other => out.push_str(&format!("{key}: {}\n", render_value(other))),
     }
 }
 
 pub fn render_frontmatter(fm: &Frontmatter) -> String {
-    fm.entries
-        .iter()
-        .map(|(k, v)| format!("{k}: {}", render_value(v)))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut out = String::new();
+    for (k, v) in &fm.entries {
+        render_top_entry(&mut out, k, v);
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
+
+    /// Parses a whole document and returns the `Frontmatter` read from its
+    /// leading fence, mirroring `crates/waml/src/okf/shell.rs::shell_fields`.
+    fn parse_frontmatter_for_test(source: &str) -> Frontmatter {
+        let text = SourceText::from_shared(std::sync::Arc::new(source.into())).unwrap();
+        let snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            text,
+            MarkdownDialect::WAML_DEFAULT,
+        )
+        .expect("test source parses");
+        for element in snapshot.tree().root().children() {
+            let Some(node) = element.into_node() else {
+                continue;
+            };
+            if let Some(fm) = parse_closed_syntax(&node) {
+                return fm;
+            }
+        }
+        Frontmatter::default()
+    }
 
     #[test]
     fn parses_scalar_and_list_values() {
@@ -430,6 +889,107 @@ mod tests {
             parse_value("\"A \\\"placed\\\" order.\""),
             FmValue::Str("A \"placed\" order.".into())
         );
+    }
+
+    #[test]
+    fn parse_value_follows_yaml_12_core() {
+        assert_eq!(parse_value("null"), FmValue::Null);
+        assert_eq!(parse_value("~"), FmValue::Null);
+        assert_eq!(parse_value(""), FmValue::Null);
+        assert_eq!(parse_value("NO"), FmValue::Str("NO".into()));
+        assert_eq!(parse_value("yes"), FmValue::Str("yes".into()));
+        assert_eq!(parse_value("0x1A"), FmValue::Num(26.0));
+        assert_eq!(parse_value("0o17"), FmValue::Num(15.0));
+        assert_eq!(parse_value(".inf"), FmValue::Num(f64::INFINITY));
+        assert_eq!(parse_value("-.inf"), FmValue::Num(f64::NEG_INFINITY));
+        assert!(matches!(parse_value(".nan"), FmValue::Num(n) if n.is_nan()));
+        assert_eq!(parse_value("6.02e23"), FmValue::Num(6.02e23));
+        assert_eq!(parse_value("2026-08-04"), FmValue::Str("2026-08-04".into()));
+        // Quoted is ALWAYS Str:
+        assert_eq!(parse_value("\"true\""), FmValue::Str("true".into()));
+        assert_eq!(parse_value("'it''s'"), FmValue::Str("it's".into()));
+        // Nested flow with quote-aware, nesting-aware splitting:
+        assert_eq!(
+            parse_value("[a, [b, c], \"x,y\"]"),
+            FmValue::List(vec![
+                FmValue::Str("a".into()),
+                FmValue::List(vec![FmValue::Str("b".into()), FmValue::Str("c".into())]),
+                FmValue::Str("x,y".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn double_quote_escapes_gain_tab_nul_unicode() {
+        assert_eq!(
+            parse_value("\"a\\tb\\0c\\u00e9\""),
+            FmValue::Str("a\tb\0c\u{e9}".into())
+        );
+    }
+
+    #[test]
+    fn nested_frontmatter_reads_into_maps_and_lists() {
+        let source = "---\nmeta:\n  owner: platform\n  n: 3\nauthors:\n  - name: Ana\n    team: platform\nstereotype:\n  - aggregateRoot\n  - entity\ndup: 1\ndup: 2\ndesc: |\n  line one\n  line two\nfolded: >\n  a\n  b\nempty:\n---\n";
+        let fm = parse_frontmatter_for_test(source);
+        assert_eq!(
+            fm.get("meta"),
+            Some(&FmValue::Map(vec![
+                ("owner".into(), FmValue::Str("platform".into())),
+                ("n".into(), FmValue::Num(3.0)),
+            ]))
+        );
+        assert_eq!(
+            fm.get("authors"),
+            Some(&FmValue::List(vec![FmValue::Map(vec![
+                ("name".into(), FmValue::Str("Ana".into())),
+                ("team".into(), FmValue::Str("platform".into())),
+            ])]))
+        );
+        assert_eq!(
+            fm.get("stereotype"),
+            Some(&FmValue::List(vec![
+                FmValue::Str("aggregateRoot".into()),
+                FmValue::Str("entity".into()),
+            ]))
+        );
+        assert_eq!(
+            fm.get("dup"),
+            Some(&FmValue::Num(2.0)),
+            "last duplicate wins"
+        );
+        assert_eq!(
+            fm.get("desc"),
+            Some(&FmValue::Str("line one\nline two\n".into())),
+            "| keeps newlines, clip chomping"
+        );
+        assert_eq!(
+            fm.get("folded"),
+            Some(&FmValue::Str("a b\n".into())),
+            "> folds to spaces"
+        );
+        assert_eq!(fm.get("empty"), Some(&FmValue::Null));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn wire_null_and_map_round_trip() {
+        let v: FmValue = serde_json::from_str("null").unwrap();
+        assert_eq!(
+            v,
+            FmValue::Null,
+            "JSON null must be Null, not the string \"null\""
+        );
+        let v: FmValue = serde_json::from_str("{\"a\": 1, \"b\": null}").unwrap();
+        assert_eq!(
+            v,
+            FmValue::Map(vec![
+                ("a".into(), FmValue::Num(1.0)),
+                ("b".into(), FmValue::Null),
+            ])
+        );
+        // Hostile depth via maps is capped like lists:
+        let deep = format!("{}1{}", "{\"k\":".repeat(100), "}".repeat(100));
+        assert!(serde_json::from_str::<FmValue>(&deep).is_err());
     }
 
     #[test]
@@ -470,8 +1030,8 @@ mod tests {
 
     #[test]
     fn render_quotes_scalars_that_would_reparse_wrong() {
-        // A string that looks like a bool/num/list/empty must stay quoted so it
-        // round-trips as a Str, not the ambiguous type it resembles.
+        // A string that looks like a bool/num/list/empty/null must stay
+        // quoted so it round-trips as a Str, not the type it resembles.
         for raw in [
             "true",
             "false",
@@ -481,6 +1041,10 @@ mod tests {
             "",
             " leading",
             "has\"quote",
+            "null",
+            "~",
+            ".inf",
+            "0x1A",
         ] {
             let fm = Frontmatter {
                 entries: vec![("k".into(), FmValue::Str(raw.to_string()))],
@@ -599,10 +1163,47 @@ mod tests {
         assert_eq!(parsed, fm.entries[0].1);
     }
 
+    #[test]
+    fn nested_map_renders_as_block_mapping_and_round_trips() {
+        let fm = Frontmatter {
+            entries: vec![(
+                "meta".into(),
+                FmValue::Map(vec![
+                    ("owner".into(), FmValue::Str("platform".into())),
+                    (
+                        "detail".into(),
+                        FmValue::Map(vec![("level".into(), FmValue::Num(3.0))]),
+                    ),
+                ]),
+            )],
+        };
+        let rendered = render_frontmatter(&fm);
+        assert_eq!(
+            rendered,
+            "meta:\n  owner: platform\n  detail:\n    level: 3"
+        );
+        let source = format!("---\n{rendered}\n---\n");
+        let parsed = parse_frontmatter_for_test(&source);
+        assert_eq!(parsed, fm);
+    }
+
+    #[test]
+    fn empty_map_renders_and_reparses_as_null() {
+        let fm = Frontmatter {
+            entries: vec![("meta".into(), FmValue::Map(vec![]))],
+        };
+        let rendered = render_frontmatter(&fm);
+        assert_eq!(rendered, "meta:");
+        let source = format!("---\n{rendered}\n---\n");
+        let parsed = parse_frontmatter_for_test(&source);
+        assert_eq!(parsed.get("meta"), Some(&FmValue::Null));
+    }
+
     use proptest::prelude::*;
 
     fn fm_value_strategy() -> impl Strategy<Value = FmValue> {
         let leaf = prop_oneof![
+            Just(FmValue::Null),
             any::<bool>().prop_map(FmValue::Bool),
             // Finite, non-NaN, and re-parseable: round through the renderer's own
             // formatting so 1.0 vs 1 formatting differences don't fail spuriously.
@@ -624,7 +1225,19 @@ mod tests {
             ]
             .prop_map(FmValue::Str),
         ];
+        // NOTE: `Map` is not yet part of this recursive strategy. Adding a
+        // `Map` arm here (as a list item AND as an entry-level value) requires
+        // the entry-level round-trip property below to reparse through the
+        // full document tree (a Map entry cannot be checked as a single
+        // rendered line) and requires sequence-of-map block rendering — both
+        // are Task 8's job, landing together with the strategy addition so
+        // the two never go out of sync. Task 7 lands `Map`-capable reading
+        // and writing (see the tests above), pinned by targeted unit tests
+        // instead of the shared property strategy.
         leaf.prop_recursive(4, 48, 8, |inner| {
+            // NOTE: the filter runs on the Vec<FmValue>, BEFORE the prop_map wraps
+            // it in FmValue::List. Filtering after the wrap does not compile —
+            // `iter()` is not available on `&FmValue`.
             prop::collection::vec(inner, 0..6)
                 // MANDATORY EXCLUSIONS — see the note below. Today's flow-list
                 // parser splits on EVERY comma, quote- and nesting-blind, and the

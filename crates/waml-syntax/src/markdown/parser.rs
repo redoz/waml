@@ -419,6 +419,29 @@ struct ValueScan {
     comment_start: Option<usize>,
     unterminated: bool,
     malformed: bool,
+    /// Span of the first unknown/malformed `\x` escape inside a
+    /// double-quoted scalar, if any (single-quoted has no escapes to check).
+    invalid_escape: Option<(usize, usize)>,
+}
+
+/// True if `c` is a double-quote escape this decoder understands:
+/// `\\ \" \n \r \t \0 \uXXXX`. Anything else is a genuine unknown escape.
+fn is_known_double_quote_escape(bytes: &[u8], at: usize, limit: usize) -> Option<usize> {
+    match bytes.get(at) {
+        Some(b'\\' | b'"' | b'n' | b'r' | b't' | b'0') => Some(at + 1),
+        Some(b'u') => {
+            let hex_start = at + 1;
+            let hex_end = (hex_start + 4).min(limit);
+            if hex_end - hex_start == 4
+                && bytes[hex_start..hex_end].iter().all(u8::is_ascii_hexdigit)
+            {
+                Some(hex_end)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Scans a value position (after `key: ` or after `- `), quote-aware. Bare
@@ -433,6 +456,7 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
             comment_start: None,
             unterminated: false,
             malformed: false,
+            invalid_escape: None,
         };
     }
     let first = bytes[start];
@@ -440,6 +464,7 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
         let quote = first;
         let mut at = start + 1;
         let mut unterminated = true;
+        let mut invalid_escape = None;
         while at < limit {
             if bytes[at] == quote {
                 if quote == b'\'' && at + 1 < limit && bytes[at + 1] == b'\'' {
@@ -451,7 +476,16 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
                 break;
             }
             if quote == b'"' && bytes[at] == b'\\' && at + 1 < limit {
-                at += 2;
+                let escape_start = at;
+                match is_known_double_quote_escape(bytes, at + 1, limit) {
+                    Some(next) => at = next,
+                    None => {
+                        if invalid_escape.is_none() {
+                            invalid_escape = Some((escape_start, (at + 2).min(limit)));
+                        }
+                        at += 2;
+                    }
+                }
                 continue;
             }
             at += 1;
@@ -465,6 +499,7 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
                 comment_start: None,
                 unterminated: true,
                 malformed: false,
+                invalid_escape,
             };
         }
         // A closed quote can still be followed by a trailing comment, or by
@@ -481,6 +516,7 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
                 comment_start: Some(trail),
                 unterminated: false,
                 malformed: false,
+                invalid_escape,
             };
         }
         return ValueScan {
@@ -489,6 +525,7 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
             comment_start: None,
             unterminated: false,
             malformed: trail < limit,
+            invalid_escape,
         };
     }
     let mut at = start;
@@ -512,6 +549,7 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
         comment_start,
         unterminated: false,
         malformed,
+        invalid_escape: None,
     }
 }
 
@@ -869,6 +907,15 @@ fn push_mapping_entry<I: Iterator<Item = (usize, usize)>>(
                     "malformed frontmatter entry",
                 ));
             }
+            if let Some((escape_start, escape_end)) = scan.invalid_escape {
+                malformed = true;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::InvalidEscapeSequence,
+                    escape_start,
+                    escape_end,
+                    "unknown escape sequence in quoted scalar",
+                ));
+            }
         }
         ValueKind::Bare => {
             children.push(GreenElement::Token(token_with_leading(
@@ -1131,6 +1178,15 @@ fn push_sequence_item<I: Iterator<Item = (usize, usize)>>(
                     after_dash,
                     scan.value_end,
                     "unterminated quoted scalar",
+                ));
+            }
+            if let Some((escape_start, escape_end)) = scan.invalid_escape {
+                malformed = true;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::InvalidEscapeSequence,
+                    escape_start,
+                    escape_end,
+                    "unknown escape sequence in quoted scalar",
                 ));
             }
         }

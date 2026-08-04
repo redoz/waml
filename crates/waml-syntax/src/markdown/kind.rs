@@ -170,6 +170,7 @@ pub enum OkfSyntaxDiagnosticCode {
     TabInFrontmatterIndent,
     InvalidFrontmatterIndent,
     UnterminatedQuotedScalar,
+    InvalidEscapeSequence,
     InvalidUtf8Boundary,
     ParserStalled,
     MalformedBlock,
