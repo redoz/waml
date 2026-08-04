@@ -4872,6 +4872,125 @@ mod tests {
         assert_eq!(Icon::ALL.len(), 121);
     }
 
+    // ------------------------------------------------------------------
+    // The five-way order invariant (enum == IconSet field == DSL == `get`
+    // == `ALL`), mechanically checked so drift fails the gate instead of
+    // relying on the convention comments alone. `label` and `get` are
+    // already compiler-exhaustive matches; what the compiler cannot see is
+    // the *order* agreement and `ALL`'s completeness, so this parses the
+    // declarations straight out of this file's source text.
+    // ------------------------------------------------------------------
+
+    const SRC: &str = include_str!("icons.rs");
+
+    /// The lines of the block that starts on the first line containing
+    /// `start`, up to (excluding) the first following line whose trimmed
+    /// text starts with `end`.
+    fn block(start: &str, end: &str) -> Vec<&'static str> {
+        let mut lines = SRC.lines();
+        for line in lines.by_ref() {
+            if line.contains(start) {
+                break;
+            }
+        }
+        lines
+            .take_while(|line| !line.trim_start().starts_with(end))
+            .collect()
+    }
+
+    /// `IconSet` field-name spelling of a variant name (the same convention
+    /// throughout: an underscore before every interior capital or digit).
+    fn snake(name: &str) -> String {
+        let mut out = String::new();
+        for (i, ch) in name.chars().enumerate() {
+            if i > 0 && (ch.is_ascii_uppercase() || ch.is_ascii_digit()) {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        }
+        out
+    }
+
+    /// The enum's variant names, in declaration order.
+    fn declared_variants() -> Vec<String> {
+        block("pub enum Icon {", "}")
+            .into_iter()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with('#'))
+            .map(|line| line.trim_end_matches(',').to_string())
+            .collect()
+    }
+
+    #[test]
+    fn all_matches_the_enum_declaration_exactly() {
+        let variants = declared_variants();
+        assert_eq!(
+            Icon::ALL.len(),
+            variants.len(),
+            "a variant is missing from (or extra in) Icon::ALL"
+        );
+        // Discriminants are declaration indices, so this pins ALL's order to
+        // the enum's and rules out duplicates in one pass.
+        for (index, icon) in Icon::ALL.iter().enumerate() {
+            assert_eq!(*icon as usize, index, "ALL is out of enum order at {index}");
+        }
+    }
+
+    #[test]
+    fn icon_set_fields_follow_the_enum_in_order_and_spelling() {
+        let fields: Vec<String> = block("pub struct IconSet {", "}")
+            .into_iter()
+            .map(str::trim)
+            .filter(|line| line.starts_with("pub ") && line.ends_with(": DrawColor,"))
+            .map(|line| line["pub ".len()..line.len() - ": DrawColor,".len()].to_string())
+            .collect();
+        let expected: Vec<String> = declared_variants().iter().map(|v| snake(v)).collect();
+        assert_eq!(fields, expected, "IconSet fields drifted from the enum");
+    }
+
+    #[test]
+    fn dsl_bindings_follow_the_enum_in_order_and_spelling() {
+        let bindings: Vec<(String, String)> = block(
+            "mod.widgets.IconSet = set_type_default()",
+            "}",
+        )
+        .into_iter()
+        .map(str::trim)
+        .filter_map(|line| {
+            let (field, rest) = line.split_once(": mod.draw.Icon")?;
+            let camel = rest.split('{').next()?.trim();
+            Some((field.to_string(), camel.to_string()))
+        })
+        .collect();
+        let expected: Vec<(String, String)> = declared_variants()
+            .into_iter()
+            .map(|v| (snake(&v), v))
+            .collect();
+        assert_eq!(bindings, expected, "the IconSet DSL block drifted from the enum");
+    }
+
+    #[test]
+    fn get_arms_follow_the_enum_and_name_their_own_field() {
+        let arms: Vec<(String, String)> = SRC
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| {
+                let (variant, rest) = line
+                    .strip_prefix("Icon::")?
+                    .split_once(" => &mut self.")?;
+                Some((variant.to_string(), rest.trim_end_matches(',').to_string()))
+            })
+            .collect();
+        let expected: Vec<(String, String)> = declared_variants()
+            .into_iter()
+            .map(|v| {
+                let field = snake(&v);
+                (v, field)
+            })
+            .collect();
+        assert_eq!(arms, expected, "IconSet::get drifted from the enum");
+    }
+
     #[test]
     fn icon_all_is_in_field_order_at_the_edges() {
         assert_eq!(Icon::ALL[0], Icon::Package);
