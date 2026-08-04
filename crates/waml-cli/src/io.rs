@@ -29,14 +29,28 @@ pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(Strin
 /// A dot-directory named directly on the command line is still descended into,
 /// since that is an explicit request rather than an incidental discovery.
 pub fn collect_md(paths: &[PathBuf]) -> std::io::Result<Vec<PathBuf>> {
-    // A non-followed link is the walker's clean-skip default, not a failure:
-    // the pre-unification walkers never made one link abort the collection.
+    collect_md_with(paths, &mut |skipped| eprintln!("warning: {skipped}"))
+}
+
+/// `collect_md` with an injectable sink for skipped-link reports. A
+/// non-followed link is the walker's clean-skip default, not a failure: the
+/// pre-unification walkers never made one link abort the collection. But the
+/// old walkers *followed* links, so a bundle that relied on one would now
+/// silently lose documents -- every skip is surfaced through `report_skipped_link`.
+fn collect_md_with(
+    paths: &[PathBuf],
+    report_skipped_link: &mut dyn FnMut(&IngestError),
+) -> std::io::Result<Vec<PathBuf>> {
     let ingested = ingest_markdown(paths, &IngestOptions::default());
-    if let Some(error) = ingested
-        .errors
-        .into_iter()
-        .find(|error| error.kind != IngestErrorKind::LinkSkipped)
-    {
+    let mut fatal = None;
+    for error in ingested.errors {
+        if error.kind == IngestErrorKind::LinkSkipped {
+            report_skipped_link(&error);
+        } else if fatal.is_none() {
+            fatal = Some(error);
+        }
+    }
+    if let Some(error) = fatal {
         return Err(ingest_error_to_io(error));
     }
     Ok(ingested
@@ -696,7 +710,9 @@ mod tests {
     }
 
     /// One link anywhere under a collected directory must not make the whole
-    /// collection fail: a non-followed link is a clean skip, not a fatal error.
+    /// collection fail: a non-followed link is a clean skip, not a fatal
+    /// error. The skip must be *surfaced*, not silent -- the pre-unification
+    /// walker followed links, so a bundle relying on one loses documents here.
     #[test]
     fn collect_md_survives_a_skipped_link() {
         let temp = TempDir::new();
@@ -708,8 +724,17 @@ mod tests {
             return;
         }
 
-        let files = collect_md(std::slice::from_ref(&temp.0))
-            .expect("a skipped link must not fail the collection");
+        let mut skipped = Vec::new();
+        let files = collect_md_with(std::slice::from_ref(&temp.0), &mut |error| {
+            skipped.push(error.to_string())
+        })
+        .expect("a skipped link must not fail the collection");
+        assert_eq!(skipped.len(), 1, "the skipped link must be reported");
+        assert!(
+            skipped[0].contains("linked"),
+            "the report must name the skipped link: {}",
+            skipped[0]
+        );
         let names: Vec<String> = files
             .iter()
             .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())

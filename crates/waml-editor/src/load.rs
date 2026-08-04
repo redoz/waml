@@ -1,7 +1,13 @@
 //! Load an OKF directory into its source-authoritative bundle.
 
+// `Path` is only reached from the native loaders; the wasm build keeps just
+// `source_for`, which takes no filesystem path.
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
-use waml::host::ingest::{ingest_markdown, IngestErrorKind, IngestOptions};
+// The shared ingest walker reads the local filesystem, which the wasm build
+// does not have; the wasm build fetches its bundle over HTTP instead.
+#[cfg(not(target_arch = "wasm32"))]
+use waml::host::ingest::{ingest_markdown, IngestError, IngestErrorKind, IngestOptions};
 use waml::source::{SourceBundle, SourceError};
 
 #[derive(Debug)]
@@ -46,17 +52,34 @@ impl From<SourceError> for LoadError {
 /// Delegates to the shared hardened walker (`waml::host::ingest`); the first
 /// `IngestError` fails the load, matching the previous fail-fast behavior.
 /// A non-followed link is the walker's clean-skip default, not a failure:
-/// the pre-unification walkers never made one link abort the bundle.
+/// the pre-unification walkers never made one link abort the bundle. Skipped
+/// links are logged rather than dropped -- the old walker followed links, so a
+/// bundle that relied on one would otherwise lose documents with zero signal.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read_bundle(dir: &Path) -> Result<SourceBundle, LoadError> {
+    read_bundle_with(dir, &mut |skipped| {
+        tracing::warn!(error.message = %skipped, "skipped a link while loading the bundle");
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_bundle_with(
+    dir: &Path,
+    report_skipped_link: &mut dyn FnMut(&IngestError),
+) -> Result<SourceBundle, LoadError> {
     let ingested = ingest_markdown(
         std::slice::from_ref(&dir.to_path_buf()),
         &IngestOptions::default(),
     );
-    if let Some(error) = ingested
-        .errors
-        .into_iter()
-        .find(|error| error.kind != IngestErrorKind::LinkSkipped)
-    {
+    let mut fatal = None;
+    for error in ingested.errors {
+        if error.kind == IngestErrorKind::LinkSkipped {
+            report_skipped_link(&error);
+        } else if fatal.is_none() {
+            fatal = Some(error);
+        }
+    }
+    if let Some(error) = fatal {
         return Err(LoadError::Io(std::io::Error::other(error.to_string())));
     }
     let out: Vec<(String, String)> = ingested
@@ -171,6 +194,8 @@ mod tests {
 
     /// One link anywhere inside a bundle must not make the whole bundle
     /// unloadable: a non-followed link is a clean skip, not a fatal error.
+    /// The skip must be *surfaced*, not silent -- the pre-unification walker
+    /// followed links, so a bundle that relied on one loses documents here.
     #[test]
     fn read_bundle_survives_a_skipped_link_inside_the_bundle() {
         let tmp = std::env::temp_dir().join(format!(
@@ -191,9 +216,16 @@ mod tests {
             return;
         }
 
-        let bundle = read_bundle(&tmp);
+        let mut skipped = Vec::new();
+        let bundle = read_bundle_with(&tmp, &mut |error| skipped.push(error.to_string()));
         let _ = std::fs::remove_dir_all(&tmp);
 
+        assert_eq!(skipped.len(), 1, "the skipped link must be reported");
+        assert!(
+            skipped[0].contains("linked"),
+            "the report must name the skipped link: {}",
+            skipped[0]
+        );
         let paths: Vec<String> = bundle
             .expect("a skipped link must not fail the whole bundle")
             .documents()
