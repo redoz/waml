@@ -1,16 +1,18 @@
-# OKF-UML — UML domain models in OKF
+# WAML — UML domain models in OKF
 
-OKF-UML is a profile of OKF (an open, markdown-based modeling format) for
-representing UML class and structure diagrams as a set of linked markdown
-documents. Each classifier (class, interface, enum, …) is its own document;
-relationships between classifiers are expressed as markdown links inside a
-`## Relationships` section; and a *diagram* document curates a subset of those
-classifiers into a rendered view. Everything the renderer must dispatch on is
-carried by a small closed set of **metaclasses**, while all domain-specific
-vocabulary is carried as open **data** (stereotypes and profiles).
+WAML (formerly OKF-UML) is a profile of OKF (an open, markdown-based modeling
+format) for representing UML models as a set of linked markdown documents. Each
+classifier (class, interface, enum, …) is its own document; relationships
+between classifiers are expressed as markdown links inside a
+`## Relationships` section; a *diagram* document curates a subset of those
+classifiers into a rendered view; and *behavior* documents (activity, state
+machine, sequence) are self-rendering views over their own declared elements.
+Everything the renderer must dispatch on is carried by a small closed set of
+**metaclasses**, while all domain-specific vocabulary is carried as open
+**data** (stereotypes and profiles).
 
 This document specifies the on-disk format precisely enough to implement a
-parser, a serializer, or to author OKF-UML documents by hand. It describes the
+parser, a serializer, or to author WAML documents by hand. It describes the
 format only — not any particular application, storage, or rendering technology.
 
 A guiding principle throughout is **graceful degradation**: an unknown family,
@@ -19,20 +21,32 @@ as an error (see [Graceful degradation](#graceful-degradation)).
 
 ## Document roles
 
-Every OKF document plays exactly one of three roles. The role is determined
+Every WAML document plays exactly one of four roles. The role is determined
 structurally, not by a free-text label:
 
-| role | how identified | is it a node? |
+| role | how identified | is it a pool element? |
 |---|---|---|
-| **index** | filename is `index.md` | no — navigation only |
-| **diagram** | `type: Diagram` **and** a `## Members` list | no — it is a *view* over nodes |
-| **classifier (node)** | anything else | yes |
+| **index** | filename is `index.md` | no — navigation only, generated (see [Packages and indexes](#packages-and-indexes)) |
+| **diagram** | `type: Diagram` **and** a `## Members` list | no — it is a *view* over pooled nodes |
+| **behavior** | `type: uml.Activity`, `uml.StateMachine`, or `uml.Sequence` | no — a self-rendering view (see [Behavioral substrates](#behavioral-substrates)) |
+| **node** | anything else | yes |
 
 - **Index** documents provide navigation and are not part of any model graph.
+  They are regenerated from the bundle, one per directory.
 - **Diagram** documents are curated, profiled views over a set of nodes (see
   [Diagram documents](#diagram-documents)).
-- **Classifier** (node) documents describe a single modeling element — a class,
-  interface, enum, data type, package, association class, or note.
+- **Behavior** documents each hold one directed graph (flow substrate) or one
+  ordered interaction (interaction substrate). They are the document — model
+  and view at once — and never contribute a classifier node.
+- **Node** documents describe a single modeling element — a class, interface,
+  enum, data type, package, association class, actor, use case, instance
+  specification, or note.
+
+Within the pool, **classifier** is a narrower predicate than **node**: `Class`,
+`Interface`, `Enum`, `DataType`, `Actor`, `UseCase`, `Association`, and the
+behavior kinds are UML Classifiers; `Package`, `Note`, and
+`InstanceSpecification` are pool elements but *not* classifiers (an instance is
+never instantiated, a note is a comment, a package is a namespace).
 
 ## The `type` dispatch key: `family.Metaclass`
 
@@ -54,7 +68,15 @@ defined rendering; a conforming renderer has explicit handling per entry:
 | `uml.DataType` | box with the `«dataType»` keyword |
 | `uml.Package` | tabbed-folder box |
 | `uml.Association` | association class — a classifier box (name / attributes) dashed-connected to an association line |
+| `uml.Actor` | stick figure (use-case structure tier) |
+| `uml.UseCase` | ellipse (use-case structure tier) |
+| `uml.InstanceSpecification` | object box — underlined `name : Classifier` header over a slot list |
 | `uml.Note` | dog-eared comment box; markdown body; dashed anchor(s) to the annotated element(s) |
+
+Three further `uml.*` tokens select the behavior substrates rather than node
+metaclasses: `uml.Activity`, `uml.StateMachine`, and `uml.Sequence` (see
+[Behavioral substrates](#behavioral-substrates)). A diagram's dispatch key is
+the bare token `Diagram` (no family prefix).
 
 The metaclass set is *closed*: authors do not invent new metaclasses. All
 domain-specific meaning is expressed through **stereotypes** instead.
@@ -65,7 +87,7 @@ domain-specific meaning is expressed through **stereotypes** instead.
 
 ## Metaclasses vs stereotypes
 
-OKF-UML uses UML's own extension mechanism to stay open without growing the
+WAML uses UML's own extension mechanism to stay open without growing the
 renderer:
 
 - **Metaclasses** are the closed set above. The renderer knows each one.
@@ -84,8 +106,9 @@ it is one new stereotype name, optionally given styling in a profile.
 ## Profiles
 
 A **profile** (for example `uml-domain`) is a named bundle of presentation data
-that a diagram selects. It does not change what a model *means*; it selects what
-is *emphasized* and how stereotyped elements look. A profile does three jobs:
+that a diagram selects via its `profile` frontmatter key. It does not change
+what a model *means*; it selects what is *emphasized* and how stereotyped
+elements look. A profile does three jobs:
 
 1. **Render lens / emphasis** — which adornments to surface. A `uml-domain`
    profile might show multiplicity, aggregation/composition diamonds,
@@ -112,7 +135,8 @@ palette:
 
 The same node documents may be drawn by different profiles, yielding different
 emphasis. "What matters here" is a property of the **diagram/profile, never of
-the node**.
+the node**. A diagram may additionally override individual display switches in
+its own frontmatter (see [Display settings](#display-settings)).
 
 ## Node (classifier) documents
 
@@ -152,6 +176,18 @@ description: A customer's placed order.
 - `abstract` — optional boolean flag; renders the name italic for `uml.Class`.
 - `description` — optional one-line description.
 
+Generic OKF frontmatter (`tags`, `resource`, `timestamp`, and any keys this
+profile does not read) is preserved losslessly on every document.
+
+### Canonical sections
+
+The recognised section headings are `Body`, `Attributes`, `Slots`, `Values`,
+`Relationships`, `Notes`, `Nodes`, `Lifelines`, `Gates`, `Messages`, `Members`,
+and `Layout`. Headings are matched case-insensitively and normalised to these
+canonical titles by the formatter. Which sections are meaningful depends on the
+document's role; an unrecognised section is carried through untouched (see
+[Graceful degradation](#graceful-degradation)).
+
 ### `## Attributes`
 
 One bullet per attribute, following the grammar:
@@ -166,7 +202,8 @@ One bullet per attribute, following the grammar:
 - **multiplicity** — optional trailing `{…}` using full UML multiplicity strings
   (`1`, `0..1`, `*`, `1..*`, `0..*`, `2..5`). Absent multiplicity is treated as
   `{1}`. The braces avoid colliding with Markdown's `[…]` link/reference syntax;
-  relationship-end multiplicities stay bare (see `## Relationships`).
+  relationship-end multiplicities stay bare (see `## Relationships`). A parser
+  tolerates `[…]` in this position, but `{…}` is the canonical serialization.
 - **visibility** — optional leading `+`, `-`, `#`, or `~`
   (public / private / protected / package). Permitted but omittable; a
   domain-oriented profile typically hides it.
@@ -207,8 +244,8 @@ the verb itself adds the **end adornment**:
 
 | category | line | verbs | end adornment |
 |---|---|---|---|
-| **association** | solid | `associates`, `aggregates`, `composes` | none / hollow ◇ (aggregation) / filled ◆ (composition) |
-| **dependency** | dashed | `depends`, `implements` (realization), `includes`, `extends` | open → / hollow ▷ (realization) / open → + `«include»`/`«extend»` label |
+| **association** | solid | `associates`, `aggregates`, `composes`, `links` | none / hollow ◇ (aggregation) / filled ◆ (composition) |
+| **dependency** | dashed | `depends`, `implements` (realization), `includes`, `extends`, `instance of` | open → / hollow ▷ (realization) / open → + `«include»`/`«extend»`/`«instanceOf»` label |
 | **generalization** | solid | `specializes` | hollow ▷ |
 
 These nest: composition is a stronger aggregation, and aggregation a stronger
@@ -222,25 +259,36 @@ the verb, so new dependency kinds added later need no new line logic.
 
 | verb | UML meaning | ends? | renders as |
 |---|---|---|---|
-| `associates` | association | yes | solid line, arrowhead on navigable end(s) |
-| `aggregates` | shared aggregation | yes | solid line, hollow ◇ on this (whole) end |
-| `composes` | composition | yes | solid line, filled ◆ on this (whole) end |
+| `associates` | association | optional | solid line, arrowhead on navigable end(s) |
+| `aggregates` | shared aggregation | required | solid line, hollow ◇ on this (whole) end |
+| `composes` | composition | required | solid line, filled ◆ on this (whole) end |
 | `specializes` | generalization | no | solid line, hollow ▷ at parent |
 | `implements` | realization | no | dashed line, hollow ▷ at interface |
 | `depends` | dependency | no | dashed line, open → at target |
+| `includes` | use-case include | no | dashed line, open → + `«include»` label |
+| `extends` | use-case extend | no | dashed line, open → + `«extend»` label |
+| `instance of` | instance ↔ classifier typing | no | dashed line, open → at classifier (see [Instances](#instances-and-object-diagrams-umlinstancespecification)) |
+| `links` | link — an instance of an association | no | solid line between two instances |
+| `annotates` | comment anchor | no | plain dashed line, no arrowhead (`uml.Note` only) |
 
 `specializes` reads near → far as child → parent (the child document declares its
-parent).
+parent). `annotates` is valid only in a `uml.Note`'s `## Relationships` (see
+[Notes](#notes--comments-umlnote)); `instance of` and `links` are valid only on a
+`uml.InstanceSpecification`.
 
 ### Ends
 
-For `associates` / `aggregates` / `composes`, the ends clause is
-`: <near> to <far>`, where each end is `<multiplicity>[ <role>]`. **near** is the
-declaring document; **far** is the target.
+For `aggregates` / `composes` (required) and `associates` (optional), the ends
+clause is `: <near> to <far>`, where each end is `<multiplicity>[ <role>]`.
+**near** is the declaring document; **far** is the target.
 
 Example: `- composes [OrderLine](./order-line.md): 1 order to 1..* lines`
 means one `Order` (near, role `order`) composes one-or-more `OrderLine`s (far,
 role `lines`).
+
+A bare `associates` (no ends clause) is a plain communication/association link
+with unstated ends — the idiomatic form between an `uml.Actor` and a
+`uml.UseCase`, and permitted between any two classifiers.
 
 ### Navigability and reciprocity
 
@@ -269,6 +317,9 @@ arrow, and is allowed on **all** verbs. It takes one of two forms:
   preserved; the association class is reached *via the `as` link*, not by routing
   the relationship through an intermediate document.
 
+On a `links` relationship, the link form of `as` names the **Association the
+link instantiates** rather than an association class.
+
 ### BNF
 
 ```bnf
@@ -276,6 +327,9 @@ arrow, and is allowed on **all** verbs. It takes one of two forms:
 
 <verb>          ::= "associates" | "aggregates" | "composes"
                   | "specializes" | "implements" | "depends"
+                  | "includes" | "extends"
+                  | "instance of" | "links"
+                  | "annotates"          ; uml.Note only
 
 <link>          ::= "[" <title> "](./" <slug> ".md)"
 
@@ -298,41 +352,103 @@ arrow, and is allowed on **all** verbs. It takes one of two forms:
 
 ### Context rules (parser-enforced, not expressible in the BNF)
 
-- `<ends>` is **required** for `associates` / `aggregates` / `composes`, and
-  **forbidden** for `specializes` / `implements` / `depends`.
+- `<ends>` is **required** for `aggregates` / `composes`, **optional** for
+  `associates` (present with both ends, or absent entirely), and **forbidden**
+  for every other verb.
 - `<name>` (`as …`) is **optional** on every verb; when present it precedes
   `<ends>`. Names need not be globally unique, but a name referenced by a note
   should be unique within its source document so the anchor resolves
   unambiguously.
 - End order is always **near** (the declaring document) `to` **far** (the
   target).
-- Multiplicity: `*` is unbounded; bare `*` ≡ `0..*`; bare `n` ≡ exactly `n`; in
-  `lower..bound`, `lower ≤ bound` unless `bound` is `*`.
+- Multiplicity: `*` is unbounded; bare `*` ≡ `0..*`; bare `n` ≡ exactly `n`; a
+  bare `0` is invalid; in `lower..bound`, `lower ≤ bound` unless `bound` is `*`.
 - `<role>` is optional per end; it is a single token following the multiplicity
   after one space.
+- `annotates` is accepted only on `uml.Note` documents; `instance of` and
+  `links` only on `uml.InstanceSpecification` documents.
+
+## Instances and object diagrams (`uml.InstanceSpecification`)
+
+An **instance specification** is UML's "object on an object diagram": a pool
+element that is an *instance of* a classifier, carrying **slot** values rather
+than declaring attributes. A **link** is the object-diagram counterpart of an
+association — an edge connecting two instances, optionally naming the
+Association it instantiates. An instance is a pool element but **not** a
+classifier: you do not instantiate an instance.
+
+### Standalone instance document
+
+```markdown
+---
+type: uml.InstanceSpecification
+title: order42
+---
+# order42
+
+## Relationships
+- instance of [Order](./order.md)
+- links [order42-line](./order42-line.md) as [Places](./places.md)
+
+## Slots
+- id: "ORD-42"
+- status: PLACED
+```
+
+- `instance of <link>` types the instance by a classifier. No ends, no `as`.
+- `links <link>` connects this instance to another instance; the optional
+  `as` clause (string or link) names the instantiated Association.
+- `## Slots` lists one `- name: value` bullet per slot.
+
+### Slot values
+
+A slot **value** is one of:
+
+- a **quoted string** — `"ORD-42"`;
+- a **bare token** — an identifier or number (`PLACED`, `3`); a bare value must
+  not contain a reserved word (`instance of`, `with`, `set to`, `and`, `as`,
+  `links`) — quote it if it must;
+- a **link** — `[order42-line](./order42-line.md)`: an instance-valued slot,
+  navigable to the referenced element.
+
+### Inline instance (in a diagram's `## Members`)
+
+For sketching an object diagram without one file per object, a Diagram's
+`## Members` list accepts an inline-instance bullet:
+
+```markdown
+## Members
+- instance of [Order](./order.md) as order42 with id set to "ORD-42" and status set to PLACED
+```
+
+Grammar: `- instance of <link> as <name>[ with <slot> set to <value> { and <slot> set to <value> }]`.
+The instance is promoted to a pool element keyed `{diagram}#{name}` and is
+automatically a member of that diagram. Canonical serialization joins slots
+with ` and ` (one canonical form), so parse → serialize is byte-identical.
+Inlining is **instances-only** — classifiers are never declared inline.
+
+### Conformance validation (warn-only)
+
+Object diagrams are often sketched before their classifiers settle, so
+conformance failures are **warnings**, never errors:
+
+- **slot-unknown-attribute** — a slot name is not an attribute of the referenced
+  classifier.
+- **instance-of-non-classifier** — the `instance of` target is not a classifier
+  (including another instance).
+- **instance-of-unresolved** — the classifier reference is dangling.
 
 ## Behavioral substrates
 
-Three additions extend the structure grammar above and introduce two new
-self-rendering substrates. Full rationale and worked examples:
+Beyond the structure tier, WAML defines two self-rendering behavior substrates.
+Full rationale and worked examples:
 `docs/superpowers/specs/2026-07-11-uaml-behavioral-substrates-design.md`.
 
-### Structure tier additions
-
-Two new metaclasses join the closed set: `uml.Actor`, `uml.UseCase`. Two new
-dependency verbs join the Relationships grammar:
-
-```bnf
-<rel-verb>      ::= "associates" | "aggregates" | "composes" | "specializes"
-                   | "implements" | "depends" | "includes" | "extends"
-```
-
-`includes` and `extends` are dependencies: no ends, rendered dashed with an
-open arrow and a `«include»` / `«extend»` label. Context rule: `associates`
-ends (`: <near> to <far>`) are required between two classifiers, and
-**optional** when either end is an `uml.Actor` or `uml.UseCase` (a bare
-`associates` there is a communication link). A system boundary is a `frame`
-group in a Diagram's `## Members` section — no new metaclass.
+The structure tier participates through the `uml.Actor` and `uml.UseCase`
+metaclasses and the `includes` / `extends` dependency verbs (all part of the
+core sets above). A bare `associates` between an actor and a use case is a
+communication link. A system boundary is a `frame` group in a Diagram's
+`## Members` section — no new metaclass.
 
 ### Flow substrate (`uml.Activity`, `uml.StateMachine`)
 
@@ -349,7 +465,9 @@ node-identity   ::= text                      ; heading text minus the keyword;
                                                ; its link title
 ```
 
-Each node owns zero or more bullets:
+A heading with no keyword is a **plain** node — an action (activity flavor) or a
+state (state-machine flavor). The flavor tunes rendering only; the grammar is
+one. Each node owns zero or more bullets:
 
 ```bnf
 flow-bullet     ::= transition | internal | refines | partition
@@ -366,8 +484,10 @@ link            ::= "[" text "](" "./" slug ".md" ")"
 ```
 
 `transitions` is the one edge verb for both flow flavors. Guards are
-delimited by the word `when`, never `[...]`. A trailing `#### Notes` under a
-node is a plain bulleted list, same grammar as a classifier's `## Notes`.
+delimited by the word `when`, never `[...]`; `else` marks a decision's default
+branch. A link target is a cross-document transition into another behavior. A
+trailing `#### Notes` under a node is a plain bulleted list, same grammar as a
+classifier's `## Notes`.
 
 ### Interaction substrate (`uml.Sequence`)
 
@@ -421,6 +541,9 @@ The message forms have these meanings:
 | `creates` | create a lifeline | dashed arrow to the new lifeline head |
 | `destroys` | delete a lifeline | solid line that ends at an X |
 
+`replies` and `sends` are recognised as *unsupported* verbs and rejected with a
+diagnostic naming the supported forms — they never parse as messages.
+
 An optional call identity follows `as`. A return can select that call with
 `for`. Without `for`, the return must have exactly one eligible open call. The
 solver derives activation bars from the selected call identity, not from a
@@ -428,7 +551,7 @@ lifeline stack.
 
 An endpoint has one of four forms:
 
-- A lifeline handle, such as `customer`.
+- A lifeline handle, such as `customer` (a lifeline's alias, else its title).
 - `outside`, for a found or lost message. A message cannot have `outside` at
   both ends.
 - A local gate, such as `@request`, declared in `## Gates`.
@@ -556,7 +679,8 @@ back to a `## Notes` bullet.
 A diagram is a curated, profiled **view** over nodes — not a classifier. It is
 identified by `type: Diagram` together with a `## Members` list. It carries three
 deliberately separate concerns: **membership** (`## Members`, optionally organised
-into groups), **presentation lens** (`profile`), and **arrangement** (`## Layout`).
+into groups), **presentation lens** (`profile`, plus per-diagram display
+switches), and **arrangement** (`## Layout`).
 
 ```markdown
 ---
@@ -599,6 +723,27 @@ near-English, a deterministic solver produces the pixels at render time, and the
 editor round-trips direct manipulation back into the same language. **No
 coordinate is ever stored.**
 
+### Display settings
+
+A diagram's frontmatter may carry per-diagram display switches — a **partial**:
+only keys present in the file take effect, everything else falls back to the
+renderer's (profile-informed) defaults.
+
+| key | value | meaning |
+|---|---|---|
+| `description` | string | one-line diagram description |
+| `showAttributes` | bool | draw the attribute compartment |
+| `showType` | bool | show attribute types (`attributeDetail: name-type` is an accepted legacy spelling) |
+| `showAttributeVisibility` | bool | show `+`/`-`/`#`/`~` markers |
+| `cardinality` | `off` \| `explicit` \| `all` | attribute-multiplicity policy: hide, show only authored values, or show all (supersedes the legacy boolean `showAttributeMultiplicity`) |
+| `maxAttributes` | positive integer | truncate long attribute lists with a "more" footer |
+| `showRoles` | bool | show relationship-end roles |
+| `showCardinality` | bool | show relationship-end multiplicities |
+| `showLabels` | bool | show association name labels |
+| `showStereotype` | bool | show `«stereotype»` eyebrows |
+| `stereotypeFilter` | list of names | allowlist of stereotypes to display (absent = show all; empty = show none) |
+| `stereotypeColors` | list of `name:#rrggbb` | per-stereotype color overrides |
+
 ### Members and groups
 
 `## Members` declares membership only. It may be a flat bullet list, or it may be
@@ -617,6 +762,8 @@ organised into **groups**:
   no imposed axis or order. Member **list order carries no layout meaning** until
   the group is given an axis with an `as row` / `as column` clause (see [Treatment
   clauses](#treatment-clauses-as--with)).
+- A member bullet is a link to a pooled node, or an [inline
+  instance](#inline-instance-in-a-diagrams--members).
 
 ```markdown
 ## Members
@@ -635,12 +782,12 @@ organised into **groups**:
 
 ### The `## Layout` section
 
-`## Layout` supersedes the former `## Render hints` section, and in particular its
-per-node saved coordinate (`[Order](./order.md) at 0,0`), which is **removed**: no
-coordinate is ever stored. The former per-node `emphasize` / `collapse` flags move
-here as operand treatment (see [Treatment clauses](#treatment-clauses-as--with)).
-Selecting *which adornments* a diagram surfaces remains a [profile](#profiles)
-concern, as before.
+Positions are never stored as coordinates. The former `## Render hints` section
+and its per-node saved coordinate (`[Order](./order.md) at 0,0`) are **removed**
+from the format; the former per-node `emphasize` / `collapse` flags live here as
+operand treatment (see [Treatment clauses](#treatment-clauses-as--with)).
+Selecting *which adornments* a diagram surfaces remains a [profile](#profiles) /
+[display-settings](#display-settings) concern.
 
 Each bullet in `## Layout` is one statement — a **placement**, an **alignment**,
 or a **standalone** treated operand. All arrangement is relative: the solver reads
@@ -655,6 +802,7 @@ Two families, both plain English.
 ```
 - Users left of Orders
 - Order above OrderLine above Payment
+- Order above left of PaymentGateway
 ```
 
 | direction | places left operand … |
@@ -663,6 +811,10 @@ Two families, both plain English.
 | `right of` | to the right of the right operand |
 | `above` | above the right operand |
 | `below` | below the right operand |
+| `above left of` | diagonally up-left of the right operand |
+| `above right of` | diagonally up-right of the right operand |
+| `below left of` | diagonally down-left of the right operand |
+| `below right of` | diagonally down-right of the right operand |
 
 Adjacency — **tight and aligned** — is the default, and is how rows and columns
 are built. There is **no loose/far variant**; separation is controlled by margin
@@ -751,8 +903,7 @@ margin are **orthogonal**: the old wide / thin / none idea is just `shrink` plus
 bare element too.
 
 *Flags* (any operand) are `emphasized` and `collapsed`. `collapsed` renders a node
-as a reference chip rather than a full box; `emphasized` surfaces it. These are the
-former `## Render hints` per-node flags.
+as a reference chip rather than a full box; `emphasized` surfaces it.
 
 **`with` binds greedily** to the nearest complete operand on its left. To attach a
 `with` clause to a whole inline group rather than to its last member,
@@ -780,6 +931,8 @@ zero-or-more, `[ … ]` optional; `<link>`, `<quoted>`, and `<ident>` are as in 
 <placement>     ::= <operand> " " <direction> " " <operand>
                     { " " <direction> " " <operand> }
 <direction>     ::= "left of" | "right of" | "above" | "below"
+                  | "above left of" | "above right of"
+                  | "below left of" | "below right of"
 
 <alignment>     ::= <anchored> " aligned with " <anchored>
 <anchored>      ::= [ <edge> " of " ] <operand>
@@ -818,6 +971,8 @@ zero-or-more, `[ … ]` optional; `<link>`, `<quoted>`, and `<ident>` are as in 
 - `<flag>`s apply to any operand.
 - Placement adjacency is always tight and aligned; qualitative separation is a
   `<margin>` concern, not a relation.
+- The cardinal `above` / `below` take no trailing `of`; every other direction
+  (including all four diagonals) ends in `of`.
 - Anchor → axis: `top`/`bottom` → **Y**, `left`/`right` → **X**, `center` →
   **both**; a bare `<operand> aligned with <operand>` is centre-to-centre.
 - A `with` clause binds to the **nearest complete operand on its left**;
@@ -883,6 +1038,33 @@ view. Instead, the other end of each such relationship is surfaced as a
 does contain that node. This keeps each diagram a focused window while keeping
 cross-document links discoverable and traversable.
 
+## Packages and indexes
+
+A bundle's directory tree **is** its package tree. Every directory holds an
+`index.md` — a navigation document, generated and kept correct by tooling, never
+part of the model graph. Its shape:
+
+```markdown
+# Sales
+
+Sales bounded context.
+
+* [orders](orders/)
+* [Customer](./customer.md) - a buyer
+```
+
+- **No frontmatter.** The `#` heading is the package title (falling back to the
+  directory basename); an optional intro paragraph is the description.
+- One `*` bullet per member, in curated order: a sub-package links to its
+  directory (`orders/`), a document links to its file (`./customer.md`), and a
+  document's one-line description follows as a ` - ` blurb.
+- Indexes are **regenerated** whenever the bundle changes (titles, blurbs, and
+  membership are re-derived); a hand-edited custom title survives regeneration.
+
+Independent of the directory tree, `uml.Package` remains a node metaclass for
+*modeled* packages (a tabbed-folder box on a diagram) — a directory does not
+have to be modeled, and a modeled package does not have to be a directory.
+
 ## Graceful degradation
 
 Recognition failures never produce errors; they degrade to generic behavior:
@@ -894,6 +1076,9 @@ Recognition failures never produce errors; they degrade to generic behavior:
   generically.
 - **Unknown section** in a document → carried through and rendered generically,
   never dropped.
+- **Malformed bullets** inside a known section are preserved in the syntax tree
+  with a diagnostic; the parser recovers at the next bullet, heading, or
+  document end.
 
 Serialization is lossless: content a parser does not specifically understand is
 preserved on round-trip rather than discarded.
@@ -906,15 +1091,23 @@ preserved on round-trip rather than discarded.
 - **Title** — the human-readable display name, from frontmatter `title` and
   echoed as the document's `#` heading.
 - **Multiplicity** — full UML strings (`1`, `0..1`, `*`, `1..*`, `0..*`,
-  `2..5`); `*` is unbounded, bare `*` ≡ `0..*`, and absent multiplicity on an
-  attribute ≡ `{1}`.
+  `2..5`); `*` is unbounded, bare `*` ≡ `0..*`, bare `0` invalid, and absent
+  multiplicity on an attribute ≡ `{1}`.
+- **Sections** — canonical headings are `Body`, `Attributes`, `Slots`, `Values`,
+  `Relationships`, `Notes`, `Nodes`, `Lifelines`, `Gates`, `Messages`,
+  `Members`, `Layout`; matching is case-insensitive and the formatter
+  normalises to the canonical spelling.
 - **Group** — a sub-heading under a diagram's `## Members`, declaring membership
   only; nesting is heading depth. A flat `## Members` list is one implicit
   top-level group. A group's members clump by default; list order carries no
   layout meaning until an `as row` / `as column` axis is set.
 - **Layout** — positions are **relational, never coordinates**. A diagram's
   `## Layout` section holds placement (`left of` / `right of` / `above` /
-  `below`), alignment (`[<edge> of] X aligned with [<edge> of] Y`), and per-operand
-  treatment (`as` axis; `with` shape / margin / `emphasized` / `collapsed`). A
-  solver produces the pixels at render time; none are stored. This supersedes the
-  former `## Render hints` section (including its `at x,y` saved coordinate).
+  `below` plus the four diagonals), alignment (`[<edge> of] X aligned with
+  [<edge> of] Y`), and per-operand treatment (`as` axis; `with` shape / margin /
+  `emphasized` / `collapsed`). A solver produces the pixels at render time; none
+  are stored.
+- **Instances** — `uml.InstanceSpecification` + `## Slots` + `instance of` /
+  `links`; conformance problems warn, never error.
+- **Packages** — directories; each holds a generated, frontmatter-less
+  `index.md` listing members with `*` bullets.
