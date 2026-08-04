@@ -236,6 +236,58 @@ fn participating_lifelines(concept: &DeclaredConcept) -> BTreeSet<String> {
 
 type InteractionUseGraph = BTreeMap<String, Vec<(usize, String)>>;
 
+/// A single defect found while checking an interaction use's lifeline bindings.
+/// This is the ONE verdict for the rule: the silent (graph) copy and the
+/// diagnosed (`lower`) copy both consume it instead of re-deriving it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UseBindingIssue {
+    /// The same local lifeline or the same target lifeline is bound twice.
+    DuplicateBinding,
+    /// The local lifeline or the bound target lifeline does not exist.
+    UnknownEndpoint,
+    /// The local and target lifelines are bound to different classifiers.
+    ClassifierMismatch,
+    /// A lifeline that participates in the target interaction has no binding.
+    MissingParticipant,
+}
+
+/// Validate an interaction use's lifeline bindings against the target
+/// interaction's lifelines and participating set. `bindings` must already be
+/// filtered to entries with both a local and a target endpoint resolved; the
+/// returned index is the position of the offending binding within that slice
+/// (`None` for the whole-use `MissingParticipant` issue).
+fn validate_use_bindings(
+    bindings: &[SeqBinding],
+    lifelines: &BTreeSet<String>,
+    lifeline_classifiers: &BTreeMap<String, String>,
+    target_lifelines: &BTreeMap<String, String>,
+    participating: &BTreeSet<String>,
+) -> Vec<(UseBindingIssue, Option<usize>)> {
+    let mut issues = Vec::new();
+    let mut locals = BTreeSet::new();
+    let mut targets = BTreeSet::new();
+    for (index, binding) in bindings.iter().enumerate() {
+        if !locals.insert(binding.local.clone()) || !targets.insert(binding.target.clone()) {
+            issues.push((UseBindingIssue::DuplicateBinding, Some(index)));
+        }
+        if !lifelines.contains(&binding.local) || !target_lifelines.contains_key(&binding.target) {
+            issues.push((UseBindingIssue::UnknownEndpoint, Some(index)));
+        }
+        if let (Some(local_classifier), Some(target_classifier)) = (
+            lifeline_classifiers.get(&binding.local),
+            target_lifelines.get(&binding.target),
+        ) {
+            if local_classifier != target_classifier {
+                issues.push((UseBindingIssue::ClassifierMismatch, Some(index)));
+            }
+        }
+    }
+    if participating.iter().any(|handle| !targets.contains(handle)) {
+        issues.push((UseBindingIssue::MissingParticipant, None));
+    }
+    issues
+}
+
 fn interaction_use_graph(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
@@ -290,34 +342,28 @@ fn interaction_use_graph(
                 .unwrap_or_else(|| target.clone());
             let target_lifelines = lifeline_classifier_map(target_concept, &target_path);
             let participating = participating_lifelines(target_concept);
-            let mut locals = BTreeSet::new();
-            let mut targets = BTreeSet::new();
-            let mut valid = true;
-            for binding in interaction_use.bindings.iter() {
-                let (Some(local), Some(bound_target)) =
-                    (value(&binding.local), value(&binding.target))
-                else {
-                    valid = false;
-                    continue;
-                };
-                if !locals.insert(local.clone()) || !targets.insert(bound_target.clone()) {
-                    valid = false;
-                }
-                if !lifelines.contains(local) || !target_lifelines.contains_key(bound_target) {
-                    valid = false;
-                }
-                if let (Some(local_classifier), Some(target_classifier)) = (
-                    local_classifiers.get(local),
-                    target_lifelines.get(bound_target),
-                ) {
-                    if local_classifier != target_classifier {
-                        valid = false;
-                    }
-                }
-            }
-            if participating.iter().any(|handle| !targets.contains(handle)) {
-                valid = false;
-            }
+            let has_unresolved_binding = interaction_use
+                .bindings
+                .iter()
+                .any(|binding| value(&binding.local).is_none() || value(&binding.target).is_none());
+            let resolved_bindings = interaction_use
+                .bindings
+                .iter()
+                .filter_map(|binding| {
+                    Some(SeqBinding {
+                        local: value(&binding.local)?.clone(),
+                        target: value(&binding.target)?.clone(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let issues = validate_use_bindings(
+                &resolved_bindings,
+                &lifelines,
+                &local_classifiers,
+                &target_lifelines,
+                &participating,
+            );
+            let valid = !has_unresolved_binding && issues.is_empty();
             if valid {
                 graph
                     .entry(concept.concept_id.clone())
@@ -579,62 +625,42 @@ pub(crate) fn lower(
                 .unwrap_or_else(|| target.clone());
             let target_lifelines = lifeline_classifier_map(target_concept, &target_path);
             let participating = participating_lifelines(target_concept);
-            let mut locals = BTreeSet::new();
-            let mut targets = BTreeSet::new();
-            for (binding, declared_binding) in &binding_entries {
-                if !locals.insert(binding.local.clone()) || !targets.insert(binding.target.clone())
-                {
-                    report_at(
-                        context,
-                        diagnostics,
-                        DiagCode::InvalidInteractionUse,
-                        format!("interaction use '{alias}' has duplicate bindings"),
-                        path,
-                        declared_binding.syntax.syntax(),
-                    );
-                    valid_use = false;
-                }
-                if !lifelines.contains(&binding.local)
-                    || !target_lifelines.contains_key(&binding.target)
-                {
-                    report_at(
-                        context,
-                        diagnostics,
-                        DiagCode::InvalidInteractionUse,
-                        format!("interaction use '{alias}' has an unknown binding endpoint"),
-                        path,
-                        declared_binding.syntax.syntax(),
-                    );
-                    valid_use = false;
-                }
-                if let (Some(local_classifier), Some(target_classifier)) = (
-                    lifeline_classifiers.get(&binding.local),
-                    target_lifelines.get(&binding.target),
-                ) {
-                    if local_classifier != target_classifier {
-                        report_at(
-                            context,
-                            diagnostics,
-                            DiagCode::InvalidInteractionUse,
-                            format!("interaction use '{alias}' binds different classifiers"),
-                            path,
-                            declared_binding.syntax.syntax(),
-                        );
-                        valid_use = false;
+            let issues = validate_use_bindings(
+                &bindings,
+                &lifelines,
+                &lifeline_classifiers,
+                &target_lifelines,
+                &participating,
+            );
+            for (issue, index) in &issues {
+                let syntax = match index {
+                    Some(index) => binding_entries[*index].1.syntax.syntax(),
+                    None => declared_use.syntax.syntax(),
+                };
+                let message = match issue {
+                    UseBindingIssue::DuplicateBinding => {
+                        format!("interaction use '{alias}' has duplicate bindings")
                     }
-                }
-            }
-            if participating.iter().any(|handle| !targets.contains(handle)) {
+                    UseBindingIssue::UnknownEndpoint => {
+                        format!("interaction use '{alias}' has an unknown binding endpoint")
+                    }
+                    UseBindingIssue::ClassifierMismatch => {
+                        format!("interaction use '{alias}' binds different classifiers")
+                    }
+                    UseBindingIssue::MissingParticipant => format!(
+                        "interaction use '{alias}' is missing a participating lifeline binding"
+                    ),
+                };
                 report_at(
                     context,
                     diagnostics,
                     DiagCode::InvalidInteractionUse,
-                    format!(
-                        "interaction use '{alias}' is missing a participating lifeline binding"
-                    ),
+                    message,
                     path,
-                    declared_use.syntax.syntax(),
+                    syntax,
                 );
+            }
+            if !issues.is_empty() {
                 valid_use = false;
             }
         }
@@ -1693,4 +1719,117 @@ fn validate_lifetimes(
         diagnostics,
         path,
     );
+}
+
+#[cfg(test)]
+mod use_binding_verdict_tests {
+    use super::*;
+
+    fn binding(local: &str, target: &str) -> SeqBinding {
+        SeqBinding {
+            local: local.to_string(),
+            target: target.to_string(),
+        }
+    }
+
+    fn set(items: &[&str]) -> BTreeSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn map(items: &[(&str, &str)]) -> BTreeMap<String, String> {
+        items
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn ok_bindings_produce_no_issues() {
+        let bindings = vec![binding("a", "x")];
+        let lifelines = set(&["a"]);
+        let lifeline_classifiers = map(&[("a", "Cls")]);
+        let target_lifelines = map(&[("x", "Cls")]);
+        let participating = set(&["x"]);
+        let issues = validate_use_bindings(
+            &bindings,
+            &lifelines,
+            &lifeline_classifiers,
+            &target_lifelines,
+            &participating,
+        );
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn duplicate_binding_is_flagged() {
+        let bindings = vec![binding("a", "x"), binding("a", "y")];
+        let lifelines = set(&["a"]);
+        let target_lifelines = map(&[("x", "Cls"), ("y", "Cls")]);
+        let issues = validate_use_bindings(
+            &bindings,
+            &lifelines,
+            &BTreeMap::new(),
+            &target_lifelines,
+            &BTreeSet::new(),
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|(issue, index)| *issue == UseBindingIssue::DuplicateBinding
+                    && *index == Some(1))
+        );
+    }
+
+    #[test]
+    fn unknown_endpoint_is_flagged() {
+        let bindings = vec![binding("missing", "x")];
+        let lifelines = set(&["a"]);
+        let target_lifelines = map(&[("x", "Cls")]);
+        let issues = validate_use_bindings(
+            &bindings,
+            &lifelines,
+            &BTreeMap::new(),
+            &target_lifelines,
+            &BTreeSet::new(),
+        );
+        assert!(issues
+            .iter()
+            .any(|(issue, index)| *issue == UseBindingIssue::UnknownEndpoint && *index == Some(0)));
+    }
+
+    #[test]
+    fn classifier_mismatch_is_flagged() {
+        let bindings = vec![binding("a", "x")];
+        let lifelines = set(&["a"]);
+        let lifeline_classifiers = map(&[("a", "ClsA")]);
+        let target_lifelines = map(&[("x", "ClsB")]);
+        let issues = validate_use_bindings(
+            &bindings,
+            &lifelines,
+            &lifeline_classifiers,
+            &target_lifelines,
+            &BTreeSet::new(),
+        );
+        assert!(issues.iter().any(|(issue, index)| {
+            *issue == UseBindingIssue::ClassifierMismatch && *index == Some(0)
+        }));
+    }
+
+    #[test]
+    fn missing_participant_is_flagged() {
+        let bindings = vec![binding("a", "x")];
+        let lifelines = set(&["a"]);
+        let target_lifelines = map(&[("x", "Cls"), ("y", "Cls")]);
+        let participating = set(&["x", "y"]);
+        let issues = validate_use_bindings(
+            &bindings,
+            &lifelines,
+            &BTreeMap::new(),
+            &target_lifelines,
+            &participating,
+        );
+        assert!(issues.iter().any(
+            |(issue, index)| *issue == UseBindingIssue::MissingParticipant && index.is_none()
+        ));
+    }
 }
