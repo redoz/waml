@@ -71,13 +71,20 @@ fn parse_strict(
     };
     let mut stack = Vec::<BlockFrame>::new();
     let mut blocks = Vec::<BlockFrame>::new();
-    // Container opens beyond `MD_MAX_CONTAINER_DEPTH` are suppressed: no frame
-    // is pushed, so the matching close must also be swallowed to keep the
-    // stack balanced. The suppressed range's source bytes still reach the
+    // Container opens beyond `MD_MAX_CONTAINER_DEPTH` are suppressed, along
+    // with everything they contain: no frame is pushed, so the matching close
+    // must also be swallowed to keep the stack balanced. Counts every
+    // suppressed start still awaiting its close. The suppressed range's bytes
+    // still reach the
     // tree via `emit_uncovered`'s raw-text flush, so exact-source recovery
     // still holds.
     let mut suppressed_depth = 0usize;
     let mut suppressed_range: Option<Range<usize>> = None;
+    // Counts only the *container* frames on `stack` (see `is_container_kind`).
+    // Leaf frames — paragraphs, headings, code blocks — cannot recurse, so
+    // letting them consume cap budget would make the effective limit depend
+    // on the leaf a document happens to end in.
+    let mut container_depth = 0usize;
     // Offsets are relative to the scanned slice; re-base them onto `source`.
     let scan = scan_blocks(&source[event_start..end], dialect, ScanProfile::Tree);
     // The seam filters inline and text events out, so only it can screen their
@@ -103,11 +110,19 @@ fn parse_strict(
         match event {
             ScanEvent::Start(tag) => {
                 if let Some(kind) = start_kind(&tag, source, &offsets) {
-                    if is_container_kind(kind) && stack.len() >= super::MD_MAX_CONTAINER_DEPTH {
+                    // Once a container is suppressed its whole subtree must be
+                    // too: a lone `TableHead`/`TableCell` reparented onto the
+                    // grandparent loses the alignment metadata its consumers
+                    // require, and a lone `ListItem` loses its `List`.
+                    if suppressed_depth > 0
+                        || (is_container_kind(kind)
+                            && container_depth >= super::MD_MAX_CONTAINER_DEPTH)
+                    {
                         suppressed_depth += 1;
                         suppressed_range.get_or_insert_with(|| offsets.clone());
                         continue;
                     }
+                    container_depth += usize::from(is_container_kind(kind));
                     let metadata = if kind == Kind::TableCell {
                         let column = stack.last().map_or(0, |parent| {
                             parent
@@ -156,7 +171,10 @@ fn parse_strict(
                 }
             }
             ScanEvent::End(kind) => {
-                if suppressed_depth > 0 && is_container_scan_kind(kind) {
+                // `end_closes_block` mirrors `start_kind`, so the same
+                // predicate that decides a start pushed a frame decides
+                // whether its suppressed twin has to be swallowed here.
+                if suppressed_depth > 0 && end_closes_block(kind) {
                     suppressed_depth -= 1;
                 } else if end_closes_block(kind) {
                     let Some(mut frame) = stack.pop() else {
@@ -165,6 +183,7 @@ fn parse_strict(
                         }
                         .into());
                     };
+                    container_depth -= usize::from(is_container_kind(frame.kind));
                     frame.source_range.end = frame.source_range.end.max(offsets.end);
                     frame.cursor = frame.source_range.start;
                     if let Some(parent) = stack.last_mut() {
@@ -208,7 +227,10 @@ fn parse_strict(
             Diagnostic::NestingDepthExceeded,
             range.start,
             range.end,
-            "Markdown nesting exceeds the supported depth of 64; deeper structure is treated as plain text.",
+            format!(
+                "Markdown nesting exceeds the supported depth of {} containers (a nested list level counts as two: the list and its item); deeper structure is treated as plain text.",
+                super::MD_MAX_CONTAINER_DEPTH
+            ),
         )?);
     }
     let mut definitions = Vec::new();
@@ -531,16 +553,6 @@ fn is_container_kind(kind: Kind) -> bool {
     matches!(
         kind,
         Kind::BlockQuote | Kind::List | Kind::ListItem | Kind::Table
-    )
-}
-
-/// Mirrors `is_container_kind`, but keyed on the scan's own tag kind so the
-/// `ScanEvent::End` arm — which never sees our `Kind` — can recognize the
-/// close of a container start that was suppressed by the depth cap.
-fn is_container_scan_kind(kind: ScanTagKind) -> bool {
-    matches!(
-        kind,
-        ScanTagKind::BlockQuote | ScanTagKind::List | ScanTagKind::Item | ScanTagKind::Table
     )
 }
 
@@ -1527,13 +1539,13 @@ fn diagnostic(
     code: Diagnostic,
     start: usize,
     end: usize,
-    message: &'static str,
+    message: impl Into<Arc<str>>,
 ) -> Result<TreeDiagnostic<Diagnostic>, ParseError> {
     Ok(TreeDiagnostic {
         code,
         range: range(start, end)?,
         severity: crate::SyntaxSeverity::Error,
-        message: Arc::from(message),
+        message: message.into(),
     })
 }
 
@@ -1576,23 +1588,6 @@ mod tests {
                 opens,
                 end_closes_block(kind),
                 "{kind:?} opens a frame but does not close one (or the reverse)"
-            );
-        }
-    }
-
-    /// The depth cap suppresses container starts via `is_container_kind` and
-    /// recognizes their closes via `is_container_scan_kind`. If the two lists
-    /// ever disagree, an `End` either decrements the suppressed depth for a
-    /// live frame or pops a frame that was never pushed.
-    #[test]
-    fn container_scan_kind_mirrors_container_kind() {
-        for &kind in ScanTagKind::ALL {
-            let opens_container =
-                start_kind(&sample_tag(kind), "", &(0..0)).is_some_and(is_container_kind);
-            assert_eq!(
-                opens_container,
-                is_container_scan_kind(kind),
-                "{kind:?} opens a container but is not recognized as one on End (or the reverse)"
             );
         }
     }
@@ -1671,6 +1666,124 @@ mod tests {
             count
         }
         assert_eq!(count_block_quotes(&parsed.root), depth);
+    }
+
+    /// A leaf block sitting under the containers must not consume cap budget:
+    /// a block quote nested to one below the cap still materializes every
+    /// level even though its paragraph adds a frame to `stack`.
+    #[test]
+    fn leaf_frames_do_not_consume_container_cap_budget() {
+        let depth = super::super::MD_MAX_CONTAINER_DEPTH;
+        let source = "> ".repeat(depth) + "leaf\n";
+        let text = SourceText::new(&source).unwrap();
+        let parsed = parse(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()).unwrap();
+
+        assert!(!parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded));
+    }
+
+    fn nested_bullet_list(levels: usize) -> String {
+        (0..levels)
+            .map(|level| format!("{}- x\n", "  ".repeat(level)))
+            .collect()
+    }
+
+    fn count_kind(node: &crate::GreenNode<OkfMarkdownLanguage>, kind: Kind) -> usize {
+        let mut count = usize::from(node.kind() == kind);
+        for child in node.children() {
+            if let GreenElement::Node(child) = child {
+                count += count_kind(child, kind);
+            }
+        }
+        count
+    }
+
+    /// A nested bullet list costs two container frames per visual level
+    /// (`List` + `ListItem`), so the cap bites at roughly half the block-quote
+    /// depth. Deep nesting must still round-trip exactly and record exactly
+    /// one diagnostic.
+    #[test]
+    fn deeply_nested_list_is_capped_with_one_diagnostic() {
+        let source = nested_bullet_list(super::super::MD_MAX_CONTAINER_DEPTH * 4);
+        let text = SourceText::new(&source).unwrap();
+        let parsed = parse(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()).unwrap();
+
+        let tree = crate::SyntaxTree::new(
+            parsed.root,
+            parsed.diagnostics.clone(),
+            MarkdownDialect::WAML_DEFAULT,
+        );
+        assert_eq!(tree.write_to_string(), source);
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded)
+                .count(),
+            1
+        );
+    }
+
+    /// The last list level that fits (`MD_MAX_CONTAINER_DEPTH / 2`, two
+    /// frames each) must be untouched, and every level must materialize.
+    #[test]
+    fn nested_list_at_half_the_cap_is_unaffected() {
+        let levels = super::super::MD_MAX_CONTAINER_DEPTH / 2;
+        let source = nested_bullet_list(levels);
+        let text = SourceText::new(&source).unwrap();
+        let parsed = parse(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()).unwrap();
+
+        assert!(!parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded));
+        assert_eq!(count_kind(&parsed.root, Kind::ListItem), levels);
+    }
+
+    /// Suppressing a `Table` start leaves its `TableHead`/`TableRow`/
+    /// `TableCell` frames to attach under the grandparent without alignment
+    /// metadata. That degraded shape is deliberate, but the stack must stay
+    /// balanced, the source must round-trip exactly, and exactly one
+    /// diagnostic must be recorded.
+    #[test]
+    fn suppressed_table_start_keeps_the_stack_balanced() {
+        let prefix = "> ".repeat(super::super::MD_MAX_CONTAINER_DEPTH);
+        let source = format!("{prefix}| a | b |\n{prefix}| --- | ---: |\n{prefix}| 1 | 2 |\n");
+        let text = SourceText::new(&source).unwrap();
+        let parsed = parse(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()).unwrap();
+
+        let root = parsed.root.clone();
+        let tree = crate::SyntaxTree::new(
+            parsed.root,
+            parsed.diagnostics.clone(),
+            MarkdownDialect::WAML_DEFAULT,
+        );
+        assert_eq!(tree.write_to_string(), source);
+        assert_eq!(count_kind(&root, Kind::Table), 0);
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded)
+                .count(),
+            1
+        );
+        // No `TableCell` may carry alignment metadata harvested from a
+        // suppressed `Table`: the lookup finds no table frame at all.
+        fn no_orphan_alignment(node: &crate::GreenNode<OkfMarkdownLanguage>) -> bool {
+            let ok = node.kind() != Kind::TableCell
+                || !node
+                    .annotations()
+                    .iter()
+                    .any(|annotation| annotation.kind() == super::super::gfm::TABLE_ALIGNMENT);
+            ok && node.children().iter().all(|child| match child {
+                GreenElement::Node(child) => no_orphan_alignment(child),
+                GreenElement::Token(_) => true,
+            })
+        }
+        assert!(no_orphan_alignment(&root));
     }
 
     #[test]

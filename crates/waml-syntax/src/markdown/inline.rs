@@ -352,9 +352,10 @@ fn parse_inlines(
                         reason: "invalid inline nesting-depth range".into(),
                     })?,
                     severity: crate::SyntaxSeverity::Error,
-                    message: Arc::from(
-                        "Markdown inline nesting exceeds the supported depth of 32; deeper structure is treated as plain text.",
-                    ),
+                    message: Arc::from(format!(
+                        "Markdown inline nesting exceeds the supported depth of {}; deeper structure is treated as plain text.",
+                        super::MD_MAX_INLINE_DEPTH
+                    )),
                 });
             }
         }

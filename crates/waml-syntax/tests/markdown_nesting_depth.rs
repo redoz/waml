@@ -126,6 +126,26 @@ fn deeply_nested_block_quotes_are_capped_end_to_end() {
     assert_capped_and_exercised("10,000-deep block quote", &source);
 }
 
+/// Nested bullet lists spend two container frames per visual level, so they
+/// hit the same cap on a different code path than `>` nesting.
+#[test]
+fn deeply_nested_lists_are_capped_end_to_end() {
+    let source: String = (0..300)
+        .map(|level| format!("{}- x\n", "  ".repeat(level)))
+        .collect();
+    assert_capped_and_exercised("300-deep bullet list", &source);
+}
+
+/// A GFM table opened past the cap has its `Table` start suppressed while its
+/// head/row/cell events keep arriving; the tree must stay balanced and the
+/// source must still round-trip.
+#[test]
+fn suppressed_table_is_capped_end_to_end() {
+    let prefix = "> ".repeat(200);
+    let source = format!("{prefix}| a | b |\n{prefix}| --- | ---: |\n{prefix}| 1 | 2 |\n");
+    assert_capped_and_exercised("table past the container cap", &source);
+}
+
 #[test]
 fn deeply_nested_emphasis_is_capped_end_to_end() {
     let depth = 10_000;

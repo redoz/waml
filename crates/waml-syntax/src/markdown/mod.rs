@@ -29,8 +29,11 @@ pub use snapshot::{
 
 use scan::{scan_blocks, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 
-/// Maximum container nesting depth (block quotes, list items, tables, ...)
-/// the block builder will materialize as real tree structure. Beyond this,
+/// Maximum container nesting depth (block quotes, lists, list items, tables)
+/// the block builder will materialize as real tree structure. Only container
+/// frames count — leaf blocks (paragraphs, headings, code blocks) cannot
+/// recurse — and note a nested bullet level costs two (`List` + `ListItem`),
+/// so this is 64 block-quote levels but ~32 list levels. Beyond this,
 /// `block.rs::parse_strict` stops pushing frames so every downstream
 /// recursive consumer (`rebuild`, `projection::visit`, `collect_occurrences`,
 /// `red::rewrite`) is bounded — sized well below the smallest stack this
