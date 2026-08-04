@@ -575,6 +575,70 @@ pub struct MarkdownEditor {
     last_draw: DrawRecorder,
     #[rust]
     paint_evidence: PaintEvidence,
+    /// Cached base draw-command list + per-layer visit plan (P-6); see
+    /// `cached_draw_commands`.
+    #[rust]
+    draw_commands_cache: Option<DrawCommandsCache>,
+}
+
+/// The draw layers in paint order -- the single sequence `draw_walk` runs.
+const DRAW_LAYERS: [DrawLayer; 6] = [
+    DrawLayer::BlockBackground,
+    DrawLayer::Selection,
+    DrawLayer::Text,
+    DrawLayer::Decoration,
+    DrawLayer::EmbeddedBlock,
+    DrawLayer::CaretAndIme,
+];
+
+fn layer_slot(layer: DrawLayer) -> usize {
+    match layer {
+        DrawLayer::BlockBackground => 0,
+        DrawLayer::Selection => 1,
+        DrawLayer::Text => 2,
+        DrawLayer::Decoration => 3,
+        DrawLayer::EmbeddedBlock => 4,
+        DrawLayer::CaretAndIme => 5,
+    }
+}
+
+/// Which commands each layer must visit. A `Text` command fans out into text
+/// paint operations whose layers depend only on its style (background ->
+/// BlockBackground, glyphs -> Text, underline/strikethrough -> Decoration);
+/// every other command paints solely on its own layer. Translation moves rects
+/// but never layers, so the plan is computed once per cached command list and
+/// reused across scroll frames instead of scanning every command per layer.
+fn layer_plan(commands: &[DrawCommand]) -> [Vec<usize>; DRAW_LAYERS.len()] {
+    let mut plan: [Vec<usize>; DRAW_LAYERS.len()] = Default::default();
+    for (index, command) in commands.iter().enumerate() {
+        if let DrawCommand::Text { style, .. } = command {
+            if style.background.is_some() {
+                plan[layer_slot(DrawLayer::BlockBackground)].push(index);
+            }
+            plan[layer_slot(DrawLayer::Text)].push(index);
+            if style.underline || style.strikethrough {
+                plan[layer_slot(DrawLayer::Decoration)].push(index);
+            }
+        } else {
+            plan[layer_slot(command.layer())].push(index);
+        }
+    }
+    plan
+}
+
+/// P-6: `build_draw_commands` output cached across frames. The build's inputs
+/// are the installed presentation (plan/styles/diagnostics/assets/revision --
+/// covered by `Arc` identity), the layout snapshot (`Arc` identity; a pure
+/// scroll reuses the same snapshot), and the selection set (compared by value;
+/// the active-owner set derives from the primary cursor, which lives in it).
+/// An in-flight IME composition bypasses the cache entirely -- it is
+/// per-keystroke anyway and carries no cheap equality.
+struct DrawCommandsCache {
+    installed: Arc<InstalledPresentation>,
+    layout: Arc<LayoutSnapshot>,
+    selections: crate::selection::SelectionSet,
+    commands: Arc<[DrawCommand]>,
+    plan: Arc<[Vec<usize>; DRAW_LAYERS.len()]>,
 }
 
 impl Widget for MarkdownEditor {
@@ -784,25 +848,9 @@ impl MarkdownEditor {
             .as_ref()
             .ok_or(MarkdownEditorError::MissingLayoutDocument)?
             .clone();
-        let frame = PresentationFrame {
-            revision: installed.revision,
-            layout: layout.clone(),
-            active_owners: installed
-                .plan
-                .active_owners(session.selections().primary().cursor.offset),
-            diagnostics: installed.diagnostics.clone(),
-            assets: installed.assets.clone(),
-        };
-        let commands = build_draw_commands(
-            &frame,
-            &installed.plan,
-            &installed.styles,
-            session.selections(),
-            session.ime(),
-        )
-        .map_err(MarkdownEditorError::Presentation)?;
+        let (base_commands, plan) = self.cached_draw_commands(session, &installed, &layout)?;
         let content_origin = viewport.pos + dvec2(gutter, 0.0) - self.scroll_bars.get_scroll_pos();
-        let commands = commands
+        let commands = base_commands
             .iter()
             .map(|command| command.translated(content_origin))
             .collect::<Arc<[_]>>();
@@ -810,17 +858,13 @@ impl MarkdownEditor {
         self.last_draw = DrawRecorder::default();
         self.paint_evidence.begin_frame();
         self.paint_current_line(cx, session, &layout, viewport, gutter);
-        for layer in [
-            DrawLayer::BlockBackground,
-            DrawLayer::Selection,
-            DrawLayer::Text,
-            DrawLayer::Decoration,
-            DrawLayer::EmbeddedBlock,
-            DrawLayer::CaretAndIme,
-        ] {
+        for layer in DRAW_LAYERS {
             self.last_draw.record(layer, &layout);
             let mut primitive_count = 0;
-            for command in commands.iter() {
+            // Visit only the commands the plan says contribute to this layer
+            // (the loop used to rescan the whole list once per layer).
+            for &index in plan[layer_slot(layer)].iter() {
+                let command = &commands[index];
                 if command.layer() == layer {
                     self.paint_evidence.record_command(command);
                 }
@@ -848,7 +892,8 @@ impl MarkdownEditor {
                         );
                         primitive_count += 1;
                     }
-                } else if command.layer() == layer {
+                } else {
+                    // Non-text commands are planned only at their own layer.
                     self.paint_command(cx, scope, command);
                     primitive_count += 1;
                 }
@@ -869,6 +914,59 @@ impl MarkdownEditor {
             self.show_ime(cx, session);
         }
         Ok(DrawStep::done())
+    }
+
+    /// The base (untranslated) draw-command list + per-layer visit plan for
+    /// this frame, rebuilt only when an input actually changed (P-6). A pure
+    /// scroll keeps the installed presentation, layout snapshot, and selection
+    /// set identical, so it reuses the cached list instead of re-deriving
+    /// every command. See `DrawCommandsCache` for the key's coverage argument.
+    #[allow(clippy::type_complexity)]
+    fn cached_draw_commands(
+        &mut self,
+        session: &MarkdownDocumentSession,
+        installed: &Arc<InstalledPresentation>,
+        layout: &Arc<LayoutSnapshot>,
+    ) -> Result<(Arc<[DrawCommand]>, Arc<[Vec<usize>; DRAW_LAYERS.len()]>), MarkdownEditorError>
+    {
+        let reusable = session.ime().is_none()
+            && self.draw_commands_cache.as_ref().is_some_and(|cache| {
+                Arc::ptr_eq(&cache.installed, installed)
+                    && Arc::ptr_eq(&cache.layout, layout)
+                    && cache.selections == *session.selections()
+            });
+        if !reusable {
+            let frame = PresentationFrame {
+                revision: installed.revision,
+                layout: layout.clone(),
+                active_owners: installed
+                    .plan
+                    .active_owners(session.selections().primary().cursor.offset),
+                diagnostics: installed.diagnostics.clone(),
+                assets: installed.assets.clone(),
+            };
+            let commands = build_draw_commands(
+                &frame,
+                &installed.plan,
+                &installed.styles,
+                session.selections(),
+                session.ime(),
+            )
+            .map_err(MarkdownEditorError::Presentation)?;
+            let plan = Arc::new(layer_plan(&commands));
+            self.draw_commands_cache = Some(DrawCommandsCache {
+                installed: installed.clone(),
+                layout: layout.clone(),
+                selections: session.selections().clone(),
+                commands,
+                plan,
+            });
+        }
+        let cache = self
+            .draw_commands_cache
+            .as_ref()
+            .expect("cache installed just above");
+        Ok((cache.commands.clone(), cache.plan.clone()))
     }
 
     /// Logical pixels reserved on the left for line numbers, gap included.
