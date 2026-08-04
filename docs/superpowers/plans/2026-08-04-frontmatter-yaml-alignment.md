@@ -12,10 +12,10 @@
 
 ## Global Constraints
 
-- Gate for EVERY task: `cargo test --workspace` green (run from the worktree root `C:/dev/waml/.worktrees/frontmatter-yaml-spec`). No task touches `editors/vscode`.
+- Gate for EVERY task: `cargo test --workspace` green, run from the root of the worktree this plan is being implemented in. No task touches `editors/vscode`.
 - Before Task 1, run the gate once at the baseline commit and record any pre-existing failures (local main has previously carried 2 unrelated icon-table failures). A pre-existing failure is not yours to fix, but nothing you add may fail.
 - Commit messages: conventional-commit subject + body. NO co-author trailer, NO "Generated with" footer.
-- Every commit uses absolute paths in `git -C C:/dev/waml/.worktrees/frontmatter-yaml-spec ...` or runs with that cwd. Never edit files under `C:/dev/waml/crates/...` (the MAIN checkout) — only under the worktree.
+- Work in a git worktree, never in the main checkout. Every file edit and every `git` invocation must target the worktree root — pass it explicitly (`git -C <worktree-root> ...`) or run with it as the cwd. Editing `crates/...` under the main checkout silently edits the wrong tree and still gates green; resolve the worktree root once at the start (`git rev-parse --show-toplevel`) and use it throughout.
 - NO YAML 1.1: `NO`/`no`/`yes`/`on`/`off`/`y`/`n` are strings. No flow mappings (`{a: 1}`). No anchors, aliases, tags, directives, multi-docs, no date type.
 - Full fidelity: every byte of the source stays in the tree; `render_to_string` of the tree reproduces the source exactly. Indentation stays leading trivia.
 - No `unwrap`/`expect` reachable from document content. Recovery is per line and never fatal: unreadable line → `BadToken` inside its `FrontmatterEntry`, indent stack keeps state, region still yields a tree, `FrontmatterNotClean` marks it.
