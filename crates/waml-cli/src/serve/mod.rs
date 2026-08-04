@@ -13,6 +13,10 @@ pub mod paths;
 #[allow(dead_code)]
 pub mod guard;
 
+// Consumed by Task 6 (routes hold a ServeState behind a Mutex).
+#[allow(dead_code)]
+pub mod state;
+
 /// Everything `run` needs, decoupled from clap so tests can build one.
 ///
 /// `bind_all`/`api_only`/`no_open` are wired up by later tasks; `#[allow]`
