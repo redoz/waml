@@ -58,12 +58,10 @@ fn validate_sequence_identifier(
 }
 
 fn report_message(
-    context: &DomainAnalysisContext<'_>,
-    concept: &DeclaredConcept,
+    ctx: &FoldCtx<'_>,
     diagnostics: &mut Vec<Diagnostic>,
     code: DiagCode,
     message: impl Into<String>,
-    path: &str,
     id: &MessageId,
 ) {
     let Some(index) =
@@ -72,17 +70,70 @@ fn report_message(
     else {
         return;
     };
-    let Some(declared) = concept.messages.get(index) else {
+    let Some(declared) = ctx.concept.messages.get(index) else {
         return;
     };
     report_at(
-        context,
+        ctx.context,
         diagnostics,
         code,
         message,
-        path,
+        ctx.path,
         declared.syntax.syntax(),
     );
+}
+
+/// Read-only context threaded through the fragment-fold walkers
+/// (`resolve_returns`/`walk_return_items`, `repeated_deletes`, `walk`): who to
+/// blame a diagnostic on (`context`, `concept`) and which document it came
+/// from (`path`). Bundled so the walkers stay under clippy's argument-count
+/// threshold instead of each carrying three loose parameters.
+struct FoldCtx<'a> {
+    context: &'a DomainAnalysisContext<'a>,
+    concept: &'a DeclaredConcept,
+    path: &'a str,
+}
+
+/// Read-only id -> node/edge lookup shared by the fragment-fold walkers.
+struct SeqLookup<'a> {
+    nodes: &'a BTreeMap<String, &'a SeqNode>,
+    edges: &'a BTreeMap<MessageId, &'a SeqEdge>,
+}
+
+/// Whether a fragment's `incoming` state (the state as of the fragment's
+/// start) must also be admitted as one of the merge outcomes, alongside each
+/// operand branch. `opt`/`loop`/`break` may execute zero times; an `alt`
+/// without an explicit `else` operand may take none of its guarded branches.
+fn fragment_readmits_incoming(kind: FragmentKind, has_else: bool) -> bool {
+    matches!(
+        kind,
+        FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
+    ) || (kind == FragmentKind::Alt && !has_else)
+}
+
+/// Join a fragment's per-operand outcomes with union: an item is in the
+/// merged state if it is in *any* outcome. Used for state that only grows
+/// monotonically as messages are seen (e.g. "still-open calls").
+fn merge_union<T: Ord + Clone>(outcomes: Vec<BTreeSet<T>>) -> BTreeSet<T> {
+    let mut merged = BTreeSet::new();
+    for outcome in outcomes {
+        merged.extend(outcome);
+    }
+    merged
+}
+
+/// Join a fragment's per-operand outcomes with intersection: an item is in
+/// the merged state only if it is in *every* outcome. Used for state that
+/// must hold on every path (e.g. "lifeline is alive").
+fn merge_intersect<T: Ord + Clone>(outcomes: Vec<BTreeSet<T>>) -> BTreeSet<T> {
+    let mut iter = outcomes.into_iter();
+    let Some(first) = iter.next() else {
+        return BTreeSet::new();
+    };
+    iter.fold(first, |mut joined, branch| {
+        joined.retain(|id| branch.contains(id));
+        joined
+    })
 }
 
 fn message_kind(kind: DeclaredMessageKind) -> MessageKind {
@@ -1004,6 +1055,11 @@ fn resolve_returns(
     diagnostics: &mut Vec<Diagnostic>,
     path: &str,
 ) {
+    let ctx = FoldCtx {
+        context,
+        concept,
+        path,
+    };
     let mut call_ids: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (index, edge) in edges.iter().enumerate() {
         if matches!(edge.kind, MessageKind::SyncCall | MessageKind::AsyncCall) {
@@ -1016,12 +1072,10 @@ fn resolve_returns(
         if entries.len() > 1 {
             for index in entries {
                 report_message(
-                    context,
-                    concept,
+                    &ctx,
                     diagnostics,
                     DiagCode::DuplicateCallIdentity,
                     format!("duplicate call identity '{call_id}'"),
-                    path,
                     &edges[*index].id,
                 );
             }
@@ -1047,13 +1101,14 @@ fn resolve_returns(
         &edge_by_id,
         &node_by_id,
         &call_ids,
-        context,
-        concept,
+        &ctx,
         diagnostics,
-        path,
     );
 }
 
+// `edges` is a mutable slice indexed by position (return-resolution mutates
+// it in place), so it can't share `SeqLookup`'s by-reference map shape with
+// `node_by_id` — that keeps this one at 8 read/write parameters.
 #[allow(clippy::too_many_arguments)]
 fn walk_return_items(
     items: &[SeqChild],
@@ -1062,10 +1117,8 @@ fn walk_return_items(
     edge_by_id: &BTreeMap<MessageId, usize>,
     node_by_id: &BTreeMap<String, &SeqNode>,
     call_ids: &BTreeMap<String, Vec<usize>>,
-    context: &DomainAnalysisContext<'_>,
-    concept: &DeclaredConcept,
+    ctx: &FoldCtx<'_>,
     diagnostics: &mut Vec<Diagnostic>,
-    path: &str,
 ) {
     for item in items {
         match item {
@@ -1077,16 +1130,9 @@ fn walk_return_items(
                     MessageKind::SyncCall | MessageKind::AsyncCall => {
                         open.insert(index);
                     }
-                    MessageKind::Reply => resolve_one_return(
-                        index,
-                        open,
-                        edges,
-                        call_ids,
-                        context,
-                        concept,
-                        diagnostics,
-                        path,
-                    ),
+                    MessageKind::Reply => {
+                        resolve_one_return(index, open, edges, call_ids, ctx, diagnostics)
+                    }
                     MessageKind::AsyncSignal | MessageKind::Create | MessageKind::Delete => {}
                 }
             }
@@ -1095,36 +1141,18 @@ fn walk_return_items(
                 else {
                     continue;
                 };
-                if operands.len() == 1 {
-                    let incoming = open.clone();
-                    if let Some(SeqNode::Operand { items, .. }) =
-                        node_by_id.get(&operands[0]).copied()
-                    {
-                        walk_return_items(
-                            items,
-                            open,
-                            edges,
-                            edge_by_id,
-                            node_by_id,
-                            call_ids,
-                            context,
-                            concept,
-                            diagnostics,
-                            path,
-                        );
-                    }
-                    if matches!(
-                        kind,
-                        FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
-                    ) {
-                        open.extend(incoming);
-                    }
-                    continue;
-                }
-                let incoming = open.clone();
-                let mut joined = BTreeSet::new();
+                let has_else = operands.iter().any(|operand| {
+                    matches!(
+                        node_by_id.get(operand).copied(),
+                        Some(SeqNode::Operand {
+                            spec: OperandSpec::Else,
+                            ..
+                        })
+                    )
+                });
+                let mut outcomes = Vec::new();
                 for operand in operands {
-                    let mut branch = incoming.clone();
+                    let mut branch = open.clone();
                     if let Some(SeqNode::Operand { items, .. }) = node_by_id.get(operand).copied() {
                         walk_return_items(
                             items,
@@ -1133,44 +1161,42 @@ fn walk_return_items(
                             edge_by_id,
                             node_by_id,
                             call_ids,
-                            context,
-                            concept,
+                            ctx,
                             diagnostics,
-                            path,
                         );
                     }
-                    joined.extend(branch);
+                    outcomes.push(branch);
                 }
-                if *kind == FragmentKind::Alt
-                    && !operands.iter().any(|operand| {
-                        matches!(
-                            node_by_id.get(operand).copied(),
-                            Some(SeqNode::Operand {
-                                spec: OperandSpec::Else,
-                                ..
-                            })
-                        )
-                    })
-                {
-                    joined.extend(incoming);
+                // A lone-operand `alt` (a single guarded branch, no `else`)
+                // does NOT readmit the incoming open-call set here — this
+                // matches the pre-existing behaviour of this walker, which
+                // differs from `repeated_deletes`/`walk` below (both always
+                // readmit an else-less `alt`'s incoming state regardless of
+                // operand count). That divergence pre-dates this refactor;
+                // preserved rather than silently unified.
+                let readmits = matches!(
+                    kind,
+                    FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
+                ) || (operands.len() > 1 && *kind == FragmentKind::Alt && !has_else);
+                if readmits {
+                    outcomes.push(open.clone());
                 }
-                *open = joined;
+                if !outcomes.is_empty() {
+                    *open = merge_union(outcomes);
+                }
             }
             SeqChild::InteractionUse { .. } => {}
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_one_return(
     index: usize,
     open: &mut BTreeSet<usize>,
     edges: &mut [SeqEdge],
     call_ids: &BTreeMap<String, Vec<usize>>,
-    context: &DomainAnalysisContext<'_>,
-    concept: &DeclaredConcept,
+    ctx: &FoldCtx<'_>,
     diagnostics: &mut Vec<Diagnostic>,
-    path: &str,
 ) {
     let authored_to = edges[index].to.clone();
     let selected = if let Some(authored_for) = edges[index].call_id.clone() {
@@ -1188,24 +1214,20 @@ fn resolve_one_return(
             [candidate] => Some(*candidate),
             [] => {
                 report_message(
-                    context,
-                    concept,
+                    ctx,
                     diagnostics,
                     DiagCode::UnknownCallIdentity,
                     format!("unknown call identity '{authored_for}'"),
-                    path,
                     &edges[index].id,
                 );
                 None
             }
             _ => {
                 report_message(
-                    context,
-                    concept,
+                    ctx,
                     diagnostics,
                     DiagCode::AmbiguousReturn,
                     format!("call identity '{authored_for}' is not unique"),
-                    path,
                     &edges[index].id,
                 );
                 None
@@ -1227,24 +1249,20 @@ fn resolve_one_return(
             [candidate] => Some(*candidate),
             [] => {
                 report_message(
-                    context,
-                    concept,
+                    ctx,
                     diagnostics,
                     DiagCode::UnmatchedReturn,
                     "return has no eligible preceding call",
-                    path,
                     &edges[index].id,
                 );
                 None
             }
             _ => {
                 report_message(
-                    context,
-                    concept,
+                    ctx,
                     diagnostics,
                     DiagCode::AmbiguousReturn,
                     "return matches more than one preceding call",
-                    path,
                     &edges[index].id,
                 );
                 None
@@ -1254,12 +1272,10 @@ fn resolve_one_return(
     let Some(candidate) = selected else { return };
     if !open.contains(&candidate) {
         report_message(
-            context,
-            concept,
+            ctx,
             diagnostics,
             DiagCode::CompletedReturn,
             "call already has an explicit return",
-            path,
             &edges[index].id,
         );
         return;
@@ -1271,12 +1287,10 @@ fn resolve_one_return(
     };
     if !source_matches || !to_matches {
         report_message(
-            context,
-            concept,
+            ctx,
             diagnostics,
             DiagCode::ConflictingReturn,
             "return endpoints conflict with the selected call",
-            path,
             &edges[index].id,
         );
         return;
@@ -1362,17 +1376,13 @@ fn validate_lifetimes(
     diagnostics: &mut Vec<Diagnostic>,
     path: &str,
 ) {
-    #[allow(clippy::too_many_arguments)]
     fn repeated_deletes(
         items: &[SeqChild],
-        nodes: &BTreeMap<String, &SeqNode>,
-        edges: &BTreeMap<MessageId, &SeqEdge>,
+        lookup: &SeqLookup<'_>,
         deleted: &mut BTreeSet<String>,
         repeated: &mut BTreeSet<MessageId>,
-        context: &DomainAnalysisContext<'_>,
-        concept: &DeclaredConcept,
+        ctx: &FoldCtx<'_>,
         diagnostics: &mut Vec<Diagnostic>,
-        path: &str,
     ) {
         for item in items {
             match item {
@@ -1381,116 +1391,80 @@ fn validate_lifetimes(
                         kind: MessageKind::Delete,
                         to: Some(EndpointRef::Lifeline { id }),
                         ..
-                    }) = edges.get(edge).copied()
+                    }) = lookup.edges.get(edge).copied()
                     else {
                         continue;
                     };
                     if !deleted.insert(id.clone()) {
                         repeated.insert(edge.clone());
                         report_message(
-                            context,
-                            concept,
+                            ctx,
                             diagnostics,
                             DiagCode::InvalidLifelineLifetime,
                             "lifeline is created or deleted more than once",
-                            path,
                             edge,
                         );
                     }
                 }
                 SeqChild::InteractionUse { .. } => {}
                 SeqChild::Fragment { node } => {
-                    let Some(SeqNode::Fragment { kind, operands, .. }) = nodes.get(node).copied()
+                    let Some(SeqNode::Fragment { kind, operands, .. }) =
+                        lookup.nodes.get(node).copied()
                     else {
                         continue;
                     };
                     let incoming = deleted.clone();
                     if *kind == FragmentKind::Par {
                         for operand in operands {
-                            let Some(SeqNode::Operand { items, .. }) = nodes.get(operand).copied()
+                            let Some(SeqNode::Operand { items, .. }) =
+                                lookup.nodes.get(operand).copied()
                             else {
                                 continue;
                             };
-                            repeated_deletes(
-                                items,
-                                nodes,
-                                edges,
-                                deleted,
-                                repeated,
-                                context,
-                                concept,
-                                diagnostics,
-                                path,
-                            );
+                            repeated_deletes(items, lookup, deleted, repeated, ctx, diagnostics);
                         }
                         continue;
                     }
                     let mut outcomes = Vec::new();
                     for operand in operands {
-                        let Some(SeqNode::Operand { items, .. }) = nodes.get(operand).copied()
+                        let Some(SeqNode::Operand { items, .. }) =
+                            lookup.nodes.get(operand).copied()
                         else {
                             continue;
                         };
                         let mut branch = incoming.clone();
-                        repeated_deletes(
-                            items,
-                            nodes,
-                            edges,
-                            &mut branch,
-                            repeated,
-                            context,
-                            concept,
-                            diagnostics,
-                            path,
-                        );
+                        repeated_deletes(items, lookup, &mut branch, repeated, ctx, diagnostics);
                         outcomes.push(branch);
                     }
                     let has_else = operands.iter().any(|operand| {
                         matches!(
-                            nodes.get(operand).copied(),
+                            lookup.nodes.get(operand).copied(),
                             Some(SeqNode::Operand {
                                 spec: OperandSpec::Else,
                                 ..
                             })
                         )
                     });
-                    if matches!(kind, FragmentKind::Alt) && !has_else
-                        || matches!(
-                            kind,
-                            FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
-                        )
-                    {
+                    if fragment_readmits_incoming(*kind, has_else) {
                         outcomes.push(incoming);
                     }
-                    if let Some(first) = outcomes.first().cloned() {
-                        *deleted = outcomes.iter().skip(1).fold(first, |mut joined, branch| {
-                            joined.retain(|id| branch.contains(id));
-                            joined
-                        });
+                    if !outcomes.is_empty() {
+                        *deleted = merge_intersect(outcomes);
                     }
                 }
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn walk(
         items: &[SeqChild],
-        nodes: &BTreeMap<String, &SeqNode>,
-        edges: &BTreeMap<MessageId, &SeqEdge>,
+        lookup: &SeqLookup<'_>,
         alive: &mut BTreeSet<String>,
         repeated_deletes: &BTreeSet<MessageId>,
-        context: &DomainAnalysisContext<'_>,
-        concept: &DeclaredConcept,
+        ctx: &FoldCtx<'_>,
         diagnostics: &mut Vec<Diagnostic>,
-        path: &str,
     ) {
-        fn created_in(
-            items: &[SeqChild],
-            nodes: &BTreeMap<String, &SeqNode>,
-            edges: &BTreeMap<MessageId, &SeqEdge>,
-            out: &mut BTreeSet<String>,
-        ) {
+        fn created_in(items: &[SeqChild], lookup: &SeqLookup<'_>, out: &mut BTreeSet<String>) {
             for item in items {
                 match item {
                     SeqChild::Message { edge } => {
@@ -1498,18 +1472,20 @@ fn validate_lifetimes(
                             kind: MessageKind::Create,
                             to: Some(EndpointRef::Lifeline { id }),
                             ..
-                        }) = edges.get(edge).copied()
+                        }) = lookup.edges.get(edge).copied()
                         {
                             out.insert(id.clone());
                         }
                     }
                     SeqChild::Fragment { node } => {
-                        if let Some(SeqNode::Fragment { operands, .. }) = nodes.get(node).copied() {
+                        if let Some(SeqNode::Fragment { operands, .. }) =
+                            lookup.nodes.get(node).copied()
+                        {
                             for operand in operands {
                                 if let Some(SeqNode::Operand { items, .. }) =
-                                    nodes.get(operand).copied()
+                                    lookup.nodes.get(operand).copied()
                                 {
-                                    created_in(items, nodes, edges, out);
+                                    created_in(items, lookup, out);
                                 }
                             }
                         }
@@ -1521,7 +1497,7 @@ fn validate_lifetimes(
         for item in items {
             match item {
                 SeqChild::Message { edge } => {
-                    let Some(message) = edges.get(edge).copied() else {
+                    let Some(message) = lookup.edges.get(edge).copied() else {
                         continue;
                     };
                     let mut invalid = None;
@@ -1542,12 +1518,10 @@ fn validate_lifetimes(
                     }
                     if let Some(id) = invalid {
                         report_message(
-                            context,
-                            concept,
+                            ctx,
                             diagnostics,
                             DiagCode::InvalidLifelineLifetime,
                             format!("lifeline '{id}' is used outside its lifetime"),
-                            path,
                             edge,
                         );
                     }
@@ -1556,12 +1530,10 @@ fn validate_lifetimes(
                             MessageKind::Create => {
                                 if alive.contains(id) {
                                     report_message(
-                                        context,
-                                        concept,
+                                        ctx,
                                         diagnostics,
                                         DiagCode::InvalidLifelineLifetime,
                                         "lifeline is created or deleted more than once",
-                                        path,
                                         edge,
                                     );
                                 }
@@ -1576,7 +1548,8 @@ fn validate_lifetimes(
                 }
                 SeqChild::InteractionUse { .. } => {}
                 SeqChild::Fragment { node } => {
-                    let Some(SeqNode::Fragment { kind, operands, .. }) = nodes.get(node).copied()
+                    let Some(SeqNode::Fragment { kind, operands, .. }) =
+                        lookup.nodes.get(node).copied()
                     else {
                         continue;
                     };
@@ -1587,15 +1560,16 @@ fn validate_lifetimes(
                         .map(|operand| {
                             let mut creates = BTreeSet::new();
                             if let Some(SeqNode::Operand { items, .. }) =
-                                nodes.get(operand).copied()
+                                lookup.nodes.get(operand).copied()
                             {
-                                created_in(items, nodes, edges, &mut creates);
+                                created_in(items, lookup, &mut creates);
                             }
                             creates
                         })
                         .collect::<Vec<_>>();
                     for (operand_index, operand) in operands.iter().enumerate() {
-                        let Some(SeqNode::Operand { items, .. }) = nodes.get(operand).copied()
+                        let Some(SeqNode::Operand { items, .. }) =
+                            lookup.nodes.get(operand).copied()
                         else {
                             continue;
                         };
@@ -1609,44 +1583,38 @@ fn validate_lifetimes(
                         }
                         walk(
                             items,
-                            nodes,
-                            edges,
+                            lookup,
                             &mut branch,
                             repeated_deletes,
-                            context,
-                            concept,
+                            ctx,
                             diagnostics,
-                            path,
                         );
                         outcomes.push(branch);
                     }
                     let has_else = operands.iter().any(|operand| {
                         matches!(
-                            nodes.get(operand).copied(),
+                            lookup.nodes.get(operand).copied(),
                             Some(SeqNode::Operand {
                                 spec: OperandSpec::Else,
                                 ..
                             })
                         )
                     });
-                    if matches!(kind, FragmentKind::Alt) && !has_else
-                        || matches!(
-                            kind,
-                            FragmentKind::Opt | FragmentKind::Loop | FragmentKind::Break
-                        )
-                    {
+                    if fragment_readmits_incoming(*kind, has_else) {
                         outcomes.push(incoming.clone());
                     }
-                    if let Some(first) = outcomes.first().cloned() {
-                        *alive = outcomes.iter().skip(1).fold(first, |mut joined, branch| {
-                            joined.retain(|id| branch.contains(id));
-                            joined
-                        });
+                    if !outcomes.is_empty() {
+                        *alive = merge_intersect(outcomes);
                     }
                 }
             }
         }
     }
+    let ctx = FoldCtx {
+        context,
+        concept,
+        path,
+    };
     let node_by_id = nodes
         .iter()
         .filter_map(|node| match node {
@@ -1661,12 +1629,10 @@ fn validate_lifetimes(
             && !matches!(target, Some(EndpointRef::Lifeline { .. }))
         {
             report_message(
-                context,
-                concept,
+                &ctx,
                 diagnostics,
                 DiagCode::InvalidSequenceEndpoint,
                 "create and delete targets must be local lifelines",
-                path,
                 &edge.id,
             );
             continue;
@@ -1690,28 +1656,26 @@ fn validate_lifetimes(
         .iter()
         .map(|edge| (edge.id.clone(), edge))
         .collect::<BTreeMap<_, _>>();
+    let lookup = SeqLookup {
+        nodes: &node_by_id,
+        edges: &edge_by_id,
+    };
     let mut repeated_delete_messages = BTreeSet::new();
     repeated_deletes(
         items,
-        &node_by_id,
-        &edge_by_id,
+        &lookup,
         &mut BTreeSet::new(),
         &mut repeated_delete_messages,
-        context,
-        concept,
+        &ctx,
         diagnostics,
-        path,
     );
     walk(
         items,
-        &node_by_id,
-        &edge_by_id,
+        &lookup,
         &mut alive,
         &repeated_delete_messages,
-        context,
-        concept,
+        &ctx,
         diagnostics,
-        path,
     );
 }
 
