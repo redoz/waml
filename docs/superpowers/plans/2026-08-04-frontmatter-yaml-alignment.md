@@ -302,7 +302,9 @@ read as a Str. YAML 1.1 bool words (NO/yes/on/off/y/n) classify as Str by
 design; date-shaped scalars stay Str. Table test pins every rule."
 ```
 
----### Task 4: Parser — nested mappings, sequences, comments, quoted scalars
+---
+
+### Task 4: Parser — nested mappings, sequences, comments, quoted scalars
 
 The core builder rewrite, WITHOUT block scalars (those are Task 5 because they also change the classifier/region detection). New syntax kinds land here together with their producer.
 
