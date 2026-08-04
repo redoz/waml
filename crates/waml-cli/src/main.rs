@@ -937,6 +937,12 @@ fn run_bundle(
             eprintln!("waml: --export-name required when --format ts");
             return 2;
         }
+        // The name is interpolated verbatim into `export const {name}`;
+        // anything but an identifier would become injected TypeScript.
+        (BundleFormat::Ts, Some(name)) if !commands::is_ts_export_name(&name) => {
+            eprintln!("waml: --export-name must be a valid identifier, got {name:?}");
+            return 2;
+        }
         (_, name) => name,
     };
     let bundle = match io::read_files(std::slice::from_ref(dir)) {

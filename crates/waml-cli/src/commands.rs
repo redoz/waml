@@ -36,10 +36,14 @@ pub fn render_human(diags: &[Diagnostic]) -> String {
     }
     let mut lines = Vec::new();
     for d in sorted(diags) {
+        // `span` is 0-based byte columns within the line; print 1-based
+        // columns to match the 1-based `line`.
+        let location = match d.span {
+            Some((start, end)) => format!("{}:{}:{}-{}", d.file, d.line, start + 1, end + 1),
+            None => format!("{}:{}", d.file, d.line),
+        };
         lines.push(format!(
-            "{}:{}: {}[{}]: {}",
-            d.file,
-            d.line,
+            "{location}: {}[{}]: {}",
             severity_str(d.severity),
             d.code.as_str(),
             d.message
@@ -125,6 +129,17 @@ pub fn render_diff(old: &[(String, String)], new: &[(String, String)]) -> String
 
 pub fn render_bundle_json(bundle: &[(String, String)]) -> String {
     serde_json::to_string_pretty(bundle).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// True iff `name` can sit verbatim in `export const {name}` — an ASCII
+/// identifier. Anything else would splice arbitrary text into the generated
+/// TypeScript, so [`render_bundle_ts`] callers must reject it first.
+pub fn is_ts_export_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
 /// Emit a checked-in TS module: `serde_json::to_string` per field reuses JSON string
@@ -357,6 +372,18 @@ mod tests {
     }
 
     #[test]
+    fn human_output_includes_the_column_span_when_present() {
+        let diags = vec![
+            Diagnostic::new(DiagCode::MalformedAttribute, "bad", "a.md", 8).with_span((2, 20)),
+        ];
+        let out = render_human(&diags);
+        assert!(
+            out.contains("a.md:8:3-21: error[malformed-attribute]: bad"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn json_output_is_an_array_of_diagnostics() {
         let out = render_json(&sample());
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -458,6 +485,24 @@ mod tests {
         assert!(out.contains("export const myBundle: [string, string][] = ["));
         assert!(out.contains("\"a/one.md\""));
         assert!(out.contains("\\n\\\"quoted\\\"\\n"));
+    }
+
+    #[test]
+    fn ts_export_names_admit_identifiers_and_nothing_else() {
+        for valid in ["myBundle", "_private", "$x", "b2", "SNAKE_CASE"] {
+            assert!(is_ts_export_name(valid), "{valid}");
+        }
+        for invalid in [
+            "",
+            "2start",
+            "has space",
+            "a-b",
+            "x;alert(1)//",
+            "a\"] = evil; //",
+            "café",
+        ] {
+            assert!(!is_ts_export_name(invalid), "{invalid}");
+        }
     }
 
     #[test]
