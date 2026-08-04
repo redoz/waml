@@ -940,7 +940,28 @@ pub(crate) fn op_pkg_insert(
 
 #[cfg(test)]
 mod tests {
-    use crate::ops::{apply, Op};
+    use crate::edit::{Batch, EditError, Step};
+    use crate::okf;
+    use crate::source::SourceBundle;
+
+    type Pairs = Vec<(String, String)>;
+
+    fn apply(bundle: &[(String, String)], steps: Vec<Step>) -> Result<Pairs, EditError> {
+        let source = SourceBundle::try_from_pairs(bundle.iter().cloned())
+            .map_err(|error| EditError::at("bundle", error.to_string()))?;
+        crate::edit::apply(&source, &Batch::new(steps)).map(|bundle| bundle.to_pairs())
+    }
+
+    fn dir(path: &str) -> okf::DirectoryAddress {
+        let path = path.trim_matches('/');
+        okf::DirectoryAddress::parse(if path.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{path}")
+        })
+        .unwrap()
+    }
+
     #[test]
     fn move_changes_directory_keeps_basename() {
         let b = vec![(
@@ -949,10 +970,10 @@ mod tests {
         )];
         let out = apply(
             &b,
-            &[Op::PkgMove {
-                slug: "order".into(),
-                to_dir: "billing".into(),
-            }],
+            vec![Step::Okf(okf::Op::ConceptMove {
+                id: "order".into(),
+                to_directory: dir("billing"),
+            })],
         )
         .unwrap();
         assert!(out.iter().any(|(p, _)| p == "billing/order.md"));
@@ -966,10 +987,10 @@ mod tests {
         )];
         let out = apply(
             &b,
-            &[Op::PkgMove {
-                slug: "order".into(),
-                to_dir: "".into(),
-            }],
+            vec![Step::Okf(okf::Op::ConceptMove {
+                id: "order".into(),
+                to_directory: dir(""),
+            })],
         )
         .unwrap();
         assert!(out.iter().any(|(p, _)| p == "order.md"));
@@ -983,10 +1004,10 @@ mod tests {
         ];
         let out = apply(
             &b,
-            &[Op::PkgRename {
-                from: "sales".into(),
-                to: "commerce".into(),
-            }],
+            vec![Step::Okf(okf::Op::DirectoryRename {
+                directory: dir("sales"),
+                name: "commerce".into(),
+            })],
         )
         .unwrap();
         assert!(out.iter().any(|(p, _)| p == "commerce/order.md"));
@@ -1019,10 +1040,10 @@ mod tests {
         ];
         let out = apply(
             &b,
-            &[Op::PkgDelete {
-                path: "sales".into(),
+            vec![Step::Okf(okf::Op::DirectoryDelete {
+                directory: dir("sales"),
                 cascade: true,
-            }],
+            })],
         )
         .unwrap();
         assert!(out.iter().all(|(p, _)| !p.starts_with("sales")));
@@ -1036,10 +1057,10 @@ mod tests {
         )];
         let out = apply(
             &b,
-            &[Op::PkgDelete {
-                path: "sales/orders".into(),
+            vec![Step::Okf(okf::Op::DirectoryDelete {
+                directory: dir("sales/orders"),
                 cascade: false,
-            }],
+            })],
         )
         .unwrap();
         assert!(out.iter().any(|(p, _)| p == "sales/order.md"));
@@ -1060,10 +1081,10 @@ mod tests {
         ];
         let out = apply(
             &b,
-            &[Op::PkgReorder {
-                path: "sales".into(),
+            vec![Step::Okf(okf::Op::IndexReorder {
+                directory: dir("sales"),
                 order: vec!["sales/order".into(), "sales/customer".into()],
-            }],
+            })],
         )
         .unwrap();
         let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
@@ -1085,9 +1106,9 @@ mod tests {
         ];
         let out = apply(
             &b,
-            &[Op::PkgSort {
-                path: "sales".into(),
-            }],
+            vec![Step::Okf(okf::Op::IndexSort {
+                directory: dir("sales"),
+            })],
         )
         .unwrap();
         let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
@@ -1102,10 +1123,10 @@ mod tests {
         )];
         let out = apply(
             &b,
-            &[Op::PkgRetitle {
-                path: "".into(),
+            vec![Step::Okf(okf::Op::IndexRetitle {
+                directory: dir(""),
                 title: "Acme".into(),
-            }],
+            })],
         )
         .unwrap();
         let idx = &out
@@ -1138,10 +1159,10 @@ mod tests {
         ];
         let out = apply(
             &b,
-            &[Op::PkgRetitle {
-                path: "sales".into(),
+            vec![Step::Okf(okf::Op::IndexRetitle {
+                directory: dir("sales"),
                 title: "Sales Domain".into(),
-            }],
+            })],
         )
         .unwrap();
         let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
@@ -1161,19 +1182,27 @@ mod tests {
         )];
         let err = apply(
             &b,
-            &[Op::PkgRetitle {
-                path: "".into(),
+            vec![Step::Okf(okf::Op::IndexRetitle {
+                directory: dir(""),
                 title: "   ".into(),
-            }],
+            })],
         )
         .unwrap_err();
         assert_eq!(err.op, "pkg.retitle");
         assert!(err.reason.contains("empty"), "reason: {}", err.reason);
     }
 
+    fn bundle_import(parent: &str, name: &str, docs: Vec<(String, String)>) -> Step {
+        Step::Okf(okf::Op::BundleImport {
+            parent: dir(parent),
+            name: name.into(),
+            bundle: SourceBundle::try_from_pairs(docs).unwrap(),
+        })
+    }
+
     #[test]
     fn insert_reroots_docs_under_parent_and_name() {
-        let b: crate::ops::Bundle = vec![];
+        let b: Pairs = vec![];
         let docs = vec![
             (
                 "orders-domain-uml/order.md".to_string(),
@@ -1184,15 +1213,7 @@ mod tests {
                 "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string(),
             ),
         ];
-        let out = apply(
-            &b,
-            &[Op::PkgInsert {
-                parent_path: "sales".into(),
-                name: "orders".into(),
-                docs,
-            }],
-        )
-        .unwrap();
+        let out = apply(&b, vec![bundle_import("sales", "orders", docs)]).unwrap();
         assert!(
             out.iter().any(|(p, _)| p == "sales/orders/order.md"),
             "{out:?}"
@@ -1210,39 +1231,23 @@ mod tests {
 
     #[test]
     fn insert_at_root_uses_name_as_top_segment() {
-        let b: crate::ops::Bundle = vec![];
+        let b: Pairs = vec![];
         let docs = vec![(
             "tmpl/order.md".to_string(),
             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
         )];
-        let out = apply(
-            &b,
-            &[Op::PkgInsert {
-                parent_path: "".into(),
-                name: "orders".into(),
-                docs,
-            }],
-        )
-        .unwrap();
+        let out = apply(&b, vec![bundle_import("", "orders", docs)]).unwrap();
         assert!(out.iter().any(|(p, _)| p == "orders/order.md"), "{out:?}");
     }
 
     #[test]
     fn insert_preserves_same_directory_relative_links() {
-        let b: crate::ops::Bundle = vec![];
+        let b: Pairs = vec![];
         let docs = vec![
             ("t/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Customer](./customer.md)\n".to_string()),
             ("t/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
         ];
-        let out = apply(
-            &b,
-            &[Op::PkgInsert {
-                parent_path: "".into(),
-                name: "orders".into(),
-                docs,
-            }],
-        )
-        .unwrap();
+        let out = apply(&b, vec![bundle_import("", "orders", docs)]).unwrap();
         let order = &out.iter().find(|(p, _)| p == "orders/order.md").unwrap().1;
         assert!(
             order.contains("(./customer.md)"),
@@ -1254,7 +1259,7 @@ mod tests {
     fn insert_keeps_distinct_same_basename_docs_across_packages() {
         // The old TS mergeBundles bug: a same-basename doc in a different package
         // must NOT be dropped. Full-path identity keeps both.
-        let b: crate::ops::Bundle = vec![(
+        let b: Pairs = vec![(
             "billing/order.md".to_string(),
             "---\ntype: uml.Class\ntitle: Invoice Order\n---\n# Invoice Order\n".to_string(),
         )];
@@ -1262,15 +1267,7 @@ mod tests {
             "t/order.md".to_string(),
             "---\ntype: uml.Class\ntitle: Sales Order\n---\n# Sales Order\n".to_string(),
         )];
-        let out = apply(
-            &b,
-            &[Op::PkgInsert {
-                parent_path: "".into(),
-                name: "sales".into(),
-                docs,
-            }],
-        )
-        .unwrap();
+        let out = apply(&b, vec![bundle_import("", "sales", docs)]).unwrap();
         assert!(
             out.iter().any(|(p, _)| p == "billing/order.md"),
             "existing kept: {out:?}"
@@ -1284,7 +1281,7 @@ mod tests {
 
     #[test]
     fn insert_errors_when_target_package_already_exists() {
-        let b: crate::ops::Bundle = vec![(
+        let b: Pairs = vec![(
             "sales/orders/order.md".to_string(),
             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
         )];
@@ -1292,35 +1289,19 @@ mod tests {
             "t/thing.md".to_string(),
             "---\ntype: uml.Class\ntitle: Thing\n---\n# Thing\n".to_string(),
         )];
-        let err = apply(
-            &b,
-            &[Op::PkgInsert {
-                parent_path: "sales".into(),
-                name: "orders".into(),
-                docs,
-            }],
-        )
-        .unwrap_err();
+        let err = apply(&b, vec![bundle_import("sales", "orders", docs)]).unwrap_err();
         assert_eq!(err.op, "pkg.insert");
         assert!(err.reason.contains("already exists"), "got: {}", err.reason);
     }
 
     #[test]
     fn insert_errors_on_empty_name() {
-        let b: crate::ops::Bundle = vec![];
+        let b: Pairs = vec![];
         let docs = vec![(
             "t/x.md".to_string(),
             "---\ntype: uml.Class\ntitle: X\n---\n# X\n".to_string(),
         )];
-        let err = apply(
-            &b,
-            &[Op::PkgInsert {
-                parent_path: "".into(),
-                name: "".into(),
-                docs,
-            }],
-        )
-        .unwrap_err();
+        let err = apply(&b, vec![bundle_import("", "", docs)]).unwrap_err();
         assert!(err.reason.contains("name"), "got: {}", err.reason);
     }
 }

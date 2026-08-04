@@ -289,7 +289,25 @@ fn rewritten_href(
 #[cfg(test)]
 mod tests {
     use super::super::lower::slug_of;
-    use crate::ops::{apply, Op};
+    use crate::edit::{Batch, EditError, Step};
+    use crate::source::SourceBundle;
+    use crate::uml;
+
+    fn apply(
+        bundle: &[(String, String)],
+        steps: Vec<Step>,
+    ) -> Result<Vec<(String, String)>, EditError> {
+        let source = SourceBundle::try_from_pairs(bundle.iter().cloned())
+            .map_err(|error| EditError::at("bundle", error.to_string()))?;
+        crate::edit::apply(&source, &Batch::new(steps)).map(|bundle| bundle.to_pairs())
+    }
+
+    fn node_rename(from: &str, to: &str) -> Step {
+        Step::Uml(uml::Op::ClassifierRename {
+            from: from.into(),
+            to: to.into(),
+        })
+    }
 
     fn bundle() -> Vec<(String, String)> {
         vec![
@@ -307,14 +325,7 @@ mod tests {
 
     #[test]
     fn rename_rewrites_every_referrer_and_rekeys_the_file() {
-        let out = apply(
-            &bundle(),
-            &[Op::NodeRename {
-                from: "order-line".into(),
-                to: "line-item".into(),
-            }],
-        )
-        .unwrap();
+        let out = apply(&bundle(), vec![node_rename("order-line", "line-item")]).unwrap();
 
         // file re-keyed, directory preserved
         assert!(out.iter().any(|(p, _)| p == "shop/line-item.md"));
@@ -336,14 +347,7 @@ mod tests {
             ("shop/tree-node.md".to_string(),
              "---\ntype: uml.Class\ntitle: TreeNode\n---\n# TreeNode\n\n## Attributes\n- parent: [TreeNode](./tree-node.md)\n\n## Relationships\n- composes [TreeNode](./tree-node.md) as [TreeNode](./tree-node.md): 1 to 0..* children\n".to_string()),
         ];
-        let out = apply(
-            &b,
-            &[Op::NodeRename {
-                from: "tree-node".into(),
-                to: "node".into(),
-            }],
-        )
-        .unwrap();
+        let out = apply(&b, vec![node_rename("tree-node", "node")]).unwrap();
 
         let doc = &out.iter().find(|(p, _)| p == "shop/node.md").unwrap().1;
         assert!(
@@ -364,14 +368,7 @@ mod tests {
             "shop/line-item.md".to_string(),
             "---\ntype: uml.Class\ntitle: LineItem\n---\n# LineItem\n".to_string(),
         ));
-        let err = apply(
-            &b,
-            &[Op::NodeRename {
-                from: "order-line".into(),
-                to: "line-item".into(),
-            }],
-        )
-        .unwrap_err();
+        let err = apply(&b, vec![node_rename("order-line", "line-item")]).unwrap_err();
         assert!(err.reason.contains("already exists"));
     }
 
@@ -383,14 +380,7 @@ mod tests {
             ("shop/diagram.md".to_string(),
              "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n\n## Layout\n- [Order](./order.md) with collapsed\n".to_string()),
         ];
-        let out = apply(
-            &b,
-            &[Op::NodeRename {
-                from: "order".into(),
-                to: "invoice".into(),
-            }],
-        )
-        .unwrap();
+        let out = apply(&b, vec![node_rename("order", "invoice")]).unwrap();
 
         let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
         assert!(
@@ -421,14 +411,7 @@ mod tests {
             ("shop/diagram.md".to_string(),
              "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- order left of customer\n".to_string()),
         ];
-        let out = apply(
-            &b,
-            &[Op::NodeRename {
-                from: "order".into(),
-                to: "invoice".into(),
-            }],
-        )
-        .unwrap();
+        let out = apply(&b, vec![node_rename("order", "invoice")]).unwrap();
 
         let diagram = &out.iter().find(|(p, _)| p == "shop/diagram.md").unwrap().1;
         assert!(
@@ -445,14 +428,7 @@ mod tests {
     fn rename_resolves_from_by_full_path_id_and_still_rewrites_referrers() {
         // `from` addressed as the parse/graph layer's full bundle-path id
         // (`shop/order-line`), not the bare basename `order-line`.
-        let out = apply(
-            &bundle(),
-            &[Op::NodeRename {
-                from: "shop/order-line".into(),
-                to: "line-item".into(),
-            }],
-        )
-        .unwrap();
+        let out = apply(&bundle(), vec![node_rename("shop/order-line", "line-item")]).unwrap();
 
         assert!(out.iter().any(|(p, _)| p == "shop/line-item.md"));
         let order = &out.iter().find(|(p, _)| p == "shop/order.md").unwrap().1;
@@ -473,14 +449,7 @@ mod tests {
             "billing/line-item.md".to_string(),
             "---\ntype: uml.Class\ntitle: LineItem\n---\n# LineItem\n".to_string(),
         ));
-        let out = apply(
-            &b,
-            &[Op::NodeRename {
-                from: "order-line".into(),
-                to: "line-item".into(),
-            }],
-        )
-        .unwrap();
+        let out = apply(&b, vec![node_rename("order-line", "line-item")]).unwrap();
         assert!(out.iter().any(|(p, _)| p == "shop/line-item.md"));
         assert!(
             out.iter().any(|(p, _)| p == "billing/line-item.md"),
