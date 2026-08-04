@@ -140,7 +140,10 @@ fn fm_value_strategy() -> impl Strategy<Value = FmValue> {
         .prop_map(FmValue::Str),
     ];
     leaf.prop_recursive(4, 48, 8, |inner| {
-        prop::collection::vec(inner, 0..6).prop_map(FmValue::List)
+        // NOTE: the filter runs on the Vec<FmValue>, BEFORE the prop_map wraps
+        // it in FmValue::List. Filtering after the wrap does not compile —
+        // `iter()` is not available on `&FmValue`.
+        prop::collection::vec(inner, 0..6)
             // MANDATORY EXCLUSIONS — see the note below. Today's flow-list
             // parser splits on EVERY comma, quote- and nesting-blind, and the
             // writer never quotes list items. These shapes CANNOT round-trip
@@ -163,6 +166,7 @@ fn fm_value_strategy() -> impl Strategy<Value = FmValue> {
                     _ => false,
                 })
             })
+            .prop_map(FmValue::List)
     })
 }
 
@@ -394,6 +398,32 @@ design; date-shaped scalars stay Str. Table test pins every rule."
 
 ### Task 4: Parser — nested mappings, sequences, comments, quoted scalars
 
+> **LAND THIS TASK AS THREE COMMITS, NOT ONE.** A previous run rotated out of
+> context mid-task and landed nothing. This task is too large for one
+> generation, so it has explicit internal commit boundaries. Each is green and
+> pushable on its own:
+>
+> 1. **Kinds commit** (Step 3 only) — new `OkfMarkdownSyntaxKind` variants, new
+>    `OkfSyntaxDiagnosticCode` variants, and the `snapshot.rs`
+>    `semantic_role`/`source_role`/`is_semantic` arms that keep every match
+>    exhaustive. No builder change, no fixtures. The workspace compiles and all
+>    existing tests pass — nothing produces the new kinds yet.
+>    Commit subject: `feat(waml-syntax): add frontmatter mapping/sequence syntax kinds`.
+>    **NO `Plan-Tasks` trailer** — this is a partial unit.
+> 2. **Builder commit** (Steps 1, 2, 4) — the indent-stack builder, the unit
+>    test for it, and the `parse_closed_syntax` descent through the new mapping
+>    level. Do NOT register the new fixtures yet; existing goldens are re-blessed
+>    here where tree shape changed, after reading each diff.
+>    Commit subject: `feat(waml-syntax): parse nested frontmatter mappings and sequences`.
+>    **NO `Plan-Tasks` trailer.**
+> 3. **Fixtures commit** (Steps 5, 6) — the six new fixture sources, their
+>    `assert_fixture_shape` arms, and their blessed goldens.
+>    **This commit carries `Plan-Tasks: Task 4`** and completes the task.
+>
+> If you are a fresh generation resuming here, check `git log` on the trunk for
+> the two untrailered subjects above to see which boundary you are past — the
+> absence of a `Task 4` trailer does NOT mean nothing landed.
+
 The core builder rewrite, WITHOUT block scalars (those are Task 5 because they also change the classifier/region detection). New syntax kinds land here together with their producer.
 
 **Files:**
@@ -601,6 +631,15 @@ Block scalars follow separately (they also change region detection)."
 ---
 
 ### Task 5: Block scalars and the block-scalar-aware classifier
+
+> **LAND AS TWO COMMITS** (same rationale as Task 4):
+> 1. **Classifier commit** (Step 3) — `line_opens_block_scalar` plus the
+>    extracted `frontmatter_close_fence_line`, and the `same_frontmatter_fences`
+>    side using the same scan. Green on existing tests.
+>    **NO `Plan-Tasks` trailer.**
+> 2. **Builder + fixtures commit** (Steps 1, 2, 4, 5, 6) — block scalar tokens
+>    in the builder, the two new fixtures with their `assert_fixture_shape` arms
+>    and blessed goldens. **Carries `Plan-Tasks: Task 5`.**
 
 Region detection changes here — the riskiest part of the spec ("a mistake here misclassifies document bodies"). Includes the `same_frontmatter_fences` fix, because once the classifier skips a `---` inside a literal block, the incremental fence comparison must use the same scan or an edit inside a literal block miscompares.
 
