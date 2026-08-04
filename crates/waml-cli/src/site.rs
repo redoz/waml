@@ -29,8 +29,6 @@ pub(crate) use waml::site_boot::SITE_BOOT_CONFIG_FILE as BOOT_CONFIG_FILE;
 
 /// Where an assembled site gets its model from.
 #[derive(Debug, Clone, PartialEq, Eq)]
-// `Api` is built by the future `waml serve`; only tests construct it today.
-#[allow(dead_code)]
 pub(crate) enum SiteSource {
     /// A `bundle.waml` written beside the editor, holding these bytes.
     Static(Vec<u8>),
@@ -78,29 +76,48 @@ impl std::error::Error for SiteError {}
 /// (tens of MB) and finite enough that a malformed stream cannot fill a disk.
 const MAX_ASSET_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Validate an embedded artifact's manifest: safe relative paths, no
+/// duplicates, and an `index.html` entry point. Shared by `assemble_site`
+/// (which then decompresses everything) and `serve::ui` (which serves the
+/// compressed bytes directly), so the two checks cannot drift apart.
+pub(crate) fn validate_manifest(artifact: &[EmbeddedAsset]) -> Result<(), SiteError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for asset in artifact {
+        if !is_safe_relative_path(asset.path) {
+            return Err(SiteError::UnsafePath(asset.path.to_string()));
+        }
+        if !seen.insert(asset.path) {
+            return Err(SiteError::DuplicatePath(asset.path.to_string()));
+        }
+    }
+    if !seen.contains("index.html") {
+        return Err(SiteError::MissingIndex);
+    }
+    Ok(())
+}
+
+/// The boot-config query string a site with this source boots from.
+pub(crate) fn boot_query(source: &SiteSource) -> String {
+    match source {
+        SiteSource::Static(_) => format!("?bundle={BUNDLE_FILE}"),
+        SiteSource::Api => "?api=/api".to_string(),
+    }
+}
+
 /// Build the complete site as `path -> bytes`, ready to write.
 pub(crate) fn assemble_site(
     artifact: &[EmbeddedAsset],
     source: SiteSource,
 ) -> Result<BTreeMap<String, Vec<u8>>, SiteError> {
+    validate_manifest(artifact)?;
+
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for asset in artifact {
-        if !is_safe_relative_path(asset.path) {
-            return Err(SiteError::UnsafePath(asset.path.to_string()));
-        }
         let bytes = decompress(asset)?;
-        if files.insert(asset.path.to_string(), bytes).is_some() {
-            return Err(SiteError::DuplicatePath(asset.path.to_string()));
-        }
+        files.insert(asset.path.to_string(), bytes);
     }
 
-    if !files.contains_key("index.html") {
-        return Err(SiteError::MissingIndex);
-    }
-    let boot_query = match &source {
-        SiteSource::Static(_) => format!("?bundle={BUNDLE_FILE}"),
-        SiteSource::Api => "?api=/api".to_string(),
-    };
+    let boot_query = boot_query(&source);
     files.insert(BOOT_CONFIG_FILE.to_string(), boot_query.into_bytes());
 
     if let SiteSource::Static(bundle) = source {

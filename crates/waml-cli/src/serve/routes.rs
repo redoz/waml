@@ -1,7 +1,7 @@
 //! The API router: one guard layer in front of the read table and the two
-//! write surfaces `ServeState` implements. UI routes are mounted by Task 7;
-//! until then every non-`/api` path answers 404, which is also the final
-//! `--api-only` behaviour.
+//! write surfaces `ServeState` implements. UI routes (`serve::ui`) merge in
+//! alongside it when `run` mounts the embedded web editor; with no UI router
+//! merged (or with `--api-only`), every non-`/api` path answers 404.
 
 use std::sync::{Arc, Mutex};
 
@@ -26,16 +26,21 @@ pub struct App {
     pub guard: Arc<Guard>,
 }
 
-/// The API router. UI routes (Task 7) are mounted alongside this on `run`'s
-/// `axum::Router`; this function only ever answers `/api/*`.
-pub fn router(app: App) -> Router {
-    Router::new()
+/// The API router, optionally merged with the UI router (`serve::ui`). The
+/// UI router answers via a catch-all fallback, so it must be merged in —
+/// never made the base router — or it would shadow the `/api/*` routes.
+pub fn router(app: App, ui: Option<Router>) -> Router {
+    let api = Router::new()
         .route("/api/bundle", get(get_bundle))
         .route("/api/model", get(get_model))
         .route("/api/diagnostics", get(get_diagnostics))
         .route("/api/ops", post(post_ops))
         .route("/api/documents", post(post_documents))
-        .with_state(app)
+        .with_state(app);
+    match ui {
+        Some(ui) => api.merge(ui),
+        None => api,
+    }
 }
 
 #[derive(Deserialize)]
@@ -242,11 +247,15 @@ fn apply_failure_response(failure: ApplyFailure) -> Response {
 /// (`127.0.0.1:0`) listener instead of a fixed port; tests never trigger the
 /// shutdown signal, so the spawned server simply runs until the test task
 /// that owns it is dropped.
-pub async fn serve_on(listener: tokio::net::TcpListener, app: App) -> std::io::Result<()> {
+pub async fn serve_on(
+    listener: tokio::net::TcpListener,
+    app: App,
+    ui: Option<Router>,
+) -> std::io::Result<()> {
     let shutdown = async {
         let _ = tokio::signal::ctrl_c().await;
     };
-    axum::serve(listener, router(app))
+    axum::serve(listener, router(app, ui))
         .with_graceful_shutdown(shutdown)
         .await
 }
@@ -280,7 +289,7 @@ mod tests {
             state: Arc::new(Mutex::new(state)),
             guard: Arc::new(guard),
         };
-        tokio::spawn(serve_on(listener, app));
+        tokio::spawn(serve_on(listener, app, None));
         // Give the listener a moment to start accepting.
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         TestServer {

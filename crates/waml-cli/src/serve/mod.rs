@@ -10,6 +10,7 @@ pub mod guard;
 pub mod paths;
 pub mod routes;
 pub mod state;
+pub mod ui;
 
 use guard::{Guard, Token};
 use routes::App;
@@ -78,15 +79,30 @@ pub fn run(args: ServeArgs) -> i32 {
         let url = format!("http://127.0.0.1:{port}/?api=/api&token={}", token.as_str());
         println!("waml serve  {url}   (serving {})", args.dir.display());
 
-        if args.api_only {
+        let ui_router = if args.api_only {
             eprintln!("waml serve: --api-only, the embedded web editor is not mounted");
-        }
+            None
+        } else {
+            match crate::web_artifact::embedded_artifact() {
+                Ok(artifact) => match ui::build(artifact) {
+                    Ok(assets) => Some(ui::router(assets)),
+                    Err(err) => {
+                        eprintln!("waml serve: embedded web editor is malformed: {err}");
+                        None
+                    }
+                },
+                Err(err) => {
+                    eprintln!("waml serve: {err}");
+                    None
+                }
+            }
+        };
 
         if !args.no_open {
             launch_browser(&url);
         }
 
-        if let Err(err) = routes::serve_on(listener, app).await {
+        if let Err(err) = routes::serve_on(listener, app, ui_router).await {
             eprintln!("waml serve: server error: {err}");
             return 2;
         }
