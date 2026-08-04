@@ -261,17 +261,21 @@ pub fn analyze(
     let mut island_snapshots = BTreeMap::new();
     let mut declared = DeclaredBundle::default();
     let mut diagnostics = Vec::new();
+    // Index the catalog by concept id once, instead of scanning every document
+    // per claimed concept (O(concepts × documents)).
+    let mut concept_documents: BTreeMap<String, DocumentId> = BTreeMap::new();
+    for (id, document) in context.catalog.documents().iter() {
+        // First document wins on a duplicate id, matching the scan this replaces.
+        concept_documents
+            .entry(crate::okf::id_of(document.path().as_str()))
+            .or_insert(*id);
+    }
     for concept in claimed {
-        let id = context
-            .catalog
-            .documents()
-            .iter()
-            .find_map(|(id, document)| {
-                (crate::okf::id_of(document.path().as_str()) == concept.id).then_some(*id)
-            })
-            .ok_or_else(|| AnalysisError::CatalogInvariant {
+        let id = *concept_documents.get(concept.id.as_str()).ok_or_else(|| {
+            AnalysisError::CatalogInvariant {
                 reason: "claimed concept has no document".into(),
-            })?;
+            }
+        })?;
         let markdown_snapshot =
             context
                 .markdown
