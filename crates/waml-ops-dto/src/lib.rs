@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
-use waml::compat::{Batch, Step};
+use waml::edit::{Batch, Step};
 use waml::layout::Direction;
 use waml::model::{
     parse_ends, render_ends, CardinalityVisibility, ElementType, RelEnd, RelationshipKind,
     Visibility,
 };
 use waml::multiplicity::Multiplicity;
-use waml::ops::{DiagramDisplaySet, FieldEdit, NameSpec, RelBy};
 use waml::source::SourceBundle;
+use waml::uml::selector::RelBy;
+use waml::uml::{DiagramDisplaySet, FieldEdit, NameSpec};
 use waml::{okf, uml};
 
 fn one() -> u32 {
@@ -388,7 +389,7 @@ pub fn to_batch(dtos: &[OpDto]) -> Result<Batch, String> {
     dtos.iter()
         .enumerate()
         .map(|(index, dto)| {
-            dto.to_compat_step()
+            dto.to_step()
                 .map_err(|error| format!("op {index}: {error}"))
         })
         .collect::<Result<Vec<_>, _>>()
@@ -396,7 +397,7 @@ pub fn to_batch(dtos: &[OpDto]) -> Result<Batch, String> {
 }
 
 impl OpDto {
-    pub fn to_compat_step(&self) -> Result<Step, String> {
+    pub fn to_step(&self) -> Result<Step, String> {
         Ok(match self {
             OpDto::NodeNew {
                 v,
@@ -673,7 +674,7 @@ impl OpDto {
         })
     }
 
-    pub fn from_compat_step(step: &Step) -> Self {
+    pub fn from_step(step: &Step) -> Self {
         let ends_str =
             |ends: &Option<(RelEnd, RelEnd)>| ends.as_ref().map(|(from, to)| render_ends(from, to));
         let name_parts = |name: &Option<NameSpec>| match name {
@@ -951,11 +952,10 @@ fn sel_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use waml::ops::{FieldEdit, Op};
 
     fn round_trip(line: &str) -> Step {
         let dto: OpDto = serde_json::from_str(line).unwrap();
-        dto.to_compat_step().unwrap()
+        dto.to_step().unwrap()
     }
 
     #[test]
@@ -1017,33 +1017,32 @@ mod tests {
             FieldEdit::Clear,
             FieldEdit::Set(Multiplicity::parse("0..1").unwrap()),
         ] {
-            let op = Op::AttrSet {
+            let step = Step::Uml(uml::Op::AttributeSet {
                 node: "order".into(),
                 name: "total".into(),
                 ty_token: None,
                 multiplicity: intent,
                 visibility: None,
                 rename: None,
-            };
-            let step = Step::try_from(op.clone()).unwrap();
-            let value = serde_json::to_value(OpDto::from_compat_step(&step)).unwrap();
-            match &op {
-                Op::AttrSet {
+            });
+            let value = serde_json::to_value(OpDto::from_step(&step)).unwrap();
+            match &step {
+                Step::Uml(uml::Op::AttributeSet {
                     multiplicity: FieldEdit::Unchanged,
                     ..
-                } => assert!(value.get("mult").is_none()),
-                Op::AttrSet {
+                }) => assert!(value.get("mult").is_none()),
+                Step::Uml(uml::Op::AttributeSet {
                     multiplicity: FieldEdit::Clear,
                     ..
-                } => assert!(value.get("mult").is_some_and(serde_json::Value::is_null)),
-                Op::AttrSet {
+                }) => assert!(value.get("mult").is_some_and(serde_json::Value::is_null)),
+                Step::Uml(uml::Op::AttributeSet {
                     multiplicity: FieldEdit::Set(_),
                     ..
-                } => assert_eq!(value.get("mult").and_then(|v| v.as_str()), Some("0..1")),
+                }) => assert_eq!(value.get("mult").and_then(|v| v.as_str()), Some("0..1")),
                 _ => unreachable!(),
             }
             let dto: OpDto = serde_json::from_value(value).unwrap();
-            assert_eq!(dto.to_compat_step().unwrap(), step);
+            assert_eq!(dto.to_step().unwrap(), step);
         }
     }
 
@@ -1054,7 +1053,7 @@ mod tests {
         // explicit unknown v is rejected
         let dto: OpDto =
             serde_json::from_str(r#"{"v":2,"op":"value.add","node":"e","literal":"X"}"#).unwrap();
-        assert!(dto.to_compat_step().is_err());
+        assert!(dto.to_step().is_err());
     }
 
     #[test]
@@ -1066,20 +1065,19 @@ mod tests {
     }
 
     #[test]
-    fn from_compat_step_round_trips_through_wire() {
+    fn from_step_round_trips_through_wire() {
         // build a core Op, render to a DTO line, parse back, expect equality
-        let op = Op::AttrAdd {
+        let step = Step::Uml(uml::Op::AttributeAdd {
             node: "order".into(),
             name: "total".into(),
             ty_token: "Money".into(),
             multiplicity: Some(Multiplicity::parse("0..1").unwrap()),
             visibility: None,
-        };
-        let step = Step::try_from(op).unwrap();
-        let line = serde_json::to_string(&OpDto::from_compat_step(&step)).unwrap();
+        });
+        let line = serde_json::to_string(&OpDto::from_step(&step)).unwrap();
         let back = {
             let dto: OpDto = serde_json::from_str(&line).unwrap();
-            dto.to_compat_step().unwrap()
+            dto.to_step().unwrap()
         };
         assert_eq!(step, back);
     }
@@ -1114,7 +1112,7 @@ mod tests {
             }
         ]))
         .unwrap();
-        let changed = waml::compat::apply(&source, &to_batch(&success).unwrap()).unwrap();
+        let changed = waml::edit::apply(&source, &to_batch(&success).unwrap()).unwrap();
         assert!(changed
             .documents()
             .iter()
@@ -1151,7 +1149,7 @@ mod tests {
             {"op":"pkg.move","slug":"sales/order","to_dir":"archive"}
         ]))
         .unwrap();
-        let error = waml::compat::apply(&source, &to_batch(&failure).unwrap()).unwrap_err();
+        let error = waml::edit::apply(&source, &to_batch(&failure).unwrap()).unwrap_err();
         assert_eq!(error.index, 3);
         assert_eq!(source.to_pairs(), original);
         assert_eq!(
@@ -1186,7 +1184,7 @@ mod tests {
         ]))
         .unwrap();
 
-        let changed = waml::compat::apply(&source, &to_batch(&dtos).unwrap()).unwrap();
+        let changed = waml::edit::apply(&source, &to_batch(&dtos).unwrap()).unwrap();
 
         assert!(changed
             .documents()
@@ -1208,7 +1206,7 @@ mod tests {
         ]))
         .unwrap();
 
-        let changed = waml::compat::apply(&source, &to_batch(&dtos).unwrap()).unwrap();
+        let changed = waml::edit::apply(&source, &to_batch(&dtos).unwrap()).unwrap();
         let document = changed
             .documents()
             .iter()
@@ -1223,134 +1221,142 @@ mod tests {
         use waml::model::parse_ends;
         use waml::model::{ElementType, RelationshipKind};
         use waml::multiplicity::Multiplicity;
-        use waml::ops::{NameSpec, Op, RelBy, Selector};
+        use waml::okf::DirectoryAddress;
+        use waml::uml::selector::RelationshipSelector;
+        use waml::uml::{NameSpec, Selector};
 
-        let ops = vec![
-            Op::NodeNew {
+        let steps = vec![
+            Step::Uml(uml::Op::ClassifierNew {
                 slug: "order".into(),
-                dir: "sales".into(),
+                directory: DirectoryAddress::parse("/sales").unwrap(),
                 ty: ElementType::parse("uml.Class"),
                 title: "Order".into(),
                 stereotype: vec!["entity".into()],
                 description: Some("x".into()),
                 abstract_: true,
-            },
-            Op::NodeRename {
+            }),
+            Step::Uml(uml::Op::ClassifierRename {
                 from: "a".into(),
                 to: "b".into(),
-            },
-            Op::NodeSet {
-                slug: "order".into(),
+            }),
+            Step::Uml(uml::Op::ClassifierSet {
+                id: "order".into(),
                 title: Some("O".into()),
                 description: None,
                 stereotype: Some(vec!["e".into()]),
                 abstract_: Some(false),
                 ty: None,
-            },
-            Op::NodeRm {
-                slug: "x".into(),
+            }),
+            Step::Uml(uml::Op::ClassifierRemove {
+                id: "x".into(),
                 cascade: true,
-            },
-            Op::AttrAdd {
+            }),
+            Step::Uml(uml::Op::AttributeAdd {
                 node: "order".into(),
                 name: "total".into(),
                 ty_token: "Money".into(),
                 multiplicity: Some(Multiplicity::parse("0..1").unwrap()),
                 visibility: Some(Visibility::Private),
-            },
-            Op::AttrSet {
+            }),
+            Step::Uml(uml::Op::AttributeSet {
                 node: "order".into(),
                 name: "total".into(),
                 ty_token: Some("Cash".into()),
                 multiplicity: FieldEdit::Set(Multiplicity::default()),
                 visibility: None,
                 rename: Some("amount".into()),
-            },
-            Op::AttrRm {
+            }),
+            Step::Uml(uml::Op::AttributeRemove {
                 node: "order".into(),
                 name: "total".into(),
-            },
-            Op::ValueAdd {
+            }),
+            Step::Uml(uml::Op::ValueAdd {
                 node: "e".into(),
                 literal: "PLACED".into(),
-            },
-            Op::ValueRm {
+            }),
+            Step::Uml(uml::Op::ValueRemove {
                 node: "e".into(),
                 literal: "DRAFT".into(),
-            },
-            Op::RelAdd {
+            }),
+            Step::Uml(uml::Op::RelationshipAdd {
                 source: "order".into(),
                 kind: RelationshipKind::Composes,
                 target: "order-line".into(),
                 name: Some(NameSpec::Label("has".into())),
                 ends: parse_ends("1 to 1..* lines"),
-            },
-            Op::RelSet {
-                selector: Selector::Rel {
+            }),
+            Step::Uml(uml::Op::RelationshipSet {
+                selector: RelationshipSelector::try_from(Selector::Rel {
                     source: "order".into(),
                     by: RelBy::Endpoint {
                         kind: RelationshipKind::Composes,
                         target: "order-line".into(),
                     },
-                },
+                })
+                .unwrap(),
                 ends: parse_ends("1 to *"),
                 name: None,
-            },
-            Op::RelRm {
-                selector: Selector::Rel {
+            }),
+            Step::Uml(uml::Op::RelationshipRemove {
+                selector: RelationshipSelector::try_from(Selector::Rel {
                     source: "order".into(),
                     by: RelBy::Named("has".into()),
-                },
-            },
-            Op::PkgMove {
-                slug: "order".into(),
-                to_dir: "billing".into(),
-            },
-            Op::PkgRename {
-                from: "a".into(),
-                to: "b".into(),
-            },
-            Op::PkgDelete {
-                path: "sales".into(),
+                })
+                .unwrap(),
+            }),
+            Step::Okf(okf::Op::ConceptMove {
+                id: "order".into(),
+                to_directory: DirectoryAddress::parse("/billing").unwrap(),
+            }),
+            Step::Okf(okf::Op::DirectoryRename {
+                directory: DirectoryAddress::parse("/a").unwrap(),
+                name: "b".into(),
+            }),
+            Step::Okf(okf::Op::DirectoryDelete {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
                 cascade: false,
-            },
-            Op::PkgReorder {
-                path: "sales".into(),
+            }),
+            Step::Okf(okf::Op::IndexReorder {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
                 order: vec!["a".into()],
-            },
-            Op::PkgSort {
-                path: "sales".into(),
-            },
-            Op::PkgRetitle {
-                path: "sales".into(),
+            }),
+            Step::Okf(okf::Op::IndexSort {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
+            }),
+            Step::Okf(okf::Op::IndexRetitle {
+                directory: DirectoryAddress::parse("/sales").unwrap(),
                 title: "Sales Domain".into(),
-            },
-            Op::PkgInsert {
-                parent_path: "sales".into(),
+            }),
+            Step::Okf(okf::Op::BundleImport {
+                parent: DirectoryAddress::parse("/sales").unwrap(),
                 name: "orders".into(),
-                docs: vec![("t/order.md".into(), "body".into())],
-            },
-            Op::PlaceSet {
+                bundle: SourceBundle::try_from_pairs([(
+                    "t/order.md".to_string(),
+                    "body".to_string(),
+                )])
+                .unwrap(),
+            }),
+            Step::Uml(uml::Op::PlacementSet {
                 diagram: "dia".into(),
                 subject_title: "Order".into(),
                 subject_slug: "order".into(),
                 reference_title: "Customer".into(),
                 reference_slug: "customer".into(),
                 directions: vec![Direction::LeftOf, Direction::Above],
-            },
-            Op::PlaceRm {
+            }),
+            Step::Uml(uml::Op::PlacementRemove {
                 diagram: "dia".into(),
                 subject_slug: "order".into(),
                 reference_slug: "customer".into(),
-            },
-            Op::DiagramSet {
+            }),
+            Step::Uml(uml::Op::DiagramSet {
                 key: "dia".into(),
                 title: Some("D".into()),
                 description: None,
                 clear_description: false,
                 display: None,
-            },
-            Op::DiagramSet {
+            }),
+            Step::Uml(uml::Op::DiagramSet {
                 key: "dia".into(),
                 title: None,
                 description: Some("notes".into()),
@@ -1368,14 +1374,13 @@ mod tests {
                     stereotype_filter: Some(vec!["entity".into()]),
                     stereotype_colors: vec!["entity:#ffedd5".into()],
                 }),
-            },
+            }),
         ];
-        for op in &ops {
-            let step = Step::try_from(op.clone()).unwrap();
-            let line = serde_json::to_string(&OpDto::from_compat_step(&step)).unwrap();
+        for step in &steps {
+            let line = serde_json::to_string(&OpDto::from_step(step)).unwrap();
             let back: OpDto = serde_json::from_str(&line).unwrap();
             assert_eq!(
-                back.to_compat_step().unwrap(),
+                &back.to_step().unwrap(),
                 step,
                 "wire round-trip changed op: {line}"
             );
@@ -1384,20 +1389,20 @@ mod tests {
 
     #[test]
     fn pkg_insert_wire_round_trips() {
-        let op = Op::PkgInsert {
-            parent_path: "sales".into(),
+        let step = Step::Okf(okf::Op::BundleImport {
+            parent: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
             name: "orders".into(),
-            docs: vec![(
-                "t/order.md".into(),
-                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into(),
-            )],
-        };
-        let step = Step::try_from(op.clone()).unwrap();
-        let line = serde_json::to_string(&OpDto::from_compat_step(&step)).unwrap();
+            bundle: SourceBundle::try_from_pairs([(
+                "t/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            )])
+            .unwrap(),
+        });
+        let line = serde_json::to_string(&OpDto::from_step(&step)).unwrap();
         assert!(line.contains("\"op\":\"pkg.insert\""), "wire tag: {line}");
         let back: OpDto = serde_json::from_str(&line).unwrap();
         assert_eq!(
-            back.to_compat_step().unwrap(),
+            back.to_step().unwrap(),
             step,
             "round-trip changed op: {line}"
         );
@@ -1405,15 +1410,14 @@ mod tests {
 
     #[test]
     fn diagram_set_wire_tag_is_diagram_dot_set() {
-        let step = Step::try_from(Op::DiagramSet {
+        let step = Step::Uml(uml::Op::DiagramSet {
             key: "dia".into(),
             title: Some("D".into()),
             description: None,
             clear_description: false,
             display: None,
-        })
-        .unwrap();
-        let dto = OpDto::from_compat_step(&step);
+        });
+        let dto = OpDto::from_step(&step);
         let line = serde_json::to_string(&dto).unwrap();
         assert!(
             line.contains("\"op\":\"diagram.set\""),
@@ -1423,19 +1427,18 @@ mod tests {
 
     #[test]
     fn diagram_set_clear_description_survives_a_wire_round_trip() {
-        let op = Op::DiagramSet {
+        let step = Step::Uml(uml::Op::DiagramSet {
             key: "dia".into(),
             title: None,
             description: None,
             clear_description: true,
             display: None,
-        };
+        });
 
-        let step = Step::try_from(op).unwrap();
-        let line = serde_json::to_string(&OpDto::from_compat_step(&step)).unwrap();
+        let line = serde_json::to_string(&OpDto::from_step(&step)).unwrap();
         let back: OpDto = serde_json::from_str(&line).unwrap();
 
-        assert_eq!(back.to_compat_step().unwrap(), step);
+        assert_eq!(back.to_step().unwrap(), step);
         assert!(line.contains("\"clearDesc\":true"), "wire payload: {line}");
     }
 
@@ -1451,7 +1454,7 @@ mod tests {
 
         let source = SourceBundle::try_from_pairs(bundle).unwrap();
         let batch = to_batch(&[dto]).unwrap();
-        let updated = waml::compat::apply(&source, &batch).unwrap();
+        let updated = waml::edit::apply(&source, &batch).unwrap();
         let prepared = waml::analysis::prepare_candidate(updated, None, 0).unwrap();
         let model = &prepared.uml().projection;
 
@@ -1480,7 +1483,7 @@ mod tests {
         let dto: OpDto = serde_json::from_str(r#"{"op":"diagram.set","v":1,"key":"dia"}"#).unwrap();
 
         assert_eq!(
-            dto.to_compat_step().unwrap(),
+            dto.to_step().unwrap(),
             Step::Uml(uml::Op::DiagramSet {
                 key: "dia".into(),
                 title: None,
@@ -1493,7 +1496,7 @@ mod tests {
 
     #[test]
     fn diagram_set_display_dto_round_trips_absent_nullable_fields() {
-        let op = Op::DiagramSet {
+        let step = Step::Uml(uml::Op::DiagramSet {
             key: "dia".into(),
             title: None,
             description: None,
@@ -1511,13 +1514,12 @@ mod tests {
                 stereotype_filter: None,
                 stereotype_colors: vec![],
             }),
-        };
-        let step = Step::try_from(op).unwrap();
-        let dto = OpDto::from_compat_step(&step);
+        });
+        let dto = OpDto::from_step(&step);
         let line = serde_json::to_string(&dto).unwrap();
         let back: OpDto = serde_json::from_str(&line).unwrap();
         assert_eq!(
-            back.to_compat_step().unwrap(),
+            back.to_step().unwrap(),
             step,
             "absent maxAttributes/stereotypeFilter must round-trip as None: {line}"
         );

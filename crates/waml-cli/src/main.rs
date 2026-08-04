@@ -5,7 +5,7 @@ use waml::analysis::{prepare_candidate, PreviousAnalyses};
 use waml::bundle_envelope::encode_bundle_envelope;
 use waml::edit::{EditBatch, EditContext};
 use waml::multiplicity::Multiplicity;
-use waml::ops::FieldEdit;
+use waml::uml::FieldEdit;
 
 use crate::ops_dto::{to_batch, OpDto};
 
@@ -696,7 +696,7 @@ fn run_mutation(common: &Common, dto: OpDto) -> i32 {
     run_batch(common, batch)
 }
 
-fn run_batch(common: &Common, batch: waml::compat::Batch) -> i32 {
+fn run_batch(common: &Common, batch: waml::edit::Batch) -> i32 {
     let pairs = match io::read_bundle_rooted(std::slice::from_ref(&common.dir), false) {
         Ok(pairs) => pairs,
         Err(e) => {
