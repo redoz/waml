@@ -24,8 +24,11 @@ impl SyntaxIdentity {
     }
 
     pub(crate) fn fresh() -> Result<Self, ParseError> {
+        // `fetch_update` was renamed `try_update` in 1.95; the old name stays
+        // until the workspace MSRV (1.80) catches up.
+        #[allow(deprecated)]
         let value = NEXT_MARKDOWN_ID
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| ParseError::StructuralInvariant {
