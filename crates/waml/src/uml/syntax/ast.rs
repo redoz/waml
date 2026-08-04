@@ -129,12 +129,7 @@ impl AttributeSyntax {
             .map(MultiplicitySyntax)
     }
     pub fn recovery(&self) -> impl Iterator<Item = SyntaxElement<UmlLanguage>> + '_ {
-        self.0.children().filter(|e| {
-            matches!(
-                e.kind(),
-                UmlSyntaxKind::SkippedTokensSyntax | UmlSyntaxKind::BadToken
-            )
-        })
+        direct_recovery(&self.0)
     }
     fn token(&self, kind: UmlSyntaxKind) -> Option<SyntaxToken<UmlLanguage>> {
         self.0
@@ -592,6 +587,20 @@ fn present_slot_token_at(
     node_at(node, slot_index).and_then(|slot| present_token_at(&slot, token_index))
 }
 
+/// Direct-child recovery elements of a node: the one filter both
+/// `AttributeSyntax::recovery` and `RelationshipSyntax::recovery` expose
+/// (previously copied verbatim into each wrapper).
+fn direct_recovery(
+    node: &SyntaxNode<UmlLanguage>,
+) -> impl Iterator<Item = SyntaxElement<UmlLanguage>> + '_ {
+    node.children().filter(|e| {
+        matches!(
+            e.kind(),
+            UmlSyntaxKind::SkippedTokensSyntax | UmlSyntaxKind::BadToken
+        )
+    })
+}
+
 fn recovery_at(
     node: &SyntaxNode<UmlLanguage>,
     slot_index: usize,
@@ -1045,12 +1054,7 @@ impl SlotSyntax {
 }
 impl RelationshipSyntax {
     pub fn recovery(&self) -> impl Iterator<Item = SyntaxElement<UmlLanguage>> + '_ {
-        self.0.children().filter(|e| {
-            matches!(
-                e.kind(),
-                UmlSyntaxKind::SkippedTokensSyntax | UmlSyntaxKind::BadToken
-            )
-        })
+        direct_recovery(&self.0)
     }
     pub fn name_label_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         self.0
