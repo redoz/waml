@@ -355,9 +355,13 @@ impl SourceBundle {
     }
 
     pub fn document_by_concept_id(&self, id: &str) -> Option<&SourceDocument> {
-        self.documents
-            .iter()
-            .find(|document| document.path.concept_id() == Some(id))
+        // A concept id is always `path.concept_id()` of a real `BundlePath`, so
+        // `format!("{id}.md")` reconstructs exactly the path that produced it and
+        // `BundlePath::parse` re-validates it before the lookup; a parse failure means
+        // no document could ever have had this id, so `None` is correct (never a
+        // reason to fall back to a scan).
+        let path = BundlePath::parse(format!("{id}.md")).ok()?;
+        self.document(&path)
     }
 
     pub fn to_pairs(&self) -> Vec<(String, String)> {
@@ -499,6 +503,23 @@ mod tests {
             "# Support"
         );
         assert!(bundle.document_by_concept_id("order").is_none());
+    }
+
+    #[test]
+    fn document_by_concept_id_rejects_ids_that_cannot_be_a_bundle_path() {
+        let bundle = SourceBundle::try_from_pairs([("sales/order.md", "# Sales")]).unwrap();
+
+        // Empty id: "".md" reconstructs to ".md", which is a single non-empty segment
+        // and therefore a *valid* (if unmatched) BundlePath -- must miss, not panic.
+        assert!(bundle.document_by_concept_id("").is_none());
+        // Leading slash: no BundlePath ever starts with '/', so this can never match
+        // and must be rejected by BundlePath::parse rather than found by a scan.
+        assert!(bundle.document_by_concept_id("/order").is_none());
+        // Path separator inside the id is legitimate -- it addresses a nested concept.
+        assert_eq!(
+            bundle.document_by_concept_id("sales/order").unwrap().text(),
+            "# Sales"
+        );
     }
 
     #[cfg(feature = "serde")]
