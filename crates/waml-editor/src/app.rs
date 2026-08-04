@@ -9,7 +9,7 @@ use self::navigation::{PendingAnchorRestore, PendingFragment, TransitionCause};
 #[cfg(target_arch = "wasm32")]
 use self::workspace::web_location_query;
 use self::workspace::{prevent_quit_after_failed_save, should_flush_save, SaveFeedback};
-pub use menus::{burger_menu_items, logo_command_for, logo_menu_items, LogoCommand};
+pub(crate) use menus::{burger_menu_items, logo_command_for, logo_menu_items, LogoCommand};
 use menus::{doc_switcher_items, DOC_SWITCHER_MAX_H};
 
 use crate::doc_tabs::OpenTabs;

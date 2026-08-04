@@ -434,7 +434,7 @@ const FADE_SECS: f64 = 0.4;
 /// the `App` wiring, so the payload/readers look unused in that unit.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
-pub enum LogoAction {
+pub(crate) enum LogoAction {
     #[default]
     None,
     Clicked(DVec2),
@@ -722,13 +722,13 @@ impl Widget for LogoMark {
 impl LogoMark {
     /// The mark's last-drawn absolute rect. `App` uses this to answer the OS
     /// window drag-query as `Client`, so hover/click reach `handle_event`.
-    pub fn drawn_rect(&self) -> Rect {
+    pub(crate) fn drawn_rect(&self) -> Rect {
         self.rect
     }
 
     /// Reader for `App` (mirrors `ClassDiagramSurface::surface_action`): the wordmark
     /// centre if a `Clicked` action landed this frame, else `None`.
-    pub fn logo_action(&self, actions: &Actions) -> Option<DVec2> {
+    pub(crate) fn logo_action(&self, actions: &Actions) -> Option<DVec2> {
         let item = actions.find_widget_action(self.widget_uid())?;
         match item.cast::<LogoAction>() {
             LogoAction::Clicked(center) => Some(center),
@@ -773,7 +773,7 @@ impl LogoMark {
     /// on the splash (`auto`), which never meters. The logo stores them and
     /// redraws; the hover-suppression gate is applied at draw time. Passing
     /// `strength == 0` (the meter's rest state) makes the tint a no-op.
-    pub fn set_heat(&mut self, cx: &mut Cx, color: [f32; 3], strength: f32) {
+    pub(crate) fn set_heat(&mut self, cx: &mut Cx, color: [f32; 3], strength: f32) {
         if self.auto {
             return;
         }

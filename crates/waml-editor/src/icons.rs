@@ -4467,7 +4467,7 @@ impl IconSet {
     /// Set `color` on the glyph's shader, then draw it into `rect`. The single
     /// tint+draw path; callers pass a tint copied from a DSL atlas-token holder
     /// (no RGBA crosses Rust).
-    pub fn draw(&mut self, cx: &mut Cx2d, icon: Icon, rect: Rect, color: Vec4) {
+    pub(crate) fn draw(&mut self, cx: &mut Cx2d, icon: Icon, rect: Rect, color: Vec4) {
         let dc = self.get(icon);
         dc.color = color;
         dc.draw_abs(cx, rect);
@@ -4477,7 +4477,9 @@ impl IconSet {
 /// One variant per catalog glyph, in the exact `IconSet` field order (the
 /// load-bearing order invariant: enum == field == DSL == `ALL` == `label`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // some bins include this file without touching every variant
+// The catalog is deliberately complete: unused glyph variants are kept so the
+// enum == field == DSL == `get` == `ALL` == `label` order invariant holds.
+#[allow(dead_code)]
 pub enum Icon {
     Package,
     Message,
@@ -4602,7 +4604,6 @@ pub enum Icon {
     Plus,
 }
 
-#[allow(dead_code)] // ALL/label are unused in bins that don't iterate the catalog
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.

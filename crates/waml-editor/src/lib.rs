@@ -5,7 +5,10 @@ pub use makepad_widgets;
 // or `main.rs`. `pub` items lose clippy's dead-code checking under
 // `-D warnings`, so widening visibility trims the coverage this project
 // values; widen only as far as a harness/test import actually demands, never
-// preemptively (2026-08-04).
+// preemptively (2026-08-04). A `pub mod` is not a licence for its contents:
+// only the items a harness/test/`main.rs` names stay `pub`, everything else in
+// it is `pub(crate)`, or the module-wide public reachability silences dead-code
+// for the whole file.
 mod accent;
 mod action_link;
 mod agent_mark;
