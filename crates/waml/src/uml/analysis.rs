@@ -264,11 +264,14 @@ pub fn analyze(
     // Index the catalog by concept id once, instead of scanning every document
     // per claimed concept (O(concepts × documents)).
     let mut concept_documents: BTreeMap<String, DocumentId> = BTreeMap::new();
+    let mut concept_paths: BTreeMap<String, String> = BTreeMap::new();
     for (id, document) in context.catalog.documents().iter() {
         // First document wins on a duplicate id, matching the scan this replaces.
-        concept_documents
-            .entry(crate::okf::id_of(document.path().as_str()))
-            .or_insert(*id);
+        let concept_id = crate::okf::id_of(document.path().as_str());
+        concept_documents.entry(concept_id.clone()).or_insert(*id);
+        concept_paths
+            .entry(concept_id)
+            .or_insert_with(|| document.path().as_str().to_string());
     }
     for concept in claimed {
         let id = *concept_documents.get(concept.id.as_str()).ok_or_else(|| {
@@ -672,7 +675,7 @@ pub fn analyze(
             .unwrap_or_else(|| Arc::new(SyntaxSnapshot::new(document.clone(), tree)));
         snapshots.insert(id, snapshot);
     }
-    validate_declared_semantics(&context, &declared, &mut diagnostics)?;
+    validate_declared_semantics(&context, &declared, &concept_paths, &mut diagnostics)?;
     let projection = declared_projection(&context, &declared, &mut diagnostics)?;
     let metadata = analysis_metadata(
         &context,
@@ -976,6 +979,7 @@ fn trimmed_token_range(token: &SyntaxToken<UmlLanguage>) -> TextRange {
 fn validate_declared_semantics(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
+    concept_paths: &BTreeMap<String, String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<(), AnalysisError> {
     for concept in declared.concepts() {
@@ -983,12 +987,9 @@ fn validate_declared_semantics(
             continue;
         };
         let source_ty = crate::model::ElementType::parse(&source_okf.ty);
-        let path = context
-            .catalog
-            .documents()
-            .values()
-            .find(|document| crate::okf::id_of(document.path().as_str()) == concept.concept_id)
-            .map(|document| document.path().as_str())
+        let path = concept_paths
+            .get(concept.concept_id.as_str())
+            .map(String::as_str)
             .unwrap_or_default();
         for relationship in concept.relationships.iter() {
             let (
@@ -1056,12 +1057,9 @@ fn validate_declared_semantics(
         {
             continue;
         }
-        let path = context
-            .catalog
-            .documents()
-            .values()
-            .find(|document| crate::okf::id_of(document.path().as_str()) == concept.concept_id)
-            .map(|document| document.path().as_str())
+        let path = concept_paths
+            .get(concept.concept_id.as_str())
+            .map(String::as_str)
             .unwrap_or_default();
         let mut classifier_attributes = BTreeSet::new();
         let mut classifier_found = false;
@@ -1148,12 +1146,9 @@ fn validate_declared_semantics(
         if !crate::model::ElementType::parse(&okf.ty).is_view() {
             continue;
         }
-        let path = context
-            .catalog
-            .documents()
-            .values()
-            .find(|document| crate::okf::id_of(document.path().as_str()) == concept.concept_id)
-            .map(|document| document.path().as_str())
+        let path = concept_paths
+            .get(concept.concept_id.as_str())
+            .map(String::as_str)
             .unwrap_or_default();
         for inline in concept.inline_instances.iter() {
             let crate::uml::DeclaredField::Valid {
@@ -1241,12 +1236,9 @@ fn validate_declared_semantics(
         if concept.layout.is_empty() {
             continue;
         }
-        let path = context
-            .catalog
-            .documents()
-            .values()
-            .find(|document| crate::okf::id_of(document.path().as_str()) == concept.concept_id)
-            .map(|document| document.path().as_str())
+        let path = concept_paths
+            .get(concept.concept_id.as_str())
+            .map(String::as_str)
             .unwrap_or_default();
         let mut groups = BTreeSet::new();
         for group in concept.member_groups.iter() {
