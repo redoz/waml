@@ -236,12 +236,19 @@ impl App {
     // Consumed on wasm by `reload_from_bundle` (a save-conflict reload); native
     // file watching will call this ingress too when enabled.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    /// `flush_on_conflict` says what a pending-local-edit conflict does: try
+    /// one save-then-retry (a synchronous backend can clear the conflict that
+    /// way), or report the conflict untouched. The save-conflict reload path
+    /// passes `false`: its save already 409'd, and on the async API backend a
+    /// re-flush here would post the same stale baseline again — an unbounded
+    /// save → 409 → reload ping-pong.
     fn replace_external_document(
         &mut self,
         cx: &mut Cx,
         document: waml::analysis::DocumentId,
         base_revision: waml_markdown_editor::syntax::DocumentRevision,
         text: String,
+        flush_on_conflict: bool,
     ) -> Result<ExternalReplacement, String> {
         let mut replacement = self
             .session
@@ -252,6 +259,9 @@ impl App {
                 self.session.snapshot().dirty_revision,
                 Some(*dirty_revision)
             );
+            if !flush_on_conflict {
+                return Ok(replacement);
+            }
             self.save_or_retry(cx, false)?;
             replacement = self
                 .session
@@ -417,11 +427,19 @@ impl App {
     ) -> bool {
         let snapshot = self.session.snapshot();
         if bundle_paths_differ(&snapshot.source, &bundle) {
-            log!(
-                "server bundle changed structurally after a save conflict; \
-                 reopening it (unsaved local edits are discarded)"
-            );
-            return self.open_bundle(cx, bundle, self.open_name.clone(), None);
+            let had_unsaved_edits = self.session.is_dirty();
+            let message = "another client changed the served bundle's structure; \
+                 reopened the server's version and discarded unsaved local edits"
+                .to_string();
+            log!("{message}");
+            let opened = self.open_bundle(cx, bundle, self.open_name.clone(), None);
+            if opened && had_unsaved_edits {
+                // `open_bundle` resets the save feedback; re-state the loss in
+                // the statusbar so the discard is not console-only.
+                self.save_feedback.finish_save(&Err(message));
+                self.sync_save_error(cx);
+            }
+            return opened;
         }
         let mut changes = Vec::new();
         for document in bundle.documents() {
@@ -436,10 +454,30 @@ impl App {
             }
             changes.push((id, syntax.revision(), document.text().to_string()));
         }
+        let mut conflicted = 0usize;
         for (id, base_revision, text) in changes {
-            if let Err(error) = self.replace_external_document(cx, id, base_revision, text) {
-                log!("could not reload a document after a save conflict: {error}");
+            match self.replace_external_document(cx, id, base_revision, text, false) {
+                Ok(ExternalReplacement::Conflict { .. }) => conflicted += 1,
+                Ok(_) => {}
+                Err(error) => {
+                    log!("could not reload a document after a save conflict: {error}");
+                    conflicted += 1;
+                }
             }
+        }
+        if conflicted > 0 {
+            // The local edits stay stale against the server, so the debounced
+            // save re-armed by the 409 would just 409 again and re-trigger
+            // this reload — an unbounded ping-pong. Park the autosave and say
+            // so; the user's next edit re-arms it deliberately.
+            cx.stop_timer(self.save_timer);
+            let message = format!(
+                "{conflicted} document(s) changed on the server while local edits were \
+                 unsaved; local edits kept, autosave paused until the next edit"
+            );
+            log!("{message}");
+            self.save_feedback.finish_save(&Err(message));
+            self.sync_save_error(cx);
         }
         true
     }
