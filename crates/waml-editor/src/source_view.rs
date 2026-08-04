@@ -168,7 +168,15 @@ impl SourceView {
             host.reconcile_presentation(&plan, path.clone());
             assets.reconcile(host, &plan);
             for event in host.drain_events() {
-                let _ = assets.apply_event(event);
+                // The outcome is deliberately discarded: this is a fresh
+                // compile, so an `Applied` invalidation is subsumed by the
+                // full layout built just below. A stale event is the one case
+                // that silently drops an asset (its image never appears), so
+                // name it -- the measurement and layout failures in this
+                // chain are already logged nearby.
+                if let AssetEventOutcome::IgnoredStale = assets.apply_event(event) {
+                    log!("markdown asset event ignored as stale during presentation compile");
+                }
             }
         }
         let layout = Arc::new(
