@@ -144,26 +144,53 @@ pub struct MarkdownEntity {
     pub identity: super::SyntaxIdentity,
 }
 
+/// An immutable slice plus an owner -> index map built from it. Replaces the
+/// hand-maintained `Arc<[T]>` + `*_by_owner: HashMap<SyntaxIdentity, usize>` field
+/// pairs, so the two can no longer drift apart.
+struct IndexedByOwner<T> {
+    items: Arc<[T]>,
+    by_owner: HashMap<SyntaxIdentity, usize>,
+}
+
+impl<T> Default for IndexedByOwner<T> {
+    fn default() -> Self {
+        Self {
+            items: Arc::from([]),
+            by_owner: HashMap::new(),
+        }
+    }
+}
+
+impl<T> IndexedByOwner<T> {
+    fn new(items: impl Into<Arc<[T]>>, owner: impl Fn(&T) -> SyntaxIdentity) -> Self {
+        let items: Arc<[T]> = items.into();
+        let by_owner = items
+            .iter()
+            .enumerate()
+            .map(|(index, value)| (owner(value), index))
+            .collect();
+        Self { items, by_owner }
+    }
+    fn get(&self, owner: SyntaxIdentity) -> Option<&T> {
+        self.by_owner.get(&owner).and_then(|&i| self.items.get(i))
+    }
+    fn iter(&self) -> impl Iterator<Item = &T> {
+        self.items.iter()
+    }
+}
+
 #[derive(Default)]
 pub struct MarkdownSyntaxQueries {
-    links: Arc<[MarkdownLink]>,
-    images: Arc<[MarkdownImage]>,
+    links: IndexedByOwner<MarkdownLink>,
+    images: IndexedByOwner<MarkdownImage>,
     spans: Arc<[MarkdownSyntaxSpan]>,
-    headings: Arc<[MarkdownHeading]>,
-    lists: Arc<[MarkdownList]>,
-    cells: Arc<[MarkdownTableCell]>,
-    html: Arc<[MarkdownRawHtml]>,
-    fenced: Arc<[FencedCodeInfo]>,
-    islands: Arc<[super::WamlLanguageIsland]>,
+    headings: IndexedByOwner<MarkdownHeading>,
+    lists: IndexedByOwner<MarkdownList>,
+    cells: IndexedByOwner<MarkdownTableCell>,
+    html: IndexedByOwner<MarkdownRawHtml>,
+    fenced: IndexedByOwner<FencedCodeInfo>,
+    islands: IndexedByOwner<super::WamlLanguageIsland>,
     diagnostics: Arc<[TreeDiagnostic<OkfSyntaxDiagnosticCode>]>,
-    heading_by_owner: HashMap<SyntaxIdentity, usize>,
-    list_by_owner: HashMap<SyntaxIdentity, usize>,
-    cell_by_owner: HashMap<SyntaxIdentity, usize>,
-    link_by_owner: HashMap<SyntaxIdentity, usize>,
-    image_by_owner: HashMap<SyntaxIdentity, usize>,
-    html_by_owner: HashMap<SyntaxIdentity, usize>,
-    fenced_by_owner: HashMap<SyntaxIdentity, usize>,
-    island_by_owner: HashMap<SyntaxIdentity, usize>,
     entities: Arc<[MarkdownEntity]>,
     backlinks: Arc<HashMap<Arc<str>, Arc<[super::SyntaxIdentity]>>>,
 }
@@ -189,44 +216,28 @@ impl MarkdownSyntaxQueries {
         self.images.iter()
     }
     pub fn heading(&self, owner: SyntaxIdentity) -> Option<&MarkdownHeading> {
-        self.heading_by_owner
-            .get(&owner)
-            .and_then(|&i| self.headings.get(i))
+        self.headings.get(owner)
     }
     pub fn list(&self, owner: SyntaxIdentity) -> Option<&MarkdownList> {
-        self.list_by_owner
-            .get(&owner)
-            .and_then(|&i| self.lists.get(i))
+        self.lists.get(owner)
     }
     pub fn table_cell(&self, owner: SyntaxIdentity) -> Option<&MarkdownTableCell> {
-        self.cell_by_owner
-            .get(&owner)
-            .and_then(|&i| self.cells.get(i))
+        self.cells.get(owner)
     }
     pub fn link(&self, owner: SyntaxIdentity) -> Option<&MarkdownLink> {
-        self.link_by_owner
-            .get(&owner)
-            .and_then(|&i| self.links.get(i))
+        self.links.get(owner)
     }
     pub fn image(&self, owner: SyntaxIdentity) -> Option<&MarkdownImage> {
-        self.image_by_owner
-            .get(&owner)
-            .and_then(|&i| self.images.get(i))
+        self.images.get(owner)
     }
     pub fn raw_html(&self, owner: SyntaxIdentity) -> Option<&MarkdownRawHtml> {
-        self.html_by_owner
-            .get(&owner)
-            .and_then(|&i| self.html.get(i))
+        self.html.get(owner)
     }
     pub fn fenced_code(&self, owner: SyntaxIdentity) -> Option<&FencedCodeInfo> {
-        self.fenced_by_owner
-            .get(&owner)
-            .and_then(|&i| self.fenced.get(i))
+        self.fenced.get(owner)
     }
     pub fn island(&self, owner: SyntaxIdentity) -> Option<&super::WamlLanguageIsland> {
-        self.island_by_owner
-            .get(&owner)
-            .and_then(|&i| self.islands.get(i))
+        self.islands.get(owner)
     }
     pub fn diagnostics(
         &self,
@@ -538,37 +549,17 @@ fn queries(
         .images
         .sort_by_key(|image| (image.source_range.start(), image.source_range.end()));
     spans.sort_by_key(|span| (span.range.start(), span.range.end()));
-    let heading_by_owner = identity_map(&collected.headings, |value| value.owner);
-    let list_by_owner = identity_map(&collected.lists, |value| value.owner);
-    let cell_by_owner = identity_map(&collected.cells, |value| value.owner);
-    let link_by_owner = identity_map(&collected.links, |value| value.owner);
-    let image_by_owner = identity_map(&collected.images, |value| value.owner);
-    let html_by_owner = identity_map(&collected.html, |value| value.owner);
-    let fenced_by_owner = identity_map(&collected.fenced, |value| value.owner);
-    let island_by_owner = islands
-        .iter()
-        .enumerate()
-        .map(|(i, value)| (value.owner, i))
-        .collect();
     Ok(MarkdownSyntaxQueries {
-        links: collected.links.into(),
-        images: collected.images.into(),
+        links: IndexedByOwner::new(collected.links, |value| value.owner),
+        images: IndexedByOwner::new(collected.images, |value| value.owner),
         spans: spans.into(),
-        headings: collected.headings.into(),
-        lists: collected.lists.into(),
-        cells: collected.cells.into(),
-        html: collected.html.into(),
-        fenced: collected.fenced.into(),
-        islands,
+        headings: IndexedByOwner::new(collected.headings, |value| value.owner),
+        lists: IndexedByOwner::new(collected.lists, |value| value.owner),
+        cells: IndexedByOwner::new(collected.cells, |value| value.owner),
+        html: IndexedByOwner::new(collected.html, |value| value.owner),
+        fenced: IndexedByOwner::new(collected.fenced, |value| value.owner),
+        islands: IndexedByOwner::new(islands, |value| value.owner),
         diagnostics: Arc::from(tree.diagnostics()),
-        heading_by_owner,
-        list_by_owner,
-        cell_by_owner,
-        link_by_owner,
-        image_by_owner,
-        html_by_owner,
-        fenced_by_owner,
-        island_by_owner,
         entities: collected.entities.into(),
         backlinks: collected
             .backlinks
@@ -590,17 +581,6 @@ struct Collected {
     fenced: Vec<FencedCodeInfo>,
     entities: Vec<MarkdownEntity>,
     backlinks: HashMap<Arc<str>, Vec<SyntaxIdentity>>,
-}
-
-fn identity_map<T>(
-    values: &[T],
-    owner: impl Fn(&T) -> SyntaxIdentity,
-) -> HashMap<SyntaxIdentity, usize> {
-    values
-        .iter()
-        .enumerate()
-        .map(|(index, value)| (owner(value), index))
-        .collect()
 }
 
 fn collect_queries(
