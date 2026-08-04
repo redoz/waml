@@ -86,8 +86,10 @@ jobs:
 
       # The root package.json that used to gate this test went away with the
       # node workspace; the script itself still ships the Pages artifact.
+      # Quoted so node's own glob expansion runs the whole suite on every OS
+      # (same invocation pages.yml uses at deploy time).
       - name: Web artifact script tests
-        run: node --test scripts/inject-runtime-shell.test.mjs
+        run: node --test "scripts/*.test.mjs"
 
       - name: VS Code build
         run: pnpm build
