@@ -7,6 +7,7 @@ use super::*;
 const SAVE_DEBOUNCE_SECS: f64 = 3.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(super) enum BackingTransitionError {
     Save(String),
     Load(String),
@@ -15,6 +16,7 @@ pub(super) enum BackingTransitionError {
 /// Flush the current document before loading its replacement. Keeping this
 /// ordering explicit prevents a reopen of the same directory from observing
 /// stale pre-save source.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(super) fn replace_after_save<T, S, L>(save: S, load: L) -> Result<T, BackingTransitionError>
 where
     S: FnOnce() -> Result<(), String>,
@@ -70,6 +72,7 @@ pub(super) fn prevent_quit_after_failed_save(event: &Event, result: &Result<(), 
     false
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(super) fn restore_markdown_asset_host_after_open(
     installed: &mut Option<crate::markdown_hosts::SharedMarkdownAssetHost>,
     previous: Option<crate::markdown_hosts::SharedMarkdownAssetHost>,

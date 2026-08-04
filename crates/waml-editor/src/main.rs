@@ -16,6 +16,8 @@ mod card;
 mod chrome_seam;
 mod class_diagram_view;
 mod classifier_preview_view;
+// Native argv parsing; the wasm build boots from the URL instead.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod cli;
 mod colors_overlay;
 mod config;
@@ -43,6 +45,8 @@ mod icons;
 mod icons_overlay;
 mod inspector;
 mod inspector_panel;
+// Native filesystem bundle loading; the wasm build fetches over HTTP.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod load;
 mod logo;
 mod markdown_analysis;

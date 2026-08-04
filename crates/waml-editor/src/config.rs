@@ -26,6 +26,7 @@ const EDITOR_FILE: &str = "editor.json";
 /// Current `editor.json` schema version.
 const EDITOR_VERSION: u32 = 1;
 /// Most-recent-projects retained; older entries fall off the back.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const RECENTS_CAP: usize = 10;
 
 // ---------------------------------------------------------------------------
@@ -204,6 +205,7 @@ fn sort_recents(recents: &mut [Recent]) {
 /// `opened_at`, then cap the list at `RECENTS_CAP` (dropping oldest first).
 /// An existing entry's `pinned_at` is carried forward: `push_recent` runs on
 /// every open, so re-opening a pinned model must not silently unpin it.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn add_or_promote(
     mut recents: Vec<Recent>,
     path: &Path,
@@ -305,6 +307,7 @@ pub fn toggle_theme() -> ThemeMode {
 /// Record an open: add or promote `path` to the front (MRU), refresh its
 /// `opened_at`, cap the list, and persist. Best-effort — a write failure is
 /// logged and swallowed so recording a recent never blocks opening a project.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn push_recent(path: &Path, title: &str) {
     let mut config: EditorConfig = load(EDITOR_FILE);
     config.version = EDITOR_VERSION;

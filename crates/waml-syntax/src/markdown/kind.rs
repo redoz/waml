@@ -25,7 +25,7 @@ impl SyntaxIdentity {
 
     pub(crate) fn fresh() -> Result<Self, ParseError> {
         let value = NEXT_MARKDOWN_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(1)
             })
             .map_err(|_| ParseError::StructuralInvariant {

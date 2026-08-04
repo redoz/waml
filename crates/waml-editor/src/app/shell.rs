@@ -578,6 +578,7 @@ impl App {
     /// Seed the dock column widths from the project that just opened. Called
     /// once per `open_dir`; a project with no `.waml/settings.json` (or an
     /// unreadable one) lands on the compiled-in defaults.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) fn load_dock_widths(&mut self, cx: &mut Cx, project_root: &std::path::Path) {
         self.dock_widths = crate::project_settings::load(project_root).dock;
         self.sync_dock_slots(cx);

@@ -19,6 +19,7 @@ use crate::document_host::{DocumentCommand, DocumentHost};
 use crate::editor_session::{EditorSession, ExternalReplacement, SaveCompletion, SaveTicket};
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::load;
 use crate::nav::NavState;
 use crate::panel_splitter::PanelSplitterWidgetRefExt;
