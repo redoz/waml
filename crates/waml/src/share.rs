@@ -183,6 +183,13 @@ fn base64url_decode(s: &str) -> Result<Vec<u8>, ShareError> {
             out.push((acc >> bits) as u8);
         }
     }
+    // Canonicality (RFC 4648 §3.5): a trailing chunk of one char (len % 4 == 1)
+    // carries fewer bits than a byte and encodes nothing, and any nonzero bits
+    // left over past the last full byte mean the input was not produced by the
+    // encoder. Reject both so every payload has exactly one accepted encoding.
+    if bits >= 6 || (acc & ((1 << bits) - 1)) != 0 {
+        return Err(ShareError::BadBase64);
+    }
     Ok(out)
 }
 
@@ -195,6 +202,28 @@ mod tests {
             ("customer.md".into(), "---\ntitle: Customer\n---\n".into()),
             ("shop/order.md".into(), "# Order\n\nBody text.\n".into()),
         ]
+    }
+
+    #[test]
+    fn base64url_decode_rejects_non_canonical_encodings() {
+        // len % 4 == 1 can never be produced by the encoder.
+        assert!(matches!(
+            base64url_decode("AAAAA"),
+            Err(ShareError::BadBase64)
+        ));
+        assert!(matches!(base64url_decode("A"), Err(ShareError::BadBase64)));
+        // Nonzero dangling bits: "AB" and "AA" both decoded to [0] before; only
+        // "AA" (dangling bits zero) is canonical.
+        assert_eq!(base64url_decode("AA").unwrap(), vec![0]);
+        assert!(matches!(base64url_decode("AB"), Err(ShareError::BadBase64)));
+        assert!(matches!(base64url_decode("AAB"), Err(ShareError::BadBase64)));
+        // Round-trip stays intact for every remainder class.
+        for payload in [&b""[..], b"x", b"xy", b"xyz", b"xyzw"] {
+            assert_eq!(
+                base64url_decode(&base64url_encode(payload)).unwrap(),
+                payload
+            );
+        }
     }
 
     #[test]
