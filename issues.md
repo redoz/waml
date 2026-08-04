@@ -4,7 +4,9 @@ Reviewed 2026-07-31 against local `main` at
 `c61484ac250569eb722e19e2ce3a348003e08b75`. Reconciled 2026-08-04 against
 `c31fdc51` after the seven-dimension review
 (`docs/reviews/2026-08-04/SUMMARY.md`), which fixed 46 of its 52 findings in
-the range `a24f03eb..c31fdc51`.
+the range `a24f03eb..c31fdc51`. Extended 2026-08-04 with the five-domain
+code-smell review (god modules, misplaced behavior, idiomatic Rust) against
+`2fd4b609`; its findings are the dated section near the end.
 
 This document tracks active issues only. Completed items from the 2026-07-26
 review were removed. In particular, native edits now use a real save path,
@@ -462,6 +464,340 @@ almost entirely by integration-shaped tests. This is a debugging-cost issue,
 not a shipping risk — the integration net is broad. Add direct unit tests
 opportunistically when debugging in these files; the extent of the gap is
 inferred, not measured by a coverage run.
+
+## 2026-08-04 code-smell review (five-domain, against `2fd4b609`)
+
+Five parallel staff-engineer reviews over the `.claude/rules` rulebooks:
+UML domain, headless core (solve/okf), waml-syntax, waml-editor, and
+waml-markdown-editor + waml-cli. New findings only; overlaps with existing
+entries are cross-referenced rather than duplicated.
+
+### P1 — Markdown-editor pointer events ignore the gutter offset
+
+- `crates/waml-markdown-editor/src/widget.rs:770,785,790` convert pointer
+  positions with `event.abs - area.rect(cx).pos + scroll` only; the draw path
+  (`widget.rs:852`) additionally translates by the gutter width. With line
+  numbers on, `point_to_source`, `navigation_position`, and `embedded_at`
+  receive a point ~36px too far right — clicks land characters left of the
+  glyph, link activation and embedded-block hit-tests shift with it.
+- No compensating subtraction exists anywhere on the event path; no test
+  exercises pointer hits with `LineNumberMode != Off`.
+
+Fix: one shared `abs_to_layout_point()` helper (the translation is already
+copy-pasted three times), plus a pointer test with line numbers enabled.
+
+### P1 — Incremental reference-use scan drops the rest of the line
+
+- `crates/waml-syntax/src/markdown/reparse.rs:133`: when a bracket pair is
+  followed by `(`, the scan returns `("", after.len())`, consuming the whole
+  remainder of the line. For `[a](x) see [b][id]`, the `[b][id]` use is never
+  seen, so `change_may_affect_reference_use` fails to force full-parse
+  fallback and the incremental splice can resolve links differently from a
+  full parse. The debug oracle compares island counts, not link resolution,
+  so it cannot catch this.
+
+Fix: consume only the balanced `(...)` (or `close + 1`) and keep scanning;
+add a fixture editing a definition line while `[a](x) [b][id]` sits in an
+untouched window, asserting incremental == full.
+
+### P1 — Hostile nesting overflows the stack and kills the session
+
+- `crates/waml-syntax/src/markdown/inline.rs:79` (`rebuild`),
+  `parse_inlines` (self-recursive per emphasis/strikethrough/link pair),
+  `projection::visit`, `incremental::collect_occurrences`, and
+  `red::SyntaxTree::rewrite` all recurse on tree depth or inline nesting.
+  10k `>` or 10k `*a ` overflows the stack — uncatchable, kills the LSP,
+  poisons the wasm instance. (Known open defect: parser overflow at 10k
+  quotes.) The codebase already has the standard: `recover_exact_source` is
+  iterative with a 2,048-deep test.
+
+Fix (cheapest durable): cap container/inline nesting at the block scanner
+(cmark-gfm precedent) and emit a diagnostic beyond it — one bound at the
+entry point covers every recursive consumer.
+
+### P1 — `FieldEdit` serde round-trip turns `Unchanged` into `Clear`
+
+- `crates/waml/src/uml/ops.rs:36-55`: `Serialize` collapses both `Unchanged`
+  and `Clear` to `serialize_none()`; `Deserialize` maps `None` → `Clear`.
+  Unless every containing struct carries both
+  `skip_serializing_if(FieldEdit::is_unchanged)` and `serde(default)`,
+  serializing an op with `FieldEdit::Unchanged` and reading it back yields a
+  silently destructive edit (deletes authored multiplicity). The contract
+  lives in attributes the impl cannot enforce.
+
+Fix: error/debug-panic on serializing `Unchanged`, or a tested newtype
+helper; at minimum a round-trip test asserting `Unchanged` survives the wire
+on every op that carries one.
+
+### P2 — `okf::Bundle` linear-scan accessors make per-edit work quadratic
+
+- `crates/waml/src/okf.rs:279`: every accessor is `iter().find()` over a
+  `Vec`; consumers loop over them — `okf/shell.rs:241-265` is O(A²) per
+  directory build, `default_member_order` (`shell.rs:527-546`) scans per
+  concept, the authored-order merge (`shell.rs:273-283`) is `contains` in a
+  loop, `index_md.rs:88,98` scans per member. This runs inside
+  `okf::shell::derive`, i.e. on every accepted edit.
+- Same pattern copied in `Model::node` (`model.rs:1143`) and
+  `SourceBundle::document_by_concept_id` (`source.rs:357`).
+
+Fix: the vectors are already sorted at construction — switch accessors to
+`binary_search_by`; have `default_member_order` and the merge use them.
+
+### P2 — Content-reachable `expect`s in `okf::project`; dead `project_document`
+
+- `crates/waml/src/okf.rs:392-430`: `.expect("non-reserved projection
+  produces one concept")` is false under the quarantine design —
+  `analyze_okf_inner` (analysis.rs:1193,1295) quarantines instead of
+  erroring, so `Bundle::parse` can succeed with zero concepts and the
+  `expect` panics (poisons wasm). Also wrong for reserved filenames.
+- `project_document` has no callers anywhere in the workspace and carries two
+  more `expect`s.
+
+Fix: delete `project_document`; make `project` return `Option`/`Result`
+while its only callers are tests.
+
+### P2 — Concept→path resolution scans the catalog seven times
+
+- The pattern `catalog.documents().values().find(|d| id_of(d.path()) ==
+  concept_id)` appears at `uml/analysis.rs:986,1059,1151,1244,1493` and as
+  `path_for_concept` in `uml/sequence.rs:200-209` (called per interaction-use
+  and per target). `analyze` builds exactly this index at `analysis.rs:266-272`
+  — with a comment explaining why — and does not pass it down. (The earlier
+  `d30af731` fix covered `analyze` itself; these six sites still scan.)
+
+Fix: thread the `BTreeMap<String, &Document>` (or a small `ValidationCtx`)
+through `validate_declared_semantics`, `declared_projection`, and
+`sequence::lower`.
+
+### P2 — UML validation rules exist in parallel copies with no ownership rule
+
+Validation verdicts live in three layers — `validate_declared_semantics`,
+`declared_projection`'s admission filters, and `sequence::lower`'s inline
+checks — and each feature added its checks to whichever was nearest.
+Concrete duplications, each a drift bomb:
+
+- Interaction-use binding checks: `uml/sequence.rs:250-337`
+  (`interaction_use_graph`, silent) vs `:581-643` (`lower`, diagnosed);
+  the `is_graph_link` cross-check (`:644-649`) only works while the copies
+  agree. Extract one `validate_use_bindings` with a report/silent flag.
+- Relationship-end validity: `uml/analysis.rs:1749-1775` (`ends_valid`,
+  admission) vs `:1019-1046` (diagnostic) — a one-ended `composes` is
+  already dropped at `:1776` with no message. One `ends_valid(kind, from,
+  to) -> EndVerdict` consumed by both.
+- `describes` link parsed two ways: `uml/sequence.rs:966-972` hand-splits
+  `"]("`; `uml/analysis.rs:1894-1913` has `parse_link_ref`/`resolve_describes`
+  with different tolerance. Export the analysis helper.
+- Branch-join lattice hand-coded three times in `uml/sequence.rs`
+  (`walk_return_items` :1041, `repeated_deletes` :1349, `walk` :1460), which
+  is also why the file carries four `too_many_arguments` allows. Extract a
+  generic `fold_fragment` skeleton.
+
+Decide the ownership rule before the next UML feature: projection admits or
+drops, validate diagnoses, both consume one shared verdict function per rule.
+
+### P2 — Incremental guards re-lex text instead of querying the parser
+
+- Frontmatter fence recognition exists three times:
+  `incremental.rs:1290` (`frontmatter_fences`), `markdown/parser.rs:95,604`,
+  `markdown/mod.rs:186-193`. The parser copy handles a BOM; the incremental
+  copy does not — verify `\u{FEFF}---` for a live incremental/full
+  divergence. The pending frontmatter-YAML-alignment plan must otherwise land
+  in three places.
+- Link resolution duplicated inside `markdown/inline.rs` (`bracket_match_end`
+  :723 vs `parse_link` :805) — drift becomes `ParseError::StructuralInvariant`
+  for the whole document. Record what matched in `BracketMatch` instead.
+- Frontmatter-entry extraction exists three times: `frontmatter.rs:272`
+  (`parse_closed_syntax`), `okf/lower.rs:508-562` (`frontmatter_value`),
+  `uml/lower.rs:669,788` — already disagree on non-`Str` values. Make
+  `frontmatter_value` call `parse_closed_syntax`.
+
+Direction: guards should be derived from parser output (structure/reference
+maps from the tree), and the debug oracle at `incremental.rs:981-1000` should
+compare full trees, not island counts.
+
+### P2 — Content-reachable panics and catch-alls on domain enums
+
+- `uml/sequence.rs:1294-1296`: `.expect("each runtime fragment has a typed
+  declared fragment")` holds only because `lower` (`:756`) applies the same
+  filter 500 lines away; nothing couples the two sites. Pass the declared
+  fragment into `SeqNode::Fragment` or debug_assert-and-skip.
+- `uml/analysis.rs:651`: catch-all `_ =>` maps any future
+  `UmlSyntaxDiagnosticCode` variant to `MalformedAttribute`. Five variants
+  already explicit; finish the match.
+- `incremental.rs:282-340`: five width-arithmetic `unwrap`s on the
+  per-keystroke path in a file that otherwise threads `Result` through 15
+  `map_err`s for the same arithmetic; correct degraded behavior is
+  full-parse fallback. Return `ParseError::WidthOverflow`.
+- `solve/route.rs:1002`: `Side` round-trips through `u8` with a
+  `_ => Side::Bottom` catch-all purely to key a `BTreeMap` — derive
+  `Eq, Ord` on `Side`, delete `side_disc`/`disc_to_side`.
+- `uml/sequence.rs:69-77,929`: `MessageId` is `format!("m{index}")` re-parsed
+  by `report_message` with silent diagnostic drop on parse failure. Carry the
+  index in the type.
+
+### P2 — Core `analysis.rs` hard-codes the UML specialization it abstracts
+
+- `crates/waml/src/analysis.rs:234,424,910`: the module carries plugin
+  scaffolding (`AnalysisStage::Specialization`, `ClaimSet`,
+  `validate_disjoint_claims`) then hard-codes the single plugin, and hosts
+  ~150 lines of UML syntax-highlighting classification (`waml_code_role`,
+  `collect_waml_code_spans`, `WamlCodeSyntaxSnapshot` over `UmlLanguage`)
+  that belong in `uml/`. Result: a 1,916-line module mixing catalog/session
+  mechanics, candidate preparation, quarantine policy, and highlighting.
+
+Fix: move the highlighting quartet into `uml/`; leave the claims machinery
+but do not extend it until a second specialization is real.
+
+### P2 — Quarantine messages are Debug dumps shown to users
+
+- `crates/waml/src/analysis.rs:660`: `Display` for `AnalysisError` is
+  `write!(f, "analysis error: {self:?}")`, and that string is stored as the
+  user-facing quarantine message (`format!("{error}")` at :1194,:1296). Write
+  real `Display` arms for at least `SourceTooLarge` and `Shell`.
+
+Related editor-side visibility faults:
+
+- `crates/waml-editor/src/class_diagram_view.rs:742`: the `ToggleExpand`
+  re-solve drops `build_scene` diagnostics into `log!` while the `sync` path
+  routes them to `set_scene_diagnostics` (:457). One-line fix; call it here
+  too.
+- `crates/waml-markdown-editor/src/widget.rs:653,1652`: `draw_walk` logs its
+  failure every frame while the condition persists (`StalePresentation` is a
+  steady state — buries the console); `install_presentation` swallows a
+  validation failure with a bare `return` — no log, no action, editor keeps
+  showing the old revision. Log once per distinct error; surface the
+  validation failure.
+
+### P2 — Stale `#[allow(dead_code)]` scaffolding defeats the `-D warnings` gate
+
+- `crates/waml-editor/src/editor_session.rs:35,210,243,352,741,874`: six
+  allows annotated "mounted by Task 4" — Task 4 landed (`app/actions.rs:961`
+  calls `promote_source_edit`, `:967` `install_semantic_completion`). A
+  blanket allow on the 13-field `EditorSessionSnapshot` keeps any
+  later-unused field forever. The crate has 90+ allow sites (19 in
+  `popup/radial.rs`, 17 in `frame.rs`) and nothing retires them.
+
+Fix: delete the six now; adopt the convention that an allow must name a
+concrete unlanded consumer and landing that consumer removes the allow in the
+same commit. One sweep restores dead-code detection crate-wide.
+
+### P2 — `MarkdownEditor`'s 54 fields hide a hand-reset state machine
+
+- `crates/waml-markdown-editor/src/widget.rs:464-582`: the layout/motion
+  pipeline is ten fields (`installed`, `target_layout`, `previous_layout`,
+  `frame_layout`, `motion`, `pending_cause`, `pending_invalidation`,
+  `last_layout_width`, `next_frame`, `scroll_y`) reset by enumeration in
+  `clear_presentation` (:1664-1676) — which already misses
+  `draw_commands_cache` and `scroll_y`, so a document swap can carry stale
+  scroll and cache into the next document. Extract a `LayoutPipeline` struct
+  with `reset()`/`invalidate()`. (Palette and `DrawText` fields must stay
+  flat for the live system.)
+- Font plumbing needs five coordinated edits per text face
+  (`widget.rs:122-191,512-527,1345-1366`), and `install_layout` re-clones all
+  eight `FontFamily`s per layout install. Collapse to
+  `[Option<FontFamily>; 8]` indexed by `TextFace`.
+- Gutter geometry from hardcoded font metrics
+  (`widget.rs:455-461`, `GUTTER_DIGIT_WIDTH = 6.6`): a theme font swap
+  silently misaligns line numbers. Measure one digit through the shaper at
+  layout time, or accept and document.
+
+### P2 — Per-frame and per-keystroke hot-path costs
+
+- `crates/waml-markdown-editor/src/widget.rs:853-856`: even on a cache hit,
+  every frame re-allocates the full translated command list; pass
+  `content_origin` into the paint functions instead.
+- `widget.rs:1185-1191`: `paint_text` does a linear `find` over
+  `glyph_clusters()` per text command — O(runs²) per frame; index once per
+  snapshot.
+- `crates/waml-syntax/src/markdown/inline.rs:297,323,569`: `parse_inlines`
+  is quadratic on adversarial inline runs (linear pair-vector `find`s per
+  byte, `code_spans`/`angle_spans` recomputed per recursion level,
+  `format!` per raw-HTML candidate) — fuzz-reachable DoS inside the LSP
+  keystroke path. Index pairs by open offset; pass protected spans down.
+- `crates/waml/src/analysis.rs:141-195,341`: `code_spans` scans every
+  markdown document to validate an owner it can look up directly, and
+  `WamlCodeSyntaxSnapshot::code_spans()` re-walks, sorts, and dedups per
+  call. Look up by owner; compute once in `attach_code_syntax` and store
+  `Arc<[WamlCodeSpan]>`.
+- `crates/waml/src/edit/batch.rs:197-282`: each step full-parses every
+  touched document (`claimed_id`) to classify invalidations, with
+  O(removed × inserted) rename matching. Fine for one interactive op; a
+  directory move does N discarded parses. Read only the frontmatter fence,
+  or consult the shell cache — and comment the intent either way.
+
+### P2 — `analyze` and `reparse_okf_markdown_with_structure` decomposition
+
+- `crates/waml/src/uml/analysis.rs:248-700`: `analyze` is four functions —
+  island reuse, declared-bundle extraction, inline attribute lowering
+  (~100 lines of open code at :405-505 while fifteen sibling categories have
+  `declared_*` functions — the file contains the pattern and its violation as
+  competing precedents), and parser-diagnostic translation (:619-667).
+  Mechanical extraction; also unlocks isolated tests for
+  `validate_declared_semantics`/`declared_projection`, whose high crap
+  scores reflect untestable shape, not zero coverage (both run under the
+  golden suites via `analyze`).
+- `crates/waml-syntax/src/incremental.rs:667-1009`: the `full(reason)`
+  fallback closure is defined at :774 after two hand-expanded copies of it
+  (:686-699, :703-717) — hoist now, before the copies drift. Then extract
+  `plan_window_reparse(...) -> Result<WindowPlan, FullReparseReason>` so the
+  ~25 returns become `?`.
+
+### P3 — Smaller consolidations, when next touched
+
+- First-match-wins action router: `class_diagram_view.rs:488-841` is ~10
+  sequential `if let ... { return }` blocks scanning the same action batch;
+  `camera_changed` (:686) already had to break the pattern because "a zoom
+  can share a batch with a click". When the next branch is added, split a
+  pure `route(actions) -> Vec<Intent>` (headlessly testable) from dispatch.
+- `crates/waml-editor/src/editor_session.rs`: move the 2,390-line inline
+  `mod tests` to `editor_session/tests.rs` per the `app.rs:1204` precedent
+  (child module keeps private-field access). The non-test 1,038 lines are
+  cohesive — not a god module.
+- `crates/waml/src/uml/syntax/parser.rs` (4,734 lines): not a god module —
+  87 free functions, clean seams, no shared state. Opportunistic mechanical
+  split into `parser/{sequence,flow,layout,classifier,scan}.rs`; same
+  verdict for extracting analysis.rs's `declared_*` block (~2300-3534) into
+  `declared_extract.rs`.
+- `crates/waml-markdown-editor/src/layout/engine.rs` (2,871 lines): real
+  seams exist (shaping ledger :461-640, table intrinsics :1315-1450 and
+  :1618-1786, block placement :1454-1560, row assembly :1969+). Split
+  `table.rs`/`intrinsic.rs`/`assemble.rs` before the next feature lands
+  here.
+- `crates/waml-syntax/src/markdown/snapshot.rs:142`:
+  `MarkdownSyntaxQueries` is eight hand-maintained `Arc<[T]>` +
+  `_by_owner` map pairs (and `entities` already shipped without an index).
+  A 20-line `IndexedByOwner<T>` collapses 16 fields to 8.
+- `crates/waml-syntax/src/ast.rs:37-50`: `optional_node`/`optional_token`/
+  `recovery` are aliases of `required_*` — names promise semantics that
+  don't exist; `list(range)` is O(n²). Delete the aliases until a caller
+  needs the distinction.
+- `crates/waml/src/solve/route.rs:167,154`: inflated-obstacle list computed
+  twice per edge; per-edge obstacle mask clones full `Obstacle`s (with
+  `BoxId` string clones); `nudge` clones endpoint `String`s per `Seg`.
+  Mechanical, do with the `Side` fix above.
+- Two hand-rolled minimal-diff algorithms: `analysis.rs:1449`
+  (`single_text_change`) vs `edit/reversible.rs:150` (`text_splice`) — both
+  verified correct; below the three-instance threshold. Add
+  cross-referencing comments so the third copy triggers the merge.
+- `crates/waml/src/uml/analysis.rs:21-34`: `Analysis` mixes six `pub`
+  fields with five getter-wrapped private ones, no rule distinguishing
+  them; unique-basename disambiguation exists in three partial variants
+  (`analysis.rs:172-176`, `lower.rs:137-144`, `:1424-1428`). Consolidate
+  when next touched.
+
+### Metric ghosts — checked and dismissed, do not re-litigate
+
+- `serve/guard.rs` "fan-in 104" is not real: one pure constant-time
+  `check()`, one caller, guard-before-body-parse tested. Model file.
+- `serve/mod.rs ↔ routes.rs ↔ state.rs` is a chain, not a cycle.
+- `multiplicity.rs` fan-in 112 is a leaf domain newtype doing its job.
+- `ClassDiagramSurface`'s 37 fields are 21 required shader-pen handles plus
+  extracted headless controllers; `App`'s 35 fields are documented shell
+  state; `BehaviorSurface` shares `ViewportController` rather than
+  duplicating it.
+- Model-logic-in-widgets: checked explicitly — clean. `scene.rs` is plain
+  data over `waml::solve` with zero makepad; placement previews call the
+  headless solver.
 
 ## What should not be “fixed”
 
