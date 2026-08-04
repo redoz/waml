@@ -32,7 +32,6 @@ pub struct EditorSession {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
 pub struct EditorSessionSnapshot {
     pub revision: u64,
     pub source: Arc<SourceBundle>,
@@ -115,7 +114,6 @@ pub struct EditorSnapshot<'a> {
     pub revision: u64,
 }
 
-#[allow(dead_code)]
 impl EditorSessionSnapshot {
     pub fn borrowed(&self) -> EditorSnapshot<'_> {
         EditorSnapshot {
@@ -207,7 +205,6 @@ impl EditorSessionSnapshot {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
 pub struct ProposedSourceEdit {
     pub document: DocumentId,
     pub base_revision: DocumentRevision,
@@ -227,7 +224,6 @@ impl fmt::Debug for ProposedSourceEdit {
     }
 }
 
-#[allow(dead_code)]
 impl ProposedSourceEdit {
     pub fn from_local(document: DocumentId, local: ProposedMarkdownEdit) -> Self {
         Self {
@@ -239,37 +235,54 @@ impl ProposedSourceEdit {
     }
 }
 
+// These variant fields are read only through the derived Debug impl (used by
+// `Display` below to render diagnostics); rustc's dead_code lint does not count a
+// derive-generated field access as a read, so each field needs a narrow allow.
+// They are not scaffolding for an unlanded consumer — Display is already landed.
 #[derive(Debug)]
-#[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
 pub enum SourceEditError {
     DocumentNotFound {
+        #[allow(dead_code)]
         document: DocumentId,
     },
     DocumentPathInvariant {
+        #[allow(dead_code)]
         document: DocumentId,
     },
     StaleBaseRevision {
+        #[allow(dead_code)]
         document: DocumentId,
+        #[allow(dead_code)]
         base: DocumentRevision,
+        #[allow(dead_code)]
         current: DocumentRevision,
     },
     RevisionOverflow {
+        #[allow(dead_code)]
         document: DocumentId,
+        #[allow(dead_code)]
         current: DocumentRevision,
     },
     InvalidChanges {
+        #[allow(dead_code)]
         document: DocumentId,
+        #[allow(dead_code)]
         reason: FullReparseReason,
     },
     SyntaxRevisionMismatch {
+        #[allow(dead_code)]
         document: DocumentId,
+        #[allow(dead_code)]
         expected: DocumentRevision,
+        #[allow(dead_code)]
         actual: DocumentRevision,
     },
     ResultTextMismatch {
+        #[allow(dead_code)]
         document: DocumentId,
     },
     BaseIdentityMismatch {
+        #[allow(dead_code)]
         document: DocumentId,
     },
     Edit(EditError),
@@ -349,7 +362,6 @@ impl SessionChange {
         }
     }
 
-    #[allow(dead_code)] // Used when the Task 2 proposal path is mounted in Task 4.
     fn source_only(revision: u64, document: DocumentId) -> SessionChange {
         SessionChange {
             revision,
@@ -651,7 +663,8 @@ impl EditorSession {
         }
     }
 
-    #[allow(dead_code)]
+    // Only used from #[cfg(test)] `bundle()` below; no non-test consumer has landed.
+    #[cfg(test)]
     pub fn source(&self) -> &SourceBundle {
         &self.current.source
     }
@@ -661,7 +674,8 @@ impl EditorSession {
         self.source()
     }
 
-    #[allow(dead_code)]
+    // Only used from the #[cfg(test)] `mod tests` below; no non-test consumer has landed.
+    #[cfg(test)]
     pub fn persisted_bundle(&self) -> &SourceBundle {
         &self.current.persisted_source
     }
@@ -738,7 +752,6 @@ impl EditorSession {
         self.history.break_merge_group();
     }
 
-    #[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
     pub fn promote_source_edit(
         &mut self,
         proposal: ProposedSourceEdit,
@@ -871,7 +884,6 @@ impl EditorSession {
         ))
     }
 
-    #[allow(dead_code)] // Task 2 API is mounted by the editor integration in Task 4.
     pub fn install_semantic_completion(
         &mut self,
         completion: SemanticAnalysisCompletion,
