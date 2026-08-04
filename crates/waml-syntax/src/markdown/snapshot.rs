@@ -845,6 +845,9 @@ fn is_semantic(kind: crate::OkfMarkdownSyntaxKind) -> bool {
         kind,
         Kind::Frontmatter
             | Kind::FrontmatterEntry
+            | Kind::FrontmatterMapping
+            | Kind::FrontmatterSequence
+            | Kind::FrontmatterSequenceItem
             | Kind::BlockQuote
             | Kind::List
             | Kind::ListItem
@@ -1120,6 +1123,7 @@ fn source_role(kind: crate::OkfMarkdownSyntaxKind) -> MarkdownSourceRole {
         | CodeTextToken
         | FrontmatterValueToken
         | FrontmatterKeyToken
+        | FrontmatterQuotedValueToken
         | HtmlToken
         | EntityToken
         | InfoStringToken => MarkdownSourceRole::Content,
@@ -1145,7 +1149,11 @@ fn semantic_role(kind: crate::OkfMarkdownSyntaxKind) -> MarkdownSemanticRole {
     use crate::OkfMarkdownSyntaxKind as K;
     match kind {
         K::Root => MarkdownSemanticRole::Document,
-        K::Frontmatter | K::FrontmatterEntry => MarkdownSemanticRole::Frontmatter,
+        K::Frontmatter
+        | K::FrontmatterEntry
+        | K::FrontmatterMapping
+        | K::FrontmatterSequence
+        | K::FrontmatterSequenceItem => MarkdownSemanticRole::Frontmatter,
         K::BlockQuote => MarkdownSemanticRole::BlockQuote,
         K::List => MarkdownSemanticRole::List,
         K::ListItem => MarkdownSemanticRole::ListItem,
