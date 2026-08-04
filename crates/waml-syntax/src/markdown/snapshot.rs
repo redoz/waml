@@ -1137,7 +1137,11 @@ fn token_semantic_role(
         }
         Kind::BadToken => MarkdownSemanticRole::Recovery,
         Kind::FrontmatterKey | Kind::FrontmatterKeyToken => MarkdownSemanticRole::FrontmatterKey,
-        Kind::ColonToken | Kind::FrontmatterDashToken => {
+        // `ColonToken` is shared with link reference definitions, so it only
+        // paints frontmatter punctuation under a frontmatter parent.
+        Kind::ColonToken | Kind::FrontmatterDashToken
+            if parent == MarkdownSemanticRole::Frontmatter =>
+        {
             MarkdownSemanticRole::FrontmatterPunctuation
         }
         Kind::FrontmatterOpenFence | Kind::FrontmatterCloseFence | Kind::FrontmatterFenceToken => {

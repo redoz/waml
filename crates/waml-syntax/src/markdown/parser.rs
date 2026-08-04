@@ -1481,7 +1481,36 @@ fn build_frontmatter_mapping(
             finalize_pending_with_null(factory, &mut stack)?;
         }
 
+        // A dash only opens a sequence item when the block it lands in IS a
+        // sequence — a sequence block is only ever opened by the indent-
+        // increase branch above. At a MAPPING's own indent the dash has no
+        // reading: the model reader (`map_entries_from_mapping`) skips
+        // sequence items, so accepting it would drop the line silently.
+        // Keep it malformed, as it was before block sequences existed.
         if is_dash_at(source, indent_end, line.significant_end) {
+            if stack.last().expect("stack is never empty").kind == FmContainerKind::Mapping {
+                clean = false;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                    line.start,
+                    line.significant_end,
+                    "sequence item outside a sequence",
+                ));
+                let entry = bad_line_entry(
+                    factory,
+                    text,
+                    source,
+                    line,
+                    indent_end,
+                    OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                )?;
+                stack
+                    .last_mut()
+                    .expect("stack is never empty")
+                    .children
+                    .push(GreenElement::Node(entry));
+                continue;
+            }
             let outcome = push_sequence_item(
                 factory,
                 text,

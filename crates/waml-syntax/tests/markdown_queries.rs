@@ -291,3 +291,30 @@ fn recovery_queries_return_the_exact_unclosed_fence_diagnostic() {
     assert!(snapshot.queries().has_recovery(whole(source)));
     assert!(!snapshot.queries().has_recovery(range_of(source, "rust")));
 }
+
+#[test]
+fn link_reference_definition_colon_is_not_frontmatter_punctuation() {
+    // `ColonToken` is emitted both by frontmatter entries and by link
+    // reference definitions. Only the frontmatter one may carry a
+    // frontmatter semantic role: the presentation layer hides
+    // `FrontmatterPunctuation` in the reading view, which would delete the
+    // colon from `[id]: dest`.
+    let source = "[id]: https://example.test\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let colon = range_of(source, ":");
+    let span = snapshot
+        .queries()
+        .spans(whole(source))
+        .find(|span| span.range.start() <= colon.start() && colon.end() <= span.range.end())
+        .expect("the definition colon is covered by a span");
+
+    assert_ne!(
+        span.semantic_role,
+        MarkdownSemanticRole::FrontmatterPunctuation
+    );
+}

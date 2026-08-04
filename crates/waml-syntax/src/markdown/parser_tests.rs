@@ -60,6 +60,34 @@ const FIXTURES: &[Fixture] = &[
 ];
 
 #[test]
+fn dash_at_a_mapping_indent_is_rejected_rather_than_silently_dropped() {
+    // A `- item` line at an indent whose open block is a MAPPING has no
+    // reading: `map_entries_from_mapping` skips sequence items, so accepting
+    // it would drop the content with no diagnostic. It must stay malformed,
+    // as it was before block sequences existed.
+    for source in [
+        "---\n- item\ntype: uml.Class\n---\n",
+        "---\nk:\n  a: 1\n  - item\n---\n",
+    ] {
+        let shell = parse(source);
+        let codes: Vec<_> = shell
+            .tree
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect();
+        assert!(
+            codes.contains(&OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry),
+            "dash at a mapping indent must be malformed: {source:?} -> {codes:?}"
+        );
+        assert!(
+            codes.contains(&OkfSyntaxDiagnosticCode::FrontmatterNotClean),
+            "dash at a mapping indent must be unclean: {source:?} -> {codes:?}"
+        );
+    }
+}
+
+#[test]
 fn preserves_bom_crlf_unicode_frontmatter_and_top_level_headings() {
     let source = "\u{feff}---\r\ntype: arbitrary.\u{1d11e}\r\n---\r\n# Title  \r\n## Section\r\n";
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();

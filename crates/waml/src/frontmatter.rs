@@ -849,8 +849,11 @@ fn render_map_block(entries: &[(String, FmValue)], indent: usize) -> String {
 /// [`flow_item_needs_quote`] says so (adds `,`/`[`/`]` to the top-level
 /// scalar rule); any other shape (nested list, or a bare number/bool/null)
 /// renders through the ordinary value renderer, since a nested flow list is
-/// unambiguous inside brackets and a `Map` item never reaches here — a list
-/// containing a `Map` renders as a block sequence instead, in [`render_entry`].
+/// unambiguous inside brackets. A `Map` item normally never reaches here — a
+/// list whose DIRECT item is a `Map` renders as a block sequence instead, in
+/// [`render_entry`] — but a `Map` nested deeper (list-of-list-of-map) does,
+/// and degrades to a quoted one-line `{k: v}` scalar so the output stays
+/// parseable.
 fn render_flow_item(item: &FmValue, depth: usize) -> String {
     match item {
         FmValue::Str(s) => {
@@ -859,6 +862,49 @@ fn render_flow_item(item: &FmValue, depth: usize) -> String {
             } else {
                 s.clone()
             }
+        }
+        // A `Map` has no block form here (nothing carries its key) and
+        // `render_map_block` is multi-line — raw newlines inside `[...]`
+        // would write unparseable frontmatter back into the document. This
+        // shape is reachable from wire JSON, so degrade to a quoted
+        // single-line scalar rather than emitting invalid output.
+        FmValue::Map(entries) => format!(
+            "\"{}\"",
+            escape_quoted_string(&render_flow_map(entries, depth))
+        ),
+        other => render_value_at(other, depth),
+    }
+}
+
+/// Renders a `Map` that has no block form as a single-line `{k: v, ...}`
+/// scalar body. Never emits a newline; the caller quotes the result.
+fn render_flow_map(entries: &[(String, FmValue)], depth: usize) -> String {
+    if depth >= MAX_VALUE_DEPTH {
+        return "{}".to_string();
+    }
+    let inner = entries
+        .iter()
+        .map(|(k, v)| format!("{}: {}", render_key(k), render_flow_inline(v, depth + 1)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{{inner}}}")
+}
+
+/// Single-line rendering of a value already inside a degraded flow mapping:
+/// nested containers stay inline so the whole scalar remains one line.
+fn render_flow_inline(value: &FmValue, depth: usize) -> String {
+    match value {
+        FmValue::Map(entries) => render_flow_map(entries, depth),
+        FmValue::List(items) => {
+            if depth >= MAX_VALUE_DEPTH {
+                return "[]".to_string();
+            }
+            let inner = items
+                .iter()
+                .map(|item| render_flow_inline(item, depth + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{inner}]")
         }
         other => render_value_at(other, depth),
     }
@@ -873,9 +919,11 @@ fn render_flow_item(item: &FmValue, depth: usize) -> String {
 /// a nested `List` containing a `Map` (list-of-list-of-map) has no block
 /// form the current parser reads back — a bare `-` with nothing after it,
 /// followed by a more-indented `-` continuation, does not open a nested
-/// sequence the way `key:` does. That combination is excluded from what the
-/// writer will attempt (see `representable_value` in the tests below);
-/// widening the parser to accept it is future work, not this task's.
+/// sequence the way `key:` does. That combination does not round-trip as a
+/// `Map` (see `representable_value` in the tests below); the writer degrades
+/// it to a quoted one-line `{k: v}` scalar in [`render_flow_item`] so the
+/// emitted frontmatter still parses. Widening the parser to read that shape
+/// back is future work, not this task's.
 fn render_entry(out: &mut String, key: &str, value: &FmValue, indent: usize) {
     if indent >= MAX_VALUE_DEPTH {
         return;
@@ -1024,6 +1072,35 @@ mod tests {
             }
         }
         Frontmatter::default()
+    }
+
+    /// A `Map` reached in FLOW position (inside `[...]`) has no block form,
+    /// but it must still render on ONE line: a multi-line `render_map_block`
+    /// inside brackets writes unparseable frontmatter back into the user's
+    /// document. This shape is reachable from wire JSON (`FmValueSeed`
+    /// accepts arbitrary nesting), so the writer degrades to a quoted
+    /// single-line scalar instead.
+    #[test]
+    fn map_inside_a_flow_sequence_degrades_to_one_line() {
+        let fm = Frontmatter {
+            entries: vec![(
+                "k".into(),
+                FmValue::List(vec![FmValue::List(vec![FmValue::Map(vec![(
+                    "a".into(),
+                    FmValue::Str("b".into()),
+                )])])]),
+            )],
+        };
+        let rendered = render_frontmatter(&fm);
+        assert_eq!(rendered.lines().count(), 1, "rendered: {rendered:?}");
+
+        let reparsed = parse_frontmatter_for_test(&format!("---\n{rendered}\n---\n"));
+        assert_eq!(
+            reparsed.get("k"),
+            Some(&FmValue::List(vec![FmValue::List(vec![FmValue::Str(
+                "{a: b}".into()
+            )])]))
+        );
     }
 
     #[test]
@@ -1656,6 +1733,10 @@ mod tests {
     /// `Map` nested inside a `List` that is itself a `List` item — e.g.
     /// list-of-list-of-map — because the parser has no block form for a
     /// bare `-` opening a nested sequence (see `render_entry`'s comment).
+    /// The writer still emits VALID (if lossy) output for that shape — a
+    /// quoted one-line `{k: v}` scalar, pinned by
+    /// `map_inside_a_flow_sequence_degrades_to_one_line` — it just does not
+    /// come back as a `Map`, so the round-trip property excludes it.
     fn representable_value(v: &FmValue) -> bool {
         match v {
             FmValue::Map(entries) => entries.iter().all(|(_, v)| representable_value(v)),
