@@ -1,6 +1,6 @@
 use super::{
-    primitives::ClassDrawResources, relations::relations_for_visibility, LineworkMetrics,
-    RenderSnapshot,
+    primitives::ClassDrawResources, relations::relations_for_visibility, CardMeasureCache,
+    LineworkMetrics, RenderSnapshot,
 };
 use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
 use crate::frame::SurfaceExt;
@@ -22,7 +22,7 @@ impl FocusState {
 fn node_focus_state(
     key: &str,
     selected_key: Option<&str>,
-    focus_keys: &HashSet<String>,
+    focus_keys: &HashSet<&str>,
 ) -> FocusState {
     FocusState {
         selected: selected_key == Some(key),
@@ -35,10 +35,28 @@ fn desaturate(color: Vec4) -> Vec4 {
     vec4(luminance, luminance, luminance, color.w)
 }
 
+/// Extra screen pixels a node's draw may spill past its layout rect (the port
+/// nubs on the left/right edges and the selection-lift shadow), so viewport
+/// culling never clips a node whose body is just off-screen but whose
+/// decoration is not.
+const CULL_PAD: f64 = 32.0;
+
+/// Whether `screen` (inflated by `CULL_PAD`) intersects the visible `view`
+/// rect -- both in screen space, the space the draw loop already works in.
+/// Hit-testing (`interaction::node_at`) recomputes from scene rects + camera
+/// per event, so culling a draw leaves no stale clickable rect behind.
+fn on_screen(screen: Rect, view: Rect) -> bool {
+    screen.pos.x + screen.size.x + CULL_PAD >= view.pos.x
+        && screen.pos.y + screen.size.y + CULL_PAD >= view.pos.y
+        && screen.pos.x - CULL_PAD <= view.pos.x + view.size.x
+        && screen.pos.y - CULL_PAD <= view.pos.y + view.size.y
+}
+
 pub(super) fn draw_nodes(
     cx: &mut Cx2d,
     snapshot: &RenderSnapshot<'_>,
     draws: &mut ClassDrawResources<'_>,
+    cards: &mut CardMeasureCache,
 ) {
     let zoom = snapshot.viewport.camera.zoom;
     draws.node.set_uniform(cx, live_id!(zoom), &[zoom as f32]);
@@ -53,19 +71,22 @@ pub(super) fn draw_nodes(
         &[snapshot.linework.frame_screen_space],
     );
 
-    let focus_keys: HashSet<String> = relations_for_visibility(
+    let focus_keys: HashSet<&str> = relations_for_visibility(
         &snapshot.scene.relations,
         snapshot.selection.constraint_visibility,
         snapshot.selection.selected_key.as_deref(),
     )
     .iter()
-    .flat_map(|relation| [relation.subject.clone(), relation.reference.clone()])
+    .flat_map(|relation| [relation.subject.as_str(), relation.reference.as_str()])
     .collect();
     let focus_active = !focus_keys.is_empty();
     let selected_key = snapshot.selection.selected_key.as_deref();
 
     for node in &snapshot.scene.nodes {
         let screen = world_rect_to_screen(snapshot.viewport, node.rect);
+        if !on_screen(screen, snapshot.viewport.view_rect) {
+            continue;
+        }
         draws.node.set_uniform(
             cx,
             live_id!(selected),
@@ -77,10 +98,11 @@ pub(super) fn draw_nodes(
             .node
             .set_uniform(cx, live_id!(grey), &[if muted { 1.0 } else { 0.0 }]);
         draws.node.draw_surface_abs(cx, screen);
-        draw_card(cx, screen, node, zoom, snapshot.linework, muted, draws);
+        draw_card(cx, screen, node, zoom, snapshot.linework, muted, draws, cards);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_card(
     cx: &mut Cx2d,
     screen: Rect,
@@ -89,11 +111,12 @@ fn draw_card(
     linework: LineworkMetrics,
     grey: bool,
     draws: &mut ClassDrawResources<'_>,
+    cards: &mut CardMeasureCache,
 ) {
-    use crate::card::{self, Token, Weight};
+    use crate::card::{Token, Weight};
     use crate::scene::HeaderStyle;
 
-    let placed = card::measure(&card::class_shape(node, &card::mono_sheet()));
+    let placed = cards.placed(node);
     let accent_full = draws.mono_accent.color;
     let amber_full = draws.mono_amber.color;
     let dim = draws.mono_dim.color;
@@ -208,10 +231,7 @@ mod tests {
 
     #[test]
     fn focus_state_splits_selected_neighbour_and_outsider() {
-        let focus: HashSet<String> = ["order", "payment-gateway", "user"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let focus: HashSet<&str> = ["order", "payment-gateway", "user"].into_iter().collect();
         let selected = node_focus_state("order", Some("order"), &focus);
         assert_eq!(
             selected,

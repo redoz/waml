@@ -8,7 +8,10 @@
 use super::{
     interaction::ClassInteraction,
     placement::PlacementInteraction,
-    render::{self, ClassDrawResources, LineworkMetrics, RenderSnapshot, DEFAULT_LINEWORK_MODE},
+    render::{
+        self, CardMeasureCache, ClassDrawResources, LineworkMetrics, RenderSnapshot,
+        DEFAULT_LINEWORK_MODE,
+    },
     selection::{ConstraintVisibility, SelectionPolicy, SelectionState, SELECTION_TICK},
     DialPlacement, FrameCommand, InteractionEffects, SceneUpdate, SurfaceIntent, TimerCommand,
     Zone,
@@ -450,6 +453,10 @@ pub struct ClassDiagramSurface {
     dwell_timer: Timer,
     #[rust]
     selection: SelectionState,
+    /// Per-node card measurements, invalidated on every scene install
+    /// (`reconcile_scene`) -- the only path that changes node content.
+    #[rust]
+    card_cache: CardMeasureCache,
     #[rust]
     projection_stale: bool,
     /// Last zoom percentage announced via `CameraChanged`. Every camera
@@ -678,6 +685,7 @@ impl Widget for ClassDiagramSurface {
             draw_mono_amber,
             draw_stale_badge,
             draw_stale_text,
+            card_cache,
             projection_stale,
             ..
         } = self;
@@ -712,7 +720,7 @@ impl Widget for ClassDiagramSurface {
             mono_accent: draw_mono_accent,
             mono_amber: draw_mono_amber,
         };
-        render::draw(cx, &snapshot, &mut draws);
+        render::draw(cx, &snapshot, &mut draws, card_cache);
         if *projection_stale {
             draw_stale_badge_overlay(cx, viewport.view_rect, draw_stale_badge, draw_stale_text);
         }
@@ -839,6 +847,9 @@ impl ClassDiagramSurface {
             self.prepare_scene_reconciliation(&scene, &update);
         self.apply_interaction_effects(cx, interaction_effects);
         self.apply_viewport_effects(cx, viewport_effects);
+        // Node content may have changed shape-relevant fields; drop every
+        // cached card measurement with the old scene.
+        self.card_cache.clear();
         self.scene = scene;
         self.sync_selection_lift_timer(cx);
         self.draw_bg.redraw(cx);
