@@ -147,6 +147,13 @@ fn apply_text_changes(
     Ok((candidate, SourceDelta::Text(reciprocal)))
 }
 
+/// Minimal common-prefix/common-suffix diff over `&str`, producing a `TextSplice` for undo.
+///
+/// A second, independent minimal-diff implementation exists at
+/// `crate::analysis::single_text_change` — that one works on `SourceText` for the reparse
+/// path. Both are verified correct and are kept separate on purpose: two instances is below
+/// the threshold at which a shared abstraction pays for itself.
+/// **If you are about to write a third, merge all three instead.**
 fn text_splice(path: BundlePath, before: &str, after: &str) -> Option<TextSplice> {
     if before == after {
         return None;

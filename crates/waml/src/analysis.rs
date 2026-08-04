@@ -1207,6 +1207,13 @@ fn invalid_promoted_update(
     AnalysisError::InvalidPromotedMarkdownUpdate { document, reason }
 }
 
+/// Minimal single-splice diff over `SourceText`, for the reparse path.
+///
+/// A second, independent common-prefix/common-suffix diff exists at
+/// `crate::edit::reversible::text_splice` — that one works on `&str` and produces a
+/// `TextSplice` for undo. Both are verified correct and are kept separate on purpose:
+/// two instances is below the threshold at which a shared abstraction pays for itself.
+/// **If you are about to write a third, merge all three instead.**
 pub(crate) fn single_text_change(old: &SourceText, new: &SourceText) -> Vec<TextChange> {
     if Arc::ptr_eq(old.shared(), new.shared()) || old.shared().as_str() == new.shared().as_str() {
         return Vec::new();
