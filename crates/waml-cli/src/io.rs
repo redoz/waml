@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use waml::bundle_envelope::split_bundle;
-use waml::host::ingest::{ingest_markdown, IngestError, IngestOptions};
+use waml::host::ingest::{ingest_markdown, IngestError, IngestErrorKind, IngestOptions};
 
 /// Expand a valid Bundle Envelope v1 or retain the input as one plain document.
 pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(String, String)>> {
@@ -29,8 +29,14 @@ pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(Strin
 /// A dot-directory named directly on the command line is still descended into,
 /// since that is an explicit request rather than an incidental discovery.
 pub fn collect_md(paths: &[PathBuf]) -> std::io::Result<Vec<PathBuf>> {
+    // A non-followed link is the walker's clean-skip default, not a failure:
+    // the pre-unification walkers never made one link abort the collection.
     let ingested = ingest_markdown(paths, &IngestOptions::default());
-    if let Some(error) = ingested.errors.into_iter().next() {
+    if let Some(error) = ingested
+        .errors
+        .into_iter()
+        .find(|error| error.kind != IngestErrorKind::LinkSkipped)
+    {
         return Err(ingest_error_to_io(error));
     }
     Ok(ingested
@@ -687,6 +693,44 @@ mod tests {
             error.to_string().contains(&missing.display().to_string()),
             "error should name the offending path: {error}"
         );
+    }
+
+    /// One link anywhere under a collected directory must not make the whole
+    /// collection fail: a non-followed link is a clean skip, not a fatal error.
+    #[test]
+    fn collect_md_survives_a_skipped_link() {
+        let temp = TempDir::new();
+        fs::create_dir(temp.0.join("real")).unwrap();
+        fs::write(temp.0.join("order.md"), "# Order\n").unwrap();
+        fs::write(temp.0.join("real/nested.md"), "# Nested\n").unwrap();
+        if !make_dir_link(&temp.0.join("linked"), &temp.0.join("real")) {
+            eprintln!("skipping: this environment cannot create directory links");
+            return;
+        }
+
+        let files = collect_md(std::slice::from_ref(&temp.0))
+            .expect("a skipped link must not fail the collection");
+        let names: Vec<String> = files
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["order.md", "nested.md"]);
+    }
+
+    #[cfg(unix)]
+    fn make_dir_link(link: &Path, target: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    fn make_dir_link(link: &Path, target: &Path) -> bool {
+        // NTFS junction via `mklink /J`: needs no admin rights, unlike symlinks.
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status();
+        matches!(status, Ok(status) if status.success())
     }
 
     struct FailRename {

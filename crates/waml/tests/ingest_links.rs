@@ -342,6 +342,135 @@ fn windows_junction_escaping_the_root_is_reported_and_not_ingested() {
 
 #[cfg(unix)]
 #[test]
+fn unix_explicit_symlink_root_is_followed_by_default() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new();
+    let real = temp.0.join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("order.md"), "# Order\n").unwrap();
+    let linked_root = temp.0.join("linked-root");
+    symlink(&real, &linked_root).unwrap();
+
+    // A root that is itself a link is an explicit request, not an incidental
+    // discovery: it must be followed even with the default follow_links=false,
+    // mirroring the dot-dir root exemption.
+    let result = ingest_markdown(
+        std::slice::from_ref(&linked_root),
+        &IngestOptions::default(),
+    );
+
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.files.len(), 1, "{:?}", result.files);
+    assert_eq!(result.files[0].0.file_name().unwrap(), "order.md");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_explicit_junction_root_is_followed_by_default() {
+    let temp = TempDir::new();
+    let real = temp.0.join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("order.md"), "# Order\n").unwrap();
+    let linked_root = temp.0.join("linked-root");
+
+    if !try_make_junction(&linked_root, &real) {
+        eprintln!("skipping: this environment cannot create NTFS junctions (mklink /J failed)");
+        return;
+    }
+
+    // A root that is itself a junction is an explicit request, not an
+    // incidental discovery: it must be followed even with the default
+    // follow_links=false, mirroring the dot-dir root exemption.
+    let result = ingest_markdown(
+        std::slice::from_ref(&linked_root),
+        &IngestOptions::default(),
+    );
+
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.files.len(), 1, "{:?}", result.files);
+    assert_eq!(result.files[0].0.file_name().unwrap(), "order.md");
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_link_back_to_a_regular_ancestor_is_a_cycle_without_reingestion() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new();
+    let root = temp.0.join("root");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("order.md"), "# Order\n").unwrap();
+    fs::create_dir(root.join("sub")).unwrap();
+    // A link back to the root, which was reached as a REGULAR directory. The
+    // cycle must fire on first encounter, not after re-ingesting the whole
+    // ancestor tree, so no duplicate (path, text) entries are produced.
+    symlink(&root, root.join("sub/back")).unwrap();
+
+    let options = IngestOptions {
+        follow_links: true,
+        ..IngestOptions::default()
+    };
+    let result = ingest_markdown(std::slice::from_ref(&root), &options);
+
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.kind == IngestErrorKind::LinkCycle),
+        "cycle must be reported: {:?}",
+        result.errors
+    );
+    let paths: Vec<_> = result.files.iter().map(|(path, _)| path.clone()).collect();
+    let unique: std::collections::BTreeSet<_> = paths.iter().cloned().collect();
+    assert_eq!(
+        paths.len(),
+        unique.len(),
+        "no duplicate paths may be ingested: {paths:?}"
+    );
+    assert_eq!(paths.len(), 1, "{paths:?}");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_junction_back_to_a_regular_ancestor_is_a_cycle_without_reingestion() {
+    let temp = TempDir::new();
+    let root = temp.0.join("root");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("order.md"), "# Order\n").unwrap();
+    fs::create_dir(root.join("sub")).unwrap();
+
+    if !try_make_junction(&root.join("sub").join("back"), &root) {
+        eprintln!("skipping: this environment cannot create NTFS junctions (mklink /J failed)");
+        return;
+    }
+
+    let options = IngestOptions {
+        follow_links: true,
+        ..IngestOptions::default()
+    };
+    let result = ingest_markdown(std::slice::from_ref(&root), &options);
+
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.kind == IngestErrorKind::LinkCycle),
+        "cycle must be reported: {:?}",
+        result.errors
+    );
+    let paths: Vec<_> = result.files.iter().map(|(path, _)| path.clone()).collect();
+    let unique: std::collections::BTreeSet<_> = paths.iter().cloned().collect();
+    assert_eq!(
+        paths.len(),
+        unique.len(),
+        "no duplicate paths may be ingested: {paths:?}"
+    );
+    assert_eq!(paths.len(), 1, "{paths:?}");
+}
+
+#[cfg(unix)]
+#[test]
 fn unix_unreadable_file_produces_a_structured_error() {
     use std::os::unix::fs::PermissionsExt;
 

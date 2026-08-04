@@ -13,9 +13,11 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct IngestOptions {
     /// Follow symlinks and NTFS junctions into their targets. When `false`
-    /// (the default), a link is not recursed into or read; a skipped link
-    /// whose target is a directory or a `.md` file is recorded as an
-    /// [`IngestErrorKind::LinkSkipped`] error.
+    /// (the default), a *discovered* link is not recursed into or read; a
+    /// skipped link whose target is a directory or a `.md` file is recorded
+    /// as an [`IngestErrorKind::LinkSkipped`] error. A link passed directly
+    /// as a root is still followed, since that is an explicit request rather
+    /// than an incidental discovery.
     pub follow_links: bool,
     /// Skip dot-directories (`.git`, `.waml`, ...) discovered *during* the
     /// walk. A dot-directory passed directly as a root is still descended
@@ -154,9 +156,12 @@ fn walk(
     // a OneDrive/cloud-placeholder or dedup reparse point on an ordinary
     // file is not a link and must still be read as a regular file.
     let is_link = metadata.file_type().is_symlink();
-    let mut entered_directory_link = false;
+    let mut entered_directory = false;
     if is_link {
-        if !options.follow_links {
+        // A link passed directly as a root is an explicit request, not an
+        // incidental discovery — follow it even when `follow_links` is
+        // disabled, mirroring the dot-dir root exemption above.
+        if !options.follow_links && !is_root {
             // A link whose target would otherwise have been ingested — a
             // directory or a `.md` file — is recorded, never silently
             // dropped. A link to anything else was never ingestible, so
@@ -216,7 +221,21 @@ fn walk(
         }
         if path.is_dir() {
             walk_path.push(key);
-            entered_directory_link = true;
+            entered_directory = true;
+        }
+    } else if metadata.is_dir() && options.follow_links {
+        // When links can be followed, a directory reached WITHOUT a link must
+        // be tracked too: a link back to a regular-directory ancestor must
+        // fire the cycle check on first encounter, not after re-ingesting the
+        // whole ancestor tree, and a link to a directory already walked must
+        // dedup instead of producing duplicate (path, text) entries.
+        if let Ok(canonical) = fs::canonicalize(path) {
+            let key = canonical.to_string_lossy().into_owned();
+            if !visited.insert(key.clone()) {
+                return;
+            }
+            walk_path.push(key);
+            entered_directory = true;
         }
     }
 
@@ -251,7 +270,7 @@ fn walk(
                 }),
             }
         }
-        if entered_directory_link {
+        if entered_directory {
             walk_path.pop();
         }
         return;

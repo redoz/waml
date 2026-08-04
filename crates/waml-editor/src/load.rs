@@ -1,7 +1,7 @@
 //! Load an OKF directory into its source-authoritative bundle.
 
 use std::path::Path;
-use waml::host::ingest::{ingest_markdown, IngestOptions};
+use waml::host::ingest::{ingest_markdown, IngestErrorKind, IngestOptions};
 use waml::source::{SourceBundle, SourceError};
 
 #[derive(Debug)]
@@ -45,12 +45,18 @@ impl From<SourceError> for LoadError {
 ///
 /// Delegates to the shared hardened walker (`waml::host::ingest`); the first
 /// `IngestError` fails the load, matching the previous fail-fast behavior.
+/// A non-followed link is the walker's clean-skip default, not a failure:
+/// the pre-unification walkers never made one link abort the bundle.
 pub fn read_bundle(dir: &Path) -> Result<SourceBundle, LoadError> {
     let ingested = ingest_markdown(
         std::slice::from_ref(&dir.to_path_buf()),
         &IngestOptions::default(),
     );
-    if let Some(error) = ingested.errors.into_iter().next() {
+    if let Some(error) = ingested
+        .errors
+        .into_iter()
+        .find(|error| error.kind != IngestErrorKind::LinkSkipped)
+    {
         return Err(LoadError::Io(std::io::Error::other(error.to_string())));
     }
     let out: Vec<(String, String)> = ingested
@@ -161,6 +167,56 @@ mod tests {
             .map(|document| document.path().as_str().to_string())
             .collect();
         assert_eq!(paths, ["order.md", "shop/basket.md"]);
+    }
+
+    /// One link anywhere inside a bundle must not make the whole bundle
+    /// unloadable: a non-followed link is a clean skip, not a fatal error.
+    #[test]
+    fn read_bundle_survives_a_skipped_link_inside_the_bundle() {
+        let tmp = std::env::temp_dir().join(format!(
+            "waml-editor-load-link-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("real")).unwrap();
+        std::fs::write(tmp.join("order.md"), "# Order").unwrap();
+        std::fs::write(tmp.join("real/nested.md"), "# Nested").unwrap();
+        let made_link = make_dir_link(&tmp.join("linked"), &tmp.join("real"));
+        if !made_link {
+            let _ = std::fs::remove_dir_all(&tmp);
+            eprintln!("skipping: this environment cannot create directory links");
+            return;
+        }
+
+        let bundle = read_bundle(&tmp);
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let paths: Vec<String> = bundle
+            .expect("a skipped link must not fail the whole bundle")
+            .documents()
+            .iter()
+            .map(|document| document.path().as_str().to_string())
+            .collect();
+        assert_eq!(paths, ["order.md", "real/nested.md"]);
+    }
+
+    #[cfg(unix)]
+    fn make_dir_link(link: &Path, target: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    fn make_dir_link(link: &Path, target: &Path) -> bool {
+        // NTFS junction via `mklink /J`: needs no admin rights, unlike symlinks.
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status();
+        matches!(status, Ok(status) if status.success())
     }
 
     #[test]
