@@ -105,7 +105,9 @@ fn empty_message(diagnostics: usize) -> String {
 
 /// The status-bar line for a solve's diagnostics, or `None` when it was clean.
 /// The count plus the first message: the status bar is one line.
-fn diagnostics_status(diagnostics: &[Diagnostic]) -> Option<String> {
+/// `pub(crate)`: `class_diagram_view` reports its scene-build diagnostics
+/// through the same statusbar channel with the same summary shape.
+pub(crate) fn diagnostics_status(diagnostics: &[Diagnostic]) -> Option<String> {
     let first = diagnostics.first()?;
     let noun = if diagnostics.len() == 1 {
         "diagnostic"

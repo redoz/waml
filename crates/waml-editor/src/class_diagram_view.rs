@@ -196,6 +196,11 @@ pub struct ClassDiagramView {
     expanded: HashSet<String>,
     mode: ClassDiagramMode,
     projection_status: Option<String>,
+    /// Statusbar summary of the last scene build's diagnostics (count + first
+    /// message), or `None` when the build was clean. Sits below
+    /// `projection_status` in priority: a stale projection outranks a built
+    /// scene's warnings.
+    scene_status: Option<String>,
 }
 
 impl ClassDiagramView {
@@ -205,7 +210,37 @@ impl ClassDiagramView {
             expanded: HashSet::new(),
             mode: ClassDiagramMode::default(),
             projection_status: None,
+            scene_status: None,
         }
+    }
+
+    /// Push the view's one statusbar line: the stale-projection banner when
+    /// there is one, else the scene-build diagnostics summary, else nothing.
+    fn push_diagnostics(&self, cx: &mut Cx, body: &BodyWidgets) {
+        body.set_solver_diagnostics(
+            cx,
+            self.projection_status
+                .as_deref()
+                .or(self.scene_status.as_deref()),
+        );
+    }
+
+    /// Record a scene build's diagnostics: summarised onto the statusbar (the
+    /// behavior view's pattern), with the console line deduplicated on change.
+    fn set_scene_diagnostics(
+        &mut self,
+        cx: &mut Cx,
+        body: &BodyWidgets,
+        diagnostics: &[waml::diagnostic::Diagnostic],
+    ) {
+        let status = crate::behavior_doc_view::diagnostics_status(diagnostics);
+        if status != self.scene_status {
+            if let Some(line) = &status {
+                log!("class diagram: {line}");
+            }
+            self.scene_status = status;
+        }
+        self.push_diagnostics(cx, body);
     }
 
     fn apply_tool_action(&mut self, action: crate::tool_dock::ToolDockAction) -> bool {
@@ -313,7 +348,7 @@ impl ClassDiagramView {
             );
     }
 
-    fn update_scene(&self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
+    fn update_scene(&mut self, cx: &mut Cx, body: &BodyWidgets, model: &Model) {
         self.sync_properties(cx, body, model);
         if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
             let selected_key = body
@@ -327,9 +362,7 @@ impl ClassDiagramView {
                 &self.expanded,
             );
             let node_keys: Vec<String> = scene.nodes.iter().map(|node| node.key.clone()).collect();
-            for diagnostic in &diagnostics {
-                log!("diagnostic: {diagnostic:?}");
-            }
+            self.set_scene_diagnostics(cx, body, &diagnostics);
             if let Some(mut canvas) = body
                 .canvas(cx)
                 .borrow_mut::<crate::canvas::ClassDiagramSurface>()
@@ -421,9 +454,7 @@ impl DocView for ClassDiagramView {
             (scene, diags, d.title.clone())
         });
         if let Some((scene, diags, title)) = built {
-            for d in &diags {
-                log!("diagnostic: {d:?}");
-            }
+            self.set_scene_diagnostics(cx, body, &diags);
             let node_keys: Vec<String> = scene.nodes.iter().map(|n| n.key.clone()).collect();
             if let Some(mut canvas) = body
                 .canvas(cx)
@@ -966,7 +997,7 @@ impl DocView for ClassDiagramView {
 
     fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
         self.show_mode(cx, body);
-        body.set_solver_diagnostics(cx, self.projection_status.as_deref());
+        self.push_diagnostics(cx, body);
     }
 
     fn on_deactivate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
