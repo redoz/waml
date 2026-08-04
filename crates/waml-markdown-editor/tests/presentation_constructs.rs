@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use waml_markdown_editor::presentation::{
-    compile_presentation, render_plan_golden, BlockDecorationKind, EmbeddedBlockKind,
-    HighlighterRegistry, PresentationBlockKind, PresentationItem, PresentationPlan,
-    PresentationStyles, TextRole,
+    compile_presentation, render_plan_golden, BlockDecorationKind, CodeTokenRole,
+    EmbeddedBlockKind, HighlighterRegistry, PresentationBlockKind, PresentationItem,
+    PresentationPlan, PresentationStyles, TextRole,
 };
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, MarkdownSyntaxSnapshot, SourceText,
@@ -290,4 +290,52 @@ fn frontmatter_compiles_to_its_own_code_block() {
 #[test]
 fn frontmatter_role_is_not_a_syntax_marker() {
     assert!(!TextRole::Frontmatter.is_syntax_marker());
+}
+
+#[test]
+fn frontmatter_tokens_paint_from_the_shared_classifier() {
+    let source = "---\ntitle: Order # note\nn: 3\nok: true\nbad\nstereotype: [a, b]\n---\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).expect("the WAML source is valid"),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("the WAML source parses");
+    let plan = compile_presentation(
+        &snapshot,
+        &PresentationStyles::balanced(),
+        &HighlighterRegistry::default(),
+    )
+    .expect("the document compiles");
+
+    assert_eq!(
+        roles_for(&plan, &snapshot, "title"),
+        vec![TextRole::CodeToken(CodeTokenRole::Property)]
+    );
+    assert!(roles_for(&plan, &snapshot, ":")
+        .iter()
+        .all(|role| *role == TextRole::CodeToken(CodeTokenRole::Punctuation)));
+    assert_eq!(
+        roles_for(&plan, &snapshot, " # note"),
+        vec![TextRole::CodeToken(CodeTokenRole::Comment)]
+    );
+    assert_eq!(
+        roles_for(&plan, &snapshot, " Order"),
+        vec![TextRole::CodeToken(CodeTokenRole::String)]
+    );
+    assert_eq!(
+        roles_for(&plan, &snapshot, " 3"),
+        vec![TextRole::CodeToken(CodeTokenRole::Number)]
+    );
+    assert_eq!(
+        roles_for(&plan, &snapshot, " true"),
+        vec![TextRole::CodeToken(CodeTokenRole::Keyword)]
+    );
+    assert_eq!(
+        roles_for(&plan, &snapshot, "bad"),
+        vec![TextRole::CodeToken(CodeTokenRole::Invalid)]
+    );
+    assert!(roles_for(&plan, &snapshot, "---")
+        .iter()
+        .all(|role| *role == TextRole::CodeToken(CodeTokenRole::Punctuation)));
 }

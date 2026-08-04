@@ -24,6 +24,12 @@ pub enum MarkdownSourceRole {
 pub enum MarkdownSemanticRole {
     Document,
     Frontmatter,
+    FrontmatterKey,
+    FrontmatterPunctuation,
+    FrontmatterFence,
+    FrontmatterComment,
+    FrontmatterScalar,
+    FrontmatterInvalid,
     BlockQuote,
     List,
     ListItem,
@@ -1121,9 +1127,13 @@ fn source_role(kind: crate::OkfMarkdownSyntaxKind) -> MarkdownSourceRole {
     match kind {
         TextToken
         | CodeTextToken
+        | FrontmatterValue
         | FrontmatterValueToken
+        | FrontmatterKey
         | FrontmatterKeyToken
         | FrontmatterQuotedValueToken
+        | FrontmatterCommentToken
+        | FrontmatterBlockScalarHeaderToken
         | HtmlToken
         | EntityToken
         | InfoStringToken => MarkdownSourceRole::Content,
@@ -1140,7 +1150,24 @@ fn token_semantic_role(
         Kind::TextToken => MarkdownSemanticRole::Text,
         Kind::TaskListMarkerToken => MarkdownSemanticRole::TaskMarker,
         Kind::WhitespaceToken | Kind::NewlineToken => MarkdownSemanticRole::Whitespace,
+        // A malformed line inside frontmatter paints Invalid, not the generic
+        // Recovery role every other construct's BadToken uses.
+        Kind::BadToken if parent == MarkdownSemanticRole::Frontmatter => {
+            MarkdownSemanticRole::FrontmatterInvalid
+        }
         Kind::BadToken => MarkdownSemanticRole::Recovery,
+        Kind::FrontmatterKey | Kind::FrontmatterKeyToken => MarkdownSemanticRole::FrontmatterKey,
+        Kind::ColonToken | Kind::FrontmatterDashToken => {
+            MarkdownSemanticRole::FrontmatterPunctuation
+        }
+        Kind::FrontmatterOpenFence | Kind::FrontmatterCloseFence | Kind::FrontmatterFenceToken => {
+            MarkdownSemanticRole::FrontmatterFence
+        }
+        Kind::FrontmatterCommentToken => MarkdownSemanticRole::FrontmatterComment,
+        Kind::FrontmatterValue
+        | Kind::FrontmatterValueToken
+        | Kind::FrontmatterQuotedValueToken
+        | Kind::FrontmatterBlockScalarHeaderToken => MarkdownSemanticRole::FrontmatterScalar,
         _ => parent,
     }
 }

@@ -844,6 +844,12 @@ impl<'a> Renderer<'a> {
             MarkdownSemanticRole::Whitespace
             | MarkdownSemanticRole::Recovery
             | MarkdownSemanticRole::Frontmatter
+            | MarkdownSemanticRole::FrontmatterKey
+            | MarkdownSemanticRole::FrontmatterPunctuation
+            | MarkdownSemanticRole::FrontmatterFence
+            | MarkdownSemanticRole::FrontmatterComment
+            | MarkdownSemanticRole::FrontmatterScalar
+            | MarkdownSemanticRole::FrontmatterInvalid
             | MarkdownSemanticRole::TaskMarker
             | MarkdownSemanticRole::WamlSection => {}
         }
