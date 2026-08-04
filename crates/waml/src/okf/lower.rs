@@ -531,7 +531,15 @@ fn frontmatter_value(
         if !closed {
             return Ok(None);
         }
-        for entry in child.children().filter_map(SyntaxElement::into_node) {
+        let entry_parent = child
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .find(|n| n.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping);
+        let entries: Box<dyn Iterator<Item = SyntaxElement<_>>> = match &entry_parent {
+            Some(mapping) => Box::new(mapping.children()),
+            None => Box::new(child.children()),
+        };
+        for entry in entries.filter_map(SyntaxElement::into_node) {
             if entry.kind() != OkfMarkdownSyntaxKind::FrontmatterEntry {
                 continue;
             }

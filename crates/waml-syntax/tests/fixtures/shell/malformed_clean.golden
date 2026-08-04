@@ -2,16 +2,17 @@ N root Root 0..57
 N root/0 Frontmatter 0..45
 T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
 T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
-N root/0/2 FrontmatterEntry 4..19
-T root/0/2/0 BadToken 4..18 missing=false leading="" text="type arbitrary" trailing=""
-T root/0/2/1 NewlineToken 18..19 missing=false leading="" text="\n" trailing=""
-N root/0/3 FrontmatterEntry 19..41
-T root/0/3/0 FrontmatterKey 19..24 missing=false leading="" text="title" trailing=""
-T root/0/3/1 ColonToken 24..25 missing=false leading="" text=":" trailing=""
-T root/0/3/2 FrontmatterValue 25..40 missing=false leading=" " text="Still lossless" trailing=""
-T root/0/3/3 NewlineToken 40..41 missing=false leading="" text="\n" trailing=""
-T root/0/4 FrontmatterCloseFence 41..44 missing=false leading="" text="---" trailing=""
-T root/0/5 NewlineToken 44..45 missing=false leading="" text="\n" trailing=""
+N root/0/2 FrontmatterMapping 4..41
+N root/0/2/0 FrontmatterEntry 4..19
+T root/0/2/0/0 BadToken 4..18 missing=false leading="" text="type arbitrary" trailing=""
+T root/0/2/0/1 NewlineToken 18..19 missing=false leading="" text="\n" trailing=""
+N root/0/2/1 FrontmatterEntry 19..41
+T root/0/2/1/0 FrontmatterKey 19..24 missing=false leading="" text="title" trailing=""
+T root/0/2/1/1 ColonToken 24..25 missing=false leading="" text=":" trailing=""
+T root/0/2/1/2 FrontmatterValue 25..40 missing=false leading=" " text="Still lossless" trailing=""
+T root/0/2/1/3 NewlineToken 40..41 missing=false leading="" text="\n" trailing=""
+T root/0/3 FrontmatterCloseFence 41..44 missing=false leading="" text="---" trailing=""
+T root/0/4 NewlineToken 44..45 missing=false leading="" text="\n" trailing=""
 N root/1 AtxHeading 45..57
 T root/1/0 HeadingMarkerToken 45..46 missing=false leading="" text="#" trailing=""
 T root/1/1 WhitespaceToken 46..47 missing=false leading="" text=" " trailing=""

@@ -155,22 +155,10 @@ fn frontmatter(
         OkfMarkdownSyntaxKind::FrontmatterOpenFence,
     )?;
     let mut clean = !recovered;
-    let mut entries_consumed_end = open.end;
-    for (start, end) in lines(source, open.end, entries_end) {
-        let line = line_at(source, start, end);
-        entries_consumed_end = structured_end(line);
-        let (entry, malformed) = frontmatter_entry(factory, text, source, line)?;
-        if malformed {
-            clean = false;
-            diagnostics.push(diagnostic(
-                OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
-                line.start,
-                line.significant_end,
-                "malformed frontmatter entry",
-            ));
-        }
-        children.push(GreenElement::Node(entry));
-    }
+    let (mapping, mapping_clean, entries_consumed_end) =
+        build_frontmatter_mapping(factory, text, source, open.end, entries_end, diagnostics)?;
+    clean = clean && mapping_clean;
+    children.push(GreenElement::Node(mapping));
     if let Some(close) = close {
         children.extend(line_tokens(
             factory,
@@ -337,6 +325,18 @@ fn plausible_unclosed_frontmatter(source: &str, from: usize, to: usize) -> bool 
         if line.start == line.significant_end {
             continue;
         }
+        let (indent, indent_end, _has_tab) =
+            leading_indent(source, line.start, line.significant_end);
+        // Comments, sequence items, and indented continuation lines never
+        // disqualify a candidate — only a column-0 `key:` line counts.
+        if source.as_bytes().get(indent_end) == Some(&b'#')
+            || is_dash_at(source, indent_end, line.significant_end)
+        {
+            continue;
+        }
+        if indent > 0 {
+            continue;
+        }
         let content = &source[line.start..line.significant_end];
         let Some(colon) = content.find(':') else {
             return false;
@@ -349,110 +349,822 @@ fn plausible_unclosed_frontmatter(source: &str, from: usize, to: usize) -> bool 
     entries > 0
 }
 
-fn frontmatter_entry(
+/// Which syntax kind a stack frame's finished children get wrapped in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FmContainerKind {
+    Mapping,
+    Sequence,
+}
+
+impl FmContainerKind {
+    fn node_kind(self) -> OkfMarkdownSyntaxKind {
+        match self {
+            FmContainerKind::Mapping => OkfMarkdownSyntaxKind::FrontmatterMapping,
+            FmContainerKind::Sequence => OkfMarkdownSyntaxKind::FrontmatterSequence,
+        }
+    }
+}
+
+/// An entry or sequence-item that has been opened (key+colon, or a dash) but
+/// whose value is not yet known — a deeper-indented line still to come
+/// decides whether it becomes a nested mapping, a nested sequence, or (on
+/// same/lesser indent, or EOF) an explicit `FrontmatterValue`/Null.
+struct FmPending {
+    is_sequence_item: bool,
+    /// Already-built prefix children (key/dash, colon, optional comment).
+    children: Vec<GreenElement<OkfMarkdownLanguage>>,
+    /// The newline token for the opening line, appended AFTER the value.
+    trailer: Option<GreenElement<OkfMarkdownLanguage>>,
+    /// Index in the owning frame's `children` this entry must land at once
+    /// resolved — recorded when the pending was opened, so a blank or
+    /// comment line pushed to the frame in the meantime (which never
+    /// touches a pending value slot) does not get sorted ahead of an entry
+    /// that started earlier in the source.
+    insert_at: usize,
+}
+
+struct FmFrame {
+    kind: FmContainerKind,
+    indent: usize,
+    children: Vec<GreenElement<OkfMarkdownLanguage>>,
+    seen_keys: Vec<String>,
+    pending: Option<FmPending>,
+}
+
+impl FmFrame {
+    fn new(kind: FmContainerKind, indent: usize) -> Self {
+        Self {
+            kind,
+            indent,
+            children: Vec::new(),
+            seen_keys: Vec::new(),
+            pending: None,
+        }
+    }
+
+    fn has_key(&self, key: &str) -> bool {
+        self.seen_keys.iter().any(|seen| seen == key)
+    }
+}
+
+enum ValueKind {
+    Bare,
+    Quoted,
+}
+
+struct ValueScan {
+    kind: ValueKind,
+    value_end: usize,
+    comment_start: Option<usize>,
+    unterminated: bool,
+    malformed: bool,
+}
+
+/// Scans a value position (after `key: ` or after `- `), quote-aware. Bare
+/// scalars stop at a ` #` trailing comment; a bare scalar containing `: `
+/// (colon-space) is flagged malformed per YAML's block-mapping grammar.
+fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
+    let bytes = source.as_bytes();
+    if start >= limit {
+        return ValueScan {
+            kind: ValueKind::Bare,
+            value_end: start,
+            comment_start: None,
+            unterminated: false,
+            malformed: false,
+        };
+    }
+    let first = bytes[start];
+    if first == b'\'' || first == b'"' {
+        let quote = first;
+        let mut at = start + 1;
+        let mut unterminated = true;
+        while at < limit {
+            if bytes[at] == quote {
+                if quote == b'\'' && at + 1 < limit && bytes[at + 1] == b'\'' {
+                    at += 2;
+                    continue;
+                }
+                at += 1;
+                unterminated = false;
+                break;
+            }
+            if quote == b'"' && bytes[at] == b'\\' && at + 1 < limit {
+                at += 2;
+                continue;
+            }
+            at += 1;
+        }
+        let value_end = at;
+        if unterminated {
+            // Already consumed to `limit` — nothing trails to scan.
+            return ValueScan {
+                kind: ValueKind::Quoted,
+                value_end,
+                comment_start: None,
+                unterminated: true,
+                malformed: false,
+            };
+        }
+        // A closed quote can still be followed by a trailing comment, or by
+        // garbage YAML would error on — fold garbage into the token's own
+        // span (rather than silently dropping it) and flag it malformed.
+        let mut trail = value_end;
+        while trail < limit && bytes[trail] == b' ' {
+            trail += 1;
+        }
+        if trail < limit && bytes[trail] == b'#' {
+            return ValueScan {
+                kind: ValueKind::Quoted,
+                value_end,
+                comment_start: Some(trail),
+                unterminated: false,
+                malformed: false,
+            };
+        }
+        return ValueScan {
+            kind: ValueKind::Quoted,
+            value_end: if trail < limit { limit } else { value_end },
+            comment_start: None,
+            unterminated: false,
+            malformed: trail < limit,
+        };
+    }
+    let mut at = start;
+    let mut comment_start = None;
+    let mut malformed = false;
+    while at < limit {
+        if bytes[at] == b'#' && at > start && bytes[at - 1] == b' ' {
+            comment_start = Some(at);
+            break;
+        }
+        if bytes[at] == b':' && at + 1 < limit && bytes[at + 1] == b' ' {
+            malformed = true;
+        }
+        at += 1;
+    }
+    let raw_end = comment_start.unwrap_or(at);
+    let value_end = trim_horizontal_end(source, start, raw_end);
+    ValueScan {
+        kind: ValueKind::Bare,
+        value_end,
+        comment_start,
+        unterminated: false,
+        malformed,
+    }
+}
+
+struct FmKeyMatch {
+    key_start: usize,
+    key_end: usize,
+    colon: usize,
+    key_kind: OkfMarkdownSyntaxKind,
+}
+
+/// Recognizes `key:` (bare or quoted) at a value position, per the YAML rule
+/// that the colon must be followed by a space or end-of-line.
+fn parse_mapping_key(source: &str, start: usize, limit: usize) -> Option<FmKeyMatch> {
+    let bytes = source.as_bytes();
+    if start >= limit {
+        return None;
+    }
+    if bytes[start] == b'\'' || bytes[start] == b'"' {
+        let quote = bytes[start];
+        let mut at = start + 1;
+        while at < limit {
+            if bytes[at] == quote {
+                if quote == b'\'' && at + 1 < limit && bytes[at + 1] == b'\'' {
+                    at += 2;
+                    continue;
+                }
+                at += 1;
+                break;
+            }
+            if quote == b'"' && bytes[at] == b'\\' && at + 1 < limit {
+                at += 2;
+                continue;
+            }
+            at += 1;
+        }
+        let key_end = at;
+        if key_end < limit
+            && bytes[key_end] == b':'
+            && (key_end + 1 == limit || bytes[key_end + 1] == b' ')
+        {
+            return Some(FmKeyMatch {
+                key_start: start,
+                key_end,
+                colon: key_end,
+                key_kind: OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken,
+            });
+        }
+        return None;
+    }
+    let mut at = start;
+    while at < limit {
+        if bytes[at] == b':' && (at + 1 == limit || bytes[at + 1] == b' ') {
+            let key_end = trim_horizontal_end(source, start, at);
+            if key_end == start {
+                return None;
+            }
+            return Some(FmKeyMatch {
+                key_start: start,
+                key_end,
+                colon: at,
+                key_kind: OkfMarkdownSyntaxKind::FrontmatterKey,
+            });
+        }
+        at += 1;
+    }
+    None
+}
+
+fn is_dash_at(source: &str, at: usize, limit: usize) -> bool {
+    let bytes = source.as_bytes();
+    at < limit && bytes[at] == b'-' && (at + 1 == limit || bytes[at + 1] == b' ')
+}
+
+/// Leading-whitespace run of a line: (column count, end offset, saw a tab).
+fn leading_indent(source: &str, start: usize, limit: usize) -> (usize, usize, bool) {
+    let bytes = source.as_bytes();
+    let mut at = start;
+    let mut has_tab = false;
+    while at < limit && matches!(bytes[at], b' ' | b'\t') {
+        has_tab |= bytes[at] == b'\t';
+        at += 1;
+    }
+    (at - start, at, has_tab)
+}
+
+fn blank_or_comment_entry(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
-    source: &str,
     line: Line,
-) -> Result<(crate::GreenNode<OkfMarkdownLanguage>, bool), ParseError> {
+    comment_start: Option<usize>,
+) -> Result<crate::GreenNode<OkfMarkdownLanguage>, ParseError> {
     let mut children = Vec::new();
-    if line.start == line.significant_end {
-        if line.newline_start < line.end {
-            children.push(GreenElement::Token(newline_token(factory, text, line)?));
-        }
-        return Ok((
-            identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)?,
-            false,
-        ));
-    }
-    let content = &source[line.start..line.significant_end];
-    let Some(relative_colon) = content.find(':') else {
-        let text_start = skip_horizontal(source, line.start, line.significant_end);
-        let leading = trivia(factory, text, line.start, text_start)?;
-        children.push(GreenElement::Token(
-            factory
-                .bad_token_with_leading(
-                    OkfMarkdownSyntaxKind::BadToken,
-                    slice(text, text_start, line.significant_end)?,
-                    leading,
-                    OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
-                )
-                .map_err(|_| ParseError::WidthOverflow)?,
-        ));
-        if line.newline_start < line.end {
-            children.push(GreenElement::Token(newline_token(factory, text, line)?));
-        }
-        return Ok((
-            identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)?,
-            true,
-        ));
-    };
-    let colon = line.start + relative_colon;
-    let key_start = skip_horizontal(source, line.start, colon);
-    let key_end = trim_horizontal_end(source, key_start, colon);
-    if key_start == key_end {
-        let leading = trivia(factory, text, line.start, colon)?;
-        children.push(GreenElement::Token(
-            factory
-                .bad_token_with_leading(
-                    OkfMarkdownSyntaxKind::BadToken,
-                    slice(text, colon, line.significant_end)?,
-                    leading,
-                    OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
-                )
-                .map_err(|_| ParseError::WidthOverflow)?,
-        ));
-        if line.newline_start < line.end {
-            children.push(GreenElement::Token(newline_token(factory, text, line)?));
-        }
-        return Ok((
-            identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)?,
-            true,
-        ));
-    }
-    children.push(GreenElement::Token(token_with_leading(
-        factory,
-        text,
-        line.start,
-        key_start,
-        key_end,
-        OkfMarkdownSyntaxKind::FrontmatterKey,
-    )?));
-    children.push(GreenElement::Token(token_with_leading(
-        factory,
-        text,
-        key_end,
-        colon,
-        colon + 1,
-        OkfMarkdownSyntaxKind::ColonToken,
-    )?));
-    let value_start = skip_horizontal(source, colon + 1, line.significant_end);
-    if value_start == line.significant_end {
-        children.push(GreenElement::Token(
-            factory
-                .missing_token_with_leading(
-                    OkfMarkdownSyntaxKind::FrontmatterValue,
-                    trivia(factory, text, colon + 1, value_start)?,
-                )
-                .map_err(|_| ParseError::WidthOverflow)?,
-        ));
-    } else {
+    if let Some(comment_start) = comment_start {
         children.push(GreenElement::Token(token_with_leading(
             factory,
             text,
-            colon + 1,
-            value_start,
+            line.start,
+            comment_start,
             line.significant_end,
-            OkfMarkdownSyntaxKind::FrontmatterValue,
+            OkfMarkdownSyntaxKind::FrontmatterCommentToken,
         )?));
     }
     if line.newline_start < line.end {
         children.push(GreenElement::Token(newline_token(factory, text, line)?));
     }
-    Ok((
-        identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)?,
-        false,
-    ))
+    identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)
+}
+
+fn bad_line_entry(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    text: &SourceText,
+    source: &str,
+    line: Line,
+    content_start: usize,
+    code: OkfSyntaxDiagnosticCode,
+) -> Result<crate::GreenNode<OkfMarkdownLanguage>, ParseError> {
+    let leading = trivia(factory, text, line.start, content_start)?;
+    let mut children = vec![GreenElement::Token(
+        factory
+            .bad_token_with_leading(
+                OkfMarkdownSyntaxKind::BadToken,
+                slice(text, content_start, line.significant_end)?,
+                leading,
+                code,
+            )
+            .map_err(|_| ParseError::WidthOverflow)?,
+    )];
+    let _ = source;
+    if line.newline_start < line.end {
+        children.push(GreenElement::Token(newline_token(factory, text, line)?));
+    }
+    identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)
+}
+
+fn pop_frame(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    stack: &mut Vec<FmFrame>,
+) -> Result<(), ParseError> {
+    let frame = stack.pop().expect("pop_frame requires a frame to pop");
+    let node = identified_node(factory, frame.kind.node_kind(), frame.children)?;
+    let parent = stack.last_mut().expect("root frame is never popped");
+    if let Some(pending) = parent.pending.take() {
+        let mut children = pending.children;
+        // The trailer is the newline that ended the opening ("key:" / "-")
+        // line — it precedes the nested block's own bytes in source order.
+        if let Some(trailer) = pending.trailer {
+            children.push(trailer);
+        }
+        children.push(GreenElement::Node(node));
+        let wrap_kind = if pending.is_sequence_item {
+            OkfMarkdownSyntaxKind::FrontmatterSequenceItem
+        } else {
+            OkfMarkdownSyntaxKind::FrontmatterEntry
+        };
+        let insert_at = pending.insert_at.min(parent.children.len());
+        parent.children.insert(
+            insert_at,
+            GreenElement::Node(identified_node(factory, wrap_kind, children)?),
+        );
+    } else {
+        // Defensive: a frame is only ever opened to satisfy a pending value
+        // slot, so this should not happen in practice.
+        parent.children.push(GreenElement::Node(node));
+    }
+    Ok(())
+}
+
+fn finalize_pending_with_null(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    stack: &mut [FmFrame],
+) -> Result<(), ParseError> {
+    let frame = stack.last_mut().expect("stack is never empty");
+    if let Some(pending) = frame.pending.take() {
+        let mut children = pending.children;
+        if let Some(trailer) = pending.trailer {
+            children.push(trailer);
+        }
+        children.push(GreenElement::Token(
+            factory.missing_token(OkfMarkdownSyntaxKind::FrontmatterValue),
+        ));
+        let wrap_kind = if pending.is_sequence_item {
+            OkfMarkdownSyntaxKind::FrontmatterSequenceItem
+        } else {
+            OkfMarkdownSyntaxKind::FrontmatterEntry
+        };
+        let insert_at = pending.insert_at.min(frame.children.len());
+        frame.children.insert(
+            insert_at,
+            GreenElement::Node(identified_node(factory, wrap_kind, children)?),
+        );
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_mapping_entry(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    text: &SourceText,
+    source: &str,
+    line: Line,
+    key: FmKeyMatch,
+    stack: &mut [FmFrame],
+    diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
+) -> Result<bool, ParseError> {
+    let mut malformed = false;
+    let mut children = vec![
+        GreenElement::Token(token_with_leading(
+            factory,
+            text,
+            line.start,
+            key.key_start,
+            key.key_end,
+            key.key_kind,
+        )?),
+        GreenElement::Token(token_with_leading(
+            factory,
+            text,
+            key.key_end,
+            key.colon,
+            key.colon + 1,
+            OkfMarkdownSyntaxKind::ColonToken,
+        )?),
+    ];
+    let key_text = source[key.key_start..key.key_end].to_owned();
+    let frame = stack.last_mut().expect("stack is never empty");
+    let dup = frame.has_key(&key_text);
+    if dup {
+        malformed = true;
+        diagnostics.push(diagnostic(
+            OkfSyntaxDiagnosticCode::DuplicateFrontmatterKey,
+            key.key_start,
+            key.key_end,
+            "duplicate frontmatter key",
+        ));
+    }
+    frame.seen_keys.push(key_text);
+
+    let value_start = skip_horizontal(source, key.colon + 1, line.significant_end);
+    let starts_comment =
+        value_start < line.significant_end && source.as_bytes()[value_start] == b'#';
+    if value_start == line.significant_end || starts_comment {
+        if starts_comment {
+            children.push(GreenElement::Token(token_with_leading(
+                factory,
+                text,
+                key.colon + 1,
+                value_start,
+                line.significant_end,
+                OkfMarkdownSyntaxKind::FrontmatterCommentToken,
+            )?));
+        }
+        let trailer = if line.newline_start < line.end {
+            Some(GreenElement::Token(newline_token(factory, text, line)?))
+        } else {
+            None
+        };
+        let insert_at = frame.children.len();
+        frame.pending = Some(FmPending {
+            is_sequence_item: false,
+            children,
+            trailer,
+            insert_at,
+        });
+        return Ok(malformed);
+    }
+
+    let scan = scan_value(source, value_start, line.significant_end);
+    match scan.kind {
+        ValueKind::Quoted => {
+            children.push(GreenElement::Token(token_with_leading(
+                factory,
+                text,
+                key.colon + 1,
+                value_start,
+                scan.value_end,
+                OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken,
+            )?));
+            if scan.unterminated {
+                malformed = true;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::UnterminatedQuotedScalar,
+                    value_start,
+                    scan.value_end,
+                    "unterminated quoted scalar",
+                ));
+            } else if scan.malformed {
+                malformed = true;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                    value_start,
+                    scan.value_end,
+                    "malformed frontmatter entry",
+                ));
+            }
+        }
+        ValueKind::Bare => {
+            children.push(GreenElement::Token(token_with_leading(
+                factory,
+                text,
+                key.colon + 1,
+                value_start,
+                scan.value_end,
+                OkfMarkdownSyntaxKind::FrontmatterValue,
+            )?));
+            if scan.malformed {
+                malformed = true;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                    value_start,
+                    line.significant_end,
+                    "malformed frontmatter entry",
+                ));
+            }
+        }
+    }
+    if let Some(comment_start) = scan.comment_start {
+        children.push(GreenElement::Token(token_with_leading(
+            factory,
+            text,
+            scan.value_end,
+            comment_start,
+            line.significant_end,
+            OkfMarkdownSyntaxKind::FrontmatterCommentToken,
+        )?));
+    }
+    if line.newline_start < line.end {
+        children.push(GreenElement::Token(newline_token(factory, text, line)?));
+    }
+    frame.children.push(GreenElement::Node(identified_node(
+        factory,
+        OkfMarkdownSyntaxKind::FrontmatterEntry,
+        children,
+    )?));
+    Ok(malformed)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_sequence_item(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    text: &SourceText,
+    source: &str,
+    line: Line,
+    indent_end: usize,
+    stack: &mut Vec<FmFrame>,
+    diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
+) -> Result<bool, ParseError> {
+    let dash = GreenElement::Token(token_with_leading(
+        factory,
+        text,
+        line.start,
+        indent_end,
+        indent_end + 1,
+        OkfMarkdownSyntaxKind::FrontmatterDashToken,
+    )?);
+    let after_dash = skip_horizontal(source, indent_end + 1, line.significant_end);
+    if after_dash == line.significant_end {
+        let mut children = vec![
+            dash,
+            GreenElement::Token(
+                factory
+                    .missing_token_with_leading(
+                        OkfMarkdownSyntaxKind::FrontmatterValue,
+                        trivia(factory, text, indent_end + 1, after_dash)?,
+                    )
+                    .map_err(|_| ParseError::WidthOverflow)?,
+            ),
+        ];
+        if line.newline_start < line.end {
+            children.push(GreenElement::Token(newline_token(factory, text, line)?));
+        }
+        stack
+            .last_mut()
+            .expect("stack is never empty")
+            .children
+            .push(GreenElement::Node(identified_node(
+                factory,
+                OkfMarkdownSyntaxKind::FrontmatterSequenceItem,
+                children,
+            )?));
+        return Ok(false);
+    }
+    if let Some(key) = parse_mapping_key(source, after_dash, line.significant_end) {
+        let parent = stack.last_mut().expect("stack is never empty");
+        let insert_at = parent.children.len();
+        parent.pending = Some(FmPending {
+            is_sequence_item: true,
+            children: vec![dash],
+            trailer: None,
+            insert_at,
+        });
+        stack.push(FmFrame::new(
+            FmContainerKind::Mapping,
+            after_dash - line.start,
+        ));
+        return push_mapping_entry(factory, text, source, line, key, stack, diagnostics);
+    }
+
+    let mut malformed = false;
+    let mut children = vec![dash];
+    let scan = scan_value(source, after_dash, line.significant_end);
+    match scan.kind {
+        ValueKind::Quoted => {
+            children.push(GreenElement::Token(token_with_leading(
+                factory,
+                text,
+                indent_end + 1,
+                after_dash,
+                scan.value_end,
+                OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken,
+            )?));
+            if scan.unterminated {
+                malformed = true;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::UnterminatedQuotedScalar,
+                    after_dash,
+                    scan.value_end,
+                    "unterminated quoted scalar",
+                ));
+            }
+        }
+        ValueKind::Bare => {
+            children.push(GreenElement::Token(token_with_leading(
+                factory,
+                text,
+                indent_end + 1,
+                after_dash,
+                scan.value_end,
+                OkfMarkdownSyntaxKind::FrontmatterValue,
+            )?));
+            if scan.malformed {
+                malformed = true;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                    after_dash,
+                    line.significant_end,
+                    "malformed frontmatter entry",
+                ));
+            }
+        }
+    }
+    if let Some(comment_start) = scan.comment_start {
+        children.push(GreenElement::Token(token_with_leading(
+            factory,
+            text,
+            scan.value_end,
+            comment_start,
+            line.significant_end,
+            OkfMarkdownSyntaxKind::FrontmatterCommentToken,
+        )?));
+    }
+    if line.newline_start < line.end {
+        children.push(GreenElement::Token(newline_token(factory, text, line)?));
+    }
+    stack
+        .last_mut()
+        .expect("stack is never empty")
+        .children
+        .push(GreenElement::Node(identified_node(
+            factory,
+            OkfMarkdownSyntaxKind::FrontmatterSequenceItem,
+            children,
+        )?));
+    Ok(malformed)
+}
+
+/// Builds the single `FrontmatterMapping` node that sits between the fences,
+/// via an explicit indent-stack over the significant lines `[from, to)`.
+/// Returns the node, whether it stayed clean (no recovery needed), and the
+/// consumed-end offset of the last significant line (mirrors `structured_end`).
+fn build_frontmatter_mapping(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    text: &SourceText,
+    source: &str,
+    from: usize,
+    to: usize,
+    diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
+) -> Result<(crate::GreenNode<OkfMarkdownLanguage>, bool, usize), ParseError> {
+    let mut clean = true;
+    let mut entries_consumed_end = from;
+    let mut stack: Vec<FmFrame> = vec![FmFrame::new(FmContainerKind::Mapping, 0)];
+
+    for (start, end) in lines(source, from, to) {
+        let line = line_at(source, start, end);
+        entries_consumed_end = structured_end(line);
+
+        if line.start == line.significant_end {
+            let entry = blank_or_comment_entry(factory, text, line, None)?;
+            stack
+                .last_mut()
+                .expect("stack is never empty")
+                .children
+                .push(GreenElement::Node(entry));
+            continue;
+        }
+
+        let (indent, indent_end, has_tab) =
+            leading_indent(source, line.start, line.significant_end);
+
+        if has_tab {
+            clean = false;
+            diagnostics.push(diagnostic(
+                OkfSyntaxDiagnosticCode::TabInFrontmatterIndent,
+                line.start,
+                indent_end,
+                "tab used in frontmatter indentation",
+            ));
+            finalize_pending_with_null(factory, &mut stack)?;
+            let entry = bad_line_entry(
+                factory,
+                text,
+                source,
+                line,
+                indent_end,
+                OkfSyntaxDiagnosticCode::TabInFrontmatterIndent,
+            )?;
+            stack
+                .last_mut()
+                .expect("stack is never empty")
+                .children
+                .push(GreenElement::Node(entry));
+            continue;
+        }
+
+        if source.as_bytes().get(indent_end) == Some(&b'#') {
+            let entry = blank_or_comment_entry(factory, text, line, Some(indent_end))?;
+            stack
+                .last_mut()
+                .expect("stack is never empty")
+                .children
+                .push(GreenElement::Node(entry));
+            continue;
+        }
+
+        let top_indent = stack.last().expect("stack is never empty").indent;
+        if indent > top_indent {
+            if stack
+                .last()
+                .expect("stack is never empty")
+                .pending
+                .is_none()
+            {
+                clean = false;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                    line.start,
+                    indent_end,
+                    "frontmatter indentation does not match an open block",
+                ));
+                let entry = bad_line_entry(
+                    factory,
+                    text,
+                    source,
+                    line,
+                    indent_end,
+                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                )?;
+                stack
+                    .last_mut()
+                    .expect("stack is never empty")
+                    .children
+                    .push(GreenElement::Node(entry));
+                continue;
+            }
+            let kind = if is_dash_at(source, indent_end, line.significant_end) {
+                FmContainerKind::Sequence
+            } else {
+                FmContainerKind::Mapping
+            };
+            stack.push(FmFrame::new(kind, indent));
+        } else if indent < top_indent {
+            while stack.len() > 1 && indent < stack.last().expect("checked len").indent {
+                pop_frame(factory, &mut stack)?;
+            }
+            if indent != stack.last().expect("stack is never empty").indent {
+                clean = false;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                    line.start,
+                    indent_end,
+                    "frontmatter indentation does not match an open block",
+                ));
+                let entry = bad_line_entry(
+                    factory,
+                    text,
+                    source,
+                    line,
+                    indent_end,
+                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                )?;
+                stack
+                    .last_mut()
+                    .expect("stack is never empty")
+                    .children
+                    .push(GreenElement::Node(entry));
+                continue;
+            }
+            finalize_pending_with_null(factory, &mut stack)?;
+        } else {
+            finalize_pending_with_null(factory, &mut stack)?;
+        }
+
+        if is_dash_at(source, indent_end, line.significant_end) {
+            let malformed = push_sequence_item(
+                factory,
+                text,
+                source,
+                line,
+                indent_end,
+                &mut stack,
+                diagnostics,
+            )?;
+            clean = clean && !malformed;
+            continue;
+        }
+
+        if let Some(key) = parse_mapping_key(source, indent_end, line.significant_end) {
+            let malformed =
+                push_mapping_entry(factory, text, source, line, key, &mut stack, diagnostics)?;
+            clean = clean && !malformed;
+        } else {
+            clean = false;
+            diagnostics.push(diagnostic(
+                OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                line.start,
+                line.significant_end,
+                "malformed frontmatter entry",
+            ));
+            let entry = bad_line_entry(
+                factory,
+                text,
+                source,
+                line,
+                indent_end,
+                OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+            )?;
+            stack
+                .last_mut()
+                .expect("stack is never empty")
+                .children
+                .push(GreenElement::Node(entry));
+        }
+    }
+
+    while stack.len() > 1 {
+        pop_frame(factory, &mut stack)?;
+    }
+    finalize_pending_with_null(factory, &mut stack)?;
+    let root = stack.pop().expect("root frame always exists");
+    let node = identified_node(
+        factory,
+        OkfMarkdownSyntaxKind::FrontmatterMapping,
+        root.children,
+    )?;
+    Ok((node, clean, entries_consumed_end))
 }
 
 fn identified_node(
@@ -706,6 +1418,58 @@ mod tests {
         assert_eq!(full.tree.write_to_string(), text.shared().as_str());
         assert_eq!(parsed.elements.len(), 1);
         assert_eq!(element_width(&parsed.elements[0]), frontmatter.len());
+    }
+
+    #[test]
+    fn nested_frontmatter_mapping_has_recursive_tree_shape() {
+        let text = source("---\na:\n  b: 1\n---\n");
+        let shell = parse(text.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
+        assert_eq!(shell.tree.write_to_string(), text.shared().as_str());
+
+        let root = shell.tree.root();
+        let frontmatter = root
+            .children()
+            .filter_map(crate::SyntaxElement::into_node)
+            .find(|n| n.kind() == OkfMarkdownSyntaxKind::Frontmatter)
+            .expect("frontmatter node");
+        let outer_mapping = frontmatter
+            .children()
+            .filter_map(crate::SyntaxElement::into_node)
+            .find(|n| n.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping)
+            .expect("outer mapping");
+        let entry_a = outer_mapping
+            .children()
+            .filter_map(crate::SyntaxElement::into_node)
+            .find(|n| n.kind() == OkfMarkdownSyntaxKind::FrontmatterEntry)
+            .expect("entry a");
+        let key_a = entry_a
+            .children()
+            .filter_map(crate::SyntaxElement::into_token)
+            .find(|t| t.kind() == OkfMarkdownSyntaxKind::FrontmatterKey)
+            .expect("key a");
+        assert_eq!(key_a.text().write_to_string(), "a");
+        let inner_mapping = entry_a
+            .children()
+            .filter_map(crate::SyntaxElement::into_node)
+            .find(|n| n.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping)
+            .expect("inner mapping");
+        let entry_b = inner_mapping
+            .children()
+            .filter_map(crate::SyntaxElement::into_node)
+            .find(|n| n.kind() == OkfMarkdownSyntaxKind::FrontmatterEntry)
+            .expect("entry b");
+        let key_b = entry_b
+            .children()
+            .filter_map(crate::SyntaxElement::into_token)
+            .find(|t| t.kind() == OkfMarkdownSyntaxKind::FrontmatterKey)
+            .expect("key b");
+        assert_eq!(key_b.text().write_to_string(), "b");
+        let value_b = entry_b
+            .children()
+            .filter_map(crate::SyntaxElement::into_token)
+            .find(|t| t.kind() == OkfMarkdownSyntaxKind::FrontmatterValue)
+            .expect("value b");
+        assert_eq!(value_b.text().write_to_string(), "1");
     }
 
     #[test]

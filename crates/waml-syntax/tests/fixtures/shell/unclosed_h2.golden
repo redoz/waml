@@ -2,14 +2,15 @@ N root Root 0..32
 N root/0 Frontmatter 0..21
 T root/0/0 FrontmatterOpenFence 0..3 missing=false leading="" text="---" trailing=""
 T root/0/1 NewlineToken 3..4 missing=false leading="" text="\n" trailing=""
-N root/0/2 FrontmatterEntry 4..20
-T root/0/2/0 FrontmatterKey 4..8 missing=false leading="" text="type" trailing=""
-T root/0/2/1 ColonToken 8..9 missing=false leading="" text=":" trailing=""
-T root/0/2/2 FrontmatterValue 9..19 missing=false leading=" " text="arbitrary" trailing=""
-T root/0/2/3 NewlineToken 19..20 missing=false leading="" text="\n" trailing=""
-N root/0/3 FrontmatterEntry 20..21
-T root/0/3/0 NewlineToken 20..21 missing=false leading="" text="\n" trailing=""
-T root/0/4 FrontmatterCloseFence 21..21 missing=true leading="" text="" trailing=""
+N root/0/2 FrontmatterMapping 4..21
+N root/0/2/0 FrontmatterEntry 4..20
+T root/0/2/0/0 FrontmatterKey 4..8 missing=false leading="" text="type" trailing=""
+T root/0/2/0/1 ColonToken 8..9 missing=false leading="" text=":" trailing=""
+T root/0/2/0/2 FrontmatterValue 9..19 missing=false leading=" " text="arbitrary" trailing=""
+T root/0/2/0/3 NewlineToken 19..20 missing=false leading="" text="\n" trailing=""
+N root/0/2/1 FrontmatterEntry 20..21
+T root/0/2/1/0 NewlineToken 20..21 missing=false leading="" text="\n" trailing=""
+T root/0/3 FrontmatterCloseFence 21..21 missing=true leading="" text="" trailing=""
 N root/1 AtxHeading 21..32
 T root/1/0 HeadingMarkerToken 21..23 missing=false leading="" text="##" trailing=""
 T root/1/1 WhitespaceToken 23..24 missing=false leading="" text=" " trailing=""

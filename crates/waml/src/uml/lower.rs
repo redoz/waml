@@ -663,8 +663,15 @@ fn frontmatter_entries(source: &str, op: &str) -> Result<Vec<(String, Range<usiz
         .filter_map(SyntaxElement::into_node)
         .filter(|node| node.kind() == OkfMarkdownSyntaxKind::Frontmatter)
     {
-        for node in frontmatter
+        let entry_parent = frontmatter
             .children()
+            .filter_map(SyntaxElement::into_node)
+            .find(|node| node.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping);
+        let entry_source: Box<dyn Iterator<Item = SyntaxElement<_>>> = match &entry_parent {
+            Some(mapping) => Box::new(mapping.children()),
+            None => Box::new(frontmatter.children()),
+        };
+        for node in entry_source
             .filter_map(SyntaxElement::into_node)
             .filter(|node| node.kind() == OkfMarkdownSyntaxKind::FrontmatterEntry)
         {

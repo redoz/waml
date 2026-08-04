@@ -282,7 +282,16 @@ pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Opt
     }
 
     let mut frontmatter = Frontmatter::default();
-    for entry in node.children().filter_map(SyntaxElement::into_node) {
+    let entry_parent = node
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .find(|n| n.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping);
+    let entries: Box<dyn Iterator<Item = SyntaxElement<OkfMarkdownLanguage>>> = match &entry_parent
+    {
+        Some(mapping) => Box::new(mapping.children()),
+        None => Box::new(node.children()),
+    };
+    for entry in entries.filter_map(SyntaxElement::into_node) {
         if entry.kind() != OkfMarkdownSyntaxKind::FrontmatterEntry {
             continue;
         }
@@ -294,6 +303,9 @@ pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Opt
                 OkfMarkdownSyntaxKind::FrontmatterValue if !token.flags().is_missing() => {
                     value = Some(token.text().write_to_string())
                 }
+                OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken => {
+                    value = Some(decode_quoted_scalar(&token.text().write_to_string()))
+                }
                 _ => {}
             }
         }
@@ -302,6 +314,30 @@ pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Opt
         }
     }
     Some(frontmatter)
+}
+
+/// Minimal single/double-quoted scalar decoding for the top-level reader.
+/// Full escape-sequence decoding lands with the value reader in a later task
+/// — this only strips the surrounding quotes and undoes the `''` escape.
+fn decode_quoted_scalar(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    if bytes.len() < 2 {
+        return raw.to_string();
+    }
+    // An unterminated quoted scalar (already flagged by
+    // `UnterminatedQuotedScalar`) has no closing quote byte to strip — only
+    // peel the opening quote so a multi-byte final character stays intact.
+    let closed = matches!(bytes[bytes.len() - 1], b'\'' | b'"') && bytes.len() > 1;
+    let inner = if closed {
+        &raw[1..raw.len() - 1]
+    } else {
+        &raw[1..]
+    };
+    match bytes[0] {
+        b'\'' => inner.replace("''", "'"),
+        b'"' => decode_quoted_string(inner),
+        _ => raw.to_string(),
+    }
 }
 
 /// Render any `FmValue` in its canonical form. Total over parsed input: a
