@@ -106,6 +106,16 @@ pub(super) fn browser_save_fragment(ticket: &SaveTicket) -> (String, SaveComplet
     )
 }
 
+/// What a save backend produced. Native and the browser-fragment backend
+/// finish synchronously; the API backend's write is a `cx.http_request` that
+/// only resolves in `handle_http_response`, so `save()` must be able to defer
+/// completing the ticket instead of finishing it on the spot.
+pub(super) enum SaveOutcome {
+    Complete(SaveCompletion),
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Pending,
+}
+
 impl App {
     /// Surface a failed user gesture (open, export, boot) in the GUI, on
     /// whichever screen is up: the statusbar's feedback line (the channel save
@@ -183,10 +193,16 @@ impl App {
         if ticket.snapshot.source.is_empty() {
             return Err("cannot save an empty bundle".to_string());
         }
-        let completion = self.save_backend(cx, &ticket)?;
-        let result = completion.result.clone();
-        self.session.finish_save(completion);
-        result
+        match self.save_backend(cx, &ticket)? {
+            SaveOutcome::Complete(completion) => {
+                let result = completion.result.clone();
+                self.session.finish_save(completion);
+                result
+            }
+            // The API backend's POST is in flight; `finish_api_save` completes
+            // the ticket once its response (or error) arrives.
+            SaveOutcome::Pending => Ok(()),
+        }
     }
 
     fn sync_save_error(&mut self, cx: &mut Cx) {
@@ -217,7 +233,9 @@ impl App {
         result
     }
 
-    #[allow(dead_code)] // Native file watching calls this ingress when enabled.
+    // Consumed on wasm by `reload_from_bundle` (a save-conflict reload); native
+    // file watching will call this ingress too when enabled.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     fn replace_external_document(
         &mut self,
         cx: &mut Cx,
@@ -267,16 +285,20 @@ impl App {
     /// `replace`, not push: an edit is not a navigation, and one history entry
     /// per save would make Back mean "undo some edits, sometimes".
     #[cfg(target_arch = "wasm32")]
-    fn save_backend(&self, cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveCompletion, String> {
+    fn save_backend(&mut self, cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveOutcome, String> {
+        if let Some(api) = self.api_backend.clone() {
+            self.start_api_save(cx, api, ticket.clone());
+            return Ok(SaveOutcome::Pending);
+        }
         let (fragment, completion) = browser_save_fragment(ticket);
         cx.browser_update_url(&fragment, true);
-        Ok(completion)
+        Ok(SaveOutcome::Complete(completion))
     }
 
     /// Native backing: atomically replace each authored file in the opened OKF
     /// directory. The helper validates bundle paths before performing writes.
     #[cfg(not(target_arch = "wasm32"))]
-    fn save_backend(&self, _cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveCompletion, String> {
+    fn save_backend(&mut self, _cx: &mut Cx, ticket: &SaveTicket) -> Result<SaveOutcome, String> {
         let Some(root) = self.open_dir.as_deref() else {
             return Err("native bundle has no opened directory".to_string());
         };
@@ -285,7 +307,112 @@ impl App {
         completion.result = completion
             .result
             .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"));
-        Ok(completion)
+        Ok(SaveOutcome::Complete(completion))
+    }
+
+    /// Complete a save whose write happened through the API backend: the
+    /// `session`/`save_feedback`/statusbar path a synchronous backend drives
+    /// inline from `save_or_retry`, run here instead once the response (or
+    /// error) for the `cx.http_request` `save_backend` issued has arrived.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn finish_api_save(
+        &mut self,
+        cx: &mut Cx,
+        ticket: SaveTicket,
+        result: Result<u64, String>,
+    ) {
+        let result = result.map(|revision| {
+            if let Some(api) = self.api_backend.as_mut() {
+                api.revision = revision;
+            }
+        });
+        let completion = SaveCompletion {
+            revision: ticket.revision,
+            history_state: ticket.history_state,
+            result: result.clone(),
+        };
+        self.session.finish_save(completion);
+        if let Err(error) = &result {
+            log!("failed to save open document: {error}");
+            if self.session.is_dirty() {
+                self.schedule_save(cx);
+            }
+        }
+        self.save_feedback.finish_save(&result);
+        self.sync_save_error(cx);
+    }
+
+    /// Send `ticket`'s dirty documents to `api`'s `/api/documents` route and
+    /// stash the ticket so the response can complete it. One save in flight at
+    /// a time: a save requested while this one is pending goes back through
+    /// the existing debounce and will be sent once this response lands.
+    #[cfg(target_arch = "wasm32")]
+    fn start_api_save(&mut self, cx: &mut Cx, api: ApiBackend, ticket: SaveTicket) {
+        let body = match crate::api_save::documents_request(&ticket, api.revision) {
+            Ok(body) => body,
+            Err(error) => {
+                self.finish_api_save(cx, ticket, Err(error));
+                return;
+            }
+        };
+        self.pending_api_save = Some(ticket);
+        let mut request = HttpRequest::new(
+            format!("{}/documents", api.base.trim_end_matches('/')),
+            HttpMethod::POST,
+        );
+        request.set_header("Content-Type".to_string(), "application/json".to_string());
+        request.set_header("X-Waml-Client".to_string(), "1".to_string());
+        if let Some(token) = &api.token {
+            request.set_header("Authorization".to_string(), format!("Bearer {token}"));
+        }
+        request.set_body(body.into_bytes());
+        cx.http_request(live_id!(save_api), request);
+    }
+
+    /// A save 409'd: the server's bundle moved past the ticket's baseline.
+    /// Re-fetch it and route every changed document through the existing
+    /// `replace_external_document` ingress, never a silent clobber of local
+    /// edits (a document with local edits still pending simply reports the
+    /// usual conflict from that path and is left alone).
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn start_api_reload(&mut self, cx: &mut Cx) {
+        let Some(api) = self.api_backend.clone() else {
+            return;
+        };
+        let (url, headers) =
+            crate::browser_boot::api_bundle_request(&api.base, api.token.as_deref());
+        let mut request = HttpRequest::new(url, HttpMethod::GET);
+        for (name, value) in headers {
+            request.set_header(name, value);
+        }
+        cx.http_request(live_id!(reload_api), request);
+    }
+
+    /// Replace every currently-open document whose text in `bundle` differs
+    /// from what the session has, using each document's own tracked revision
+    /// as the base -- exactly what `replace_external_document` already
+    /// guards against a concurrent local edit with.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn reload_from_bundle(&mut self, cx: &mut Cx, bundle: waml::source::SourceBundle) {
+        let snapshot = self.session.snapshot();
+        let mut changes = Vec::new();
+        for document in bundle.documents() {
+            let Some(id) = snapshot.okf_analysis.catalog.id_for_path(document.path()) else {
+                continue;
+            };
+            let Some(syntax) = snapshot.markdown_snapshot(id) else {
+                continue;
+            };
+            if syntax.text().shared().as_str() == document.text() {
+                continue;
+            }
+            changes.push((id, syntax.revision(), document.text().to_string()));
+        }
+        for (id, base_revision, text) in changes {
+            if let Err(error) = self.replace_external_document(cx, id, base_revision, text) {
+                log!("could not reload a document after a save conflict: {error}");
+            }
+        }
     }
 
     /// Read `dir` from disk and populate the editor. Returns `false` if a

@@ -130,6 +130,18 @@ impl EditorSessionSnapshot {
         self.markdown_snapshots.get(&document)
     }
 
+    /// Test-only: swap in a different `persisted_source`, so callers outside
+    /// this module can build a snapshot that carries an unsaved new file
+    /// (`persisted_source` predates it) without needing access to this
+    /// struct's private fields.
+    #[cfg(test)]
+    pub(crate) fn with_persisted_source(&self, persisted_source: Arc<SourceBundle>) -> Self {
+        Self {
+            persisted_source,
+            ..self.clone()
+        }
+    }
+
     /// Map a range from a known source revision to the current Markdown
     /// snapshot. A change that touches the range fails instead of selecting
     /// text that no longer has the same meaning.

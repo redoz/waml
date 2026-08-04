@@ -731,6 +731,12 @@ pub struct App {
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     #[rust]
     pending_api_boot: Option<(String, Option<String>)>,
+    /// The `SaveTicket` an in-flight `POST /api/documents` was built from, so
+    /// `handle_http_response`/`handle_http_request_error` can complete it
+    /// (`workspace::App::finish_api_save`) once the write resolves.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[rust]
+    pending_api_save: Option<SaveTicket>,
 }
 
 impl MatchEvent for App {
@@ -902,6 +908,69 @@ impl MatchEvent for App {
             }
             return;
         }
+        if request_id == live_id!(save_api) {
+            let Some(ticket) = self.pending_api_save.take() else {
+                return;
+            };
+            if response.status_code == 409 {
+                if let Ok(current) = crate::api_save::parse_conflict(body) {
+                    if let Some(api) = self.api_backend.as_mut() {
+                        api.revision = current;
+                    }
+                }
+                self.start_api_reload(cx);
+                self.finish_api_save(
+                    cx,
+                    ticket,
+                    Err(
+                        "save conflicted with a newer revision on the server; reloading"
+                            .to_string(),
+                    ),
+                );
+                return;
+            }
+            if !ok {
+                let message = String::from_utf8_lossy(body).into_owned();
+                self.finish_api_save(
+                    cx,
+                    ticket,
+                    Err(format!("save failed ({}): {message}", response.status_code)),
+                );
+                return;
+            }
+            let result = crate::api_save::parse_save_response(body);
+            self.finish_api_save(cx, ticket, result);
+            return;
+        }
+        if request_id == live_id!(reload_api) {
+            let Some(api) = self.api_backend.clone() else {
+                return;
+            };
+            if !ok {
+                log!(
+                    "could not reload {} after a save conflict: status {}",
+                    api.base,
+                    response.status_code
+                );
+                return;
+            }
+            match crate::browser_boot::decode_boot_bundle(body) {
+                Ok(bundle) => {
+                    let revision = response
+                        .headers
+                        .iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case("x-waml-revision"))
+                        .and_then(|(_, values)| values.first())
+                        .and_then(|value| value.parse::<u64>().ok());
+                    if let (Some(revision), Some(api)) = (revision, self.api_backend.as_mut()) {
+                        api.revision = revision;
+                    }
+                    self.reload_from_bundle(cx, bundle);
+                }
+                Err(error) => log!("could not reload {}: {error}", api.base),
+            }
+            return;
+        }
         if request_id != live_id!(boot_bundle) {
             return;
         }
@@ -947,6 +1016,22 @@ impl MatchEvent for App {
                 let message = crate::browser_boot::api_boot_error(&base, None);
                 tracing::error!(base = %base, "{message}");
                 self.report_action_error(cx, &message);
+            }
+            return;
+        }
+        if request_id == live_id!(save_api) {
+            if let Some(ticket) = self.pending_api_save.take() {
+                self.finish_api_save(
+                    cx,
+                    ticket,
+                    Err("could not reach the serve backend to save".to_string()),
+                );
+            }
+            return;
+        }
+        if request_id == live_id!(reload_api) {
+            if let Some(api) = self.api_backend.as_ref() {
+                log!("could not reload {} after a save conflict", api.base);
             }
             return;
         }

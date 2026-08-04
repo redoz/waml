@@ -5,6 +5,7 @@ use waml_editor::{editor_history, view_history};
 mod accent;
 mod action_link;
 mod agent_mark;
+mod api_save;
 mod app;
 mod attr_row;
 mod behavior_doc_view;

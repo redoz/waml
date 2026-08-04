@@ -272,6 +272,36 @@ mod tests {
         assert_eq!(reproduced.to_pairs(), state.prepared.source().to_pairs());
     }
 
+    /// `waml-cli` and `waml-editor` share no dependency edge, so their two
+    /// `DocumentWrite`/`documents_request` spellings can only be pinned to one
+    /// wire shape by literal JSON like this -- the shape
+    /// `crates/waml-editor/src/api_save.rs`'s `documents_request` builds.
+    #[test]
+    fn the_editor_wire_shape_round_trips() {
+        let json = r##"{
+            "revision": 3,
+            "writes": [
+                { "path": "order.md", "baseline": "# Order\n", "desired": "# Order (renamed)\n" },
+                { "path": "new.md", "baseline": null, "desired": "# New\n" }
+            ]
+        }"##;
+        #[derive(serde::Deserialize)]
+        struct Request {
+            revision: u64,
+            writes: Vec<DocumentWrite>,
+        }
+        let parsed: Request = serde_json::from_str(json).unwrap();
+
+        assert_eq!(parsed.revision, 3);
+        assert_eq!(parsed.writes.len(), 2);
+        assert_eq!(parsed.writes[0].path, "order.md");
+        assert_eq!(parsed.writes[0].baseline.as_deref(), Some("# Order\n"));
+        assert_eq!(parsed.writes[0].desired, "# Order (renamed)\n");
+        assert_eq!(parsed.writes[1].path, "new.md");
+        assert_eq!(parsed.writes[1].baseline, None);
+        assert_eq!(parsed.writes[1].desired, "# New\n");
+    }
+
     fn attr_add(node: &str, name: &str, ty: &str) -> OpDto {
         OpDto::AttrAdd {
             v: 1,
