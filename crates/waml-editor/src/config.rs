@@ -571,6 +571,29 @@ mod tests {
     }
 
     #[test]
+    fn store_to_twice_second_value_wins() {
+        let tmp = TempDir::new();
+        let a = EditorConfig {
+            version: EDITOR_VERSION,
+            recents: vec![rec("/a", 1)],
+            theme: ThemeMode::Light,
+        };
+        store_to(tmp.path(), EDITOR_FILE, &a).unwrap();
+        let b = EditorConfig {
+            version: EDITOR_VERSION,
+            recents: vec![rec("/b", 2), rec("/c", 3)],
+            theme: ThemeMode::Dark,
+        };
+        store_to(tmp.path(), EDITOR_FILE, &b).unwrap();
+        let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+        assert_eq!(back, b, "second write wins over the first");
+        assert!(
+            !tmp.path().join(format!("{EDITOR_FILE}.tmp")).exists(),
+            "temp file is renamed away, not left behind"
+        );
+    }
+
+    #[test]
     fn theme_defaults_light_and_round_trips_dark() {
         let tmp = TempDir::new();
         // Missing field / missing file -> Light.
