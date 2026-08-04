@@ -214,6 +214,10 @@ pub fn write_back(
 
 trait FsOps {
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()>;
+
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        fs::remove_dir_all(path)
+    }
 }
 
 struct RealFs;
@@ -272,7 +276,15 @@ fn write_back_with_ops(
             validate_relative(relative)?;
             let target = root.join(relative);
             validate_target(&root, &target)?;
+            // Two logical paths that collide on one filesystem entry would
+            // make the transaction overwrite its own work. Fold case only
+            // where the platform's filesystems are conventionally
+            // case-insensitive (Windows, macOS); on Linux `A.md` and `a.md`
+            // are genuinely distinct files and must both be writable.
+            #[cfg(any(windows, target_os = "macos"))]
             let key = target.to_string_lossy().to_lowercase();
+            #[cfg(not(any(windows, target_os = "macos")))]
+            let key = target.to_string_lossy().into_owned();
             if !targets.insert(key) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -350,6 +362,12 @@ fn write_back_with_ops(
         for write in writes {
             create_missing_parents(&root, &write.target, &mut created_directories)?;
             if write.existed {
+                // Re-screen at commit: the staging pass checked this target,
+                // but a concurrent writer may have swapped it for a symlink or
+                // directory since (S-4 TOCTOU). Renames never follow symlinks,
+                // so the residual race after this check cannot escape the
+                // root; it can only displace whatever now sits at the target.
+                ensure_regular_file(&write.target)?;
                 ops.rename(&write.target, &write.backup)?;
                 journal.push(JournalEntry::Updated {
                     target: write.target.clone(),
@@ -369,6 +387,8 @@ fn write_back_with_ops(
             }
         }
         for delete in deletes {
+            // Same commit-time re-screen as updates (S-4).
+            ensure_regular_file(&delete.target)?;
             if let Err(error) = ops.rename(&delete.target, &delete.backup) {
                 return Err(std::io::Error::new(
                     error.kind(),
@@ -406,8 +426,29 @@ fn write_back_with_ops(
             )),
         };
     }
-    fs::remove_dir_all(&staging)?;
+    // Every target is committed at this point; failing to sweep up the
+    // staging directory must not be reported as a failed write. Surface it as
+    // a warning alongside the successful entries instead.
+    let mut touched = touched;
+    if let Err(cleanup) = ops.remove_dir_all(&staging) {
+        touched.push(format!(
+            "warning: all changes committed, but removing the staging directory {} failed: {cleanup}",
+            staging.display()
+        ));
+    }
     Ok(touched)
+}
+
+fn ensure_regular_file(target: &Path) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(target)?;
+    if metadata.is_file() {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("bundle target is not a file: {}", target.display()),
+        ))
+    }
 }
 
 fn create_staging_directory(root: &Path) -> std::io::Result<PathBuf> {
@@ -425,9 +466,13 @@ fn create_staging_directory(root: &Path) -> std::io::Result<PathBuf> {
 
 fn validate_relative(path: &Path) -> std::io::Result<()> {
     if path.as_os_str().is_empty()
-        || path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
+        || path.components().any(|component| match component {
+            // A colon inside a name is an NTFS alternate-data-stream write
+            // (`a:b.md`), not a file the user can see; reject it everywhere
+            // so bundles behave identically across platforms.
+            Component::Normal(name) => name.to_string_lossy().contains(':'),
+            _ => true,
+        })
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -878,6 +923,51 @@ mod tests {
     }
 
     #[test]
+    fn write_back_rejects_ntfs_alternate_data_stream_paths() {
+        let temp = TempDir::new();
+        for logical in ["a:b.md", "nested/a:b.md"] {
+            let new = vec![(logical.to_owned(), "streamed".to_owned())];
+            let error = write_back(&temp.0, &[], &new).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{logical}");
+            assert!(
+                error.to_string().contains("relative and traversal-free"),
+                "{error}"
+            );
+        }
+        assert_eq!(directory_entries(&temp.0), Vec::<String>::new());
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn case_differing_targets_are_rejected_on_case_insensitive_platforms() {
+        let temp = TempDir::new();
+        let new = vec![
+            ("Order.md".to_owned(), "upper".to_owned()),
+            ("order.md".to_owned(), "lower".to_owned()),
+        ];
+        let error = write_back(&temp.0, &[], &new).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            error.to_string().contains("duplicate filesystem target"),
+            "{error}"
+        );
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    #[test]
+    fn case_differing_targets_are_distinct_files_on_case_sensitive_platforms() {
+        let temp = TempDir::new();
+        let new = vec![
+            ("Order.md".to_owned(), "upper".to_owned()),
+            ("order.md".to_owned(), "lower".to_owned()),
+        ];
+        let touched = write_back(&temp.0, &[], &new).unwrap();
+        assert_eq!(touched, ["wrote Order.md", "wrote order.md"]);
+        assert_eq!(fs::read_to_string(temp.0.join("Order.md")).unwrap(), "upper");
+        assert_eq!(fs::read_to_string(temp.0.join("order.md")).unwrap(), "lower");
+    }
+
+    #[test]
     fn late_write_failure_restores_updates_and_removes_new_artifacts() {
         let temp = TempDir::new();
         fs::write(temp.0.join("a.md"), "before").unwrap();
@@ -1087,6 +1177,41 @@ mod tests {
             })
             .expect("recovery journal must retain the original backup");
         assert_eq!(fs::read_to_string(backup).unwrap(), "original bytes");
+    }
+
+    /// Every target is committed by the time the staging directory is swept
+    /// up; a cleanup failure must surface as a warning, never as a failed
+    /// write.
+    #[test]
+    fn committed_write_reports_success_with_a_warning_when_cleanup_fails() {
+        struct FailCleanup;
+
+        impl FsOps for FailCleanup {
+            fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+                fs::rename(from, to)
+            }
+
+            fn remove_dir_all(&self, _path: &Path) -> std::io::Result<()> {
+                Err(std::io::Error::other("injected cleanup failure"))
+            }
+        }
+
+        let temp = TempDir::new();
+        let target = temp.0.join("a.md");
+        fs::write(&target, "before").unwrap();
+        let old = vec![("a.md".to_owned(), "before".to_owned())];
+        let new = vec![("a.md".to_owned(), "after".to_owned())];
+
+        let touched = write_back_with_ops(&temp.0, &old, &new, &FailCleanup).unwrap();
+
+        assert_eq!(touched.len(), 2, "{touched:?}");
+        assert_eq!(touched[0], "wrote a.md");
+        assert!(
+            touched[1].starts_with("warning: all changes committed"),
+            "{touched:?}"
+        );
+        assert!(touched[1].contains("injected cleanup failure"), "{touched:?}");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "after");
     }
 
     #[test]
