@@ -558,8 +558,17 @@ impl LayoutSnapshot {
                 continue;
             }
             let stops = self.stops_for_lane(lane);
-            let start_x = boundary_x(&stops, start, true)?;
-            let end_x = boundary_x(&stops, end, false)?;
+            // A lane in range can own no caret stop at all — a blank line
+            // between two blocks, or a decoration-only lane. It contributes no
+            // rect of its own, and it must not discard the rects the other
+            // lanes already produced: a selection dragged into the space
+            // between two rows would otherwise vanish entirely.
+            let (Some(start_x), Some(end_x)) = (
+                boundary_x(&stops, start, true),
+                boundary_x(&stops, end, false),
+            ) else {
+                continue;
+            };
             rects.push(Rect {
                 pos: dvec2(start_x.min(end_x), lane.rect.pos.y),
                 size: dvec2((end_x - start_x).abs(), lane.rect.size.y),
@@ -757,6 +766,48 @@ impl LayoutSnapshot {
                     18.0,
                     30.0,
                     &[4, 8, 9],
+                    &[0.0, 45.0, 55.0],
+                ),
+            ],
+            Vec::new(),
+        )
+    }
+
+    /// Two text lines with an empty line between them. The blank line owns a
+    /// lane with no clusters, so that lane carries no caret stop at all — the
+    /// shape a selection dragged into the space between two rows has to cross.
+    #[doc(hidden)]
+    pub fn blank_line_fixture_for_test() -> Self {
+        let owner = fixture_identity();
+        let layout = LayoutElementId {
+            owner,
+            fragment_ordinal: 0,
+        };
+        Self::from_parts_for_test(
+            DocumentRevision::INITIAL,
+            dvec2(100.0, 60.0),
+            vec![
+                VisualLine::for_test(text_range(0, 4), 0.0, 20.0),
+                VisualLine::for_test(text_range(4, 5), 20.0, 20.0),
+                VisualLine::for_test(text_range(5, 9), 40.0, 20.0),
+            ],
+            vec![
+                fixture_cluster(
+                    layout,
+                    0,
+                    text_range(0, 4),
+                    0.0,
+                    20.0,
+                    &[0, 1, 4],
+                    &[0.0, 10.0, 40.0],
+                ),
+                fixture_cluster(
+                    layout,
+                    1,
+                    text_range(5, 9),
+                    40.0,
+                    20.0,
+                    &[5, 8, 9],
                     &[0.0, 45.0, 55.0],
                 ),
             ],

@@ -162,6 +162,24 @@ fn source_point_round_trip_handles_proportional_clusters_and_affinity() {
 }
 
 #[test]
+fn selection_spanning_a_blank_line_still_paints_the_lines_it_covers() {
+    let snapshot = LayoutSnapshot::blank_line_fixture_for_test();
+    // Dragged from inside the first line, through the blank line, into the
+    // third. The blank line's lane owns no caret stop, and it must not erase
+    // the selection over the two lines that do.
+    let selection = Selection::new(
+        TextPosition::new(t(1), Affinity::Before),
+        TextPosition::new(t(8), Affinity::After),
+    );
+    let rects = snapshot
+        .selection_rects(selection)
+        .expect("a stopless lane in range does not discard the whole selection");
+    assert_eq!(rects.len(), 2);
+    assert_eq!(rects[0].pos.y, 0.0);
+    assert_eq!(rects[1].pos.y, 40.0);
+}
+
+#[test]
 fn selection_rects_split_across_wrapped_mixed_height_lines() {
     let snapshot = LayoutSnapshot::wrapped_fixture_for_test();
     let selection = Selection::new(
