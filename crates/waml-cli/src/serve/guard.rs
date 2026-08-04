@@ -23,6 +23,7 @@ impl Token {
         }
     }
 
+    #[allow(dead_code)] // only test call sites construct a fixed token; production always generates
     pub fn from_raw(raw: impl Into<String>) -> Self {
         Self { raw: raw.into() }
     }
