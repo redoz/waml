@@ -1040,7 +1040,7 @@ mod tests {
     use std::path::Path;
     use waml::analysis::ProjectionFreshness;
     use waml::model::CardinalityVisibility;
-    use waml::ops::DiagramDisplaySet;
+    use waml::uml::DiagramDisplaySet;
 
     struct TestBody {
         uid: WidgetUid,

@@ -7,7 +7,7 @@ use crate::property_controls::{SegmentItem, SegmentedControl, ToggleControl};
 use crate::select_box::SelectBox;
 use makepad_widgets::*;
 use waml::model::CardinalityVisibility;
-use waml::ops::DiagramDisplaySet;
+use waml::uml::DiagramDisplaySet;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -706,7 +706,7 @@ mod tests {
         ScriptNew, ScriptVmCx, Size, TextInput, Widget, WidgetRef,
     };
     use waml::model::CardinalityVisibility;
-    use waml::ops::DiagramDisplaySet;
+    use waml::uml::DiagramDisplaySet;
 
     fn resolved_display() -> ResolvedDiagramDisplay {
         ResolvedDiagramDisplay {

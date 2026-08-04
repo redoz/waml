@@ -1,6 +1,5 @@
 use waml::{
-    compat::{Batch, Step},
-    edit::{EditBatch, EditContext},
+    edit::{Batch, EditBatch, EditContext, Step},
     layout::Direction,
     model::ElementType,
     okf::{self, DirectoryAddress},

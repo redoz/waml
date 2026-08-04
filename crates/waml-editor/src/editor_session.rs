@@ -2846,16 +2846,16 @@ mod tests {
         let revision = session.revision();
 
         let change = session
-            .apply(waml::compat::Batch::new(vec![
-                waml::compat::Step::Okf(waml::okf::Op::IndexRetitle {
+            .apply(waml::edit::Batch::new(vec![
+                waml::edit::Step::Okf(waml::okf::Op::IndexRetitle {
                     directory: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
                     title: "Sales".into(),
                 }),
-                waml::compat::Step::Uml(Op::ClassifierRename {
+                waml::edit::Step::Uml(Op::ClassifierRename {
                     from: "sales/order".into(),
                     to: "purchase-order".into(),
                 }),
-                waml::compat::Step::Uml(Op::PlacementSet {
+                waml::edit::Step::Uml(Op::PlacementSet {
                     diagram: "sales/orders-diagram".into(),
                     subject_title: "Purchase Order".into(),
                     subject_slug: "sales/purchase-order".into(),
@@ -2900,12 +2900,12 @@ mod tests {
         let persisted = session.persisted_bundle().clone();
         let model = session.model().clone();
 
-        let result = session.apply(waml::compat::Batch::new(vec![
-            waml::compat::Step::Okf(waml::okf::Op::IndexRetitle {
+        let result = session.apply(waml::edit::Batch::new(vec![
+            waml::edit::Step::Okf(waml::okf::Op::IndexRetitle {
                 directory: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
                 title: "Sales Domain".into(),
             }),
-            waml::compat::Step::Uml(Op::ClassifierRename {
+            waml::edit::Step::Uml(Op::ClassifierRename {
                 from: "sales/order".into(),
                 to: "customer".into(),
             }),
@@ -3124,12 +3124,12 @@ mod tests {
         session.replace(source).unwrap();
 
         let change = session
-            .apply(waml::compat::Batch::new(vec![
-                waml::compat::Step::Okf(waml::okf::Op::IndexRetitle {
+            .apply(waml::edit::Batch::new(vec![
+                waml::edit::Step::Okf(waml::okf::Op::IndexRetitle {
                     directory: waml::okf::DirectoryAddress::parse("/").unwrap(),
                     title: "Parser Platform Baseline".into(),
                 }),
-                waml::compat::Step::Uml(Op::ClassifierSet {
+                waml::edit::Step::Uml(Op::ClassifierSet {
                     id: "class".into(),
                     title: Some("Café Order Baseline".into()),
                     description: None,
