@@ -13,7 +13,6 @@ pub mod layout;
 pub mod model;
 pub mod multiplicity;
 pub mod okf;
-pub mod ops;
 pub mod seed;
 pub mod share;
 pub mod site_boot;
@@ -22,9 +21,6 @@ pub mod solve;
 pub mod source;
 pub mod uml;
 pub mod validate;
-
-#[doc(hidden)]
-pub mod compat;
 
 #[cfg(test)]
 mod smoke {

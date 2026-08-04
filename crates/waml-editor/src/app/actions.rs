@@ -1265,7 +1265,7 @@ mod tests {
     // End-to-end at the ops layer (no live `Cx`/`App` needed): the mapped
     // `Op::PlaceRm` removes ONLY the targeted placement from the re-serialized
     // bundle, leaving an unrelated one intact. The solver's dropped/
-    // conflicts_with reporting is already covered by Task 1's `waml::ops`
+    // conflicts_with reporting is already covered by `waml::edit`
     // tests and `scene.rs`'s `project_conflicts` tests.
     #[test]
     fn conflict_delete_removes_only_the_targeted_placement() {

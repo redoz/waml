@@ -1673,7 +1673,8 @@ pub(crate) fn op_node_rm(
     Ok(())
 }
 
-pub fn referrers(work: &[(String, String)], slug: &str) -> Vec<String> {
+#[cfg(test)]
+pub(crate) fn referrers(work: &[(String, String)], slug: &str) -> Vec<String> {
     let Ok(source) = SourceBundle::try_from_pairs(work.iter().cloned()) else {
         return Vec::new();
     };
