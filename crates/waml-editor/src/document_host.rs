@@ -236,14 +236,18 @@ impl DocumentHost {
         let body = BodyWidgets::new(cx, ui);
         body.apply_chrome(cx, self.active_chrome());
         let active = self.tabs.active;
-        if let Some(view) = self.views.get_mut(&active) {
-            let snapshot = session.snapshot();
-            view.sync_from_session(cx, &body, &snapshot);
-        } else {
-            // No active view at all: neither canvas may take input.
-            body.set_canvas_interaction_enabled(cx, false);
-            body.set_behavior_canvas_interaction_enabled(cx, false);
+        let active_resolved = self.tabs.active_tab().is_some_and(|tab| tab.resolved);
+        if active_resolved {
+            if let Some(view) = self.views.get_mut(&active) {
+                let snapshot = session.snapshot();
+                view.sync_from_session(cx, &body, &snapshot);
+                return;
+            }
         }
+        // No active view at all, or the active tab is tombstoned (its
+        // locator no longer resolves): neither canvas may take input.
+        body.set_canvas_interaction_enabled(cx, false);
+        body.set_behavior_canvas_interaction_enabled(cx, false);
     }
 
     fn finish_transition(
@@ -375,6 +379,12 @@ impl DocumentHost {
             let current = &self.tabs.tabs[index];
             let current_id = current.id;
             let Some(prepared) = prepared else {
+                // The locator no longer resolves (renamed or deleted out
+                // from under the tab). Tombstone it instead of silently
+                // retaining stale state -- the tab and its view stay around
+                // so closing it still works, but `sync_active` disables
+                // interaction while it is the active tab.
+                self.tabs.tabs[index].resolved = false;
                 continue;
             };
             let compatible = prepared.tab_id == current_id
@@ -384,12 +394,14 @@ impl DocumentHost {
             if compatible {
                 self.tabs.tabs[index].title = prepared.title;
                 self.tabs.tabs[index].presentation = prepared.presentation;
+                self.tabs.tabs[index].resolved = true;
                 continue;
             }
             let preview = current.preview;
             let old_id = current.id;
             let (mut tab, view) = prepared.into_tab(preview);
             tab.preview = preview;
+            tab.resolved = true;
             let active_replacement = self.tabs.active == old_id;
             if active_replacement {
                 self.tabs.active = tab.id;
@@ -1013,5 +1025,91 @@ mod tests {
         host.apply_command(DocumentCommand::Activate(b));
         host.apply_command(DocumentCommand::Close(b));
         assert_eq!(host.tabs.active, c);
+    }
+
+    #[test]
+    fn unresolved_locator_tombstones_the_tab_and_disables_interaction_when_active() {
+        let mut host = DocumentHost::default();
+        let first = prepared("first", NavCategory::Class, Rc::new(Cell::new(0)));
+        let first_id = first.tab_id;
+        host.apply_command(DocumentCommand::Open {
+            document: first,
+            persistent: true,
+        });
+        let second = prepared("second", NavCategory::Class, Rc::new(Cell::new(0)));
+        let second_id = second.tab_id;
+        host.apply_command(DocumentCommand::Open {
+            document: second,
+            persistent: true,
+        });
+        assert_eq!(host.active_id(), second_id);
+
+        // Second document's locator no longer resolves (renamed/deleted).
+        host.reconcile_documents(vec![
+            Some(prepared("first", NavCategory::Class, Rc::new(Cell::new(0)))),
+            None,
+        ]);
+
+        let second_tab = host.tabs().iter().find(|tab| tab.id == second_id).unwrap();
+        assert!(!second_tab.resolved, "tombstoned tab must be retained");
+        // The tab is still there and still the active one.
+        assert_eq!(host.active_id(), second_id);
+        assert!(host.views.contains_key(&second_id), "view is retained too");
+
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = WidgetRef::empty();
+        let session = EditorSession::default();
+        host.sync_active(&mut cx, &ui, &session);
+        // No assertion surface for canvas interaction without a live widget
+        // tree; the branch is exercised (no panic) and covered structurally
+        // by `sync_active`'s resolved-gate above.
+
+        // Undo: the locator resolves again -- revival happens through the
+        // ordinary prepared-document flow.
+        host.reconcile_documents(vec![
+            Some(prepared("first", NavCategory::Class, Rc::new(Cell::new(0)))),
+            Some(prepared(
+                "second",
+                NavCategory::Class,
+                Rc::new(Cell::new(0)),
+            )),
+        ]);
+        let second_tab = host.tabs().iter().find(|tab| tab.id == second_id).unwrap();
+        assert!(second_tab.resolved, "tab must revive once resolved again");
+        let _ = first_id;
+    }
+
+    #[test]
+    fn closing_a_tombstoned_tab_removes_it_and_its_view() {
+        let mut host = DocumentHost::default();
+        let first = prepared("first", NavCategory::Class, Rc::new(Cell::new(0)));
+        host.apply_command(DocumentCommand::Open {
+            document: first,
+            persistent: true,
+        });
+        let second = prepared("second", NavCategory::Class, Rc::new(Cell::new(0)));
+        let second_id = second.tab_id;
+        host.apply_command(DocumentCommand::Open {
+            document: second,
+            persistent: true,
+        });
+
+        host.reconcile_documents(vec![
+            Some(prepared("first", NavCategory::Class, Rc::new(Cell::new(0)))),
+            None,
+        ]);
+        assert!(
+            !host
+                .tabs()
+                .iter()
+                .find(|tab| tab.id == second_id)
+                .unwrap()
+                .resolved
+        );
+
+        host.apply_command(DocumentCommand::Close(second_id));
+
+        assert!(host.tabs().iter().all(|tab| tab.id != second_id));
+        assert!(!host.views.contains_key(&second_id));
     }
 }

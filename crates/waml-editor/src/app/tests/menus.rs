@@ -13,6 +13,7 @@ fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) ->
             category,
         },
         preview,
+        resolved: true,
     }
 }
 

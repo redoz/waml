@@ -142,6 +142,13 @@ pub struct DocTab {
     /// inline-edit commit "pins" it (`promote`), after which it behaves like
     /// any other persisted tab.
     pub preview: bool,
+    /// `false` once this tab's locator no longer resolves against the
+    /// session (the underlying concept was renamed or deleted out from under
+    /// it). A tombstoned tab is kept -- closing it still works, and it
+    /// revives if the locator resolves again (e.g. an undo) -- but it cannot
+    /// be interacted with and renders dimmed. Defaults `true`: every tab
+    /// starts resolved.
+    pub resolved: bool,
 }
 
 impl DocTab {
@@ -186,6 +193,7 @@ impl OpenTabs {
                 category: crate::document::NavCategory::Diagram,
             },
             preview: true,
+            resolved: true,
         });
         tabs
     }
@@ -750,11 +758,19 @@ impl Widget for DocTabs {
             // and the fudge was tuned to the short floating one. `TEXT_DY`
             // absorbs the `asc: -0.1` trim, which rides the ink high in its box.
             let text_y = (tab_rect.pos.y + (tab_rect.size.y - text_h) / 2.0 + TEXT_DY).round();
-            let draw_text = match (is_active, tab.preview) {
-                (true, true) => &mut self.draw_text_preview_active,
-                (true, false) => &mut self.draw_text_active,
-                (false, true) => &mut self.draw_text_preview,
-                (false, false) => &mut self.draw_text_persisted,
+            // A tombstoned tab (locator no longer resolves) always renders
+            // with the dim, regular-weight style -- the same read as an
+            // inactive persisted tab -- regardless of its active/preview
+            // state, so the user sees at a glance that the document is gone.
+            let draw_text = if !tab.resolved {
+                &mut self.draw_text_persisted
+            } else {
+                match (is_active, tab.preview) {
+                    (true, true) => &mut self.draw_text_preview_active,
+                    (true, false) => &mut self.draw_text_active,
+                    (false, true) => &mut self.draw_text_preview,
+                    (false, false) => &mut self.draw_text_persisted,
+                }
             };
             draw_text.draw_abs(cx, dvec2(x + lead, text_y), &title);
 
@@ -984,6 +1000,7 @@ mod tests {
                 category,
             },
             preview: true,
+            resolved: true,
         }
     }
 

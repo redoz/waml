@@ -73,6 +73,7 @@ impl OpenDocument {
                 title: self.title,
                 presentation: self.presentation,
                 preview,
+                resolved: true,
             },
             self.view,
         )
