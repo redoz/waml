@@ -541,8 +541,9 @@ The message forms have these meanings:
 | `creates` | create a lifeline | dashed arrow to the new lifeline head |
 | `destroys` | delete a lifeline | solid line that ends at an X |
 
-`replies` and `sends` are recognised as *unsupported* verbs and rejected with a
-diagnostic naming the supported forms — they never parse as messages.
+Message verbs from earlier drafts of this specification are recognised as
+*unsupported* and rejected with a diagnostic naming the supported forms — they
+never parse as messages.
 
 An optional call identity follows `as`. A return can select that call with
 `for`. Without `for`, the return must have exactly one eligible open call. The
