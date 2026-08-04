@@ -1140,6 +1140,11 @@ pub struct Model {
 }
 
 impl Model {
+    // Deliberately linear: `nodes` is in authored/document order (see
+    // uml/analysis.rs:1727,1860 where nodes are pushed during document
+    // iteration), not sorted by key, so `binary_search_by` is not applicable
+    // here the way it is for `okf::Bundle`'s accessors. Revisit only with
+    // profiling evidence that this scan is hot.
     pub fn node(&self, key: &str) -> Option<&Node> {
         self.nodes.iter().find(|n| n.key == key)
     }
