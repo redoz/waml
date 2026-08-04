@@ -81,6 +81,19 @@ pub(super) fn restore_markdown_asset_host_after_open(
     opened
 }
 
+/// The backend a browser boot committed to at open time: a live `waml serve`
+/// mounted at `base`, presenting `token` on every request, tracking the
+/// revision the last successful read or write reported. Held once the `?api=`
+/// boot fetch succeeds; consulted by the wasm `save_backend` (Task 9) so the
+/// save seam stays a choice made once at open, not re-derived per save.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(super) struct ApiBackend {
+    pub(super) base: String,
+    pub(super) token: Option<String>,
+    pub(super) revision: u64,
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(super) fn browser_save_fragment(ticket: &SaveTicket) -> (String, SaveCompletion) {
     (

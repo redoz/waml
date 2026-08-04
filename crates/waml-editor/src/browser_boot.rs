@@ -155,6 +155,42 @@ fn fragment_token(hash: &str) -> Option<String> {
         .map(|(_, value)| value)
 }
 
+/// Build the request for `GET {base}/bundle`: the URL and the header list to
+/// set on it (a `Bearer` `Authorization` header when a token is present).
+///
+/// `base` may be relative (`/api`) or absolute, and may or may not carry a
+/// trailing slash -- both are joined the same way, one `/` between `base` and
+/// `bundle`.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn api_bundle_request(
+    base: &str,
+    token: Option<&str>,
+) -> (String, Vec<(String, String)>) {
+    let base = base.trim_end_matches('/');
+    let url = format!("{base}/bundle");
+    let headers = token
+        .map(|token| vec![("Authorization".to_string(), format!("Bearer {token}"))])
+        .unwrap_or_default();
+    (url, headers)
+}
+
+/// The message shown when a `?api=` boot fetch failed.
+///
+/// A 401 gets a named cause -- the printed URL is missing its token or the
+/// token is stale -- rather than a bare status code, because that is exactly
+/// the case the spec's tokenless `waml-boot.txt` fallback exists to recover
+/// from.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn api_boot_error(base: &str, status: Option<u16>) -> String {
+    match status {
+        Some(401) => {
+            format!("could not open {base}: the URL is missing its token, or the token is stale")
+        }
+        Some(status) => format!("could not load {base}/bundle: HTTP {status}"),
+        None => format!("could not load {base}/bundle: the request failed or was blocked by CORS"),
+    }
+}
+
 /// Percent-decode a query string into its key/value pairs.
 fn parse_query(search: &str) -> Result<Vec<(String, String)>, String> {
     let search = search.strip_prefix('?').unwrap_or(search);
@@ -400,5 +436,40 @@ mod tests {
             select_site_boot("?bundle=a.waml#w1.abc").unwrap(),
             BrowserBootSource::Bundle("a.waml".to_string())
         );
+    }
+
+    #[test]
+    fn api_bundle_request_joins_base_and_sets_the_bearer_header() {
+        assert_eq!(
+            api_bundle_request("/api", Some("tok")),
+            (
+                "/api/bundle".to_string(),
+                vec![("Authorization".to_string(), "Bearer tok".to_string())]
+            )
+        );
+        assert_eq!(
+            api_bundle_request("/api/", Some("tok")),
+            (
+                "/api/bundle".to_string(),
+                vec![("Authorization".to_string(), "Bearer tok".to_string())]
+            )
+        );
+        assert_eq!(
+            api_bundle_request("http://127.0.0.1:9999/api", Some("tok")),
+            (
+                "http://127.0.0.1:9999/api/bundle".to_string(),
+                vec![("Authorization".to_string(), "Bearer tok".to_string())]
+            )
+        );
+        assert_eq!(
+            api_bundle_request("/api", None),
+            ("/api/bundle".to_string(), Vec::new())
+        );
+    }
+
+    #[test]
+    fn a_401_boot_failure_names_the_token() {
+        let error = api_boot_error("/api", Some(401));
+        assert!(error.contains("token"), "{error}");
     }
 }

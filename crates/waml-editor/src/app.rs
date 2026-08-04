@@ -616,6 +616,11 @@ pub struct App {
     /// Filesystem root backing `bundle` in native builds.
     #[rust]
     open_dir: Option<PathBuf>,
+    /// `waml serve` backend, when this session booted from `?api=`. See
+    /// `workspace::ApiBackend`.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[rust]
+    api_backend: Option<workspace::ApiBackend>,
     /// Debounce for `mark_dirty` -> `save`; see `SAVE_DEBOUNCE_SECS`.
     #[rust]
     save_timer: Timer,
@@ -720,6 +725,12 @@ pub struct App {
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     #[rust]
     pending_boot_bundle: Option<String>,
+    /// `{ base, token }` of an in-flight `?api=` boot fetch, so its response
+    /// can name the base URL in an error and, on success, commit both into
+    /// the workspace's API backend (Task 9 consults it for saves).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[rust]
+    pending_api_boot: Option<(String, Option<String>)>,
 }
 
 impl MatchEvent for App {
@@ -796,15 +807,9 @@ impl MatchEvent for App {
                 self.show_start_screen(cx);
                 self.start_boot_bundle_fetch(cx, url);
             }
-            // `?api=` is selected for, but no live model server exists yet; the
-            // URL is honoured as far as "not a bundle, not a share link". Say
-            // so: a visitor handed an `?api=` URL must not land on the start
-            // screen with no trace of why nothing opened.
-            crate::browser_boot::BrowserBootSource::Api { .. } => {
-                let message = "live model server URLs (?api=) are not supported yet";
-                tracing::warn!("{message}");
+            crate::browser_boot::BrowserBootSource::Api { base, token } => {
                 self.show_start_screen(cx);
-                self.report_action_error(cx, message);
+                self.start_api_boot_fetch(cx, base, token);
             }
             // The URL names nothing, so ask the page's own site config. An
             // exported site answers with the query it used to push into the
@@ -859,6 +864,44 @@ impl MatchEvent for App {
             }
             return;
         }
+        if request_id == live_id!(boot_api) {
+            let Some((base, token)) = self.pending_api_boot.take() else {
+                return;
+            };
+            if !ok {
+                log!(
+                    "{}",
+                    crate::browser_boot::api_boot_error(&base, Some(response.status_code))
+                );
+                return;
+            }
+            // Same guard as the other boot responses: a model opened by hand
+            // during the fetch must not be discarded by a fetch that only now
+            // finished loading.
+            if self.editor_shown {
+                return;
+            }
+            match crate::browser_boot::decode_boot_bundle(body) {
+                Ok(bundle) => {
+                    let revision = response
+                        .headers
+                        .iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case("x-waml-revision"))
+                        .and_then(|(_, values)| values.first())
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    self.open_bundle(cx, bundle, "served".to_string(), None);
+                    self.api_backend = Some(workspace::ApiBackend {
+                        base,
+                        token,
+                        revision,
+                    });
+                    self.show_editor(cx);
+                }
+                Err(e) => log!("could not open {base}: {e}"),
+            }
+            return;
+        }
         if request_id != live_id!(boot_bundle) {
             return;
         }
@@ -899,6 +942,14 @@ impl MatchEvent for App {
     /// a site that promised a bundle and did not deliver one is a fault.
     #[cfg(target_arch = "wasm32")]
     fn handle_http_request_error(&mut self, cx: &mut Cx, request_id: LiveId, _error: &HttpError) {
+        if request_id == live_id!(boot_api) {
+            if let Some((base, _token)) = self.pending_api_boot.take() {
+                let message = crate::browser_boot::api_boot_error(&base, None);
+                tracing::error!(base = %base, "{message}");
+                self.report_action_error(cx, &message);
+            }
+            return;
+        }
         if request_id != live_id!(boot_bundle) {
             return;
         }
@@ -926,6 +977,20 @@ impl App {
             live_id!(boot_bundle),
             HttpRequest::new(url, HttpMethod::GET),
         );
+    }
+
+    /// Start `GET {base}/bundle`, presenting `token` as a `Bearer` header when
+    /// one is present. The start screen holds the window until the answer
+    /// lands, same as `start_boot_bundle_fetch`.
+    #[cfg(target_arch = "wasm32")]
+    fn start_api_boot_fetch(&mut self, cx: &mut Cx, base: String, token: Option<String>) {
+        let (url, headers) = crate::browser_boot::api_bundle_request(&base, token.as_deref());
+        self.pending_api_boot = Some((base, token));
+        let mut request = HttpRequest::new(url, HttpMethod::GET);
+        for (name, value) in headers {
+            request.set_header(name, value);
+        }
+        cx.http_request(live_id!(boot_api), request);
     }
 }
 
