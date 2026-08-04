@@ -46,5 +46,22 @@ if ($Empty) {
 }
 else {
     if (-not $Fixture) { $Fixture = 'crates/waml-editor/tests/fixtures/mini' }
+
+    # Committed test fixtures are read-only inputs: the editor's drag/place
+    # flow writes layout back into the loaded bundle, and interactive runs
+    # used to leave e.g. fixtures/mini/orders-diagram.md dirty in git. Stage
+    # any fixture that lives under tests/fixtures into target/ and launch the
+    # copy, so verification never mutates the committed baseline.
+    $fixtureFull = [IO.Path]::GetFullPath((Join-Path $root $Fixture))
+    $fixturesRoot = [IO.Path]::GetFullPath((Join-Path $root 'crates/waml-editor/tests/fixtures'))
+    if ($fixtureFull.StartsWith($fixturesRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        $name = Split-Path $fixtureFull -Leaf
+        $staged = Join-Path $root "target/run-fixture-$name"
+        if (Test-Path $staged) { Remove-Item -Recurse -Force $staged }
+        Copy-Item -Recurse -Force $fixtureFull $staged
+        Write-Host "Staged fixture '$name' -> $staged (committed fixture stays clean)"
+        $Fixture = $staged
+    }
+
     cargo run -p waml-editor --bin waml-editor @profileArgs -- $Fixture @markArgs
 }
