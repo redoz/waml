@@ -707,10 +707,18 @@ fn format_opened(secs: u64) -> String {
     const MONTH: u64 = 30 * DAY;
     const YEAR: u64 = 365 * DAY;
 
+    // `SystemTime::now()` PANICS on `wasm32-unknown-unknown` (see
+    // `waml::bundle_envelope::production_nonce`). Recents are empty on the web
+    // build (no filesystem), so this is unreachable there today -- but gate it
+    // structurally rather than relying on that data-flow accident: a wasm
+    // caller gets "just now" instead of a poisoned instance.
+    #[cfg(not(target_arch = "wasm32"))]
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(secs);
+    #[cfg(target_arch = "wasm32")]
+    let now = secs;
     let d = now.saturating_sub(secs);
 
     // "1 unit ago" reads better as "a unit ago"; "an hour" is special-cased.

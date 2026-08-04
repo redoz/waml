@@ -14,6 +14,7 @@
 use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use makepad_widgets::log;
@@ -52,9 +53,12 @@ pub(crate) fn load_from<T: DeserializeOwned + Default>(dir: &Path, file: &str) -
     };
     match serde_json::from_slice(&bytes) {
         Ok(val) => val,
-        Err(_) => {
-            // Preserve the corrupt file for forensics, then start clean.
+        Err(error) => {
+            // Preserve the corrupt file for forensics, then start clean --
+            // and say so, or the reset (vanished recents, reverted theme) is
+            // indistinguishable from data loss and nobody finds the `.bak`.
             let _ = std::fs::rename(&path, dir.join(format!("{file}.bak")));
+            log!("waml-editor: {file} was corrupt ({error}); backed it up to {file}.bak and started with defaults");
             T::default()
         }
     }
@@ -155,11 +159,22 @@ impl Recent {
 }
 
 /// Seconds since the Unix epoch (0 if the clock somehow predates it).
+#[cfg(not(target_arch = "wasm32"))]
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// `SystemTime::now()` PANICS on `wasm32-unknown-unknown` (see
+/// `waml::bundle_envelope::production_nonce`). The browser build has no
+/// filesystem, so recents are never pushed or pinned there and this stamp is
+/// unreachable today -- but keep the guard structural (cfg), not a data-flow
+/// accident a future caller can trip.
+#[cfg(target_arch = "wasm32")]
+fn now_unix() -> u64 {
+    0
 }
 
 /// Dedup key for a recent: the canonicalized path, so the same directory reached
