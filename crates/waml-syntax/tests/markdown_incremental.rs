@@ -281,6 +281,74 @@ fn definition_change_updates_non_contiguous_reference_dependents() {
 }
 
 #[test]
+fn inline_link_before_reference_use_still_forces_reference_fallback() {
+    // This fails if the reference-label scanner treats an inline link's `(...)`
+    // destination as consuming the rest of the line, hiding a reference use
+    // (`[b][id]`) that follows an inline link (`[a](x)`) on the same line.
+    // The edit lands on the use line itself (not the definition line) so it
+    // exercises `reference_labels` via `change_may_affect_reference_use`
+    // directly: a buggy scanner never sees the `[b][id]` label on this line,
+    // so it never forces the full-parse fallback the definition lies outside
+    // a window for.
+    let old = "# A\n\n[id]: /one\n\n# B\n\nsee [a](x) then [b][id]\n";
+    let new = "# A\n\n[id]: /one\n\n# B\n\nsee [a](y) then [b][id]\n";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        text(old),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let edit_at = old.find("(x)").unwrap() + 1;
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        text(new),
+        &[TextChange {
+            old_range: range(edit_at, edit_at + 1),
+            replacement: Arc::from("y"),
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(reference_destinations(&update.snapshot), vec!["/one"]);
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
+}
+
+#[test]
+fn inline_link_before_reference_use_in_separate_paragraph_still_resolves() {
+    // Mirrors the issue text: the edit lands in a paragraph that shares a
+    // shell window (heading section "# B") with the mixed
+    // inline-link-then-reference-use paragraph, but the window excludes the
+    // definition's heading section ("# A"). This exercises
+    // `window_reparse_may_lose_reference_resolution` rather than
+    // `change_may_affect_reference_use`: a buggy scanner never notices the
+    // window contains a `[b][id]` use, so it never forces the full-parse
+    // fallback needed because the definition lies outside the window.
+    let old = "# A\n\n[id]: /one\n\n# B\n\nmiddle paragraph\n\nsee [a](x) then [b][id]\n";
+    let new = "# A\n\n[id]: /one\n\n# B\n\nMIDDLE paragraph\n\nsee [a](x) then [b][id]\n";
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        text(old),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let edit_at = old.find("middle").unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        text(new),
+        &[TextChange {
+            old_range: range(edit_at, edit_at + "middle".len()),
+            replacement: Arc::from("MIDDLE"),
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(reference_destinations(&update.snapshot), vec!["/one"]);
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
+}
+
+#[test]
 fn local_edit_publishes_the_caller_source_and_a_single_normalized_range() {
     // This fails if direct incremental reparse allocates another source or if
     // normalization reports an unrelated shell window.
@@ -534,6 +602,14 @@ fn deterministic_incremental_cases_match_the_full_parse_oracle() {
             "Values",
         ),
         ("Unicode replacement", "café\n", "cafø\n", 3, 5, "ø"),
+        (
+            "inline link before reference use",
+            "[a](x) [b][id]\n",
+            "[a](y) [b][id]\n",
+            4,
+            5,
+            "y",
+        ),
         ("EOF insertion", "tail\n", "tail\nmore\n", 5, 5, "more\n"),
     ];
     for (name, old, new, start, end, replacement) in cases {

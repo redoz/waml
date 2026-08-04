@@ -600,6 +600,41 @@ proptest! {
     }
 }
 
+// A heading section carrying only a reference definition, followed by a
+// second heading section whose only content is a line mixing an inline link
+// (`[a](x)`) with a reference use (`[b][id]`) that follows it. The two
+// sections land in separate shell windows, so an edit inside the second
+// section can only resolve `[b][id]` correctly if the reference-label
+// scanner still notices the use after the inline link (issue #21).
+const INLINE_LINK_BEFORE_REFERENCE_USE_BASE: &str =
+    "# A\n\n[id]: /one\n\n# B\n\nsee [a](x) then [b][id]\n";
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+    #[test]
+    fn inline_link_before_reference_use_full_and_incremental_agree(letter in "[a-zA-Z]") {
+        // A same-length, single-character substitution of the word "then"'s
+        // first letter. Fixing the edit's position and length isolates the
+        // reference-label scanning class this test targets (issue #21) from
+        // the unrelated destination-range-tracking divergence a
+        // length-changing edit near the inline link's `(x)` destination can
+        // trigger (a separate, pre-existing incremental-splicing concern).
+        let candidate = INLINE_LINK_BEFORE_REFERENCE_USE_BASE.to_owned();
+        let snapshot = parse_markdown(DocumentRevision::INITIAL, source(&candidate), MarkdownDialect::WAML_DEFAULT).unwrap();
+        let at = candidate.find("then").unwrap();
+        let replacement: Arc<str> = Arc::from(letter.as_str());
+        let mut edited = candidate.clone();
+        edited.replace_range(at..at + 1, &letter);
+        let update = reparse_markdown(
+            &snapshot,
+            DocumentRevision::INITIAL.checked_next().unwrap(),
+            source(&edited),
+            &[TextChange { old_range: range(at, at + 1), replacement }],
+        ).unwrap();
+        assert_full_oracle(&update.snapshot, &edited);
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
     #[test]

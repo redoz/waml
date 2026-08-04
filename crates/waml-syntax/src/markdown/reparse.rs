@@ -130,7 +130,30 @@ fn reference_labels(line: &str) -> Vec<Arc<str>> {
             let label = &after_label[..label_end];
             (if label.is_empty() { text } else { label }, label_end + 2)
         } else if after.starts_with('(') {
-            ("", after.len())
+            // Inline link destination: `[text](dest)` carries no reference
+            // label. Consume only the parenthesized tail so a later
+            // reference use on the same line (e.g. `[a](x) then [b][id]`)
+            // is still scanned. Track paren depth to handle balanced nested
+            // parens in the destination; if the line ends unbalanced, only
+            // consume the opening `(` (consumed = 1) so scanning resumes
+            // right after it — over-scanning is safe (extra fallback),
+            // under-scanning is the bug this guards against.
+            let mut depth = 0usize;
+            let mut close_at = None;
+            for (idx, ch) in after.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_at = Some(idx);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ("", close_at.map_or(1, |idx| idx + 1))
         } else {
             (text, 0)
         };
