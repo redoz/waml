@@ -20,6 +20,11 @@ Evaluate whether the code is easy to understand, modify, and extend.
 - Are enums and message types well designed? Right granularity, no variant that means "several unrelated things"?
 - Is naming clear and consistent with the surrounding code?
 - Is there dead code, commented-out code, or an obsolete module left behind?
+- Does every `#[allow(dead_code)]` name a concrete unlanded consumer (or, when the
+  item is genuinely only reachable via a derive-generated read, say so explicitly)?
+  The allow belongs on the specific item, never on the enclosing struct or impl —
+  a struct-/impl-level allow silences every future field or method added under it.
+  The commit that lands the named consumer removes the allow in the same commit.
 - Does the change match the density and idiom of the code around it?
 
 ### Change Resistance
