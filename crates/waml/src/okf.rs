@@ -258,7 +258,7 @@ pub struct Directory {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Bundle {
     concepts: Vec<Concept>,
     indexes: Vec<Index>,
@@ -266,7 +266,53 @@ pub struct Bundle {
     directories: Vec<Directory>,
 }
 
+/// Deserialization accepts arbitrary input, so it cannot assume the wire order matches
+/// the sortedness the accessors binary-search on; [`Bundle::from_parts`] re-establishes it.
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Bundle {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct Wire {
+            concepts: Vec<Concept>,
+            indexes: Vec<Index>,
+            logs: Vec<Log>,
+            directories: Vec<Directory>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Bundle::from_parts(
+            wire.concepts,
+            wire.indexes,
+            wire.logs,
+            wire.directories,
+        ))
+    }
+}
+
 impl Bundle {
+    /// The single constructor for a populated `Bundle`. It establishes the ordering the
+    /// accessors below binary-search on: concepts by `id`, indexes and logs by
+    /// `directory`, directories by `address`. Callers that already build in order (see
+    /// `shell::project`) pay only the sortedness check of a sorted merge sort.
+    pub(crate) fn from_parts(
+        mut concepts: Vec<Concept>,
+        mut indexes: Vec<Index>,
+        mut logs: Vec<Log>,
+        mut directories: Vec<Directory>,
+    ) -> Self {
+        concepts.sort_by(|left, right| left.id.cmp(&right.id));
+        indexes.sort_by(|left, right| left.directory.cmp(&right.directory));
+        logs.sort_by(|left, right| left.directory.cmp(&right.directory));
+        directories.sort_by(|left, right| left.address.cmp(&right.address));
+        Self {
+            concepts,
+            indexes,
+            logs,
+            directories,
+        }
+    }
+
     pub fn parse(source: &SourceBundle) -> Result<Self, BundleError> {
         crate::analysis::analyze_okf(source, None, 0)
             .map(|analysis| analysis.bundle)
@@ -276,8 +322,8 @@ impl Bundle {
             })
     }
 
-    /// Requires `self.concepts` to be sorted by `id` (invariant of construction; see
-    /// `shell.rs` where the vector is built and asserted sorted in debug builds).
+    /// Requires `self.concepts` to be sorted by `id` (established by
+    /// [`Bundle::from_parts`], the only constructor of a populated bundle).
     pub fn concept(&self, id: &str) -> Option<&Concept> {
         self.concepts
             .binary_search_by(|c| c.id.as_str().cmp(id))
@@ -285,8 +331,8 @@ impl Bundle {
             .map(|i| &self.concepts[i])
     }
 
-    /// Requires `self.indexes` to be sorted by `directory` (invariant of construction; see
-    /// `shell.rs`).
+    /// Requires `self.indexes` to be sorted by `directory` (established by
+    /// [`Bundle::from_parts`]).
     pub fn index(&self, address: &str) -> Option<&Index> {
         self.indexes
             .binary_search_by(|index| index.directory.as_str().cmp(address))
@@ -294,8 +340,8 @@ impl Bundle {
             .map(|i| &self.indexes[i])
     }
 
-    /// Requires `self.logs` to be sorted by `directory` (invariant of construction; see
-    /// `shell.rs`).
+    /// Requires `self.logs` to be sorted by `directory` (established by
+    /// [`Bundle::from_parts`]).
     pub fn log(&self, address: &str) -> Option<&Log> {
         self.logs
             .binary_search_by(|log| log.directory.as_str().cmp(address))
@@ -303,8 +349,8 @@ impl Bundle {
             .map(|i| &self.logs[i])
     }
 
-    /// Requires `self.directories` to be sorted by `address` (invariant of construction; see
-    /// `shell.rs`).
+    /// Requires `self.directories` to be sorted by `address` (established by
+    /// [`Bundle::from_parts`]).
     pub fn directory(&self, address: &str) -> Option<&Directory> {
         self.directories
             .binary_search_by(|directory| directory.address.as_str().cmp(address))
@@ -573,6 +619,106 @@ mod tests {
         assert!(bundle.log("/east").is_some());
         assert!(bundle.log("/west").is_some());
         assert!(bundle.log("/missing").is_none());
+    }
+
+    #[test]
+    fn nested_directories_group_children_and_concepts_in_address_order() {
+        // Every directory below holds MORE THAN ONE child directory and more than one
+        // concept, and the documents are handed over out of order, so a grouping or
+        // ordering regression in the single-pass build shows up here.
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n"),
+            ("zeta.md", "---\ntype: Note\n---\n# Zeta\n"),
+            ("alpha.md", "---\ntype: Note\n---\n# Alpha\n"),
+            ("sales/west/deal.md", "---\ntype: Note\n---\n# Deal\n"),
+            ("sales/order.md", "---\ntype: Note\n---\n# Order\n"),
+            ("sales/east/lead.md", "---\ntype: Note\n---\n# Lead\n"),
+            ("sales/east/bid.md", "---\ntype: Note\n---\n# Bid\n"),
+            ("sales/customer.md", "---\ntype: Note\n---\n# Customer\n"),
+            ("ops/runbook.md", "---\ntype: Note\n---\n# Runbook\n"),
+        ])
+        .unwrap();
+
+        let bundle = Bundle::parse(&source).unwrap();
+
+        let grouped = |address: &str| {
+            let directory = bundle.directory(address).unwrap();
+            (
+                directory
+                    .child_directories
+                    .iter()
+                    .map(|child| child.as_str().to_owned())
+                    .collect::<Vec<_>>(),
+                directory.concepts.clone(),
+            )
+        };
+
+        let (root_children, root_concepts) = grouped("/");
+        assert_eq!(root_children, ["/ops", "/sales"]);
+        assert_eq!(root_concepts, ["alpha", "zeta"]);
+
+        let (sales_children, sales_concepts) = grouped("/sales");
+        assert_eq!(sales_children, ["/sales/east", "/sales/west"]);
+        assert_eq!(sales_concepts, ["sales/customer", "sales/order"]);
+
+        let (east_children, east_concepts) = grouped("/sales/east");
+        assert!(east_children.is_empty());
+        assert_eq!(east_concepts, ["sales/east/bid", "sales/east/lead"]);
+
+        let (west_children, west_concepts) = grouped("/sales/west");
+        assert!(west_children.is_empty());
+        assert_eq!(west_concepts, ["sales/west/deal"]);
+
+        let (ops_children, ops_concepts) = grouped("/ops");
+        assert!(ops_children.is_empty());
+        assert_eq!(ops_concepts, ["ops/runbook"]);
+
+        // A directory only reaches its own children — no leakage across siblings.
+        assert_eq!(
+            bundle
+                .directories()
+                .iter()
+                .map(|directory| directory.address.as_str())
+                .collect::<Vec<_>>(),
+            ["/", "/ops", "/sales", "/sales/east", "/sales/west"]
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn deserialized_bundle_reestablishes_accessor_ordering() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n"),
+            ("alpha.md", "---\ntype: Note\n---\n# Alpha\n"),
+            ("beta.md", "---\ntype: Note\n---\n# Beta\n"),
+            ("east/index.md", "# East\n"),
+            ("east/log.md", "# Log\n"),
+            ("west/index.md", "# West\n"),
+            ("west/log.md", "# Log\n"),
+        ])
+        .unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+
+        // A wire bundle is untrusted input: reverse every vector so no accessor's
+        // binary search would find its record without re-sorting on the way in.
+        let mut wire = serde_json::to_value(&bundle).unwrap();
+        for key in ["concepts", "indexes", "logs", "directories"] {
+            wire[key].as_array_mut().unwrap().reverse();
+        }
+        let decoded: Bundle = serde_json::from_value(wire).unwrap();
+
+        assert_eq!(decoded, bundle);
+        assert_eq!(decoded.concept("alpha").unwrap().id, "alpha");
+        assert_eq!(decoded.concept("beta").unwrap().id, "beta");
+        assert!(decoded.concept("missing").is_none());
+        assert!(decoded.index("/").is_some());
+        assert!(decoded.index("/east").is_some());
+        assert!(decoded.index("/west").is_some());
+        assert!(decoded.log("/east").is_some());
+        assert!(decoded.log("/west").is_some());
+        assert!(decoded.directory("/").is_some());
+        assert!(decoded.directory("/east").is_some());
+        assert!(decoded.directory("/west").is_some());
     }
 
     #[test]

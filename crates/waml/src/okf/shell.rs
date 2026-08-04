@@ -303,28 +303,9 @@ fn project(documents: Vec<ShellDocument<'_>>) -> Result<Bundle, BundleError> {
             }),
         }
     }
-    debug_assert!(
-        concepts.windows(2).all(|w| w[0].id <= w[1].id),
-        "Bundle::concept relies on concepts being sorted by id"
-    );
-    debug_assert!(
-        indexes.windows(2).all(|w| w[0].directory <= w[1].directory),
-        "Bundle::index relies on indexes being sorted by directory"
-    );
-    debug_assert!(
-        logs.windows(2).all(|w| w[0].directory <= w[1].directory),
-        "Bundle::log relies on logs being sorted by directory"
-    );
-    debug_assert!(
-        directories.windows(2).all(|w| w[0].address <= w[1].address),
-        "Bundle::directory relies on directories being sorted by address"
-    );
-    Ok(Bundle {
-        concepts,
-        indexes,
-        logs,
-        directories,
-    })
+    // `Bundle::from_parts` establishes the sortedness the accessors binary-search on.
+    // Every vector above is already built in order, so this costs only the ordering check.
+    Ok(Bundle::from_parts(concepts, indexes, logs, directories))
 }
 
 fn project_concept(shell: &ShellDocument<'_>) -> Concept {
