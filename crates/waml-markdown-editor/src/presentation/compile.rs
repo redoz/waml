@@ -238,16 +238,20 @@ fn marker_role(
         }
         MarkdownSemanticRole::Frontmatter => TextRole::Frontmatter,
         MarkdownSemanticRole::FrontmatterPunctuation | MarkdownSemanticRole::FrontmatterFence => {
-            TextRole::CodeToken(CodeTokenRole::Punctuation)
+            TextRole::FrontmatterToken(CodeTokenRole::Punctuation)
         }
         // These four never actually reach marker_role: their tokens are
         // Content-sourced (see `source_role`), so content_role paints them.
         // The arms exist only for match exhaustiveness on
         // `MarkdownSemanticRole`.
-        MarkdownSemanticRole::FrontmatterKey => TextRole::CodeToken(CodeTokenRole::Property),
-        MarkdownSemanticRole::FrontmatterComment => TextRole::CodeToken(CodeTokenRole::Comment),
+        MarkdownSemanticRole::FrontmatterKey => TextRole::FrontmatterToken(CodeTokenRole::Property),
+        MarkdownSemanticRole::FrontmatterComment => {
+            TextRole::FrontmatterToken(CodeTokenRole::Comment)
+        }
         MarkdownSemanticRole::FrontmatterScalar => frontmatter_scalar_role(span, text),
-        MarkdownSemanticRole::FrontmatterInvalid => TextRole::CodeToken(CodeTokenRole::Invalid),
+        MarkdownSemanticRole::FrontmatterInvalid => {
+            TextRole::FrontmatterToken(CodeTokenRole::Invalid)
+        }
         // `#` runs read as part of the heading, so they carry the heading's
         // metrics and only the marker colors set them apart.
         MarkdownSemanticRole::Heading => headings
@@ -290,20 +294,20 @@ fn content_role(
         }
         MarkdownSemanticRole::Frontmatter => return TextRole::Frontmatter,
         MarkdownSemanticRole::FrontmatterKey => {
-            return TextRole::CodeToken(CodeTokenRole::Property)
+            return TextRole::FrontmatterToken(CodeTokenRole::Property)
         }
         MarkdownSemanticRole::FrontmatterComment => {
-            return TextRole::CodeToken(CodeTokenRole::Comment)
+            return TextRole::FrontmatterToken(CodeTokenRole::Comment)
         }
         MarkdownSemanticRole::FrontmatterScalar => return frontmatter_scalar_role(span, text),
         MarkdownSemanticRole::FrontmatterInvalid => {
-            return TextRole::CodeToken(CodeTokenRole::Invalid)
+            return TextRole::FrontmatterToken(CodeTokenRole::Invalid)
         }
         // Never reached: these tokens are SyntaxMarker-sourced, so
         // marker_role paints them before content_role runs. Arms exist only
         // for match exhaustiveness on `MarkdownSemanticRole`.
         MarkdownSemanticRole::FrontmatterPunctuation | MarkdownSemanticRole::FrontmatterFence => {
-            return TextRole::CodeToken(CodeTokenRole::Punctuation)
+            return TextRole::FrontmatterToken(CodeTokenRole::Punctuation)
         }
         MarkdownSemanticRole::FencedCode | MarkdownSemanticRole::IndentedCode => {
             return fenced_content_role(span, snapshot)
@@ -364,23 +368,27 @@ fn content_role(
 /// uses, so a value painted Number can never be read as a Str.
 fn frontmatter_scalar_role(span: &MarkdownSyntaxSpan, text: &SourceText) -> TextRole {
     let Ok(slice) = text.slice(span.range) else {
-        return TextRole::CodeToken(CodeTokenRole::String);
+        return TextRole::FrontmatterToken(CodeTokenRole::String);
     };
     let s = slice.trim();
     if s.starts_with('"') || s.starts_with('\'') || s.starts_with('|') || s.starts_with('>') {
-        return TextRole::CodeToken(CodeTokenRole::String);
+        return TextRole::FrontmatterToken(CodeTokenRole::String);
     }
     if s.starts_with('[') {
         // Flow sequences arrive as one token; painting the whole run String
         // is the deliberate choice pinned by the presentation test.
-        return TextRole::CodeToken(CodeTokenRole::String);
+        return TextRole::FrontmatterToken(CodeTokenRole::String);
     }
     match waml_syntax::classify_bare_scalar(s) {
         waml_syntax::FrontmatterScalarKind::Bool | waml_syntax::FrontmatterScalarKind::Null => {
-            TextRole::CodeToken(CodeTokenRole::Keyword)
+            TextRole::FrontmatterToken(CodeTokenRole::Keyword)
         }
-        waml_syntax::FrontmatterScalarKind::Number => TextRole::CodeToken(CodeTokenRole::Number),
-        waml_syntax::FrontmatterScalarKind::Str => TextRole::CodeToken(CodeTokenRole::String),
+        waml_syntax::FrontmatterScalarKind::Number => {
+            TextRole::FrontmatterToken(CodeTokenRole::Number)
+        }
+        waml_syntax::FrontmatterScalarKind::Str => {
+            TextRole::FrontmatterToken(CodeTokenRole::String)
+        }
     }
 }
 

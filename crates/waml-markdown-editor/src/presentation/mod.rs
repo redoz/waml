@@ -72,6 +72,14 @@ pub enum TextRole {
     TableDelimiter,
     RawHtml,
     Frontmatter,
+    /// A highlighted token inside frontmatter content (key, comment, scalar,
+    /// invalid run, or fence/colon punctuation). Kept distinct from
+    /// `CodeToken` — both resolve to the same colors via `code_token`, but a
+    /// reading view must hide every frontmatter run regardless of its token
+    /// kind, while a real fenced code block's highlighted tokens stay
+    /// visible; collapsing the two into one role would make that
+    /// distinction unrecoverable downstream.
+    FrontmatterToken(CodeTokenRole),
     Recovery,
     Whitespace,
     LineBreak,

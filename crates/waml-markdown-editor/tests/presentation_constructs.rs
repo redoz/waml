@@ -310,32 +310,32 @@ fn frontmatter_tokens_paint_from_the_shared_classifier() {
 
     assert_eq!(
         roles_for(&plan, &snapshot, "title"),
-        vec![TextRole::CodeToken(CodeTokenRole::Property)]
+        vec![TextRole::FrontmatterToken(CodeTokenRole::Property)]
     );
     assert!(roles_for(&plan, &snapshot, ":")
         .iter()
-        .all(|role| *role == TextRole::CodeToken(CodeTokenRole::Punctuation)));
+        .all(|role| *role == TextRole::FrontmatterToken(CodeTokenRole::Punctuation)));
     assert_eq!(
         roles_for(&plan, &snapshot, " # note"),
-        vec![TextRole::CodeToken(CodeTokenRole::Comment)]
+        vec![TextRole::FrontmatterToken(CodeTokenRole::Comment)]
     );
     assert_eq!(
         roles_for(&plan, &snapshot, " Order"),
-        vec![TextRole::CodeToken(CodeTokenRole::String)]
+        vec![TextRole::FrontmatterToken(CodeTokenRole::String)]
     );
     assert_eq!(
         roles_for(&plan, &snapshot, " 3"),
-        vec![TextRole::CodeToken(CodeTokenRole::Number)]
+        vec![TextRole::FrontmatterToken(CodeTokenRole::Number)]
     );
     assert_eq!(
         roles_for(&plan, &snapshot, " true"),
-        vec![TextRole::CodeToken(CodeTokenRole::Keyword)]
+        vec![TextRole::FrontmatterToken(CodeTokenRole::Keyword)]
     );
     assert_eq!(
         roles_for(&plan, &snapshot, "bad"),
-        vec![TextRole::CodeToken(CodeTokenRole::Invalid)]
+        vec![TextRole::FrontmatterToken(CodeTokenRole::Invalid)]
     );
     assert!(roles_for(&plan, &snapshot, "---")
         .iter()
-        .all(|role| *role == TextRole::CodeToken(CodeTokenRole::Punctuation)));
+        .all(|role| *role == TextRole::FrontmatterToken(CodeTokenRole::Punctuation)));
 }

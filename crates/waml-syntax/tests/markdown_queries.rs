@@ -61,20 +61,30 @@ fn frontmatter_spans_cover_the_source_with_semantic_owners() {
         .windows(2)
         .all(|pair| pair[0].range.end() == pair[1].range.start()));
 
-    let owner_for = |needle: &str| {
+    // Frontmatter spans carry finer semantic roles than the parent
+    // `Frontmatter` node kind: the fence is `FrontmatterFence`, a key is
+    // `FrontmatterKey`, and its value is `FrontmatterScalar` — that
+    // granularity is what lets the presentation layer color and (for the
+    // reading view) hide keys, values, comments, and punctuation
+    // independently. See `TextRole::FrontmatterToken` in
+    // `waml-markdown-editor`.
+    let owner_for = |needle: &str, expected: MarkdownSemanticRole| {
         let range = range_of(source, needle);
         spans
             .iter()
             .find(|span| span.range.start() <= range.start() && range.end() <= span.range.end())
             .map(|span| {
-                assert_eq!(span.semantic_role, MarkdownSemanticRole::Frontmatter);
+                assert_eq!(span.semantic_role, expected);
                 span.owner
             })
             .unwrap()
     };
-    let fence_owner = owner_for("---");
-    let entry_owner = owner_for("type");
-    assert_eq!(entry_owner, owner_for("uml.Class"));
+    let fence_owner = owner_for("---", MarkdownSemanticRole::FrontmatterFence);
+    let entry_owner = owner_for("type", MarkdownSemanticRole::FrontmatterKey);
+    assert_eq!(
+        entry_owner,
+        owner_for("uml.Class", MarkdownSemanticRole::FrontmatterScalar)
+    );
     assert_ne!(fence_owner, entry_owner);
 }
 

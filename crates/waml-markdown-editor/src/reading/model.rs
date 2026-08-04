@@ -304,11 +304,14 @@ fn emits(bullet_ranges: &HashSet<(usize, usize)>, role: TextRole, range: TextRan
         return false;
     }
     // Frontmatter is document metadata, not prose: the editor always shows it
-    // (as code, per `PresentationBlockKind::Code`), but this reading view
-    // hides it. `TextRole::is_syntax_marker` no longer covers it, since it
-    // now answers "is this markdown punctuation" for the always-visible
-    // editor, not "should a reading view hide this".
-    if role == TextRole::Frontmatter {
+    // (as code, per `PresentationBlockKind::Code`, with per-token coloring
+    // via `TextRole::FrontmatterToken`), but this reading view hides all of
+    // it — the bare `Frontmatter` role (comments/blank runs) as well as
+    // every colored `FrontmatterToken` (keys, values, punctuation).
+    // `TextRole::is_syntax_marker` no longer covers it, since it now
+    // answers "is this markdown punctuation" for the always-visible editor,
+    // not "should a reading view hide this".
+    if matches!(role, TextRole::Frontmatter | TextRole::FrontmatterToken(_)) {
         return false;
     }
     if role == TextRole::ListMarker {

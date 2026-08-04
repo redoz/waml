@@ -77,11 +77,12 @@ fn frontmatter_is_suppressed_but_still_covered() {
         .expect("frontmatter bytes stay in the partition");
     fn any_emitting_frontmatter(blocks: &[waml_markdown_editor::reading::ReadingBlock]) -> bool {
         blocks.iter().any(|block| {
-            block
-                .pieces
-                .iter()
-                .any(|piece| piece.role == TextRole::Frontmatter && piece.emit)
-                || any_emitting_frontmatter(&block.children)
+            block.pieces.iter().any(|piece| {
+                matches!(
+                    piece.role,
+                    TextRole::Frontmatter | TextRole::FrontmatterToken(_)
+                ) && piece.emit
+            }) || any_emitting_frontmatter(&block.children)
         })
     }
     assert!(

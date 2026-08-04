@@ -1088,6 +1088,7 @@ mod tests {
         assert_eq!(parse_value(""), FmValue::Null);
         assert_eq!(parse_value("NO"), FmValue::Str("NO".into()));
         assert_eq!(parse_value("yes"), FmValue::Str("yes".into()));
+        assert_eq!(parse_value("on"), FmValue::Str("on".into()));
         assert_eq!(parse_value("0x1A"), FmValue::Num(26.0));
         assert_eq!(parse_value("0o17"), FmValue::Num(15.0));
         assert_eq!(parse_value(".inf"), FmValue::Num(f64::INFINITY));
@@ -1617,6 +1618,46 @@ mod tests {
         }
     }
 
+    /// True unless `v` contains a block-sequence item that is itself a
+    /// nested `List` (so it renders as its own flow `[...]` run on the dash
+    /// line) whose flow text contains a `:` anywhere, including inside a
+    /// quoted string. KNOWN PARSER GAP: a block-sequence item's line is
+    /// re-scanned for the `- key: value` shorthand without being
+    /// quote-aware, so `- [": "]` misreads the quoted colon as the item's
+    /// own key separator instead of one flow-list item — mirrors
+    /// `flow_avoids_hash_bug`'s already-documented gap for `" #"`. Only
+    /// matters once a `List` becomes a block sequence (contains at least
+    /// one `Map` item, so its OTHER items are dash lines, not one shared
+    /// flow run).
+    fn block_sequence_avoids_colon_bug(v: &FmValue) -> bool {
+        match v {
+            FmValue::List(items) => {
+                let is_block = items.iter().any(|item| matches!(item, FmValue::Map(_)));
+                items.iter().all(|item| {
+                    if is_block && matches!(item, FmValue::List(_)) && value_contains_colon(item) {
+                        return false;
+                    }
+                    block_sequence_avoids_colon_bug(item)
+                })
+            }
+            FmValue::Map(entries) => entries
+                .iter()
+                .all(|(_, v)| block_sequence_avoids_colon_bug(v)),
+            _ => true,
+        }
+    }
+
+    fn value_contains_colon(v: &FmValue) -> bool {
+        match v {
+            FmValue::Str(s) => s.contains(':'),
+            FmValue::List(items) => items.iter().any(value_contains_colon),
+            FmValue::Map(entries) => entries
+                .iter()
+                .any(|(k, v)| k.contains(':') || value_contains_colon(v)),
+            _ => false,
+        }
+    }
+
     /// True when `v` is a shape the current writer+parser combo round-trips.
     /// A `Map` may sit under a key (any depth, via `render_entry`'s
     /// recursion) or as a DIRECT `List` item (a block sequence of maps,
@@ -1635,6 +1676,74 @@ mod tests {
                 other => !value_contains_map(other) && representable_value(other),
             }),
             _ => true,
+        }
+    }
+
+    /// Conformance-sweep pin: a bare value that itself contains a colon (not
+    /// followed by whitespace at the position that already matched the
+    /// entry's key) is NOT a nested key — the scanner only treats the
+    /// FIRST `: `/`:$` on the line as the key/value split, so the rest of
+    /// the line is the value's own text.
+    #[test]
+    fn colon_in_bare_value_is_not_a_second_key() {
+        let fm = parse_frontmatter_for_test("---\na: b: c\n---\n");
+        assert_eq!(fm.get("a"), Some(&FmValue::Str("b: c".into())));
+    }
+
+    /// Conformance-sweep pin: `[a, [b, c]]` nests, matching
+    /// `parse_value_follows_yaml_12_core`'s flow-splitting coverage but
+    /// exercised through the full document parse (closed-syntax reader),
+    /// not just the bare-value splitter.
+    #[test]
+    fn nested_flow_sequence_parses_through_full_document() {
+        let fm = parse_frontmatter_for_test("---\nseq: [a, [b, c]]\n---\n");
+        assert_eq!(
+            fm.get("seq"),
+            Some(&FmValue::List(vec![
+                FmValue::Str("a".into()),
+                FmValue::List(vec![FmValue::Str("b".into()), FmValue::Str("c".into())]),
+            ]))
+        );
+    }
+
+    /// Fuzz-seed no-panic pin (Task 10, Step 2): the Windows host cannot run
+    /// `cargo fuzz`, so this feeds each `fuzz/seeds/parse_write` frontmatter
+    /// seed through the full parse, a `write_to_string` round-trip identity
+    /// check, and `parse_closed_syntax`, asserting none of them panic.
+    #[test]
+    fn fuzz_seeds_parse_without_panic() {
+        let seeds: &[(&str, &str)] = &[
+            (
+                "frontmatter-nested.md",
+                include_str!("../../../fuzz/seeds/parse_write/frontmatter-nested.md"),
+            ),
+            (
+                "frontmatter-block-scalars.md",
+                include_str!("../../../fuzz/seeds/parse_write/frontmatter-block-scalars.md"),
+            ),
+            (
+                "frontmatter-hostile.md",
+                include_str!("../../../fuzz/seeds/parse_write/frontmatter-hostile.md"),
+            ),
+        ];
+        for (name, source) in seeds {
+            let text = SourceText::from_shared(std::sync::Arc::new((*source).into())).unwrap();
+            let snapshot = parse_markdown(
+                DocumentRevision::INITIAL,
+                text,
+                MarkdownDialect::WAML_DEFAULT,
+            )
+            .unwrap_or_else(|_| panic!("{name}: bounded UTF-8 markdown must parse"));
+            assert_eq!(
+                snapshot.tree().write_to_string(),
+                *source,
+                "{name}: round-trip must be lossless"
+            );
+            for element in snapshot.tree().root().children() {
+                if let Some(node) = element.into_node() {
+                    let _ = parse_closed_syntax(&node);
+                }
+            }
         }
     }
 
@@ -1686,6 +1795,10 @@ mod tests {
                 .prop_filter(
                     "known parser gap: a quoted flow-list item containing ' #' truncates (see flow_avoids_hash_bug)",
                     |entries| entries.iter().all(|(_, v)| flow_avoids_hash_bug(v, false)),
+                )
+                .prop_filter(
+                    "known parser gap: a block-sequence item that is a nested flow list containing ':' misreads as a map entry (see block_sequence_avoids_colon_bug)",
+                    |entries| entries.iter().all(|(_, v)| block_sequence_avoids_colon_bug(v)),
                 )
         ) {
             let fm = Frontmatter { entries: entries.clone() };

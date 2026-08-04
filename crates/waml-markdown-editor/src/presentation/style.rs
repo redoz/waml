@@ -132,7 +132,8 @@ impl PresentationStyles {
             | TextRole::CodeToken(_)
             | TextRole::CodeFence
             | TextRole::CodeInfo
-            | TextRole::Frontmatter => TextMetrics {
+            | TextRole::Frontmatter
+            | TextRole::FrontmatterToken(_) => TextMetrics {
                 font: FONT_MONO,
                 font_size: 12.5,
                 line_spacing: 1.08,
@@ -255,7 +256,9 @@ impl PresentationStyles {
                 active_color: ColorRole::ActiveMarker,
                 ..base
             },
-            TextRole::CodeToken(token) => self.code_token(token),
+            TextRole::CodeToken(token) | TextRole::FrontmatterToken(token) => {
+                self.code_token(token)
+            }
             TextRole::CodeContent => TextStyle {
                 font: FontRole::Monospace,
                 size: FontSizeRole::Code,
