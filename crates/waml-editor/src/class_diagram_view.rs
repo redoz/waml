@@ -236,7 +236,7 @@ impl ClassDiagramView {
         let status = crate::behavior_doc_view::diagnostics_status(diagnostics);
         if status != self.scene_status {
             if let Some(line) = &status {
-                log!("class diagram: {line}");
+                tracing::warn!(target: "waml_editor::class_diagram", "{line}");
             }
             self.scene_status = status;
         }

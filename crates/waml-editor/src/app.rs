@@ -725,13 +725,14 @@ pub struct App {
 impl MatchEvent for App {
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_startup(&mut self, cx: &mut Cx) {
+        crate::telemetry::init();
         let argv: Vec<String> = std::env::args().collect();
         let args = match crate::cli::parse(&argv) {
             Ok(a) => a,
             Err(e) => {
                 // Land on the start screen rather than a blank window: a bad flag
                 // should cost you the flag, not the session.
-                log!("{e}");
+                tracing::error!(error.message = %e, "could not parse command line");
                 self.show_start_screen(cx);
                 return;
             }
@@ -758,6 +759,7 @@ impl MatchEvent for App {
     /// the start screen -- never a blank window.
     #[cfg(target_arch = "wasm32")]
     fn handle_startup(&mut self, cx: &mut Cx) {
+        crate::telemetry::init();
         self.reveal_caption_bar_on_web(cx);
         // A browser touch device delivers `TouchUpdate` and nothing else (the
         // backend `preventDefault()`s touches, which also kills the browser's
@@ -771,7 +773,7 @@ impl MatchEvent for App {
         let source = match crate::browser_boot::select_browser_boot(&search, &hash) {
             Ok(source) => source,
             Err(e) => {
-                log!("could not read this page's URL: {e}");
+                tracing::error!(error.message = %e, "could not read this page's URL");
                 crate::browser_boot::BrowserBootSource::Start
             }
         };
@@ -784,7 +786,7 @@ impl MatchEvent for App {
                     }
                     Err(e) => {
                         let message = format!("could not open the model in this link: {e}");
-                        log!("{message}");
+                        tracing::error!(error.message = %e, "could not open the model in this share link");
                         self.show_start_screen(cx);
                         self.report_action_error(cx, &message);
                     }
@@ -800,7 +802,7 @@ impl MatchEvent for App {
             // screen with no trace of why nothing opened.
             crate::browser_boot::BrowserBootSource::Api { .. } => {
                 let message = "live model server URLs (?api=) are not supported yet";
-                log!("{message}");
+                tracing::warn!("{message}");
                 self.show_start_screen(cx);
                 self.report_action_error(cx, message);
             }
@@ -851,7 +853,9 @@ impl MatchEvent for App {
                     self.start_boot_bundle_fetch(cx, url)
                 }
                 Ok(_) => {}
-                Err(e) => log!("could not read this site's boot config: {e}"),
+                Err(e) => {
+                    tracing::error!(error.message = %e, "could not read this site's boot config")
+                }
             }
             return;
         }
@@ -863,7 +867,11 @@ impl MatchEvent for App {
         };
         if !ok {
             let message = crate::browser_boot::boot_fetch_error(&url, Some(response.status_code));
-            log!("{message}");
+            tracing::error!(
+                url = %url,
+                http.response.status_code = response.status_code,
+                "{message}"
+            );
             self.report_action_error(cx, &message);
             return;
         }
@@ -880,7 +888,7 @@ impl MatchEvent for App {
             }
             Err(e) => {
                 let message = format!("could not open {url}: {e}");
-                log!("{message}");
+                tracing::error!(url = %url, error.message = %e, "could not open boot bundle");
                 self.report_action_error(cx, &message);
             }
         }
@@ -896,7 +904,7 @@ impl MatchEvent for App {
         }
         if let Some(url) = self.pending_boot_bundle.take() {
             let message = crate::browser_boot::boot_fetch_error(&url, None);
-            log!("{message}");
+            tracing::error!(url = %url, "{message}");
             self.report_action_error(cx, &message);
         }
     }

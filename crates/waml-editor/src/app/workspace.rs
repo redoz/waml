@@ -194,7 +194,7 @@ impl App {
     ) -> Result<(), String> {
         let result = self.save(cx);
         if let Err(error) = &result {
-            log!("failed to save open document: {error}");
+            tracing::error!(error.message = %error, "failed to save open document");
             if retry_on_error && self.session.is_dirty() {
                 self.schedule_save(cx);
             }
@@ -300,7 +300,7 @@ impl App {
                 self.save_feedback.finish_save(&Err(error.clone()));
                 self.schedule_save(cx);
                 self.sync_save_error(cx);
-                log!("{error}");
+                tracing::error!(error.message = %error, "failed to flush the open document before switching bundles");
                 return false;
             }
             Err(BackingTransitionError::Load(error)) => {
@@ -308,7 +308,7 @@ impl App {
                 // was attempted, so the retained backing is now clean.
                 self.save_feedback.finish_save(&Ok(()));
                 self.sync_save_error(cx);
-                log!("{error}");
+                tracing::error!(error.message = %error, "failed to load the bundle");
                 self.report_action_error(cx, &error);
                 return false;
             }
@@ -330,7 +330,7 @@ impl App {
             Err(error) => {
                 let message =
                     format!("failed to canonicalize Markdown asset root {next_root:?}: {error}");
-                log!("{message}");
+                tracing::error!(error.message = %error, path = ?next_root, "failed to canonicalize Markdown asset root");
                 self.report_action_error(cx, &message);
                 return false;
             }
@@ -395,7 +395,7 @@ impl App {
             Ok(change) => change,
             Err(error) => {
                 let message = format!("failed to analyze replacement bundle: {error}");
-                log!("{message}");
+                tracing::error!(error.message = %error, "failed to analyze replacement bundle");
                 self.report_action_error(cx, &message);
                 return false;
             }
@@ -429,9 +429,9 @@ impl App {
                 self.transition_document(cx, &concept_id, false);
             }
             crate::cli::InitialDocument::None => {
-                log!(
-                    "no documents in {:?}; opening bundle with an empty canvas",
-                    self.open_name
+                tracing::info!(
+                    bundle = %self.open_name,
+                    "no documents in bundle; opening with an empty canvas"
                 );
                 // Empty scene draws nothing and `bounding_box` returns `None`, so
                 // the fit path leaves the camera untouched (no divide-by-zero). No
@@ -561,7 +561,7 @@ impl App {
             crate::bundle_export::export_bundle(cx, &mut adapter, &title, snapshot.source.as_ref())
         {
             let message = format!("failed to export the WAML bundle: {error}");
-            log!("{message}");
+            tracing::error!(error.message = %error, "failed to export the WAML bundle");
             self.report_action_error(cx, &message);
         }
     }
@@ -598,7 +598,7 @@ impl App {
 
         self.save_feedback.finish_save(&result);
         if let Err(error) = &result {
-            log!("failed to close open document: {error}");
+            tracing::error!(error.message = %error, "failed to close open document");
             self.schedule_save(cx);
             self.sync_save_error(cx);
             return false;

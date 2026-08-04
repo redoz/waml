@@ -58,7 +58,11 @@ pub(crate) fn load_from<T: DeserializeOwned + Default>(dir: &Path, file: &str) -
             // and say so, or the reset (vanished recents, reverted theme) is
             // indistinguishable from data loss and nobody finds the `.bak`.
             let _ = std::fs::rename(&path, dir.join(format!("{file}.bak")));
-            log!("waml-editor: {file} was corrupt ({error}); backed it up to {file}.bak and started with defaults");
+            tracing::warn!(
+                error.message = %error,
+                file = %file,
+                "config file was corrupt; backed it up to a .bak and started with defaults"
+            );
             T::default()
         }
     }

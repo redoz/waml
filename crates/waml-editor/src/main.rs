@@ -77,6 +77,7 @@ mod source_view;
 mod splitter;
 mod start_screen;
 mod statusbar;
+mod telemetry;
 mod theme_atlas;
 mod tool_dock;
 mod tree;

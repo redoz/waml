@@ -175,7 +175,7 @@ impl SourceView {
                 // name it -- the measurement and layout failures in this
                 // chain are already logged nearby.
                 if let AssetEventOutcome::IgnoredStale = assets.apply_event(event) {
-                    log!("markdown asset event ignored as stale during presentation compile");
+                    tracing::warn!("markdown asset event ignored as stale during presentation compile");
                 }
             }
         }

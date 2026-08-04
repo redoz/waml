@@ -41,6 +41,14 @@ url = { workspace = true }
 # `home_dir()` for the `~/.waml` config root (see src/config.rs).
 dirs = "6.0.0"
 rfd = "0.17.2"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native mirrors telemetry to stderr (`fmt`) behind a RUST_LOG-overridable
+# filter (`env-filter`); wasm keeps the registry-only baseline -- EnvFilter's
+# env read and stderr writer have no business in the browser build.
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 
 [target.'cfg(windows)'.build-dependencies]
 # Embeds resources/icon.ico into the exe (see build.rs).
