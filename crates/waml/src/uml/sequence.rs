@@ -1,3 +1,11 @@
+//! Ownership rule for UML validation: every rule has exactly ONE verdict
+//! function, placed in the module that owns the concept it validates. This
+//! module never invents a validation rule of its own — it calls the owning
+//! module's verdict function (e.g. `analysis::relationship_end_verdict`) and
+//! either admits/drops (projection) or reports (diagnostics) based on the
+//! same verdict every other consumer sees. New UML rules must follow this
+//! shape: one verdict function, two consumers.
+
 use super::{
     DeclaredBundle, DeclaredConcept, DeclaredEndpointRef, DeclaredField, DeclaredMessageKind,
     DeclaredOperandSpec,

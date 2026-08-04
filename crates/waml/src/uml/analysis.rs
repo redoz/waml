@@ -1,3 +1,12 @@
+//! Ownership rule for UML validation: every rule has exactly ONE verdict
+//! function, placed in the module that owns the concept it validates.
+//! Projection (admission) consumes the verdict to admit or silently drop a
+//! declaration from the model; the diagnostic pass consumes the SAME verdict
+//! to report it to the user. Neither admission nor diagnostics re-derives a
+//! rule of its own, and `sequence::lower` never invents one either — it calls
+//! back into the owning module's verdict function. New UML rules must follow
+//! this shape: one verdict function, two consumers.
+
 use super::{
     declared::{DeclaredAttribute, DeclaredBundle},
     syntax::{self, UmlLanguage},
