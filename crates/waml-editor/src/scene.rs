@@ -421,9 +421,9 @@ pub fn conflict_participants(c: &SceneConflict) -> Vec<String> {
 
 /// Native-only stress/grid default layout. Kept at this call seam (not inside
 /// `solve_diagram`) so the wasm/web path stays unchanged — web keeps dagre.
-/// Node set is every sized member; undirected `model.edges` among them drive the
-/// stress solve, and an edgeless set falls back to `grid_pack`.
-fn stress_default(model: &Model, sizes: &SizeMap) -> (Solved, SolvedRouting) {
+/// Node set is every sized member; the caller's undirected drawable edges among
+/// them drive the stress solve, and an edgeless set falls back to `grid_pack`.
+fn stress_default(model_edges: &[&waml::model::Edge], sizes: &SizeMap) -> (Solved, SolvedRouting) {
     use std::collections::{BTreeMap, BTreeSet};
 
     let keys: Vec<String> = sizes.keys().cloned().collect();
@@ -438,7 +438,7 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> (Solved, SolvedRouting) {
     // Undirected edge index pairs among members; drop self-loops and duplicates.
     let mut seen = BTreeSet::new();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
-    for e in &model.edges {
+    for e in model_edges {
         let (Some(&a), Some(&b)) = (index.get(e.source.as_str()), index.get(e.target.as_str()))
         else {
             continue;
@@ -461,11 +461,12 @@ fn stress_default(model: &Model, sizes: &SizeMap) -> (Solved, SolvedRouting) {
     // Rects keyed by BoxId for the router (obstacles derive from these rects).
     let rect_map: BTreeMap<BoxId, Rect> = ids.iter().cloned().zip(rects.iter().copied()).collect();
 
-    // Directed (BoxId, BoxId) edge list from the shared `drawable_edges` filter,
-    // so routes come out in the exact order build_scene consumes them.
+    // Directed (BoxId, BoxId) edge list from the caller's shared
+    // `drawable_edges` list (P-5: computed once in build_scene, not again
+    // here), so routes come out in the exact order build_scene consumes them.
     // route::route presence-filters internally.
-    let route_edges: Vec<(BoxId, BoxId)> = drawable_edges(model)
-        .into_iter()
+    let route_edges: Vec<(BoxId, BoxId)> = model_edges
+        .iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
 
@@ -525,9 +526,15 @@ pub fn build_scene(
 ) -> (Scene, Vec<Diagnostic>) {
     use std::collections::BTreeMap;
 
+    // Key -> model node, built once up front: the size loop below and the
+    // scene-node projection loop further down both look nodes up per key
+    // (P-5: the size loop used to scan `model.nodes` per key, O(n^2)).
+    let node_of: BTreeMap<&str, &waml::model::Node> =
+        model.nodes.iter().map(|n| (n.key.as_str(), n)).collect();
+
     let mut sizes = crate::sizing::size_map(model, diagram, expanded);
     for (key, size) in &mut sizes {
-        if let Some(node) = model.nodes.iter().find(|node| node.key == *key) {
+        if let Some(node) = node_of.get(key.as_str()).copied() {
             let mut projected = project_scene_node_with_display(model, node, &display);
             projected.expanded = expanded.contains(key);
             let (w, h) = crate::card::card_size(&projected, &crate::card::mono_sheet());
@@ -544,7 +551,7 @@ pub fn build_scene(
     // `model_edges`, which is the same list (same order) as `edges`.
     let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
     let (mut solved, diags, dropped, routing) = if use_stress_default(diagram) {
-        let (solved, routing) = stress_default(model, &sizes);
+        let (solved, routing) = stress_default(&model_edges, &sizes);
         (solved, Vec::new(), Vec::new(), routing)
     } else {
         waml::solve::solve_diagram_routed(
@@ -555,9 +562,6 @@ pub fn build_scene(
             &SolveConfig::default(),
         )
     };
-
-    let node_of: BTreeMap<&str, &waml::model::Node> =
-        model.nodes.iter().map(|n| (n.key.as_str(), n)).collect();
 
     let mut nodes = Vec::with_capacity(solved.nodes.len());
     for (key, rect) in &solved.nodes {
@@ -1622,7 +1626,7 @@ mod tests {
             &model.diagrams[0],
             &std::collections::HashSet::new(),
         );
-        let (solved, _routing) = stress_default(&model, &sizes);
+        let (solved, _routing) = stress_default(&drawable_edges(&model), &sizes);
         // mini declares one associates edge order -> customer.
         assert_eq!(solved.routes.len(), 1);
         assert!(!solved.routes[0].points.is_empty());
