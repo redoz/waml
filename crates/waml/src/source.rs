@@ -37,10 +37,9 @@ impl BundlePath {
         let normalized = original.replace('\\', "/");
         let invalid = normalized.is_empty()
             || normalized.starts_with('/')
-            || normalized
-                .as_bytes()
-                .get(1)
-                .is_some_and(|byte| *byte == b':')
+            // Any colon, anywhere: drive prefixes (`C:`) and NTFS alternate
+            // data streams (`a:b.md`) must never reach the filesystem layer.
+            || normalized.contains(':')
             || !normalized.ends_with(".md")
             || normalized
                 .split('/')
@@ -424,6 +423,9 @@ mod tests {
             "/order.md",
             r"\order.md",
             "C:/order.md",
+            "a:b.md",
+            "sales/a:b.md",
+            "order.md:stream.md",
             "sales//order.md",
             "sales/./order.md",
             "sales/order",
