@@ -22,7 +22,15 @@ use waml::source::SourceBundle;
 pub(crate) enum BrowserBootSource {
     /// `#w1.<payload>`: a whole model deflated into the fragment.
     Share(String),
-    /// `?api=<base>[&token=<token>]`: a live model server.
+    /// `?api=<base>`, with an optional bearer token: a live model server.
+    ///
+    /// SECURITY: the token belongs in the URL *fragment* (`#token=<t>`), never
+    /// the query string. A query-string secret lands in browser history, proxy
+    /// and server access logs, and potentially `Referer` headers; the fragment
+    /// is never sent to any server. The query spelling is still accepted as a
+    /// deprecated fallback, but when `waml serve` ships, its boot path must
+    /// also strip the token from the address bar (`history.replaceState`)
+    /// immediately after this read.
     Api { base: String, token: Option<String> },
     /// `?bundle=<url>`: a static Bundle Envelope v1 file to fetch.
     Bundle(String),
@@ -50,9 +58,14 @@ pub(crate) fn select_browser_boot(search: &str, hash: &str) -> Result<BrowserBoo
             .filter(|value| !value.is_empty())
     };
     if let Some(base) = value("api") {
+        // Prefer a fragment-carried token (`#token=<t>`) over the leaky
+        // query-string spelling -- see the `Api` variant's SECURITY note. The
+        // fragment is parsed leniently: a page can carry an ordinary anchor
+        // (`#section-2`) instead, which simply yields no token.
+        let fragment_token = fragment_token(hash);
         return Ok(BrowserBootSource::Api {
             base: base.to_owned(),
-            token: value("token").map(str::to_owned),
+            token: fragment_token.or_else(|| value("token").map(str::to_owned)),
         });
     }
     if let Some(url) = value("bundle") {
@@ -125,6 +138,21 @@ pub(crate) fn boot_fetch_error(url: &str, status: Option<u16>) -> String {
         Some(status) => format!("could not load {url}: HTTP {status}"),
         None => format!("could not load {url}: the request failed or was blocked by CORS"),
     }
+}
+
+/// The bearer token an `?api=` boot carries in the URL fragment, if any.
+///
+/// The fragment is the non-leaky channel for a secret (never sent to servers,
+/// not kept in proxy logs), so it wins over a query-string `token`. Lenient on
+/// purpose: a fragment that is not a `key=value` list (a plain `#anchor`, or
+/// malformed percent-encoding) is somebody else's fragment, not an error.
+fn fragment_token(hash: &str) -> Option<String> {
+    let hash = hash.strip_prefix('#').unwrap_or(hash);
+    parse_query(hash)
+        .ok()?
+        .into_iter()
+        .find(|(key, value)| key == "token" && !value.is_empty())
+        .map(|(_, value)| value)
 }
 
 /// Percent-decode a query string into its key/value pairs.
@@ -201,6 +229,39 @@ mod tests {
             BrowserBootSource::Api {
                 base: "https://example.test".to_string(),
                 token: Some("t".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn api_token_in_the_fragment_is_preferred_over_the_query() {
+        assert_eq!(
+            select_browser_boot("?api=https://example.test&token=leaky", "#token=safe").unwrap(),
+            BrowserBootSource::Api {
+                base: "https://example.test".to_string(),
+                token: Some("safe".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn api_token_can_arrive_in_the_fragment_alone() {
+        assert_eq!(
+            select_browser_boot("?api=https://example.test", "#token=t%20v").unwrap(),
+            BrowserBootSource::Api {
+                base: "https://example.test".to_string(),
+                token: Some("t v".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_plain_anchor_fragment_is_not_a_token() {
+        assert_eq!(
+            select_browser_boot("?api=https://example.test", "#section-2").unwrap(),
+            BrowserBootSource::Api {
+                base: "https://example.test".to_string(),
+                token: None,
             }
         );
     }
