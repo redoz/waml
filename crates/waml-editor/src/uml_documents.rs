@@ -82,10 +82,11 @@ pub fn describe(
     })
 }
 
-pub fn open(
+pub fn open_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
     concept_id: &str,
+    assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
 ) -> Option<OpenDocument> {
     let concept = okf.bundle.concept(concept_id)?;
     let presentation = presentation(okf, uml, concept_id)?;
@@ -96,19 +97,32 @@ pub fn open(
             .unwrap_or(concept_id)
             .to_string()
     });
+    // Every UML document is markdown underneath, so each primary view carries
+    // the breadcrumb header's in-place source toggle.
+    use crate::source_toggle_view::SourceToggleView;
     let view: Box<dyn crate::doc_view::DocView> = match presentation.category {
-        NavCategory::Diagram => Box::new(crate::class_diagram_view::ClassDiagramView::new(
+        NavCategory::Diagram => Box::new(SourceToggleView::new(
+            crate::class_diagram_view::ClassDiagramView::new(concept_id.to_string()),
             concept_id.to_string(),
+            assets.clone(),
         )),
-        NavCategory::Behavior => Box::new(crate::behavior_doc_view::BehaviorDocView::flow(
+        NavCategory::Behavior => Box::new(SourceToggleView::new(
+            crate::behavior_doc_view::BehaviorDocView::flow(concept_id.to_string()),
             concept_id.to_string(),
+            assets.clone(),
         )),
-        NavCategory::Sequence => Box::new(crate::behavior_doc_view::BehaviorDocView::interaction(
+        NavCategory::Sequence => Box::new(SourceToggleView::new(
+            crate::behavior_doc_view::BehaviorDocView::interaction(concept_id.to_string()),
             concept_id.to_string(),
+            assets.clone(),
         )),
-        _ => Box::new(crate::classifier_preview_view::ClassifierPreviewView::new(
+        _ => Box::new(SourceToggleView::new(
+            crate::classifier_preview_view::ClassifierPreviewView::new(
+                concept_id.to_string(),
+                presentation.category,
+            ),
             concept_id.to_string(),
-            presentation.category,
+            assets.clone(),
         )),
     };
     Some(OpenDocument {
@@ -119,6 +133,22 @@ pub fn open(
         presentation,
         view,
     })
+}
+
+#[cfg(test)]
+pub fn open(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    concept_id: &str,
+) -> Option<OpenDocument> {
+    open_with_asset_host(
+        okf,
+        uml,
+        concept_id,
+        &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
+            crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+        ),
+    )
 }
 
 #[cfg(test)]

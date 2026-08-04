@@ -16,7 +16,7 @@ pub fn open_with_asset_host(
     concept_id: &str,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
 ) -> Option<OpenDocument> {
-    crate::uml_documents::open(okf, uml, concept_id)
+    crate::uml_documents::open_with_asset_host(okf, uml, concept_id, assets)
         .or_else(|| crate::okf_documents::open_with_asset_host(okf, concept_id, assets))
 }
 

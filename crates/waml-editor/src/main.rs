@@ -74,6 +74,7 @@ mod selection_toolbar;
 mod shortcuts;
 mod shortcuts_overlay;
 mod sizing;
+mod source_toggle_view;
 mod source_view;
 mod splitter;
 mod start_screen;
