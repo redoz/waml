@@ -1,12 +1,13 @@
 # waml-editor tests
 
-`waml-editor` is primarily a binary crate: most unit tests live inline in
-`src/*.rs` behind `#[cfg(test)]` and run as the bin's unit-test harness. A
-small `lib.rs` additionally exports `editor_history` and `view_history`, and
-the five integration files in `tests/` (`editor_history.rs`,
-`view_history.rs`, `history_integration.rs`, `markdown_authority.rs`,
-`markdown_integration.rs`) test against those two modules plus
-filesystem-level fixtures. Everything else in `src/` stays bin-private.
+`waml-editor` is a library crate with a thin `main.rs` shim (it just calls
+`app_main!(App)`): every module is declared in `src/lib.rs`, so the inline
+`#[cfg(test)]` unit tests in `src/*.rs` run as the **lib** unit-test harness.
+The five integration files in `tests/` (`editor_history.rs`, `view_history.rs`,
+`history_integration.rs`, `markdown_authority.rs`, `markdown_integration.rs`)
+link that same compiled library and test its public modules (`editor_history`,
+`view_history`) plus filesystem-level fixtures. Modules stay crate-private
+(`mod`) unless a `tests/` file or a `src/bin/*` harness actually imports them.
 
 ## Unit tests (no GPU)
 
@@ -111,7 +112,8 @@ independent, decisive reasons found while implementing it:
    `#[cfg(headless)]` inside `makepad-platform` — not a public API and not even
    compiled in a normal `cargo test` build. A `tests/*.rs` integration test is a
    *separate crate* that can only touch `waml-editor`'s public items, and
-   `ClassDiagramSurface` is a **bin-private** widget (declared via `mod` in `main.rs`).
+   `ClassDiagramSurface` is a **crate-private** widget (its module is declared
+   as a plain `mod` in `lib.rs`).
    There is no in-process "render this widget to an RGBA buffer" function to
    call, so the check cannot participate in `cargo test -p waml-editor`.
 
@@ -119,7 +121,7 @@ Because the headless backend is platform-incomplete here **and** structurally
 unreachable from an external test crate, the automated headless test is omitted
 (a plan-sanctioned outcome). The interactive `cargo run` above is the
 verification of record — this applies equally to the `ProjectTree` panel added
-in Task 3: it too is a bin-private widget with no in-process render hook, so
+in Task 3: it too is a crate-private widget with no in-process render hook, so
 its `FileTree` rendering, fold state, and diagram-row click wiring are only
 exercised by the same interactive run (its data-layer pieces — `tree::build_tree`
 and the `tree_panel` id-map round-trip — remain unit-tested above). If the fork

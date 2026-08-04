@@ -33,47 +33,52 @@ use makepad_widgets::*;
 /// fit-zoom. Screen-space CAD mode deliberately bypasses it. Both
 /// [`surface_bleed`]'s caller and the shader use the same effective zoom, or
 /// the padded quad and the drawn shadow disagree.
-pub const SURFACE_SHADOW_ZOOM_FLOOR: f64 = 0.35;
+pub(crate) const SURFACE_SHADOW_ZOOM_FLOOR: f64 = 0.35;
 
 /// Master scale and CSS radius for the resting accent bloom. These values are
 /// repeated in the shader because the script VM cannot read Rust constants.
-pub const SURFACE_GLOW: f64 = 0.4;
-pub const SURFACE_BLOOM_PX: f64 = 14.0;
+pub(crate) const SURFACE_GLOW: f64 = 0.4;
+pub(crate) const SURFACE_BLOOM_PX: f64 = 14.0;
 
-/// Selected canvas-node depth and bloom values. Rust uses them to size the
+/// Selected canvas-node depth and bloom geometry. Rust uses them to size the
 /// padded quad; the shader uses the matching literals to draw the material.
-pub const SURFACE_SEL_DEPTH_Y: f64 = 8.0;
-pub const SURFACE_SEL_DEPTH_BLUR: f64 = 22.0;
-pub const SURFACE_SEL_DEPTH_A: f64 = 0.14;
-pub const SURFACE_SEL_BLOOM_PX: f64 = 26.0;
-pub const SURFACE_SEL_BLOOM_A: f64 = 0.28;
+pub(crate) const SURFACE_SEL_DEPTH_Y: f64 = 8.0;
+pub(crate) const SURFACE_SEL_DEPTH_BLUR: f64 = 22.0;
+pub(crate) const SURFACE_SEL_BLOOM_PX: f64 = 26.0;
 
-/// Total CSS border thickness in logical pixels at zoom 1.0.
-pub const SURFACE_BORDER_PX: f64 = 1.5;
+/// Selected-state alphas and the total CSS border thickness (logical pixels at
+/// zoom 1.0). These drive color, not padding geometry, so only the shader
+/// literals and the tests that assert them consume these.
+#[cfg(test)]
+pub(crate) const SURFACE_SEL_DEPTH_A: f64 = 0.14;
+#[cfg(test)]
+pub(crate) const SURFACE_SEL_BLOOM_A: f64 = 0.28;
+#[cfg(test)]
+pub(crate) const SURFACE_BORDER_PX: f64 = 1.5;
 
 /// Round a logical coordinate to the device-pixel grid.
-pub fn surface_snap(value: f64, dpi: f64) -> f64 {
+pub(crate) fn surface_snap(value: f64, dpi: f64) -> f64 {
     (value * dpi).round() / dpi
 }
 
 /// Round padding up so snapping cannot clip an outside-the-box layer.
-pub fn surface_snap_up(value: f64, dpi: f64) -> f64 {
+pub(crate) fn surface_snap_up(value: f64, dpi: f64) -> f64 {
     (value * dpi).ceil() / dpi
 }
 
 /// Mirror the shader's selected-value mix for padding calculations.
-pub fn surface_lift(base: f64, selected_value: f64, selected: f64) -> f64 {
+pub(crate) fn surface_lift(base: f64, selected_value: f64, selected: f64) -> f64 {
     base + (selected_value - base) * selected.clamp(0.0, 1.0)
 }
 
 /// Mirror the shader's material-zoom mix for padding calculations.
-pub fn surface_material_zoom(zoom: f64, screen_space: f64) -> f64 {
+pub(crate) fn surface_material_zoom(zoom: f64, screen_space: f64) -> f64 {
     let floored = zoom.max(SURFACE_SHADOW_ZOOM_FLOOR);
     floored + (zoom - floored) * screen_space.clamp(0.0, 1.0)
 }
 
 /// Whether a surface rectangle can safely carry padded material geometry.
-pub fn surface_rect_has_area(width: f64, height: f64) -> bool {
+pub(crate) fn surface_rect_has_area(width: f64, height: f64) -> bool {
     width > 0.0 && height > 0.0
 }
 
@@ -83,14 +88,14 @@ pub fn surface_rect_has_area(width: f64, height: f64) -> bool {
 /// `depth_blur + depth_y` covers the downward-offset shadow's far edge;
 /// `bloom_px` is the un-offset halo radius; `+ 2.0` is antialias slack. `zoom`
 /// is the effective material zoom and must match what the shader scales by.
-pub fn surface_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64 {
+pub(crate) fn surface_bleed(depth_y: f64, depth_blur: f64, bloom_px: f64, zoom: f64) -> f64 {
     ((depth_blur + depth_y).max(bloom_px) * zoom).max(0.0) + 2.0
 }
 
 /// The generic seam: draw an `AccentFrame`-derived pen at `rect`, padding the
 /// drawn quad so the depth shadow and bloom have room to fall outside the
 /// surface.
-pub trait SurfaceExt {
+pub(crate) trait SurfaceExt {
     /// Reads the pen's own knob uniforms, computes the bleed, pushes it, and
     /// draws the inflated quad. `rect` stays the TRUE surface rect -- the frame
     /// lands exactly where `draw_abs(cx, rect)` would have put it.
