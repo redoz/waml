@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use super::properties::{diagnostic_fingerprint, text_fingerprint};
 use super::{reparse_okf_markdown, reparse_okf_markdown_with_structure};
 use crate::{
     annotate_occurrence, markdown::parser::parse as parse_okf_markdown, rebase_unchanged_green,
@@ -279,24 +280,6 @@ fn annotations(annotations: &[SyntaxAnnotation]) -> Vec<(u64, &str, Option<&str>
         .collect()
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum TextFingerprint {
-    Static(String),
-    Owned(String),
-    SourceSlice { range: TextRange, spelling: String },
-}
-
-fn green_text_fingerprint(text: &GreenText) -> TextFingerprint {
-    match text {
-        GreenText::Static(value) => TextFingerprint::Static((*value).to_owned()),
-        GreenText::Owned(value) => TextFingerprint::Owned(value.to_string()),
-        GreenText::SourceSlice { range, .. } => TextFingerprint::SourceSlice {
-            range: *range,
-            spelling: text.write_to_string(),
-        },
-    }
-}
-
 fn structural_fingerprint(tree: &SyntaxTree<crate::OkfMarkdownLanguage>) -> Vec<String> {
     fn visit(
         element: &GreenElement<crate::OkfMarkdownLanguage>,
@@ -320,14 +303,14 @@ fn structural_fingerprint(tree: &SyntaxTree<crate::OkfMarkdownLanguage>) -> Vec<
                 let leading: Vec<_> = token
                     .leading_trivia()
                     .iter()
-                    .map(|trivia| (trivia.kind, green_text_fingerprint(&trivia.text)))
+                    .map(|trivia| (trivia.kind, text_fingerprint(&trivia.text)))
                     .collect();
                 let trailing: Vec<_> = token
                     .trailing_trivia()
                     .iter()
-                    .map(|trivia| (trivia.kind, green_text_fingerprint(&trivia.text)))
+                    .map(|trivia| (trivia.kind, text_fingerprint(&trivia.text)))
                     .collect();
-                out.push(format!("token:{:?}:{at:?}..{end:?}:{:?}:{leading:?}:{trailing:?}:missing={}:bad={}:codes={:?}:{:?}", token.kind(), green_text_fingerprint(token.text()), token.flags().is_missing(), token.flags().is_bad(), token.annotations(), annotations(token.syntax_annotations())));
+                out.push(format!("token:{:?}:{at:?}..{end:?}:{:?}:{leading:?}:{trailing:?}:missing={}:bad={}:codes={:?}:{:?}", token.kind(), text_fingerprint(token.text()), token.flags().is_missing(), token.flags().is_bad(), token.annotations(), annotations(token.syntax_annotations())));
                 end
             }
         }
@@ -341,20 +324,8 @@ fn structural_fingerprint(tree: &SyntaxTree<crate::OkfMarkdownLanguage>) -> Vec<
     out
 }
 
-fn diagnostic_fingerprint(tree: &SyntaxTree<crate::OkfMarkdownLanguage>) -> Vec<String> {
-    tree.diagnostics()
-        .iter()
-        .map(|diagnostic| {
-            format!(
-                "{:?}:{:?}:{:?}:{}",
-                diagnostic.code, diagnostic.severity, diagnostic.range, diagnostic.message
-            )
-        })
-        .collect()
-}
-
 #[test]
-fn green_text_fingerprint_detects_allocation_kind_and_slice_partition() {
+fn text_fingerprint_detects_allocation_kind_and_slice_partition() {
     let source = text("xx");
     let first = GreenText::SourceSlice {
         source: source.clone(),
@@ -366,12 +337,12 @@ fn green_text_fingerprint_detects_allocation_kind_and_slice_partition() {
     };
     let owned = GreenText::Owned(Arc::from("x"));
     assert_ne!(
-        green_text_fingerprint(&first),
-        green_text_fingerprint(&second)
+        text_fingerprint(&first),
+        text_fingerprint(&second)
     );
     assert_ne!(
-        green_text_fingerprint(&first),
-        green_text_fingerprint(&owned)
+        text_fingerprint(&first),
+        text_fingerprint(&owned)
     );
 }
 

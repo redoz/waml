@@ -160,13 +160,13 @@ fn assert_red_tree(tree: &SyntaxTree<OkfMarkdownLanguage>, source: &str) {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum TextFingerprint {
+pub(super) enum TextFingerprint {
     Static(String),
     Owned(String),
     SourceSlice { range: TextRange, text: String },
 }
 
-fn text_fingerprint(text: &GreenText) -> TextFingerprint {
+pub(super) fn text_fingerprint(text: &GreenText) -> TextFingerprint {
     match text {
         GreenText::Static(value) => TextFingerprint::Static((*value).to_owned()),
         GreenText::Owned(value) => TextFingerprint::Owned(value.to_string()),
@@ -240,7 +240,7 @@ fn shell_fingerprint(tree: &SyntaxTree<OkfMarkdownLanguage>) -> Vec<ElementFinge
     out
 }
 
-fn diagnostic_fingerprint(tree: &SyntaxTree<OkfMarkdownLanguage>) -> Vec<String> {
+pub(super) fn diagnostic_fingerprint(tree: &SyntaxTree<OkfMarkdownLanguage>) -> Vec<String> {
     tree.diagnostics()
         .iter()
         .map(|diagnostic| {
