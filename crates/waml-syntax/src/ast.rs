@@ -34,18 +34,12 @@ impl<'a, L: SyntaxLanguage> AstSlots<'a, L> {
     pub fn required_token(&self, index: usize) -> Option<SyntaxToken<L>> {
         self.syntax.child_at(index)?.into_token()
     }
-    pub fn optional_node(&self, index: usize) -> Option<SyntaxNode<L>> {
-        self.required_node(index)
-    }
-    pub fn optional_token(&self, index: usize) -> Option<SyntaxToken<L>> {
-        self.required_token(index)
-    }
     pub fn list(&self, indices: Range<usize>) -> Vec<SyntaxElement<L>> {
-        indices
-            .filter_map(|index| self.syntax.child_at(index))
+        let start = indices.start;
+        self.syntax
+            .children()
+            .skip(start)
+            .take(indices.len())
             .collect()
-    }
-    pub fn recovery(&self, index: usize) -> Option<SyntaxNode<L>> {
-        self.required_node(index)
     }
 }

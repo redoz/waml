@@ -202,13 +202,13 @@ fn ast_slots_use_declared_indices_for_all_slot_categories() {
             self.slots().required_token(Self::COLON).unwrap()
         }
         fn value(&self) -> Option<waml_syntax::SyntaxToken<Lang>> {
-            self.slots().optional_token(Self::VALUE)
+            self.slots().required_token(Self::VALUE)
         }
         fn items(&self) -> Vec<SyntaxElement<Lang>> {
             self.slots().list(Self::ITEMS)
         }
         fn recovery(&self) -> waml_syntax::SyntaxNode<Lang> {
-            self.slots().recovery(Self::RECOVERY).unwrap()
+            self.slots().required_node(Self::RECOVERY).unwrap()
         }
         fn trailing(&self) -> waml_syntax::SyntaxToken<Lang> {
             self.slots().required_token(Self::TRAILING).unwrap()
@@ -302,6 +302,22 @@ fn ast_slots_use_declared_indices_for_all_slot_categories() {
     assert_eq!(zero.recovery().children().count(), 0);
     assert_eq!(multiple.recovery().children().count(), 3);
     assert_eq!(zero.trailing().kind(), multiple.trailing().kind());
+}
+
+#[test]
+fn ast_slots_list_truncates_past_the_end_and_is_empty_for_an_empty_range() {
+    let tree = tree();
+    let root = tree.root();
+    let slots = AstSlots::new(&root);
+    assert_eq!(slots.len(), 2);
+    let all = slots.list(0..2);
+    let past_end = slots.list(0..10);
+    assert_eq!(all.len(), 2);
+    assert_eq!(past_end.len(), 2);
+    for (a, b) in all.iter().zip(past_end.iter()) {
+        assert_eq!(a.locator().path(), b.locator().path());
+    }
+    assert!(slots.list(2..2).is_empty());
 }
 
 #[test]
