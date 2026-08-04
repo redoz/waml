@@ -1,5 +1,11 @@
 pub use makepad_widgets;
 
+// M-8 dead-code posture: a module stays plain `mod` (crate-private) unless it
+// is consumed from outside the crate -- by `src/bin/*` harnesses, `tests/`,
+// or `main.rs`. `pub` items lose clippy's dead-code checking under
+// `-D warnings`, so widening visibility trims the coverage this project
+// values; widen only as far as a harness/test import actually demands, never
+// preemptively (2026-08-04).
 mod accent;
 mod action_link;
 mod agent_mark;
@@ -10,7 +16,7 @@ mod behavior_doc_view;
 mod browser_boot;
 mod bundle_export;
 mod canvas;
-pub mod card;
+mod card;
 mod chrome_seam;
 mod class_diagram_view;
 mod classifier_preview_view;
@@ -20,8 +26,8 @@ mod cli;
 mod colors_overlay;
 mod config;
 mod conflict_badge;
-pub mod cursor;
-pub mod diagram_display;
+mod cursor;
+mod diagram_display;
 mod diagram_properties;
 mod diagram_switcher;
 mod doc_tabs;
@@ -31,7 +37,7 @@ mod document;
 mod document_header;
 mod document_host;
 mod documents;
-pub mod edge_labels;
+mod edge_labels;
 pub mod editor_history;
 mod editor_session;
 pub mod fonts;
@@ -42,11 +48,11 @@ mod generic_okf_view;
 mod icon_button;
 pub mod icons;
 mod icons_overlay;
-pub mod inspector;
+mod inspector;
 mod inspector_panel;
 // Native filesystem bundle loading; the wasm build fetches over HTTP.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub mod load;
+mod load;
 pub mod logo;
 mod markdown_analysis;
 // Dead-code checked on native (the gate target); the wasm build never reaches
@@ -59,7 +65,7 @@ mod native_save;
 mod nav;
 mod navigation;
 pub mod node_design_editor;
-pub mod node_style;
+mod node_style;
 mod okf_documents;
 mod overlay_shell;
 mod panel_splitter;
@@ -70,13 +76,13 @@ mod property_controls;
 mod reading_view;
 mod recent_row;
 mod ref_card;
-pub mod scene;
+mod scene;
 mod section_heading;
 mod select_box;
 mod selection_toolbar;
 mod shortcuts;
 mod shortcuts_overlay;
-pub mod sizing;
+mod sizing;
 mod source_toggle_view;
 mod source_view;
 mod splitter;
