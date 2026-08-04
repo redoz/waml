@@ -197,17 +197,6 @@ impl Endpoints<'_> {
     }
 }
 
-fn path_for_concept(context: &DomainAnalysisContext<'_>, concept_id: &str) -> Option<String> {
-    context
-        .catalog
-        .documents()
-        .iter()
-        .find_map(|(_, document)| {
-            (crate::okf::id_of(document.path().as_str()) == concept_id)
-                .then(|| document.path().as_str().to_string())
-        })
-}
-
 fn lifeline_classifier_map(concept: &DeclaredConcept, path: &str) -> BTreeMap<String, String> {
     concept
         .lifelines
@@ -251,10 +240,11 @@ fn interaction_use_graph(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
     claimed: &BTreeSet<&str>,
+    concept_paths: &BTreeMap<String, String>,
 ) -> InteractionUseGraph {
     let mut graph = BTreeMap::new();
     for concept in declared.concepts() {
-        let Some(path) = path_for_concept(context, &concept.concept_id) else {
+        let Some(path) = concept_paths.get(concept.concept_id.as_str()).cloned() else {
             continue;
         };
         let mut lifelines = BTreeSet::new();
@@ -294,7 +284,10 @@ fn interaction_use_graph(
             if !target_is_sequence {
                 continue;
             }
-            let target_path = path_for_concept(context, &target).unwrap_or_else(|| target.clone());
+            let target_path = concept_paths
+                .get(target.as_str())
+                .cloned()
+                .unwrap_or_else(|| target.clone());
             let target_lifelines = lifeline_classifier_map(target_concept, &target_path);
             let participating = participating_lifelines(target_concept);
             let mut locals = BTreeSet::new();
@@ -385,6 +378,7 @@ pub(crate) fn lower(
     okf: &crate::okf::Concept,
     path: &str,
     claimed: &BTreeSet<&str>,
+    concept_paths: &BTreeMap<String, String>,
     model: &mut crate::model::Model,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -504,7 +498,7 @@ pub(crate) fn lower(
     let mut interaction_uses = Vec::new();
     let mut use_aliases = BTreeMap::new();
     let mut authored_use_aliases = BTreeSet::new();
-    let use_graph = interaction_use_graph(context, declared, claimed);
+    let use_graph = interaction_use_graph(context, declared, claimed, concept_paths);
     for (declared_use_index, declared_use) in concept.interaction_uses.iter().enumerate() {
         let (Some(link), Some(alias)) = (value(&declared_use.link), value(&declared_use.alias))
         else {
@@ -579,7 +573,10 @@ pub(crate) fn lower(
             .map(|(binding, _)| binding.clone())
             .collect::<Vec<_>>();
         if let Some(target_concept) = target_concept {
-            let target_path = path_for_concept(context, &target).unwrap_or_else(|| target.clone());
+            let target_path = concept_paths
+                .get(target.as_str())
+                .cloned()
+                .unwrap_or_else(|| target.clone());
             let target_lifelines = lifeline_classifier_map(target_concept, &target_path);
             let participating = participating_lifelines(target_concept);
             let mut locals = BTreeSet::new();

@@ -1572,6 +1572,7 @@ fn declared_projection(
                 okf,
                 &path,
                 &claimed,
+                concept_paths,
                 &mut model,
                 diagnostics,
             );
