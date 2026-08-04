@@ -102,6 +102,57 @@ Prior art: [[waml-syntax-incremental-proptest-bug]] was the same class of
 defect (reparse windows swallowing trailing EOF whitespace, fixed in
 `10f66dc9`) — worth reading before diagnosing this one.
 
+## P2 — A second incremental/full divergence lives only in a test comment
+
+Surfaced 2026-08-04 by the issue-21 review; not introduced by it.
+
+`crates/waml-syntax/tests/properties.rs:616` documents a still-live divergence
+in prose and then shapes the test to avoid triggering it: a length-changing
+edit near an inline link's `(x)` destination makes incremental and full parse
+disagree on destination-range tracking.
+
+This is recorded nowhere else — no issue entry, no `TODO`, no failing test.
+It is distinct from the source-ownership defect above (different property,
+different trigger). Filed here so it survives the next edit to that test.
+
+Fix: reproduce it as an explicit ignored/expected-fail case rather than a
+comment, then diagnose alongside the source-ownership defect — both are
+incremental-vs-full disagreements in markdown reparse and may share a cause.
+
+## P2 — IME window ignores the gutter, mirroring the fixed pointer bug
+
+Surfaced 2026-08-04 by the issue-20 review; pre-existing and out of that
+plan's scope.
+
+`crates/waml-markdown-editor/src/widget.rs:1507,1530` — the reverse mapping
+for `cx.show_text_ime` subtracts `scroll_y` but never adds the gutter width
+back. With line numbers on, the IME/candidate window renders `gutter` px left
+of the caret.
+
+Same coordinate contract as the pointer-event bug fixed in `1155f9ea`, in the
+opposite direction: that fix added the gutter on the event path, this is the
+draw path back out. The shared `abs_to_layout_point()` helper introduced by
+that fix has no inverse; adding one would close this and stop the contract
+being hand-maintained in both directions.
+
+Related, same file, both pre-existing and both currently harmless:
+`widget.rs:1567` adds back only vertical scroll while the draw path subtracts
+the full `get_scroll_pos()` (safe only because the DSL sets
+`show_scroll_x: false`), and `widget.rs:722` vs `:847` assume
+`scroll_bars.area().rect(cx).pos` equals `cx.peek_walk_turtle(walk).pos`.
+
+## P3 — Deserialized bundles are not checked for duplicate ids
+
+`crates/waml/src/okf.rs:274` — `Bundle::parse` rejects duplicate concept ids
+and directory addresses (`BundleError::DuplicateConceptId`), but the serde
+deserialization path never has. Since `825dd558` the accessors use
+`binary_search_by`, so a duplicate now resolves to an *arbitrary* one of the
+duplicates where `iter().find()` previously returned the first.
+
+No live caller is known to feed a duplicate-bearing bundle through serde, so
+this is latent. Enforcing uniqueness on deserialize (or reusing `parse`'s
+validation) closes it.
+
 ## P1 — Shell and frontmatter diagnostics disappear at public boundaries
 
 Evidence:

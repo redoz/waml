@@ -88,6 +88,29 @@ frontmatter parsing and extends `FmValue`, touching every copy that issue 28
 tasks A and C collapse into a single authority. Landing the YAML plan first
 means implementing its changes three times over.
 
+**SUPERSEDED 2026-08-04 — overtaken by events.** The YAML plan landed first
+(it was already in flight when implementation of this triage set began), and
+it performs much of the collapse itself:
+
+- **Task A is subsumed.** YAML Task 5 extracts `frontmatter_close_fence_line`
+  into `parser.rs` and has both `classify_frontmatter` and
+  `incremental.rs::frontmatter_fences` call it, explicitly so they cannot
+  drift. Caveat: task A names *three* copies; the YAML plan covers two — the
+  `markdown/mod.rs:183` shell-structure scan is not in its file list.
+- **Task C is partly subsumed.** YAML Tasks 3 and 7 make scalar
+  classification the single source of truth for `waml/src/frontmatter.rs`, but
+  the other two extractors (`okf/lower.rs:508`, `uml/lower.rs:693`) are not in
+  the YAML plan's scope and likely survive.
+- **Tasks B and D are untouched.** B (link resolution duplicated in
+  `inline.rs`, where drift is promoted to a whole-document
+  `StructuralInvariant`) and D (the debug oracle comparing island counts
+  rather than trees) have nothing to do with frontmatter.
+
+**Do not implement issue 28 as written.** Re-verify it against `main` once the
+YAML plan has fully landed, then implement what survives — certainly B and D,
+probably the two `lower.rs` copies in C. Issue 28 is consequently no longer a
+blocker for the plans sequenced behind it (34, 35, 36).
+
 ## Standalone plans
 
 - **21** — reference-use scan (`markdown/reparse.rs` only)
