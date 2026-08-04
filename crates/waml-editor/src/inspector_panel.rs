@@ -456,6 +456,34 @@ fn ref_card_icon(kind: ElementKind) -> Icon {
     }
 }
 
+/// The kind line, e.g. `Class  (abstract)`. Pure: shared by the declared body
+/// column (`fill_body_column`) and the immediate-mode fallback body, which
+/// duplicated it inline before.
+fn kind_line(kind_label: &str, abstract_flag: bool) -> String {
+    if abstract_flag {
+        format!("{kind_label}  (abstract)")
+    } else {
+        kind_label.to_string()
+    }
+}
+
+/// The stereotype chip run, e.g. `<<aggregateRoot>> <<entity>>`; empty when
+/// there are no stereotypes. Pure; shared like `kind_line`.
+fn stereotype_chips(stereotypes: &[String]) -> String {
+    stereotypes
+        .iter()
+        .map(|s| format!("<<{s}>>"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The joined single-line attribute row the fallback body draws, from the same
+/// `attr_line_parts` the row widget consumes.
+fn attr_line(attr: &crate::inspector::AttrRow) -> String {
+    let (vis, name, ty, mult) = attr_line_parts(attr);
+    format!("{vis}{name}: {ty}{mult}")
+}
+
 /// Display parts for one attribute row: `(visibility, name, ty, mult)`. Empty
 /// visibility and the trivial `"1"` multiplicity are elided. Kept pure so the
 /// formatting is unit-tested without a `Cx`; consumed by the attribute row
@@ -752,23 +780,17 @@ impl Widget for Inspector {
         y += TITLE_H;
 
         // Kind + abstract badge, e.g. "Class  (abstract)". Read-only breadth (U6).
-        let kind_line = if view.abstract_flag {
-            format!("{}  (abstract)", view.kind_label)
-        } else {
-            view.kind_label.clone()
-        };
-        self.draw_dim.draw_abs(cx, dvec2(x, y), &kind_line);
+        self.draw_dim.draw_abs(
+            cx,
+            dvec2(x, y),
+            &kind_line(&view.kind_label, view.abstract_flag),
+        );
         y += ROW_H;
 
         // Stereotype chips, e.g. "<<aggregateRoot>> <<entity>>". Read-only breadth (U6).
         if !view.stereotypes.is_empty() {
-            let chips = view
-                .stereotypes
-                .iter()
-                .map(|s| format!("<<{s}>>"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            self.draw_dim.draw_abs(cx, dvec2(x, y), &chips);
+            self.draw_dim
+                .draw_abs(cx, dvec2(x, y), &stereotype_chips(&view.stereotypes));
             y += ROW_H;
         }
         y += GAP;
@@ -777,18 +799,7 @@ impl Widget for Inspector {
             self.draw_dim.draw_abs(cx, dvec2(x, y), "ATTRIBUTES");
             y += ROW_H;
             for attr in &view.attributes {
-                let vis = if attr.visibility.is_empty() {
-                    String::new()
-                } else {
-                    format!("{} ", attr.visibility)
-                };
-                let mult = if attr.multiplicity.is_empty() || attr.multiplicity == "1" {
-                    String::new()
-                } else {
-                    format!("  [{}]", attr.multiplicity)
-                };
-                let line = format!("{vis}{}: {}{mult}", attr.name, attr.ty);
-                self.draw_label.draw_abs(cx, dvec2(x, y), &line);
+                self.draw_label.draw_abs(cx, dvec2(x, y), &attr_line(attr));
                 y += ROW_H;
             }
             y += GAP;
@@ -870,14 +881,9 @@ impl Inspector {
     /// text, and the description). Hides a heading + its rows when that section
     /// is empty. Called each `draw_walk` for the `show_picker` path.
     fn fill_body_column(&mut self, cx: &mut Cx, view: &InspectorView) {
-        let kind_line = if view.abstract_flag {
-            format!("{}  (abstract)", view.kind_label)
-        } else {
-            view.kind_label.clone()
-        };
         self.view
             .label(cx, ids!(body.kind))
-            .set_text(cx, &kind_line);
+            .set_text(cx, &kind_line(&view.kind_label, view.abstract_flag));
 
         // Profile: diagram subjects only; the row (label included) disappears
         // when empty, so no stray gap for a classifier/group/edge.
@@ -888,15 +894,7 @@ impl Inspector {
             .label(cx, ids!(body.profile_row.profile_value))
             .set_text(cx, &view.profile);
 
-        let stereo = if view.stereotypes.is_empty() {
-            String::new()
-        } else {
-            view.stereotypes
-                .iter()
-                .map(|s| format!("<<{s}>>"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
+        let stereo = stereotype_chips(&view.stereotypes);
         self.view
             .widget(cx, ids!(body.stereo))
             .set_visible(cx, !stereo.is_empty());
@@ -1448,6 +1446,32 @@ mod tests {
     fn node_lead_uses_generic_okf_icon_for_unclaimed_type() {
         let lead = node_lead(&ElementType::Unknown("Widget".into()), "W".into());
         assert!(matches!(lead, SelectLead::Icon(Icon::FileText)));
+    }
+
+    #[test]
+    fn kind_line_appends_the_abstract_badge_only_when_flagged() {
+        assert_eq!(kind_line("Class", true), "Class  (abstract)");
+        assert_eq!(kind_line("Class", false), "Class");
+    }
+
+    #[test]
+    fn stereotype_chips_wrap_and_join_with_spaces() {
+        assert_eq!(
+            stereotype_chips(&["aggregateRoot".into(), "entity".into()]),
+            "<<aggregateRoot>> <<entity>>"
+        );
+        assert_eq!(stereotype_chips(&[]), "");
+    }
+
+    #[test]
+    fn attr_line_joins_the_parts_the_row_widget_consumes() {
+        let a = crate::inspector::AttrRow {
+            name: "items".into(),
+            ty: "Product".into(),
+            multiplicity: "0..*".into(),
+            visibility: "+".into(),
+        };
+        assert_eq!(attr_line(&a), "+ items: Product  [0..*]");
     }
 
     #[test]
