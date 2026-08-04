@@ -6,6 +6,7 @@
 //! byte lies in exactly one piece. Dropping a run instead would make
 //! "everything drawn maps back to source" unverifiable.
 
+use std::collections::HashSet;
 use std::fmt;
 
 use waml_syntax::{TextRange, TextSize};
@@ -167,6 +168,11 @@ fn walk(blocks: &[ReadingBlock], expected: &mut TextSize) -> Result<(), ReadingE
 /// inside no block becomes its own synthetic `Paragraph` so the partition
 /// stays complete (blank lines and inter-block whitespace take this path).
 pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument, ReadingError> {
+    // 0. One pass over the items collects every ListBullet range, so the
+    //    per-run and per-block "is this a bullet?" checks are set lookups
+    //    rather than rescans of the whole item list.
+    let bullet_ranges = collect_bullet_ranges(plan);
+
     // 1. Turn the plan's flat block list into reading kinds, keeping the
     //    parent indices. Levels come from ancestor list-item depth.
     let mut kinds: Vec<ReadingBlockKind> = Vec::with_capacity(plan.blocks.len());
@@ -181,7 +187,7 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
             PresentationBlockKind::Paragraph => ReadingBlockKind::Paragraph,
             PresentationBlockKind::Heading(level) => ReadingBlockKind::Heading(level),
             PresentationBlockKind::ListItem { marker_range } => {
-                let is_bullet = if_unordered(plan, marker_range);
+                let is_bullet = bullet_ranges.contains(&range_key(marker_range));
                 if is_bullet {
                     ReadingBlockKind::BulletItem { level }
                 } else {
@@ -199,9 +205,13 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
         });
     }
 
-    // 2. Bucket every text run into the deepest containing block.
+    // 2. Bucket every text run into the deepest containing block. The plan's
+    //    runs partition the source in order (`validate_source_partition` ran
+    //    at compile time) and block ranges nest, so one sweep with an
+    //    open-block stack replaces a per-run scan of every block.
     let mut buckets: Vec<Vec<ReadingPiece>> = vec![Vec::new(); plan.blocks.len()];
     let mut orphans: Vec<ReadingPiece> = Vec::new();
+    let mut sweep = BlockSweep::new(plan);
     for item in plan.items.iter() {
         let PresentationItem::TextRun {
             range, role, style, ..
@@ -213,9 +223,9 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
             range: *range,
             role: *role,
             style: *style,
-            emit: emits(plan, *role, *range),
+            emit: emits(&bullet_ranges, *role, *range),
         };
-        match deepest_block(plan, *range) {
+        match sweep.deepest_block(plan, *range) {
             Some(index) => buckets[index].push(piece),
             None => orphans.push(piece),
         }
@@ -289,34 +299,86 @@ fn gap_block(piece: ReadingPiece) -> ReadingBlock {
 
 /// Whether a run is drawn. Markdown punctuation is suppressed; an ordered list
 /// number is content, an unordered bullet character is not.
-fn emits(plan: &PresentationPlan, role: TextRole, range: TextRange) -> bool {
+fn emits(bullet_ranges: &HashSet<(usize, usize)>, role: TextRole, range: TextRange) -> bool {
     if role.is_syntax_marker() {
         return false;
     }
     if role == TextRole::ListMarker {
-        return !has_bullet_decoration(plan, range);
+        return !bullet_ranges.contains(&range_key(range));
     }
     true
+}
+
+fn range_key(range: TextRange) -> (usize, usize) {
+    (range.start().to_usize(), range.end().to_usize())
 }
 
 /// The compiler already knows which markers are bullets: an unordered item
 /// carries a `ListBullet` decoration over the marker's own range. Reading that
 /// back keeps the "is this a bullet?" answer in one place.
-fn has_bullet_decoration(plan: &PresentationPlan, range: TextRange) -> bool {
-    plan.items.iter().any(|item| {
-        matches!(
-            item,
+fn collect_bullet_ranges(plan: &PresentationPlan) -> HashSet<(usize, usize)> {
+    plan.items
+        .iter()
+        .filter_map(|item| match item {
             PresentationItem::BlockDecoration {
                 source_range,
                 kind: BlockDecorationKind::ListBullet { .. },
                 ..
-            } if *source_range == range
-        )
-    })
+            } => Some(range_key(*source_range)),
+            _ => None,
+        })
+        .collect()
 }
 
-fn if_unordered(plan: &PresentationPlan, marker_range: TextRange) -> bool {
-    has_bullet_decoration(plan, marker_range)
+/// Deepest-containing-block queries for runs arriving in source order.
+///
+/// Blocks are visited in pre-order (start ascending, wider range first). The
+/// stack holds the ancestor chain of the last pushed block; because block
+/// ranges nest and queried runs never move backwards, a block popped for one
+/// run can never contain a later one.
+struct BlockSweep {
+    order: Vec<usize>,
+    next: usize,
+    open: Vec<usize>,
+}
+
+impl BlockSweep {
+    fn new(plan: &PresentationPlan) -> Self {
+        let mut order: Vec<usize> = (0..plan.blocks.len()).collect();
+        order.sort_by_key(|&index| {
+            let range = plan.blocks[index].source_range;
+            (range.start(), std::cmp::Reverse(range.end()))
+        });
+        Self {
+            order,
+            next: 0,
+            open: Vec::new(),
+        }
+    }
+
+    fn deepest_block(&mut self, plan: &PresentationPlan, range: TextRange) -> Option<usize> {
+        while self.next < self.order.len() {
+            let index = self.order[self.next];
+            if plan.blocks[index].source_range.start() > range.start() {
+                break;
+            }
+            while let Some(&top) = self.open.last() {
+                if plan.blocks[top].source_range.end() >= plan.blocks[index].source_range.end() {
+                    break;
+                }
+                self.open.pop();
+            }
+            self.open.push(index);
+            self.next += 1;
+        }
+        while let Some(&top) = self.open.last() {
+            if plan.blocks[top].source_range.end() >= range.end() {
+                break;
+            }
+            self.open.pop();
+        }
+        self.open.last().copied()
+    }
 }
 
 /// Nesting depth of block `index`, counting only `ListItem` ancestors.
@@ -333,20 +395,4 @@ fn list_depth(plan: &PresentationPlan, index: usize) -> u8 {
         cursor = plan.blocks[parent].parent;
     }
     depth
-}
-
-/// Index of the innermost block whose source range contains `range`.
-fn deepest_block(plan: &PresentationPlan, range: TextRange) -> Option<usize> {
-    let mut best: Option<(usize, u32)> = None;
-    for (index, block) in plan.blocks.iter().enumerate() {
-        if block.source_range.start() > range.start() || block.source_range.end() < range.end() {
-            continue;
-        }
-        let span =
-            (block.source_range.end().to_usize() - block.source_range.start().to_usize()) as u32;
-        if best.map_or(true, |(_, best_span)| span < best_span) {
-            best = Some((index, span));
-        }
-    }
-    best.map(|(index, _)| index)
 }

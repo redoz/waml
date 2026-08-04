@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     BlockDecorationRole, ColorRole, EmbeddedAssetFrame, EmbeddedState, PresentationError,
-    PresentationItem, PresentationPlan, PresentationStyles, TextRole,
+    PresentationItem, PresentationPlan, PresentationStyles,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -211,6 +211,12 @@ pub fn build_draw_commands(
         let PresentationItem::BlockDecoration { id, kind, .. } = item else {
             continue;
         };
+        // The plan records that a marker is a bullet; the editor surface shows
+        // raw markdown, so its bullet is the `-` glyph itself. Only the reading
+        // view substitutes the decoration for the marker.
+        if kind.role() == BlockDecorationRole::ListBullet {
+            continue;
+        }
         let id = layout_id(id.owner, id.fragment_ordinal);
         if let Some(block) = frame
             .layout
@@ -227,20 +233,6 @@ pub fn build_draw_commands(
                     let height = styles.spacing().quote_rule.min(rect.size.y);
                     rect.pos.y += (rect.size.y - height) * 0.5;
                     rect.size.y = height;
-                }
-                // The block rect spans the whole list item, so the bullet takes
-                // a small square from the hanging-marker gutter, centred on the
-                // item's first line rather than on the item as a whole.
-                BlockDecorationRole::ListBullet => {
-                    let size = styles.spacing().list_bullet_size.min(rect.size.y);
-                    // `line_spacing` is a multiplier, so the first line's band
-                    // comes from the body font size.
-                    let metrics = styles.metrics(TextRole::Body);
-                    let band = (metrics.font_size as f64 * metrics.line_spacing.max(1.0) as f64)
-                        .min(rect.size.y);
-                    rect.pos.y += (band - size) * 0.5;
-                    rect.pos.x += (styles.spacing().list_marker_gap - size).max(0.0) * 0.5;
-                    rect.size = DVec2 { x: size, y: size };
                 }
                 _ => {}
             }

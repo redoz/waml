@@ -61,11 +61,27 @@ impl ReadingView {
         }
         let styles = Arc::new(PresentationStyles::balanced());
         let highlighters = WamlCodeHighlightHost::registry(Arc::new(snapshot.clone()));
-        let Ok(plan) = compile_presentation(&syntax, &styles, &highlighters) else {
-            return;
+        // On failure the viewer keeps showing the previous revision; say so,
+        // or the stale surface is indistinguishable from a current one.
+        let plan = match compile_presentation(&syntax, &styles, &highlighters) {
+            Ok(plan) => plan,
+            Err(error) => {
+                log!(
+                    "reading view {}: presentation compile failed, keeping the previous revision: {error:?}",
+                    self.key
+                );
+                return;
+            }
         };
-        let Ok(document) = build_reading_document(&plan) else {
-            return;
+        let document = match build_reading_document(&plan) {
+            Ok(document) => document,
+            Err(error) => {
+                log!(
+                    "reading view {}: reading model build failed, keeping the previous revision: {error:?}",
+                    self.key
+                );
+                return;
+            }
         };
         let source: Arc<str> = Arc::from(syntax.text().shared().as_str());
         self.revision = Some(syntax.revision());

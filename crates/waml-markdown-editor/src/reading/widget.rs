@@ -417,11 +417,9 @@ impl MarkdownViewer {
     }
 
     fn draw_children(&mut self, cx: &mut Cx2d, block: &ReadingBlock, source: &str) {
-        // `children` is cloned so the recursive borrow of `self` is legal. A
-        // reading model is per-revision and editor-sized, so the clone is not
-        // on any hot path; `install_document` runs once per compile.
-        let children = block.children.clone();
-        for child in &children {
+        // `block` borrows the Arc'd document held by `draw_walk`, not `self`,
+        // so recursing with `&mut self` needs no clone.
+        for child in &block.children {
             self.draw_block(cx, child, source);
         }
     }
@@ -437,8 +435,8 @@ impl Widget for MarkdownViewer {
         if let Some(mut flow) = flow_ref.borrow_mut() {
             flow.begin(cx, walk);
         }
-        for block in document.roots.clone() {
-            self.draw_block(cx, &block, &source);
+        for block in document.roots.iter() {
+            self.draw_block(cx, block, &source);
         }
         if let Some(mut flow) = flow_ref.borrow_mut() {
             flow.end(cx);

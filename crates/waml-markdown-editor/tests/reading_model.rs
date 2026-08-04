@@ -232,3 +232,20 @@ fn a_table_delimiter_row_between_child_rows_does_not_break_the_partition() {
         "a table block must still be produced"
     );
 }
+
+#[test]
+fn a_deep_nesting_of_quotes_does_not_overflow_the_stack() {
+    // The model build and the partition walk recurse over block nesting.
+    // `parse_markdown` itself overflows around 10k nested quotes (a
+    // pre-existing parser bound, not the model's), so this pins the model at
+    // a depth the parser survives; if the parser gains a depth cap, raise
+    // this to match it.
+    let mut source = String::new();
+    for _ in 0..500 {
+        source.push('>');
+    }
+    source.push_str(" deep\n");
+    let doc = document(&source);
+    doc.validate_source_partition()
+        .expect("a deep nesting still covers its source");
+}

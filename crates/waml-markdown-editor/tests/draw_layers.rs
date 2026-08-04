@@ -865,7 +865,7 @@ fn link_activation_rejects_source_range_end() {
 }
 
 #[test]
-fn a_hidden_list_marker_draws_a_small_bullet_in_the_gutter_not_over_the_item() {
+fn the_editor_never_draws_the_list_bullet_decoration() {
     let source = "- alpha";
     let styles = PresentationStyles::balanced();
     let bullet_id = item_id(
@@ -914,36 +914,15 @@ fn a_hidden_list_marker_draws_a_small_bullet_in_the_gutter_not_over_the_item() {
     };
     let commands =
         build_draw_commands(&frame, &plan, &styles, &selection(source, 0, 0), None).unwrap();
-    let bullet = commands
-        .iter()
-        .find_map(|command| match command {
+    assert!(
+        !commands.iter().any(|command| matches!(
+            command,
             DrawCommand::BlockBackground {
-                rect,
                 role: BlockDecorationRole::ListBullet,
                 ..
-            } => Some(*rect),
-            _ => None,
-        })
-        .expect("a hidden unordered marker draws a bullet");
-
-    let size = styles.spacing().list_bullet_size;
-    assert_eq!(
-        (bullet.size.x, bullet.size.y),
-        (size, size),
-        "the bullet is a small square, not the item's whole background"
-    );
-    assert!(
-        bullet.size.x < block_rect.size.x,
-        "the bullet never spans the list item"
-    );
-    assert!(
-        bullet.pos.x >= block_rect.pos.x
-            && bullet.pos.x + bullet.size.x
-                <= block_rect.pos.x + styles.spacing().list_marker_gap.max(size),
-        "the bullet sits in the hanging-marker gutter"
-    );
-    assert!(
-        bullet.pos.y >= block_rect.pos.y,
-        "the bullet stays inside its item"
+            }
+        )),
+        "the editor shows the raw `-` marker; the ListBullet decoration is \
+         plan metadata for the reading view, never an editor draw command"
     );
 }
