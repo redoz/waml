@@ -275,6 +275,28 @@ struct BracketMatch {
     image: bool,
 }
 
+/// The earliest delimiter the inline depth cap demotes to plain text, if any.
+///
+/// Used to span the nesting-depth diagnostic over the delimiter that was
+/// actually demoted — a deep region containing no delimiters loses nothing and
+/// so must not be reported at all.
+fn first_demoted_delimiter(
+    brackets: &[BracketMatch],
+    emphasis: &[EmphasisPair],
+    strikethrough: &[EmphasisPair],
+) -> Option<std::ops::Range<usize>> {
+    brackets
+        .iter()
+        .map(|bracket| bracket.start..bracket.end)
+        .chain(
+            emphasis
+                .iter()
+                .chain(strikethrough)
+                .map(|pair| pair.open..pair.open + pair.width),
+        )
+        .min_by_key(|range| range.start)
+}
+
 fn parse_inlines(
     context: &mut InlineContext<'_>,
     start: usize,
@@ -286,57 +308,60 @@ fn parse_inlines(
     let source = context.text.shared();
     // Beyond `MD_MAX_INLINE_DEPTH`, stop matching strikethrough, emphasis,
     // and link delimiters: their arms below recurse into `parse_inlines`, so
-    // leaving them empty here demotes the delimiters to plain text instead
-    // of growing the recursion further. Emit one diagnostic the first time
-    // this bites, spanning the delimiter that was demoted.
+    // clearing them here demotes the delimiters to plain text instead of
+    // growing the recursion further. The candidates are still computed at the
+    // cap (they do not recurse) so the diagnostic can be emitted only when a
+    // delimiter is really demoted, spanning that delimiter.
     let capped = depth >= super::MD_MAX_INLINE_DEPTH;
-    if capped && !context.depth_diagnostic_emitted {
-        context.depth_diagnostic_emitted = true;
-        context.diagnostics.push(TreeDiagnostic {
-            code: Diagnostic::NestingDepthExceeded,
-            range: TextRange::new(
-                TextSize::try_from_usize(start)
-                    .map_err(|_| ParseError::SourceTooLarge { bytes: start })?,
-                TextSize::try_from_usize(end)
-                    .map_err(|_| ParseError::SourceTooLarge { bytes: end })?,
-            )
-            .map_err(|_| ParseError::StructuralInvariant {
-                reason: "invalid inline nesting-depth range".into(),
-            })?,
-            severity: crate::SyntaxSeverity::Error,
-            message: Arc::from(
-                "Markdown inline nesting exceeds the supported depth of 32; deeper structure is treated as plain text.",
-            ),
-        });
-    }
-    let brackets = if capped {
-        Vec::new()
-    } else {
-        bracket_matches(context, start, end, allow_links)
-    };
-    let crosses_link_label = |pair: &EmphasisPair| {
+    let mut brackets = bracket_matches(context, start, end, allow_links);
+    let crosses_link_label = |brackets: &[BracketMatch], pair: &EmphasisPair| {
         brackets.iter().any(|bracket| {
             let open_inside = pair.open > bracket.open && pair.open < bracket.label_end;
             let close_inside = pair.close > bracket.open && pair.close < bracket.label_end;
             open_inside != close_inside
         })
     };
-    let emphasis: Vec<_> = if capped {
-        Vec::new()
-    } else {
-        emphasis_pairs(source, start, end)
-            .into_iter()
-            .filter(|pair| !crosses_link_label(pair))
-            .collect()
-    };
-    let strikethrough = if !capped && context.dialect.strikethrough() {
+    let mut emphasis: Vec<_> = emphasis_pairs(source, start, end)
+        .into_iter()
+        .filter(|pair| !crosses_link_label(&brackets, pair))
+        .collect();
+    let mut strikethrough: Vec<EmphasisPair> = if context.dialect.strikethrough() {
         strikethrough_pairs(source, start, end)
             .into_iter()
-            .filter(|pair| !crosses_link_label(pair))
+            .filter(|pair| !crosses_link_label(&brackets, pair))
             .collect()
     } else {
         Vec::new()
     };
+    if capped {
+        if let Some(demoted) = first_demoted_delimiter(&brackets, &emphasis, &strikethrough) {
+            if !context.depth_diagnostic_emitted {
+                context.depth_diagnostic_emitted = true;
+                context.diagnostics.push(TreeDiagnostic {
+                    code: Diagnostic::NestingDepthExceeded,
+                    range: TextRange::new(
+                        TextSize::try_from_usize(demoted.start).map_err(|_| {
+                            ParseError::SourceTooLarge {
+                                bytes: demoted.start,
+                            }
+                        })?,
+                        TextSize::try_from_usize(demoted.end)
+                            .map_err(|_| ParseError::SourceTooLarge { bytes: demoted.end })?,
+                    )
+                    .map_err(|_| ParseError::StructuralInvariant {
+                        reason: "invalid inline nesting-depth range".into(),
+                    })?,
+                    severity: crate::SyntaxSeverity::Error,
+                    message: Arc::from(
+                        "Markdown inline nesting exceeds the supported depth of 32; deeper structure is treated as plain text.",
+                    ),
+                });
+            }
+        }
+        brackets.clear();
+        emphasis.clear();
+        strikethrough.clear();
+    }
     let mut out = Vec::new();
     let mut at = start;
     let mut plain = start;
@@ -1887,5 +1912,52 @@ mod tests {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded));
+    }
+
+    /// Reaching the cap is not itself a defect: if the region at the cap holds
+    /// no emphasis, link, or strikethrough delimiter, nothing is demoted to
+    /// plain text and no diagnostic may be reported.
+    #[test]
+    fn nesting_at_cap_without_delimiters_reports_nothing() {
+        let depth = super::super::MD_MAX_INLINE_DEPTH;
+        let source = "*".repeat(depth * 2) + "x" + &"*".repeat(depth * 2) + "\n";
+        let snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            crate::SourceText::new(&source).unwrap(),
+            crate::MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(snapshot.tree().write_to_string(), source);
+        assert!(!snapshot
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded));
+    }
+
+    /// When a delimiter really is demoted, the diagnostic spans that
+    /// delimiter, not the whole inner region.
+    #[test]
+    fn demoted_delimiter_diagnostic_spans_the_delimiter() {
+        let depth = super::super::MD_MAX_INLINE_DEPTH;
+        let inner = "a *b* a";
+        let source = "*".repeat(depth * 2) + inner + &"*".repeat(depth * 2) + "\n";
+        let snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            crate::SourceText::new(&source).unwrap(),
+            crate::MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(snapshot.tree().write_to_string(), source);
+        let diagnostics: Vec<_> = snapshot
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded)
+            .collect();
+        assert_eq!(diagnostics.len(), 1);
+        let range = diagnostics[0].range;
+        assert!(
+            range.end().to_usize() - range.start().to_usize() < inner.len(),
+            "diagnostic spans the whole inner region, not the demoted delimiter"
+        );
     }
 }

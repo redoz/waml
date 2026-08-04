@@ -1580,6 +1580,23 @@ mod tests {
         }
     }
 
+    /// The depth cap suppresses container starts via `is_container_kind` and
+    /// recognizes their closes via `is_container_scan_kind`. If the two lists
+    /// ever disagree, an `End` either decrements the suppressed depth for a
+    /// live frame or pops a frame that was never pushed.
+    #[test]
+    fn container_scan_kind_mirrors_container_kind() {
+        for &kind in ScanTagKind::ALL {
+            let opens_container =
+                start_kind(&sample_tag(kind), "", &(0..0)).is_some_and(is_container_kind);
+            assert_eq!(
+                opens_container,
+                is_container_scan_kind(kind),
+                "{kind:?} opens a container but is not recognized as one on End (or the reverse)"
+            );
+        }
+    }
+
     #[test]
     fn malformed_scan_event_range_recovers_as_raw_text() {
         let source = "0\n\r\t\u{0800}";
