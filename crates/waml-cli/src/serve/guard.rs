@@ -69,8 +69,8 @@ fn base64_url_no_pad(bytes: &[u8]) -> String {
 
 /// The server-side facts needed to admit or deny a request: minted token,
 /// the loopback origin/port it is bound to, and whether `--bind-all` is in
-/// effect (which relaxes only the Host check — anti-DNS-rebinding still
-/// applies to Origin).
+/// effect (which relaxes the Host check and admits the request's own
+/// vetted-Host origin — a foreign Origin is still rejected).
 pub struct Guard {
     pub token: Token,
     pub port: u16,
@@ -109,8 +109,20 @@ pub fn check(guard: &Guard, facts: &ReqFacts<'_>) -> Result<(), Deny> {
     // 2. Origin: exact-match allowlist when the header is present at all.
     // Never `*`, no Private-Network-Access header. Absent Origin (e.g. a
     // same-origin navigation, or curl) is allowed through to the Host check.
+    // Under `--bind-all` the request's own origin — `http://` plus the Host
+    // header the anti-rebinding check below vets — is admitted too: a remote
+    // browser at `http://<lan-ip>:<port>` sends that origin on every
+    // non-GET fetch, and the spec requires the server's own origin to match
+    // exactly, not a loopback-only list.
     if let Some(origin) = facts.origin {
-        let allowed = expected_origins(guard.port);
+        let mut allowed = expected_origins(guard.port);
+        if guard.bind_all {
+            if let Some(host) = facts.host {
+                if host_is_acceptable(host, guard.port, true) {
+                    allowed.push(format!("http://{host}"));
+                }
+            }
+        }
         if !allowed.iter().any(|candidate| candidate == origin) {
             return Err(Deny::Forbidden(format!("origin not allowed: {origin}")));
         }
@@ -268,8 +280,28 @@ mod tests {
         f.host = Some("anything.example:8099");
         assert!(check(&g, &f).is_ok());
 
-        // Origin allowlist is unaffected by bind_all.
+        // A foreign origin is still rejected under bind_all.
         f.origin = Some("https://evil.example");
+        assert!(matches!(check(&g, &f), Err(Deny::Forbidden(_))));
+    }
+
+    #[test]
+    fn bind_all_admits_the_requests_own_origin() {
+        let g = guard(true);
+        let mut f = facts();
+        f.host = Some("192.168.1.7:8099");
+        f.origin = Some("http://192.168.1.7:8099");
+        assert!(check(&g, &f).is_ok());
+
+        // Wrong port on the Origin's matching Host: not this server's origin.
+        f.host = Some("192.168.1.7:9000");
+        f.origin = Some("http://192.168.1.7:9000");
+        assert!(matches!(check(&g, &f), Err(Deny::Forbidden(_))));
+
+        // Without bind_all the LAN origin stays rejected.
+        let g = guard(false);
+        f.host = Some("192.168.1.7:8099");
+        f.origin = Some("http://192.168.1.7:8099");
         assert!(matches!(check(&g, &f), Err(Deny::Forbidden(_))));
     }
 }
