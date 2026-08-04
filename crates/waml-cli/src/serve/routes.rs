@@ -93,6 +93,31 @@ fn admit(
     check(&app.guard, &facts).map_err(|deny| Box::new(deny_response(deny)))
 }
 
+/// Lock the serve state, recovering a poisoned mutex. A panic while a
+/// previous request held the lock must cost that request only, not turn
+/// every later `/api` call into a panic for the rest of the session; the
+/// state's write paths only install a new `PreparedCandidate` as their last
+/// step, so the recovered value is the last fully-applied one.
+fn lock_state(app: &App) -> std::sync::MutexGuard<'_, ServeState> {
+    app.state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Deserialize a request body only after `admit` has accepted the request
+/// (guard.rs: access checks happen before any body work).
+fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, Box<Response>> {
+    serde_json::from_slice(body).map_err(|err| {
+        Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "invalid request body", "reason": err.to_string()})),
+            )
+                .into_response(),
+        )
+    })
+}
+
 async fn get_bundle(
     State(app): State<App>,
     Query(token_q): Query<TokenQuery>,
@@ -101,7 +126,7 @@ async fn get_bundle(
     if let Err(resp) = admit(&app, &headers, &token_q, false) {
         return *resp;
     }
-    let state = app.state.lock().expect("serve state mutex poisoned");
+    let state = lock_state(&app);
     match state.bundle_envelope() {
         Ok(body) => {
             let mut resp = body.into_response();
@@ -131,7 +156,7 @@ async fn get_model(
     if let Err(resp) = admit(&app, &headers, &token_q, false) {
         return *resp;
     }
-    let state = app.state.lock().expect("serve state mutex poisoned");
+    let state = lock_state(&app);
     Json(json!({
         "revision": state.revision(),
         "model": state.model(),
@@ -147,7 +172,7 @@ async fn get_diagnostics(
     if let Err(resp) = admit(&app, &headers, &token_q, false) {
         return *resp;
     }
-    let state = app.state.lock().expect("serve state mutex poisoned");
+    let state = lock_state(&app);
     Json(json!({
         "revision": state.revision(),
         "diagnostics": state.diagnostics(),
@@ -171,12 +196,16 @@ async fn post_ops(
     State(app): State<App>,
     Query(token_q): Query<TokenQuery>,
     headers: HeaderMap,
-    Json(body): Json<OpsRequest>,
+    body: axum::body::Bytes,
 ) -> Response {
     if let Err(resp) = admit(&app, &headers, &token_q, true) {
         return *resp;
     }
-    let mut state = app.state.lock().expect("serve state mutex poisoned");
+    let body: OpsRequest = match parse_body(&body) {
+        Ok(body) => body,
+        Err(resp) => return *resp,
+    };
+    let mut state = lock_state(&app);
     match state.apply_ops(body.revision, &body.ops) {
         Ok(changed) => Json(OpsResponse {
             revision: state.revision(),
@@ -202,12 +231,16 @@ async fn post_documents(
     State(app): State<App>,
     Query(token_q): Query<TokenQuery>,
     headers: HeaderMap,
-    Json(body): Json<DocumentsRequest>,
+    body: axum::body::Bytes,
 ) -> Response {
     if let Err(resp) = admit(&app, &headers, &token_q, true) {
         return *resp;
     }
-    let mut state = app.state.lock().expect("serve state mutex poisoned");
+    let body: DocumentsRequest = match parse_body(&body) {
+        Ok(body) => body,
+        Err(resp) => return *resp,
+    };
+    let mut state = lock_state(&app);
     match state.apply_documents(body.revision, &body.writes) {
         Ok(()) => Json(DocumentsResponse {
             revision: state.revision(),
@@ -503,6 +536,69 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn an_unauthenticated_post_is_401_even_with_a_malformed_body() {
+        // The guard must run before any body work: an unauthenticated caller
+        // never gets its JSON parsed, so the answer is 401, not 400/422.
+        let server = spawn().await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/api/ops", server.base))
+            .header("Content-Type", "application/json")
+            .body("{not json")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn an_admitted_post_with_a_malformed_body_is_400() {
+        let server = spawn().await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/api/documents", server.base))
+            .bearer_auth("thetoken")
+            .header("X-Waml-Client", "1")
+            .header("Content-Type", "application/json")
+            .body("{not json")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn a_poisoned_state_mutex_is_recovered_not_repropagated() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("order.md"),
+            "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+        )
+        .unwrap();
+        let state = ServeState::load(dir.path()).unwrap();
+        let app = App {
+            state: Arc::new(Mutex::new(state)),
+            guard: Arc::new(Guard {
+                token: Token::from_raw("thetoken"),
+                port: 0,
+                bind_all: false,
+            }),
+        };
+        // Poison the mutex the way a handler panic would.
+        let poisoner = app.state.clone();
+        std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("poison the serve state mutex");
+        })
+        .join()
+        .unwrap_err();
+        assert!(app.state.lock().is_err(), "mutex should be poisoned");
+        // A later request must still get a working state, not a panic.
+        let guard = lock_state(&app);
+        assert_eq!(guard.revision(), 0);
     }
 
     #[tokio::test]
