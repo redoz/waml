@@ -3,6 +3,7 @@
 pub mod analysis;
 pub mod declared;
 mod format;
+pub(crate) mod highlight;
 pub(crate) mod lower;
 pub mod ops;
 pub(crate) mod rename;
