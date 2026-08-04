@@ -137,7 +137,12 @@ script_mod! {
         }
         // Keeps the FileTree rows and the header band off the column's own
         // edges; it used to double as clearance for the 1.5px frame ring.
-        padding: 6.0
+        //
+        // The RIGHT edge is deliberately flush (0): the FileTree's own scrollbar
+        // rides its turtle's right edge, so any padding here parks the bar that
+        // far in from the column edge and reads as misaligned. Rows gain the 6px
+        // back as label width instead.
+        padding: Inset{left: 6.0, top: 6.0, bottom: 6.0}
 
         // No header band: the search field and type-filter chip that used to be
         // hand-drawn over one are gone, so the tree rows start at the top of the
@@ -723,32 +728,46 @@ fn draw_nodes(
         let is_reveal = reveal_key == Some(node.key.as_str());
         if node.is_directory {
             let opened = ft.begin_folder(cx, id, &node.title).is_ok();
-            if is_selected {
-                draw_row_highlight(cx, draw_selection, row_top, scale);
-            }
+            // A row scrolled out of the viewport is culled by the fork -- it
+            // draws no bg, no label, and forgets its node. Skip its marks too,
+            // or the overlay is the only thing painted there.
+            let drawn = ft.last_node_drawn();
             if is_reveal {
-                draw_reveal.color = vec4(
-                    reveal_color.x,
-                    reveal_color.y,
-                    reveal_color.z,
-                    0.24 * reveal_strength,
-                );
-                draw_row_highlight(cx, draw_reveal, row_top, scale);
+                // Set even for a culled row: this flags that the reveal target
+                // was reached in this draw, which is exactly what arms the
+                // scroll-into-view below -- and a reveal target is usually
+                // off-screen, which is why it needs scrolling to at all.
                 reveal_was_drawn = true;
             }
-            draw_row_icon(
-                cx,
-                icons,
-                node.presentation.icon,
-                row_top,
-                depth,
-                icon_color,
-                scale,
-            );
-            // Rotation comes from the fork's own animated fold amount, so the
-            // chevron swings exactly with the rows rather than on a second timer.
-            let child_open = ft.folder_opened(id);
-            draw_row_chevron(cx, draw_chevron, row_top, depth, child_open, scale);
+            if drawn {
+                if is_selected {
+                    draw_row_highlight(cx, draw_selection, row_top, scale);
+                }
+                if is_reveal {
+                    draw_reveal.color = vec4(
+                        reveal_color.x,
+                        reveal_color.y,
+                        reveal_color.z,
+                        0.24 * reveal_strength,
+                    );
+                    draw_row_highlight(cx, draw_reveal, row_top, scale);
+                }
+                draw_row_icon(
+                    cx,
+                    icons,
+                    node.presentation.icon,
+                    row_top,
+                    depth,
+                    icon_color,
+                    scale,
+                );
+                // Rotation comes from the fork's own animated fold amount, so
+                // the chevron swings exactly with the rows rather than on a
+                // second timer. Only read inside `drawn`: a culled folder's node
+                // is forgotten, so `folder_opened` would report it closed.
+                let child_open = ft.folder_opened(id);
+                draw_row_chevron(cx, draw_chevron, row_top, depth, child_open, scale);
+            }
             if opened {
                 reveal_was_drawn |= draw_nodes(
                     cx,
@@ -765,34 +784,44 @@ fn draw_nodes(
                     reveal_color,
                     reveal_key,
                     reveal_strength,
-                    scale * child_open as f64,
+                    // The child scale comes straight off the fork's own fold
+                    // stack rather than `scale * folder_opened(id)`: a culled
+                    // ancestor is forgotten and reports 0, which would fade every
+                    // descendant's marks away while their labels drew at full
+                    // size (the scrolled-tree "icons vanish" bug).
+                    ft.current_scale(),
                 );
                 ft.end_folder();
             }
         } else {
             ft.file(cx, id, &node.title);
-            if is_selected {
-                draw_row_highlight(cx, draw_selection, row_top, scale);
-            }
+            let drawn = ft.last_node_drawn();
             if is_reveal {
-                draw_reveal.color = vec4(
-                    reveal_color.x,
-                    reveal_color.y,
-                    reveal_color.z,
-                    0.24 * reveal_strength,
-                );
-                draw_row_highlight(cx, draw_reveal, row_top, scale);
                 reveal_was_drawn = true;
             }
-            draw_row_icon(
-                cx,
-                icons,
-                node.presentation.icon,
-                row_top,
-                depth,
-                icon_color,
-                scale,
-            );
+            if drawn {
+                if is_selected {
+                    draw_row_highlight(cx, draw_selection, row_top, scale);
+                }
+                if is_reveal {
+                    draw_reveal.color = vec4(
+                        reveal_color.x,
+                        reveal_color.y,
+                        reveal_color.z,
+                        0.24 * reveal_strength,
+                    );
+                    draw_row_highlight(cx, draw_reveal, row_top, scale);
+                }
+                draw_row_icon(
+                    cx,
+                    icons,
+                    node.presentation.icon,
+                    row_top,
+                    depth,
+                    icon_color,
+                    scale,
+                );
+            }
         }
     }
     reveal_was_drawn
