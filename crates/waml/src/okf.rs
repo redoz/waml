@@ -276,26 +276,40 @@ impl Bundle {
             })
     }
 
+    /// Requires `self.concepts` to be sorted by `id` (invariant of construction; see
+    /// `shell.rs` where the vector is built and asserted sorted in debug builds).
     pub fn concept(&self, id: &str) -> Option<&Concept> {
-        self.concepts.iter().find(|c| c.id == id)
+        self.concepts
+            .binary_search_by(|c| c.id.as_str().cmp(id))
+            .ok()
+            .map(|i| &self.concepts[i])
     }
 
+    /// Requires `self.indexes` to be sorted by `directory` (invariant of construction; see
+    /// `shell.rs`).
     pub fn index(&self, address: &str) -> Option<&Index> {
         self.indexes
-            .iter()
-            .find(|index| index.directory.as_str() == address)
+            .binary_search_by(|index| index.directory.as_str().cmp(address))
+            .ok()
+            .map(|i| &self.indexes[i])
     }
 
+    /// Requires `self.logs` to be sorted by `directory` (invariant of construction; see
+    /// `shell.rs`).
     pub fn log(&self, address: &str) -> Option<&Log> {
         self.logs
-            .iter()
-            .find(|log| log.directory.as_str() == address)
+            .binary_search_by(|log| log.directory.as_str().cmp(address))
+            .ok()
+            .map(|i| &self.logs[i])
     }
 
+    /// Requires `self.directories` to be sorted by `address` (invariant of construction; see
+    /// `shell.rs`).
     pub fn directory(&self, address: &str) -> Option<&Directory> {
         self.directories
-            .iter()
-            .find(|directory| directory.address.as_str() == address)
+            .binary_search_by(|directory| directory.address.as_str().cmp(address))
+            .ok()
+            .map(|i| &self.directories[i])
     }
 
     pub fn concepts(&self) -> &[Concept] {
@@ -521,6 +535,44 @@ mod tests {
             [DirectoryAddress::parse("/sales/archive").unwrap()]
         );
         assert_eq!(sales_dir.concepts, ["sales/order"]);
+    }
+
+    #[test]
+    fn bundle_accessors_binary_search_first_middle_last_and_absent() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n"),
+            ("alpha.md", "---\ntype: Note\n---\n# Alpha\n"),
+            ("beta.md", "---\ntype: Note\n---\n# Beta\n"),
+            ("gamma.md", "---\ntype: Note\n---\n# Gamma\n"),
+            ("east/index.md", "# East\n"),
+            ("east/log.md", "# Log\n"),
+            ("west/index.md", "# West\n"),
+            ("west/log.md", "# Log\n"),
+        ])
+        .unwrap();
+
+        let bundle = Bundle::parse(&source).unwrap();
+
+        // concepts: alpha, beta, gamma sort first/middle/last.
+        assert_eq!(bundle.concept("alpha").unwrap().id, "alpha");
+        assert_eq!(bundle.concept("beta").unwrap().id, "beta");
+        assert_eq!(bundle.concept("gamma").unwrap().id, "gamma");
+        assert!(bundle.concept("missing").is_none());
+
+        // directories: "/", "/east", "/west" sort first/middle/last.
+        assert!(bundle.directory("/").is_some());
+        assert!(bundle.directory("/east").is_some());
+        assert!(bundle.directory("/west").is_some());
+        assert!(bundle.directory("/missing").is_none());
+
+        assert!(bundle.index("/").is_some());
+        assert!(bundle.index("/east").is_some());
+        assert!(bundle.index("/west").is_some());
+        assert!(bundle.index("/missing").is_none());
+
+        assert!(bundle.log("/east").is_some());
+        assert!(bundle.log("/west").is_some());
+        assert!(bundle.log("/missing").is_none());
     }
 
     #[test]
