@@ -33,7 +33,10 @@ pub fn describe(
     analysis.bundle.concept(concept_id)?;
     Some(DocumentDescriptor {
         presentation: DocumentPresentation {
-            icon: Icon::StickyNote,
+            // The generic-document glyph the tree rows, doc tabs, and the
+            // inspector's node lead all share; a describe/open split here
+            // makes the tree row disagree with the tab for the same concept.
+            icon: Icon::FileText,
             accent: generic_okf_accent(),
             category: NavCategory::OkfDocument,
         },
@@ -47,8 +50,7 @@ pub fn open_with_asset_host(
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
 ) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
-    let mut presentation = presentation(analysis, concept_id)?;
-    presentation.icon = Icon::FileText;
+    let presentation = presentation(analysis, concept_id)?;
     Some(OpenDocument {
         tab_id: okf_document_tab_id(concept_id),
         concept_id: concept_id.to_string(),
