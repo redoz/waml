@@ -2379,8 +2379,16 @@ mod tests {
         let mut rng = Lcg(0xC0FFEE);
         let mut edges: Vec<KeyedEdge> = Vec::new();
         for e in 0..m {
-            let a = if e < n - 1 { e } else { (rng.next() as usize) % n };
-            let b = if e < n - 1 { e + 1 } else { (rng.next() as usize) % n };
+            let a = if e < n - 1 {
+                e
+            } else {
+                (rng.next() as usize) % n
+            };
+            let b = if e < n - 1 {
+                e + 1
+            } else {
+                (rng.next() as usize) % n
+            };
             if a == b {
                 continue;
             }

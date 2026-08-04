@@ -16,6 +16,7 @@ use super::{
     DialPlacement, FrameCommand, InteractionEffects, SceneUpdate, SurfaceIntent, TimerCommand,
     Zone,
 };
+use crate::canvas::stale_badge::draw_stale_badge_overlay;
 use crate::canvas::viewport::{
     InitialFit, TimerCommand as ViewportTimerCommand, TouchPair, ViewportController,
     ViewportEffects,
@@ -24,7 +25,6 @@ use crate::cursor;
 use crate::inspector::Subject;
 use crate::popup::base::PopupItem;
 use crate::scene::{bounding_box, Scene};
-use crate::canvas::stale_badge::draw_stale_badge_overlay;
 use makepad_widgets::event::{TouchPoint, TouchState, TouchUpdateEvent};
 use makepad_widgets::*;
 

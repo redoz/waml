@@ -1972,8 +1972,14 @@ pub(crate) fn behavior_diagnostic(
         })
         .unwrap_or_else(|| syntax.range());
     let (Some(start), Some(end)) = (
-        document.line_index().line_col(document.text(), range.start()).ok(),
-        document.line_index().line_col(document.text(), range.end()).ok(),
+        document
+            .line_index()
+            .line_col(document.text(), range.start())
+            .ok(),
+        document
+            .line_index()
+            .line_col(document.text(), range.end())
+            .ok(),
     ) else {
         debug_assert!(false, "behavior range is not a document offset: {path}");
         return;

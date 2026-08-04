@@ -963,8 +963,14 @@ mod tests {
         ];
         let touched = write_back(&temp.0, &[], &new).unwrap();
         assert_eq!(touched, ["wrote Order.md", "wrote order.md"]);
-        assert_eq!(fs::read_to_string(temp.0.join("Order.md")).unwrap(), "upper");
-        assert_eq!(fs::read_to_string(temp.0.join("order.md")).unwrap(), "lower");
+        assert_eq!(
+            fs::read_to_string(temp.0.join("Order.md")).unwrap(),
+            "upper"
+        );
+        assert_eq!(
+            fs::read_to_string(temp.0.join("order.md")).unwrap(),
+            "lower"
+        );
     }
 
     #[test]
@@ -1210,7 +1216,10 @@ mod tests {
             touched[1].starts_with("warning: all changes committed"),
             "{touched:?}"
         );
-        assert!(touched[1].contains("injected cleanup failure"), "{touched:?}");
+        assert!(
+            touched[1].contains("injected cleanup failure"),
+            "{touched:?}"
+        );
         assert_eq!(fs::read_to_string(&target).unwrap(), "after");
     }
 

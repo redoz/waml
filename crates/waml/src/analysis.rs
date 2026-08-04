@@ -1629,8 +1629,7 @@ mod tests {
             Ok(())
         }
         fn shell_failure(&mut self, path: &BundlePath) -> Option<ParseError> {
-            (path == &self.fail_path)
-                .then_some(ParseError::SourceTooLarge { bytes: usize::MAX })
+            (path == &self.fail_path).then_some(ParseError::SourceTooLarge { bytes: usize::MAX })
         }
     }
 

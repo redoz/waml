@@ -336,14 +336,8 @@ fn text_fingerprint_detects_allocation_kind_and_slice_partition() {
         range: range(1, 2),
     };
     let owned = GreenText::Owned(Arc::from("x"));
-    assert_ne!(
-        text_fingerprint(&first),
-        text_fingerprint(&second)
-    );
-    assert_ne!(
-        text_fingerprint(&first),
-        text_fingerprint(&owned)
-    );
+    assert_ne!(text_fingerprint(&first), text_fingerprint(&second));
+    assert_ne!(text_fingerprint(&first), text_fingerprint(&owned));
 }
 
 #[test]
@@ -534,15 +528,14 @@ fn same_length_heading_text_edit_is_incremental_and_reuses_eof() {
         replacement: Arc::from("After!"),
     };
     let full = parse_okf_markdown(next_source.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
-    let (outcome, structure) =
-        reparse_okf_markdown_with_structure(
-            &previous.tree,
-            next_source.clone(),
-            &[change],
-            None,
-            None,
-        )
-        .unwrap();
+    let (outcome, structure) = reparse_okf_markdown_with_structure(
+        &previous.tree,
+        next_source.clone(),
+        &[change],
+        None,
+        None,
+    )
+    .unwrap();
     let ReparseOutcome::Incremental { tree, .. } = outcome else {
         panic!("same-length heading text edit must be incremental")
     };

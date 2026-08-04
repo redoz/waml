@@ -98,7 +98,16 @@ pub(super) fn draw_nodes(
             .node
             .set_uniform(cx, live_id!(grey), &[if muted { 1.0 } else { 0.0 }]);
         draws.node.draw_surface_abs(cx, screen);
-        draw_card(cx, screen, node, zoom, snapshot.linework, muted, draws, cards);
+        draw_card(
+            cx,
+            screen,
+            node,
+            zoom,
+            snapshot.linework,
+            muted,
+            draws,
+            cards,
+        );
     }
 }
 

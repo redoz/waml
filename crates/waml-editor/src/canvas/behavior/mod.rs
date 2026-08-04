@@ -915,5 +915,4 @@ mod tests {
         surface.set_projection_stale(vm.cx_mut(), false);
         assert!(!surface.projection_stale());
     }
-
 }

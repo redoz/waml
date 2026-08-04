@@ -216,7 +216,10 @@ mod tests {
         // "AA" (dangling bits zero) is canonical.
         assert_eq!(base64url_decode("AA").unwrap(), vec![0]);
         assert!(matches!(base64url_decode("AB"), Err(ShareError::BadBase64)));
-        assert!(matches!(base64url_decode("AAB"), Err(ShareError::BadBase64)));
+        assert!(matches!(
+            base64url_decode("AAB"),
+            Err(ShareError::BadBase64)
+        ));
         // Round-trip stays intact for every remainder class.
         for payload in [&b""[..], b"x", b"xy", b"xyz", b"xyzw"] {
             assert_eq!(

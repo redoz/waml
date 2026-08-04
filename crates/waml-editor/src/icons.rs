@@ -4950,23 +4950,24 @@ mod tests {
 
     #[test]
     fn dsl_bindings_follow_the_enum_in_order_and_spelling() {
-        let bindings: Vec<(String, String)> = block(
-            "mod.widgets.IconSet = set_type_default()",
-            "}",
-        )
-        .into_iter()
-        .map(str::trim)
-        .filter_map(|line| {
-            let (field, rest) = line.split_once(": mod.draw.Icon")?;
-            let camel = rest.split('{').next()?.trim();
-            Some((field.to_string(), camel.to_string()))
-        })
-        .collect();
+        let bindings: Vec<(String, String)> =
+            block("mod.widgets.IconSet = set_type_default()", "}")
+                .into_iter()
+                .map(str::trim)
+                .filter_map(|line| {
+                    let (field, rest) = line.split_once(": mod.draw.Icon")?;
+                    let camel = rest.split('{').next()?.trim();
+                    Some((field.to_string(), camel.to_string()))
+                })
+                .collect();
         let expected: Vec<(String, String)> = declared_variants()
             .into_iter()
             .map(|v| (snake(&v), v))
             .collect();
-        assert_eq!(bindings, expected, "the IconSet DSL block drifted from the enum");
+        assert_eq!(
+            bindings, expected,
+            "the IconSet DSL block drifted from the enum"
+        );
     }
 
     #[test]
@@ -4975,9 +4976,7 @@ mod tests {
             .lines()
             .map(str::trim)
             .filter_map(|line| {
-                let (variant, rest) = line
-                    .strip_prefix("Icon::")?
-                    .split_once(" => &mut self.")?;
+                let (variant, rest) = line.strip_prefix("Icon::")?.split_once(" => &mut self.")?;
                 Some((variant.to_string(), rest.trim_end_matches(',').to_string()))
             })
             .collect();

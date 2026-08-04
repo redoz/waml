@@ -97,9 +97,14 @@ impl<'de> serde::de::DeserializeSeed<'de> for FmValueSeed {
             fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<FmValue, E> {
                 Ok(FmValue::Num(v as f64))
             }
-            fn visit_seq<S: serde::de::SeqAccess<'de>>(self, mut s: S) -> Result<FmValue, S::Error> {
+            fn visit_seq<S: serde::de::SeqAccess<'de>>(
+                self,
+                mut s: S,
+            ) -> Result<FmValue, S::Error> {
                 if self.depth >= MAX_VALUE_DEPTH {
-                    return Err(serde::de::Error::custom("frontmatter value nests too deeply"));
+                    return Err(serde::de::Error::custom(
+                        "frontmatter value nests too deeply",
+                    ));
                 }
                 let mut items = Vec::new();
                 while let Some(item) = s.next_element_seed(FmValueSeed {
