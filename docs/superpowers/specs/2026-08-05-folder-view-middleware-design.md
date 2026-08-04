@@ -86,6 +86,10 @@ pub trait Projection {
 }
 ```
 
+A `SurfaceId` is a name contributed by an extension's editor half (see
+Extensions), resolved in the same table the chain already uses. It is not a
+second namespace.
+
 This is why `markdown` and `member:` are **not middleware**, though an earlier
 draft of this design listed them as such. Neither projects rows:
 
@@ -106,14 +110,9 @@ owning the listing while the surface is decided somewhere else.
 
 ### Costs
 
-- **A named surface registry.** `SurfaceId -> DocView`, where the wiring is
-  concrete today. This is the same shape as `script_mod!` widget registration,
-  and it has the same failure mode: a surface missing from the registry is
-  silently unreachable. It needs the same gate treatment
-  (`crates/waml-editor/src/script_gate.rs`), not a runtime discovery.
 - **Virtual rows must name a surface.** There is no document to infer one from,
   so `surface: None` is legal only for rows with a real target.
-- **Default resolution stays total.** An unknown `SurfaceId` degrades to the
+- **Default resolution stays total.** An unresolvable surface degrades to the
   document-type default and emits a diagnostic. Never a blank tab.
 
 ### Scope
@@ -125,6 +124,75 @@ canvas, and the folder listing. No speculative format registry.
 "Adding a new format is easy" is a property to demonstrate the first time one is
 actually needed, not a claim the design makes about itself. The seam earns its
 generality when a second real consumer disagrees with it.
+
+## Extensions
+
+`Projection`, `Row`, `Chain`, and `RowPath` live in `waml`, the headless crate.
+That is what keeps row projection unit-testable with no window, and it is not
+negotiable. `DocView` lives in `waml-editor` and pulls in makepad, so a
+middleware cannot construct one directly.
+
+An **Extension** is the unit that spans the boundary: it contributes middleware
+and profiles on the headless side, and the surfaces those middleware resolve to
+on the editor side.
+
+```rust
+// waml — headless
+pub trait CoreExtension {
+    fn name(&self) -> &str;
+    fn middleware(&self) -> Vec<(&'static str, Box<dyn Projection>)>;
+    fn profiles(&self) -> Vec<ProfileDef>;
+}
+
+// waml-editor
+pub trait EditorExtension {
+    fn name(&self) -> &str;                              // matches its core half
+    fn surfaces(&self) -> Vec<(&'static str, SurfaceFactory)>;
+}
+```
+
+Two traits rather than one type, because the crate dependency points one way:
+`waml` cannot name `DocView`. The halves are paired by name at startup.
+
+An extension is a **composition** unit, not a runtime seam. Nothing resolves
+*through* it. The chain looks middleware up by name exactly as before; the
+extension is only what put that name in the table. There is therefore one name
+table, not a middleware table plus a separate `SurfaceId` namespace.
+
+`SurfaceFactory` is a factory, not an instance: `fn open(&self, ctx, path) ->
+Box<dyn DocView>`, called when a row is opened. A `DocView` per row in a listing
+would allocate widgets and fonts for rows nobody opens.
+
+Session restore needs no persisted surface identity. Persist the `RowId`, re-run
+`resolve(path)`, hand the row to its owner's editor half. Deterministic, and
+`resolve` is required anyway.
+
+### Constraints
+
+- **Declaration only, no behavior.** An extension returns lists. The moment it
+  grows `on_open` or `handle_event` it becomes a god-concept and every feature
+  gets pushed into it.
+- **The core half stands alone.** Tests, the LSP, and any headless consumer load
+  `CoreExtension`s with no editor present. An extension's middleware must never
+  *require* its surfaces to project rows; it simply cannot open them.
+- **Pairing is gate-checked.** A `CoreExtension` whose middleware is reachable
+  while its `EditorExtension` half is absent yields rows that cannot be opened —
+  the `script_mod!` failure mode exactly. Asserted in
+  `crates/waml-editor/src/script_gate.rs`, not discovered at runtime.
+- **Compiled-in, not a plugin API.** "Extension" reads as "plugin" to anyone who
+  meets the word cold. It is not one. No dynamic loading, no bundle-supplied
+  code; the threat model is unchanged.
+
+### Scope
+
+Land the two traits and register exactly **one** extension: core, holding
+`index`, `hide`, the `okf` and `uml-domain` profiles, and today's surfaces.
+
+`UmlExtension` is the intended end state and the shape the seam is built for —
+UML middleware, the canvas surface, and the `uml-domain` profile rules in one
+place. It is deliberately **not** split out in this work. A seam is proven when a
+second extension disagrees with it; manufacturing that second extension now
+produces a shape fitted to a guess rather than to UML's actual needs.
 
 ### Intended second consumer
 
@@ -448,9 +516,10 @@ with its strict-consumer degradation.
 4. **Folder surface, read-only** — render the projected rows; tree row-versus-
    chevron split; diagnostics strip and tree marker. Folders open for the first
    time.
-5. **Surface registry** — `SurfaceId -> DocView`, gate-checked like
-   `script_mod!`; default resolution by document type; register today's surfaces
-   only. Then `markdown` and `member:` fall out as resolutions.
+5. **Extensions** — `CoreExtension` and `EditorExtension`, name pairing
+   gate-checked like `script_mod!`, one registered extension (core), default
+   surface resolution by document type. Then `markdown` and `member:` fall out
+   as resolutions.
 6. **`hide`** — the first non-identity middleware. Proves projection and op
    forwarding on a working surface.
 7. **Editing** — `apply` on the root view: Enter, retitle, Tab/Shift-Tab,
@@ -488,6 +557,9 @@ Headless, in `waml`:
 - An unknown `SurfaceId` degrades to the type default and emits a diagnostic
   rather than yielding a blank tab.
 - A virtual row with `surface: None` is rejected at construction.
+- `CoreExtension`s load and project rows with no `EditorExtension` present.
+- Gate: every reachable middleware name has an editor half when it resolves a
+  surface.
 - `apply` on the root view produces the expected OKF op batch and leaves both
   affected `index.md` files consistent.
 
