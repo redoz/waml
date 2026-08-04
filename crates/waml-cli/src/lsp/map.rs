@@ -176,14 +176,6 @@ pub fn from_lsp_range(
     Ok(start..end)
 }
 
-/// True iff the document's frontmatter declares a recognized WAML `type:`.
-///
-/// This scans the leading frontmatter region line by line — mirroring the core
-/// parser's `scan_frontmatter_and_preamble` — rather than requiring a cleanly
-/// terminated `---`…`---` block. That matters for a buffer mid-edit whose
-/// frontmatter is broken/unterminated (the exact `FrontmatterNotClean` case):
-/// a strict block parse would classify it as non-WAML and silently suppress
-/// its live diagnostics, blinding the LSP to the very error it reports.
 /// UTF-16 code-unit offset of byte offset `byte_col` within `line_text`.
 pub fn utf16_col(line_text: &str, byte_col: usize) -> Result<u32, PositionError> {
     if byte_col > line_text.len() {
@@ -212,14 +204,19 @@ pub fn to_lsp_diagnostic(d: &Diagnostic, document: &DocumentVersion) -> lsp::Dia
     });
     let range = range.unwrap_or_else(|| {
         let requested_line = d.line.saturating_sub(1);
-        let (line, line_text) = document
-            .text()
-            .shared()
-            .lines()
-            .enumerate()
-            .nth(requested_line)
-            .map(|(line, text)| (line as u32, text))
-            .unwrap_or((0, ""));
+        // Clamp an out-of-range line to the last line rather than silently
+        // relocating the diagnostic to line 0: a clamped position is still
+        // near the reported problem, a relocated one points nowhere related.
+        let (line, line_text) = {
+            let mut clamped = (0_u32, "");
+            for (line, text) in document.text().shared().lines().enumerate() {
+                clamped = (line as u32, text);
+                if line == requested_line {
+                    break;
+                }
+            }
+            clamped
+        };
         let default_range = (0, utf16_col(line_text, line_text.len()).unwrap_or(0));
         let (start_ch, end_ch) = d
             .span
@@ -326,6 +323,25 @@ mod tests {
                 default_range
             );
         }
+    }
+
+    #[test]
+    fn out_of_range_diagnostic_line_clamps_to_the_last_line() {
+        use waml::diagnostic::DiagCode;
+
+        let state = state_with_text("first\nlast line");
+        let document = document(&state);
+        let diagnostic = Diagnostic::new(
+            DiagCode::MalformedAttribute,
+            "beyond the end",
+            "position-test.md",
+            99,
+        );
+
+        assert_eq!(
+            to_lsp_diagnostic(&diagnostic, document).range,
+            lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 9)),
+        );
     }
 
     #[test]
