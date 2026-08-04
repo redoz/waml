@@ -571,12 +571,12 @@ fn rgb(hex: u32) -> Vec4 {
     }
 }
 
-/// The 8 accent swatches, in the mock's order (the Atlas `bucket_*` hexes). Kept
-/// as Rust consts so `handle_event` can recolour every accent-material surface
-/// per draw without reading the live theme back out.
-const ACCENTS: [u32; 8] = [
-    0x1496dc, 0x00b4d2, 0x14bea0, 0x5a6ef0, 0xe69614, 0x3cbe5a, 0xeb4678, 0x64748b,
-];
+/// The 8 accent swatches, in the mock's order (the Atlas `bucket_*` hexes).
+/// Sourced from `node_style::ACCENT_SWATCH_HEX` -- the single palette table
+/// also mapped by `accent.rs` -- so the design editor and the shell cannot
+/// drift. Rust consts so `handle_event` can recolour every accent-material
+/// surface per draw without reading the live theme back out.
+const ACCENTS: [u32; 8] = crate::node_style::ACCENT_SWATCH_HEX;
 
 /// An interactive region, resolved on `FingerUp` against its laid-out child rect.
 #[derive(Clone, Copy, PartialEq)]

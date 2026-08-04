@@ -21,20 +21,23 @@ fn rgb(hex: u32) -> Vec4 {
 }
 
 /// The Atlas `bucket_*` swatch for an accent bucket (`None` and `Unknown` share
-/// the neutral slate). Literal hex rather than an atlas token because the bucket
-/// swatches are theme-invariant by design -- the same saturated HUD colours in
-/// light and dark (see the bucket notes in `theme_atlas.rs`).
+/// the neutral slate). The hexes live in `node_style::ACCENT_SWATCH_HEX` (the
+/// single palette source, shared with the node-design editor's swatch row)
+/// rather than an atlas token because the bucket swatches are theme-invariant
+/// by design -- the same saturated HUD colours in light and dark (see the
+/// bucket notes in `theme_atlas.rs`).
 pub fn bucket_color(b: AccentBucket) -> Vec4 {
-    match b {
-        AccentBucket::Interface => rgb(0x1496dc),
-        AccentBucket::Enum => rgb(0x00b4d2),
-        AccentBucket::Note => rgb(0x14bea0),
-        AccentBucket::Actor => rgb(0x5a6ef0),
-        AccentBucket::UseCase => rgb(0xe69614),
-        AccentBucket::Package => rgb(0x3cbe5a),
-        AccentBucket::Behavior => rgb(0xeb4678),
-        AccentBucket::None | AccentBucket::Unknown => rgb(0x64748b),
-    }
+    use crate::node_style::ACCENT_SWATCH_HEX as HEX;
+    rgb(match b {
+        AccentBucket::Interface => HEX[0],
+        AccentBucket::Enum => HEX[1],
+        AccentBucket::Note => HEX[2],
+        AccentBucket::Actor => HEX[3],
+        AccentBucket::UseCase => HEX[4],
+        AccentBucket::Package => HEX[5],
+        AccentBucket::Behavior => HEX[6],
+        AccentBucket::None | AccentBucket::Unknown => HEX[7],
+    })
 }
 
 /// How far a glyph drawn in an accent is pulled toward the surrounding text ink.

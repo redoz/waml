@@ -26,6 +26,16 @@ pub enum AccentBucket {
     Unknown,
 }
 
+/// The 8 accent swatch hexes (`#rrggbb`), in the mock's order: Interface,
+/// Enum/DataType, Note, Actor, UseCase, Package, Behavior, neutral slate.
+/// Single source for the palette: `accent.rs` maps buckets onto it for the
+/// shell and `node_design_editor.rs` indexes it for the swatch row, so the two
+/// surfaces cannot drift. Kept as raw hex (no makepad type) because this
+/// module compiles without a GPU dependency.
+pub const ACCENT_SWATCH_HEX: [u32; 8] = [
+    0x1496dc, 0x00b4d2, 0x14bea0, 0x5a6ef0, 0xe69614, 0x3cbe5a, 0xeb4678, 0x64748b,
+];
+
 /// Which accent bucket a node's element type renders with.
 pub fn accent_bucket(ty: &ElementType) -> AccentBucket {
     match ty {
