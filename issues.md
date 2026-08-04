@@ -26,6 +26,13 @@ Removed in the 2026-08-04 reconciliation:
   (`56fdf772` deleted `waml::ops` and the `compat.rs` bridge; design at
   `docs/superpowers/specs/2026-08-04-retire-compat-design.md`). The residual
   public-API issue below was rewritten accordingly.
+- Config rename not replace-existing on Windows: dismissed as false —
+  `std::fs::rename` uses `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` (and
+  POSIX-semantics rename on newer Windows), the temp file is written in the
+  destination directory so cross-volume failure cannot occur, and the new
+  `store_to_twice_second_value_wins` test locks in second-write-wins.
+  Residual transient sharing-violation failures are already logged and
+  swallowed by callers.
 
 Priority meanings are calibrated for a hobby project:
 
@@ -176,26 +183,6 @@ Recommendation:
    block another traversal while restoration is pending.
 4. Choose and test an explicit close-versus-tombstone policy for unresolved
    tabs, including undo restoration.
-
-## P2 — Repeated configuration writes are not replace-existing portable
-
-Evidence:
-
-- `crates/waml-editor/src/config.rs:62-67` writes `editor.json.tmp` and then
-  calls `std::fs::rename` over the destination.
-- On Windows, rename does not provide replace-existing semantics for an
-  existing destination.
-- Existing tests cover the first write into an empty directory but not two
-  consecutive stores.
-
-Theme, recent-file, or pin changes can therefore stop persisting after the
-first successful configuration write on a primary target platform.
-
-Recommendation:
-
-Reuse the tested platform replacement primitive from the shared persistence
-work. Add a test that stores two different values consecutively and reloads the
-second value on Windows.
 
 ## P2 — Bundle ingestion has three filesystem authorities and follows links
 
