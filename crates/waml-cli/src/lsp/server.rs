@@ -100,7 +100,13 @@ impl Backend {
     }
 
     async fn install_initial(&self, root: PathBuf) {
-        match LspAnalysisState::from_documents(Some(root.clone()), read_disk_documents(&root)) {
+        let (documents, ingest_errors) = read_disk_documents(&root);
+        for error in &ingest_errors {
+            self.client
+                .log_message(MessageType::WARNING, format!("WAML bundle ingest: {error}"))
+                .await;
+        }
+        match LspAnalysisState::from_documents(Some(root.clone()), documents) {
             Ok(state) => *self.current.write().await = Arc::new(state),
             Err(error) => {
                 self.client

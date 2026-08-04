@@ -335,26 +335,23 @@ fn normalize_physical(path: PathBuf) -> PathBuf {
     PathBuf::from(path.to_string_lossy().replace('\\', "/"))
 }
 
-pub fn read_disk_documents(root: &Path) -> Vec<(PathBuf, String)> {
-    fn walk(directory: &Path, output: &mut Vec<(PathBuf, String)>) {
-        let Ok(entries) = std::fs::read_dir(directory) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, output);
-            } else if path.extension().and_then(|extension| extension.to_str()) == Some("md") {
-                if let Ok(text) = std::fs::read_to_string(&path) {
-                    output.push((normalize_physical(path), text));
-                }
-            }
-        }
-    }
-    let mut output = Vec::new();
-    walk(root, &mut output);
-    output.sort_by(|left, right| left.0.cmp(&right.0));
-    output
+/// Walk `root` for `.md` files via the shared hardened ingester, normalizing
+/// each returned path. Returns the ingested documents and every
+/// [`host::ingest::IngestError`] encountered so the caller can surface them
+/// instead of silently dropping unreadable or non-UTF-8 content.
+pub fn read_disk_documents(
+    root: &Path,
+) -> (Vec<(PathBuf, String)>, Vec<host::ingest::IngestError>) {
+    let ingested = host::ingest::ingest_markdown(
+        std::slice::from_ref(&root.to_path_buf()),
+        &host::ingest::IngestOptions::default(),
+    );
+    let files = ingested
+        .files
+        .into_iter()
+        .map(|(path, text)| (normalize_physical(path), text))
+        .collect();
+    (files, ingested.errors)
 }
 
 #[cfg(test)]
@@ -849,5 +846,51 @@ mod tests {
                 .as_str(),
             "__external__/C_/one/two/order.md"
         );
+    }
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "waml-lsp-bundle-{label}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn read_disk_documents_skips_discovered_dot_directories() {
+        let temp = TempDir::new("dotdir");
+        std::fs::write(temp.0.join("order.md"), "# Order\n").unwrap();
+        std::fs::create_dir(temp.0.join(".waml")).unwrap();
+        std::fs::write(temp.0.join(".waml/hidden.md"), "# Hidden\n").unwrap();
+
+        let (documents, errors) = read_disk_documents(&temp.0);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].0.file_name().unwrap(), "order.md");
+    }
+
+    #[test]
+    fn read_disk_documents_reports_non_utf8_instead_of_dropping_it() {
+        let temp = TempDir::new("nonutf8");
+        std::fs::write(temp.0.join("bad.md"), [0xff, 0xfe, 0x00, 0x01]).unwrap();
+
+        let (documents, errors) = read_disk_documents(&temp.0);
+        assert!(documents.is_empty());
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].kind, host::ingest::IngestErrorKind::NotUtf8);
     }
 }
