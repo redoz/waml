@@ -676,7 +676,7 @@ pub fn analyze(
         snapshots.insert(id, snapshot);
     }
     validate_declared_semantics(&context, &declared, &concept_paths, &mut diagnostics)?;
-    let projection = declared_projection(&context, &declared, &mut diagnostics)?;
+    let projection = declared_projection(&context, &declared, &concept_paths, &mut diagnostics)?;
     let metadata = analysis_metadata(
         &context,
         previous,
@@ -1468,6 +1468,7 @@ fn directed_cycle(graph: &BTreeMap<String, Vec<String>>) -> bool {
 fn declared_projection(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
+    concept_paths: &BTreeMap<String, String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<super::Projection, AnalysisError> {
     let claimed: BTreeSet<_> = declared.concepts().map(|c| c.concept_id.as_str()).collect();
@@ -1482,14 +1483,9 @@ fn declared_projection(
                 .into(),
             }
         })?;
-        let path = context
-            .catalog
-            .documents()
-            .iter()
-            .find_map(|(_, d)| {
-                (crate::okf::id_of(d.path().as_str()) == concept.concept_id)
-                    .then_some(d.path().as_str().to_string())
-            })
+        let path = concept_paths
+            .get(concept.concept_id.as_str())
+            .cloned()
             .unwrap_or_default();
         let attributes = concept
             .attributes
