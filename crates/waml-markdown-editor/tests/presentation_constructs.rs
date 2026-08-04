@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use waml_markdown_editor::presentation::{
     compile_presentation, render_plan_golden, BlockDecorationKind, EmbeddedBlockKind,
-    HighlighterRegistry, PresentationItem, PresentationPlan, PresentationStyles, TextRole,
+    HighlighterRegistry, PresentationBlockKind, PresentationItem, PresentationPlan,
+    PresentationStyles, TextRole,
 };
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, MarkdownSyntaxSnapshot, SourceText,
@@ -247,4 +248,46 @@ fn plan_goldens_are_byte_stable() {
             .replace("\r\n", "\n");
         assert_eq!(rendered, golden, "golden mismatch for {name}");
     }
+}
+
+#[test]
+fn frontmatter_compiles_to_its_own_code_block() {
+    let source = "---\ntype: uml.Class\n---\n\nBody paragraph.\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).expect("the WAML source is valid"),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("the WAML source parses");
+    let plan = compile_presentation(
+        &snapshot,
+        &PresentationStyles::balanced(),
+        &HighlighterRegistry::default(),
+    )
+    .expect("the document compiles");
+
+    let frontmatter_len = "---\ntype: uml.Class\n---\n".len();
+    assert!(
+        plan.blocks.iter().any(|block| {
+            block.kind == PresentationBlockKind::Code
+                && block.source_range.start().to_usize() == 0
+                && block.source_range.end().to_usize() == frontmatter_len
+        }),
+        "frontmatter must be its own Code block, not folded into the root paragraph: {:?}",
+        plan.blocks
+    );
+    assert!(
+        !plan
+            .blocks
+            .iter()
+            .any(|block| block.kind == PresentationBlockKind::Paragraph
+                && block.source_range.start().to_usize() == 0
+                && block.source_range.end().to_usize() >= frontmatter_len),
+        "frontmatter must not be folded into the document-root paragraph"
+    );
+}
+
+#[test]
+fn frontmatter_role_is_not_a_syntax_marker() {
+    assert!(!TextRole::Frontmatter.is_syntax_marker());
 }

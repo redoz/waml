@@ -646,7 +646,9 @@ fn block_kind(
                 .unwrap_or(TextRange::new(node.range().start(), node.range().start()).ok()?);
             PresentationBlockKind::ListItem { marker_range }
         }
-        Kind::FencedCodeBlock | Kind::IndentedCodeBlock => PresentationBlockKind::Code,
+        Kind::FencedCodeBlock | Kind::IndentedCodeBlock | Kind::Frontmatter => {
+            PresentationBlockKind::Code
+        }
         Kind::Table => PresentationBlockKind::Table {
             columns: table_columns(node),
         },

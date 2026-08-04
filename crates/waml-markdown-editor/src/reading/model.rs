@@ -303,6 +303,14 @@ fn emits(bullet_ranges: &HashSet<(usize, usize)>, role: TextRole, range: TextRan
     if role.is_syntax_marker() {
         return false;
     }
+    // Frontmatter is document metadata, not prose: the editor always shows it
+    // (as code, per `PresentationBlockKind::Code`), but this reading view
+    // hides it. `TextRole::is_syntax_marker` no longer covers it, since it
+    // now answers "is this markdown punctuation" for the always-visible
+    // editor, not "should a reading view hide this".
+    if role == TextRole::Frontmatter {
+        return false;
+    }
     if role == TextRole::ListMarker {
         return !bullet_ranges.contains(&range_key(range));
     }
