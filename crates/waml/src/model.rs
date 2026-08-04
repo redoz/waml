@@ -972,7 +972,9 @@ pub struct Node {
     /// single authoritative source for `title`/`description`/verbatim `body` (read
     /// via `concept.title`/`concept.description`/`concept.body`) plus the non-UML
     /// OKF fields (`tags`/`resource`/`timestamp`/`links`/`citations`/`role`/`extra`).
-    /// Populated from `crate::okf::project` (single source).
+    /// Populated from `crate::okf::project` (single source), unwrapped at the
+    /// call site — `project` returns `None` only for a reserved filename or a
+    /// quarantined/shell-failed source, neither of which reaches this field.
     pub concept: crate::okf::Concept,
     pub key: String,
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
@@ -1349,7 +1351,8 @@ mod tests {
             concept: crate::okf::project(
                 "order.md",
                 "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
-            ),
+            )
+            .unwrap(),
             key: "order".to_string(),
             ty: ElementType::Uml(UmlMetaclass::Class),
             stereotypes: vec![],

@@ -171,7 +171,8 @@ fn assoc_name_matches_ts_union_shape() {
 #[test]
 fn package_node_and_model_path() {
     let pkg = Node {
-        concept: waml::okf::project("sales/package.md", "# sales\n\nSales bounded context.\n"),
+        concept: waml::okf::project("sales/package.md", "# sales\n\nSales bounded context.\n")
+            .unwrap(),
         key: "sales".into(),
         ty: ElementType::Uml(UmlMetaclass::Package),
         stereotypes: vec![],
@@ -199,7 +200,8 @@ fn package_node_and_model_path() {
         concept: waml::okf::project(
             "order.md",
             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
-        ),
+        )
+        .unwrap(),
         key: "order".into(),
         ty: ElementType::Uml(UmlMetaclass::Class),
         stereotypes: vec![],

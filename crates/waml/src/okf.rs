@@ -10,7 +10,7 @@
 use std::fmt;
 
 use crate::frontmatter::Frontmatter;
-use crate::source::{SourceBundle, SourceDocument, SourceSlice};
+use crate::source::{SourceBundle, SourceSlice};
 
 pub(crate) mod lower;
 pub mod ops;
@@ -452,44 +452,22 @@ pub fn relative_href(referring_path: &str, target_path: &str) -> String {
     authored
 }
 
-pub fn project_document(document: &SourceDocument) -> Option<Concept> {
-    let filename = document
-        .path()
-        .as_str()
-        .rsplit('/')
-        .next()
-        .unwrap_or_default();
-    if matches!(filename, "index.md" | "log.md") {
-        return None;
-    }
-    let source = SourceBundle::try_from_pairs([(
-        document.path().as_str().to_owned(),
-        document.text().to_owned(),
-    )])
-    .expect("existing source document has a valid path");
-    Bundle::parse(&source)
-        .expect("one source document has no duplicate concept ID")
-        .concepts
-        .into_iter()
-        .next()
-}
-
-pub fn project(path: &str, src: &str) -> Concept {
+/// Project a single Markdown source into its OKF [`Concept`], or `None` when
+/// the projection yields zero concepts — a reserved filename (`index.md` /
+/// `log.md`) or a source the OKF shell quarantines instead of erroring
+/// (e.g. an oversized document). Caller-error conditions (a non-bundle-
+/// relative path, an impossible duplicate concept ID for a single document)
+/// fold into the same `None` rather than panicking.
+pub fn project(path: &str, src: &str) -> Option<Concept> {
     let bundle_path = if path.ends_with(".md") {
         path.to_owned()
     } else {
         format!("{path}.md")
     };
-    let source = SourceBundle::try_from_pairs([(bundle_path, src.to_owned())])
-        .expect("OKF projection path must be bundle-relative");
-    let mut concept = Bundle::parse(&source)
-        .expect("one source document has no duplicate concept ID")
-        .concepts
-        .into_iter()
-        .next()
-        .expect("non-reserved projection produces one concept");
+    let source = SourceBundle::try_from_pairs([(bundle_path, src.to_owned())]).ok()?;
+    let mut concept = Bundle::parse(&source).ok()?.concepts.into_iter().next()?;
     concept.id = id_of(path);
-    concept
+    Some(concept)
 }
 
 #[cfg(test)]
@@ -851,7 +829,7 @@ mod tests {
             See the [customers table](/tables/customers.md) for the join key.\n\n\
             # Citations\n\n\
             [1] [BigQuery announcement](https://cloud.google.com/blog/x)\n";
-        let c = project("playbooks/dataplex.md", src);
+        let c = project("playbooks/dataplex.md", src).unwrap();
 
         assert_eq!(c.id, "playbooks/dataplex");
         assert_eq!(c.ty, "Playbook");
@@ -880,7 +858,8 @@ mod tests {
         let concept = project(
             "links.md",
             "---\ntype: Note\n---\n# Links\n\n[real **nested**](./real.md)\n\n![image](./image.md)\n\n\\[escaped](./escaped.md)\n\n[reference][ref]\n\n```md\n[fenced](./fenced.md)\n```\n\n# Citations\n\n[citation](https://example.test/citation)\n\n![citation image](./citation.png)\n\n[ref]: ./reference.md\n",
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             concept
@@ -952,13 +931,14 @@ mod tests {
         let c = project(
             "shop/order.md",
             "---\ntype: uml.Class\n---\n# Order Heading\n\n## Attributes\n- id: X\n",
-        );
+        )
+        .unwrap();
         assert_eq!(c.title.as_deref(), Some("Order Heading"));
     }
 
     #[test]
     fn title_prefers_frontmatter_over_h1() {
-        let c = project("x.md", "---\ntitle: FM Title\n---\n# H1 Title\n");
+        let c = project("x.md", "---\ntitle: FM Title\n---\n# H1 Title\n").unwrap();
         assert_eq!(c.title.as_deref(), Some("FM Title"));
     }
 
@@ -967,7 +947,8 @@ mod tests {
         let c = project(
             "x.md",
             "---\ntype: uml.Class\n---\n\nprose with no heading\n",
-        );
+        )
+        .unwrap();
         assert_eq!(c.title, None);
     }
 
@@ -975,7 +956,7 @@ mod tests {
     fn uml_doc_also_projects_to_a_concept() {
         let src =
             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- id: OrderId\n";
-        let c = project("shop/order.md", src);
+        let c = project("shop/order.md", src).unwrap();
         assert_eq!(c.id, "shop/order");
         assert_eq!(c.ty, "uml.Class");
         assert_eq!(c.title.as_deref(), Some("Order"));
@@ -1008,13 +989,32 @@ mod tests {
         assert!(b.log("/").is_some());
     }
 
+    #[test]
+    fn project_returns_none_for_reserved_filename() {
+        // `index.md` and `log.md` are routed away from the concepts vec
+        // (see `okf::shell::project`), so a bare projection of either yields
+        // zero concepts rather than panicking.
+        assert!(project("index.md", "# Root\n").is_none());
+        assert!(project("log.md", "# Log\n").is_none());
+        assert!(project("docs/index.md", "# Root\n").is_none());
+    }
+
+    #[test]
+    fn project_returns_none_for_shell_rejected_path() {
+        // A path that cannot round-trip through `BundlePath::parse` (here,
+        // rooted at `/`) is a caller-error condition folded into `None`
+        // instead of an `expect` panic — see design decision 3.
+        assert!(project("/etc/passwd", "# X\n").is_none());
+    }
+
     #[cfg(feature = "serde")]
     #[test]
     fn concept_serializes_with_type_field_and_omits_empty() {
         let c = project(
             "shop/order.md",
             "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
-        );
+        )
+        .unwrap();
         let v = serde_json::to_value(&c).unwrap();
         assert_eq!(v["type"], "uml.Class");
         assert_eq!(v["id"], "shop/order");

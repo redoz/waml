@@ -546,7 +546,7 @@ proptest! {
     #[test]
     fn only_supported_uml_type_strings_are_claimed(ty in "[^\\r\\n]{0,48}") {
         const SUPPORTED: &[&str] = &["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Package", "uml.Note", "uml.Association", "uml.Actor", "uml.UseCase", "uml.InstanceSpecification", "uml.Activity", "uml.StateMachine", "uml.Sequence", "Diagram"];
-        let concept = waml::okf::project("x.md", &format!("---\ntype: {ty}\n---\n# X\n"));
+        let concept = waml::okf::project("x.md", &format!("---\ntype: {ty}\n---\n# X\n")).unwrap();
         prop_assert_eq!(waml::uml::recognizes(&concept), SUPPORTED.contains(&ty.as_str()));
     }
 }
@@ -640,19 +640,17 @@ fn every_supported_literal_and_explicit_near_miss_has_exact_claim_state() {
     ];
     for ty in SUPPORTED {
         assert!(
-            waml::uml::recognizes(&waml::okf::project(
-                "x.md",
-                &format!("---\ntype: {ty}\n---\n# X\n")
-            )),
+            waml::uml::recognizes(
+                &waml::okf::project("x.md", &format!("---\ntype: {ty}\n---\n# X\n")).unwrap()
+            ),
             "{ty}"
         );
     }
     for ty in NEAR_MISSES {
         assert!(
-            !waml::uml::recognizes(&waml::okf::project(
-                "x.md",
-                &format!("---\ntype: {ty}\n---\n# X\n")
-            )),
+            !waml::uml::recognizes(
+                &waml::okf::project("x.md", &format!("---\ntype: {ty}\n---\n# X\n")).unwrap()
+            ),
             "{ty}"
         );
     }

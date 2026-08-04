@@ -56,7 +56,7 @@ mod tests {
     use crate::source::SourceBundle;
 
     fn concept(ty: &str) -> crate::okf::Concept {
-        crate::okf::project("x.md", &format!("---\ntype: {ty}\n---\n# X\n"))
+        crate::okf::project("x.md", &format!("---\ntype: {ty}\n---\n# X\n")).unwrap()
     }
 
     fn projection(source: &SourceBundle) -> Projection {
