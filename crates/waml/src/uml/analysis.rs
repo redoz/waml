@@ -345,17 +345,22 @@ pub fn analyze(
                                 == Some(island.content_range)
                     })
                 });
-            let island_tree = reusable
-                .map(|snapshot| snapshot.syntax.clone())
-                .unwrap_or_else(|| {
-                    syntax::parse_authoritative_island(
-                        document.text().clone(),
-                        structure,
-                        island.owner,
-                        island.content_range,
-                    )
-                    .expect("validated Markdown structure identifies its UML island")
-                });
+            let island_tree = match reusable.map(|snapshot| snapshot.syntax.clone()) {
+                Some(tree) => tree,
+                // Seam invariant (structure map identifies its islands): a
+                // break here must surface as an error, not panic the editor
+                // in-process or poison the wasm instance.
+                None => syntax::parse_authoritative_island(
+                    document.text().clone(),
+                    structure,
+                    island.owner,
+                    island.content_range,
+                )
+                .ok_or_else(|| AnalysisError::Specialization {
+                    name: "uml",
+                    reason: "validated Markdown structure does not identify its UML island".into(),
+                })?,
+            };
             let key = (island.owner, island.content_range);
             island_trees.insert(key, island_tree.clone());
             islands.insert(
@@ -511,11 +516,15 @@ pub fn analyze(
             let start = document
                 .line_index()
                 .line_col(document.text(), range.start())
-                .expect("layout diagnostic start is a document offset");
+                .map_err(|_| AnalysisError::CatalogInvariant {
+                    reason: "layout diagnostic start is not a document offset".into(),
+                })?;
             let end = document
                 .line_index()
                 .line_col(document.text(), range.end())
-                .expect("layout diagnostic end is a document offset");
+                .map_err(|_| AnalysisError::CatalogInvariant {
+                    reason: "layout diagnostic end is not a document offset".into(),
+                })?;
             diagnostics.push(
                 Diagnostic::new(
                     crate::diagnostic::DiagCode::MalformedLayout,
@@ -613,11 +622,15 @@ pub fn analyze(
             let start_line = document
                 .line_index()
                 .line_col(document.text(), start)
-                .expect("parser diagnostic start is a document offset");
+                .map_err(|_| AnalysisError::CatalogInvariant {
+                    reason: "parser diagnostic start is not a document offset".into(),
+                })?;
             let end_line = document
                 .line_index()
                 .line_col(document.text(), end)
-                .expect("parser diagnostic end is a document offset");
+                .map_err(|_| AnalysisError::CatalogInvariant {
+                    reason: "parser diagnostic end is not a document offset".into(),
+                })?;
             diagnostics.push(
                 Diagnostic::new(
                     match diagnostic.code {
@@ -659,8 +672,8 @@ pub fn analyze(
             .unwrap_or_else(|| Arc::new(SyntaxSnapshot::new(document.clone(), tree)));
         snapshots.insert(id, snapshot);
     }
-    validate_declared_semantics(&context, &declared, &mut diagnostics);
-    let projection = declared_projection(&context, &declared, &mut diagnostics);
+    validate_declared_semantics(&context, &declared, &mut diagnostics)?;
+    let projection = declared_projection(&context, &declared, &mut diagnostics)?;
     let metadata = analysis_metadata(
         &context,
         previous,
@@ -896,7 +909,7 @@ fn declared_diagnostic(
     code: crate::diagnostic::DiagCode,
     message: String,
     warning: bool,
-) -> Diagnostic {
+) -> Result<Diagnostic, AnalysisError> {
     declared_diagnostic_range(context, path, syntax.range(), code, message, warning)
 }
 
@@ -907,28 +920,37 @@ fn declared_diagnostic_range(
     code: crate::diagnostic::DiagCode,
     message: String,
     warning: bool,
-) -> Diagnostic {
-    let bundle_path = crate::source::BundlePath::parse(path).expect("analyzed path is valid");
+) -> Result<Diagnostic, AnalysisError> {
+    // Seam invariants (declared syntax belongs to a cataloged document): a
+    // break becomes an AnalysisError instead of panicking the caller's process.
+    let seam = |reason: &str| AnalysisError::CatalogInvariant {
+        reason: format!("{reason}: {path}").into(),
+    };
+    let bundle_path = crate::source::BundlePath::parse(path)
+        .map_err(|_| seam("analyzed path is not a valid bundle path"))?;
     let id = context
         .catalog
         .id_for_path(&bundle_path)
-        .expect("analyzed path is cataloged");
-    let document = context.catalog.document(id).expect("catalog document");
+        .ok_or_else(|| seam("analyzed path is not cataloged"))?;
+    let document = context
+        .catalog
+        .document(id)
+        .ok_or_else(|| seam("cataloged path has no document"))?;
     let line = document
         .line_index()
         .line_col(document.text(), range.start())
-        .expect("declared syntax range");
+        .map_err(|_| seam("declared syntax range is not a document offset"))?;
     let diagnostic = if warning {
         Diagnostic::warn(code, message, path, line.line as usize + 1)
     } else {
         Diagnostic::new(code, message, path, line.line as usize + 1)
     };
-    diagnostic
+    Ok(diagnostic
         .with_span((
             line.byte_column as usize,
             line.byte_column as usize + range.len().to_usize(),
         ))
-        .with_provenance(id, document.revision(), range)
+        .with_provenance(id, document.revision(), range))
 }
 
 fn trimmed_token_range(token: &SyntaxToken<UmlLanguage>) -> TextRange {
@@ -955,7 +977,7 @@ fn validate_declared_semantics(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+) -> Result<(), AnalysisError> {
     for concept in declared.concepts() {
         let Some(source_okf) = context.okf.concept(&concept.concept_id) else {
             continue;
@@ -991,7 +1013,7 @@ fn validate_declared_semantics(
                         crate::diagnostic::DiagCode::UnresolvedTarget,
                         format!("unresolved UML target '{href}'"),
                         true,
-                    ));
+                    )?);
                 }
             }
             let ends_absent = matches!(
@@ -1019,7 +1041,7 @@ fn validate_declared_semantics(
                         crate::diagnostic::DiagCode::MalformedRelationship,
                         "'associates' between classifiers requires ': <near> to <far>' multiplicity ends (ends are optional only on an actor↔use-case communication link)".into(),
                         false,
-                    ));
+                    )?);
                 }
             }
         }
@@ -1068,7 +1090,7 @@ fn validate_declared_semantics(
                     crate::diagnostic::DiagCode::InstanceOfUnresolved,
                     format!("'instance of' target '{href}' resolves to no document"),
                     true,
-                ));
+                )?);
                 continue;
             };
             if !crate::model::ElementType::parse(&target_okf.ty).is_classifier() {
@@ -1083,7 +1105,7 @@ fn validate_declared_semantics(
                     crate::diagnostic::DiagCode::InstanceOfNonClassifier,
                     format!("'instance of' target '{target}' is not a classifier"),
                     true,
-                ));
+                )?);
                 continue;
             }
             classifier_found = true;
@@ -1114,7 +1136,7 @@ fn validate_declared_semantics(
                     crate::diagnostic::DiagCode::SlotUnknownAttribute,
                     format!("slot '{name}' names no classifier attribute"),
                     true,
-                ));
+                )?);
             }
         }
     }
@@ -1153,7 +1175,7 @@ fn validate_declared_semantics(
                     crate::diagnostic::DiagCode::InstanceOfUnresolved,
                     format!("'instance of' target '{classifier}' resolves to no document"),
                     true,
-                ));
+                )?);
                 continue;
             };
             if !crate::model::ElementType::parse(&target_okf.ty).is_classifier() {
@@ -1168,7 +1190,7 @@ fn validate_declared_semantics(
                     crate::diagnostic::DiagCode::InstanceOfNonClassifier,
                     format!("'instance of' target '{target}' is not a classifier"),
                     true,
-                ));
+                )?);
                 continue;
             }
             let classifier_attributes = declared
@@ -1199,7 +1221,7 @@ fn validate_declared_semantics(
                         crate::diagnostic::DiagCode::SlotUnknownAttribute,
                         format!("slot '{name}' names no classifier attribute"),
                         true,
-                    ));
+                    )?);
                 }
             }
         }
@@ -1248,7 +1270,7 @@ fn validate_declared_semantics(
                         crate::diagnostic::DiagCode::UnresolvedLayoutRef,
                         format!("layout operand '{name}' resolves no member group"),
                         true,
-                    ));
+                    )?);
                 }
             }
             let crate::uml::DeclaredLayoutStatement::Placement {
@@ -1328,10 +1350,11 @@ fn validate_declared_semantics(
                     crate::diagnostic::DiagCode::LayoutCycle,
                     "layout placement constraints form a cycle (contradictory ordering)".into(),
                     false,
-                ));
+                )?);
             }
         }
     }
+    Ok(())
 }
 
 fn is_communication_party(ty: &crate::model::ElementType) -> bool {
@@ -1454,14 +1477,19 @@ fn declared_projection(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
     diagnostics: &mut Vec<Diagnostic>,
-) -> super::Projection {
+) -> Result<super::Projection, AnalysisError> {
     let claimed: BTreeSet<_> = declared.concepts().map(|c| c.concept_id.as_str()).collect();
     let mut model = crate::model::Model::default();
     for concept in declared.concepts() {
-        let okf = context
-            .okf
-            .concept(&concept.concept_id)
-            .expect("declared concept is claimed OKF concept");
+        let okf = context.okf.concept(&concept.concept_id).ok_or_else(|| {
+            AnalysisError::CatalogInvariant {
+                reason: format!(
+                    "declared concept is not a claimed OKF concept: {}",
+                    concept.concept_id
+                )
+                .into(),
+            }
+        })?;
         let path = context
             .catalog
             .documents()
@@ -1503,12 +1531,9 @@ fn declared_projection(
                         ),
                         syntax::SlotValueKind::Link => {
                             let range = s.syntax.syntax().range();
-                            let authored = context
-                                .source
-                                .document(
-                                    &crate::source::BundlePath::parse(path.clone())
-                                        .expect("analyzed path"),
-                                )
+                            let authored = crate::source::BundlePath::parse(path.clone())
+                                .ok()
+                                .and_then(|bundle_path| context.source.document(&bundle_path))
                                 .map(|document| {
                                     &document.text()
                                         [range.start().to_usize()..range.end().to_usize()]
@@ -1574,34 +1599,18 @@ fn declared_projection(
                 let range = member
                     .syntax
                     .target_token()
-                    .expect("valid member target token")
+                    .ok_or_else(|| AnalysisError::CatalogInvariant {
+                        reason: "valid member has no target token".into(),
+                    })?
                     .range();
-                let id = context
-                    .catalog
-                    .id_for_path(
-                        &crate::source::BundlePath::parse(path.clone())
-                            .expect("catalog path valid"),
-                    )
-                    .expect("catalog document");
-                let document = context.catalog.document(id).expect("catalog document");
-                let line = document
-                    .line_index()
-                    .line_col(document.text(), range.start())
-                    .expect("member range");
-                diagnostics.push(
-                    Diagnostic::warn(
-                        crate::diagnostic::DiagCode::UnresolvedTarget,
-                        format!("unresolved UML member '{href}'"),
-                        path.clone(),
-                        line.line as usize + 1,
-                    )
-                    .with_span((
-                        line.byte_column as usize,
-                        line.byte_column as usize + range.end().to_usize()
-                            - range.start().to_usize(),
-                    ))
-                    .with_provenance(id, document.revision(), range),
-                );
+                diagnostics.push(declared_diagnostic_range(
+                    context,
+                    &path,
+                    range,
+                    crate::diagnostic::DiagCode::UnresolvedTarget,
+                    format!("unresolved UML member '{href}'"),
+                    true,
+                )?);
             }
             let groups = concept
                 .member_groups
@@ -1785,34 +1794,18 @@ fn declared_projection(
                 let range = relationship
                     .syntax
                     .target_token()
-                    .expect("valid declared target token")
+                    .ok_or_else(|| AnalysisError::CatalogInvariant {
+                        reason: "valid relationship has no target token".into(),
+                    })?
                     .range();
-                let id = context
-                    .catalog
-                    .id_for_path(
-                        &crate::source::BundlePath::parse(path.clone())
-                            .expect("catalog path valid"),
-                    )
-                    .expect("catalog document");
-                let document = context.catalog.document(id).expect("catalog document");
-                let line = document
-                    .line_index()
-                    .line_col(document.text(), range.start())
-                    .expect("relationship range");
-                diagnostics.push(
-                    Diagnostic::new(
-                        crate::diagnostic::DiagCode::UnresolvedTarget,
-                        format!("unresolved UML target '{href}'"),
-                        path.clone(),
-                        line.line as usize + 1,
-                    )
-                    .with_span((
-                        line.byte_column as usize,
-                        line.byte_column as usize
-                            + (range.end().to_usize() - range.start().to_usize()),
-                    ))
-                    .with_provenance(id, document.revision(), range),
-                );
+                diagnostics.push(declared_diagnostic_range(
+                    context,
+                    &path,
+                    range,
+                    crate::diagnostic::DiagCode::UnresolvedTarget,
+                    format!("unresolved UML target '{href}'"),
+                    false,
+                )?);
                 continue;
             }
             let from_end = match &relationship.from_end {
@@ -1890,7 +1883,7 @@ fn declared_projection(
             });
         }
     }
-    model
+    Ok(model)
 }
 
 fn resolve_slug(path: &str, slug: &str, claimed: &BTreeSet<&str>) -> Option<String> {
@@ -1942,11 +1935,22 @@ pub(crate) fn behavior_diagnostic(
     message: String,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let id = context
-        .catalog
-        .id_for_path(&crate::source::BundlePath::parse(path.to_string()).expect("catalog path"))
-        .expect("catalog document");
-    let document = context.catalog.document(id).expect("catalog document");
+    // Seam invariant (behavior syntax belongs to a cataloged document). This
+    // helper fans out through the sequence/flow lowering paths, which have no
+    // error channel; on a seam break, drop this one diagnostic instead of
+    // panicking the in-process editor / poisoning the wasm instance. Debug
+    // builds still assert so tests catch the broken seam.
+    let Some(id) = crate::source::BundlePath::parse(path.to_string())
+        .ok()
+        .and_then(|bundle_path| context.catalog.id_for_path(&bundle_path))
+    else {
+        debug_assert!(false, "behavior diagnostic path is not cataloged: {path}");
+        return;
+    };
+    let Some(document) = context.catalog.document(id) else {
+        debug_assert!(false, "cataloged path has no document: {path}");
+        return;
+    };
     let range = items(syntax.clone(), syntax::UmlSyntaxKind::Link)
         .into_iter()
         .find_map(|link| {
@@ -1967,14 +1971,13 @@ pub(crate) fn behavior_diagnostic(
                 })
         })
         .unwrap_or_else(|| syntax.range());
-    let start = document
-        .line_index()
-        .line_col(document.text(), range.start())
-        .expect("behavior range");
-    let end = document
-        .line_index()
-        .line_col(document.text(), range.end())
-        .expect("behavior range");
+    let (Some(start), Some(end)) = (
+        document.line_index().line_col(document.text(), range.start()).ok(),
+        document.line_index().line_col(document.text(), range.end()).ok(),
+    ) else {
+        debug_assert!(false, "behavior range is not a document offset: {path}");
+        return;
+    };
     diagnostics.push(
         Diagnostic::new(code, message, path, start.line as usize + 1)
             .with_span((
