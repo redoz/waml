@@ -986,13 +986,7 @@ pub(crate) fn lower(
             .title
             .clone()
             .unwrap_or_else(|| concept.concept_id.clone()),
-        describes: okf
-            .extra
-            .get_str("describes")
-            .and_then(|authored| authored.split("](").nth(1))
-            .and_then(|href| href.strip_suffix(')'))
-            .map(|href| crate::okf::resolve_href(path, href))
-            .filter(|target| claimed.contains(target.as_str())),
+        describes: super::analysis::resolve_describes(okf, path, claimed),
         nodes,
         edges,
         gates,
