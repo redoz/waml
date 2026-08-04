@@ -582,3 +582,16 @@ fn t(value: usize) -> TextSize {
 fn range(start: usize, end: usize) -> TextRange {
     TextRange::new(t(start), t(end)).unwrap()
 }
+
+/// `clear_presentation` must zero the hit-test scroll and the painted
+/// scrollbar position together: `draw_walk_with_session` only resyncs the two
+/// when the *session* scroll disagrees with the scrollbar, so a split between
+/// them survives every later frame.
+#[test]
+fn clear_presentation_resets_both_halves_of_the_scroll_state() {
+    let (mut cx, editor, _session) = mounted_editor("alpha\nbeta\n");
+    editor.test_set_scroll_y(&mut cx, 120.0);
+    assert_eq!(editor.test_scroll_state(), (120.0, 120.0));
+    editor.clear_presentation(&mut cx);
+    assert_eq!(editor.test_scroll_state(), (0.0, 0.0));
+}

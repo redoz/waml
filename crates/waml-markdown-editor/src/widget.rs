@@ -201,13 +201,28 @@ impl GutterMetrics {
 #[derive(Default)]
 struct WidgetFonts {
     faces: [Option<FontFamily>; TextFace::COUNT],
-    /// Reset alongside `faces` (Task 3, issue 33): both are populated once
-    /// per font install and refreshed together, so a stale digit metric can
-    /// never survive a font-family refresh.
-    gutter_metrics: Option<GutterMetrics>,
+    /// Measured metrics plus the `font_scale` bits they were measured at
+    /// (Task 3, issue 33). Cleared by `install_face`, so a family swap can
+    /// never leave a stale digit metric behind, and re-measured when the mono
+    /// `DrawText` scale changes, since the measurement bakes that scale in.
+    gutter_metrics: Option<(u32, GutterMetrics)>,
 }
 
 impl WidgetFonts {
+    /// True when the cached face already matches `family`, so the caller can
+    /// skip cloning the `FontFamily` on the common no-change install.
+    fn face_matches(&self, face: TextFace, family: &FontFamily) -> bool {
+        self.faces[face.index()].as_ref() == Some(family)
+    }
+
+    /// Installs a refreshed face and drops the measured gutter metrics: a
+    /// live-apply or theme rehydrate that swaps the mono family must not keep
+    /// painting the gutter with the previous face's digit advance.
+    fn install_face(&mut self, face: TextFace, family: FontFamily) {
+        self.faces[face.index()] = Some(family);
+        self.gutter_metrics = None;
+    }
+
     fn configure_face(&self, face: TextFace, metrics: TextMetrics, draw: &mut DrawText) {
         let font = self.faces[face.index()].as_ref();
         if let Some(font) = font {
@@ -222,15 +237,18 @@ impl WidgetFonts {
     }
 
     /// Digit width/ascent for the gutter, measured lazily through the mono
-    /// `DrawText` and cached until the next font refresh. Falls back to the
-    /// documented constants when shaping the probe glyph produces nothing
-    /// usable (e.g. no font backend in a headless test).
+    /// `DrawText` and cached until the face or its `font_scale` changes. Falls
+    /// back to the documented constants when shaping the probe glyph produces
+    /// nothing usable (e.g. no font backend in a headless test).
     fn gutter_metrics(&mut self, cx: &mut Cx, mono: &mut DrawText) -> GutterMetrics {
-        if let Some(metrics) = self.gutter_metrics {
-            return metrics;
+        let scale_key = mono.font_scale.to_bits();
+        if let Some((cached_scale, metrics)) = self.gutter_metrics {
+            if cached_scale == scale_key {
+                return metrics;
+            }
         }
         let measured = measure_gutter_metrics(cx, mono).unwrap_or(GutterMetrics::FALLBACK);
-        self.gutter_metrics = Some(measured);
+        self.gutter_metrics = Some((scale_key, measured));
         measured
     }
 }
@@ -1465,15 +1483,18 @@ impl MarkdownEditor {
         }
         let viewport_size =
             resolved_layout_viewport(self.scroll_bars.area().rect(cx).size, requested_viewport);
-        // Populate once: the `#[live] DrawText` fields don't change between
-        // installs on this widget (no live-apply hook re-fires them), so
-        // re-cloning all eight `FontFamily`s on every install — including pure
-        // invalidation-driven reinstalls — is wasted work. Refresh only when
-        // the cache is empty.
-        if self.fonts.faces.iter().all(Option::is_none) {
-            for face in TextFace::ALL {
-                self.fonts.faces[face.index()] =
-                    Some(self.draw_text_for(face).text_style.font_family.clone());
+        // Compare before cloning: the steady state costs eight `FontFamily`
+        // comparisons instead of eight clones, but a live-apply or theme
+        // rehydrate that swaps a `#[live] DrawText` family is still picked up
+        // on the next install (and drops the measured gutter metrics with it),
+        // so the cache self-heals rather than shaping with a stale face.
+        for face in TextFace::ALL {
+            let stale = !self
+                .fonts
+                .face_matches(face, &self.draw_text_for(face).text_style.font_family);
+            if stale {
+                let family = self.draw_text_for(face).text_style.font_family.clone();
+                self.fonts.install_face(face, family);
             }
         }
         // A width change reflows every block whatever the caller claimed, and a
@@ -1793,6 +1814,57 @@ mod gutter_metrics_tests {
             });
         });
     }
+
+    #[test]
+    fn cache_is_rekeyed_when_font_scale_changes() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.with_vm(|vm| {
+            makepad_widgets::makepad_draw::script_mod(vm);
+            makepad_widgets::script_mod(vm);
+            let mut draw_text = Label::script_new_with_default(vm).draw_text;
+            vm.with_cx_mut(|cx| {
+                draw_text.font_scale = 1.0;
+                let mut fonts = WidgetFonts::default();
+                if measure_gutter_metrics(cx, &mut draw_text).is_none() {
+                    // No font backend: both scales collapse onto the same
+                    // fallback, so there is nothing to compare.
+                    return;
+                }
+                let at_one = fonts.gutter_metrics(cx, &mut draw_text);
+                draw_text.font_scale = 2.0;
+                let at_two = fonts.gutter_metrics(cx, &mut draw_text);
+                assert!(
+                    (at_two.digit_width - at_one.digit_width * 2.0).abs() < 0.5,
+                    "digit width {} did not follow the doubled font_scale from {}",
+                    at_two.digit_width,
+                    at_one.digit_width,
+                );
+            });
+        });
+    }
+
+    #[test]
+    fn installing_a_face_drops_the_measured_metrics() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.with_vm(|vm| {
+            makepad_widgets::makepad_draw::script_mod(vm);
+            makepad_widgets::script_mod(vm);
+            let mut draw_text = Label::script_new_with_default(vm).draw_text;
+            let family = draw_text.text_style.font_family.clone();
+            vm.with_cx_mut(|cx| {
+                let mut fonts = WidgetFonts::default();
+                fonts.gutter_metrics(cx, &mut draw_text);
+                assert!(fonts.gutter_metrics.is_some());
+                assert!(!fonts.face_matches(TextFace::MonoRegular, &family));
+                fonts.install_face(TextFace::MonoRegular, family.clone());
+                assert!(
+                    fonts.gutter_metrics.is_none(),
+                    "a face swap must invalidate the measured gutter metrics",
+                );
+                assert!(fonts.face_matches(TextFace::MonoRegular, &family));
+            });
+        });
+    }
 }
 
 fn key_input(event: KeyEvent) -> Option<EditorInput> {
@@ -1915,7 +1987,15 @@ impl MarkdownEditorRef {
             // field -- including `draw_commands_cache`, which drifted out of
             // the old hand-written reset (issue 33) -- is guaranteed cleared.
             inner.pipeline = LayoutPipeline::default();
+            // `scroll_y` (hit-testing) and the scrollbar position (painting)
+            // are two halves of the same scroll: zero them together, or the
+            // next frame hit-tests against an origin it never drew at --
+            // `draw_walk_with_session` only resyncs when the *session* scroll
+            // disagrees with the scrollbar, so the split would not self-heal.
             inner.scroll_y = 0.0;
+            inner
+                .scroll_bars
+                .set_scroll_pos_no_clip(cx, DVec2::default());
             inner.redraw(cx);
         }
     }
@@ -2033,6 +2113,27 @@ impl MarkdownEditorRef {
     pub fn test_painted_embedded_states(&self) -> Vec<EmbeddedState> {
         self.borrow().map_or_else(Vec::new, |inner| {
             inner.paint_evidence.embedded_states().to_vec()
+        })
+    }
+
+    /// Scrolls both halves of the scroll state -- the hit-test `scroll_y` and
+    /// the painted scrollbar position -- so a test can assert they are reset
+    /// together.
+    #[doc(hidden)]
+    pub fn test_set_scroll_y(&self, cx: &mut Cx, scroll_y: f64) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.scroll_y = scroll_y;
+            inner
+                .scroll_bars
+                .set_scroll_pos_no_clip(cx, dvec2(0.0, scroll_y));
+        }
+    }
+
+    /// `(hit-test scroll_y, painted scrollbar y)`.
+    #[doc(hidden)]
+    pub fn test_scroll_state(&self) -> (f64, f64) {
+        self.borrow().map_or((0.0, 0.0), |inner| {
+            (inner.scroll_y, inner.scroll_bars.get_scroll_pos().y)
         })
     }
 
