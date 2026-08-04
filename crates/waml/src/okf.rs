@@ -268,11 +268,14 @@ pub struct Bundle {
 
 /// Deserialization accepts arbitrary input, so it cannot assume the wire order matches
 /// the sortedness the accessors binary-search on; [`Bundle::from_parts`] re-establishes it.
+/// It is otherwise equivalent to the derived impl: every field remains required, so a
+/// truncated bundle still fails to decode rather than yielding an empty vector.
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for Bundle {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Default, serde::Deserialize)]
-        #[serde(default)]
+        // Every field stays required, exactly as the derived impl had it: a truncated or
+        // corrupt bundle must still fail with `missing field`, not decode as empty.
+        #[derive(serde::Deserialize)]
         struct Wire {
             concepts: Vec<Concept>,
             indexes: Vec<Index>,
@@ -682,6 +685,21 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["/", "/ops", "/sales", "/sales/east", "/sales/west"]
         );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn deserialized_bundle_rejects_a_truncated_wire_form() {
+        for missing in ["concepts", "indexes", "logs", "directories"] {
+            let mut wire = serde_json::to_value(Bundle::default()).unwrap();
+            wire.as_object_mut().unwrap().remove(missing);
+            let error = serde_json::from_value::<Bundle>(wire)
+                .expect_err("a bundle missing a field must not decode");
+            assert!(
+                error.to_string().contains(missing),
+                "expected a missing-field error naming `{missing}`, got: {error}"
+            );
+        }
     }
 
     #[cfg(feature = "serde")]
