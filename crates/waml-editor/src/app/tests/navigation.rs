@@ -1693,11 +1693,13 @@ fn document_header_projection_keeps_icon_when_breadcrumb_is_missing() {
     let chrome = DocumentHeaderChrome {
         breadcrumb: true,
         right_dock: Some(Icon::PanelRight),
+        view_toggle: None,
     };
-    let (segments, icon) = project_document_header(chrome, None);
+    let (segments, icon, view_toggle) = project_document_header(chrome, None);
 
     assert!(segments.is_empty());
     assert_eq!(icon, Some(Icon::PanelRight));
+    assert_eq!(view_toggle, None);
 }
 
 #[test]
@@ -1712,23 +1714,25 @@ fn document_header_projection_obeys_breadcrumb_flag_and_hidden_chrome() {
     let icon_only = DocumentHeaderChrome {
         breadcrumb: false,
         right_dock: Some(Icon::PanelRight),
+        view_toggle: None,
     };
     assert_eq!(
         project_document_header(icon_only, Some(vec![segment.clone()])),
-        (Vec::new(), Some(Icon::PanelRight))
+        (Vec::new(), Some(Icon::PanelRight), None)
     );
 
     let breadcrumb = DocumentHeaderChrome {
         breadcrumb: true,
         right_dock: None,
+        view_toggle: None,
     };
     assert_eq!(
         project_document_header(breadcrumb, Some(vec![segment.clone()])),
-        (vec![segment], None)
+        (vec![segment], None, None)
     );
     assert_eq!(
         project_document_header(DocumentHeaderChrome::default(), None),
-        (Vec::new(), None)
+        (Vec::new(), None, None)
     );
 }
 

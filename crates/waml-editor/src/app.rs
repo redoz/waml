@@ -62,6 +62,7 @@ script_mod! {
     use mod.widgets.AgentMark
     use mod.widgets.DocumentHeader
     use mod.widgets.MarkdownEditor
+    use mod.widgets.MarkdownViewer
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -417,15 +418,36 @@ script_mod! {
                                             return vec4(self.color.rgb * self.color.a, self.color.a)
                                         }
                                     }
-                                    flow: Down
-                                    viewer := MarkdownViewer{
+                                    flow: Overlay
+                                    // `viewer`'s own layout (flow: Down, a
+                                    // Fit-height TextFlow) needs a normal
+                                    // top-down walk to size correctly; wrapping
+                                    // it in its own Down-flow body keeps that,
+                                    // while `source_toggle_wrap` still floats
+                                    // over it via the surface's Overlay flow.
+                                    // The body scrolls: a reading document is
+                                    // routinely taller than the window, and
+                                    // this surface has no other way to reach
+                                    // content past the fold.
+                                    viewer_body := ScrollYView{
                                         width: Fill
                                         height: Fill
-                                        draw_bullet +: { color: atlas.text }
-                                        flow_body +: {
-                                            font_color: atlas.text
+                                        flow: Down
+                                        // Reading margin: prose should not
+                                        // touch the window chrome.
+                                        padding: Inset{left: 24.0, right: 24.0, top: 16.0, bottom: 24.0}
+                                        viewer := MarkdownViewer{
+                                            width: Fill
+                                            height: Fit
+                                            draw_bullet +: { color: atlas.text }
+                                            flow_body +: {
+                                                font_color: atlas.text
+                                            }
                                         }
                                     }
+                                    // The view-source toggle lives in the
+                                    // breadcrumb header's trailing button row,
+                                    // not on this surface.
                                 }
                                 // Tool dock: left edge of the CENTER, vertically
                                 // centered. Anchors to the real center rect now,

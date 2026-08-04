@@ -31,12 +31,11 @@ script_mod! {
         width: Fill
         height: Fill
         flow: Down
-        flow_body: TextFlow{
+        flow_body := TextFlow{
             width: Fill
             height: Fit
             selectable: true
         }
-        draw_bullet: {}
     }
 }
 
@@ -170,16 +169,36 @@ impl MarkdownViewer {
     }
 
     /// Draws one piece and records its flow span. `TextFlow::draw_text` trims
-    /// its input (leading whitespace when it is first on a line, and any
-    /// trailing newlines) BEFORE pushing it into the selection buffer, so the
-    /// driver trims first and adjusts the recorded range to match. Without
-    /// that, the map silently desynchronises by the trimmed byte count.
+    /// leading whitespace ONLY when the run is first on a line, and always
+    /// trims trailing newlines, before pushing the result into the selection
+    /// buffer. The driver mirrors that same decision itself (via
+    /// `first_on_line`) and adjusts the recorded range to match; trimming a
+    /// leading space unconditionally would swallow the space between two
+    /// words on the same line, since consecutive inline runs (e.g. plain text
+    /// then `code`) each carry their own leading whitespace.
     fn draw_piece(
         flow: &mut TextFlow,
         map: &mut SourceMap,
         cx: &mut Cx2d,
         source: &str,
         piece: &ReadingPiece,
+        first_on_line: &mut bool,
+    ) {
+        Self::draw_piece_wrapped(flow, map, cx, source, piece, first_on_line, true)
+    }
+
+    /// `soft_wrap` turns a source newline into a joining space so reflowed
+    /// prose keeps its word boundaries ("from\nit" reads "from it"); code
+    /// blocks pass `false` because their newlines are layout.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_piece_wrapped(
+        flow: &mut TextFlow,
+        map: &mut SourceMap,
+        cx: &mut Cx2d,
+        source: &str,
+        piece: &ReadingPiece,
+        first_on_line: &mut bool,
+        soft_wrap: bool,
     ) {
         if !piece.emit {
             return;
@@ -189,19 +208,29 @@ impl MarkdownViewer {
         let Some(raw) = source.get(start..end) else {
             return;
         };
-        let trimmed = raw.trim_start().trim_end_matches('\n');
+        let start_trimmed = if *first_on_line { raw.trim_start() } else { raw };
+        let trimmed = start_trimmed.trim_end_matches('\n');
         if trimmed.is_empty() {
             return;
         }
-        let lead = raw.len() - raw.trim_start().len();
+        let lead = raw.len() - start_trimmed.len();
         let range = TextRange::new(
             TextSize::try_from_usize(start + lead).expect("in range"),
             TextSize::try_from_usize(start + lead + trimmed.len()).expect("in range"),
         )
         .expect("ordered");
 
+        // Same byte length as `trimmed`, so the source map stays aligned.
+        let joined;
+        let drawn = if soft_wrap && trimmed.contains('\n') {
+            joined = trimmed.replace('\n', " ");
+            joined.as_str()
+        } else {
+            trimmed
+        };
+
         let before = flow.text_len();
-        flow.draw_text(cx, trimmed);
+        flow.draw_text(cx, drawn);
         let after = flow.text_len();
         debug_assert_eq!(
             after - before,
@@ -209,6 +238,7 @@ impl MarkdownViewer {
             "TextFlow reshaped the run; the source map would drift"
         );
         map.push(before..after, Some(range));
+        *first_on_line = false;
     }
 
     fn draw_block(&mut self, cx: &mut Cx2d, block: &ReadingBlock, source: &str) {
@@ -228,8 +258,16 @@ impl MarkdownViewer {
                 };
                 flow.push_size_abs_scale(scale);
                 flow.bold.push();
+                let mut first_on_line = true;
                 for piece in &block.pieces {
-                    Self::draw_piece(&mut flow, &mut self.source_map, cx, source, piece);
+                    Self::draw_piece(
+                        &mut flow,
+                        &mut self.source_map,
+                        cx,
+                        source,
+                        piece,
+                        &mut first_on_line,
+                    );
                 }
                 flow.bold.pop();
                 flow.font_sizes.pop();
@@ -256,8 +294,16 @@ impl MarkdownViewer {
                         },
                     );
                 }
+                let mut first_on_line = true;
                 for piece in &block.pieces {
-                    Self::draw_piece(&mut flow, &mut self.source_map, cx, source, piece);
+                    Self::draw_piece(
+                        &mut flow,
+                        &mut self.source_map,
+                        cx,
+                        source,
+                        piece,
+                        &mut first_on_line,
+                    );
                 }
                 drop(flow);
                 self.draw_children(cx, block, source);
@@ -272,8 +318,16 @@ impl MarkdownViewer {
             }
             ReadingBlockKind::Quote => {
                 flow.begin_quote(cx);
+                let mut first_on_line = true;
                 for piece in &block.pieces {
-                    Self::draw_piece(&mut flow, &mut self.source_map, cx, source, piece);
+                    Self::draw_piece(
+                        &mut flow,
+                        &mut self.source_map,
+                        cx,
+                        source,
+                        piece,
+                        &mut first_on_line,
+                    );
                 }
                 drop(flow);
                 self.draw_children(cx, block, source);
@@ -289,8 +343,17 @@ impl MarkdownViewer {
             ReadingBlockKind::Code => {
                 flow.begin_code(cx);
                 flow.fixed.push();
+                let mut first_on_line = true;
                 for piece in &block.pieces {
-                    Self::draw_piece(&mut flow, &mut self.source_map, cx, source, piece);
+                    Self::draw_piece_wrapped(
+                        &mut flow,
+                        &mut self.source_map,
+                        cx,
+                        source,
+                        piece,
+                        &mut first_on_line,
+                        false,
+                    );
                 }
                 flow.fixed.pop();
                 let before = flow.text_len();
@@ -302,6 +365,7 @@ impl MarkdownViewer {
                 flow.sep(cx);
             }
             _ => {
+                let mut first_on_line = true;
                 for piece in &block.pieces {
                     let style_is_code = matches!(piece.style.size, FontSizeRole::Code)
                         || piece.role == TextRole::InlineCode;
@@ -317,7 +381,14 @@ impl MarkdownViewer {
                     if strong {
                         flow.bold.push();
                     }
-                    Self::draw_piece(&mut flow, &mut self.source_map, cx, source, piece);
+                    Self::draw_piece(
+                        &mut flow,
+                        &mut self.source_map,
+                        cx,
+                        source,
+                        piece,
+                        &mut first_on_line,
+                    );
                     if strong {
                         flow.bold.pop();
                     }

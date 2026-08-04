@@ -60,6 +60,7 @@ mod platform_browser;
 mod popup;
 mod project_settings;
 mod property_controls;
+mod reading_view;
 mod recent_row;
 mod ref_card;
 mod scene;

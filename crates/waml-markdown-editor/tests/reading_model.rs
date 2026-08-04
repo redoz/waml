@@ -217,3 +217,18 @@ fn an_empty_document_is_a_valid_empty_model() {
     doc.validate_source_partition()
         .expect("a zero-length source is trivially covered");
 }
+
+#[test]
+fn a_table_delimiter_row_between_child_rows_does_not_break_the_partition() {
+    // The `Table` block's own delimiter-row piece sits BETWEEN its header-row
+    // and data-row children in source order. A walk that assumes a block's
+    // pieces all precede its children misses the header row's bytes and
+    // reports a false gap.
+    let doc = document("| Column | Meaning |\n| ------ | ------- |\n| one    | first   |\n");
+    doc.validate_source_partition()
+        .expect("the delimiter row must not break source coverage");
+    assert!(
+        kinds(&doc).contains(&ReadingBlockKind::Table { columns: 2 }),
+        "a table block must still be produced"
+    );
+}

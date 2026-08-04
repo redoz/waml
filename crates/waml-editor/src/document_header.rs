@@ -72,6 +72,14 @@ script_mod! {
                 width: Fill
                 height: Fill
             }
+            // Trailing action buttons. `view_button` is the document's
+            // view-source/view-rendered toggle; `right_button` is the
+            // inspector dock toggle. More document actions slot in here.
+            view_button := IconButton {
+                visible: false
+                width: 30.0
+                height: 30.0
+            }
             right_button := IconButton {
                 visible: false
                 width: 30.0
@@ -213,6 +221,8 @@ fn content_clip_rect(origin: DVec2, available_width: f64, right_button_width: f6
 struct DocumentHeaderState {
     segments: Vec<BreadcrumbSegment>,
     right_dock: Option<Icon>,
+    /// The view-source/view-rendered toggle, when the active document has one.
+    view_toggle: Option<Icon>,
     segment_rects: Vec<(usize, Rect)>,
     /// Keeps the header band mounted for an active document even before it has
     /// breadcrumbs, so the body does not reflow when they appear. The history
@@ -230,6 +240,7 @@ impl DocumentHeaderState {
         Self {
             segments,
             right_dock,
+            view_toggle: None,
             segment_rects,
             document_active: false,
         }
@@ -253,10 +264,31 @@ impl DocumentHeaderState {
         true
     }
 
+    fn replace_view_toggle(&mut self, view_toggle: Option<Icon>) -> bool {
+        if self.view_toggle == view_toggle {
+            return false;
+        }
+        self.view_toggle = view_toggle;
+        self.segment_rects.clear();
+        true
+    }
+
+    /// Width the trailing buttons reserve on the right of the header.
+    fn trailing_buttons_width(&self) -> f64 {
+        let mut width = 0.0;
+        if self.view_toggle.is_some() {
+            width += DOCUMENT_HEADER_H;
+        }
+        if self.right_dock.is_some() {
+            width += DOCUMENT_HEADER_H;
+        }
+        width
+    }
+
     fn visible_height(&self) -> f64 {
         header_height_for_document(
             !self.segments.is_empty(),
-            self.right_dock.is_some(),
+            self.right_dock.is_some() || self.view_toggle.is_some(),
             self.document_active,
         )
     }
@@ -343,11 +375,7 @@ impl Widget for DocumentHeader {
             .collect::<Vec<_>>();
         let label_heights = label_widths.iter().map(|(_, h)| *h).collect::<Vec<_>>();
         let label_widths = label_widths.iter().map(|(w, _)| *w).collect::<Vec<_>>();
-        let right_button_width = if self.state.right_dock.is_some() {
-            DOCUMENT_HEADER_H
-        } else {
-            0.0
-        };
+        let right_button_width = self.state.trailing_buttons_width();
         let layout = layout_header(self.draw_rect.size.x, &label_widths, right_button_width);
         self.state.segment_rects = layout
             .segment_rects
@@ -425,6 +453,25 @@ impl DocumentHeader {
             button.as_icon_button().set_icon(cx, icon);
         }
         self.sync_content_layout(cx);
+    }
+
+    pub fn set_view_toggle(&mut self, cx: &mut Cx, icon: Option<Icon>) {
+        if !self.state.replace_view_toggle(icon) {
+            return;
+        }
+
+        let button = self.view.widget(cx, ids!(view_button));
+        button.set_visible(cx, icon.is_some());
+        if let Some(icon) = icon {
+            button.as_icon_button().set_icon(cx, icon);
+        }
+        self.sync_content_layout(cx);
+    }
+
+    /// The view-source/view-rendered toggle button, for click detection and
+    /// icon updates by the active document view.
+    pub fn view_toggle_button(&self, cx: &mut Cx) -> WidgetRef {
+        self.view.widget(cx, ids!(view_button))
     }
 
     pub fn set_right_dock_icon(&mut self, cx: &mut Cx, icon: Icon) {

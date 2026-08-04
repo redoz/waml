@@ -45,7 +45,6 @@ script_mod! {
     // fork -- use `sdf.rect` for the square case rather than a zero-radius box.
     set_type_default() do #(DrawReadingBullet::script_shader(vm)){
         ..mod.draw.DrawQuad
-        color: uniform(#fff)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             let r = min(self.rect_size.x, self.rect_size.y) * 0.5

@@ -545,6 +545,7 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: false,
                     right_dock: None,
+                    view_toggle: None,
                 },
             }
         }

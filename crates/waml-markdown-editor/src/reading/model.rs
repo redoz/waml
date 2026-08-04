@@ -102,9 +102,43 @@ impl ReadingDocument {
     /// why the model must not shrink the partition to hide something.
     pub fn validate_source_partition(&self) -> Result<(), ReadingError> {
         let mut expected = TextSize::new(0);
-        fn walk(blocks: &[ReadingBlock], expected: &mut TextSize) -> Result<(), ReadingError> {
-            for block in blocks {
-                for piece in &block.pieces {
+        walk(&self.roots, &mut expected)?;
+        if expected != self.source_len {
+            return Err(ReadingError::Gap {
+                expected,
+                actual: self.source_len,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// One step of a block's own content in source order: either one of its
+/// pieces, or a whole child subtree. A block's `pieces` do NOT all precede
+/// its `children` in source order -- a table's delimiter row is a piece of
+/// the `Table` block itself, but it sits BETWEEN the header row and the data
+/// rows, which are `TableRow` children. Walking pieces-then-children would
+/// see the header row's bytes skipped over and misreport a gap.
+enum Step<'a> {
+    Piece(&'a ReadingPiece),
+    Child(&'a ReadingBlock),
+}
+
+fn walk(blocks: &[ReadingBlock], expected: &mut TextSize) -> Result<(), ReadingError> {
+    for block in blocks {
+        let mut steps: Vec<Step<'_>> = block
+            .pieces
+            .iter()
+            .map(Step::Piece)
+            .chain(block.children.iter().map(Step::Child))
+            .collect();
+        steps.sort_by_key(|step| match step {
+            Step::Piece(piece) => piece.range.start(),
+            Step::Child(child) => child.source_range.start(),
+        });
+        for step in steps {
+            match step {
+                Step::Piece(piece) => {
                     if piece.range.start() < *expected {
                         return Err(ReadingError::Overlap {
                             previous_end: *expected,
@@ -119,19 +153,13 @@ impl ReadingDocument {
                     }
                     *expected = piece.range.end();
                 }
-                walk(&block.children, expected)?;
+                Step::Child(child) => {
+                    walk(std::slice::from_ref(child), expected)?;
+                }
             }
-            Ok(())
         }
-        walk(&self.roots, &mut expected)?;
-        if expected != self.source_len {
-            return Err(ReadingError::Gap {
-                expected,
-                actual: self.source_len,
-            });
-        }
-        Ok(())
     }
+    Ok(())
 }
 
 /// Builds the reading model. Pieces are emitted in source order, and each is

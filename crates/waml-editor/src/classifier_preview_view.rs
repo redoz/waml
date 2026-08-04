@@ -144,6 +144,7 @@ impl DocView for ClassifierPreviewView {
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
+                view_toggle: None,
             },
         }
     }

@@ -101,13 +101,14 @@ pub(super) fn project_document_header(
 ) -> (
     Vec<crate::navigation::BreadcrumbSegment>,
     Option<crate::icons::Icon>,
+    Option<crate::icons::Icon>,
 ) {
     let segments = if chrome.breadcrumb {
         breadcrumb.unwrap_or_default()
     } else {
         Vec::new()
     };
-    (segments, chrome.right_dock)
+    (segments, chrome.right_dock, chrome.view_toggle)
 }
 
 /// Footprint of the tab row's tree-column toggle: the `tree_btn` DSL `width`
@@ -853,7 +854,7 @@ impl App {
         } else {
             None
         };
-        let (segments, right_dock) = project_document_header(chrome, breadcrumb);
+        let (segments, right_dock, view_toggle) = project_document_header(chrome, breadcrumb);
         if let Some(mut header) = self
             .ui
             .widget(cx, ids!(document_header))
@@ -861,6 +862,7 @@ impl App {
         {
             header.set_segments(cx, segments);
             header.set_right_dock(cx, right_dock);
+            header.set_view_toggle(cx, view_toggle);
         }
         self.sync_history_controls(cx);
         if let Some(mut tree) = self

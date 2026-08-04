@@ -6,10 +6,17 @@ use crate::doc_view::{
     ViewReconcilePolicy,
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
+use crate::icon_button::IconButtonWidgetRefExt;
+use crate::icons::Icon;
 use crate::source_view::SourceView;
 use crate::view_history::ViewAnchor;
 
 pub struct GenericOkfView {
+    /// The reading surface. A concept opens here.
+    reading: crate::reading_view::ReadingView,
+    /// The raw-markdown surface, reached by the explicit source toggle. It
+    /// stays read-only: this view discards the edit outcome, so a writable
+    /// editor would silently drop what the user typed.
     source: SourceView,
 }
 
@@ -28,12 +35,25 @@ impl GenericOkfView {
         concept_id: String,
         assets: crate::markdown_hosts::SharedMarkdownAssetHost,
     ) -> Self {
-        // Opening a concept is a reading action, so its markdown punctuation is
-        // hidden. Editing the markdown is a separate, explicit action, and the
-        // source itself is untouched: selection and copy still yield markdown.
-        let mut source = SourceView::new_read_only(concept_id, assets);
-        source.set_hide_syntax(true);
-        Self { source }
+        // Opening a concept is a reading action: it renders. Seeing the
+        // markdown behind it is a separate, explicit action.
+        Self {
+            reading: crate::reading_view::ReadingView::new_with_asset_host(
+                concept_id.clone(),
+                assets.clone(),
+            ),
+            source: SourceView::new_read_only(concept_id, assets),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn showing_source(&self) -> bool {
+        self.reading.showing_source()
+    }
+
+    pub(crate) fn toggle_source(&mut self) {
+        let showing = self.reading.showing_source();
+        self.reading.set_showing_source(!showing);
     }
 }
 
@@ -47,8 +67,18 @@ impl DocView for GenericOkfView {
     }
 
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {
-        body.show_markdown_editor(cx);
-        body.markdown_editor().set_read_only(cx, true);
+        if self.reading.showing_source() {
+            body.show_markdown_editor(cx);
+            body.markdown_editor().set_read_only(cx, true);
+            body.markdown_viewer_source_toggle(cx)
+                .as_icon_button()
+                .set_icon(cx, Icon::Eye);
+        } else {
+            body.show_markdown_viewer(cx);
+            body.markdown_viewer_source_toggle(cx)
+                .as_icon_button()
+                .set_icon(cx, Icon::FileCode);
+        }
     }
 
     fn sync_from_session(
@@ -57,9 +87,14 @@ impl DocView for GenericOkfView {
         body: &BodyWidgets,
         snapshot: &EditorSessionSnapshot,
     ) {
-        self.sync(cx, body, snapshot.borrowed().into());
+        self.reading.install_snapshot(cx, body, snapshot);
         self.source
             .install_snapshot(cx, body, snapshot, HostSnapshotCause::InitialLoad);
+        // `SourceView::install_snapshot` unconditionally shows the
+        // raw-markdown surface (it has no notion of the reading toggle), so
+        // this view's own surface choice must be applied LAST, after both
+        // installs, or a reading-mode open would flash to the editor.
+        self.sync(cx, body, snapshot.borrowed().into());
     }
 
     fn after_session_snapshot(
@@ -74,7 +109,9 @@ impl DocView for GenericOkfView {
         } else {
             HostSnapshotCause::AcknowledgedLocalEdit
         };
+        self.reading.install_snapshot(cx, body, snapshot);
         self.source.install_snapshot(cx, body, snapshot, cause);
+        self.sync(cx, body, snapshot.borrowed().into());
     }
 
     fn route_ui_event(&mut self, cx: &mut Cx, ui: &WidgetRef, event: &Event) {
@@ -88,6 +125,14 @@ impl DocView for GenericOkfView {
         actions: &Actions,
         data: ViewData<'_>,
     ) -> ViewOutcome {
+        if body
+            .markdown_viewer_source_toggle(cx)
+            .as_icon_button()
+            .clicked(actions)
+        {
+            self.toggle_source();
+            self.sync(cx, body, data);
+        }
         let mut outcome = self.source.handle(cx, body, actions, data);
         outcome.source_edit = None;
         outcome
@@ -101,6 +146,13 @@ impl DocView for GenericOkfView {
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: None,
+                // Icon shows the surface the toggle LEADS to; `sync` keeps it
+                // current when the user flips between them.
+                view_toggle: Some(if self.reading.showing_source() {
+                    Icon::Eye
+                } else {
+                    Icon::FileCode
+                }),
             },
         }
     }
@@ -148,12 +200,24 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_concept_hides_markdown_syntax_so_editing_stays_an_explicit_action() {
+    fn a_concept_opens_in_the_reading_view() {
         let view = generic_view();
         assert!(
-            view.source.hides_syntax(),
-            "a concept opens as prose to read, not as markdown to edit"
+            !view.showing_source(),
+            "a concept opens as rendered prose, not as markdown to edit"
         );
+    }
+
+    #[test]
+    fn the_source_toggle_switches_between_the_viewer_and_the_editor() {
+        let mut view = generic_view();
+        view.toggle_source();
+        assert!(
+            view.showing_source(),
+            "the toggle reveals the markdown source"
+        );
+        view.toggle_source();
+        assert!(!view.showing_source(), "and puts it back");
     }
 
     #[test]
@@ -168,6 +232,7 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
+                    view_toggle: Some(Icon::FileCode),
                 },
             }
         );

@@ -15,6 +15,7 @@ use crate::popup::base::PopupItem;
 use crate::popup::base::PopupResult;
 use crate::popup::select::SelectItem;
 use crate::view_history::ViewAnchor;
+use waml_markdown_editor::reading::{MarkdownViewerRef, MarkdownViewerWidgetRefExt};
 use waml_markdown_editor::widget::{MarkdownEditorRef, MarkdownEditorWidgetRefExt};
 
 /// Typed handles to the single shared body surface (canvas + inspector + tool
@@ -27,6 +28,7 @@ pub struct BodyWidgets {
     canvas: WidgetRef,
     behavior_canvas: WidgetRef,
     markdown_editor: MarkdownEditorRef,
+    markdown_viewer: MarkdownViewerRef,
 }
 
 impl BodyWidgets {
@@ -38,6 +40,9 @@ impl BodyWidgets {
             markdown_editor: ui
                 .widget(_cx, ids!(markdown_surface.editor))
                 .as_markdown_editor(),
+            markdown_viewer: ui
+                .widget(_cx, ids!(markdown_viewer_surface.viewer_body.viewer))
+                .as_markdown_viewer(),
         }
     }
 
@@ -168,6 +173,9 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(markdown_surface))
             .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(markdown_viewer_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
         self.set_canvas_interaction_enabled(cx, true);
     }
@@ -176,12 +184,44 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(markdown_surface))
             .set_visible(cx, true);
+        self.ui
+            .widget(cx, ids!(markdown_viewer_surface))
+            .set_visible(cx, false);
+        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.set_canvas_interaction_enabled(cx, false);
+    }
+
+    /// Show the markdown reading view (`markdown_viewer_surface`), the
+    /// sibling of `markdown_surface` (the raw-markdown editor). Mutually
+    /// exclusive with both the editor surface and the diagram canvas.
+    pub fn show_markdown_viewer(&self, cx: &mut Cx) {
+        self.ui
+            .widget(cx, ids!(markdown_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(markdown_viewer_surface))
+            .set_visible(cx, true);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
     }
 
     pub fn markdown_editor(&self) -> MarkdownEditorRef {
         self.markdown_editor.clone()
+    }
+
+    pub fn markdown_viewer(&self) -> MarkdownViewerRef {
+        self.markdown_viewer.clone()
+    }
+
+    /// The document's "view source"/"view rendered" toggle button. It lives
+    /// in the breadcrumb header's trailing button row; this is the only door
+    /// between the viewer and the raw-markdown editor.
+    pub fn markdown_viewer_source_toggle(&self, cx: &mut Cx) -> WidgetRef {
+        self.ui
+            .widget(cx, ids!(document_header))
+            .borrow::<crate::document_header::DocumentHeader>()
+            .map(|header| header.view_toggle_button(cx))
+            .unwrap_or_default()
     }
 
     pub fn apply_chrome(&self, cx: &mut Cx, chrome: BodyChrome) {
@@ -195,6 +235,7 @@ impl BodyWidgets {
             .borrow_mut::<crate::document_header::DocumentHeader>()
         {
             header.set_right_dock(cx, chrome.document_header.right_dock);
+            header.set_view_toggle(cx, chrome.document_header.view_toggle);
         }
         if chrome.document_header.right_dock.is_none() {
             if let Some(mut panel) = self
@@ -490,6 +531,9 @@ pub trait DocView {
 pub struct DocumentHeaderChrome {
     pub breadcrumb: bool,
     pub right_dock: Option<Icon>,
+    /// The view-source/view-rendered toggle in the header's trailing button
+    /// row, when the active document offers one.
+    pub view_toggle: Option<Icon>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -511,6 +555,7 @@ impl BodyChrome {
         document_header: DocumentHeaderChrome {
             breadcrumb: false,
             right_dock: None,
+            view_toggle: None,
         },
     };
 }
@@ -553,6 +598,7 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: Some(Icon::PanelRight),
+                    view_toggle: None,
                 },
             }
         );
@@ -566,6 +612,7 @@ mod tests {
                     document_header: DocumentHeaderChrome {
                         breadcrumb: true,
                         right_dock: Some(Icon::PanelRight),
+                        view_toggle: None,
                     },
                 }
             );
@@ -579,6 +626,7 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
+                    view_toggle: Some(Icon::FileCode),
                 },
             }
         );

@@ -149,13 +149,9 @@ impl SourceView {
     /// reading, such as the OKF concept view, set this; editing views do not.
     /// The source and the session are unchanged, so selection and copy still
     /// yield the original markdown.
+    #[cfg(test)]
     pub fn set_hide_syntax(&mut self, hide_syntax: bool) {
         self.hide_syntax = hide_syntax;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn hides_syntax(&self) -> bool {
-        self.hide_syntax
     }
 
     pub(crate) fn resolve_document(
@@ -378,16 +374,9 @@ impl SourceView {
                 ready.diagnostics = diagnostics;
             }
             editor.set_read_only(cx, self.read_only);
-            // The source view is the editing surface, so it carries the
-            // gutter; read-only preview surfaces stay bare.
-            editor.set_line_numbers(
-                cx,
-                if self.read_only {
-                    LineNumberMode::Off
-                } else {
-                    self.line_numbers
-                },
-            );
+            // Line numbers are presentation, not editability: a read-only
+            // "view source" still wants the gutter for referencing lines.
+            editor.set_line_numbers(cx, self.line_numbers);
             editor.install_presentation(cx, installed, layout_cause);
         }
     }
@@ -562,6 +551,7 @@ impl DocView for SourceView {
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
+                view_toggle: None,
             },
         }
     }
