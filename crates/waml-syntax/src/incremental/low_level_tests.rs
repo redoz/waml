@@ -23,6 +23,8 @@ fn incremental_structure_is_derived_from_the_rebuilt_waml_tree() {
             old_range: range(start, start + "one".len()),
             replacement: Arc::from("two"),
         }],
+        None,
+        None,
     )
     .unwrap();
     let tree = match outcome {
@@ -195,7 +197,8 @@ fn unchanged_bytes_on_fresh_source_rebase_source_backed_greens() {
     assert!(!previous.diagnostics().is_empty());
     let new_source = text("---\nbad\n---\nbody\n");
     let (outcome, _) =
-        reparse_okf_markdown_with_structure(&previous, new_source.clone(), &[]).unwrap();
+        reparse_okf_markdown_with_structure(&previous, new_source.clone(), &[], None, None)
+            .unwrap();
     let ReparseOutcome::Incremental {
         tree,
         shared_source_independent_green,
@@ -382,6 +385,8 @@ fn invalid_utf8_boundary_is_a_named_full_outcome_with_structure() {
             old_range: range(5, 6),
             replacement: Arc::from("x"),
         }],
+        None,
+        None,
     )
     .unwrap();
     assert!(matches!(
@@ -559,8 +564,14 @@ fn same_length_heading_text_edit_is_incremental_and_reuses_eof() {
     };
     let full = parse_okf_markdown(next_source.clone(), MarkdownDialect::WAML_DEFAULT).unwrap();
     let (outcome, structure) =
-        reparse_okf_markdown_with_structure(&previous.tree, next_source.clone(), &[change])
-            .unwrap();
+        reparse_okf_markdown_with_structure(
+            &previous.tree,
+            next_source.clone(),
+            &[change],
+            None,
+            None,
+        )
+        .unwrap();
     let ReparseOutcome::Incremental { tree, .. } = outcome else {
         panic!("same-length heading text edit must be incremental")
     };

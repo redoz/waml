@@ -562,38 +562,39 @@ fn changes_reconstruct(
             .map_err(|_| ParseError::InvalidRange { range: new_tail })?)
 }
 
-// Two depth-first passes: discover one backing allocation, then prove the
-// emitted leaf stream covers it exactly. Any uncertainty chooses full parsing.
-fn recover_exact_source<L: SyntaxLanguage>(root: &GreenNode<L>) -> Option<SourceText> {
-    fn walk<L: SyntaxLanguage>(
-        root: &GreenNode<L>,
-        f: &mut impl FnMut(&GreenText) -> Option<()>,
-    ) -> Option<()> {
-        let mut frames = vec![root.children().iter()];
-        while let Some(frame) = frames.last_mut() {
-            let Some(element) = frame.next() else {
-                frames.pop();
-                continue;
-            };
-            match element {
-                GreenElement::Node(node) => frames.push(node.children().iter()),
-                GreenElement::Token(token) => {
-                    for text in token
-                        .leading_trivia()
-                        .iter()
-                        .map(|x| &x.text)
-                        .chain(std::iter::once(token.text()))
-                        .chain(token.trailing_trivia().iter().map(|x| &x.text))
-                    {
-                        f(text)?;
-                    }
+fn walk_green_texts<L: SyntaxLanguage>(
+    root: &GreenNode<L>,
+    f: &mut impl FnMut(&GreenText) -> Option<()>,
+) -> Option<()> {
+    let mut frames = vec![root.children().iter()];
+    while let Some(frame) = frames.last_mut() {
+        let Some(element) = frame.next() else {
+            frames.pop();
+            continue;
+        };
+        match element {
+            GreenElement::Node(node) => frames.push(node.children().iter()),
+            GreenElement::Token(token) => {
+                for text in token
+                    .leading_trivia()
+                    .iter()
+                    .map(|x| &x.text)
+                    .chain(std::iter::once(token.text()))
+                    .chain(token.trailing_trivia().iter().map(|x| &x.text))
+                {
+                    f(text)?;
                 }
             }
         }
-        Some(())
     }
+    Some(())
+}
+
+// Two depth-first passes: discover one backing allocation, then prove the
+// emitted leaf stream covers it exactly. Any uncertainty chooses full parsing.
+fn recover_exact_source<L: SyntaxLanguage>(root: &GreenNode<L>) -> Option<SourceText> {
     let mut source: Option<SourceText> = None;
-    walk(root, &mut |text| {
+    walk_green_texts(root, &mut |text| {
         if let GreenText::SourceSlice { source: found, .. } = text {
             match &source {
                 Some(expected) if !Arc::ptr_eq(expected.shared(), found.shared()) => return None,
@@ -604,8 +605,17 @@ fn recover_exact_source<L: SyntaxLanguage>(root: &GreenNode<L>) -> Option<Source
         Some(())
     })?;
     let source = source?;
-    let mut offset = TextSize::try_from_usize(0).ok()?;
-    walk(root, &mut |text| {
+    verify_exact_source(root, &source).then_some(source)
+}
+
+// The proving pass of [`recover_exact_source`], reusable when a candidate
+// backing source is already known (e.g. the previous snapshot's text).
+fn verify_exact_source<L: SyntaxLanguage>(root: &GreenNode<L>, source: &SourceText) -> bool {
+    let mut offset = match TextSize::try_from_usize(0) {
+        Ok(offset) => offset,
+        Err(_) => return false,
+    };
+    let verified = walk_green_texts(root, &mut |text| {
         match text {
             GreenText::SourceSlice {
                 source: found,
@@ -632,8 +642,8 @@ fn recover_exact_source<L: SyntaxLanguage>(root: &GreenNode<L>) -> Option<Source
             }
         }
         Some(())
-    })?;
-    (offset == source.len() && root.width() == source.len()).then_some(source)
+    });
+    verified.is_some() && offset == source.len() && root.width() == source.len()
 }
 
 /// Safely advance an OKF shell tree. A full parse is deliberately retained as
@@ -644,16 +654,22 @@ pub(crate) fn reparse_okf_markdown(
     new_text: SourceText,
     changes: &[TextChange],
 ) -> Result<ReparseOutcome<OkfMarkdownLanguage>, ParseError> {
-    Ok(reparse_okf_markdown_with_structure(previous, new_text, changes)?.0)
+    Ok(reparse_okf_markdown_with_structure(previous, new_text, changes, None, None)?.0)
 }
 
 /// Like [`reparse_okf_markdown`], while returning the public structure derived
 /// from the completed tree. A separate internal map drives synchronization.
+///
+/// `previous_text` and `previous_projection` are optional reuse hints from the
+/// caller's snapshot of `previous`: when they verifiably match the tree they
+/// replace a full source reconstruction and a full old-tree projection.
 #[doc(hidden)]
 pub(crate) fn reparse_okf_markdown_with_structure(
     previous: &SyntaxTree<OkfMarkdownLanguage>,
     new_text: SourceText,
     changes: &[TextChange],
+    previous_text: Option<&SourceText>,
+    previous_projection: Option<&Arc<MarkdownStructureMap>>,
 ) -> Result<
     (
         ReparseOutcome<OkfMarkdownLanguage>,
@@ -663,7 +679,11 @@ pub(crate) fn reparse_okf_markdown_with_structure(
 > {
     let dialect = previous.dialect();
     let new_structure = Arc::new(crate::markdown::shell_map(&new_text, dialect)?);
-    let Some(old) = recover_exact_source(previous.root_green()) else {
+    let recovered = match previous_text {
+        Some(text) if verify_exact_source(previous.root_green(), text) => Some(text.clone()),
+        _ => recover_exact_source(previous.root_green()),
+    };
+    let Some(old) = recovered else {
         let parsed = crate::markdown::parser::parse_with_structure(
             new_text,
             dialect,
@@ -766,7 +786,14 @@ pub(crate) fn reparse_okf_markdown_with_structure(
             public_structure,
         ))
     };
-    let old_projection = crate::markdown::from_tree(previous, old.shared())?;
+    let old_projection: Arc<MarkdownStructureMap> = match previous_projection {
+        Some(projection)
+            if previous_text.is_some_and(|text| Arc::ptr_eq(text.shared(), old.shared())) =>
+        {
+            projection.clone()
+        }
+        _ => Arc::new(crate::markdown::from_tree(previous, old.shared())?),
+    };
     if old_projection.islands.iter().any(|island| {
         let island_range = island.heading_range.cover(island.content_range);
         map.segments().iter().any(|segment| {
@@ -916,6 +943,17 @@ pub(crate) fn reparse_okf_markdown_with_structure(
         .collect();
     diagnostics.extend(parsed_window.diagnostics.iter().cloned());
     diagnostics.sort_by_key(|d| (d.range.start(), d.range.end(), d.code as u8));
+    // A malformed block anywhere in the merged diagnostics (the window's own
+    // malformed blocks already fell back above, so this catches carried-over
+    // ones outside the window) means the shell is not trustworthy enough to
+    // synchronize against; hand the document back to the full parser.
+    if dialect.waml_sections()
+        && diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock)
+    {
+        return full(FullReparseReason::UnsafeSynchronization);
+    }
     let candidate = SyntaxTree::new(root, diagnostics.into(), dialect);
     let root = if has_syntax_annotations(previous.root_green()) {
         transfer_mapped_annotations(previous, &candidate, &map)
@@ -930,35 +968,36 @@ pub(crate) fn reparse_okf_markdown_with_structure(
         dialect,
     ));
     let public_structure = Arc::new(crate::markdown::from_tree(&tree, new_text.shared())?);
+    // The island-boundary guards above refuse any change that touches an old
+    // island or a new WAML heading, so a successful window reparse must keep
+    // the island count. A mismatch means the splice drifted; fall back.
+    if dialect.waml_sections() && public_structure.islands.len() != old_projection.islands.len() {
+        return full(FullReparseReason::IslandBoundaryChanged);
+    }
+    // Debug-only oracle: cross-check the spliced result against a full parse.
+    // This used to run unconditionally in production, making every
+    // "incremental" reparse strictly more expensive than a full one; the
+    // property suites (built with debug assertions) keep exercising it.
+    #[cfg(debug_assertions)]
     if dialect.waml_sections() {
         let oracle = crate::markdown::parser::parse_with_structure(
             new_text.clone(),
             dialect,
             new_structure.clone(),
         )?;
-        if oracle
-            .tree
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock)
-        {
-            return Ok((
-                ReparseOutcome::Full {
-                    tree: oracle.tree,
-                    reason: FullReparseReason::UnsafeSynchronization,
-                },
-                oracle.structure,
-            ));
-        }
-        if public_structure.islands.len() != oracle.structure.islands.len() {
-            return Ok((
-                ReparseOutcome::Full {
-                    tree: oracle.tree,
-                    reason: FullReparseReason::IslandBoundaryChanged,
-                },
-                oracle.structure,
-            ));
-        }
+        debug_assert!(
+            !oracle
+                .tree
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock),
+            "incremental reparse accepted a document the full parser marks malformed"
+        );
+        debug_assert_eq!(
+            public_structure.islands.len(),
+            oracle.structure.islands.len(),
+            "incremental reparse island count diverged from the full parse"
+        );
     }
     Ok((
         ReparseOutcome::Incremental {

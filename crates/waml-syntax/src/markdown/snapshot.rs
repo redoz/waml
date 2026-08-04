@@ -338,6 +338,8 @@ pub fn reparse_markdown(
         previous.tree.as_ref(),
         new_text.clone(),
         changes,
+        Some(previous.text()),
+        Some(previous.structure()),
     )?;
     let (mut tree, shared_source_independent_green, reparsed_range) = match outcome {
         ReparseOutcome::Incremental {
