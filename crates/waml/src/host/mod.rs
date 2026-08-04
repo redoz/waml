@@ -2,6 +2,9 @@ use std::fmt;
 
 use crate::source::{BundlePath, SourceBundle, SourceDocument, SourceError};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ingest;
+
 #[derive(Debug)]
 pub enum HostIngressError {
     ExistingDocument { path: BundlePath },
