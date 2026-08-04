@@ -12,6 +12,8 @@ use std::fmt;
 use waml_syntax::{ChangeMap, DocumentRevision, FullReparseReason, SourceText, TextChange};
 
 mod batch;
+#[cfg(test)]
+mod port_tests;
 mod reversible;
 
 pub use batch::{apply, Batch, Invalidation, InvalidationSink, Step};
