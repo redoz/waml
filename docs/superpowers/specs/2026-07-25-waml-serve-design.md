@@ -1,7 +1,7 @@
 # `waml serve` — design
 
 **Date:** 2026-07-25 (rewritten 2026-08-04 against the current architecture)
-**Status:** approved (design); groundwork landed, server pending
+**Status:** implemented — `waml serve` ships the API, the embedded UI, and the editor boot/save wiring this spec describes
 
 **Rewrite note.** The original draft was written against `waml::ops` and the
 `waml-wasm` bindings crate. Both are gone: `waml::ops` was retired in favour of
