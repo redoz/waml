@@ -178,6 +178,7 @@ pub enum OkfSyntaxDiagnosticCode {
     UnclosedLink,
     MalformedTable,
     FilteredHtmlTag,
+    NestingDepthExceeded,
 }
 
 impl SyntaxLanguage for OkfMarkdownLanguage {

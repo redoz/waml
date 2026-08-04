@@ -71,6 +71,13 @@ fn parse_strict(
     };
     let mut stack = Vec::<BlockFrame>::new();
     let mut blocks = Vec::<BlockFrame>::new();
+    // Container opens beyond `MD_MAX_CONTAINER_DEPTH` are suppressed: no frame
+    // is pushed, so the matching close must also be swallowed to keep the
+    // stack balanced. The suppressed range's source bytes still reach the
+    // tree via `emit_uncovered`'s raw-text flush, so exact-source recovery
+    // still holds.
+    let mut suppressed_depth = 0usize;
+    let mut suppressed_range: Option<Range<usize>> = None;
     // Offsets are relative to the scanned slice; re-base them onto `source`.
     let scan = scan_blocks(&source[event_start..end], dialect, ScanProfile::Tree);
     // The seam filters inline and text events out, so only it can screen their
@@ -96,6 +103,11 @@ fn parse_strict(
         match event {
             ScanEvent::Start(tag) => {
                 if let Some(kind) = start_kind(&tag, source, &offsets) {
+                    if is_container_kind(kind) && stack.len() >= super::MD_MAX_CONTAINER_DEPTH {
+                        suppressed_depth += 1;
+                        suppressed_range.get_or_insert_with(|| offsets.clone());
+                        continue;
+                    }
                     let metadata = if kind == Kind::TableCell {
                         let column = stack.last().map_or(0, |parent| {
                             parent
@@ -144,7 +156,9 @@ fn parse_strict(
                 }
             }
             ScanEvent::End(kind) => {
-                if end_closes_block(kind) {
+                if suppressed_depth > 0 && is_container_scan_kind(kind) {
+                    suppressed_depth -= 1;
+                } else if end_closes_block(kind) {
                     let Some(mut frame) = stack.pop() else {
                         return Err(ParseError::StructuralInvariant {
                             reason: "CommonMark closed a block without an open frame".into(),
@@ -189,6 +203,14 @@ fn parse_strict(
 
     let factory = GreenFactory::<OkfMarkdownLanguage>::new();
     let mut diagnostics = Vec::new();
+    if let Some(range) = suppressed_range {
+        diagnostics.push(diagnostic(
+            Diagnostic::NestingDepthExceeded,
+            range.start,
+            range.end,
+            "Markdown nesting exceeds the supported depth of 64; deeper structure is treated as plain text.",
+        )?);
+    }
     let mut definitions = Vec::new();
     let mut children = Vec::new();
     let mut cursor = start;
@@ -499,6 +521,27 @@ fn frame_metadata(
         return Some((super::gfm::HTML_TAG_FILTER, state.data()));
     }
     None
+}
+
+/// Container kinds whose nesting an attacker can drive arbitrarily deep
+/// (`> > > …`, nested lists, nested tables). Leaf kinds (paragraphs,
+/// headings, code blocks) cannot themselves recurse, so only these need the
+/// `MD_MAX_CONTAINER_DEPTH` cap.
+fn is_container_kind(kind: Kind) -> bool {
+    matches!(
+        kind,
+        Kind::BlockQuote | Kind::List | Kind::ListItem | Kind::Table
+    )
+}
+
+/// Mirrors `is_container_kind`, but keyed on the scan's own tag kind so the
+/// `ScanEvent::End` arm — which never sees our `Kind` — can recognize the
+/// close of a container start that was suppressed by the depth cap.
+fn is_container_scan_kind(kind: ScanTagKind) -> bool {
+    matches!(
+        kind,
+        ScanTagKind::BlockQuote | ScanTagKind::List | ScanTagKind::Item | ScanTagKind::Table
+    )
 }
 
 fn start_kind(tag: &ScanTag, source: &str, range: &Range<usize>) -> Option<Kind> {
@@ -1560,6 +1603,57 @@ mod tests {
             .any(|diagnostic| diagnostic.code == Diagnostic::MalformedBlock));
         assert!(parsed.inline_roots.is_empty());
         assert!(parsed.references.definitions.is_empty());
+    }
+
+    /// A hostile 10,000-deep blockquote must not overflow the stack (the
+    /// tree builder is iterative), must still yield an exact-source tree,
+    /// and must record exactly one nesting-depth diagnostic.
+    #[test]
+    fn deeply_nested_block_quote_is_capped_with_one_diagnostic() {
+        let source = "> ".repeat(10_000) + "leaf\n";
+        let text = SourceText::new(&source).unwrap();
+        let parsed = parse(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()).unwrap();
+
+        let tree = crate::SyntaxTree::new(
+            parsed.root,
+            parsed.diagnostics.clone(),
+            MarkdownDialect::WAML_DEFAULT,
+        );
+        assert_eq!(tree.write_to_string(), source);
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded)
+                .count(),
+            1
+        );
+    }
+
+    /// A document nested to exactly one below the cap must be unaffected:
+    /// no diagnostic, and every level materializes as real tree structure.
+    #[test]
+    fn block_quote_below_cap_is_unaffected() {
+        let depth = super::super::MD_MAX_CONTAINER_DEPTH - 1;
+        let source = "> ".repeat(depth) + "leaf\n";
+        let text = SourceText::new(&source).unwrap();
+        let parsed = parse(&text, MarkdownDialect::WAML_DEFAULT, 0, source.len()).unwrap();
+
+        assert!(!parsed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded));
+
+        fn count_block_quotes(node: &crate::GreenNode<OkfMarkdownLanguage>) -> usize {
+            let mut count = usize::from(node.kind() == Kind::BlockQuote);
+            for child in node.children() {
+                if let GreenElement::Node(child) = child {
+                    count += count_block_quotes(child);
+                }
+            }
+            count
+        }
+        assert_eq!(count_block_quotes(&parsed.root), depth);
     }
 
     #[test]

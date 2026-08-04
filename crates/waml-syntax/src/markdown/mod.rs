@@ -29,6 +29,14 @@ pub use snapshot::{
 
 use scan::{scan_blocks, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 
+/// Maximum container nesting depth (block quotes, list items, tables, ...)
+/// the block builder will materialize as real tree structure. Beyond this,
+/// `block.rs::parse_strict` stops pushing frames so every downstream
+/// recursive consumer (`rebuild`, `projection::visit`, `collect_occurrences`,
+/// `red::rewrite`) is bounded — sized well below the smallest stack this
+/// parser runs on (wasm's default ~1 MB, with large recursive frames).
+pub(crate) const MD_MAX_CONTAINER_DEPTH: usize = 64;
+
 use crate::{MarkdownDialect, SourceText, TextRange, TextSize};
 
 use crate::shell::ParseError;
