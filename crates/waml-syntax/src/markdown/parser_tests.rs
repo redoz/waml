@@ -596,3 +596,43 @@ fn golden(shell: &ShellParse) -> String {
     }
     output
 }
+
+/// Frontmatter nesting is capped like markdown containers: without the cap a
+/// document of progressively indented keys builds a tree deep enough that
+/// walking or dropping it overflows the stack (an unrecoverable crash from
+/// untrusted document content, cheaper still on wasm's 1MB stack).
+#[test]
+fn deeply_indented_frontmatter_is_capped_instead_of_overflowing_the_stack() {
+    let mut source = String::from("---\n");
+    for depth in 0..2000 {
+        source.push_str(&"  ".repeat(depth));
+        source.push_str("k:\n");
+    }
+    source.push_str("---\n");
+
+    let text = SourceText::from_shared(Arc::new(source.as_str().into())).unwrap();
+    let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
+
+    assert_eq!(shell.tree.write_to_string(), source);
+    assert!(shell
+        .tree
+        .diagnostics()
+        .iter()
+        .any(|d| d.code == OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent));
+}
+
+/// A quoted key and a bare key that DECODE to the same text are the same key:
+/// the model's reader collapses them last-wins, so the parser must say so.
+#[test]
+fn quoted_and_bare_keys_that_decode_alike_report_a_duplicate() {
+    let source = "---\n'a': 1\na: 2\n---\n";
+    let text = SourceText::from_shared(Arc::new(source.into())).unwrap();
+    let shell = parse_okf_markdown(text, MarkdownDialect::WAML_DEFAULT).unwrap();
+
+    assert_eq!(shell.tree.write_to_string(), source);
+    assert!(shell
+        .tree
+        .diagnostics()
+        .iter()
+        .any(|d| d.code == OkfSyntaxDiagnosticCode::DuplicateFrontmatterKey));
+}

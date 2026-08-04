@@ -214,24 +214,8 @@ impl Frontmatter {
     }
 }
 
-fn normalize_line_endings(value: &str) -> String {
-    let mut normalized = String::with_capacity(value.len());
-    let mut characters = value.chars().peekable();
-    while let Some(character) = characters.next() {
-        if character == '\r' {
-            if characters.peek() == Some(&'\n') {
-                characters.next();
-            }
-            normalized.push('\n');
-        } else {
-            normalized.push(character);
-        }
-    }
-    normalized
-}
-
 fn escape_quoted_string(value: &str) -> String {
-    let normalized = normalize_line_endings(value);
+    let normalized = waml_syntax::normalize_line_endings(value);
     let mut escaped = String::with_capacity(normalized.len());
     for character in normalized.chars() {
         match character {
@@ -244,53 +228,6 @@ fn escape_quoted_string(value: &str) -> String {
         }
     }
     escaped
-}
-
-/// Decodes a double-quoted scalar's inner text (no surrounding quotes).
-/// Understands `\\ \" \n \r \t \0` and `\uXXXX`; an unrecognized escape is
-/// kept verbatim (backslash and the following character/digits preserved) —
-/// the parser side flags this with `InvalidEscapeSequence` but the model
-/// never panics on it.
-fn decode_quoted_string(value: &str) -> String {
-    let mut decoded = String::with_capacity(value.len());
-    let mut characters = value.chars();
-    while let Some(character) = characters.next() {
-        if character != '\\' {
-            decoded.push(character);
-            continue;
-        }
-        match characters.next() {
-            Some('\\') => decoded.push('\\'),
-            Some('"') => decoded.push('"'),
-            Some('n') => decoded.push('\n'),
-            Some('r') => decoded.push('\r'),
-            Some('t') => decoded.push('\t'),
-            Some('0') => decoded.push('\0'),
-            Some('u') => {
-                let hex: String = characters.clone().take(4).collect();
-                if hex.chars().count() == 4 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
-                    if let Some(decoded_char) =
-                        u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
-                    {
-                        decoded.push(decoded_char);
-                        for _ in 0..4 {
-                            characters.next();
-                        }
-                        continue;
-                    }
-                }
-                // Malformed/unknown \u escape: keep verbatim.
-                decoded.push('\\');
-                decoded.push('u');
-            }
-            Some(other) => {
-                decoded.push('\\');
-                decoded.push(other);
-            }
-            None => decoded.push('\\'),
-        }
-    }
-    normalize_line_endings(&decoded)
 }
 
 /// Splits a flow sequence's inner text (`[...]` with the brackets already
@@ -395,7 +332,7 @@ fn parse_value_at(s: &str, depth: usize) -> FmValue {
     }
     if s.len() >= 2 {
         if let Some(inner) = s.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
-            return FmValue::Str(decode_quoted_string(inner));
+            return FmValue::Str(waml_syntax::decode_double_quoted_body(inner));
         }
         if let Some(inner) = s.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')) {
             return FmValue::Str(inner.replace("''", "'"));
@@ -427,15 +364,30 @@ fn parse_core_number(s: &str) -> f64 {
         ".nan" => return f64::NAN,
         _ => {}
     }
+    // Radix integers: the exact `i64` path first, then a digit fold for a
+    // literal too large for `i64` (`0xFFFFFFFFFFFFFFFFF`). Folding — rather
+    // than the old `unwrap_or(0.0)` — keeps the magnitude instead of silently
+    // rewriting the value as `0` on the next save.
     if let Some(hex) = s.strip_prefix("0x") {
         return i64::from_str_radix(hex, 16)
             .map(|n| n as f64)
-            .unwrap_or(0.0);
+            .unwrap_or_else(|_| fold_radix_digits(hex, 16.0));
     }
     if let Some(oct) = s.strip_prefix("0o") {
-        return i64::from_str_radix(oct, 8).map(|n| n as f64).unwrap_or(0.0);
+        return i64::from_str_radix(oct, 8)
+            .map(|n| n as f64)
+            .unwrap_or_else(|_| fold_radix_digits(oct, 8.0));
     }
     s.parse::<f64>().unwrap_or(0.0)
+}
+
+/// Accumulates already-validated radix digits into an `f64`. Loses precision
+/// past 2^53 (as any `f64` must) but never the magnitude, and never fails —
+/// the classifier guaranteed every byte is a digit of this radix.
+fn fold_radix_digits(digits: &str, radix: f64) -> f64 {
+    digits.chars().fold(0.0f64, |acc, c| {
+        acc * radix + f64::from(c.to_digit(radix as u32).unwrap_or(0))
+    })
 }
 
 pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Option<Frontmatter> {
@@ -459,30 +411,6 @@ pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Opt
         None => Vec::new(),
     };
     Some(Frontmatter { entries })
-}
-
-/// Minimal single/double-quoted scalar decoding for a token straight off the
-/// tree (still carries its surrounding quotes, unlike the value-position
-/// strings `parse_value`/`decode_quoted_string` are handed).
-fn decode_quoted_scalar(raw: &str) -> String {
-    let bytes = raw.as_bytes();
-    if bytes.len() < 2 {
-        return raw.to_string();
-    }
-    // An unterminated quoted scalar (already flagged by
-    // `UnterminatedQuotedScalar`) has no closing quote byte to strip — only
-    // peel the opening quote so a multi-byte final character stays intact.
-    let closed = matches!(bytes[bytes.len() - 1], b'\'' | b'"') && bytes.len() > 1;
-    let inner = if closed {
-        &raw[1..raw.len() - 1]
-    } else {
-        &raw[1..]
-    };
-    match bytes[0] {
-        b'\'' => inner.replace("''", "'"),
-        b'"' => decode_quoted_string(inner),
-        _ => raw.to_string(),
-    }
 }
 
 /// Reads every `FrontmatterEntry` child of a `FrontmatterMapping` node into
@@ -516,7 +444,7 @@ fn map_entries_from_mapping(
         let key_text = match key_token.kind() {
             OkfMarkdownSyntaxKind::FrontmatterKey => key_token.text().write_to_string(),
             OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken => {
-                decode_quoted_scalar(&key_token.text().write_to_string())
+                waml_syntax::decode_quoted_scalar(&key_token.text().write_to_string())
             }
             // Comment-only / blank-line entries, or a `BadToken` recovery
             // entry: no key to read.
@@ -630,7 +558,7 @@ fn value_from_elements(
     for element in elements {
         if let SyntaxElement::Token(t) = element {
             if t.kind() == OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken {
-                return Some(FmValue::Str(decode_quoted_scalar(
+                return Some(FmValue::Str(waml_syntax::decode_quoted_scalar(
                     &t.text().write_to_string(),
                 )));
             }
@@ -806,6 +734,26 @@ fn flow_item_needs_quote(s: &str) -> bool {
     scalar_needs_quote(s) || s.contains(',') || s.contains('[') || s.contains(']')
 }
 
+/// True when a bare `key` would not read back as the same key. Keys reach the
+/// writer from `Concept.extra` wire JSON, not just from authored source, so
+/// this must hold for arbitrary text: an empty key, one with leading/trailing
+/// space, a structural first character, or one carrying `:`, `#`, or a line
+/// break would otherwise re-parse as different structure.
+fn key_needs_quote(key: &str) -> bool {
+    scalar_needs_quote(key) || key.contains(':') || key.contains('#')
+}
+
+/// Renders a mapping key, quoting (and escaping) it when bare text would not
+/// survive the round trip. The reader decodes a quoted key back to its text
+/// (`decode_quoted_scalar`), so quoting is always safe.
+fn render_key(key: &str) -> String {
+    if key_needs_quote(key) {
+        format!("\"{}\"", escape_quoted_string(key))
+    } else {
+        key.to_string()
+    }
+}
+
 fn render_value(v: &FmValue) -> String {
     render_value_at(v, 0)
 }
@@ -814,7 +762,16 @@ fn render_value_at(v: &FmValue, depth: usize) -> String {
     match v {
         FmValue::Null => "null".to_string(),
         FmValue::Num(n) => {
-            if n.fract() == 0.0 {
+            // `.inf`/`.nan` have no plain-decimal form: rendering them via
+            // `{n}` emits `inf`/`NaN`, which reparse as strings.
+            if n.is_nan() {
+                ".nan".to_string()
+            } else if n.is_infinite() {
+                if *n > 0.0 { ".inf" } else { "-.inf" }.to_string()
+            } else if n.fract() == 0.0 && n.abs() < 9.0e18 {
+                // Guarded: an `as i64` cast saturates, which would rewrite a
+                // magnitude past `i64` (reachable from a big hex literal) as
+                // `i64::MAX`.
                 format!("{}", *n as i64)
             } else {
                 format!("{n}")
@@ -870,15 +827,16 @@ fn render_map_block(entries: &[(String, FmValue)], indent: usize) -> String {
     for (k, v) in entries {
         match v {
             FmValue::Map(inner) if inner.is_empty() => {
-                out.push_str(&format!("{pad}{k}:\n"));
+                out.push_str(&format!("{pad}{}:\n", render_key(k)));
             }
             FmValue::Map(inner) => {
-                out.push_str(&format!("{pad}{k}:\n"));
+                out.push_str(&format!("{pad}{}:\n", render_key(k)));
                 out.push_str(&render_map_block(inner, indent + 1));
             }
             other => {
                 out.push_str(&format!(
-                    "{pad}{k}: {}\n",
+                    "{pad}{}: {}\n",
+                    render_key(k),
                     render_value_at(other, indent + 1)
                 ));
             }
@@ -925,7 +883,7 @@ fn render_entry(out: &mut String, key: &str, value: &FmValue, indent: usize) {
     let pad = "  ".repeat(indent);
     match value {
         FmValue::Map(entries) => {
-            out.push_str(&format!("{pad}{key}:\n"));
+            out.push_str(&format!("{pad}{}:\n", render_key(key)));
             // An empty map has no block form and no flow form; the reader
             // maps a valueless key back to `Null`, so this deliberately
             // round-trips as Null rather than Map([]).
@@ -934,14 +892,15 @@ fn render_entry(out: &mut String, key: &str, value: &FmValue, indent: usize) {
             }
         }
         FmValue::List(items) if items.iter().any(|item| matches!(item, FmValue::Map(_))) => {
-            out.push_str(&format!("{pad}{key}:\n"));
+            out.push_str(&format!("{pad}{}:\n", render_key(key)));
             for item in items {
                 render_block_sequence_item(out, item, indent + 1);
             }
         }
         other => {
             out.push_str(&format!(
-                "{pad}{key}: {}\n",
+                "{pad}{}: {}\n",
+                render_key(key),
                 render_value_at(other, indent + 1)
             ));
         }
@@ -979,17 +938,21 @@ fn render_block_sequence_item(out: &mut String, item: &FmValue, indent: usize) {
                         // that would emit a valueless key with nothing
                         // after it, silently turning `List([])` into `Null`.
                         FmValue::Map(_) => {
-                            out.push_str(&format!("{pad}- {k}:\n"));
+                            out.push_str(&format!("{pad}- {}:\n", render_key(k)));
                             render_nested_under(out, v, indent + 2);
                         }
                         FmValue::List(items)
                             if items.iter().any(|item| matches!(item, FmValue::Map(_))) =>
                         {
-                            out.push_str(&format!("{pad}- {k}:\n"));
+                            out.push_str(&format!("{pad}- {}:\n", render_key(k)));
                             render_nested_under(out, v, indent + 2);
                         }
                         scalar => {
-                            out.push_str(&format!("{pad}- {k}: {}\n", render_value(scalar)));
+                            out.push_str(&format!(
+                                "{pad}- {}: {}\n",
+                                render_key(k),
+                                render_value(scalar)
+                            ));
                         }
                     }
                 } else {
@@ -1334,7 +1297,7 @@ mod tests {
     }
 
     #[test]
-    fn hash_after_space_is_safe_quoted_at_top_level_but_not_yet_inside_a_flow_list() {
+    fn hash_after_space_is_safe_quoted_at_top_level_and_inside_a_flow_list() {
         // A quoted top-level scalar containing " #" round-trips fine: the
         // tokenizer only special-cases whitespace-then-# for BARE (unquoted)
         // scalars, and correctly stays inside a quoted run.
@@ -1345,23 +1308,102 @@ mod tests {
         let source = format!("---\n{rendered}\n---\n");
         assert_eq!(parse_frontmatter_for_test(&source), fm);
 
-        // KNOWN PARSER GAP (waml-syntax, not this crate): the flow-sequence
-        // token scan (`[...]`) is not quote-aware for the same whitespace-#
-        // cutoff, so `["  #"]` truncates the token mid-quote. Documented and
-        // excluded from the round-trip proptest by `flow_avoids_hash_bug`
-        // rather than silently narrowing the generator's comment; a future
-        // task should make the bracket-run scan quote-aware and delete this
-        // exclusion.
+        // And inside a flow list: the token scan is quote-aware for the
+        // whitespace-# cutoff too, so `[" #"]` keeps the whole run.
         let fm2 = Frontmatter {
             entries: vec![("a".into(), FmValue::List(vec![FmValue::Str(" #".into())]))],
         };
         let rendered2 = render_frontmatter(&fm2);
         let source2 = format!("---\n{rendered2}\n---\n");
-        assert_ne!(
-            parse_frontmatter_for_test(&source2),
-            fm2,
-            "if this now passes, the parser gap is fixed — remove flow_avoids_hash_bug's exclusion"
-        );
+        assert_eq!(parse_frontmatter_for_test(&source2), fm2);
+    }
+
+    #[test]
+    fn block_sequence_item_that_is_a_flow_list_with_a_colon_round_trips() {
+        // `- [": "]` must read as one flow-list item, not as a `- key: value`
+        // map entry: the dash line's key scan stops at a `[`.
+        let fm = Frontmatter {
+            entries: vec![(
+                "items".into(),
+                FmValue::List(vec![
+                    FmValue::List(vec![FmValue::Str(": ".into())]),
+                    FmValue::Map(vec![("k".into(), FmValue::Num(1.0))]),
+                ]),
+            )],
+        };
+        let rendered = render_frontmatter(&fm);
+        let source = format!("---\n{rendered}\n---\n");
+        assert_eq!(parse_frontmatter_for_test(&source), fm, "{rendered}");
+    }
+
+    #[test]
+    fn structural_keys_are_quoted_and_round_trip() {
+        for key in [
+            "",
+            "a: b",
+            "#lead",
+            "- dash",
+            " padded ",
+            "with\nnewline",
+            "true",
+            "0x10",
+            "[bracket]",
+            "trailing:",
+        ] {
+            let fm = Frontmatter {
+                entries: vec![(key.to_string(), FmValue::Str("v".into()))],
+            };
+            let rendered = render_frontmatter(&fm);
+            let source = format!("---\n{rendered}\n---\n");
+            assert_eq!(
+                parse_frontmatter_for_test(&source),
+                fm,
+                "key {key:?} rendered as {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_map_keys_are_quoted_and_round_trip() {
+        let fm = Frontmatter {
+            entries: vec![(
+                "meta".into(),
+                FmValue::Map(vec![("a: b".into(), FmValue::Str("v".into()))]),
+            )],
+        };
+        let rendered = render_frontmatter(&fm);
+        let source = format!("---\n{rendered}\n---\n");
+        assert_eq!(parse_frontmatter_for_test(&source), fm, "{rendered}");
+    }
+
+    #[test]
+    fn out_of_range_radix_literal_keeps_its_magnitude() {
+        // `i64::from_str_radix` overflows here; the value must not collapse
+        // to 0 (which the next save would then write out as `0`).
+        let parsed = parse_value("0xFFFFFFFFFFFFFFFFF");
+        let FmValue::Num(n) = parsed else {
+            panic!("expected a number, got {parsed:?}");
+        };
+        assert!(n > 2.9e20 && n < 3.0e20, "got {n}");
+        // And it survives a save/reload rather than saturating to i64::MAX.
+        let fm = Frontmatter {
+            entries: vec![("n".into(), FmValue::Num(n))],
+        };
+        let rendered = render_frontmatter(&fm);
+        let source = format!("---\n{rendered}\n---\n");
+        assert_eq!(parse_frontmatter_for_test(&source), fm, "{rendered}");
+    }
+
+    #[test]
+    fn infinities_render_in_yaml_core_form() {
+        for n in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let fm = Frontmatter {
+                entries: vec![("n".into(), FmValue::Num(n))],
+            };
+            let rendered = render_frontmatter(&fm);
+            let source = format!("---\n{rendered}\n---\n");
+            assert_eq!(parse_frontmatter_for_test(&source), fm, "{rendered}");
+        }
     }
 
     #[test]
@@ -1496,6 +1538,19 @@ mod tests {
 
     use proptest::prelude::*;
 
+    /// Mapping keys as they actually arrive: mostly identifier-shaped, but
+    /// `Concept.extra` wire JSON can carry anything — empty, padded, or
+    /// carrying `:`/`#`/a line break. A carriage return is excluded only
+    /// because quoted decoding normalizes line endings (a CR key decodes back
+    /// as LF), which is the documented scalar rule, not a key bug.
+    fn key_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-z][a-z0-9_]{0,8}",
+            "[ -~\\n]{0,6}",
+            "(true|null|0x10|- x|#c|a: b)",
+        ]
+    }
+
     fn fm_value_strategy() -> impl Strategy<Value = FmValue> {
         let leaf = prop_oneof![
             Just(FmValue::Null),
@@ -1533,7 +1588,7 @@ mod tests {
         leaf.prop_recursive(4, 48, 8, |inner| {
             prop_oneof![
                 prop::collection::vec(inner.clone(), 0..6).prop_map(FmValue::List),
-                prop::collection::vec(("[a-z][a-z0-9_]{0,8}", inner), 0..4).prop_map(FmValue::Map),
+                prop::collection::vec((key_strategy(), inner), 0..4).prop_map(FmValue::Map),
             ]
         })
         // An empty `Map` has no representable form (block form needs at
@@ -1591,70 +1646,6 @@ mod tests {
             }
             FmValue::List(items) => items.iter().all(keys_unique),
             _ => true,
-        }
-    }
-
-    /// True unless `v` contains a `Str` with " #" (space then `#`) somewhere
-    /// that will render INSIDE a flow `[...]` run. KNOWN PARSER GAP: the
-    /// bracket-run token scan is not quote-aware for the whitespace-`#`
-    /// comment cutoff the way the top-level bare-scalar scan is — see
-    /// `hash_after_space_is_safe_quoted_at_top_level_but_not_yet_inside_a_flow_list`.
-    /// `in_flow` tracks whether the CURRENT value renders inside brackets:
-    /// true for every item of a flow (non-block) `List`; false for a
-    /// top-level value, a `Map` entry's value, or a block-sequence item —
-    /// each of those starts its own rendering context, which is flow again
-    /// only if it is itself a flow `List`.
-    fn flow_avoids_hash_bug(v: &FmValue, in_flow: bool) -> bool {
-        match v {
-            FmValue::Str(s) => !in_flow || !s.contains(" #"),
-            FmValue::List(items) => {
-                let is_block = items.iter().any(|item| matches!(item, FmValue::Map(_)));
-                items
-                    .iter()
-                    .all(|item| flow_avoids_hash_bug(item, !is_block))
-            }
-            FmValue::Map(entries) => entries.iter().all(|(_, v)| flow_avoids_hash_bug(v, false)),
-            _ => true,
-        }
-    }
-
-    /// True unless `v` contains a block-sequence item that is itself a
-    /// nested `List` (so it renders as its own flow `[...]` run on the dash
-    /// line) whose flow text contains a `:` anywhere, including inside a
-    /// quoted string. KNOWN PARSER GAP: a block-sequence item's line is
-    /// re-scanned for the `- key: value` shorthand without being
-    /// quote-aware, so `- [": "]` misreads the quoted colon as the item's
-    /// own key separator instead of one flow-list item — mirrors
-    /// `flow_avoids_hash_bug`'s already-documented gap for `" #"`. Only
-    /// matters once a `List` becomes a block sequence (contains at least
-    /// one `Map` item, so its OTHER items are dash lines, not one shared
-    /// flow run).
-    fn block_sequence_avoids_colon_bug(v: &FmValue) -> bool {
-        match v {
-            FmValue::List(items) => {
-                let is_block = items.iter().any(|item| matches!(item, FmValue::Map(_)));
-                items.iter().all(|item| {
-                    if is_block && matches!(item, FmValue::List(_)) && value_contains_colon(item) {
-                        return false;
-                    }
-                    block_sequence_avoids_colon_bug(item)
-                })
-            }
-            FmValue::Map(entries) => entries
-                .iter()
-                .all(|(_, v)| block_sequence_avoids_colon_bug(v)),
-            _ => true,
-        }
-    }
-
-    fn value_contains_colon(v: &FmValue) -> bool {
-        match v {
-            FmValue::Str(s) => s.contains(':'),
-            FmValue::List(items) => items.iter().any(value_contains_colon),
-            FmValue::Map(entries) => entries
-                .iter()
-                .any(|(k, v)| k.contains(':') || value_contains_colon(v)),
-            _ => false,
         }
     }
 
@@ -1762,10 +1753,6 @@ mod tests {
                     "Map (at any depth) is only representable under a key; see rendered_frontmatter_entries_reparse",
                     |v| !value_contains_map(v),
                 )
-                .prop_filter(
-                    "known parser gap: a quoted flow-list item containing ' #' truncates (see flow_avoids_hash_bug)",
-                    |v| flow_avoids_hash_bug(v, false),
-                )
         ) {
             let rendered = render_value(&v);
             prop_assert_eq!(parse_value(&rendered), v.clone(), "rendered as {:?}", rendered);
@@ -1776,7 +1763,7 @@ mod tests {
         /// forms a per-line split cannot recover), back to the same entries.
         #[test]
         fn rendered_frontmatter_entries_reparse(
-            entries in prop::collection::vec(("[a-z][a-z0-9_]{0,8}", fm_value_strategy()), 0..5)
+            entries in prop::collection::vec((key_strategy(), fm_value_strategy()), 0..5)
                 // Duplicate top-level keys collapse to last-wins on reparse
                 // (by design — see `map_entries_from_mapping`), which is a
                 // different, already-covered contract; keep this property to
@@ -1792,14 +1779,6 @@ mod tests {
                 .prop_filter("nested map keys must be unique too", |entries| {
                     entries.iter().all(|(_, v)| keys_unique(v))
                 })
-                .prop_filter(
-                    "known parser gap: a quoted flow-list item containing ' #' truncates (see flow_avoids_hash_bug)",
-                    |entries| entries.iter().all(|(_, v)| flow_avoids_hash_bug(v, false)),
-                )
-                .prop_filter(
-                    "known parser gap: a block-sequence item that is a nested flow list containing ':' misreads as a map entry (see block_sequence_avoids_colon_bug)",
-                    |entries| entries.iter().all(|(_, v)| block_sequence_avoids_colon_bug(v)),
-                )
         ) {
             let fm = Frontmatter { entries: entries.clone() };
             let rendered = render_frontmatter(&fm);

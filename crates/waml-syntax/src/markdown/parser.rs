@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::{
@@ -388,7 +389,12 @@ struct FmFrame {
     kind: FmContainerKind,
     indent: usize,
     children: Vec<GreenElement<OkfMarkdownLanguage>>,
-    seen_keys: Vec<String>,
+    /// DECODED keys seen in this frame, for the duplicate-key diagnostic —
+    /// decoded (not raw source text) so `'a': 1` and `a: 2` are recognized
+    /// as the same key, matching the model's last-wins collapse. A set, not
+    /// a list: a linear scan per entry made frontmatter parsing quadratic in
+    /// key count, which a hostile document can drive.
+    seen_keys: HashSet<String>,
     pending: Option<FmPending>,
 }
 
@@ -398,13 +404,14 @@ impl FmFrame {
             kind,
             indent,
             children: Vec::new(),
-            seen_keys: Vec::new(),
+            seen_keys: HashSet::new(),
             pending: None,
         }
     }
 
-    fn has_key(&self, key: &str) -> bool {
-        self.seen_keys.iter().any(|seen| seen == key)
+    /// Records `key` and reports whether this frame already held it.
+    fn insert_key(&mut self, key: String) -> bool {
+        !self.seen_keys.insert(key)
     }
 }
 
@@ -528,18 +535,75 @@ fn scan_value(source: &str, start: usize, limit: usize) -> ValueScan {
             invalid_escape,
         };
     }
+    // Bare run, but flow-aware: a `[...]` run is a flow sequence whose items
+    // may be quoted, and a ` #` or `: ` INSIDE such a quoted item is content,
+    // not a comment cutoff or a mapping indicator. The quote/bracket
+    // bookkeeping mirrors `split_flow_items` in the model crate, which reads
+    // the token back: a quote only opens a quoted item at an item start
+    // (string start, after a comma, or right after an opening bracket).
     let mut at = start;
     let mut comment_start = None;
     let mut malformed = false;
+    let mut depth: i32 = 0;
+    let mut at_item_start = false;
     while at < limit {
-        if bytes[at] == b'#' && at > start && bytes[at - 1] == b' ' {
+        let byte = bytes[at];
+        if byte == b' ' {
+            at += 1;
+            continue;
+        }
+        if depth > 0 && at_item_start && (byte == b'\'' || byte == b'"') {
+            let quote = byte;
+            at += 1;
+            while at < limit {
+                if bytes[at] == quote {
+                    if quote == b'\'' && at + 1 < limit && bytes[at + 1] == b'\'' {
+                        at += 2;
+                        continue;
+                    }
+                    at += 1;
+                    break;
+                }
+                if quote == b'"' && bytes[at] == b'\\' && at + 1 < limit {
+                    at += 2;
+                    continue;
+                }
+                at += 1;
+            }
+            at_item_start = false;
+            continue;
+        }
+        if depth == 0 && byte == b'#' && at > start && bytes[at - 1] == b' ' {
             comment_start = Some(at);
             break;
         }
-        if bytes[at] == b':' && at + 1 < limit && bytes[at + 1] == b' ' {
-            malformed = true;
+        match byte {
+            b'[' => {
+                depth += 1;
+                at_item_start = true;
+                at += 1;
+            }
+            b']' => {
+                depth -= 1;
+                at_item_start = false;
+                at += 1;
+            }
+            b',' if depth > 0 => {
+                at_item_start = true;
+                at += 1;
+            }
+            b':' => {
+                if depth == 0 && at + 1 < limit && bytes[at + 1] == b' ' {
+                    malformed = true;
+                }
+                at_item_start = false;
+                at += 1;
+            }
+            _ => {
+                at_item_start = false;
+                at += 1;
+            }
         }
-        at += 1;
     }
     let raw_end = comment_start.unwrap_or(at);
     let value_end = trim_horizontal_end(source, start, raw_end);
@@ -597,6 +661,12 @@ fn parse_mapping_key(source: &str, start: usize, limit: usize) -> Option<FmKeyMa
                 key_kind: OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken,
             });
         }
+        return None;
+    }
+    // A `[` opens a flow sequence — never a plain key (YAML forbids an
+    // indicator there). Scanning on would find a `:` inside a quoted flow
+    // item and misread `- [": "]` as a `- key: value` entry.
+    if bytes[start] == b'[' {
         return None;
     }
     let mut at = start;
@@ -817,9 +887,12 @@ fn push_mapping_entry<I: Iterator<Item = (usize, usize)>>(
             OkfMarkdownSyntaxKind::ColonToken,
         )?),
     ];
-    let key_text = source[key.key_start..key.key_end].to_owned();
+    // Compare DECODED key text: `'a': 1` and `a: 2` name the same key, and
+    // the model's reader collapses them last-wins — so the diagnostic has to
+    // fire, or an entry vanishes silently.
+    let key_text = super::scalar::decode_quoted_scalar(&source[key.key_start..key.key_end]);
     let frame = stack.last_mut().expect("stack is never empty");
-    let dup = frame.has_key(&key_text);
+    let dup = frame.insert_key(key_text);
     if dup {
         malformed = true;
         diagnostics.push(diagnostic(
@@ -829,7 +902,6 @@ fn push_mapping_entry<I: Iterator<Item = (usize, usize)>>(
             "duplicate frontmatter key",
         ));
     }
-    frame.seen_keys.push(key_text);
 
     let value_start = skip_horizontal(source, key.colon + 1, line.significant_end);
     if let Some(header_len) = block_scalar_header_len(&source[value_start..line.significant_end]) {
@@ -1326,6 +1398,36 @@ fn build_frontmatter_mapping(
                     indent_end,
                     "frontmatter indentation does not match an open block",
                 ));
+                let entry = bad_line_entry(
+                    factory,
+                    text,
+                    source,
+                    line,
+                    indent_end,
+                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                )?;
+                stack
+                    .last_mut()
+                    .expect("stack is never empty")
+                    .children
+                    .push(GreenElement::Node(entry));
+                continue;
+            }
+            // Nesting cap, mirroring `MD_MAX_CONTAINER_DEPTH` for markdown
+            // containers: every frame becomes one more level of the green
+            // tree, and reading or dropping that tree recurses. Without the
+            // cap a document of progressively indented `k:` lines — cheap to
+            // write, cheaper still to hit on wasm's 1MB stack — overflows the
+            // stack instead of producing a diagnostic.
+            if stack.len() >= super::MD_MAX_CONTAINER_DEPTH {
+                clean = false;
+                diagnostics.push(diagnostic(
+                    OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                    line.start,
+                    indent_end,
+                    "frontmatter nesting is too deep",
+                ));
+                finalize_pending_with_null(factory, &mut stack)?;
                 let entry = bad_line_entry(
                     factory,
                     text,

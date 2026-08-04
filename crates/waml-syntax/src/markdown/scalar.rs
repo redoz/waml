@@ -78,10 +78,110 @@ fn is_float(s: &str) -> bool {
     }
 }
 
+/// Normalizes `\r\n` and lone `\r` to `\n`, so a decoded scalar has one
+/// line-ending shape regardless of how the source was saved.
+pub fn normalize_line_endings(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\r' {
+            if characters.peek() == Some(&'\n') {
+                characters.next();
+            }
+            normalized.push('\n');
+        } else {
+            normalized.push(character);
+        }
+    }
+    normalized
+}
+
+/// Decodes a double-quoted scalar's INNER text (no surrounding quotes).
+/// Understands `\\ \" \n \r \t \0` and `\uXXXX`; an unrecognized escape is
+/// kept verbatim (backslash and the following character/digits preserved) —
+/// the parser side flags this with `InvalidEscapeSequence` but no reader
+/// ever panics on it.
+pub fn decode_double_quoted_body(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        match characters.next() {
+            Some('\\') => decoded.push('\\'),
+            Some('"') => decoded.push('"'),
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some('t') => decoded.push('\t'),
+            Some('0') => decoded.push('\0'),
+            Some('u') => {
+                let hex: String = characters.clone().take(4).collect();
+                if hex.chars().count() == 4 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    if let Some(decoded_char) =
+                        u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+                    {
+                        decoded.push(decoded_char);
+                        for _ in 0..4 {
+                            characters.next();
+                        }
+                        continue;
+                    }
+                }
+                // Malformed/unknown \u escape: keep verbatim.
+                decoded.push('\\');
+                decoded.push('u');
+            }
+            Some(other) => {
+                decoded.push('\\');
+                decoded.push(other);
+            }
+            None => decoded.push('\\'),
+        }
+    }
+    normalize_line_endings(&decoded)
+}
+
+/// Decodes a quoted scalar token straight off the tree — `raw` still carries
+/// its surrounding quotes. A token with no opening quote is returned as-is,
+/// and an unterminated one (already flagged `UnterminatedQuotedScalar`) only
+/// has its opening quote peeled. Shared so the parser's duplicate-key check
+/// and the model's key/value reader agree on what a key IS.
+pub fn decode_quoted_scalar(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    if bytes.len() < 2 {
+        return raw.to_string();
+    }
+    if !matches!(bytes[0], b'\'' | b'"') {
+        return raw.to_string();
+    }
+    let closed = bytes[bytes.len() - 1] == bytes[0];
+    let inner = if closed {
+        &raw[1..raw.len() - 1]
+    } else {
+        &raw[1..]
+    };
+    match bytes[0] {
+        b'\'' => inner.replace("''", "'"),
+        _ => decode_double_quoted_body(inner),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use FrontmatterScalarKind::*;
+
+    #[test]
+    fn quoted_scalar_decoding_round_trips_key_shapes() {
+        assert_eq!(decode_quoted_scalar("'a'"), "a");
+        assert_eq!(decode_quoted_scalar("\"a\\nb\""), "a\nb");
+        assert_eq!(decode_quoted_scalar("''''"), "'");
+        assert_eq!(decode_quoted_scalar("bare"), "bare");
+        // Unterminated: only the opening quote is peeled.
+        assert_eq!(decode_quoted_scalar("\"ab"), "ab");
+    }
 
     #[test]
     fn yaml_12_core_scalar_table() {
