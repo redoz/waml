@@ -21,6 +21,11 @@ pub enum DocumentCommand {
 pub struct DocumentHost {
     tabs: OpenTabs,
     views: HashMap<LiveId, Box<dyn DocView>>,
+    /// Last anchor (selection, camera, scroll) each tab had when it stopped
+    /// being active, so switching back to a tab restores where the user left
+    /// it instead of resetting to a blank view. Entries are evicted when
+    /// their tab closes.
+    anchors: HashMap<LiveId, ViewAnchor>,
 }
 
 type RemovedViews = Vec<(LiveId, Box<dyn DocView>)>;
@@ -33,6 +38,7 @@ enum ActiveReconciliation {
 impl DocumentHost {
     fn replace_tabs_for_session(&mut self, tabs: OpenTabs) -> RemovedViews {
         let removed = self.views.drain().collect();
+        self.anchors.clear();
         self.tabs = tabs;
         self.reconcile_registry();
         removed
@@ -46,6 +52,9 @@ impl DocumentHost {
             .copied()
             .filter(|id| !open.contains(id))
             .collect();
+        for id in &stale {
+            self.anchors.remove(id);
+        }
         stale
             .into_iter()
             .filter_map(|id| self.views.remove(&id).map(|view| (id, view)))
@@ -262,8 +271,12 @@ impl DocumentHost {
         let new_active = self.tabs.active;
         if old_active != new_active {
             if let Some((_, view)) = removed.iter_mut().find(|(id, _)| *id == old_active) {
+                let anchor = view.capture_anchor(&body);
+                self.anchors.insert(old_active, anchor);
                 view.on_deactivate(cx, &body);
             } else if let Some(view) = self.views.get_mut(&old_active) {
+                let anchor = view.capture_anchor(&body);
+                self.anchors.insert(old_active, anchor);
                 view.on_deactivate(cx, &body);
             }
             if let Some(view) = self.views.get_mut(&new_active) {
@@ -272,6 +285,14 @@ impl DocumentHost {
         }
         self.refresh_tabs(cx, ui);
         self.sync_active(cx, ui, session);
+        if old_active != new_active {
+            if let Some(anchor) = self.anchors.get(&new_active).cloned() {
+                let snapshot = session.snapshot();
+                if let Some(view) = self.views.get_mut(&new_active) {
+                    view.restore_anchor(cx, &body, snapshot.borrowed().into(), &anchor);
+                }
+            }
+        }
     }
 
     pub fn transition(
@@ -1111,5 +1132,208 @@ mod tests {
 
         assert!(host.tabs().iter().all(|tab| tab.id != second_id));
         assert!(!host.views.contains_key(&second_id));
+    }
+
+    struct AnchorProbeView {
+        state: Rc<RefCell<ViewAnchor>>,
+    }
+
+    impl DocView for AnchorProbeView {
+        fn identity(&self) -> DocViewIdentity {
+            DocViewIdentity::GenericOkf
+        }
+
+        fn sync(&mut self, _: &mut Cx, _: &BodyWidgets, _: ViewData<'_>) {
+            // Mirrors ClassDiagramView::sync clearing selection/camera on
+            // every sync -- the cached-anchor restore must run after this.
+            *self.state.borrow_mut() = ViewAnchor::None;
+        }
+
+        fn handle(
+            &mut self,
+            _: &mut Cx,
+            _: &BodyWidgets,
+            _: &Actions,
+            _: ViewData<'_>,
+        ) -> ViewOutcome {
+            ViewOutcome::default()
+        }
+
+        fn chrome(&self) -> BodyChrome {
+            BodyChrome::HIDDEN
+        }
+
+        fn capture_anchor(&self, _: &BodyWidgets) -> ViewAnchor {
+            self.state.borrow().clone()
+        }
+
+        fn restore_anchor(
+            &mut self,
+            _: &mut Cx,
+            _: &BodyWidgets,
+            _: ViewData<'_>,
+            anchor: &ViewAnchor,
+        ) -> bool {
+            *self.state.borrow_mut() = anchor.clone();
+            true
+        }
+    }
+
+    fn anchor_document(key: &str, state: Rc<RefCell<ViewAnchor>>) -> OpenDocument {
+        OpenDocument {
+            tab_id: LiveId::from_str(&format!("anchor-{key}")),
+            concept_id: key.into(),
+            kind: crate::view_history::DocumentKind::Primary,
+            title: key.into(),
+            presentation: DocumentPresentation {
+                icon: Icon::StickyNote,
+                accent: None,
+                category: NavCategory::Class,
+            },
+            view: Box::new(AnchorProbeView { state }),
+        }
+    }
+
+    fn sample_anchor(tag: &str) -> ViewAnchor {
+        ViewAnchor::Diagram {
+            selected_key: Some(tag.into()),
+            camera: crate::view_history::DiagramCameraAnchor {
+                pan_x: 1.0,
+                pan_y: 2.0,
+                zoom: 3.0,
+            },
+        }
+    }
+
+    fn anchor_test_env() -> (Cx, WidgetRef, EditorSession) {
+        (
+            Cx::new(Box::new(|_, _| {})),
+            WidgetRef::empty(),
+            EditorSession::default(),
+        )
+    }
+
+    #[test]
+    fn switching_away_and_back_restores_the_departing_tabs_last_anchor() {
+        let mut host = DocumentHost::default();
+        let (mut cx, ui, session) = anchor_test_env();
+
+        let state_a = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("a", state_a.clone()),
+                persistent: true,
+            },
+        );
+        let a_id = host.active_id();
+        let anchor_a = sample_anchor("a-selection");
+        *state_a.borrow_mut() = anchor_a.clone();
+
+        let state_b = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("b", state_b.clone()),
+                persistent: true,
+            },
+        );
+        assert_ne!(host.active_id(), a_id);
+
+        host.transition(&mut cx, &ui, &session, DocumentCommand::Activate(a_id));
+
+        assert_eq!(host.active_id(), a_id);
+        assert_eq!(*state_a.borrow(), anchor_a);
+    }
+
+    #[test]
+    fn an_explicit_incoming_anchor_wins_over_the_cached_one() {
+        let mut host = DocumentHost::default();
+        let (mut cx, ui, session) = anchor_test_env();
+
+        let state_a = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("a", state_a.clone()),
+                persistent: true,
+            },
+        );
+        let a_id = host.active_id();
+        let cached_anchor = sample_anchor("cached");
+        *state_a.borrow_mut() = cached_anchor.clone();
+
+        let state_b = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("b", state_b),
+                persistent: true,
+            },
+        );
+
+        // Activate A the same way a location restore does, then apply an
+        // explicit anchor afterward -- it must win over the cached one.
+        host.transition(&mut cx, &ui, &session, DocumentCommand::Activate(a_id));
+        assert_eq!(*state_a.borrow(), cached_anchor);
+        let explicit_anchor = sample_anchor("explicit");
+        assert!(host.restore_active_anchor(&mut cx, &ui, &session, &explicit_anchor));
+
+        assert_eq!(*state_a.borrow(), explicit_anchor);
+    }
+
+    #[test]
+    fn closing_a_tab_evicts_its_cached_anchor() {
+        let mut host = DocumentHost::default();
+        let (mut cx, ui, session) = anchor_test_env();
+
+        let state_a = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("a", state_a.clone()),
+                persistent: true,
+            },
+        );
+        let a_id = host.active_id();
+        *state_a.borrow_mut() = sample_anchor("stale");
+
+        let state_b = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("b", state_b),
+                persistent: true,
+            },
+        );
+        assert!(host.anchors.contains_key(&a_id));
+
+        host.transition(&mut cx, &ui, &session, DocumentCommand::Close(a_id));
+        assert!(!host.anchors.contains_key(&a_id));
+
+        // Reopening "a" under a fresh tab id must not see the stale anchor.
+        let state_a2 = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("a", state_a2.clone()),
+                persistent: true,
+            },
+        );
+        assert_eq!(*state_a2.borrow(), ViewAnchor::None);
     }
 }
