@@ -166,16 +166,20 @@ fn frontmatter_creation_at_zero_is_named() {
 fn edit_inside_block_scalar_literal_stays_incremental() {
     // Shaped after fm_fence_inside_block_scalar.md: the literal block's own
     // "---" line must not be mistaken for the frontmatter close fence by
-    // either side of `same_frontmatter_fences`.
+    // either side of `same_frontmatter_fences`. The edit starts one column
+    // AFTER the line's leading whitespace (not at it, and not before it) so
+    // `edit_touches_frontmatter_leading_whitespace`'s conservative
+    // "at-or-before the first non-whitespace column" check does not itself
+    // force a full reparse and mask what this test is checking.
     let previous = "---\ndescription: |\n  ---\nkey: value\n---\n\nBody.\n";
-    let start = previous.find("  ---").unwrap() + 2;
-    let next = "---\ndescription: |\n  xxx\nkey: value\n---\n\nBody.\n";
+    let start = previous.find("  ---").unwrap() + 2 + 1;
+    let next = "---\ndescription: |\n  -x-\nkey: value\n---\n\nBody.\n";
     let outcome = exact_oracle(
         previous,
         next,
         &[TextChange {
-            old_range: range(start, start + 3),
-            replacement: Arc::from("xxx"),
+            old_range: range(start, start + 1),
+            replacement: Arc::from("x"),
         }],
     );
     assert!(
@@ -387,23 +391,45 @@ fn invalid_utf8_boundary_is_a_named_full_outcome_with_structure() {
 }
 
 #[test]
-fn safe_frontmatter_boundary_insertions_are_incremental() {
-    for (old, new, at, replacement) in [
-        ("---\na: b\n---\n", "---\nx: y\na: b\n---\n", 4, "x: y\n"),
-        ("---\na: b\n---\n", "---\na: b\n---\nbody\n", 13, "body\n"),
-    ] {
-        assert!(matches!(
-            exact_oracle(
-                old,
-                new,
-                &[TextChange {
-                    old_range: range(at, at),
-                    replacement: Arc::from(replacement)
-                }]
-            ),
-            ReparseOutcome::Incremental { .. }
-        ));
-    }
+fn insertion_outside_frontmatter_range_stays_incremental() {
+    // Appending a new block strictly AFTER the close fence never touches the
+    // frontmatter window, so it stays incremental.
+    let (old, new, at, replacement) = ("---\na: b\n---\n", "---\na: b\n---\nbody\n", 13, "body\n");
+    assert!(matches!(
+        exact_oracle(
+            old,
+            new,
+            &[TextChange {
+                old_range: range(at, at),
+                replacement: Arc::from(replacement)
+            }]
+        ),
+        ReparseOutcome::Incremental { .. }
+    ));
+}
+
+#[test]
+fn inserting_a_new_line_at_frontmatter_content_start_forces_full_reparse() {
+    // Inserting a whole new "key: value\n" line at the very first column of
+    // the frontmatter content is, conservatively, indistinguishable from an
+    // edit that widens the following line's indentation — `at` sits AT the
+    // first non-whitespace column of `a: b`, which
+    // `edit_touches_frontmatter_leading_whitespace` treats as unsafe.
+    let (old, new, at, replacement) = ("---\na: b\n---\n", "---\nx: y\na: b\n---\n", 4, "x: y\n");
+    assert!(matches!(
+        exact_oracle(
+            old,
+            new,
+            &[TextChange {
+                old_range: range(at, at),
+                replacement: Arc::from(replacement)
+            }]
+        ),
+        ReparseOutcome::Full {
+            reason: FullReparseReason::FrontmatterBoundaryChanged,
+            ..
+        }
+    ));
 }
 
 #[test]

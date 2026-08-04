@@ -533,6 +533,73 @@ fn edit_in_sibling_line_keeps_reference_link_in_window() {
     }
 }
 
+const NESTED_FRONTMATTER_BASE: &str = "---\ntitle: test\nmeta:\n  owner: platform\n  tags:\n    - a\n    - b\nnotes: |\n  line one\n  line two\n---\n\n# Model\n\n[id]: /one\n\n- item\n\nuse [x][id]\n";
+
+#[test]
+fn frontmatter_indent_edit_forces_full_reparse() {
+    // Inserting leading whitespace inside a nested frontmatter mapping
+    // restructures the tree without moving the region or its fences, which
+    // the range-and-fence check alone waves through.
+    let candidate = NESTED_FRONTMATTER_BASE.to_owned();
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(&candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let start = candidate.find("  owner: platform").unwrap();
+    let replacement: Arc<str> = Arc::from("  ");
+    let mut edited = candidate.clone();
+    edited.insert_str(start, &replacement);
+    let update = reparse_markdown(
+        &snapshot,
+        DocumentRevision::INITIAL.checked_next().unwrap(),
+        source(&edited),
+        &[TextChange {
+            old_range: range(start, start),
+            replacement,
+        }],
+    )
+    .unwrap();
+    assert_full_oracle(&update.snapshot, &edited);
+    assert!(matches!(
+        update.outcome,
+        MarkdownReparseOutcome::Full {
+            reason: FullReparseReason::FrontmatterBoundaryChanged
+        }
+    ));
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+    #[test]
+    fn frontmatter_interior_edits_full_and_incremental_agree(
+        first in any::<u8>(), second in any::<u8>(), fragment_index in 0usize..9
+    ) {
+        // Index 8 is the empty string: a deletion of the selected range.
+        let fragments = [" ", "  ", "x", ":", "-", "\n", "#c", "\t", ""];
+        let candidate = NESTED_FRONTMATTER_BASE.to_owned();
+        let snapshot = parse_markdown(DocumentRevision::INITIAL, source(&candidate), MarkdownDialect::WAML_DEFAULT).unwrap();
+        let frontmatter_end = candidate.find("\n---\n").map_or(candidate.len(), |at| at + "\n---\n".len());
+        let points: Vec<usize> = boundaries(&candidate[..frontmatter_end]);
+        prop_assume!(!points.is_empty());
+        let left = usize::from(first) % points.len();
+        let right = usize::from(second) % points.len();
+        let (start, end) = if left <= right { (points[left], points[right]) } else { (points[right], points[left]) };
+        let fragment = fragments[fragment_index % fragments.len()];
+        let replacement: Arc<str> = Arc::from(fragment);
+        let mut edited = candidate.clone();
+        edited.replace_range(start..end, fragment);
+        let update = reparse_markdown(
+            &snapshot,
+            DocumentRevision::INITIAL.checked_next().unwrap(),
+            source(&edited),
+            &[TextChange { old_range: range(start, end), replacement }],
+        ).unwrap();
+        assert_full_oracle(&update.snapshot, &edited);
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
     #[test]

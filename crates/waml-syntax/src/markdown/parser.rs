@@ -373,11 +373,14 @@ struct FmPending {
     children: Vec<GreenElement<OkfMarkdownLanguage>>,
     /// The newline token for the opening line, appended AFTER the value.
     trailer: Option<GreenElement<OkfMarkdownLanguage>>,
+    /// Blank or comment lines encountered while this entry is still open
+    /// (between the "key:" / "-" line and the deeper-indented content that
+    /// resolves it) — these bytes fall INSIDE the entry's own source span,
+    /// so they must be replayed after `trailer` and before the resolved
+    /// value/node, not appended as a sibling in the owning frame.
+    deferred: Vec<GreenElement<OkfMarkdownLanguage>>,
     /// Index in the owning frame's `children` this entry must land at once
-    /// resolved — recorded when the pending was opened, so a blank or
-    /// comment line pushed to the frame in the meantime (which never
-    /// touches a pending value slot) does not get sorted ahead of an entry
-    /// that started earlier in the source.
+    /// resolved — recorded when the pending was opened.
     insert_at: usize,
 }
 
@@ -643,11 +646,51 @@ fn bad_line_entry(
     identified_node(factory, OkfMarkdownSyntaxKind::FrontmatterEntry, children)
 }
 
+/// If `frame` has an open pending entry, resolve it to an explicit `Null`
+/// value (a missing `FrontmatterValue` token) and splice it into the
+/// frame's own children at its recorded `insert_at`. Shared by
+/// `finalize_pending_with_null` (top-of-stack) and `pop_frame` (a frame
+/// about to be consumed into its parent's node) — a frame is turned into a
+/// green node from `frame.children` alone, so a still-open pending on that
+/// frame must be resolved first or its key/dash tokens are silently lost.
+fn finalize_frame_pending(
+    factory: &GreenFactory<OkfMarkdownLanguage>,
+    frame: &mut FmFrame,
+) -> Result<(), ParseError> {
+    let Some(pending) = frame.pending.take() else {
+        return Ok(());
+    };
+    let mut children = pending.children;
+    if let Some(trailer) = pending.trailer {
+        children.push(trailer);
+    }
+    children.extend(pending.deferred);
+    children.push(GreenElement::Token(
+        factory.missing_token(OkfMarkdownSyntaxKind::FrontmatterValue),
+    ));
+    let wrap_kind = if pending.is_sequence_item {
+        OkfMarkdownSyntaxKind::FrontmatterSequenceItem
+    } else {
+        OkfMarkdownSyntaxKind::FrontmatterEntry
+    };
+    let insert_at = pending.insert_at.min(frame.children.len());
+    frame.children.insert(
+        insert_at,
+        GreenElement::Node(identified_node(factory, wrap_kind, children)?),
+    );
+    Ok(())
+}
+
 fn pop_frame(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     stack: &mut Vec<FmFrame>,
 ) -> Result<(), ParseError> {
-    let frame = stack.pop().expect("pop_frame requires a frame to pop");
+    let mut frame = stack.pop().expect("pop_frame requires a frame to pop");
+    // A dedent can close this frame while one of its OWN entries is still
+    // pending (e.g. `tags:` opened a nested block that never arrived because
+    // the next line dedented past it) — resolve that to Null first, or its
+    // key/dash tokens never make it into the frame's node.
+    finalize_frame_pending(factory, &mut frame)?;
     let node = identified_node(factory, frame.kind.node_kind(), frame.children)?;
     let parent = stack.last_mut().expect("root frame is never popped");
     if let Some(pending) = parent.pending.take() {
@@ -657,6 +700,9 @@ fn pop_frame(
         if let Some(trailer) = pending.trailer {
             children.push(trailer);
         }
+        // Blank/comment lines seen while this entry was still open sit
+        // between the trailer and the nested block in source order.
+        children.extend(pending.deferred);
         children.push(GreenElement::Node(node));
         let wrap_kind = if pending.is_sequence_item {
             OkfMarkdownSyntaxKind::FrontmatterSequenceItem
@@ -681,26 +727,7 @@ fn finalize_pending_with_null(
     stack: &mut [FmFrame],
 ) -> Result<(), ParseError> {
     let frame = stack.last_mut().expect("stack is never empty");
-    if let Some(pending) = frame.pending.take() {
-        let mut children = pending.children;
-        if let Some(trailer) = pending.trailer {
-            children.push(trailer);
-        }
-        children.push(GreenElement::Token(
-            factory.missing_token(OkfMarkdownSyntaxKind::FrontmatterValue),
-        ));
-        let wrap_kind = if pending.is_sequence_item {
-            OkfMarkdownSyntaxKind::FrontmatterSequenceItem
-        } else {
-            OkfMarkdownSyntaxKind::FrontmatterEntry
-        };
-        let insert_at = pending.insert_at.min(frame.children.len());
-        frame.children.insert(
-            insert_at,
-            GreenElement::Node(identified_node(factory, wrap_kind, children)?),
-        );
-    }
-    Ok(())
+    finalize_frame_pending(factory, frame)
 }
 
 /// The outcome of pushing one mapping entry / sequence item: whether it
@@ -782,6 +809,7 @@ fn push_mapping_entry<I: Iterator<Item = (usize, usize)>>(
             false,
             it,
             stack,
+            diagnostics,
         );
     }
     let starts_comment =
@@ -807,6 +835,7 @@ fn push_mapping_entry<I: Iterator<Item = (usize, usize)>>(
             is_sequence_item: false,
             children,
             trailer,
+            deferred: Vec::new(),
             insert_at,
         });
         return Ok(EntryOutcome::clean(malformed));
@@ -901,6 +930,7 @@ fn open_block_scalar<I: Iterator<Item = (usize, usize)>>(
     is_sequence_item: bool,
     it: &mut std::iter::Peekable<I>,
     stack: &mut [FmFrame],
+    diagnostics: &mut Vec<TreeDiagnostic<OkfSyntaxDiagnosticCode>>,
 ) -> Result<EntryOutcome, ParseError> {
     let header_end = value_start + header_len;
     children.push(GreenElement::Token(token_with_leading(
@@ -912,15 +942,38 @@ fn open_block_scalar<I: Iterator<Item = (usize, usize)>>(
         OkfMarkdownSyntaxKind::FrontmatterBlockScalarHeaderToken,
     )?));
     let after_header = skip_horizontal(source, header_end, line.significant_end);
-    if after_header < line.significant_end && source.as_bytes()[after_header] == b'#' {
-        children.push(GreenElement::Token(token_with_leading(
-            factory,
-            text,
-            header_end,
-            after_header,
-            line.significant_end,
-            OkfMarkdownSyntaxKind::FrontmatterCommentToken,
-        )?));
+    let mut malformed = false;
+    if after_header < line.significant_end {
+        if source.as_bytes()[after_header] == b'#' {
+            children.push(GreenElement::Token(token_with_leading(
+                factory,
+                text,
+                header_end,
+                after_header,
+                line.significant_end,
+                OkfMarkdownSyntaxKind::FrontmatterCommentToken,
+            )?));
+        } else {
+            // Anything else trailing the header (chomping/indentation
+            // indicators already consumed by `header_len`) is malformed —
+            // capture it as a BadToken instead of silently dropping it, or
+            // the tree's rendered text stops matching the source.
+            malformed = true;
+            diagnostics.push(diagnostic(
+                OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry,
+                after_header,
+                line.significant_end,
+                "unexpected content after block scalar header",
+            ));
+            children.push(GreenElement::Token(token_with_leading(
+                factory,
+                text,
+                header_end,
+                after_header,
+                line.significant_end,
+                OkfMarkdownSyntaxKind::BadToken,
+            )?));
+        }
     }
     if line.newline_start < line.end {
         children.push(GreenElement::Token(newline_token(factory, text, line)?));
@@ -962,7 +1015,7 @@ fn open_block_scalar<I: Iterator<Item = (usize, usize)>>(
             factory, wrap_kind, children,
         )?));
     Ok(EntryOutcome {
-        malformed: false,
+        malformed,
         consumed_end: Some(consumed_end),
     })
 }
@@ -1002,6 +1055,7 @@ fn push_sequence_item<I: Iterator<Item = (usize, usize)>>(
             true,
             it,
             stack,
+            diagnostics,
         );
     }
     if after_dash == line.significant_end {
@@ -1037,6 +1091,7 @@ fn push_sequence_item<I: Iterator<Item = (usize, usize)>>(
             is_sequence_item: true,
             children: vec![dash],
             trailer: None,
+            deferred: Vec::new(),
             insert_at,
         });
         stack.push(FmFrame::new(
@@ -1128,6 +1183,21 @@ fn push_sequence_item<I: Iterator<Item = (usize, usize)>>(
 /// via an explicit indent-stack over the significant lines `[from, to)`.
 /// Returns the node, whether it stayed clean (no recovery needed), and the
 /// consumed-end offset of the last significant line (mirrors `structured_end`).
+/// Route a blank or comment line's node to the top frame's pending entry
+/// (when one is open) instead of the frame's own children: the line's bytes
+/// fall INSIDE the still-open entry's source span (between its "key:" / "-"
+/// line and the deeper-indented content that will resolve it), so appending
+/// it as a frame sibling would reorder bytes ahead of the pending's node
+/// once the entry resolves and is spliced in at `insert_at`.
+fn push_blank_or_comment(stack: &mut [FmFrame], entry: crate::GreenNode<OkfMarkdownLanguage>) {
+    let frame = stack.last_mut().expect("stack is never empty");
+    if let Some(pending) = frame.pending.as_mut() {
+        pending.deferred.push(GreenElement::Node(entry));
+    } else {
+        frame.children.push(GreenElement::Node(entry));
+    }
+}
+
 fn build_frontmatter_mapping(
     factory: &GreenFactory<OkfMarkdownLanguage>,
     text: &SourceText,
@@ -1147,11 +1217,7 @@ fn build_frontmatter_mapping(
 
         if line.start == line.significant_end {
             let entry = blank_or_comment_entry(factory, text, line, None)?;
-            stack
-                .last_mut()
-                .expect("stack is never empty")
-                .children
-                .push(GreenElement::Node(entry));
+            push_blank_or_comment(&mut stack, entry);
             continue;
         }
 
@@ -1185,11 +1251,7 @@ fn build_frontmatter_mapping(
 
         if source.as_bytes().get(indent_end) == Some(&b'#') {
             let entry = blank_or_comment_entry(factory, text, line, Some(indent_end))?;
-            stack
-                .last_mut()
-                .expect("stack is never empty")
-                .children
-                .push(GreenElement::Node(entry));
+            push_blank_or_comment(&mut stack, entry);
             continue;
         }
 

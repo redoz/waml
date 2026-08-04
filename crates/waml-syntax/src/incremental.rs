@@ -828,6 +828,13 @@ pub(crate) fn reparse_okf_markdown_with_structure(
     let new_frontmatter = crate::shell::frontmatter_range(&new_text, &new_structure)?;
     if !same_optional_range(old_frontmatter, new_frontmatter, &map)
         || !same_frontmatter_fences(&old, &new_text, old_frontmatter, new_frontmatter, &map)
+        || edit_touches_frontmatter_leading_whitespace(
+            &old,
+            &new_text,
+            old_frontmatter,
+            new_frontmatter,
+            &map,
+        )
     {
         return full(FullReparseReason::FrontmatterBoundaryChanged);
     }
@@ -1257,6 +1264,65 @@ fn map_range(range: TextRange, map: &ChangeMap) -> Option<TextRange> {
 }
 fn same_optional_range(old: Option<TextRange>, new: Option<TextRange>, map: &ChangeMap) -> bool {
     old.and_then(|range| map_range(range, map)) == new
+}
+
+/// Any change segment overlapping the frontmatter window that could have
+/// restructured its nested tree without moving the region or its fences
+/// forces a full reparse: a segment inside (or adjacent to) a line's
+/// leading whitespace can widen or narrow indentation, and a segment that
+/// removes or inserts a newline can merge or split lines — both change
+/// which lines nest under which without the range-and-fence check noticing.
+/// Frontmatter is small; precision buys nothing.
+fn edit_touches_frontmatter_leading_whitespace(
+    old: &SourceText,
+    new: &SourceText,
+    old_frontmatter: Option<TextRange>,
+    new_frontmatter: Option<TextRange>,
+    map: &ChangeMap,
+) -> bool {
+    let Some(new_frontmatter) = new_frontmatter else {
+        return false;
+    };
+    map.segments().iter().any(|segment| {
+        let range = segment.new;
+        if range.end() <= new_frontmatter.start() || new_frontmatter.end() <= range.start() {
+            return false;
+        }
+        // Conservative: if the segment starts at or before the first
+        // non-whitespace column of its line in the NEW text, indentation
+        // may have changed.
+        let source = new.shared();
+        let start = range.start().to_usize().min(source.len());
+        let line_start = source[..start].rfind('\n').map_or(0, |at| at + 1);
+        let content_start = line_start
+            + source[line_start..]
+                .bytes()
+                .take_while(|b| *b == b' ' || *b == b'\t')
+                .count();
+        if start <= content_start {
+            return true;
+        }
+        // A same-length (or any) replacement can still remove or introduce a
+        // newline WITHOUT starting at a line's leading whitespace — merging
+        // or splitting two lines restructures the tree just as an indent
+        // change does, and the column check above cannot see it. Check both
+        // the bytes being replaced (OLD side) and the bytes replacing them
+        // (NEW side) for a newline.
+        if old_frontmatter.is_some_and(|old_frontmatter| {
+            let old_source = old.shared();
+            let old_range = segment.old;
+            let clamped_start = old_range.start().to_usize().min(old_source.len());
+            let clamped_end = old_range.end().to_usize().min(old_source.len());
+            clamped_start < clamped_end
+                && old_range.start() < old_frontmatter.end()
+                && old_frontmatter.start() < old_range.end()
+                && old_source[clamped_start..clamped_end].contains('\n')
+        }) {
+            return true;
+        }
+        let clamped_end = range.end().to_usize().min(source.len());
+        start < clamped_end && source[start..clamped_end].contains('\n')
+    })
 }
 
 fn same_frontmatter_fences(
