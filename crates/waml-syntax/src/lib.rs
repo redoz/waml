@@ -19,6 +19,7 @@ pub use incremental::{
     rebase_unchanged_green, transfer_mapped_annotations, ChangeMap, ChangeSegment,
     FullReparseReason, RebasedGreen, ReparseOutcome, TextChange,
 };
+pub use markdown::scalar::{classify_bare_scalar, FrontmatterScalarKind};
 pub use markdown::{
     parse_markdown, reparse_markdown, ConfirmedHeading, FencedCodeInfo, HtmlTagFilter,
     MarkdownEntity, MarkdownHeading, MarkdownImage, MarkdownLink, MarkdownLinkKind, MarkdownList,

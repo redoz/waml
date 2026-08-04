@@ -10,6 +10,7 @@ mod parser_tests;
 mod projection;
 pub(crate) mod reference;
 pub(crate) mod reparse;
+pub mod scalar;
 pub(crate) mod scan;
 mod snapshot;
 
