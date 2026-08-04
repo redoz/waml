@@ -271,8 +271,9 @@ impl DocumentHost {
         let new_active = self.tabs.active;
         if old_active != new_active {
             if let Some((_, view)) = removed.iter_mut().find(|(id, _)| *id == old_active) {
-                let anchor = view.capture_anchor(&body);
-                self.anchors.insert(old_active, anchor);
+                // The old active tab was removed (closed or replaced): its id
+                // is gone, so caching an anchor for it would leak forever with
+                // no way to restore it. Just deactivate.
                 view.on_deactivate(cx, &body);
             } else if let Some(view) = self.views.get_mut(&old_active) {
                 let anchor = view.capture_anchor(&body);
@@ -1335,5 +1336,44 @@ mod tests {
             },
         );
         assert_eq!(*state_a2.borrow(), ViewAnchor::None);
+    }
+
+    #[test]
+    fn closing_the_active_tab_caches_no_anchor_for_the_dead_id() {
+        let mut host = DocumentHost::default();
+        let (mut cx, ui, session) = anchor_test_env();
+
+        let state_a = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("a", state_a.clone()),
+                persistent: true,
+            },
+        );
+
+        let state_b = Rc::new(RefCell::new(ViewAnchor::None));
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: anchor_document("b", state_b.clone()),
+                persistent: true,
+            },
+        );
+        let b_id = host.active_id();
+        *state_b.borrow_mut() = sample_anchor("dying");
+
+        // Closing the ACTIVE tab removes its view; the dead tab id must not
+        // leave an anchor behind (it is unrestorable and would leak forever).
+        host.transition(&mut cx, &ui, &session, DocumentCommand::Close(b_id));
+        assert_ne!(host.active_id(), b_id);
+        assert!(
+            !host.anchors.contains_key(&b_id),
+            "closing the active tab must not cache an anchor for its dead id"
+        );
     }
 }
