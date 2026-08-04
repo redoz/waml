@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use tower_lsp::lsp_types as lsp;
+use tower_lsp_server::ls_types as lsp;
 use waml::{
     analysis::{prepare_candidate, OkfAnalysis, PreviousAnalyses},
     host,
@@ -365,7 +365,7 @@ mod tests {
     ///
     /// Most fixtures here treat their path as an opaque key, so a literal
     /// `C:/workspace` is harmless for them. This one is different: it asserts on
-    /// `Url::from_file_path`, which requires a genuinely absolute path. On Linux
+    /// `Uri::from_file_path`, which requires a genuinely absolute path. On Linux
     /// `C:/workspace` is *relative* -- no leading slash -- so URL construction
     /// returned None, `definition` found no target, and the test unwrapped None.
     fn workspace_root() -> PathBuf {
@@ -435,11 +435,11 @@ mod tests {
 
         let links = state.document_links(&order).unwrap();
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].target, lsp::Url::from_file_path(&next).ok());
+        assert_eq!(links[0].target, lsp::Uri::from_file_path(&next));
         assert_eq!(links[0].range.start, lsp::Position::new(5, 4));
 
         let definition = state.definition(&order, lsp::Position::new(5, 6)).unwrap();
-        assert_eq!(definition.uri, lsp::Url::from_file_path(&next).unwrap());
+        assert_eq!(definition.uri, lsp::Uri::from_file_path(&next).unwrap());
         assert_eq!(definition.range.start, lsp::Position::new(3, 0));
         assert!(state
             .definition(&order, lsp::Position::new(5, 21))

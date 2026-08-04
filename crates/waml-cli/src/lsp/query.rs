@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use tower_lsp::lsp_types as lsp;
+use tower_lsp_server::ls_types as lsp;
 use waml::{
     analysis::{DocumentId, DocumentVersion, MarkdownTokenRole, WamlCodeRole},
     okf,
@@ -178,7 +178,7 @@ impl LspAnalysisState {
         )
         .ok()?;
         Some(lsp::Location::new(
-            lsp::Url::from_file_path(target_physical).ok()?,
+            lsp::Uri::from_file_path(target_physical)?,
             range,
         ))
     }
@@ -307,16 +307,18 @@ impl LspAnalysisState {
         Some((logical, document_id, document))
     }
 
-    fn link_target(&self, source: &BundlePath, destination: &str) -> Option<lsp::Url> {
-        if let Ok(url) = lsp::Url::parse(destination) {
-            if !url.scheme().is_empty() {
-                return Some(url);
-            }
+    fn link_target(&self, source: &BundlePath, destination: &str) -> Option<lsp::Uri> {
+        // A `fluent_uri::Uri` parse only succeeds for an absolute URI with a
+        // scheme; bundle-relative destinations fall through to the file path.
+        if let Ok(url) = destination.parse::<lsp::Uri>() {
+            return Some(url);
         }
         let (_, physical, fragment) = self.internal_link_target(source, destination)?;
-        let mut url = lsp::Url::from_file_path(physical).ok()?;
-        url.set_fragment(fragment.as_deref());
-        Some(url)
+        let url = lsp::Uri::from_file_path(physical)?;
+        match fragment {
+            Some(fragment) => format!("{}#{fragment}", url.as_str()).parse().ok(),
+            None => Some(url),
+        }
     }
 
     fn internal_link_target(

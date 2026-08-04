@@ -1,9 +1,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use tokio::sync::{Mutex, RwLock};
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::*;
+use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
 use crate::lsp::{
     bundle::{read_disk_documents, LspAnalysisState},
@@ -143,7 +143,7 @@ impl Backend {
             self.current.clone(),
             move |snapshot| async move {
                 for publication in snapshot.diagnostics() {
-                    if let Ok(uri) = Url::from_file_path(&publication.physical) {
+                    if let Some(uri) = Uri::from_file_path(&publication.physical) {
                         let client = client.clone();
                         if !publish_if_current(&current, &snapshot, move || async move {
                             client
@@ -166,14 +166,13 @@ impl Backend {
     }
 }
 
-#[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         #[allow(deprecated)]
         if let Some(root) = params
             .workspace_folders
             .and_then(|folders| folders.into_iter().next())
-            .and_then(|folder| folder.uri.to_file_path().ok())
+            .and_then(|folder| folder.uri.to_file_path().map(|p| p.into_owned()))
         {
             self.install_initial(root).await;
         }
@@ -192,7 +191,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let Ok(physical) = params.text_document.uri.to_file_path() else {
+        let Some(physical) = params
+            .text_document
+            .uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+        else {
             return;
         };
         let text = params.text_document.text;
@@ -211,7 +215,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        let Ok(physical) = params.text_document.uri.to_file_path() else {
+        let Some(physical) = params
+            .text_document
+            .uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+        else {
             return;
         };
         let Some(text) = params
@@ -243,7 +252,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let Ok(physical) = params.text_document.uri.to_file_path() else {
+        let Some(physical) = params
+            .text_document
+            .uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+        else {
             return;
         };
         let Some(expected_generation) = self.snapshot().await.open_generation(&physical) else {
@@ -264,7 +278,12 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let Ok(physical) = params.text_document.uri.to_file_path() else {
+        let Some(physical) = params
+            .text_document
+            .uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+        else {
             return Ok(None);
         };
         Ok(self
@@ -277,11 +296,12 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let Ok(physical) = params
+        let Some(physical) = params
             .text_document_position_params
             .text_document
             .uri
             .to_file_path()
+            .map(|p| p.into_owned())
         else {
             return Ok(None);
         };
@@ -293,7 +313,12 @@ impl LanguageServer for Backend {
     }
 
     async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
-        let Ok(physical) = params.text_document.uri.to_file_path() else {
+        let Some(physical) = params
+            .text_document
+            .uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+        else {
             return Ok(None);
         };
         Ok(self
@@ -305,7 +330,12 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let Ok(physical) = params.text_document.uri.to_file_path() else {
+        let Some(physical) = params
+            .text_document
+            .uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+        else {
             return Ok(None);
         };
         Ok(self

@@ -3,7 +3,7 @@
 
 use std::{fmt, ops::Range};
 
-use tower_lsp::lsp_types as lsp;
+use tower_lsp_server::ls_types as lsp;
 use waml::{
     analysis::DocumentVersion,
     diagnostic::{Diagnostic, Severity},

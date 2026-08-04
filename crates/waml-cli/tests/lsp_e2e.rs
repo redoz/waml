@@ -396,6 +396,10 @@ fn snapshot_queries_are_advertised_unicode_exact_and_revision_current_over_stdio
         serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
     );
     let next_uri = "file:///C:/tmp/next.md";
+    // `ls_types::Uri::from_file_path` percent-encodes the drive colon (as VS
+    // Code does), so server-emitted URIs carry `C%3A` even though the client
+    // opened with a bare `C:`.
+    let next_uri_emitted = "file:///C%3A/tmp/next.md";
     let order_uri = "file:///C:/tmp/order-query.md";
     for (uri, text) in [
         (next_uri, "---\ntype: uml.Class\n---\n# Next\n"),
@@ -447,8 +451,8 @@ fn snapshot_queries_are_advertised_unicode_exact_and_revision_current_over_stdio
             .unwrap()
     };
     assert_eq!(response(2)["result"][0]["name"], "😀 Order");
-    assert_eq!(response(3)["result"][0]["target"], next_uri);
-    assert_eq!(response(4)["result"]["uri"], next_uri);
+    assert_eq!(response(3)["result"][0]["target"], next_uri_emitted);
+    assert_eq!(response(4)["result"]["uri"], next_uri_emitted);
     let data = response(5)["result"]["data"].as_array().unwrap();
     let mut line = 0;
     let mut character = 0;
