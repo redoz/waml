@@ -189,13 +189,24 @@ struct GutterMetrics {
 }
 
 impl GutterMetrics {
-    /// Baked from the shipped mono face at `GUTTER_FONT_SIZE`. Used only when
-    /// shaping is unavailable — e.g. a headless test with no font backend —
-    /// so the gutter still renders something reasonable.
+    /// Baked from the shipped mono face at `GUTTER_FONT_SIZE` and at
+    /// `font_scale == 1.0`. Used only when shaping is unavailable — e.g. a
+    /// headless test with no font backend — so the gutter still renders
+    /// something reasonable. Scale it with [`GutterMetrics::scaled`] before
+    /// use: the measured path bakes the painter's `font_scale` in, so an
+    /// unscaled fallback would be off by exactly that factor.
     const FALLBACK: GutterMetrics = GutterMetrics {
         digit_width: GUTTER_DIGIT_WIDTH,
         ascent: GUTTER_FONT_SIZE as f64 * GUTTER_ASCENT,
     };
+
+    /// These metrics as the painter sees them at `font_scale`.
+    fn scaled(self, font_scale: f64) -> GutterMetrics {
+        GutterMetrics {
+            digit_width: self.digit_width * font_scale,
+            ascent: self.ascent * font_scale,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -238,8 +249,14 @@ impl WidgetFonts {
 
     /// Digit width/ascent for the gutter, measured lazily through the mono
     /// `DrawText` and cached until the face or its `font_scale` changes. Falls
-    /// back to the documented constants when shaping the probe glyph produces
-    /// nothing usable (e.g. no font backend in a headless test).
+    /// back to the documented constants, scaled to the painter's `font_scale`,
+    /// when shaping the probe glyph produces nothing usable (e.g. no font
+    /// backend in a headless test, or an atlas that is not loaded yet).
+    ///
+    /// Only a *successful* measurement is cached. A failure is transient —
+    /// fonts that have not finished loading, a reset atlas — and caching it
+    /// would pin the fallback for the rest of the session, since the only
+    /// other invalidation (`install_face`) stops firing once the faces settle.
     fn gutter_metrics(&mut self, cx: &mut Cx, mono: &mut DrawText) -> GutterMetrics {
         let scale_key = mono.font_scale.to_bits();
         if let Some((cached_scale, metrics)) = self.gutter_metrics {
@@ -247,9 +264,13 @@ impl WidgetFonts {
                 return metrics;
             }
         }
-        let measured = measure_gutter_metrics(cx, mono).unwrap_or(GutterMetrics::FALLBACK);
-        self.gutter_metrics = Some((scale_key, measured));
-        measured
+        match measure_gutter_metrics(cx, mono) {
+            Some(measured) => {
+                self.gutter_metrics = Some((scale_key, measured));
+                measured
+            }
+            None => GutterMetrics::FALLBACK.scaled(mono.font_scale as f64),
+        }
     }
 }
 
@@ -1771,99 +1792,121 @@ mod text_face_index_tests {
 mod gutter_metrics_tests {
     use super::*;
 
+    /// A `Cx` plus the editor's own mono `DrawText`, taken from the widget's
+    /// script default so it carries a *resolved* `theme.font_code` family.
+    /// A bare `Label` `DrawText` has no resolved family: shaping through it
+    /// only logs `type mismatch for property res` and returns nothing, which
+    /// silently turned every assertion below into a no-op early return.
+    fn mono_probe() -> (Cx, DrawText) {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        crate::live_design(&mut cx);
+        let draw_text = cx
+            .with_vm(MarkdownEditor::script_new_with_default)
+            .draw_text_mono;
+        (cx, draw_text)
+    }
+
+    #[test]
+    fn the_mono_probe_can_actually_shape() {
+        let (mut cx, mut draw_text) = mono_probe();
+        assert!(
+            measure_gutter_metrics(&mut cx, &mut draw_text).is_some(),
+            "the editor's mono face must shape in the gate, or every gutter \
+             metric test silently degrades to the fallback and asserts nothing",
+        );
+    }
+
     #[test]
     fn measured_digit_width_is_within_5_percent_of_the_shipped_fallback() {
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        cx.with_vm(|vm| {
-            makepad_widgets::makepad_draw::script_mod(vm);
-            makepad_widgets::script_mod(vm);
-            let mut draw_text = Label::script_new_with_default(vm).draw_text;
-            vm.with_cx_mut(|cx| {
-                let Some(measured) = measure_gutter_metrics(cx, &mut draw_text) else {
-                    // No usable font backend in this headless run -- the
-                    // fallback constants carry the gutter, which is exactly
-                    // the degraded path this test exists to allow.
-                    return;
-                };
-                let tolerance = GutterMetrics::FALLBACK.digit_width * 0.05;
-                assert!(
-                    (measured.digit_width - GutterMetrics::FALLBACK.digit_width).abs() <= tolerance,
-                    "measured {:?} drifted from the fallback {:?} by more than 5% -- \
-                     the shipped mono face changed, update GUTTER_DIGIT_WIDTH",
-                    measured,
-                    GutterMetrics::FALLBACK,
-                );
-            });
-        });
+        let (mut cx, mut draw_text) = mono_probe();
+        let measured =
+            measure_gutter_metrics(&mut cx, &mut draw_text).expect("the mono face must shape");
+        let fallback = GutterMetrics::FALLBACK.scaled(draw_text.font_scale as f64);
+        let tolerance = fallback.digit_width * 0.05;
+        assert!(
+            (measured.digit_width - fallback.digit_width).abs() <= tolerance,
+            "measured {:?} drifted from the fallback {:?} by more than 5% -- \
+             the shipped mono face changed, update GUTTER_DIGIT_WIDTH",
+            measured,
+            fallback,
+        );
     }
 
     #[test]
     fn cache_is_populated_once_and_reused() {
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        cx.with_vm(|vm| {
-            makepad_widgets::makepad_draw::script_mod(vm);
-            makepad_widgets::script_mod(vm);
-            let mut draw_text = Label::script_new_with_default(vm).draw_text;
-            vm.with_cx_mut(|cx| {
-                let mut fonts = WidgetFonts::default();
-                assert!(fonts.gutter_metrics.is_none());
-                let first = fonts.gutter_metrics(cx, &mut draw_text);
-                assert!(fonts.gutter_metrics.is_some());
-                let second = fonts.gutter_metrics(cx, &mut draw_text);
-                assert_eq!(first, second);
-            });
-        });
+        let (mut cx, mut draw_text) = mono_probe();
+        let mut fonts = WidgetFonts::default();
+        assert!(fonts.gutter_metrics.is_none());
+        let first = fonts.gutter_metrics(&mut cx, &mut draw_text);
+        assert!(fonts.gutter_metrics.is_some());
+        let second = fonts.gutter_metrics(&mut cx, &mut draw_text);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_failed_measurement_is_not_cached() {
+        let (mut cx, mut draw_text) = mono_probe();
+        let mut fonts = WidgetFonts::default();
+        // A zero font_scale makes the probe row degenerate, standing in for a
+        // font that has not loaded yet.
+        draw_text.font_scale = 0.0;
+        let degraded = fonts.gutter_metrics(&mut cx, &mut draw_text);
+        assert_eq!(degraded, GutterMetrics::FALLBACK.scaled(0.0));
+        assert!(
+            fonts.gutter_metrics.is_none(),
+            "a failed measurement must not be cached, or the fallback is \
+             pinned for the rest of the session",
+        );
+        draw_text.font_scale = 1.0;
+        let healed = fonts.gutter_metrics(&mut cx, &mut draw_text);
+        assert!(
+            fonts.gutter_metrics.is_some(),
+            "the next probe must self-heal once shaping works again",
+        );
+        assert!(healed.digit_width > 0.0);
+    }
+
+    #[test]
+    fn the_fallback_follows_the_font_scale() {
+        let doubled = GutterMetrics::FALLBACK.scaled(2.0);
+        assert_eq!(
+            doubled.digit_width,
+            GutterMetrics::FALLBACK.digit_width * 2.0
+        );
+        assert_eq!(doubled.ascent, GutterMetrics::FALLBACK.ascent * 2.0);
     }
 
     #[test]
     fn cache_is_rekeyed_when_font_scale_changes() {
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        cx.with_vm(|vm| {
-            makepad_widgets::makepad_draw::script_mod(vm);
-            makepad_widgets::script_mod(vm);
-            let mut draw_text = Label::script_new_with_default(vm).draw_text;
-            vm.with_cx_mut(|cx| {
-                draw_text.font_scale = 1.0;
-                let mut fonts = WidgetFonts::default();
-                if measure_gutter_metrics(cx, &mut draw_text).is_none() {
-                    // No font backend: both scales collapse onto the same
-                    // fallback, so there is nothing to compare.
-                    return;
-                }
-                let at_one = fonts.gutter_metrics(cx, &mut draw_text);
-                draw_text.font_scale = 2.0;
-                let at_two = fonts.gutter_metrics(cx, &mut draw_text);
-                assert!(
-                    (at_two.digit_width - at_one.digit_width * 2.0).abs() < 0.5,
-                    "digit width {} did not follow the doubled font_scale from {}",
-                    at_two.digit_width,
-                    at_one.digit_width,
-                );
-            });
-        });
+        let (mut cx, mut draw_text) = mono_probe();
+        draw_text.font_scale = 1.0;
+        let mut fonts = WidgetFonts::default();
+        let at_one = fonts.gutter_metrics(&mut cx, &mut draw_text);
+        draw_text.font_scale = 2.0;
+        let at_two = fonts.gutter_metrics(&mut cx, &mut draw_text);
+        assert!(
+            (at_two.digit_width - at_one.digit_width * 2.0).abs() < 0.5,
+            "digit width {} did not follow the doubled font_scale from {}",
+            at_two.digit_width,
+            at_one.digit_width,
+        );
     }
 
     #[test]
     fn installing_a_face_drops_the_measured_metrics() {
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        cx.with_vm(|vm| {
-            makepad_widgets::makepad_draw::script_mod(vm);
-            makepad_widgets::script_mod(vm);
-            let mut draw_text = Label::script_new_with_default(vm).draw_text;
-            let family = draw_text.text_style.font_family.clone();
-            vm.with_cx_mut(|cx| {
-                let mut fonts = WidgetFonts::default();
-                fonts.gutter_metrics(cx, &mut draw_text);
-                assert!(fonts.gutter_metrics.is_some());
-                assert!(!fonts.face_matches(TextFace::MonoRegular, &family));
-                fonts.install_face(TextFace::MonoRegular, family.clone());
-                assert!(
-                    fonts.gutter_metrics.is_none(),
-                    "a face swap must invalidate the measured gutter metrics",
-                );
-                assert!(fonts.face_matches(TextFace::MonoRegular, &family));
-            });
-        });
+        let (mut cx, mut draw_text) = mono_probe();
+        let family = draw_text.text_style.font_family.clone();
+        let mut fonts = WidgetFonts::default();
+        fonts.gutter_metrics(&mut cx, &mut draw_text);
+        assert!(fonts.gutter_metrics.is_some());
+        assert!(!fonts.face_matches(TextFace::MonoRegular, &family));
+        fonts.install_face(TextFace::MonoRegular, family.clone());
+        assert!(
+            fonts.gutter_metrics.is_none(),
+            "a face swap must invalidate the measured gutter metrics",
+        );
+        assert!(fonts.face_matches(TextFace::MonoRegular, &family));
     }
 }
 
