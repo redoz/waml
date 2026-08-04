@@ -267,6 +267,11 @@ fn apply_failure_response(failure: ApplyFailure) -> Response {
             Json(json!({"error": "invalid candidate", "reason": message})),
         )
             .into_response(),
+        ApplyFailure::Confinement(message) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error": "path rejected", "reason": message})),
+        )
+            .into_response(),
         ApplyFailure::Io(message) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "io failure", "reason": message})),
@@ -471,6 +476,27 @@ mod tests {
                 {"path": "a\\b.md", "baseline": null, "desired": "# One\n"},
                 {"path": "a/b.md", "baseline": null, "desired": "# Two\n"},
             ],
+        });
+        let resp = client
+            .post(format!("{}/api/documents", server.base))
+            .bearer_auth("thetoken")
+            .header("X-Waml-Client", "1")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn an_escaping_documents_path_is_422_not_500() {
+        // A client-supplied path that escapes the bundle root is hostile or
+        // mistaken client input, not a server failure.
+        let server = spawn().await;
+        let client = reqwest::Client::new();
+        let body = serde_json::json!({
+            "revision": 0,
+            "writes": [{"path": "../x.md", "baseline": null, "desired": "# Escape\n"}],
         });
         let resp = client
             .post(format!("{}/api/documents", server.base))

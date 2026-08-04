@@ -109,7 +109,7 @@ impl ServeState {
         let new_pairs = validated.source().to_pairs();
 
         for (path, _) in &new_pairs {
-            paths::safe_join(&self.root, path).map_err(ApplyFailure::Io)?;
+            paths::safe_join(&self.root, path).map_err(ApplyFailure::Confinement)?;
         }
 
         io::write_back(&self.root, &old_pairs, &new_pairs).map_err(|error| {
@@ -146,7 +146,7 @@ impl ServeState {
         }
 
         for write in writes {
-            paths::safe_join(&self.root, &write.path).map_err(ApplyFailure::Io)?;
+            paths::safe_join(&self.root, &write.path).map_err(ApplyFailure::Confinement)?;
         }
 
         let old_pairs = self.prepared.source().to_pairs();
@@ -174,6 +174,18 @@ impl ServeState {
         for write in writes {
             new_map.insert(write.path.clone(), write.desired.clone());
         }
+
+        // A request that leaves every document as it already is (including an
+        // empty writes array) is a no-op: land nothing and keep the revision,
+        // so other clients are not forced through the 409/reload path.
+        let unchanged = new_map.len() == old_map.len()
+            && new_map
+                .iter()
+                .all(|(path, text)| old_map.get(path.as_str()) == Some(&text.as_str()));
+        if unchanged {
+            return Ok(());
+        }
+
         let new_pairs: Vec<(String, String)> = new_map.into_iter().collect();
 
         let candidate_source = SourceBundle::try_from_pairs(new_pairs.clone())
@@ -218,7 +230,10 @@ pub enum ApplyFailure {
     Edit(String),
     /// The candidate lowered but failed revalidation — nothing was written.
     Invalid(String),
-    /// A confinement or filesystem failure while writing the result.
+    /// A path in the request escapes the bundle root — rejected client
+    /// input, nothing was written.
+    Confinement(String),
+    /// A filesystem failure while writing the result.
     Io(String),
 }
 
@@ -508,10 +523,35 @@ mod tests {
                 desired: "# Escape\n".to_string(),
             }],
         ) {
-            Err(ApplyFailure::Io(message)) => message,
-            other => panic!("expected an Io failure, got {other:?}"),
+            Err(ApplyFailure::Confinement(message)) => message,
+            other => panic!("expected a Confinement failure, got {other:?}"),
         };
         assert!(!error.is_empty());
+        assert_eq!(state.revision(), 0);
+    }
+
+    #[test]
+    fn a_noop_documents_post_does_not_bump_the_revision() {
+        let dir = fixture();
+        let mut state = ServeState::load(dir.path()).unwrap();
+        let baseline = std::fs::read_to_string(dir.path().join("order.md")).unwrap();
+
+        // An empty writes array is a no-op.
+        state.apply_documents(0, &[]).unwrap();
+        assert_eq!(state.revision(), 0);
+
+        // A write whose desired text equals the server's text is a no-op too:
+        // bumping the revision here would 409 every other client for nothing.
+        state
+            .apply_documents(
+                0,
+                &[DocumentWrite {
+                    path: "order.md".into(),
+                    baseline: Some(baseline.clone()),
+                    desired: baseline,
+                }],
+            )
+            .unwrap();
         assert_eq!(state.revision(), 0);
     }
 }
