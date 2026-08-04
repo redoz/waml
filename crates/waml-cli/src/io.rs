@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use waml::bundle_envelope::split_bundle;
+use waml::host::ingest::{ingest_markdown, IngestError, IngestOptions};
 
 /// Expand a valid Bundle Envelope v1 or retain the input as one plain document.
 pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(String, String)>> {
@@ -28,28 +29,19 @@ pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(Strin
 /// A dot-directory named directly on the command line is still descended into,
 /// since that is an explicit request rather than an incidental discovery.
 pub fn collect_md(paths: &[PathBuf]) -> std::io::Result<Vec<PathBuf>> {
-    let mut out = Vec::new();
-    for p in paths {
-        if p.is_dir() {
-            for entry in fs::read_dir(p)? {
-                let path = entry?.path();
-                if path.is_dir() && is_dot_dir(&path) {
-                    continue;
-                }
-                out.extend(collect_md(&[path])?);
-            }
-        } else if p.extension().and_then(|e| e.to_str()) == Some("md") {
-            out.push(p.clone());
-        }
+    let ingested = ingest_markdown(paths, &IngestOptions::default());
+    if let Some(error) = ingested.errors.into_iter().next() {
+        return Err(ingest_error_to_io(error));
     }
-    out.sort();
-    Ok(out)
+    Ok(ingested
+        .files
+        .into_iter()
+        .map(|(path, _text)| path)
+        .collect())
 }
 
-fn is_dot_dir(p: &Path) -> bool {
-    p.file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with('.'))
+fn ingest_error_to_io(error: IngestError) -> std::io::Error {
+    std::io::Error::other(error.to_string())
 }
 
 fn path_key(p: &Path) -> String {
@@ -683,6 +675,18 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn collect_md_fail_fast_error_names_the_offending_path() {
+        let temp = TempDir::new();
+        let missing = temp.0.join("does-not-exist.md");
+
+        let error = collect_md(std::slice::from_ref(&missing)).unwrap_err();
+        assert!(
+            error.to_string().contains(&missing.display().to_string()),
+            "error should name the offending path: {error}"
+        );
     }
 
     struct FailRename {
