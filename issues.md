@@ -1,13 +1,31 @@
 # WAML codebase issues
 
 Reviewed 2026-07-31 against local `main` at
-`c61484ac250569eb722e19e2ce3a348003e08b75`.
+`c61484ac250569eb722e19e2ce3a348003e08b75`. Reconciled 2026-08-04 against
+`c31fdc51` after the seven-dimension review
+(`docs/reviews/2026-08-04/SUMMARY.md`), which fixed 46 of its 52 findings in
+the range `a24f03eb..c31fdc51`.
 
 This document tracks active issues only. Completed items from the 2026-07-26
 review were removed. In particular, native edits now use a real save path,
 `EditorSession` owns in-memory transactions and savepoint identity, `DocView`
 is a real lifecycle boundary, the old monolithic `GraphCanvas` is split, and
 the legacy duplicate parser authority is gone.
+
+Removed in the 2026-08-04 reconciliation:
+
+- Bundle-envelope autodetection discarding authored bytes: the explicit
+  versioned envelope v1 codec landed (`crates/waml/src/bundle_envelope.rs`);
+  `source.rs` no longer autodetects comment markers. A narrower follow-up is
+  tracked below (part markers matched by substring).
+- Pages deployment not gated: `pages.yml` now calls `ci.yml` via
+  `workflow_call` and the build/deploy jobs require it; PR CI is restored,
+  cargo-makepad and the framework are pinned to the same revision, all
+  `scripts/*.test.mjs` suites run on PRs, and a bounded weekly fuzz job exists.
+- The `compat.rs` transitional layer: retire-compat is implemented
+  (`56fdf772` deleted `waml::ops` and the `compat.rs` bridge; design at
+  `docs/superpowers/specs/2026-08-04-retire-compat-design.md`). The residual
+  public-API issue below was rewritten accordingly.
 
 Priority meanings are calibrated for a hobby project:
 
@@ -27,9 +45,9 @@ tests, and useful fuzz targets.
 
 The main risks are now at subsystem boundaries rather than in the core parser
 or model. Diagnostics are not aggregated across parsing layers, LSP disk
-authority becomes stale, one input format can discard authored bytes, and
-native multi-file persistence has weaker guarantees than CLI persistence.
-Delivery automation does not stop these defects from reaching the web build.
+authority becomes stale, and native multi-file persistence has weaker
+guarantees than CLI persistence. Delivery automation now gates the web build
+on the full verification suite.
 
 The order below is intentional. Fix user-work and data-authority defects first.
 Measure performance before adding more incremental-parser complexity. Treat
@@ -51,6 +69,12 @@ Evidence:
 Verified malformed frontmatter fixtures can produce shell diagnostics while
 `waml check --format json` returns `[]` with exit code 0. The parser recovers
 correctly, but the user-facing layers report false success.
+
+Partial progress (2026-08-04): hard shell *failures* now quarantine the
+offending document and are surfaced instead of failing or silently passing the
+bundle (`fa7eb34a`). Recoverable shell/frontmatter diagnostics still bypass the
+CLI and LSP outputs — `commands.rs::diagnostics` reads only
+`candidate.uml().diagnostics`.
 
 Recommendation:
 
@@ -95,29 +119,6 @@ Recommendation:
    for removed URIs.
 4. Test the complete lifecycle with multi-document semantic dependencies.
 
-## P1 — Bundle-envelope autodetection can discard authored bytes
-
-Evidence:
-
-- `crates/waml/src/source.rs:6-8` accepts a line-shaped HTML comment ending in
-  `.md` as a bundle marker.
-- `crates/waml/src/source.rs:24-34` starts the first decoded document after the
-  first marker and does not preserve or reject the preceding bytes.
-- `crates/waml-cli/src/io.rs:12-23` trusts this detection for normal input.
-
-An ordinary Markdown document containing a comment such as
-`<!-- something.md -->` can be interpreted as a bundle. All content before the
-comment is silently omitted from analysis and serialization. The marker also
-handles LF and CRLF differently.
-
-Recommendation:
-
-1. Use an explicit, versioned bundle-envelope sentinel.
-2. Until that format exists, require the first marker at byte zero and reject
-   a non-blank preamble instead of discarding it.
-3. Test ordinary HTML comments, comments in fenced code, malformed markers,
-   non-empty preambles, and both LF and CRLF.
-
 ## P1 — Native and CLI persistence have different transaction guarantees
 
 Evidence:
@@ -145,33 +146,6 @@ Recommendation:
 4. Test failures after each transaction phase over a multi-file bundle.
 5. Add an editor-level test that opens a temporary bundle, edits it, saves it,
    reloads it from disk, and compares source plus semantic state.
-
-## P2 — Pages deployment is not gated by repository verification
-
-Evidence:
-
-- `.github/workflows/ci.yml:3-10` disables push and pull-request triggers;
-  only manual dispatch remains.
-- `.github/workflows/pages.yml:3-10` deploys pushes to `main` without running
-  the workspace test and lint gate.
-- `crates/waml-editor/Cargo.toml:23` pins `makepad-widgets` to
-  `c38f529984eda61e258ca69fb50c6712d85c74c1`, while
-  `.github/workflows/pages.yml:55` installs `cargo-makepad` from
-  `25d78a4d917ea2e943df6af5e037817248443bd7`.
-
-The two Makepad revisions are adjacent, and the review did not demonstrate a
-current tool/framework incompatibility. The defect is that the documented pin
-invariant is manual and already textually false. More importantly, a push can
-fail Rust tests and still replace the web editor.
-
-Recommendation:
-
-1. Restore push and pull-request CI.
-2. Make Pages depend on a reusable verification job for the exact commit.
-3. Include formatting, workspace tests, strict Clippy, extension checks,
-   runtime-shell tests, fuzz-target compilation, and a bounded seed smoke.
-4. Define or verify the Makepad revision invariant in one machine-checked
-   place. Do not infer incompatibility only from different hashes.
 
 ## P2 — Tab and navigation state does not have one identity/lifecycle policy
 
@@ -258,17 +232,16 @@ The active performance issue is narrower:
 - `crates/waml/src/uml/analysis.rs:161-260` revisits every claimed concept.
 - `crates/waml/src/uml/analysis.rs:509-510,596-860,1095-1103` rebuilds global
   validation and projection.
-- The document lookup around `crates/waml/src/uml/analysis.rs:166-186` is
-  quadratic in concepts × documents.
+
+The quadratic concepts × documents catalog lookup is fixed: `d30af731` indexes
+the catalog by concept id in UML analyze.
 
 Recommendation:
 
-1. Remove the quadratic lookup by carrying `DocumentId` provenance or using a
-   catalog index.
-2. Add repeatable 1, 100, and 1,000-document edit benchmarks.
-3. Only if measurements justify it, retain per-document semantic records and
+1. Add repeatable 1, 100, and 1,000-document edit benchmarks.
+2. Only if measurements justify it, retain per-document semantic records and
    rebuild changed indexes and cross-document resolution.
-4. Do not add another parser, title authority, or speculative invalidation
+3. Do not add another parser, title authority, or speculative invalidation
    framework.
 
 ## P2 — `App` remains the persistence and global-shell coordinator
@@ -309,19 +282,19 @@ presentation in the view. Do not restart a broad canvas decomposition project.
 
 ## P2 — Operation and public-API boundaries amplify changes
 
-These two historical issues now meet at the transitional compatibility layer.
+The transitional `compat.rs` layer is gone: retire-compat deleted `waml::ops`
+and the bridge (`56fdf772`), and legacy op tests were ported onto Step/Batch.
+The residual debt is narrower.
 
 Evidence:
 
 - Canonical domain operations are correctly split between
   `crates/waml/src/okf/ops.rs` and `crates/waml/src/uml/ops.rs`.
-- `crates/waml/src/compat.rs:47-239` still has an exhaustive legacy-to-domain
-  conversion.
-- `crates/waml-ops-dto/src/lib.rs:398-674` and following code separately map
-  every wire operation in both directions.
-- `crates/waml/src/lib.rs:3-25` publicly exposes about 20 major modules plus a
-  hidden-but-public compatibility module.
-- `crates/waml/src/solve/mod.rs:8-15` publicly exposes solver implementation
+- `crates/waml-ops-dto/src/lib.rs` still hand-maps every wire operation in
+  both directions.
+- `crates/waml/src/lib.rs:3-23` publicly exposes about 20 major modules with
+  no named supported facade.
+- `crates/waml/src/solve/mod.rs` publicly exposes solver implementation
   topology.
 
 Separate domain and wire contracts are correct, and round-trip tests are worth
@@ -330,13 +303,87 @@ a named supported facade.
 
 Recommendation:
 
-1. Decide whether `compat` is supported or transitional; `#[doc(hidden)]` does
-   not seal a public API.
-2. Define deliberate parse, analyze, edit, validate, and solve entry points.
-3. Reduce module visibility only after actual CLI/editor consumers use the
+1. Define deliberate parse, analyze, edit, validate, and solve entry points.
+2. Reduce module visibility only after actual CLI/editor consumers use the
    facade.
-4. Consider a declarative operation mapping only if it preserves explicit wire
+3. Consider a declarative operation mapping only if it preserves explicit wire
    spelling, version metadata, golden JSON, and round-trip tests.
+
+## P2 — Incremental reparse still does Θ(document) work per edit
+
+Deferred from the 2026-08-04 review (P-4 remainder). The unconditional
+per-keystroke oracle parse is fixed (`165470e2` made the hot incremental
+reparse path oracle-free), but the incremental path still performs several
+whole-document passes per edit.
+
+Evidence:
+
+- `crates/waml-syntax/src/incremental.rs` rebuilds the old shell map, walks
+  reference-map guards, and runs restore/preserve traversals over the full
+  tree on every edit, not just the reparse window.
+- `crates/waml-syntax/src/markdown/snapshot.rs` reconstructs source and walks
+  the tree bundle-wide during snapshot promotion.
+
+Recommendation:
+
+Carry the needed state (shell map, reference map, preservation indexes) on the
+snapshot across edits instead of recomputing it from the whole document, so
+per-edit cost is proportional to the edited window.
+
+## P2 — `editor_session.rs` is a god object testable only whole
+
+Deferred from the 2026-08-04 review (M-1/T-9).
+
+Evidence:
+
+- `crates/waml-editor/src/editor_session.rs` is 3,417 lines and sits at the
+  editor's centre.
+- Its behaviour is exercised only through 44 whole-session tests; no policy
+  inside it can be tested in isolation.
+
+Recommendation:
+
+Extract components only where one can own a complete policy (history
+compaction, savepoint identity, publication) and be tested without the rest of
+the session. Do not split mechanically by size. This depends on the `lib.rs`
+seam issue below.
+
+## P2 — waml-editor has no library seam for cross-module tests
+
+Deferred from the 2026-08-04 review (M-5/T-4). This is the structural cause of
+the `editor_session.rs` issue above and of the untestable draw-path residue
+noted by the review (T-3).
+
+Evidence:
+
+- `crates/waml-editor/src/lib.rs` is 2 lines and exports 2 modules.
+- `main.rs` declares ~80 flat modules private to the binary, so cross-module
+  editor behaviour has no integration-test seam; `tests/` can only reach the
+  two exported modules.
+
+Recommendation:
+
+Move the module tree into the library crate (keeping the binary a thin shim)
+so editor behaviour is reachable from `tests/`. Do this as enabling work when
+next touching editor structure, not as a standalone churn project.
+
+## P2 — Telemetry seam has no export bridge and no in-editor consumer
+
+Follow-ups to the tracing telemetry seam that landed in `8eba08ca`
+(`crates/waml-editor/src/telemetry.rs`, review O-3).
+
+Evidence:
+
+- Events go to an in-process ring buffer; there is no OTLP (or any external)
+  export bridge, so nothing persists or aggregates telemetry.
+- `telemetry::recent_events()` exists and is ready to feed a UI, but no
+  in-editor log panel consumes it; failures are still invisible in the GUI
+  beyond the statusbar messages.
+
+Recommendation:
+
+1. Add an OTLP export bridge behind the existing `tracing` seam.
+2. Add an in-editor log panel consuming `telemetry::recent_events()`.
 
 ## P3 — A combined navigation and editor-action batch may drop the final edit
 
@@ -382,6 +429,53 @@ Measure retained allocations under realistic large-bundle structural edits.
 Use path-level insert, remove, move, or reorder deltas only if the measurements
 justify the added complexity.
 
+## P3 — Bundle-envelope part markers are matched by substring, not line-anchored
+
+Deferred from the 2026-08-04 review (C-4).
+
+Evidence:
+
+- `crates/waml/src/bundle_envelope.rs:256` finds part markers by substring
+  search, so a hand-edited envelope with a marker-shaped string mid-line can
+  mis-split.
+- The encoder legitimately emits mid-line markers for bodies that do not end
+  in a newline, so simple line anchoring would reject valid encoder output.
+
+A proper fix needs a wire-format change: make the separator newline mandatory
+(version bump), then line-anchor the decoder. Machine-produced envelopes are
+unaffected today; only hand-authored envelopes can mis-split.
+
+## P3 — Edge router remains per-edge O(N²) grid plus A*
+
+Deferred from the 2026-08-04 review (P-3 follow-up). The indexing work in
+`d4c174bf` made the router about 2.4× faster, but each edge still builds its
+own obstacle grid and runs A* independently.
+
+A true shared-visibility-graph rewrite (build once per solve, mask per edge)
+would change attachment geometry and is only worth doing if large diagrams
+become a real workload. Measure wall-clock on realistic diagrams before
+scheduling it.
+
+## P3 — Eight indistinguishable `document*`/`doc*` sibling modules
+
+Deferred from the 2026-08-04 review (M-11).
+
+`crates/waml-editor/src/` contains `doc_tabs.rs`, `doc_view.rs`,
+`document.rs`, `document_header.rs`, `document_host.rs`, `documents.rs`, and
+related siblings whose names do not communicate their ownership boundaries.
+Rename or regroup when the editor module tree moves behind the library seam;
+do not rename in isolation.
+
+## P3 — Thin direct unit coverage of UML parser internals
+
+Deferred from the 2026-08-04 review (T-10).
+
+`crates/waml/src/uml/syntax/parser.rs` and `uml/analysis.rs` are covered
+almost entirely by integration-shaped tests. This is a debugging-cost issue,
+not a shipping risk — the integration net is broad. Add direct unit tests
+opportunistically when debugging in these files; the extent of the gap is
+inferred, not measured by a coverage run.
+
 ## What should not be “fixed”
 
 - Do not split `icons.rs` only because it is about 4,500 lines. It is typed
@@ -403,18 +497,19 @@ justify the added complexity.
 1. Aggregate diagnostics and make all adapters report the same failures.
 2. Complete LSP save, watched-file, and diagnostic-removal
    lifecycles.
-3. Make bundle-envelope recognition explicit and lossless.
-4. Unify filesystem transactions, add the editor save/reload test, and fix
+3. Unify filesystem transactions, add the editor save/reload test, and fix
    native deletion/rollback and
    Windows configuration replacement.
-5. Restore required CI and gate Pages on the verified commit.
-6. Consolidate tab identity, per-tab anchors, preview promotion, and deferred
+4. Consolidate tab identity, per-tab anchors, preview promotion, and deferred
    history restoration. Reproduce or dismiss the combined-action hypothesis.
-7. Centralize safe filesystem ingestion and structured load errors.
-8. Measure structural undo retention and semantic edit costs; remove the
-   quadratic UML lookup; optimize only when the data warrants it.
-9. Clean the remaining App, canvas, compatibility, operation-mapping, and
-    public-API boundaries as feature work reaches them.
+5. Centralize safe filesystem ingestion and structured load errors.
+6. Measure structural undo retention, semantic edit costs, and incremental
+   reparse per-edit costs; optimize only when the data warrants it.
+7. Open the waml-editor library seam, then chip at `editor_session.rs` and
+   the draw-path decision logic behind it.
+8. Wire the telemetry seam to an exporter and an in-editor log panel.
+9. Clean the remaining App, canvas, operation-mapping, and public-API
+   boundaries as feature work reaches them.
 
 This order protects user work first, makes automated feedback truthful, then
 improves lifecycle and scale. It intentionally leaves the parser’s extra
