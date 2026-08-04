@@ -20,7 +20,7 @@ to the loopback interface by default; a wider bind is opt-in and warns.
 
 - The web form now writes to disk through this command. `waml serve <dir>`
   loads the directory, mints a random token, prints one URL —
-  `http://127.0.0.1:<port>/?api=/api&token=<token>` — and opens it in the
+  `http://127.0.0.1:<port>/?api=/api#token=<token>` — and opens it in the
   default browser unless `--no-open` is passed. The editor boots from
   `GET /api/bundle` and saves through `POST /api/documents`.
 - The served editor and the published editor are the same embedded artifact;

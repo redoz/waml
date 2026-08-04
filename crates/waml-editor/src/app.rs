@@ -896,13 +896,18 @@ impl MatchEvent for App {
                         .and_then(|(_, values)| values.first())
                         .and_then(|value| value.parse::<u64>().ok())
                         .unwrap_or(0);
-                    self.open_bundle(cx, bundle, "served".to_string(), None);
-                    self.api_backend = Some(workspace::ApiBackend {
-                        base,
-                        token,
-                        revision,
-                    });
-                    self.show_editor(cx);
+                    // Commit the API backend and show the editor only when the
+                    // open succeeds: a server bundle that fails session
+                    // analysis must not present a blank editor bound to a live
+                    // save backend (`open_bundle` has already reported why).
+                    if self.open_bundle(cx, bundle, "served".to_string(), None) {
+                        self.api_backend = Some(workspace::ApiBackend {
+                            base,
+                            token,
+                            revision,
+                        });
+                        self.show_editor(cx);
+                    }
                 }
                 Err(e) => log!("could not open {base}: {e}"),
             }

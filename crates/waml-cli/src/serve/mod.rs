@@ -76,7 +76,10 @@ pub fn run(args: ServeArgs) -> i32 {
             guard,
         };
 
-        let url = format!("http://127.0.0.1:{port}/?api=/api&token={}", token.as_str());
+        // The token rides in the URL fragment, not the query: the fragment
+        // never leaves the browser (not sent to servers, not kept in proxy
+        // logs), and the editor's boot selection prefers it (S-2).
+        let url = format!("http://127.0.0.1:{port}/?api=/api#token={}", token.as_str());
         println!("waml serve  {url}   (serving {})", args.dir.display());
 
         let ui_router = if args.api_only {
@@ -134,8 +137,8 @@ fn launch_browser(url: &str) {
 }
 
 /// The `start` line handed raw to `cmd /C`. The URL is double-quoted so cmd
-/// treats `&` (the query separator carrying the token) as literal text, and
-/// the leading `""` is `start`'s window-title slot, which would otherwise
+/// passes it through verbatim (`&` and other cmd metacharacters stay literal),
+/// and the leading `""` is `start`'s window-title slot, which would otherwise
 /// swallow the quoted URL.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn windows_start_line(url: &str) -> String {
@@ -148,15 +151,16 @@ mod tests {
 
     #[test]
     fn the_windows_start_line_quotes_the_url_so_cmd_keeps_the_token() {
-        let url = "http://127.0.0.1:8080/?api=/api&token=abc123";
+        let url = "http://127.0.0.1:8080/?api=/api#token=abc123";
         let line = windows_start_line(url);
         assert_eq!(
             line,
-            "start \"\" \"http://127.0.0.1:8080/?api=/api&token=abc123\""
+            "start \"\" \"http://127.0.0.1:8080/?api=/api#token=abc123\""
         );
-        // The `&` must sit inside double quotes or cmd splits the line there.
+        // The fragment (and any `&` a future query may carry) must sit inside
+        // double quotes or cmd mangles the line.
         let quoted = line.rfind('"').unwrap();
-        let amp = line.find('&').unwrap();
-        assert!(amp < quoted, "token separator must be inside the quotes");
+        let hash = line.find('#').unwrap();
+        assert!(hash < quoted, "token separator must be inside the quotes");
     }
 }

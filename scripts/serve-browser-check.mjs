@@ -93,7 +93,7 @@ function killChild() {
 async function waitForUrl() {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const match = stdout.match(/(http:\/\/127\.0\.0\.1:\d+\/\?api=\/api&token=[^\s]+)/);
+    const match = stdout.match(/(http:\/\/127\.0\.0\.1:\d+\/\?api=\/api#token=[^\s]+)/);
     if (match) return match[1];
     if (child.exitCode !== null) {
       throw new Error(`waml serve exited early (code ${child.exitCode}). stderr:\n${stderr}`);
@@ -108,7 +108,8 @@ let browser = null;
 try {
   const url = await waitForUrl();
   const apiBase = url.replace(/^(http:\/\/[^/]+).*$/, '$1/api');
-  const token = new URL(url).searchParams.get('token');
+  // The token rides in the URL fragment (#token=<t>), not the query.
+  const token = new URLSearchParams(new URL(url).hash.replace(/^#/, '')).get('token');
   console.log(`serve-browser-check: boot URL ${url}`);
 
   browser = await chromium.launch({headless: true, executablePath});

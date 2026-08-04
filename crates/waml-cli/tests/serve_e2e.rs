@@ -29,7 +29,7 @@ fn tmp() -> std::path::PathBuf {
     d
 }
 
-/// Parse the `waml serve  http://127.0.0.1:<port>/?api=/api&token=<token>   (serving <dir>)`
+/// Parse the `waml serve  http://127.0.0.1:<port>/?api=/api#token=<token>   (serving <dir>)`
 /// line for the URL, splitting out the token.
 fn parse_boot_line(line: &str) -> (String, String) {
     let url = line
