@@ -97,11 +97,19 @@ continuation already expresses.
 ## Rows, identity, and ownership
 
 ```rust
+/// "/" separated, non-empty segments. Structured, not opaque.
+pub struct RowPath(String);
+
+impl RowPath {
+    pub fn segments(&self) -> impl Iterator<Item = &str>;
+    pub fn parent(&self) -> Option<RowPath>;
+    pub fn starts_with(&self, other: &RowPath) -> bool;
+}
+
 pub struct RowId {
     /// Which middleware in this folder's chain emitted the row.
     pub owner: ViewId,
-    /// Owner-resolved. Opaque to every other stage.
-    pub path: String,
+    pub path: RowPath,
 }
 
 pub struct Row {
@@ -111,11 +119,68 @@ pub struct Row {
     pub target: RowTarget,          // Concept | Folder | Virtual
     /// Folder rows only: the chain used when this row expands.
     pub expand: Option<Chain>,
+    /// Advisory, for affordances. See Capabilities.
+    pub caps: RowCaps,
+    pub child_caps: ChildCaps,
 }
 ```
 
 A row's key is `<owner view id>/<path the owner resolves>`. The emitting
 middleware owns the row and is the only stage that interprets its path.
+
+### The path is structured, not opaque
+
+A `RowPath` is *syntactically transparent, semantically owned*. Any code may
+split it on `/`, take a parent, or test a prefix. Only the owner may say what a
+segment means.
+
+That buys **prefix resolution**, which is the point: restoring a saved address, a
+deep link, or a bookmark without replaying the walk that produced it. Breadcrumbs
+alone would not justify it — the rows already passed through carry their labels —
+but session restore and deep links have no such history to draw on.
+
+So the owner gains one method:
+
+```rust
+fn resolve(&self, ctx: &ProjectionCtx<'_>, path: &RowPath) -> Result<Vec<Row>, Unresolved>;
+```
+
+Given a path, return the rows along it, labels included. Breadcrumbs, deep links,
+and session restore become the same call.
+
+This is a real constraint on synthesizing middleware, not a free property: a
+middleware that mints a virtual path must be able to resolve that path again on a
+later run, from the directory alone. A synthesizing middleware whose paths are
+positional or run-dependent cannot satisfy it, and must key its paths on
+something stable in the model instead.
+
+`Unresolved` is not a failure of the chain. A path that no longer resolves — the
+underlying file was deleted, a filter now excludes it — falls back to the nearest
+resolvable prefix, which is at worst the folder itself.
+
+### Capabilities
+
+`apply` is authoritative but answers only after the fact: the sole way to learn
+that an op is unsupported is to attempt it. That is fine for correctness and
+useless for affordances — the surface must decide whether to draw a drag handle
+before a drag begins.
+
+Rows therefore declare capabilities, in two sets:
+
+- `caps` — about the row itself: rename, delete, move out.
+- `child_caps` — about the rows beneath it: reorder, insert, accept a move in.
+
+"I can reorder my children" is a container capability on the folder row, distinct
+from "I can be reordered", which lives on each child.
+
+Capabilities are **advisory, for rendering only**; `apply` remains the authority.
+That creates one invariant, tested rather than trusted: **a declared capability
+must not yield `Unsupported`.** A property test over every row of every fixture
+chain enforces it. Without it, capabilities drift from behavior and the surface
+draws dead affordances.
+
+The converse is allowed: a middleware may under-declare and still accept an op.
+Under-declaring hides an affordance; over-declaring breaks one.
 
 **Ownership is total.** Any row not claimed by a middleware is emitted by the
 root view with a real member href. No file in a directory can be orphaned by a
@@ -138,7 +203,10 @@ row's owner:
 pub trait Projection {
     fn project(&self, ctx: &ProjectionCtx<'_>, next: Next<'_>) -> Result<Vec<Row>, ProjectionError>;
 
-    fn apply(&self, ctx: &ProjectionCtx<'_>, path: &str, op: RowOp, next: Next<'_>)
+    fn resolve(&self, ctx: &ProjectionCtx<'_>, path: &RowPath)
+        -> Result<Vec<Row>, Unresolved>;
+
+    fn apply(&self, ctx: &ProjectionCtx<'_>, path: &RowPath, op: RowOp, next: Next<'_>)
         -> Result<Vec<OkfOp>, Unsupported>;
 }
 ```
@@ -286,9 +354,10 @@ with its strict-consumer degradation.
 
 1. **Frontmatter on `Index`** — parse `profile`/`view`/`extra`, emit them in
    `render_index`, round-trip test. No UI. (Unchanged from the superseded plan.)
-2. **`Chain`, `Projection`, the runner** — root view only, plus depth cap, cycle
-   guard, and the failure path. Pure model work, unit-tested with no editor.
-   An identity chain must reproduce the plain listing exactly.
+2. **`Chain`, `Projection`, the runner** — root view only, including `RowPath`,
+   `resolve`, and capability declaration, plus depth cap, cycle guard, and the
+   failure path. Pure model work, unit-tested with no editor. An identity chain
+   must reproduce the plain listing exactly.
 3. **Resolution** — `ProfileDef` table, `resolved_profile`, `resolved_view`
    returning a `Chain`. No UI.
 4. **Folder surface, read-only** — render the projected rows; tree row-versus-
@@ -323,6 +392,10 @@ Headless, in `waml`:
   spanned diagnostic.
 - A bundle-frontmatter `max_view_depth` is ignored.
 - `RowId` is stable across a re-projection with unchanged inputs.
+- Every path minted by `project` resolves through `resolve` on a later run.
+- An unresolvable path falls back to its nearest resolvable prefix.
+- Every declared capability is accepted by `apply` — property test over all rows
+  of every fixture chain.
 - `apply` on the root view produces the expected OKF op batch and leaves both
   affected `index.md` files consistent.
 
