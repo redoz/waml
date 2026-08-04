@@ -204,10 +204,28 @@ that is the dual-read proof. Full gate: `cargo test --workspace`, plus the
 
 ## Risks
 
-- **`Concept` is a serde wire type.** Renaming `citations` to `sources` and
-  deleting `Citation` changes the JSON shape. `crates/waml/tests/serde_shape.rs`
-  pins that shape and will need updating in the same change. No TypeScript
-  consumer reads the field today, so the blast radius stops at the Rust tests.
+- **`Concept`'s serde surface has no production consumer.** Renaming
+  `citations` to `sources` changes the derived JSON, but every serialize and
+  deserialize of `okf::Bundle` in the workspace is a test: `okf.rs:674` and
+  `serde_shape.rs:33-77`. `waml-cli` holds `OkfAnalysis` as Rust types
+  (`bundle.rs:42`), `waml-editor` reads `&okf::Bundle` fields directly
+  (`editor_session.rs:687`), and `waml-ops-dto` converts `DirectoryAddress`
+  by hand (`lib.rs:686`) rather than through its `Deserialize`. `GET /api/bundle`
+  returns raw `(path, markdown)` pairs (`serve/state.rs:56`), not a parsed
+  bundle.
+
+  The surface is a leftover read side from the retired Svelte frontend
+  (`ef618e76`, "retire legacy web and WASM stack"); the write half survived as
+  `waml-ops-dto`, the read half did not. Decision for this change: **leave it
+  alone.** New types carry the same `cfg_attr` derives as their neighbours for
+  consistency. Whether an OKF read route should exist — and whether it should
+  serialize the domain type or a purpose-built DTO the way the write side
+  does — is a separate question with its own spec.
+
+  Practical consequence: the OKF assertions in `serde_shape.rs` never mention
+  `citations`, so they pass untouched. They pin that the semantic collections
+  stay separate and that `body` serializes as a string; `Source` holds only
+  plain scalars, so both invariants survive.
 - **`Source::resource` is `String`, not `Option<String>`.** An entry that
   cannot supply it is not a `Source` at all. This is what forces the
   skip-and-leave-in-`extra` rule rather than a half-built entry.
