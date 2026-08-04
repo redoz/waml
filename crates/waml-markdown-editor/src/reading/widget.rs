@@ -208,7 +208,11 @@ impl MarkdownViewer {
         let Some(raw) = source.get(start..end) else {
             return;
         };
-        let start_trimmed = if *first_on_line { raw.trim_start() } else { raw };
+        let start_trimmed = if *first_on_line {
+            raw.trim_start()
+        } else {
+            raw
+        };
         let trimmed = start_trimmed.trim_end_matches('\n');
         if trimmed.is_empty() {
             return;

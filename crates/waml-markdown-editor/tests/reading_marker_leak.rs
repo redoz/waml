@@ -36,7 +36,10 @@ fn heading_marks_and_frontmatter_never_reach_rendered_text() {
     let mut rendered = String::new();
     walk(&doc.roots, source, &mut rendered);
 
-    assert!(!rendered.contains('#'), "heading marker leaked: {rendered:?}");
+    assert!(
+        !rendered.contains('#'),
+        "heading marker leaked: {rendered:?}"
+    );
     assert!(
         !rendered.contains("title:"),
         "frontmatter leaked: {rendered:?}"

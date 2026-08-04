@@ -13,9 +13,9 @@ use waml_markdown_editor::syntax::{parse_markdown, DocumentRevision, MarkdownDia
 
 fn mounted_body(cx: &mut Cx) -> WidgetRef {
     waml_markdown_editor::live_design(cx);
-    let viewer = WidgetRef::new_with_inner(Box::new(cx.with_vm(
-        waml_markdown_editor::reading::MarkdownViewer::script_new_with_default,
-    )));
+    let viewer = WidgetRef::new_with_inner(Box::new(
+        cx.with_vm(waml_markdown_editor::reading::MarkdownViewer::script_new_with_default),
+    ));
     let mut surface = cx.with_vm(View::script_new_with_default);
     surface.children.push((live_id!(viewer), viewer));
     let surface = WidgetRef::new_with_inner(Box::new(surface));
@@ -36,8 +36,12 @@ fn a_mounted_viewer_paints_the_installed_document() {
 
     let source = "# Title\n\nBody text.\n";
     let text = SourceText::new(source.to_owned()).expect("valid source text");
-    let syntax = parse_markdown(DocumentRevision::INITIAL, text, MarkdownDialect::WAML_DEFAULT)
-        .expect("markdown parses");
+    let syntax = parse_markdown(
+        DocumentRevision::INITIAL,
+        text,
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("markdown parses");
     let styles = Arc::new(PresentationStyles::balanced());
     let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
         .expect("presentation compiles");
