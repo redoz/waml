@@ -767,7 +767,9 @@ impl MarkdownEditor {
             }
             Hit::FingerDown(event) if event.is_primary_hit() => {
                 cx.set_key_focus(area);
-                let point = event.abs - area.rect(cx).pos + dvec2(0.0, self.scroll_y);
+                let gutter = self.gutter_width(session);
+                let point =
+                    abs_to_layout_point(event.abs, area.rect(cx).pos, gutter, self.scroll_y);
                 self.pointer_drag_active = true;
                 Some(EditorInput::PointerDown(PointerGesture {
                     point,
@@ -781,13 +783,18 @@ impl MarkdownEditor {
                     },
                 }))
             }
-            Hit::FingerMove(event) if self.pointer_drag_active => Some(EditorInput::PointerMove {
-                point: event.abs - area.rect(cx).pos + dvec2(0.0, self.scroll_y),
-            }),
+            Hit::FingerMove(event) if self.pointer_drag_active => {
+                let gutter = self.gutter_width(session);
+                Some(EditorInput::PointerMove {
+                    point: abs_to_layout_point(event.abs, area.rect(cx).pos, gutter, self.scroll_y),
+                })
+            }
             Hit::FingerUp(event) if self.pointer_drag_active => {
                 self.pointer_drag_active = false;
                 if event.was_tap() {
-                    let point = event.abs - area.rect(cx).pos + dvec2(0.0, self.scroll_y);
+                    let gutter = self.gutter_width(session);
+                    let point =
+                        abs_to_layout_point(event.abs, area.rect(cx).pos, gutter, self.scroll_y);
                     if event.modifiers.is_primary() {
                         if let (Some(installed), Some(layout)) =
                             (self.installed.as_ref(), self.frame_layout.as_ref())
@@ -1545,6 +1552,58 @@ fn resolved_layout_viewport(area_size: DVec2, requested: Option<DVec2>) -> DVec2
     requested
         .filter(|size| size.x > 0.0 && size.y > 0.0)
         .unwrap_or(area_size)
+}
+
+/// Translate a window-absolute pointer position into layout space: remove the
+/// widget origin and the line-number gutter, then add back vertical scroll.
+///
+/// This is the event-side counterpart of the draw-side `content_origin`
+/// computation in `draw_walk_with_session`
+/// (`viewport.pos + dvec2(gutter, 0.0) - self.scroll_bars.get_scroll_pos()`).
+/// Both must agree on the same `gutter` value (`self.gutter_width(session)`)
+/// or clicks land offset from what was drawn. Only vertical scroll is added
+/// back (matching the widget's current y-only scroll usage) -- widening to a
+/// full 2-D scroll is out of scope here.
+fn abs_to_layout_point(abs: DVec2, area_origin: DVec2, gutter: f64, scroll_y: f64) -> DVec2 {
+    abs - area_origin - dvec2(gutter, 0.0) + dvec2(0.0, scroll_y)
+}
+
+#[cfg(test)]
+mod abs_to_layout_point_tests {
+    use super::*;
+    use crate::gutter::gutter_width;
+
+    #[test]
+    fn gutter_off_matches_old_translation() {
+        let abs = dvec2(120.0, 340.0);
+        let origin = dvec2(20.0, 40.0);
+        let scroll_y = 15.0;
+        let old = abs - origin + dvec2(0.0, scroll_y);
+        let new = abs_to_layout_point(abs, origin, 0.0, scroll_y);
+        assert_eq!(old, new);
+    }
+
+    #[test]
+    fn gutter_on_shifts_x_left() {
+        let abs = dvec2(120.0, 340.0);
+        let origin = dvec2(20.0, 40.0);
+        let scroll_y = 15.0;
+        let gutter = 36.0;
+        let old = abs - origin + dvec2(0.0, scroll_y);
+        let new = abs_to_layout_point(abs, origin, gutter, scroll_y);
+        assert_eq!(new.x, old.x - gutter);
+        assert_eq!(new.y, old.y);
+    }
+
+    #[test]
+    fn realistic_gutter_value() {
+        let abs = dvec2(200.0, 500.0);
+        let origin = dvec2(10.0, 10.0);
+        let scroll_y = 0.0;
+        let gutter = gutter_width(100, GUTTER_DIGIT_WIDTH, GUTTER_GAP);
+        let new = abs_to_layout_point(abs, origin, gutter, scroll_y);
+        assert_eq!(new, abs - origin - dvec2(gutter, 0.0));
+    }
 }
 
 fn key_input(event: KeyEvent) -> Option<EditorInput> {
