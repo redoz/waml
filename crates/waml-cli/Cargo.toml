@@ -25,14 +25,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tower-lsp = { workspace = true }
-axum = { workspace = true }
-rand = { workspace = true }
-subtle = { workspace = true }
+# `waml serve` (src/serve) is still a stub: axum/rand/subtle return with the
+# implementation that actually uses them, not before.
 brotli = { workspace = true }
 
 [build-dependencies]
 brotli = { workspace = true }
-
-[dev-dependencies]
-reqwest = { workspace = true }
-tempfile = { workspace = true }
