@@ -179,9 +179,32 @@ impl TextFace {
     ];
 }
 
+/// Digit advance and ascent of the mono face at `GUTTER_FONT_SIZE`, measured
+/// through the shaper so a theme or font swap keeps the gutter aligned
+/// instead of silently drifting against a hand-picked constant (issue 33).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GutterMetrics {
+    digit_width: f64,
+    ascent: f64,
+}
+
+impl GutterMetrics {
+    /// Baked from the shipped mono face at `GUTTER_FONT_SIZE`. Used only when
+    /// shaping is unavailable — e.g. a headless test with no font backend —
+    /// so the gutter still renders something reasonable.
+    const FALLBACK: GutterMetrics = GutterMetrics {
+        digit_width: GUTTER_DIGIT_WIDTH,
+        ascent: GUTTER_FONT_SIZE as f64 * GUTTER_ASCENT,
+    };
+}
+
 #[derive(Default)]
 struct WidgetFonts {
     faces: [Option<FontFamily>; TextFace::COUNT],
+    /// Reset alongside `faces` (Task 3, issue 33): both are populated once
+    /// per font install and refreshed together, so a stale digit metric can
+    /// never survive a font-family refresh.
+    gutter_metrics: Option<GutterMetrics>,
 }
 
 impl WidgetFonts {
@@ -197,6 +220,48 @@ impl WidgetFonts {
         draw.text_style.font_size = metrics.font_size * 0.75;
         draw.text_style.line_spacing = metrics.line_spacing;
     }
+
+    /// Digit width/ascent for the gutter, measured lazily through the mono
+    /// `DrawText` and cached until the next font refresh. Falls back to the
+    /// documented constants when shaping the probe glyph produces nothing
+    /// usable (e.g. no font backend in a headless test).
+    fn gutter_metrics(&mut self, cx: &mut Cx, mono: &mut DrawText) -> GutterMetrics {
+        if let Some(metrics) = self.gutter_metrics {
+            return metrics;
+        }
+        let measured = measure_gutter_metrics(cx, mono).unwrap_or(GutterMetrics::FALLBACK);
+        self.gutter_metrics = Some(measured);
+        measured
+    }
+}
+
+/// Shapes a single "0" glyph in `mono` at `GUTTER_FONT_SIZE` (matching the
+/// size `paint_gutter` renders at) and reads its advance and ascent back from
+/// the laid-out row. `None` when the shaper produces a degenerate row (no
+/// font backend, zero-size glyph).
+fn measure_gutter_metrics(cx: &mut Cx, mono: &mut DrawText) -> Option<GutterMetrics> {
+    let saved_font_size = mono.text_style.font_size;
+    mono.text_style.font_size = GUTTER_FONT_SIZE * 0.75;
+    let laid_out = mono.layout_uncached(
+        cx,
+        0.0,
+        0.0,
+        Some(GUTTER_FONT_SIZE * 100.0),
+        true,
+        Align::default(),
+        "0",
+    );
+    mono.text_style.font_size = saved_font_size;
+    let row = laid_out.rows.first()?;
+    let paint_scale = mono.font_scale as f64;
+    let digit_width = row.width_in_lpxs as f64 * paint_scale;
+    let ascent = row.ascender_in_lpxs as f64 * paint_scale;
+    (digit_width.is_finite() && digit_width > 0.0 && ascent.is_finite() && ascent > 0.0).then_some(
+        GutterMetrics {
+            digit_width,
+            ascent,
+        },
+    )
 }
 
 impl FontResolver for WidgetFonts {
@@ -784,7 +849,7 @@ impl MarkdownEditor {
             }
             Hit::FingerDown(event) if event.is_primary_hit() => {
                 cx.set_key_focus(area);
-                let gutter = self.gutter_width(session);
+                let gutter = self.gutter_width(cx, session);
                 let point =
                     abs_to_layout_point(event.abs, area.rect(cx).pos, gutter, self.scroll_y);
                 self.pointer_drag_active = true;
@@ -801,7 +866,7 @@ impl MarkdownEditor {
                 }))
             }
             Hit::FingerMove(event) if self.pointer_drag_active => {
-                let gutter = self.gutter_width(session);
+                let gutter = self.gutter_width(cx, session);
                 Some(EditorInput::PointerMove {
                     point: abs_to_layout_point(event.abs, area.rect(cx).pos, gutter, self.scroll_y),
                 })
@@ -809,7 +874,7 @@ impl MarkdownEditor {
             Hit::FingerUp(event) if self.pointer_drag_active => {
                 self.pointer_drag_active = false;
                 if event.was_tap() {
-                    let gutter = self.gutter_width(session);
+                    let gutter = self.gutter_width(cx, session);
                     let point =
                         abs_to_layout_point(event.abs, area.rect(cx).pos, gutter, self.scroll_y);
                     if event.modifiers.is_primary() {
@@ -863,7 +928,7 @@ impl MarkdownEditor {
             self.scroll_y = requested_scroll.y;
         }
         let viewport = cx.peek_walk_turtle(walk);
-        let gutter = self.gutter_width(session);
+        let gutter = self.gutter_width(cx, session);
         // The gutter eats viewport width before wrapping is decided, so text
         // never reflows when the mode is switched mid-session.
         let viewport_size = dvec2((viewport.size.x - gutter).max(1.0), viewport.size.y);
@@ -1000,8 +1065,16 @@ impl MarkdownEditor {
         Ok((cache.commands.clone(), cache.plan.clone()))
     }
 
+    /// Digit width/ascent for the mono face at `GUTTER_FONT_SIZE`, measured
+    /// through the shaper and cached until the next font refresh (Task 3,
+    /// issue 33). `fonts` and `draw_text_mono` are disjoint fields, so this
+    /// disjoint two-field borrow is fine even though both are `&mut self`.
+    fn gutter_metrics(&mut self, cx: &mut Cx) -> GutterMetrics {
+        self.fonts.gutter_metrics(cx, &mut self.draw_text_mono)
+    }
+
     /// Logical pixels reserved on the left for line numbers, gap included.
-    fn gutter_width(&self, session: &MarkdownDocumentSession) -> f64 {
+    fn gutter_width(&mut self, cx: &mut Cx, session: &MarkdownDocumentSession) -> f64 {
         if self.line_numbers == LineNumberMode::Off {
             return 0.0;
         }
@@ -1011,7 +1084,8 @@ impl MarkdownEditor {
             .line_index()
             .line_col(text, text.len())
             .map_or(0, |at| at.line as usize);
-        gutter_width(last_line + 1, GUTTER_DIGIT_WIDTH, GUTTER_GAP)
+        let digit_width = self.gutter_metrics(cx).digit_width;
+        gutter_width(last_line + 1, digit_width, GUTTER_GAP)
     }
 
     /// Muted band behind every visual row of the cursor's source line. Drawn
@@ -1069,6 +1143,7 @@ impl MarkdownEditor {
         );
         let origin_y = viewport_origin.y - self.scroll_bars.get_scroll_pos().y;
         let right = viewport_origin.x + gutter - GUTTER_GAP;
+        let metrics = self.gutter_metrics(cx);
         self.draw_text_mono.text_style.font_size = GUTTER_FONT_SIZE * 0.75;
         for row in rows {
             self.draw_text_mono.color = if row.current {
@@ -1076,12 +1151,12 @@ impl MarkdownEditor {
             } else {
                 self.marker_color
             };
-            // Right-aligned on the fixed digit advance of the mono face.
-            let x = right - row.label.chars().count() as f64 * GUTTER_DIGIT_WIDTH;
+            // Right-aligned on the measured digit advance of the mono face.
+            let x = right - row.label.chars().count() as f64 * metrics.digit_width;
             // `draw_abs` takes the top of the text box, so back the digit's own
-            // ascent off the line's baseline: the two sit on one baseline even
-            // where the line is a heading in a much larger face.
-            let top = row.baseline - GUTTER_FONT_SIZE as f64 * GUTTER_ASCENT;
+            // measured ascent off the line's baseline: the two sit on one
+            // baseline even where the line is a heading in a much larger face.
+            let top = row.baseline - metrics.ascent;
             self.draw_text_mono
                 .draw_abs(cx, dvec2(x, origin_y + top), &row.label);
         }
@@ -1671,6 +1746,55 @@ mod text_face_index_tests {
     }
 }
 
+#[cfg(test)]
+mod gutter_metrics_tests {
+    use super::*;
+
+    #[test]
+    fn measured_digit_width_is_within_5_percent_of_the_shipped_fallback() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.with_vm(|vm| {
+            makepad_widgets::makepad_draw::script_mod(vm);
+            makepad_widgets::script_mod(vm);
+            let mut draw_text = Label::script_new_with_default(vm).draw_text;
+            vm.with_cx_mut(|cx| {
+                let Some(measured) = measure_gutter_metrics(cx, &mut draw_text) else {
+                    // No usable font backend in this headless run -- the
+                    // fallback constants carry the gutter, which is exactly
+                    // the degraded path this test exists to allow.
+                    return;
+                };
+                let tolerance = GutterMetrics::FALLBACK.digit_width * 0.05;
+                assert!(
+                    (measured.digit_width - GutterMetrics::FALLBACK.digit_width).abs() <= tolerance,
+                    "measured {:?} drifted from the fallback {:?} by more than 5% -- \
+                     the shipped mono face changed, update GUTTER_DIGIT_WIDTH",
+                    measured,
+                    GutterMetrics::FALLBACK,
+                );
+            });
+        });
+    }
+
+    #[test]
+    fn cache_is_populated_once_and_reused() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.with_vm(|vm| {
+            makepad_widgets::makepad_draw::script_mod(vm);
+            makepad_widgets::script_mod(vm);
+            let mut draw_text = Label::script_new_with_default(vm).draw_text;
+            vm.with_cx_mut(|cx| {
+                let mut fonts = WidgetFonts::default();
+                assert!(fonts.gutter_metrics.is_none());
+                let first = fonts.gutter_metrics(cx, &mut draw_text);
+                assert!(fonts.gutter_metrics.is_some());
+                let second = fonts.gutter_metrics(cx, &mut draw_text);
+                assert_eq!(first, second);
+            });
+        });
+    }
+}
+
 fn key_input(event: KeyEvent) -> Option<EditorInput> {
     let extend = event.modifiers.shift;
     let key = match event.key_code {
@@ -1893,9 +2017,9 @@ impl MarkdownEditorRef {
     }
 
     #[doc(hidden)]
-    pub fn test_gutter_width(&self, session: &MarkdownDocumentSession) -> f64 {
-        self.borrow()
-            .map_or(0.0, |inner| inner.gutter_width(session))
+    pub fn test_gutter_width(&self, cx: &mut Cx, session: &MarkdownDocumentSession) -> f64 {
+        self.borrow_mut()
+            .map_or(0.0, |mut inner| inner.gutter_width(cx, session))
     }
 
     #[doc(hidden)]

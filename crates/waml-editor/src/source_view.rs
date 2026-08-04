@@ -1350,7 +1350,7 @@ mod tests {
         .unwrap();
         // The editable view reserves a line-number gutter, so painted content
         // starts that far right of the mount.
-        let gutter = dvec2(editor.test_gutter_width(&ready.session), 0.0);
+        let gutter = dvec2(editor.test_gutter_width(&mut cx, &ready.session), 0.0);
         let expected_commands = local_commands
             .iter()
             .map(|command| command.translated(mounted.pos + gutter))
