@@ -2123,8 +2123,8 @@ impl MarkdownEditorRef {
     ) {
         if let Err(validation_error) = presentation.validate() {
             let message = format!(
-                "install_presentation rejected revision {:?}: {validation_error}",
-                presentation.revision
+                "install_presentation rejected revision {}: {validation_error}",
+                presentation.revision.get()
             );
             if let Some(mut inner) = self.borrow_mut() {
                 if inner.last_install_validation_error.as_deref() != Some(message.as_str()) {
