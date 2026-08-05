@@ -205,6 +205,20 @@ fn normalize(mut ranges: Vec<TextRange>) -> Vec<TextRange> {
     normalized
 }
 
+/// Returns the leading frontmatter fence slice of `source` — from the
+/// opening `---` through the matching closing `---`/`...` line, inclusive —
+/// or `None` when `source` carries no closed leading frontmatter block. Cheap
+/// line scan, no tree built; callers that only need the frontmatter (e.g.
+/// classifying a document's claimed `type`/id without a full parse) can hand
+/// this small slice to [`crate::parse_markdown`] instead of the whole
+/// document. Uses the same fence-recognition rule as the shell pre-pass
+/// (`initial_frontmatter_end`), so it is consistent with how the full parser
+/// bounds the frontmatter block elsewhere in this module.
+pub fn leading_frontmatter_slice(source: &str) -> Option<&str> {
+    let end = initial_frontmatter_end(source);
+    (end > 0).then(|| &source[..end])
+}
+
 fn initial_frontmatter_end(source: &str) -> usize {
     let bom = usize::from(source.starts_with('\u{feff}')) * 3;
     let Some(first_end) = line_end(source, bom) else {

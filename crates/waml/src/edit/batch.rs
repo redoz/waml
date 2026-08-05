@@ -6,11 +6,11 @@ use crate::okf::lower::OkfLoweringState;
 use crate::source::{BundlePath, SourceBundle};
 use crate::uml::lower::UmlLoweringState;
 use crate::{okf, uml};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use waml_syntax::{
-    parse_markdown, DocumentRevision, MarkdownDialect, OkfMarkdownSyntaxKind, SourceText,
-    SyntaxElement,
+    leading_frontmatter_slice, parse_markdown, DocumentRevision, MarkdownDialect,
+    OkfMarkdownSyntaxKind, SourceText, SyntaxElement,
 };
 
 /// One primitive edit, either an OKF structural operation or a UML domain
@@ -194,8 +194,14 @@ fn snapshot(source: &SourceBundle) -> BTreeMap<BundlePath, Arc<String>> {
         .collect()
 }
 
+/// Classification only needs the frontmatter `type` and the concept id, never
+/// the full tree — so this parses just the leading frontmatter fence slice
+/// (a cheap line scan away, see [`leading_frontmatter_slice`]) instead of the
+/// whole document. A directory move of N documents now costs N small parses
+/// instead of N full-document parses.
 fn claimed_id(path: &BundlePath, text: &Arc<String>) -> Option<String> {
-    let source = SourceText::from_shared(text.clone()).ok()?;
+    let slice = leading_frontmatter_slice(text.as_str())?;
+    let source = SourceText::from_shared(Arc::new(slice.to_owned())).ok()?;
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         source,
@@ -222,38 +228,53 @@ fn invalidations(
     candidate: &SourceBundle,
 ) -> Vec<Invalidation> {
     let after = snapshot(candidate);
-    let mut removed: Vec<_> = before
+    let removed: Vec<_> = before
         .iter()
         .filter(|(path, _)| !after.contains_key(*path))
         .map(|(path, text)| (path.clone(), text.clone()))
         .collect();
-    let mut inserted: Vec<_> = after
+    let inserted: Vec<_> = after
         .iter()
         .filter(|(path, _)| !before.contains_key(*path))
         .map(|(path, text)| (path.clone(), text.clone()))
         .collect();
+
+    // Rename matching is Arc-pointer identity, not content: index `inserted`
+    // by pointer once so each `removed` entry finds its match in O(1) instead
+    // of an O(removed * inserted) linear `position` scan (a directory move of
+    // N documents would otherwise cost N^2). A queue per pointer preserves
+    // "first match by pointer identity, in insertion order" when several
+    // inserted entries happen to share the same text pointer.
+    let mut inserted_by_ptr: HashMap<*const String, VecDeque<usize>> = HashMap::new();
+    for (index, (_, text)) in inserted.iter().enumerate() {
+        inserted_by_ptr
+            .entry(Arc::as_ptr(text))
+            .or_default()
+            .push_back(index);
+    }
+
     let mut events = Vec::new();
-    let mut removed_index = 0;
-    while removed_index < removed.len() {
-        if let Some(inserted_index) = inserted
-            .iter()
-            .position(|(_, inserted_text)| Arc::ptr_eq(&removed[removed_index].1, inserted_text))
-        {
-            let (from, _) = removed.remove(removed_index);
-            let (to, to_text) = inserted.remove(inserted_index);
-            let from_text = before.get(&from).expect("removed path was snapshotted");
+    let mut matched_inserted: HashSet<usize> = HashSet::new();
+    let mut unmatched_removed = Vec::new();
+    for (from, from_text) in removed {
+        let matched_index = inserted_by_ptr
+            .get_mut(&Arc::as_ptr(&from_text))
+            .and_then(VecDeque::pop_front);
+        if let Some(inserted_index) = matched_index {
+            matched_inserted.insert(inserted_index);
+            let (to, to_text) = inserted[inserted_index].clone();
             events.push(Invalidation::Renamed {
-                id_from: claimed_id(&from, from_text),
+                id_from: claimed_id(&from, &from_text),
                 id_to: claimed_id(&to, &to_text),
                 from,
                 to,
             });
         } else {
-            removed_index += 1;
+            unmatched_removed.push((from, from_text));
         }
     }
     events.extend(
-        removed
+        unmatched_removed
             .into_iter()
             .map(|(path, text)| Invalidation::Removed {
                 id: claimed_id(&path, &text),
@@ -263,7 +284,9 @@ fn invalidations(
     events.extend(
         inserted
             .into_iter()
-            .map(|(path, text)| Invalidation::Inserted {
+            .enumerate()
+            .filter(|(index, _)| !matched_inserted.contains(index))
+            .map(|(_, (path, text))| Invalidation::Inserted {
                 id: claimed_id(&path, &text),
                 path,
             }),
@@ -314,6 +337,44 @@ mod tests {
             ("a.md".to_string(), "# Duplicate".to_string()),
         ]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalidations_classifies_same_arc_rename_with_resolved_ids() {
+        // `invalidations` matches a rename by Arc pointer identity: the same
+        // text, present at a removed path and an inserted path. Exercise the
+        // HashMap-indexed matching directly and confirm `claimed_id` (now
+        // reading only the frontmatter slice) still resolves the concept id
+        // on both sides of the rename.
+        let mut candidate = SourceBundle::try_from_pairs([(
+            "sales/order.md",
+            "---\ntype: uml.Class\n---\n# Order\n",
+        )])
+        .unwrap();
+        let before: BTreeMap<BundlePath, Arc<String>> = candidate
+            .documents()
+            .iter()
+            .map(|document| (document.path().clone(), document.text_shared().clone()))
+            .collect();
+
+        candidate.rename_document(0, "archive/order.md").unwrap();
+
+        let events = invalidations(&before, &candidate);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Invalidation::Renamed {
+                id_from,
+                id_to,
+                from,
+                to,
+            } => {
+                assert_eq!(from.as_str(), "sales/order.md");
+                assert_eq!(to.as_str(), "archive/order.md");
+                assert_eq!(id_from.as_deref(), Some("sales/order"));
+                assert_eq!(id_to.as_deref(), Some("archive/order"));
+            }
+            other => panic!("expected a Renamed invalidation, got {other:?}"),
+        }
     }
 
     #[test]

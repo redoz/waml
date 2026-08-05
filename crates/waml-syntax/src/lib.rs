@@ -24,9 +24,9 @@ pub use markdown::scalar::{
     FrontmatterScalarKind,
 };
 pub use markdown::{
-    parse_markdown, reparse_markdown, ConfirmedHeading, FencedCodeInfo, HtmlTagFilter,
-    MarkdownEntity, MarkdownHeading, MarkdownImage, MarkdownLink, MarkdownLinkKind, MarkdownList,
-    MarkdownListKind, MarkdownRawHtml, MarkdownReparseOutcome, MarkdownSemanticRole,
+    leading_frontmatter_slice, parse_markdown, reparse_markdown, ConfirmedHeading, FencedCodeInfo,
+    HtmlTagFilter, MarkdownEntity, MarkdownHeading, MarkdownImage, MarkdownLink, MarkdownLinkKind,
+    MarkdownList, MarkdownListKind, MarkdownRawHtml, MarkdownReparseOutcome, MarkdownSemanticRole,
     MarkdownSourceRole, MarkdownStructureMap, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot,
     MarkdownSyntaxSpan, MarkdownSyntaxUpdate, MarkdownTableCell, OkfMarkdownLanguage,
     OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity, TableAlignment, TaskListState,
