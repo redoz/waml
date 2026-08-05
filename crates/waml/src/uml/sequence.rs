@@ -901,6 +901,9 @@ pub(crate) fn lower(
     for (_, item) in ordered {
         match item {
             Ordered::Fragment(fragment) => {
+                // Coupled with `validate_fragments`'s `declared_fragments` filter, which
+                // applies this same predicate to stay aligned with the runtime fragments
+                // built here.
                 let Some(kind) = value(&fragment.kind).copied() else {
                     continue;
                 };
@@ -1390,6 +1393,8 @@ fn validate_fragments(
             _ => None,
         })
         .collect::<BTreeMap<_, _>>();
+    // Coupled with the fragment builder's filter below; both must apply the same
+    // `value(&fragment.kind).is_some()` predicate or this count can drift.
     let mut declared_fragments = concept
         .fragments
         .iter()
@@ -1398,9 +1403,12 @@ fn validate_fragments(
         let SeqNode::Fragment { kind, operands, .. } = node else {
             continue;
         };
-        let declared_fragment = declared_fragments
-            .next()
-            .expect("each runtime fragment has a typed declared fragment");
+        // Coupled with the filter above: `declared_fragments` is only advanced for
+        // fragments with a typed `kind`, matching how runtime `SeqNode::Fragment`s are built.
+        let Some(declared_fragment) = declared_fragments.next() else {
+            debug_assert!(false, "runtime fragment without typed declared fragment");
+            continue;
+        };
         let specs = operands
             .iter()
             .filter_map(|id| by_id.get(id.as_str()).copied())
