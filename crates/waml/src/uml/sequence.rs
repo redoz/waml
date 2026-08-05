@@ -72,13 +72,8 @@ fn report_message(
     message: impl Into<String>,
     id: &MessageId,
 ) {
-    let Some(index) =
-        id.0.strip_prefix('m')
-            .and_then(|value| value.parse::<usize>().ok())
-    else {
-        return;
-    };
-    let Some(declared) = ctx.concept.messages.get(index) else {
+    let Some(declared) = ctx.concept.messages.get(id.0) else {
+        debug_assert!(false, "message id {id} out of range of declared messages");
         return;
     };
     report_at(
@@ -1082,9 +1077,9 @@ pub(crate) fn lower(
                     }
                 }
                 let message_index = message_indices[&message.syntax.syntax().range().start()];
-                let id = MessageId(format!("m{message_index}"));
+                let id = MessageId(message_index);
                 edges.push(SeqEdge {
-                    id: id.clone(),
+                    id,
                     from,
                     kind,
                     to,
@@ -1166,7 +1161,7 @@ fn resolve_returns(
     let edge_by_id = edges
         .iter()
         .enumerate()
-        .map(|(index, edge)| (edge.id.clone(), index))
+        .map(|(index, edge)| (edge.id, index))
         .collect::<BTreeMap<_, _>>();
     let node_by_id = nodes
         .iter()
@@ -1380,7 +1375,7 @@ fn resolve_one_return(
         return;
     }
     edges[index].to = Some(edges[candidate].from.clone());
-    edges[index].returns_call = Some(edges[candidate].id.clone());
+    edges[index].returns_call = Some(edges[candidate].id);
     open.remove(&candidate);
 }
 
@@ -1485,7 +1480,7 @@ fn validate_lifetimes(
                         continue;
                     };
                     if !deleted.insert(id.clone()) {
-                        repeated.insert(edge.clone());
+                        repeated.insert(*edge);
                         report_message(
                             ctx,
                             diagnostics,
@@ -1743,7 +1738,7 @@ fn validate_lifetimes(
         .collect::<BTreeSet<_>>();
     let edge_by_id = edges
         .iter()
-        .map(|edge| (edge.id.clone(), edge))
+        .map(|edge| (edge.id, edge))
         .collect::<BTreeMap<_, _>>();
     let lookup = SeqLookup {
         nodes: &node_by_id,

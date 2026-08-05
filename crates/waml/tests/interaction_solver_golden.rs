@@ -8,6 +8,20 @@ use waml::solve::interaction::{
 };
 use waml::source::SourceBundle;
 
+/// Stable fixture-only mapping from a human-readable test id (e.g.
+/// "self-call") to `MessageId`'s usize form. Production `MessageId`s come
+/// from document order (see `model::MessageId`); these solver-level fixtures
+/// build `SeqEdge`/`SeqChild` directly and want readable names in test code,
+/// so an FNV-1a hash stands in for a real index.
+fn mid(id: &str) -> MessageId {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in id.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    MessageId(h as usize)
+}
+
 fn edge(id: &str, from: &str, kind: MessageKind, to: &str, value: Option<&str>) -> SeqEdge {
     typed_edge(
         id,
@@ -26,7 +40,7 @@ fn typed_edge(
     value: Option<&str>,
 ) -> SeqEdge {
     SeqEdge {
-        id: MessageId(id.into()),
+        id: mid(id),
         from,
         kind,
         to: Some(to),
@@ -37,9 +51,7 @@ fn typed_edge(
 }
 
 fn message(id: &str) -> SeqChild {
-    SeqChild::Message {
-        edge: MessageId(id.into()),
-    }
+    SeqChild::Message { edge: mid(id) }
 }
 
 fn load() -> SequenceDoc {
@@ -245,7 +257,7 @@ fn self_delete_ends_the_lifeline_at_the_loopback_row() {
 fn correlated_returns_close_the_selected_activation() {
     let returning = |id: &str, from: &str, to: &str, call: &str| {
         let mut edge = edge(id, from, MessageKind::Reply, to, None);
-        edge.returns_call = Some(MessageId(call.into()));
+        edge.returns_call = Some(mid(call));
         edge
     };
     let doc = SequenceDoc {
@@ -294,7 +306,7 @@ fn correlated_returns_close_the_selected_activation() {
         solved
             .messages
             .iter()
-            .find(|message| message.id == id)
+            .find(|message| message.id == mid(id))
             .unwrap_or_else(|| panic!("missing message {id}"))
             .y
     };
@@ -324,7 +336,7 @@ fn correlated_returns_close_the_selected_activation() {
     assert!(diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == waml::diagnostic::DiagCode::UnmatchedReturn));
-    assert!(pretty_interaction(&solved).contains("returns=slow"));
+    assert!(pretty_interaction(&solved).contains(&format!("returns={}", mid("slow"))));
 }
 
 #[test]
@@ -873,7 +885,7 @@ fn par_branches_share_a_start_and_join_after_all_branches() {
         solved
             .messages
             .iter()
-            .find(|item| item.id == id)
+            .find(|item| item.id == mid(id))
             .unwrap_or_else(|| panic!("missing message {id}"))
             .y
     };
@@ -893,7 +905,7 @@ fn par_branches_share_a_start_and_join_after_all_branches() {
 fn par_activation_depths_follow_row_intervals_not_operand_walk_order() {
     let returning = |id: &str, call: &str| {
         let mut edge = edge(id, "b", MessageKind::Reply, "a", None);
-        edge.returns_call = Some(MessageId(call.into()));
+        edge.returns_call = Some(mid(call));
         edge
     };
     let doc = SequenceDoc {
@@ -970,7 +982,7 @@ fn par_activation_depths_follow_row_intervals_not_operand_walk_order() {
         let y = solved
             .messages
             .iter()
-            .find(|message| message.id == id)
+            .find(|message| message.id == mid(id))
             .unwrap()
             .y;
         let mut depths = solved
@@ -1165,7 +1177,7 @@ fn interaction_use_frames_keep_bindings_and_gates() {
         let message = solved
             .messages
             .iter()
-            .find(|message| message.id == message_id)
+            .find(|message| message.id == mid(message_id))
             .unwrap();
         let gate = frame
             .gates

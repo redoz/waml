@@ -140,7 +140,7 @@ fn outside_to_outside_is_diagnosed_and_excluded_from_runtime_projection() {
         .unwrap();
 
     assert_eq!(doc.edges.len(), 1);
-    assert_eq!(doc.edges[0].id, MessageId("m1".into()));
+    assert_eq!(doc.edges[0].id, MessageId(1));
     assert_eq!(doc.edges[0].from, EndpointRef::Outside);
     assert_eq!(
         doc.edges[0].to,
@@ -169,8 +169,8 @@ fn returns_follow_the_locked_candidate_algorithm() {
         .find(|doc| doc.key == "s")
         .unwrap();
 
-    assert_eq!(doc.edges[1].returns_call, Some(MessageId("m0".into())));
-    assert_eq!(doc.edges[3].returns_call, Some(MessageId("m2".into())));
+    assert_eq!(doc.edges[1].returns_call, Some(MessageId(0)));
+    assert_eq!(doc.edges[3].returns_call, Some(MessageId(2)));
     assert_eq!(doc.edges[6].returns_call, None);
     assert_eq!(doc.edges[7].returns_call, None);
     assert!(analysis
@@ -280,7 +280,7 @@ fn nested_fragments_keep_order_and_branch_boundaries() {
     assert!(matches!(
         doc.items.as_slice(),
         [SeqChild::Fragment { node }, SeqChild::Message { edge }]
-            if node == "f0" && edge.0 == "m4"
+            if node == "f0" && edge.0 == 4
     ));
     let first_alt_operand = doc
         .nodes
@@ -297,9 +297,9 @@ fn nested_fragments_keep_order_and_branch_boundaries() {
     assert!(matches!(
         first_alt_operand.as_slice(),
         [SeqChild::Message { edge }, SeqChild::Fragment { node }]
-            if edge.0 == "m0" && node == "f1"
+            if edge.0 == 0 && node == "f1"
     ));
-    for (id, expected) in [("f1.o0", "m1"), ("f1.o1", "m2")] {
+    for (id, expected) in [("f1.o0", 1usize), ("f1.o1", 2usize)] {
         let items = doc
             .nodes
             .iter()
@@ -333,7 +333,7 @@ fn parallel_branches_do_not_infer_returns_from_siblings() {
         .find(|doc| doc.key == "branches")
         .unwrap();
     assert_eq!(doc.edges[1].returns_call, None);
-    assert_eq!(doc.edges[2].returns_call, Some(MessageId("m0".into())));
+    assert_eq!(doc.edges[2].returns_call, Some(MessageId(0)));
 }
 
 #[test]
@@ -352,8 +352,8 @@ fn conditional_join_keeps_calls_that_can_remain_open() {
         .iter()
         .find(|doc| doc.key == "conditional")
         .unwrap();
-    assert_eq!(doc.edges[1].returns_call, Some(MessageId("m0".into())));
-    assert_eq!(doc.edges[2].returns_call, Some(MessageId("m0".into())));
+    assert_eq!(doc.edges[1].returns_call, Some(MessageId(0)));
+    assert_eq!(doc.edges[2].returns_call, Some(MessageId(0)));
 }
 
 /// A multi-operand `opt` is malformed (`InvalidFragmentOperands`) but still
@@ -747,7 +747,7 @@ fn call_and_return_can_share_one_interaction_use_gate() {
     assert_eq!(doc.edges.len(), 2);
     assert_eq!(doc.items.len(), 3);
     assert_eq!(doc.interaction_uses[0].gates, ["request"]);
-    assert_eq!(doc.edges[1].returns_call, Some(doc.edges[0].id.clone()));
+    assert_eq!(doc.edges[1].returns_call, Some(doc.edges[0].id));
 
     let cfg = InteractionConfig::default();
     let sizes = measure_interaction(doc, &cfg);
@@ -865,8 +865,8 @@ fn invalid_runtime_entries_do_not_renumber_valid_siblings() {
             .count(),
         2
     );
-    assert_eq!(bad_doc.edges[0].id, MessageId("m1".into()));
-    assert_eq!(fixed_doc.edges[1].id, MessageId("m1".into()));
+    assert_eq!(bad_doc.edges[0].id, MessageId(1));
+    assert_eq!(fixed_doc.edges[1].id, MessageId(1));
     assert_eq!(
         bad_doc.interaction_uses[0].id,
         InteractionUseId("u1".into())
@@ -893,7 +893,7 @@ fn future_duplicate_call_identity_does_not_ambiguous_match() {
         .iter()
         .find(|doc| doc.key == "future")
         .unwrap();
-    assert_eq!(doc.edges[1].returns_call, Some(MessageId("m0".into())));
+    assert_eq!(doc.edges[1].returns_call, Some(MessageId(0)));
     assert!(!analysis
         .diagnostics
         .iter()

@@ -337,7 +337,7 @@ fn build_behavior_element_view(model: &Model, key: &str) -> Option<InspectorView
     let (doc_key, id) = split_behavior_key(key)?;
     let doc = model.interactions.iter().find(|d| d.key == doc_key)?;
 
-    if let Some(edge) = doc.edges.iter().find(|e| e.id.0 == id) {
+    if let Some(edge) = doc.edges.iter().find(|e| e.id.to_string() == id) {
         let lifeline_title = |lid: &str| -> String {
             doc.nodes
                 .iter()
@@ -675,7 +675,7 @@ mod tests {
         use waml::model::{EndpointRef, InteractionUseId, MessageId, MessageKind, SeqEdge};
 
         let edge = |from, kind, to, value| SeqEdge {
-            id: MessageId("m0".into()),
+            id: MessageId(0),
             from,
             kind,
             to,

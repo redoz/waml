@@ -778,7 +778,7 @@ fn parser_platform_baseline_keeps_okf_membership_and_selective_uml_claims() {
     );
     assert_eq!(
         (
-            interaction.edges[0].id.0.as_str(),
+            interaction.edges[0].id.to_string().as_str(),
             &interaction.edges[0].from,
             interaction.edges[0].kind,
             interaction.edges[0].to.as_ref(),

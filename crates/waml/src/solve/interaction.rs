@@ -76,7 +76,7 @@ pub struct SolvedActivation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolvedMessage {
-    pub id: String,
+    pub id: MessageId,
     pub verb: MessageKind,
     pub from: EndpointRef,
     pub to: EndpointRef,
@@ -137,7 +137,7 @@ fn lifeline_size_key(id: &str) -> String {
     format!("lifeline:{id}")
 }
 
-fn message_size_key(id: &str) -> String {
+fn message_size_key(id: MessageId) -> String {
     format!("message:{id}")
 }
 
@@ -182,7 +182,7 @@ pub fn measure_interaction(doc: &SequenceDoc, cfg: &InteractionConfig) -> SizeMa
         if let Some(sig) = &edge.value {
             let w = sizing::text_width(sig, cfg.message_font_size, Font::Sans);
             sizes.insert(
-                message_size_key(&edge.id.0),
+                message_size_key(edge.id),
                 Size {
                     w,
                     h: cfg.message_line_height,
@@ -213,7 +213,7 @@ struct FragmentWork {
 struct WalkState<'a> {
     doc_key: &'a str,
     lifeline_x: &'a BTreeMap<&'a str, f64>,
-    edges_by_id: &'a BTreeMap<&'a str, &'a SeqEdge>,
+    edges_by_id: &'a BTreeMap<MessageId, &'a SeqEdge>,
     nodes_by_id: &'a BTreeMap<&'a str, &'a SeqNode>,
     sizes: &'a SizeMap,
     cfg: &'a InteractionConfig,
@@ -286,7 +286,7 @@ fn precompute_interaction_uses(
 }
 
 impl<'a> WalkState<'a> {
-    fn row_h_for_message(&self, edge_id: &str) -> f64 {
+    fn row_h_for_message(&self, edge_id: MessageId) -> f64 {
         self.sizes
             .get(&message_size_key(edge_id))
             .map(|s| s.h)
@@ -303,7 +303,7 @@ impl<'a> WalkState<'a> {
         for child in items {
             match child {
                 SeqChild::Message { edge } => {
-                    if let Some((lo, hi)) = self.walk_message(&edge.0) {
+                    if let Some((lo, hi)) = self.walk_message(*edge) {
                         min_x = min_x.min(lo);
                         max_x = max_x.max(hi);
                     }
@@ -342,13 +342,13 @@ impl<'a> WalkState<'a> {
         ))
     }
 
-    fn walk_message(&mut self, edge_id: &str) -> Option<(f64, f64)> {
-        let edge = self.edges_by_id.get(edge_id).copied()?;
+    fn walk_message(&mut self, edge_id: MessageId) -> Option<(f64, f64)> {
+        let edge = self.edges_by_id.get(&edge_id).copied()?;
         let to = edge.to.as_ref()?;
         if matches!(edge.from, EndpointRef::Outside) && matches!(to, EndpointRef::Outside) {
             self.diagnostics.push(Diagnostic::new(
                 DiagCode::InvalidSequenceEndpoint,
-                format!("message '{}' cannot connect outside to outside", edge.id.0),
+                format!("message '{}' cannot connect outside to outside", edge.id),
                 self.doc_key.to_string(),
                 0,
             ));
@@ -398,11 +398,11 @@ impl<'a> WalkState<'a> {
                 h: row_h * 2.0,
             };
             self.messages.push(SolvedMessage {
-                id: edge.id.0.clone(),
+                id: edge.id,
                 verb: edge.kind,
                 from: edge.from.clone(),
                 to: to.clone(),
-                returns_call: edge.returns_call.clone(),
+                returns_call: edge.returns_call,
                 from_x,
                 to_x,
                 y,
@@ -414,11 +414,11 @@ impl<'a> WalkState<'a> {
         }
 
         self.messages.push(SolvedMessage {
-            id: edge.id.0.clone(),
+            id: edge.id,
             verb: edge.kind,
             from: edge.from.clone(),
             to: to.clone(),
-            returns_call: edge.returns_call.clone(),
+            returns_call: edge.returns_call,
             from_x,
             to_x,
             y,
@@ -442,7 +442,7 @@ impl<'a> WalkState<'a> {
                 DiagCode::UnknownLifelineHandle,
                 format!(
                     "message '{}' references unknown lifeline handle '{}'",
-                    message.0, id
+                    message, id
                 ),
                 self.doc_key.to_string(),
                 0,
@@ -515,7 +515,7 @@ impl<'a> WalkState<'a> {
         }
     }
 
-    fn label_rect(&self, edge_id: &str, from_x: f64, to_x: f64, y: f64) -> Option<Rect> {
+    fn label_rect(&self, edge_id: MessageId, from_x: f64, to_x: f64, y: f64) -> Option<Rect> {
         let size = self.sizes.get(&message_size_key(edge_id))?;
         let mid = (from_x + to_x) / 2.0;
         Some(Rect {
@@ -690,24 +690,24 @@ impl<'a> WalkState<'a> {
 
 fn derive_activations(
     doc_key: &str,
-    edges_by_id: &BTreeMap<&str, &SeqEdge>,
+    edges_by_id: &BTreeMap<MessageId, &SeqEdge>,
     messages: &[SolvedMessage],
     lifeline_x: &BTreeMap<&str, f64>,
     bottom: f64,
     cfg: &InteractionConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Vec<SolvedActivation> {
-    let rows_by_id: BTreeMap<&str, &SolvedMessage> = messages
+    let rows_by_id: BTreeMap<MessageId, &SolvedMessage> = messages
         .iter()
-        .map(|message| (message.id.as_str(), message))
+        .map(|message| (message.id, message))
         .collect();
-    let mut replies_by_call: BTreeMap<&str, &SolvedMessage> = BTreeMap::new();
+    let mut replies_by_call: BTreeMap<MessageId, &SolvedMessage> = BTreeMap::new();
 
     for reply in messages
         .iter()
         .filter(|message| message.verb == MessageKind::Reply)
     {
-        let Some(call_id) = reply.returns_call.as_ref() else {
+        let Some(call_id) = reply.returns_call else {
             diagnostics.push(Diagnostic::new(
                 DiagCode::UnmatchedReturn,
                 format!("return '{}' has no correlated call", reply.id),
@@ -716,23 +716,23 @@ fn derive_activations(
             ));
             continue;
         };
-        let valid_call = edges_by_id.get(call_id.0.as_str()).is_some_and(|call| {
+        let valid_call = edges_by_id.get(&call_id).is_some_and(|call| {
             matches!(call.kind, MessageKind::SyncCall | MessageKind::AsyncCall)
-                && rows_by_id.contains_key(call_id.0.as_str())
+                && rows_by_id.contains_key(&call_id)
         });
         if !valid_call {
             diagnostics.push(Diagnostic::new(
                 DiagCode::UnmatchedReturn,
                 format!(
                     "return '{}' references unavailable call '{}'",
-                    reply.id, call_id.0
+                    reply.id, call_id
                 ),
                 doc_key.to_string(),
                 0,
             ));
             continue;
         }
-        replies_by_call.entry(call_id.0.as_str()).or_insert(reply);
+        replies_by_call.entry(call_id).or_insert(reply);
     }
 
     let mut active_by_lifeline: BTreeMap<String, Vec<(u8, f64)>> = BTreeMap::new();
@@ -757,7 +757,7 @@ fn derive_activations(
             continue;
         };
         let reply_y = replies_by_call
-            .get(call.id.as_str())
+            .get(&call.id)
             .map(|reply| reply.y)
             .filter(|reply_y| *reply_y >= call.y);
         let end_y = reply_y.unwrap_or(bottom);
@@ -821,8 +821,7 @@ pub fn solve_interaction(
         })
         .unwrap_or(0.0);
 
-    let edges_by_id: BTreeMap<&str, &SeqEdge> =
-        doc.edges.iter().map(|e| (e.id.0.as_str(), e)).collect();
+    let edges_by_id: BTreeMap<MessageId, &SeqEdge> = doc.edges.iter().map(|e| (e.id, e)).collect();
     let nodes_by_id: BTreeMap<&str, &SeqNode> = doc
         .nodes
         .iter()
@@ -1007,7 +1006,7 @@ pub fn pretty_interaction(solved: &SolvedInteraction) -> String {
         let returns = m
             .returns_call
             .as_ref()
-            .map(|id| format!(" returns={}", id.0))
+            .map(|id| format!(" returns={id}"))
             .unwrap_or_default();
         out.push_str(&format!(
             "message {} {} {}@{:.0}->{}@{:.0} y={:.0}{}{}\n",

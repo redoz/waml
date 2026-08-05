@@ -414,7 +414,7 @@ fn sequence_doc_json_matches_ts_field_names() {
             }],
         }],
         edges: vec![SeqEdge {
-            id: MessageId("m0".into()),
+            id: MessageId(0),
             from: EndpointRef::Outside,
             kind: MessageKind::AsyncSignal,
             to: Some(EndpointRef::LocalGate {
