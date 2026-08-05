@@ -108,6 +108,28 @@ fn entry_name(raw: &str) -> &str {
     raw.split_once(':').map_or(raw, |(name, _rest)| name)
 }
 
+/// The text after the first `:` in a `view:` entry, if any -- `member`'s
+/// href, verbatim. `None` for a bare name (`"markdown"`) or a name with an
+/// empty rest (`"member:"`).
+fn entry_rest(raw: &str) -> Option<&str> {
+    raw.split_once(':').map(|(_name, rest)| rest)
+}
+
+/// Task E3: a resolution the chain attaches to its own surface rather than
+/// projecting rows through -- "the chain resolves surfaces too", not a
+/// middleware stage. Recognized by [`Chain::build`], applied by [`Chain::run`]
+/// after the ordinary stage walk computes its row-projection surface; the row
+/// projection itself is unaffected either way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Resolution {
+    /// `view: markdown` -- the folder's own tab renders the generic markdown
+    /// surface over `index.md`, rows unchanged.
+    Markdown,
+    /// `view: member:<href>` -- the folder's own tab resolves to the named
+    /// member's target, at that member's own resolved surface.
+    Member(String),
+}
+
 /// A resolved sequence of [`Projection`] stages for one folder, built from a
 /// declared [`ViewDecl`]. Cheap to clone: both arrays are `Arc`-backed.
 #[derive(Clone, Default)]
@@ -122,6 +144,11 @@ pub struct Chain {
     /// starting over at depth zero. `None` means "top-level" -- `run` seeds
     /// a fresh state from the `ChainLimits` it is given.
     descent: Option<Rc<RefCell<DescentState>>>,
+    /// Task E3's `markdown`/`member:<href>` surface resolution, if the
+    /// declared chain named one. `None` for every chain built before Task E3
+    /// and for a chain with neither entry -- ordinary stage-walk surface
+    /// resolution applies unchanged.
+    resolution: Option<Resolution>,
 }
 
 /// Outcome of running a [`Chain`].
@@ -149,7 +176,34 @@ impl Chain {
 
         let mut ids = Vec::with_capacity(decl.entries.len());
         let mut stages: Vec<Box<dyn Projection>> = Vec::with_capacity(decl.entries.len());
+        let mut resolution: Option<Resolution> = None;
+        let mut diagnostics = Vec::new();
         for (entry, (name, view_id)) in decl.entries.iter().zip(names.iter().zip(disambiguated)) {
+            match *name {
+                // Not middleware -- a resolution outcome attached to the
+                // chain (spec: "the chain resolves surfaces too"). Row
+                // projection beneath is unchanged: skip straight to the
+                // next entry rather than looking this name up as a stage.
+                "markdown" => {
+                    resolution = Some(Resolution::Markdown);
+                    continue;
+                }
+                "member" => {
+                    match entry_rest(&entry.raw) {
+                        Some(href) if !href.is_empty() => {
+                            resolution = Some(Resolution::Member(href.to_string()));
+                        }
+                        _ => diagnostics.push(Diagnostic::new(
+                            DiagCode::InvalidViewParams,
+                            "`member:` requires a non-empty href".to_string(),
+                            file.clone(),
+                            entry.line,
+                        )),
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             match registry.build(name) {
                 Some(stage) => {
                     ids.push(view_id);
@@ -173,8 +227,9 @@ impl Chain {
                 stages: stages.into(),
                 tripped: None,
                 descent: None,
+                resolution,
             },
-            Vec::new(),
+            diagnostics,
         )
     }
 
@@ -236,11 +291,34 @@ impl Chain {
         };
 
         match self.next().project(&guarded_ctx) {
-            Ok(rows) => ChainOutcome {
-                rows,
-                surface: self.next().surface(&guarded_ctx),
-                diagnostics: Vec::new(),
-            },
+            Ok(rows) => {
+                let stage_surface = self.next().surface(&guarded_ctx);
+                let (surface, diagnostics) = match &self.resolution {
+                    None => (stage_surface, Vec::new()),
+                    Some(Resolution::Markdown) => (SurfaceId("markdown".to_string()), Vec::new()),
+                    Some(Resolution::Member(href)) => {
+                        match Self::resolve_member_surface(&guarded_ctx, href, &rows, limits) {
+                            Some(surface) => (surface, Vec::new()),
+                            None => {
+                                let diagnostic = Diagnostic::new(
+                                    DiagCode::InvalidViewParams,
+                                    format!(
+                                        "`member:{href}` does not resolve to a member of this folder"
+                                    ),
+                                    ctx.dir.address.as_str().to_string(),
+                                    0,
+                                );
+                                (stage_surface, vec![diagnostic])
+                            }
+                        }
+                    }
+                };
+                ChainOutcome {
+                    rows,
+                    surface,
+                    diagnostics,
+                }
+            }
             Err(ProjectionError { message }) => {
                 let fallback = Chain::default();
                 let rows = fallback.next().project(ctx).unwrap_or_default();
@@ -258,6 +336,98 @@ impl Chain {
                 }
             }
         }
+    }
+
+    /// `member:<href>` (Task E3): resolve `href` against `ctx.dir` to the
+    /// member it names, then that member's own resolved surface -- a
+    /// concept's type default, or a nested folder's own declared chain.
+    ///
+    /// For a folder target, prefers the SAME `Chain` this run's own row
+    /// projection already resolved for that row (`rows`, via its `expand`)
+    /// over calling `ctx.descend` again: `RootView::folder_row` already
+    /// called `descend` once per listed folder row to stash it there, and
+    /// the depth/cycle guard counts every `descend` call regardless of
+    /// whether the caller runs the result -- a second call for a folder this
+    /// same pass already touched would trip the guard as a false-positive
+    /// "cycle", not a real one. Only a target that is not one of this
+    /// folder's own listed rows (e.g. filtered out by `hide`) falls back to
+    /// calling `ctx.descend` directly, still guarded against a genuine
+    /// `member:` cycle between two folders the way any `descend`-based cycle
+    /// is. `None` means the href does not name a real member of this folder
+    /// -- the caller degrades to the row-projection surface with a
+    /// diagnostic.
+    fn resolve_member_surface(
+        ctx: &ProjectionCtx<'_>,
+        href: &str,
+        rows: &[Row],
+        limits: ChainLimits,
+    ) -> Option<SurfaceId> {
+        let target = Self::resolve_member_target(ctx, href)?;
+        match &target {
+            RowTarget::Concept(_) => Some(super::surface::default_surface(&target, ctx.bundle)),
+            RowTarget::Folder(address) => {
+                if let Some(row) = rows.iter().find(|row| row.target == target) {
+                    let chain = row.expand.clone().unwrap_or_default();
+                    let child_dir = ctx.bundle.directory(address.as_str())?.clone();
+                    let extra = ctx
+                        .bundle
+                        .index(address.as_str())
+                        .map(|index| index.extra.clone())
+                        .unwrap_or_default();
+                    let child_ctx = ProjectionCtx {
+                        dir: &child_dir,
+                        bundle: ctx.bundle,
+                        params: &extra,
+                        descend: ctx.descend,
+                    };
+                    return Some(chain.run(&child_ctx, limits).surface);
+                }
+                let child_dir = ctx.bundle.directory(address.as_str())?.clone();
+                let child_chain = (ctx.descend)(&child_dir);
+                let extra = ctx
+                    .bundle
+                    .index(address.as_str())
+                    .map(|index| index.extra.clone())
+                    .unwrap_or_default();
+                let child_ctx = ProjectionCtx {
+                    dir: &child_dir,
+                    bundle: ctx.bundle,
+                    params: &extra,
+                    descend: ctx.descend,
+                };
+                Some(child_chain.run(&child_ctx, limits).surface)
+            }
+            RowTarget::Virtual => None,
+        }
+    }
+
+    /// `href` (`./orders`, `sales/`) resolved against `ctx.dir`'s own
+    /// `index.md` to a real concept or child directory of this folder --
+    /// [`okf::resolve_href`]'s bundle-relative-id resolution, then matched
+    /// against `ctx.dir`'s own member lists the same way
+    /// [`super::root::RootView::row_for_member`] does. Never a `Virtual`
+    /// target: nothing in this folder resolves to one.
+    fn resolve_member_target(ctx: &ProjectionCtx<'_>, href: &str) -> Option<RowTarget> {
+        let dir_path = ctx.dir.address.as_str().trim_start_matches('/');
+        let referring = if dir_path.is_empty() {
+            "index.md".to_string()
+        } else {
+            format!("{dir_path}/index.md")
+        };
+        let resolved = okf::resolve_href(&referring, href);
+        if ctx.dir.concepts.iter().any(|concept| concept == &resolved) {
+            return Some(RowTarget::Concept(resolved));
+        }
+        let dir_address = format!("/{resolved}");
+        if ctx
+            .dir
+            .child_directories
+            .iter()
+            .any(|child| child.as_str() == dir_address)
+        {
+            return Some(RowTarget::Folder(dir_address));
+        }
+        None
     }
 
     /// The chain returned by a tripped descent guard: no stages, just the
@@ -798,8 +968,7 @@ mod tests {
         Chain {
             ids: vec![ViewId::new("self-descend")].into(),
             stages: vec![Box::new(SelfDescendingDouble) as Box<dyn Projection>].into(),
-            tripped: None,
-            descent: None,
+            ..Chain::default()
         }
     }
 
@@ -909,8 +1078,7 @@ mod tests {
                 ids: vec![ViewId::new("cross-descend")].into(),
                 stages: vec![Box::new(CrossDescendingDouble { partner }) as Box<dyn Projection>]
                     .into(),
-                tripped: None,
-                descent: None,
+                ..Chain::default()
             }
         }
 
@@ -1032,8 +1200,7 @@ mod tests {
         Chain {
             ids: vec![ViewId::new("prefix")].into(),
             stages: vec![Box::new(PrefixDouble) as Box<dyn Projection>].into(),
-            tripped: None,
-            descent: None,
+            ..Chain::default()
         }
     }
 
@@ -1090,5 +1257,182 @@ mod tests {
         let last = outcome.rows.last().expect("never a silently empty list");
         assert_eq!(last.target, RowTarget::Virtual);
         assert_eq!(last.id.owner, ViewId::new(DEPTH_GUARD_OWNER));
+    }
+
+    // Task E3: `markdown` and `member:<href>` as chain surface resolutions.
+    mod surface_resolutions {
+        use super::*;
+        use crate::okf::Bundle;
+        use crate::source::SourceBundle;
+
+        fn descend_for<'a>(bundle: &'a okf::Bundle) -> impl Fn(&okf::Directory) -> Chain + 'a {
+            move |dir: &okf::Directory| {
+                let registry = MiddlewareRegistry::new();
+                bundle.resolved_view(dir.address.as_str(), &registry).0
+            }
+        }
+
+        fn run_root(
+            bundle: &okf::Bundle,
+            registry: &MiddlewareRegistry,
+        ) -> (Vec<Row>, SurfaceId, Vec<Diagnostic>) {
+            let (chain, mut build_diags) = bundle.resolved_view("/", registry);
+            let directory = bundle.directory("/").unwrap().clone();
+            let params = bundle
+                .index("/")
+                .map(|i| i.extra.clone())
+                .unwrap_or_default();
+            let descend = descend_for(bundle);
+            let projection_ctx = ctx(&directory, bundle, &params, &descend);
+            let outcome = chain.run(&projection_ctx, ChainLimits::default());
+            build_diags.extend(outcome.diagnostics);
+            (outcome.rows, outcome.surface, build_diags)
+        }
+
+        #[test]
+        fn view_markdown_resolves_the_folder_target_to_the_markdown_surface() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: markdown\n---\n# Root\n\n* [Orders](orders.md)\n",
+                    ),
+                    ("orders.md", "# Orders\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = MiddlewareRegistry::new();
+
+            let identity_bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
+                    ("orders.md", "# Orders\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+
+            let (rows, surface, diagnostics) = run_root(&bundle, &registry);
+            let (identity_rows, identity_surface, identity_diags) =
+                run_root(&identity_bundle, &registry);
+
+            assert!(diagnostics.is_empty());
+            assert!(identity_diags.is_empty());
+            assert_eq!(surface.as_str(), "markdown");
+            assert_ne!(identity_surface.as_str(), "markdown");
+            assert_eq!(
+                rows.len(),
+                identity_rows.len(),
+                "rows unchanged vs identity chain"
+            );
+        }
+
+        #[test]
+        fn view_member_resolves_to_the_members_target_and_surface() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: member:./orders\n---\n# Root\n\n* [Orders](orders.md)\n* [Sales](sales/)\n",
+                    ),
+                    (
+                        "orders.md",
+                        "---\ntype: uml.Class\n---\n# Orders\n",
+                    ),
+                    ("sales/index.md", "# Sales\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = MiddlewareRegistry::new();
+
+            let (_, surface, diagnostics) = run_root(&bundle, &registry);
+            assert!(diagnostics.is_empty());
+            assert_eq!(
+                surface.as_str(),
+                "canvas",
+                "orders is a uml.Class -- canvas default"
+            );
+
+            let folder_bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: member:./sales\n---\n# Root\n\n* [Sales](sales/)\n",
+                    ),
+                    ("sales/index.md", "# Sales\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let (_, folder_surface, folder_diags) = run_root(&folder_bundle, &registry);
+            assert!(folder_diags.is_empty());
+            assert_eq!(
+                folder_surface.as_str(),
+                "folder",
+                "targeting a folder member yields that member's own resolved chain surface"
+            );
+        }
+
+        #[test]
+        fn member_with_a_missing_href_degrades_with_a_spanned_diagnostic() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: member\n---\n# Root\n\n* [Orders](orders.md)\n",
+                    ),
+                    ("orders.md", "# Orders\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = MiddlewareRegistry::new();
+
+            let (rows, surface, diagnostics) = run_root(&bundle, &registry);
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(diagnostics[0].code, DiagCode::InvalidViewParams);
+            assert_eq!(surface.as_str(), "folder", "degrades to default resolution");
+            assert_eq!(rows.len(), 1);
+        }
+
+        #[test]
+        fn a_member_href_that_does_not_resolve_degrades_with_a_diagnostic() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: member:./nonexistent\n---\n# Root\n\n* [Orders](orders.md)\n",
+                    ),
+                    ("orders.md", "# Orders\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = MiddlewareRegistry::new();
+
+            let (_, surface, diagnostics) = run_root(&bundle, &registry);
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(diagnostics[0].code, DiagCode::InvalidViewParams);
+            assert_eq!(surface.as_str(), "folder", "degrades to default resolution");
+        }
+
+        #[test]
+        fn no_auto_detection_a_lone_diagram_does_not_change_the_folder_listing_surface() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    ("index.md", "# Root\n\n* [Order](order.md)\n"),
+                    ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = MiddlewareRegistry::new();
+
+            let (_, surface, diagnostics) = run_root(&bundle, &registry);
+            assert!(diagnostics.is_empty());
+            assert_eq!(surface.as_str(), "folder");
+        }
     }
 }
