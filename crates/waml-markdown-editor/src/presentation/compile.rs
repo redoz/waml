@@ -249,6 +249,9 @@ fn marker_role(
             TextRole::FrontmatterToken(CodeTokenRole::Comment)
         }
         MarkdownSemanticRole::FrontmatterScalar => frontmatter_scalar_role(span, text),
+        MarkdownSemanticRole::FrontmatterBlockScalar => {
+            TextRole::FrontmatterToken(CodeTokenRole::String)
+        }
         MarkdownSemanticRole::FrontmatterInvalid => {
             TextRole::FrontmatterToken(CodeTokenRole::Invalid)
         }
@@ -300,6 +303,12 @@ fn content_role(
             return TextRole::FrontmatterToken(CodeTokenRole::Comment)
         }
         MarkdownSemanticRole::FrontmatterScalar => return frontmatter_scalar_role(span, text),
+        // The model reads a block scalar as one `Str`, header and all content
+        // lines: classifying a line on its own would paint `true` or `42` a
+        // Keyword/Number the model never sees.
+        MarkdownSemanticRole::FrontmatterBlockScalar => {
+            return TextRole::FrontmatterToken(CodeTokenRole::String)
+        }
         MarkdownSemanticRole::FrontmatterInvalid => {
             return TextRole::FrontmatterToken(CodeTokenRole::Invalid)
         }
@@ -371,7 +380,9 @@ fn frontmatter_scalar_role(span: &MarkdownSyntaxSpan, text: &SourceText) -> Text
         return TextRole::FrontmatterToken(CodeTokenRole::String);
     };
     let s = slice.trim();
-    if s.starts_with('"') || s.starts_with('\'') || s.starts_with('|') || s.starts_with('>') {
+    // Block scalars (`|`/`>`) never reach here — header and content lines
+    // alike carry `FrontmatterBlockScalar` and paint String as one unit.
+    if s.starts_with('"') || s.starts_with('\'') {
         return TextRole::FrontmatterToken(CodeTokenRole::String);
     }
     if s.starts_with('[') {

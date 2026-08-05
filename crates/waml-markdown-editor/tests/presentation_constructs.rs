@@ -339,3 +339,37 @@ fn frontmatter_tokens_paint_from_the_shared_classifier() {
         .iter()
         .all(|role| *role == TextRole::FrontmatterToken(CodeTokenRole::Punctuation)));
 }
+
+/// The model reads a whole block scalar as one `Str`, so its content lines
+/// must paint String even when a line reads `true` or `42` — classifying each
+/// line on its own would contradict the model's verdict.
+#[test]
+fn block_scalar_content_lines_paint_as_string() {
+    let source = "---\nnotes: |\n  true\n  42\n---\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).expect("the WAML source is valid"),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("the WAML source parses");
+    let plan = compile_presentation(
+        &snapshot,
+        &PresentationStyles::balanced(),
+        &HighlighterRegistry::default(),
+    )
+    .expect("the document compiles");
+
+    for line in ["  true", "  42"] {
+        let roles = roles_for(&plan, &snapshot, line);
+        assert!(
+            !roles.is_empty(),
+            "no run covers the block-scalar line {line:?}"
+        );
+        assert!(
+            roles
+                .iter()
+                .all(|role| *role == TextRole::FrontmatterToken(CodeTokenRole::String)),
+            "block-scalar line {line:?} painted {roles:?}"
+        );
+    }
+}

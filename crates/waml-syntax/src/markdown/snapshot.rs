@@ -29,6 +29,11 @@ pub enum MarkdownSemanticRole {
     FrontmatterFence,
     FrontmatterComment,
     FrontmatterScalar,
+    /// A block scalar's header (`|`/`>`) and every content line under it. The
+    /// model reads the whole block as ONE string, so its lines must never be
+    /// classified individually — a line reading `true` is string content, not
+    /// a boolean.
+    FrontmatterBlockScalar,
     FrontmatterInvalid,
     BlockQuote,
     List,
@@ -1055,6 +1060,7 @@ fn collect_spans(
                             semantic_role: token_semantic_role(
                                 token.kind(),
                                 MarkdownSemanticRole::Document,
+                                false,
                             ),
                         });
                     }
@@ -1074,15 +1080,23 @@ fn collect_spans(
         return Ok(());
     };
     let role = semantic_role(node.kind());
+    // A block scalar's header and its content lines are siblings under one
+    // entry node, so the header is what marks the rest of this node's value
+    // tokens as block-scalar content.
+    let mut in_block_scalar = false;
     for child in node.children() {
         match child {
             SyntaxElement::Node(child) => collect_spans(&child, Some(owner), out)?,
             SyntaxElement::Token(token) if token.range().start() < token.range().end() => {
+                let semantic_role = token_semantic_role(token.kind(), role, in_block_scalar);
+                if token.kind() == crate::OkfMarkdownSyntaxKind::FrontmatterBlockScalarHeaderToken {
+                    in_block_scalar = true;
+                }
                 out.push(MarkdownSyntaxSpan {
                     owner,
                     range: token.range(),
                     source_role: source_role(token.kind()),
-                    semantic_role: token_semantic_role(token.kind(), role),
+                    semantic_role,
                 })
             }
             SyntaxElement::Token(_) => {}
@@ -1121,9 +1135,13 @@ fn source_role(kind: crate::OkfMarkdownSyntaxKind) -> MarkdownSourceRole {
     }
 }
 
+/// `in_block_scalar` says whether a `FrontmatterBlockScalarHeaderToken` was
+/// already seen among the SAME node's earlier children — every value token
+/// after it is a content line of that block scalar, not a scalar of its own.
 fn token_semantic_role(
     kind: crate::OkfMarkdownSyntaxKind,
     parent: MarkdownSemanticRole,
+    in_block_scalar: bool,
 ) -> MarkdownSemanticRole {
     use crate::OkfMarkdownSyntaxKind as Kind;
     match kind {
@@ -1148,10 +1166,13 @@ fn token_semantic_role(
             MarkdownSemanticRole::FrontmatterFence
         }
         Kind::FrontmatterCommentToken => MarkdownSemanticRole::FrontmatterComment,
+        Kind::FrontmatterBlockScalarHeaderToken => MarkdownSemanticRole::FrontmatterBlockScalar,
+        Kind::FrontmatterValue | Kind::FrontmatterValueToken if in_block_scalar => {
+            MarkdownSemanticRole::FrontmatterBlockScalar
+        }
         Kind::FrontmatterValue
         | Kind::FrontmatterValueToken
-        | Kind::FrontmatterQuotedValueToken
-        | Kind::FrontmatterBlockScalarHeaderToken => MarkdownSemanticRole::FrontmatterScalar,
+        | Kind::FrontmatterQuotedValueToken => MarkdownSemanticRole::FrontmatterScalar,
         _ => parent,
     }
 }

@@ -849,6 +849,7 @@ impl<'a> Renderer<'a> {
             | MarkdownSemanticRole::FrontmatterFence
             | MarkdownSemanticRole::FrontmatterComment
             | MarkdownSemanticRole::FrontmatterScalar
+            | MarkdownSemanticRole::FrontmatterBlockScalar
             | MarkdownSemanticRole::FrontmatterInvalid
             | MarkdownSemanticRole::TaskMarker
             | MarkdownSemanticRole::WamlSection => {}
