@@ -321,12 +321,16 @@ fn parse_inlines(
             open_inside != close_inside
         })
     };
-    let mut emphasis: Vec<_> = emphasis_pairs(source, start, end)
+    // `code_spans`/`angle_spans` protect the same [start, end) range for both
+    // pair scans below; compute once per level instead of once per scan.
+    let mut protected = code_spans(source, start, end);
+    protected.extend(angle_spans(source, start, end));
+    let mut emphasis: Vec<_> = emphasis_pairs(source, start, end, &protected)
         .into_iter()
         .filter(|pair| !crosses_link_label(&brackets, pair))
         .collect();
     let mut strikethrough: Vec<EmphasisPair> = if context.dialect.strikethrough() {
-        strikethrough_pairs(source, start, end)
+        strikethrough_pairs(source, start, end, &protected)
             .into_iter()
             .filter(|pair| !crosses_link_label(&brackets, pair))
             .collect()
@@ -363,11 +367,33 @@ fn parse_inlines(
         emphasis.clear();
         strikethrough.clear();
     }
+    // `brackets` is pushed in close-scan order (a LIFO pop on `]`), not
+    // sorted by `start`, so a monotone cursor cannot be used for it; index by
+    // start instead. `emphasis`/`strikethrough` are sorted ascending by
+    // `open` (see their sort_by_key calls) and the loop below only ever
+    // queries with a non-decreasing `at`, so both use a monotone cursor that
+    // advances past entries whose `open` has already been passed.
+    let bracket_by_start: HashMap<usize, usize> = brackets
+        .iter()
+        .enumerate()
+        .map(|(index, matched)| (matched.start, index))
+        .collect();
+    let mut strikethrough_cursor = 0usize;
+    let mut emphasis_cursor = 0usize;
     let mut out = Vec::new();
     let mut at = start;
     let mut plain = start;
     while at < end {
-        if let Some(pair) = strikethrough.iter().find(|pair| pair.open == at) {
+        while strikethrough
+            .get(strikethrough_cursor)
+            .is_some_and(|pair| pair.open < at)
+        {
+            strikethrough_cursor += 1;
+        }
+        if let Some(pair) = strikethrough
+            .get(strikethrough_cursor)
+            .filter(|pair| pair.open == at)
+        {
             flush(context.text, plain, at, &mut out)?;
             let mut children = vec![tok(
                 context.text,
@@ -394,7 +420,13 @@ fn parse_inlines(
             plain = at;
             continue;
         }
-        if let Some(pair) = emphasis.iter().find(|pair| pair.open == at) {
+        while emphasis
+            .get(emphasis_cursor)
+            .is_some_and(|pair| pair.open < at)
+        {
+            emphasis_cursor += 1;
+        }
+        if let Some(pair) = emphasis.get(emphasis_cursor).filter(|pair| pair.open == at) {
             flush(context.text, plain, at, &mut out)?;
             let mut children = vec![tok(
                 context.text,
@@ -641,8 +673,8 @@ fn parse_inlines(
                 }
             }
         }
-        if let Some(matched) = brackets.iter().find(|matched| matched.start == at) {
-            let parsed = parse_link(context, *matched, end, owner, allow_links, depth + 1)?;
+        if let Some(matched) = bracket_by_start.get(&at).map(|&index| brackets[index]) {
+            let parsed = parse_link(context, matched, end, owner, allow_links, depth + 1)?;
             flush(context.text, plain, at, &mut out)?;
             out.push(GreenElement::Node(parsed.node));
             at = parsed.end;
@@ -1159,9 +1191,12 @@ fn emit_link_gap(
     Ok(())
 }
 
-fn emphasis_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
-    let mut protected = code_spans(source, start, end);
-    protected.extend(angle_spans(source, start, end));
+fn emphasis_pairs(
+    source: &str,
+    start: usize,
+    end: usize,
+    protected: &[std::ops::Range<usize>],
+) -> Vec<EmphasisPair> {
     let mut delimiters = Vec::<Delimiter>::new();
     let mut pairs = Vec::new();
     let mut at = start;
@@ -1233,9 +1268,12 @@ fn emphasis_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
     pairs
 }
 
-fn strikethrough_pairs(source: &str, start: usize, end: usize) -> Vec<EmphasisPair> {
-    let mut protected = code_spans(source, start, end);
-    protected.extend(angle_spans(source, start, end));
+fn strikethrough_pairs(
+    source: &str,
+    start: usize,
+    end: usize,
+    protected: &[std::ops::Range<usize>],
+) -> Vec<EmphasisPair> {
     let mut openers = Vec::new();
     let mut pairs = Vec::new();
     let mut at = start;
@@ -1902,6 +1940,30 @@ mod tests {
     fn nested_emphasis_below_cap_is_unaffected() {
         let depth = super::super::MD_MAX_INLINE_DEPTH - 1;
         let source = "*".repeat(depth * 2) + "x" + &"*".repeat(depth * 2) + "\n";
+        let snapshot = parse_markdown(
+            DocumentRevision::INITIAL,
+            crate::SourceText::new(&source).unwrap(),
+            crate::MarkdownDialect::WAML_DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(snapshot.tree().write_to_string(), source);
+        assert!(!snapshot
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == Diagnostic::NestingDepthExceeded));
+    }
+
+    /// A flat (non-nested) run of thousands of link-style bracket pairs
+    /// exercises the per-byte `at` lookup against `brackets` directly — these
+    /// pairs sit side by side rather than recursing, so the nesting-depth cap
+    /// never engages and the whole cost lands on the bracket lookup inside
+    /// `parse_inlines`'s main loop. Before the lookup was indexed, this shape
+    /// was O(bytes × pairs); the test's real assertion is that it still
+    /// completes and round-trips, not a timing measurement.
+    #[test]
+    fn many_flat_link_brackets_round_trip() {
+        let count = 5_000;
+        let source = "[a](u) ".repeat(count) + "\n";
         let snapshot = parse_markdown(
             DocumentRevision::INITIAL,
             crate::SourceText::new(&source).unwrap(),
