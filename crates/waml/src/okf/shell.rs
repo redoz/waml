@@ -449,28 +449,32 @@ fn promote_sources(fm: &Frontmatter) -> Option<Vec<Source>> {
 }
 
 /// Promotes one `sources` list entry. `None` fails the whole key (see
-/// `promote_sources`) — only a missing/non-string `resource` fails an entry;
-/// a non-numeric `usage_count` is a merely-absent optional signal, not an
-/// entry failure (per the plan's malformed table).
+/// `promote_sources`) — a missing/non-string `resource` fails an entry, and so
+/// does any other field that is present but unreadable, so that a populated
+/// `Concept::sources` always means we read the entry whole. A non-numeric
+/// `usage_count` is the one sanctioned exception: a merely-absent optional
+/// signal, not an entry failure (per the plan's malformed table).
 fn promote_source_entry(entry: &FmValue) -> Option<Source> {
     let FmValue::Map(fields) = entry else {
         return None;
     };
     let resource = map_str_field(fields, "resource")?.to_owned();
-    let id = map_str_field(fields, "id").map(str::to_owned);
-    let title = map_str_field(fields, "title").map(str::to_owned);
-    let last_modified = map_str_field(fields, "last_modified").map(str::to_owned);
+    let id = opt_map_str_field(fields, "id")?.map(str::to_owned);
+    let title = opt_map_str_field(fields, "title")?.map(str::to_owned);
+    let last_modified = opt_map_str_field(fields, "last_modified")?.map(str::to_owned);
     let usage_count = fields
         .iter()
         .find_map(|(key, value)| match (key.as_str(), value) {
             ("usage_count", FmValue::Num(n)) => Some(*n),
             _ => None,
         });
-    let usage_window = fields
-        .iter()
-        .find(|(key, _)| key == "usage_window")
-        .and_then(|(_, value)| promote_usage_window(value));
-    let author = map_str_field(fields, "author").map(parse_actor);
+    let usage_window = match fields.iter().find(|(key, _)| key == "usage_window") {
+        // A present-but-malformed entry window fails the entry rather than
+        // silently yielding to the document-level window.
+        Some((_, value)) => Some(promote_usage_window(value)?),
+        None => None,
+    };
+    let author = opt_map_str_field(fields, "author")?.map(parse_actor);
     Some(Source {
         id,
         resource,
@@ -506,7 +510,7 @@ fn promote_generated(fm: &Frontmatter) -> Option<Generated> {
         return None;
     };
     let by = parse_actor(map_str_field(fields, "by")?);
-    let at = map_str_field(fields, "at").map(str::to_owned);
+    let at = opt_map_str_field(fields, "at")?.map(str::to_owned);
     Some(Generated { by, at })
 }
 
@@ -517,7 +521,7 @@ fn promote_verification_entry(entry: &FmValue) -> Option<Verification> {
         return None;
     };
     let by = parse_actor(map_str_field(fields, "by")?);
-    let at = map_str_field(fields, "at").map(str::to_owned);
+    let at = opt_map_str_field(fields, "at")?.map(str::to_owned);
     Some(Verification { by, at })
 }
 
@@ -545,12 +549,25 @@ fn promote_usage_window(value: &FmValue) -> Option<UsageWindow> {
     let FmValue::Map(fields) = value else {
         return None;
     };
-    let from = map_str_field(fields, "from").map(str::to_owned);
-    let to = map_str_field(fields, "to").map(str::to_owned);
+    let from = opt_map_str_field(fields, "from")?.map(str::to_owned);
+    let to = opt_map_str_field(fields, "to")?.map(str::to_owned);
     if from.is_none() && to.is_none() {
         return None;
     }
     Some(UsageWindow { from, to })
+}
+
+/// Reads an *optional* string field, distinguishing "absent" from "present but
+/// unreadable": `Some(None)` when the key is absent, `Some(Some(s))` when it
+/// holds a string, and `None` when the key is present with a non-string value.
+/// Callers propagate that `None` so a value we cannot read fails its promotion
+/// and survives in `extra`, instead of being silently dropped.
+fn opt_map_str_field<'a>(fields: &'a [(String, FmValue)], key: &str) -> Option<Option<&'a str>> {
+    match fields.iter().find(|(k, _)| k == key) {
+        None => Some(None),
+        Some((_, FmValue::Str(s))) => Some(Some(s.as_str())),
+        Some(_) => None,
+    }
 }
 
 fn map_str_field<'a>(fields: &'a [(String, FmValue)], key: &str) -> Option<&'a str> {

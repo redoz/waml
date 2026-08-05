@@ -1342,6 +1342,49 @@ mod tests {
     }
 
     #[test]
+    fn sources_entry_with_unreadable_signal_fails_the_whole_key() {
+        // `last_modified: 2026` is a number, not a string. Dropping it would
+        // leave a populated `sources` that we did not read whole, so the key
+        // fails and the raw value survives in `extra` instead.
+        let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/a\n    last_modified: 2026\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert!(c.sources.is_empty());
+        assert!(c.extra.get("sources").is_some());
+    }
+
+    #[test]
+    fn sources_entry_with_malformed_usage_window_fails_the_whole_key() {
+        // A present-but-malformed entry window must not silently yield to the
+        // document-level window — that would substitute a wrong value and lose
+        // the authored one.
+        let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/a\n    usage_window: 2020\nusage_window:\n  from: 2025-01-01\n  to: 2025-06-01\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert!(c.sources.is_empty());
+        assert!(c.extra.get("sources").is_some());
+        assert!(c.extra.get("usage_window").is_some());
+    }
+
+    #[test]
+    fn generated_with_unreadable_at_stays_none_and_survives_in_extra() {
+        let src = "---\ntype: Note\ngenerated:\n  by: process:nightly\n  at: 2026\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.generated, None);
+        assert!(c.extra.get("generated").is_some());
+    }
+
+    #[test]
+    fn verified_with_unreadable_at_fails_the_whole_key() {
+        let src = "---\ntype: Note\nverified:\n  - by: human:ahormati\n    at: 2026\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert!(c.verified.is_empty());
+        assert!(c.extra.get("verified").is_some());
+    }
+
+    #[test]
     fn sources_entry_without_resource_fails_the_whole_key() {
         let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/a\n  - title: no resource here\n---\n# Note\n";
         let c = project("note.md", src).unwrap();
