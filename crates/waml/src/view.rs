@@ -3,3 +3,4 @@
 //! `docs/superpowers/specs/2026-08-05-folder-view-middleware-design.md`.
 
 pub mod decl;
+pub mod row;
