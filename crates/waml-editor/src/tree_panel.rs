@@ -585,7 +585,8 @@ fn reveal_path(
             NavigationTarget::Document { concept_id, .. } => {
                 node.concept_id.as_deref() == Some(concept_id.as_str())
             }
-            NavigationTarget::Directory { address } => {
+            NavigationTarget::Directory { address }
+            | NavigationTarget::DirectoryRaw { address } => {
                 node.is_directory && node.key == address.as_str()
             }
             NavigationTarget::ExternalUrl(_) => false,

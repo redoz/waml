@@ -154,6 +154,20 @@ impl Chain {
         Chain::default()
     }
 
+    /// The raw OKF layer (spec: "The raw OKF layer"): pins the chain to the
+    /// identity listing, bypassing every declared `view:` stage regardless of
+    /// what the folder declares. Row-for-row identical to [`Chain::root_only`]
+    /// today -- both are the zero-stage chain -- but named and constructed
+    /// separately because the two mean different things: `root_only` is what
+    /// a folder gets when it declares nothing, `raw` is what a caller asks
+    /// for explicitly to see past a declared chain. Hidden rows are reachable
+    /// only through this route, never leaked into the declared listing --
+    /// this is presentational, not a permission boundary, and performs no
+    /// access check.
+    pub fn raw() -> Chain {
+        Chain::default()
+    }
+
     fn next(&self) -> Next<'_> {
         Next {
             remaining: &self.stages,
@@ -571,6 +585,62 @@ mod tests {
 
         assert_eq!(via_pass_through.rows.len(), root_only.rows.len());
         assert_eq!(via_pass_through.surface, root_only.surface);
+    }
+
+    #[test]
+    fn chain_raw_equals_the_identity_listing() {
+        let registry = registry_with_doubles();
+        let directory = dir();
+        let bundle = okf::Bundle::default();
+        let params = Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+
+        let raw = Chain::raw().run(
+            &ctx(&directory, &bundle, &params, &descend),
+            ChainLimits::default(),
+        );
+        let root_only = Chain::root_only(&registry).run(
+            &ctx(&directory, &bundle, &params, &descend),
+            ChainLimits::default(),
+        );
+
+        assert_eq!(raw.rows.len(), root_only.rows.len());
+        assert_eq!(raw.surface, root_only.surface);
+        assert!(raw.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn chain_raw_ignores_a_declared_chain() {
+        let registry = registry_with_doubles();
+        let idx = index();
+        // A folder declaring `adding` gets an extra row ahead of the
+        // identity listing when its declared chain runs.
+        let (declared, build_diags) = Chain::build(&decl(&["adding"]), &registry, &idx);
+        assert!(build_diags.is_empty());
+
+        let directory = dir();
+        let bundle = okf::Bundle::default();
+        let params = Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+
+        let via_declared = declared.run(
+            &ctx(&directory, &bundle, &params, &descend),
+            ChainLimits::default(),
+        );
+        assert_eq!(
+            via_declared.rows.len(),
+            1,
+            "the declared chain's `adding` stage contributes its own row"
+        );
+
+        let via_raw = Chain::raw().run(
+            &ctx(&directory, &bundle, &params, &descend),
+            ChainLimits::default(),
+        );
+        assert!(
+            via_raw.rows.is_empty(),
+            "raw bypasses the declared chain entirely -- the `adding` stage never runs"
+        );
     }
 
     #[test]

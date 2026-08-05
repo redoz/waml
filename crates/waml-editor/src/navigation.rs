@@ -14,6 +14,14 @@ pub enum NavigationTarget {
     Directory {
         address: String,
     },
+    /// The raw OKF layer for a folder (spec: "The raw OKF layer"): opens the
+    /// identity listing, bypassing whatever chain the folder declares.
+    /// Reached only through an explicit route -- the open-raw affordance on
+    /// a folder, or a hit whose path does not resolve through the declared
+    /// chain -- never produced by parsing an authored href.
+    DirectoryRaw {
+        address: String,
+    },
     ExternalUrl(String),
 }
 

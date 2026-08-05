@@ -92,6 +92,12 @@ pub struct FolderView {
     directory: String,
     rows: Vec<Row>,
     diagnostics: Vec<waml::diagnostic::Diagnostic>,
+    /// Set when this view was opened through the raw route (Task D3): the
+    /// identity listing, bypassing whatever chain `directory` declares.
+    /// `FolderListView`'s raw-mode banner is bound to this, not to whether
+    /// `diagnostics` is empty -- raw and degraded are different reasons to
+    /// tell the user the listing isn't the folder's plain declared view.
+    raw: bool,
 }
 
 impl FolderView {
@@ -106,6 +112,41 @@ impl FolderView {
     ) -> Option<FolderView> {
         let registry = MiddlewareRegistry::new();
         let (chain, mut diagnostics) = analysis.bundle.resolved_view(directory, &registry);
+        let (rows, outcome_diags) = Self::run(analysis, directory, &chain, limits)?;
+        diagnostics.extend(outcome_diags);
+        Some(FolderView {
+            directory: directory.to_string(),
+            rows,
+            diagnostics,
+            raw: false,
+        })
+    }
+
+    /// The raw OKF layer (Task D3, spec: "The raw OKF layer"): `directory`'s
+    /// identity listing via `Chain::raw()`, bypassing whatever it declares
+    /// entirely -- the declared chain is never even built, so a hidden row
+    /// is always reachable here regardless of what filtered it out of the
+    /// declared listing. This is presentational, not a permission boundary.
+    pub fn build_raw(
+        analysis: &waml::analysis::OkfAnalysis,
+        directory: &str,
+    ) -> Option<FolderView> {
+        let chain = Chain::raw();
+        let (rows, diagnostics) = Self::run(analysis, directory, &chain, ChainLimits::default())?;
+        Some(FolderView {
+            directory: directory.to_string(),
+            rows,
+            diagnostics,
+            raw: true,
+        })
+    }
+
+    fn run(
+        analysis: &waml::analysis::OkfAnalysis,
+        directory: &str,
+        chain: &Chain,
+        limits: ChainLimits,
+    ) -> Option<(Vec<Row>, Vec<waml::diagnostic::Diagnostic>)> {
         let dir: Directory = analysis.bundle.directory(directory)?.clone();
         let params = Frontmatter::default();
         let descend = |_: &Directory| Chain::default();
@@ -116,12 +157,7 @@ impl FolderView {
             descend: &descend,
         };
         let outcome = chain.run(&ctx, limits);
-        diagnostics.extend(outcome.diagnostics);
-        Some(FolderView {
-            directory: directory.to_string(),
-            rows: outcome.rows,
-            diagnostics,
-        })
+        Some((outcome.rows, outcome.diagnostics))
     }
 
     /// Unused outside tests until Task D2 surfaces the diagnostics strip;
@@ -149,6 +185,7 @@ impl DocView for FolderView {
         body.show_folder_view(cx);
         body.folder_list().set_rows(cx, self.row_views());
         body.folder_list().set_diagnostics(cx, self.diagnostics());
+        body.folder_list().set_raw(cx, self.raw);
     }
 
     fn handle(
@@ -168,6 +205,13 @@ impl DocView for FolderView {
                     });
                 }
             }
+        } else if !self.raw && body.folder_list().raw_requested(actions) {
+            outcome.navigation = Some(crate::navigation::NavigationIntent::Resolved {
+                target: crate::navigation::NavigationTarget::DirectoryRaw {
+                    address: self.directory.clone(),
+                },
+                disposition: crate::navigation::OpenDisposition::Preview,
+            });
         }
         outcome
     }
@@ -242,6 +286,42 @@ mod tests {
                 address: "/sales".to_string(),
             })
         );
+    }
+
+    /// The editor-level half of Task D3's "search hit on a hidden path"
+    /// caller: no search UI exists to hang the test off, but the routing
+    /// contract it depends on is exactly this -- `build_raw` never even
+    /// looks at what the folder declared, so a target the declared route
+    /// diagnoses (or, once F1 lands, filters out) is unconditionally
+    /// reachable through it.
+    #[test]
+    fn build_raw_bypasses_the_declared_chain_and_its_diagnostics() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "---\nview: nonexistent\n---\n# Root\n\n* [Orders](orders.md)\n",
+            ),
+            ("orders.md", "# Orders\n"),
+        ]);
+        let declared = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        assert!(
+            !declared.diagnostics().is_empty(),
+            "an unknown declared middleware name diagnoses on the declared route"
+        );
+
+        let raw = FolderView::build_raw(prepared.okf(), "/").unwrap();
+        assert!(
+            raw.diagnostics().is_empty(),
+            "raw never builds the declared chain, so it never diagnoses it either"
+        );
+        assert_eq!(
+            raw.row_views().len(),
+            declared.row_views().len(),
+            "both land on the same identity listing here -- the declared route only \
+             because its unknown-middleware fallback also lands on the root view"
+        );
+
+        assert!(FolderView::build_raw(prepared.okf(), "/missing").is_none());
     }
 
     #[test]

@@ -111,6 +111,47 @@ script_mod! {
                 }
             }
         }
+        // Raw-mode banner (Task D3, "The raw OKF layer"): shown instead of
+        // `raw_link` once the folder is actually open in raw mode, so the
+        // user cannot mistake the raw listing for the folder's configured
+        // view. Presentational only -- no access check backs it.
+        raw_banner := View {
+            width: Fill
+            height: Fit
+            visible: false
+            padding: Inset{left: 24.0, right: 24.0, top: 10.0, bottom: 10.0}
+            show_bg: true
+            draw_bg +: {
+                color: atlas.text_dim
+                pixel: fn() {
+                    return vec4(self.color.x, self.color.y, self.color.z, 0.12)
+                }
+            }
+            raw_banner_label := Label {
+                width: Fill
+                text: "Raw listing \u{2014} the folder's declared view is bypassed"
+                draw_text +: {
+                    color: atlas.text
+                    text_style: fonts.text_label
+                }
+            }
+        }
+        // The open-raw affordance: always available on a folder's declared
+        // view, hidden once that view IS the raw listing (`raw_banner`
+        // covers that case instead).
+        raw_link := View {
+            width: Fill
+            height: Fit
+            padding: Inset{left: 24.0, right: 24.0, top: 4.0, bottom: 4.0}
+            raw_link_label := Label {
+                width: Fit
+                text: "View raw"
+                draw_text +: {
+                    color: atlas.text_dim
+                    text_style: fonts.text_micro
+                }
+            }
+        }
         rows_scroll := ScrollYView {
             width: Fill
             height: Fill
@@ -224,6 +265,9 @@ pub enum FolderListViewAction {
     #[default]
     None,
     RowOpened(usize),
+    /// The "View raw" affordance was clicked (Task D3). Never fired while
+    /// the view is already raw -- `raw_link` is hidden in that state.
+    RawRequested,
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -237,6 +281,20 @@ pub struct FolderListView {
 impl Widget for FolderListView {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         self.view.handle_event(cx, event, scope);
+        let uid = self.widget_uid();
+        let raw_link_area = self.view.view(cx, ids!(raw_link)).area();
+        match event.hits(cx, raw_link_area) {
+            Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => {
+                cx.widget_action(uid, FolderListViewAction::RawRequested);
+            }
+            Hit::FingerHoverIn(_) => {
+                cursor::hover_in(cx, MouseCursor::Hand);
+            }
+            Hit::FingerHoverOut(_) => {
+                cursor::hover_out(cx);
+            }
+            _ => {}
+        }
         self.widget_match_event(cx, event, scope);
     }
 
@@ -311,8 +369,25 @@ impl FolderListView {
     pub fn row_opened(&self, actions: &Actions) -> Option<usize> {
         match self.actions_action(actions) {
             FolderListViewAction::RowOpened(i) => Some(i),
-            FolderListViewAction::None => None,
+            FolderListViewAction::None | FolderListViewAction::RawRequested => None,
         }
+    }
+
+    /// Whether the "View raw" affordance was clicked (Task D3). `FolderView::handle`
+    /// maps a hit into a `DirectoryRaw` navigation target for its own directory.
+    pub fn raw_requested(&self, actions: &Actions) -> bool {
+        matches!(
+            self.actions_action(actions),
+            FolderListViewAction::RawRequested
+        )
+    }
+
+    /// Toggle between the "View raw" affordance and the raw-mode banner:
+    /// `raw == true` means this view IS the raw listing already, so the
+    /// affordance to open it again is hidden and the banner shown instead.
+    pub fn set_raw(&mut self, cx: &mut Cx, raw: bool) {
+        self.view.view(cx, ids!(raw_banner)).set_visible(cx, raw);
+        self.view.view(cx, ids!(raw_link)).set_visible(cx, !raw);
     }
 
     fn actions_action(&self, actions: &Actions) -> FolderListViewAction {
@@ -336,6 +411,15 @@ impl FolderListViewRef {
     }
     pub fn row_opened(&self, actions: &Actions) -> Option<usize> {
         self.borrow().and_then(|inner| inner.row_opened(actions))
+    }
+    pub fn raw_requested(&self, actions: &Actions) -> bool {
+        self.borrow()
+            .is_some_and(|inner| inner.raw_requested(actions))
+    }
+    pub fn set_raw(&self, cx: &mut Cx, raw: bool) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_raw(cx, raw);
+        }
     }
 }
 
