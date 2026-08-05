@@ -26,6 +26,14 @@ const PROFILES: &[ProfileDef] = &[
     },
 ];
 
+/// All statically shipped profiles, in table order -- the list `CoreExt`
+/// (`crate::extension`) hands back from `profiles()`. Kept separate from
+/// [`profile`] so it never accidentally picks up a test-only override: this
+/// is the real, compiled-in table, nothing else.
+pub(crate) fn shipped_profiles() -> Vec<ProfileDef> {
+    PROFILES.to_vec()
+}
+
 /// Look up a shipped profile by its exact name. No case folding: `"UML-Domain"`
 /// does not match `"uml-domain"`.
 pub fn profile(name: &str) -> Option<&'static ProfileDef> {

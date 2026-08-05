@@ -6,6 +6,7 @@ pub mod analysis;
 pub mod bundle_envelope;
 pub mod diagnostic;
 pub mod edit;
+pub mod extension;
 pub mod frontmatter;
 pub mod host;
 pub mod index_md;

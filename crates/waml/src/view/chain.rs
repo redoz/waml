@@ -49,6 +49,20 @@ pub struct MiddlewareRegistry {
     factories: HashMap<String, Arc<dyn Fn() -> Box<dyn Projection> + Send + Sync>>,
 }
 
+/// A middleware name registered by more than one extension. One flat name
+/// table across all extensions -- a collision is a build-time programming
+/// error, not something a document author can trigger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateMiddlewareName(pub String);
+
+impl std::fmt::Display for DuplicateMiddlewareName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "duplicate middleware name `{}`", self.0)
+    }
+}
+
+impl std::error::Error for DuplicateMiddlewareName {}
+
 impl MiddlewareRegistry {
     pub fn new() -> MiddlewareRegistry {
         MiddlewareRegistry::default()
@@ -62,6 +76,24 @@ impl MiddlewareRegistry {
         factory: impl Fn() -> Box<dyn Projection> + Send + Sync + 'static,
     ) {
         self.factories.insert(name.into(), Arc::new(factory));
+    }
+
+    /// Build a registry from every `CoreExtension`'s declared middleware.
+    /// One flat name table: the same name declared by two extensions is a
+    /// build error rather than a silent last-write-wins.
+    pub fn from_extensions(
+        extensions: &[&dyn crate::extension::CoreExtension],
+    ) -> Result<MiddlewareRegistry, DuplicateMiddlewareName> {
+        let mut registry = MiddlewareRegistry::new();
+        for extension in extensions {
+            for (name, factory) in extension.middleware() {
+                if registry.factories.contains_key(name) {
+                    return Err(DuplicateMiddlewareName(name.to_string()));
+                }
+                registry.factories.insert(name.to_string(), factory);
+            }
+        }
+        Ok(registry)
     }
 
     fn build(&self, name: &str) -> Option<Box<dyn Projection>> {
