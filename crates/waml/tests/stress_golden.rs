@@ -169,3 +169,65 @@ fn grouped_layout_is_deterministic() {
     let two = stress::layout_grouped(&ids, &sizes, &edges, &groups, &cfg);
     assert_eq!(one, two);
 }
+
+/// (e) Sibling groups that merely *share* members (neither set a subset of the
+/// other) cannot be pulled apart by translating one of them — doing so drags
+/// the shared nodes out of the other group and the passes fight until the cap,
+/// leaving node boxes overlapping. Such pairs are left alone, and the rects
+/// still come out overlap-free.
+#[test]
+fn grouped_layout_survives_shared_membership() {
+    let sizes = [
+        Size { w: 183.0, h: 79.0 },
+        Size { w: 135.0, h: 141.0 },
+        Size { w: 148.0, h: 73.0 },
+        Size { w: 105.0, h: 138.0 },
+        Size { w: 209.0, h: 109.0 },
+        Size { w: 150.0, h: 53.0 },
+        Size { w: 233.0, h: 119.0 },
+        Size { w: 113.0, h: 118.0 },
+        Size { w: 245.0, h: 68.0 },
+    ];
+    let ids: Vec<BoxId> = (0..sizes.len()).map(|i| node(&format!("n{i}"))).collect();
+    let edges = [(0, 1), (0, 2), (2, 3), (3, 5), (4, 6), (3, 7), (1, 8)];
+    let groups = [
+        GroupSpec {
+            members: vec![2, 5, 6],
+            depth: 0,
+        },
+        GroupSpec {
+            members: vec![0, 2, 5],
+            depth: 0,
+        },
+        GroupSpec {
+            members: vec![0, 2, 8],
+            depth: 0,
+        },
+        GroupSpec {
+            members: vec![0, 2, 5, 6],
+            depth: 0,
+        },
+    ];
+
+    let (rects, hulls) =
+        stress::layout_grouped(&ids, &sizes, &edges, &groups, &StressConfig::default());
+    assert_eq!(hulls.len(), groups.len());
+    for i in 0..rects.len() {
+        for j in i + 1..rects.len() {
+            assert!(
+                !rects_overlap(&rects[i], &rects[j]),
+                "node rects {i} and {j} overlap: {:?} vs {:?}",
+                rects[i],
+                rects[j]
+            );
+        }
+    }
+    for (gi, g) in groups.iter().enumerate() {
+        for &m in &g.members {
+            assert!(
+                rect_inside(&rects[m], &hulls[gi]),
+                "member {m} not inside group {gi} hull"
+            );
+        }
+    }
+}

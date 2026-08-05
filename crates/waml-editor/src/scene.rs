@@ -454,13 +454,19 @@ fn flatten_groups(
     for g in groups {
         let mut members = Vec::new();
         collect_members(g, index, &mut members);
-        specs.push(stress::GroupSpec { members, depth });
-        let title = if g.name.is_empty() {
-            None
-        } else {
-            Some(g.name.clone())
-        };
-        meta.push((title, depth));
+        // A group whose members are all unresolved/unsized has no geometry: its
+        // hull would be a degenerate `Rect{0,0,0,0}` at the origin, which would
+        // become a phantom route obstacle and a zero-size dashed overlay. Drop
+        // it (children are still walked — a child may resolve).
+        if !members.is_empty() {
+            specs.push(stress::GroupSpec { members, depth });
+            let title = if g.name.is_empty() {
+                None
+            } else {
+                Some(g.name.clone())
+            };
+            meta.push((title, depth));
+        }
         flatten_groups(&g.children, index, depth + 1, specs, meta);
     }
 }
@@ -1895,6 +1901,42 @@ mod tests {
                 "{key} rect not inside the emitted hull"
             );
         }
+    }
+
+    #[test]
+    fn stress_default_skips_groups_with_no_resolved_members() {
+        // Every member key misses the size map, so the group has no geometry:
+        // it must not emit a zero-size hull (a phantom route obstacle at the
+        // origin plus a degenerate dashed overlay).
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        diagram.layout = Vec::new();
+        diagram.groups = vec![
+            DiagramGroup {
+                name: "Ghost".into(),
+                members: vec!["not-a-node".into()],
+                children: Vec::new(),
+            },
+            DiagramGroup {
+                name: "Ordering".into(),
+                members: vec!["order".into(), "customer".into()],
+                children: Vec::new(),
+            },
+        ];
+        assert!(use_stress_default(&diagram), "expected stress path");
+
+        let (scene, _) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(
+            scene.groups.len(),
+            1,
+            "the memberless group must be dropped"
+        );
+        assert_eq!(scene.groups[0].title.as_deref(), Some("Ordering"));
     }
 
     #[test]

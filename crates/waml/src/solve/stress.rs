@@ -226,8 +226,10 @@ fn normalize_to_origin(rects: &mut [Rect]) {
 /// Bounded separation pass: sibling group hulls that overlap are pushed apart
 /// by translating every member of the deeper/later group, and any *ungrouped*
 /// node that lands inside a hull is pushed out through its nearest edge.
-/// Nested (ancestor/descendant) hull pairs are left alone — containment is
-/// expected there. Deterministic: groups are always visited deepest-first
+/// Group pairs that share any member — nested (ancestor/descendant) pairs, and
+/// siblings that merely intersect — are left alone: containment is expected for
+/// the former, and neither can be separated by translating one set without
+/// dragging the shared nodes out of the other. Deterministic: groups are always visited deepest-first
 /// then by index, and the loop is capped at 6 passes, exiting early once a
 /// pass makes no translation.
 ///
@@ -248,9 +250,14 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
         .iter()
         .map(|g| g.members.iter().copied().collect())
         .collect();
-    let is_nested = |i: usize, j: usize| -> bool {
-        member_sets[i].is_subset(&member_sets[j]) || member_sets[j].is_subset(&member_sets[i])
-    };
+    // Only groups with *disjoint* member sets can be pulled apart: translating
+    // one of two sets that share a node drags that node out of the other group
+    // too, so the pair can never separate and the passes just fight until the
+    // cap. Nested (ancestor/descendant) pairs share by definition and are
+    // expected to overlap; merely-intersecting siblings (the same element under
+    // two `###` headings) are the same story geometrically.
+    let is_entangled =
+        |i: usize, j: usize| -> bool { !member_sets[i].is_disjoint(&member_sets[j]) };
 
     // A node in any group is moved only with its group, never in isolation.
     let ungrouped: Vec<bool> = (0..rects.len())
@@ -264,7 +271,7 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
         let hulls = group_hulls(rects, groups, cfg);
         for (oi, &gi) in order.iter().enumerate() {
             for &gj in &order[oi + 1..] {
-                if is_nested(gi, gj) {
+                if is_entangled(gi, gj) {
                     continue;
                 }
                 let a = &hulls[gi];
