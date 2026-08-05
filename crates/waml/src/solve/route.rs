@@ -563,7 +563,7 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
         cands.sort_by(|(pa, sa), (pb, sb)| {
             pa.0.total_cmp(&pb.0)
                 .then(pa.1.total_cmp(&pb.1))
-                .then(side_disc(*sa).cmp(&side_disc(*sb)))
+                .then(sa.cmp(sb))
         });
         // Dedup by point AND side: a corner keeps both of its sides (each with
         // its own perpendicular stub direction).
@@ -939,7 +939,7 @@ fn nudge(routes: &mut [Route]) {
 }
 
 /// A side of a box's border, used for hub-attachment grouping.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Side {
     Left,
     Right,
@@ -997,24 +997,6 @@ struct End {
     ep: usize,
     nb: usize,
     along: f64,
-}
-
-fn disc_to_side(d: u8) -> Side {
-    match d {
-        0 => Side::Left,
-        1 => Side::Right,
-        2 => Side::Top,
-        _ => Side::Bottom,
-    }
-}
-
-fn side_disc(s: Side) -> u8 {
-    match s {
-        Side::Left => 0,
-        Side::Right => 1,
-        Side::Top => 2,
-        Side::Bottom => 3,
-    }
 }
 
 /// Unit outward normal of a border side (points away from the box interior).
@@ -1086,7 +1068,7 @@ fn connect_ends(s: P, s_side: Option<Side>, t: P, t_side: Option<Side>) -> Vec<P
 /// on its own border -- the old single-pass code dragged the opposite endpoint
 /// off the target, deleting the connecting segment.
 fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
-    let mut groups: BTreeMap<(String, u8), Vec<End>> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, Side), Vec<End>> = BTreeMap::new();
 
     for (ri, route) in routes.iter().enumerate() {
         if route.points.len() < 2 {
@@ -1110,7 +1092,7 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
                 Side::Top | Side::Bottom => neighbour.0,
             };
             groups
-                .entry((key, side_disc(side)))
+                .entry((key, side))
                 .or_default()
                 .push(End { ri, ep, nb, along });
         }
@@ -1120,26 +1102,29 @@ fn hub_spread(routes: &mut [Route], rects: &BTreeMap<BoxId, Rect>) {
     // record their new endpoint (both ends may still be spread by another group,
     // and each must stay on its own border) for the rebuild pass.
     let mut moved: BTreeMap<(usize, usize), (P, Side)> = BTreeMap::new();
-    for ((key, sdisc), mut ends) in groups {
+    for ((key, side), mut ends) in groups {
         if ends.len() < 2 {
             continue;
         }
         let bx = rects[&BoxId::Node(key)];
         ends.sort_by(|a, b| a.along.total_cmp(&b.along).then(a.ri.cmp(&b.ri)));
         let m = ends.len();
-        let side = disc_to_side(sdisc);
-        let horizontal_side = sdisc == 2 || sdisc == 3; // Top/Bottom spread along x
+        let horizontal_side = matches!(side, Side::Top | Side::Bottom); // Top/Bottom spread along x
         let (span_lo, span_hi, fixed) = if horizontal_side {
             (
                 bx.x,
                 bx.x + bx.w,
-                if sdisc == 2 { bx.y } else { bx.y + bx.h },
+                if side == Side::Top { bx.y } else { bx.y + bx.h },
             )
         } else {
             (
                 bx.y,
                 bx.y + bx.h,
-                if sdisc == 0 { bx.x } else { bx.x + bx.w },
+                if side == Side::Left {
+                    bx.x
+                } else {
+                    bx.x + bx.w
+                },
             )
         };
         for (k, e) in ends.iter().enumerate() {
@@ -2212,7 +2197,7 @@ mod tests {
             cands.sort_by(|(pa, sa), (pb, sb)| {
                 pa.0.total_cmp(&pb.0)
                     .then(pa.1.total_cmp(&pb.1))
-                    .then(side_disc(*sa).cmp(&side_disc(*sb)))
+                    .then(sa.cmp(sb))
             });
             cands.dedup_by(|(pa, sa), (pb, sb)| {
                 (pa.0 - pb.0).abs() < 1e-9 && (pa.1 - pb.1).abs() < 1e-9 && sa == sb
