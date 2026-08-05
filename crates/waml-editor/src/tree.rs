@@ -9,7 +9,14 @@ pub type TreeKind = NavCategory;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeNode {
-    pub key: String,
+    /// The projected row's identity, NOT a file address. Stable across a
+    /// re-projection, so selection and expansion survive the chain re-run a
+    /// mode flip triggers; a file address is not, because a middleware may
+    /// relabel or mint rows with no file behind them.
+    pub key: waml::view::row::RowId,
+    /// Directory rows only: the real OKF address this row expands into.
+    /// `None` for concept and virtual rows.
+    pub address: Option<String>,
     pub title: String,
     pub kind: TreeKind,
     pub presentation: DocumentPresentation,
@@ -25,6 +32,13 @@ pub struct TreeNode {
     /// `false` for a non-directory row.
     pub view_degraded: bool,
     pub children: Vec<TreeNode>,
+}
+
+/// The flat string the tree panel keys its `LiveId` maps and cached chevron
+/// rects on. `\u{1}` separates the two halves: neither a `ViewId` nor a
+/// `RowPath` segment can contain it, so distinct `RowId`s never collide.
+pub fn key_string(key: &waml::view::row::RowId) -> String {
+    format!("{}\u{1}{}", key.owner, key.path)
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -103,12 +117,13 @@ pub fn build_tree(
             accent: crate::accent::tree_kind_color(NavCategory::Directory),
             category: NavCategory::Directory,
         };
-        let concept_node = |concept_id: &str| {
+        let concept_node = |concept_id: &str, key: waml::view::row::RowId| {
             let concept = bundle.concept(concept_id)?;
             let descriptor = crate::documents::describe(okf, uml_analysis, concept_id)?;
             let presentation = descriptor.presentation;
             Some(TreeNode {
-                key: concept_id.to_owned(),
+                key,
+                address: None,
                 title: concept.title.clone().unwrap_or_else(|| {
                     concept_id
                         .rsplit('/')
@@ -144,14 +159,16 @@ pub fn build_tree(
                     if let Some(mut node) =
                         directory_node(okf, uml_analysis, &child, root_fallback, mode, limits)
                     {
-                        // The chain owns the label; a middleware may relabel a
-                        // folder row, and the tree must show what it said.
+                        // The chain owns the label and the identity; a
+                        // middleware may relabel a folder row, and the tree
+                        // must show and key on what it said.
                         node.title = row.label.clone();
+                        node.key = row.id.clone();
                         children.push(node);
                     }
                 }
                 waml::view::row::RowTarget::Concept(concept_id) => {
-                    if let Some(mut node) = concept_node(concept_id) {
+                    if let Some(mut node) = concept_node(concept_id, row.id.clone()) {
                         node.title = row.label.clone();
                         children.push(node);
                     }
@@ -161,7 +178,8 @@ pub fn build_tree(
                 // tree disagree with the folder view about what is there.
                 waml::view::row::RowTarget::Virtual => {
                     children.push(TreeNode {
-                        key: row.id.path.as_str().to_string(),
+                        key: row.id.clone(),
+                        address: None,
                         title: row.label.clone(),
                         kind: NavCategory::OkfDocument,
                         presentation: DocumentPresentation {
@@ -187,7 +205,17 @@ pub fn build_tree(
         let registry = crate::folder_projection::core_registry();
         let (_, diagnostics) = bundle.resolved_view(address.as_str(), &registry);
         Some(TreeNode {
-            key: address.as_str().to_string(),
+            // The bundle root is not itself a projected row -- nothing emits
+            // it -- so it mints its own id. `RowPath::parse` rejects a
+            // leading '/', hence the literal "root" segment; a directory
+            // child immediately overwrites this with the row that produced
+            // it (see the `Folder` arm above).
+            key: waml::view::row::RowId {
+                owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
+                path: waml::view::row::RowPath::parse("root")
+                    .expect("literal non-empty single segment parses"),
+            },
+            address: Some(address.as_str().to_string()),
             title,
             kind: NavCategory::Directory,
             presentation,
@@ -325,19 +353,35 @@ mod tests {
             waml::view::chain::ChainLimits::default(),
         );
         let root = &tree.roots[0];
-        assert_eq!((root.key.as_str(), root.title.as_str()), ("/", "Root"));
+        assert_eq!(
+            (root.address.as_deref(), root.title.as_str()),
+            (Some("/"), "Root")
+        );
         let sales = &root.children[0];
         assert_eq!(
-            (sales.key.as_str(), sales.title.as_str()),
-            ("/sales", "Sales")
+            (sales.address.as_deref(), sales.title.as_str()),
+            (Some("/sales"), "Sales")
         );
         assert_eq!(
             sales
                 .children
                 .iter()
-                .map(|row| row.key.as_str())
+                .map(|row| key_string(&row.key))
                 .collect::<Vec<_>>(),
-            ["sales/order", "/sales/archive", "sales/runbook"]
+            [
+                key_string(&waml::view::row::RowId {
+                    owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
+                    path: waml::view::row::RowPath::parse("sales/order").unwrap(),
+                }),
+                key_string(&waml::view::row::RowId {
+                    owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
+                    path: waml::view::row::RowPath::parse("sales/archive").unwrap(),
+                }),
+                key_string(&waml::view::row::RowId {
+                    owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
+                    path: waml::view::row::RowPath::parse("sales/runbook").unwrap(),
+                }),
+            ]
         );
     }
 
@@ -352,11 +396,17 @@ mod tests {
             waml::view::chain::ChainLimits::default(),
         );
         let rows = &tree.roots[0].children[0].children;
-        let order = rows.iter().find(|row| row.key == "sales/order").unwrap();
+        let order = rows
+            .iter()
+            .find(|row| row.concept_id.as_deref() == Some("sales/order"))
+            .unwrap();
         assert_eq!(order.kind, NavCategory::Class);
         assert!(order.openable && order.can_edit_classifier);
         assert_eq!(order.concept_id.as_deref(), Some("sales/order"));
-        let runbook = rows.iter().find(|row| row.key == "sales/runbook").unwrap();
+        let runbook = rows
+            .iter()
+            .find(|row| row.concept_id.as_deref() == Some("sales/runbook"))
+            .unwrap();
         assert_eq!(runbook.kind, NavCategory::OkfDocument);
         assert!(runbook.openable);
         assert!(!runbook.can_edit_classifier && !runbook.can_delete_classifier);
@@ -397,9 +447,84 @@ mod tests {
             waml::view::chain::ChainLimits::default(),
         );
         let sales = &tree.roots[0].children[0];
-        assert_eq!(sales.key, "/sales");
+        assert_eq!(sales.address.as_deref(), Some("/sales"));
         assert!(sales.view_degraded);
         assert!(!tree.roots[0].view_degraded);
+    }
+
+    /// In Raw the chain is [index], so the root view owns every row and
+    /// RootView::resolve answers every path -- Raw is today's listing.
+    #[test]
+    fn raw_rows_are_owned_by_the_root_view() {
+        let prepared = hidden();
+        let tree = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Raw,
+            waml::view::chain::ChainLimits::default(),
+        );
+        let sales = &tree.roots[0].children[0];
+        assert!(sales
+            .children
+            .iter()
+            .all(|node| node.key.owner.as_str() == waml::view::ROOT_VIEW_OWNER),);
+    }
+
+    /// A RowId minted by a middleware while Projected does not resolve in
+    /// Raw, because its owner is not in the raw chain. Expansion or selection
+    /// sitting on such a row falls back to the nearest resolvable prefix --
+    /// at worst the folder. That is the existing Unresolved rule, not a new
+    /// one, and it must NOT panic or vanish.
+    #[test]
+    fn a_row_id_whose_owner_is_absent_from_the_raw_chain_falls_back_to_a_prefix() {
+        let prepared = hidden();
+        let limits = waml::view::chain::ChainLimits::default();
+        let (chain, _, _) = crate::folder_projection::project_rows(
+            prepared.okf(),
+            "/sales",
+            crate::folder_projection::ViewMode::Raw,
+            limits,
+        )
+        .unwrap();
+        let dir = prepared.okf().bundle.directory("/sales").unwrap().clone();
+        let params = prepared
+            .okf()
+            .bundle
+            .index("/sales")
+            .map(|index| index.extra.clone())
+            .unwrap_or_default();
+        let descend = |_: &waml::okf::Directory| waml::view::chain::Chain::default();
+        let ctx = waml::view::projection::ProjectionCtx {
+            dir: &dir,
+            bundle: &prepared.okf().bundle,
+            params: &params,
+            descend: &descend,
+        };
+        let stranger = waml::view::row::RowId {
+            owner: waml::view::row::ViewId::new("group-by-tag"),
+            path: waml::view::row::RowPath::parse("synthesized/leaf").unwrap(),
+        };
+        let rows = chain.resolve(&ctx, &stranger);
+        assert!(
+            rows.is_ok(),
+            "an unresolvable RowId falls back to the folder's own listing",
+        );
+    }
+
+    /// The panel keys its maps on a flat string; the encoding must not let two
+    /// distinct RowIds collide.
+    #[test]
+    fn key_string_is_injective_across_owner_and_path() {
+        let a = waml::view::row::RowId {
+            owner: waml::view::row::ViewId::new("a/b"),
+            path: waml::view::row::RowPath::parse("c").unwrap(),
+        };
+        let b = waml::view::row::RowId {
+            owner: waml::view::row::ViewId::new("a"),
+            path: waml::view::row::RowPath::parse("b/c").unwrap(),
+        };
+        assert_ne!(key_string(&a), key_string(&b));
     }
 
     #[test]

@@ -469,6 +469,17 @@ fn record_markdown_anchors(cx: &mut Cx, app: &App) {
         )));
 }
 
+/// The flat `key_string` the production tree keys an `index`-owned directory
+/// row on -- what `project_tree_folder_is_open` and `id_to_key` compare
+/// against since Task 7's `RowId` keys. `address` here is the trimmed OKF
+/// address (no leading `/`), matching `RootView::folder_row`'s own trim.
+fn tree_key(address: &str) -> String {
+    crate::tree::key_string(&waml::view::row::RowId {
+        owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
+        path: waml::view::row::RowPath::parse(address.trim_start_matches('/')).unwrap(),
+    })
+}
+
 fn project_tree_folder_is_open(cx: &mut Cx, app: &App, address: &str) -> bool {
     let project_tree = app.ui.widget(cx, ids!(project_tree));
     let file_tree = project_tree.file_tree(cx, ids!(file_tree));
@@ -1037,7 +1048,7 @@ fn breadcrumb_reveal_pins_tree_without_navigation() {
     assert_eq!(mounted_project_tree_state(&cx, &app), DockState::Pinned);
     assert_eq!(
         project_tree_selected_key(&cx, &app).as_deref(),
-        Some("/sales")
+        Some(tree_key("/sales").as_str())
     );
     assert_eq!(
         app.dock_states(&mut cx),
@@ -1333,7 +1344,7 @@ fn navigation_directory_intents_from_tree_and_markdown_share_one_toggle_path() {
         );
         let markdown_uid = markdown.widget_uid();
         assert!(
-            project_tree_folder_is_open(&mut cx, &app, "/sales"),
+            project_tree_folder_is_open(&mut cx, &app, &tree_key("/sales")),
             "the fresh Browse tree starts with its top-level folder open"
         );
         let action = match ingress {
@@ -1357,7 +1368,7 @@ fn navigation_directory_intents_from_tree_and_markdown_share_one_toggle_path() {
         app.handle_action_batch(&mut cx, &actions);
 
         assert!(
-            !project_tree_folder_is_open(&mut cx, &app, "/sales"),
+            !project_tree_folder_is_open(&mut cx, &app, &tree_key("/sales")),
             "each ingress must close the initially-open folder exactly once"
         );
         assert_eq!(app.documents.active_id(), active);

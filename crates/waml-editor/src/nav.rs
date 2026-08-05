@@ -60,11 +60,13 @@ pub fn packages(
     fn walk(nodes: &[TreeNode], depth: usize, out: &mut Vec<PackageRow>) {
         for n in nodes {
             if n.kind == TreeKind::Directory {
-                out.push(PackageRow {
-                    key: n.key.clone(),
-                    title: n.title.clone(),
-                    depth,
-                });
+                if let Some(address) = n.address.clone() {
+                    out.push(PackageRow {
+                        key: address,
+                        title: n.title.clone(),
+                        depth,
+                    });
+                }
                 walk(&n.children, depth + 1, out);
             }
         }
@@ -75,14 +77,16 @@ pub fn packages(
     out
 }
 
-/// Find the node with `key` anywhere in `nodes` (depth-first). The `build_tree`
-/// root has key `"/"`.
-fn find_node<'a>(nodes: &'a [TreeNode], key: &str) -> Option<&'a TreeNode> {
+/// Find the directory node whose `address` is `address`, anywhere in `nodes`
+/// (depth-first). The `build_tree` root has address `"/"`. `NavState::scope`
+/// is a directory address, not a `RowId`, so this compares on `address`
+/// rather than `key`.
+fn find_directory<'a>(nodes: &'a [TreeNode], address: &str) -> Option<&'a TreeNode> {
     for n in nodes {
-        if n.key == key {
+        if n.address.as_deref() == Some(address) {
             return Some(n);
         }
-        if let Some(found) = find_node(&n.children, key) {
+        if let Some(found) = find_directory(&n.children, address) {
             return Some(found);
         }
     }
@@ -94,7 +98,7 @@ fn find_node<'a>(nodes: &'a [TreeNode], key: &str) -> Option<&'a TreeNode> {
 /// the model's on-screen identity and the only thing to select when a whole
 /// bundle/directory is the subject). Unknown scope -> `None`.
 fn scope_node(full: &ProjectTree, scope: &str) -> Option<TreeNode> {
-    find_node(&full.roots, scope).map(|n| TreeNode {
+    find_directory(&full.roots, scope).map(|n| TreeNode {
         children: Vec::new(),
         ..n.clone()
     })
@@ -102,7 +106,7 @@ fn scope_node(full: &ProjectTree, scope: &str) -> Option<TreeNode> {
 
 /// The scope node's members at depth 0.
 fn scoped_roots(full: &ProjectTree, scope: &str) -> Vec<TreeNode> {
-    find_node(&full.roots, scope)
+    find_directory(&full.roots, scope)
         .map(|n| n.children.clone())
         .unwrap_or_default()
 }
@@ -208,19 +212,6 @@ mod tests {
         }
     }
 
-    // Depth-first (key, kind) pairs for order-independent assertions.
-    fn flat(t: &ProjectTree) -> Vec<(String, TreeKind)> {
-        fn walk(nodes: &[TreeNode], out: &mut Vec<(String, TreeKind)>) {
-            for n in nodes {
-                out.push((n.key.clone(), n.kind));
-                walk(&n.children, out);
-            }
-        }
-        let mut out = Vec::new();
-        walk(&t.roots, &mut out);
-        out
-    }
-
     #[test]
     fn empty_scope_puts_the_whole_model_under_the_bundle_root_row() {
         let (bundle, projection) = built();
@@ -233,9 +224,17 @@ mod tests {
         );
         let t = browse_roots(&v);
         // The scope package IS the single root row; its members hang beneath it.
-        let roots: Vec<&str> = t.roots.iter().map(|r| r.key.as_str()).collect();
-        assert_eq!(roots, vec!["/"]);
-        let keys: Vec<&str> = t.roots[0].children.iter().map(|r| r.key.as_str()).collect();
+        let roots: Vec<Option<&str>> = t.roots.iter().map(|r| r.address.as_deref()).collect();
+        assert_eq!(roots, vec![Some("/")]);
+        let keys: Vec<&str> = t.roots[0]
+            .children
+            .iter()
+            .map(|r| {
+                r.address
+                    .as_deref()
+                    .unwrap_or(r.concept_id.as_deref().unwrap_or(""))
+            })
+            .collect();
         assert_eq!(keys, vec!["/sub", "iface"]);
     }
 
@@ -254,13 +253,13 @@ mod tests {
         );
         let t = browse_roots(&v);
         // "sub" is the root row; its members hang beneath it.
+        assert_eq!(t.roots[0].address.as_deref(), Some("/sub"));
+        assert_eq!(t.roots[0].kind, TreeKind::Directory);
         assert_eq!(
-            flat(t),
-            vec![
-                ("/sub".to_string(), TreeKind::Directory),
-                ("sub/cls".to_string(), TreeKind::Class)
-            ]
+            t.roots[0].children[0].concept_id.as_deref(),
+            Some("sub/cls")
         );
+        assert_eq!(t.roots[0].children[0].kind, TreeKind::Class);
     }
 
     #[test]

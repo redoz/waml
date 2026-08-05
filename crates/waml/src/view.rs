@@ -9,3 +9,5 @@ pub mod projection;
 pub(crate) mod root;
 pub mod row;
 pub mod surface;
+
+pub use root::ROOT_VIEW_OWNER;

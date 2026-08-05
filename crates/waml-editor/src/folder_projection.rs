@@ -187,7 +187,15 @@ mod tests {
         .is_none());
     }
 
-    // `raw_mode_owns_every_row_through_the_root_view` is deferred to Task 7,
-    // which widens `ROOT_VIEW_OWNER` to `pub`. It is `pub(crate)` as of this
-    // task, so this module cannot see it yet.
+    #[test]
+    fn raw_mode_owns_every_row_through_the_root_view() {
+        let prepared = hidden_bundle();
+        let (_, rows, _) =
+            project_rows(prepared.okf(), "/", ViewMode::Raw, ChainLimits::default()).unwrap();
+        assert!(
+            rows.iter()
+                .all(|row| row.id.owner.as_str() == waml::view::ROOT_VIEW_OWNER),
+            "in Raw the chain is [index], so RootView owns every row",
+        );
+    }
 }

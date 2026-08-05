@@ -83,11 +83,12 @@ pub fn breadcrumb_for(
     fn find(nodes: &[TreeNode], concept_id: &str, path: &mut Vec<BreadcrumbSegment>) -> bool {
         for node in nodes {
             if node.is_directory {
+                let Some(address) = node.address.clone() else {
+                    continue;
+                };
                 path.push(BreadcrumbSegment {
                     title: node.title.clone(),
-                    target: NavigationTarget::Directory {
-                        address: node.key.clone(),
-                    },
+                    target: NavigationTarget::Directory { address },
                 });
                 if find(&node.children, concept_id, path) {
                     return true;

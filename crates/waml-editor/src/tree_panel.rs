@@ -346,16 +346,17 @@ fn chevron_hit(chevron_rects: &HashMap<String, Rect>, key: &str, abs: DVec2) -> 
 }
 
 fn row_navigation(
-    key: &str,
+    address: Option<&str>,
     concept_id: Option<&str>,
     is_directory: bool,
     openable: bool,
     tap_count: u32,
 ) -> Option<NavigationIntent> {
     if is_directory {
+        let address = address?;
         return Some(NavigationIntent::Resolved {
             target: NavigationTarget::Directory {
-                address: key.to_owned(),
+                address: address.to_owned(),
             },
             disposition: OpenDisposition::Preview,
         });
@@ -519,8 +520,9 @@ fn build_id_maps(tree: &ProjectTreeData) -> TreeIdMaps {
         openable: &mut HashSet<LiveId>,
     ) {
         for n in nodes {
-            let id = LiveId::from_str(&n.key);
-            keys.insert(id, n.key.clone());
+            let key = crate::tree::key_string(&n.key);
+            let id = LiveId::from_str(&key);
+            keys.insert(id, key);
             if let Some(concept_id) = &n.concept_id {
                 concepts.insert(id, concept_id.clone());
             }
@@ -548,7 +550,7 @@ fn folders_to_open(tree: &ProjectTreeData) -> Vec<String> {
     fn collect(nodes: &[TreeNode], depth: usize, max_depth: usize, out: &mut Vec<String>) {
         for n in nodes {
             if n.is_directory {
-                out.push(n.key.clone());
+                out.push(crate::tree::key_string(&n.key));
                 if depth < max_depth {
                     collect(&n.children, depth + 1, max_depth, out);
                 }
@@ -564,7 +566,7 @@ fn directory_addresses(tree: &ProjectTreeData) -> Vec<String> {
     fn collect(nodes: &[TreeNode], out: &mut Vec<String>) {
         for node in nodes {
             if node.is_directory {
-                out.push(node.key.clone());
+                out.push(crate::tree::key_string(&node.key));
                 collect(&node.children, out);
             }
         }
@@ -586,15 +588,15 @@ fn reveal_path(
                 node.concept_id.as_deref() == Some(concept_id.as_str())
             }
             NavigationTarget::Directory { address } => {
-                node.is_directory && node.key == address.as_str()
+                node.is_directory && node.address.as_deref() == Some(address.as_str())
             }
             NavigationTarget::ExternalUrl(_) => false,
         };
         if matches {
-            return Some((node.key.clone(), ancestors.clone()));
+            return Some((crate::tree::key_string(&node.key), ancestors.clone()));
         }
         if node.is_directory {
-            ancestors.push(node.key.clone());
+            ancestors.push(crate::tree::key_string(&node.key));
             if let Some(path) = reveal_path(&node.children, target, ancestors) {
                 return Some(path);
             }
@@ -767,7 +769,8 @@ fn draw_nodes(
 ) -> bool {
     let mut reveal_was_drawn = false;
     for node in nodes {
-        let id = LiveId::from_str(&node.key);
+        let key = crate::tree::key_string(&node.key);
+        let id = LiveId::from_str(&key);
         // Diagram rows carry the theme accent, tinted toward the label ink the
         // other kinds use -- the same treatment the active doc tab gives the
         // same glyph, so one document reads alike in both surfaces.
@@ -777,8 +780,8 @@ fn draw_nodes(
             color
         };
         let row_top = cx.turtle().pos();
-        let is_selected = selected == Some(node.key.as_str());
-        let is_reveal = reveal_key == Some(node.key.as_str());
+        let is_selected = selected == Some(key.as_str());
+        let is_reveal = reveal_key == Some(key.as_str());
         if node.is_directory {
             let opened = ft.begin_folder(cx, id, &node.title).is_ok();
             // A row scrolled out of the viewport is culled by the fork -- it
@@ -821,7 +824,7 @@ fn draw_nodes(
                 let child_open = ft.folder_opened(id);
                 let chevron_rect =
                     draw_row_chevron(cx, draw_chevron, row_top, depth, child_open, scale);
-                chevron_rects.insert(node.key.clone(), chevron_rect);
+                chevron_rects.insert(key.clone(), chevron_rect);
                 if node.view_degraded {
                     draw_row_diag_marker(cx, draw_diag, row_top, scale);
                 }
@@ -928,17 +931,20 @@ impl Widget for ProjectTree {
                         click_abs.is_some_and(|abs| chevron_hit(&self.chevron_rects, &key, abs));
                     if on_chevron {
                         self.toggle_directory(cx, &key);
-                    } else if let Some(intent) = row_navigation(&key, None, true, false, tap_count)
-                    {
-                        cx.widget_action(uid, ProjectTreeAction::Navigate(intent));
+                    } else {
+                        let address = self.node_for_key(&key).and_then(|n| n.address.as_deref());
+                        if let Some(intent) = row_navigation(address, None, true, false, tap_count)
+                        {
+                            cx.widget_action(uid, ProjectTreeAction::Navigate(intent));
+                        }
                     }
                 }
             } else if let Some(id) = file_tree.file_clicked(actions) {
                 let tap_count = std::mem::take(&mut self.pending_tap_count);
                 self.pending_click_abs = None;
-                if let Some(key) = self.id_to_key.get(&id) {
+                if self.id_to_key.contains_key(&id) {
                     if let Some(intent) = row_navigation(
-                        key,
+                        None,
                         self.id_to_concept.get(&id).map(String::as_str),
                         false,
                         self.openable_ids.contains(&id),
@@ -1215,6 +1221,25 @@ impl ProjectTree {
         true
     }
 
+    /// Look a node up by its flat `key_string`, the shape `reveal_path`
+    /// already walks. Used where a handler holds only the flat key (from
+    /// `id_to_key`) but needs the node's real `address` -- a `RowId` carries
+    /// no OKF location of its own.
+    fn node_for_key(&self, key: &str) -> Option<&TreeNode> {
+        fn find<'a>(nodes: &'a [TreeNode], key: &str) -> Option<&'a TreeNode> {
+            for node in nodes {
+                if crate::tree::key_string(&node.key) == key {
+                    return Some(node);
+                }
+                if let Some(found) = find(&node.children, key) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        find(&self.tree.roots, key)
+    }
+
     pub fn navigation(&self, actions: &Actions) -> Option<NavigationIntent> {
         let item = actions.find_widget_action(self.widget_uid())?;
         if let ProjectTreeAction::Navigate(intent) = item.cast() {
@@ -1431,12 +1456,15 @@ mod tests {
         ));
         assert_eq!(
             panel.open_directories,
-            HashSet::from(["/".into(), "/sales".into(), "/sales/archive".into()])
+            HashSet::from([k("/"), k("/sales"), k("/sales/archive")])
         );
-        assert_eq!(panel.selected_key.as_deref(), Some("/sales/archive/order"));
+        assert_eq!(
+            panel.selected_key.as_deref(),
+            Some(k("/sales/archive/order").as_str())
+        );
         assert_eq!(
             panel.pending_scroll_key.as_deref(),
-            Some("/sales/archive/order")
+            Some(k("/sales/archive/order").as_str())
         );
     }
 
@@ -1453,10 +1481,7 @@ mod tests {
             },
         ));
         // Ancestors of the target, up to and including the scope row.
-        assert_eq!(
-            panel.open_directories,
-            HashSet::from(["/".into(), "/sales".into()])
-        );
+        assert_eq!(panel.open_directories, HashSet::from([k("/"), k("/sales")]));
     }
 
     #[test]
@@ -1555,10 +1580,35 @@ mod tests {
         ));
     }
 
+    /// The tree literal-fixture key: every literal here is an `index`-owned
+    /// row (no middleware in play), so this avoids repeating the `RowId`
+    /// literal at every call site. Trims a leading `/`, the same trim
+    /// `RootView::folder_row` applies to a directory address; the bare
+    /// bundle root has nothing left after that trim, so it takes the same
+    /// literal "root" segment `tree::build_tree` mints for it.
+    fn node_key(path: &str) -> waml::view::row::RowId {
+        let trimmed = path.trim_start_matches('/');
+        let segment = if trimmed.is_empty() { "root" } else { trimmed };
+        waml::view::row::RowId {
+            owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
+            path: waml::view::row::RowPath::parse(segment).unwrap(),
+        }
+    }
+
+    /// The flat `key_string` a fixture's `node(path, ...)` produces -- what
+    /// `open_directories`, `selected_key`, `reveal_key`, and
+    /// `pending_scroll_key` are keyed on since Task 7. Tests that used to
+    /// assert a literal address now assert `k(address)`.
+    fn k(path: &str) -> String {
+        crate::tree::key_string(&node_key(path))
+    }
+
     fn node(key: &str, title: &str, kind: TreeKind, children: Vec<TreeNode>) -> TreeNode {
         let is_classifier = is_classifier_kind(kind);
+        let is_directory = kind == TreeKind::Directory;
         TreeNode {
-            key: key.to_owned(),
+            key: node_key(key),
+            address: is_directory.then(|| key.to_owned()),
             title: title.to_owned(),
             kind,
             presentation: DocumentPresentation {
@@ -1566,9 +1616,9 @@ mod tests {
                 accent: None,
                 category: kind,
             },
-            is_directory: kind == TreeKind::Directory,
-            openable: kind != TreeKind::Directory,
-            concept_id: (kind != TreeKind::Directory).then(|| key.to_owned()),
+            is_directory,
+            openable: !is_directory,
+            concept_id: (!is_directory).then(|| key.to_owned()),
             can_edit_classifier: is_classifier,
             can_delete_classifier: is_classifier,
             view_degraded: false,
@@ -1591,11 +1641,11 @@ mod tests {
         use crate::navigation::OpenDisposition;
 
         assert_eq!(
-            row_navigation("sales/order", Some("sales/order"), false, true, 1),
+            row_navigation(None, Some("sales/order"), false, true, 1),
             Some(resolved_document("sales/order", OpenDisposition::Preview))
         );
         assert_eq!(
-            row_navigation("sales/order", Some("sales/order"), false, true, 2),
+            row_navigation(None, Some("sales/order"), false, true, 2),
             Some(resolved_document(
                 "sales/order",
                 OpenDisposition::Persistent
@@ -1604,11 +1654,11 @@ mod tests {
     }
 
     #[test]
-    fn row_navigation_uses_the_row_key_for_directory_addresses() {
+    fn row_navigation_uses_the_row_address_for_directories() {
         use crate::navigation::{NavigationIntent, NavigationTarget, OpenDisposition};
 
         assert_eq!(
-            row_navigation("/sales", None, true, false, 1),
+            row_navigation(Some("/sales"), None, true, false, 1),
             Some(NavigationIntent::Resolved {
                 target: NavigationTarget::Directory {
                     address: "/sales".into(),
@@ -1620,11 +1670,8 @@ mod tests {
 
     #[test]
     fn row_navigation_ignores_nonopenable_nondirectory_rows() {
-        assert_eq!(
-            row_navigation("unknown", Some("unknown"), false, false, 1),
-            None
-        );
-        assert_eq!(row_navigation("unknown", None, false, true, 1), None);
+        assert_eq!(row_navigation(None, Some("unknown"), false, false, 1), None);
+        assert_eq!(row_navigation(None, None, false, true, 1), None);
     }
 
     #[test]
@@ -1674,7 +1721,7 @@ mod tests {
         let bundle = waml::okf::Bundle::parse(&source).unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         let (_, okf_analysis, uml_analysis, _) = prepared.into_parts();
-        let tree_intent = row_navigation("/sales", None, true, false, 1).unwrap();
+        let tree_intent = row_navigation(Some("/sales"), None, true, false, 1).unwrap();
         let breadcrumb_target = breadcrumb_for(&okf_analysis, &uml_analysis, "sales/order")
             .unwrap()
             .into_iter()
@@ -1701,12 +1748,14 @@ mod tests {
             roots: vec![node("/sales", "Sales", TreeKind::Directory, vec![])],
         };
         panel.set_view(&mut cx, NavView::Browse(tree));
-        assert!(panel.open_directories.contains("/sales"));
-        assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+        assert!(panel.open_directories.contains(&k("/sales")));
+        assert!(file_tree_folder_is_open(&mut cx, &file_tree, &k("/sales")));
 
         let actions: ActionsBuf = vec![Box::new(WidgetAction {
             data: None,
-            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str("/sales"))),
+            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str(&k(
+                "/sales",
+            )))),
             widget_uid: file_tree.widget_uid(),
             group: None,
         })];
@@ -1721,12 +1770,12 @@ mod tests {
                 disposition: OpenDisposition::Preview,
             })
         );
-        assert!(panel.open_directories.contains("/sales"));
-        assert!(file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+        assert!(panel.open_directories.contains(&k("/sales")));
+        assert!(file_tree_folder_is_open(&mut cx, &file_tree, &k("/sales")));
 
-        assert!(panel.toggle_directory(&mut cx, "/sales"));
-        assert!(!panel.open_directories.contains("/sales"));
-        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+        assert!(panel.toggle_directory(&mut cx, &k("/sales")));
+        assert!(!panel.open_directories.contains(&k("/sales")));
+        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, &k("/sales")));
     }
 
     #[test]
@@ -1753,7 +1802,7 @@ mod tests {
         };
         panel.set_view(&mut cx, NavView::Browse(tree));
         panel.chevron_rects.insert(
-            "/sales".to_string(),
+            k("/sales"),
             Rect {
                 pos: dvec2(0.0, 0.0),
                 size: dvec2(10.0, 10.0),
@@ -1761,24 +1810,28 @@ mod tests {
         );
 
         // A click inside the chevron rect folds locally: no Navigate action.
-        let was_open = panel.open_directories.contains("/sales");
+        let was_open = panel.open_directories.contains(&k("/sales"));
         panel.pending_click_abs = Some(dvec2(5.0, 5.0));
         let actions: ActionsBuf = vec![Box::new(WidgetAction {
             data: None,
-            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str("/sales"))),
+            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str(&k(
+                "/sales",
+            )))),
             widget_uid: file_tree.widget_uid(),
             group: None,
         })];
         panel.handle_event(&mut cx, &Event::Actions(actions), &mut Scope::empty());
         assert_eq!(panel.navigation(&cx.new_actions), None);
-        assert_ne!(panel.open_directories.contains("/sales"), was_open);
+        assert_ne!(panel.open_directories.contains(&k("/sales")), was_open);
 
         // A click outside the chevron rect opens (Navigate) without folding.
-        let before_open = panel.open_directories.contains("/sales");
+        let before_open = panel.open_directories.contains(&k("/sales"));
         panel.pending_click_abs = Some(dvec2(100.0, 100.0));
         let actions: ActionsBuf = vec![Box::new(WidgetAction {
             data: None,
-            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str("/sales"))),
+            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str(&k(
+                "/sales",
+            )))),
             widget_uid: file_tree.widget_uid(),
             group: None,
         })];
@@ -1792,7 +1845,7 @@ mod tests {
                 disposition: OpenDisposition::Preview,
             })
         );
-        assert_eq!(panel.open_directories.contains("/sales"), before_open);
+        assert_eq!(panel.open_directories.contains(&k("/sales")), before_open);
     }
 
     #[test]
@@ -1804,17 +1857,10 @@ mod tests {
 
         assert_eq!(
             panel.directory_addresses,
-            HashSet::from([
-                "/".to_owned(),
-                "/sales".to_owned(),
-                "/sales/archive".to_owned()
-            ])
+            HashSet::from([k("/"), k("/sales"), k("/sales/archive")])
         );
         // The scope row plus the packages directly under it.
-        assert_eq!(
-            panel.open_directories,
-            HashSet::from(["/".to_owned(), "/sales".to_owned()])
-        );
+        assert_eq!(panel.open_directories, HashSet::from([k("/"), k("/sales")]));
     }
 
     #[test]
@@ -1823,13 +1869,13 @@ mod tests {
 
         let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
         panel.set_view(&mut cx, NavView::Browse(nested_tree()));
-        assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
-        assert!(panel.toggle_directory(&mut cx, "/sales"));
-        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+        assert!(panel.toggle_directory(&mut cx, &k("/sales/archive")));
+        assert!(panel.toggle_directory(&mut cx, &k("/sales")));
+        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, &k("/sales")));
         assert!(file_tree_folder_is_open(
             &mut cx,
             &file_tree,
-            "/sales/archive"
+            &k("/sales/archive")
         ));
 
         // Document activation and same-view model refresh both rebuild Browse
@@ -1838,13 +1884,13 @@ mod tests {
 
         assert_eq!(
             panel.open_directories,
-            HashSet::from(["/".to_owned(), "/sales/archive".to_owned()])
+            HashSet::from([k("/"), k("/sales/archive")])
         );
-        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+        assert!(!file_tree_folder_is_open(&mut cx, &file_tree, &k("/sales")));
         assert!(file_tree_folder_is_open(
             &mut cx,
             &file_tree,
-            "/sales/archive"
+            &k("/sales/archive")
         ));
     }
 
@@ -1867,8 +1913,8 @@ mod tests {
                 )],
             }),
         );
-        assert!(panel.toggle_directory(&mut cx, "/sales/archive"));
-        assert!(panel.toggle_directory(&mut cx, "/sales"));
+        assert!(panel.toggle_directory(&mut cx, &k("/sales/archive")));
+        assert!(panel.toggle_directory(&mut cx, &k("/sales")));
 
         panel.set_view(
             &mut cx,
@@ -1880,10 +1926,7 @@ mod tests {
             }),
         );
 
-        assert_eq!(
-            panel.open_directories,
-            HashSet::from(["/support".to_owned()])
-        );
+        assert_eq!(panel.open_directories, HashSet::from([k("/support")]));
     }
 
     #[test]
@@ -1891,24 +1934,21 @@ mod tests {
         let (mut cx, mut panel) = project_tree_test_context();
         let tree = nested_search_tree;
         panel.set_view(&mut cx, NavView::Browse(tree()));
-        assert!(panel.toggle_directory(&mut cx, "/sales"));
+        assert!(panel.toggle_directory(&mut cx, &k("/sales")));
 
         panel.set_view_with_fold_reset(&mut cx, NavView::Browse(tree()), true);
 
-        assert_eq!(
-            panel.open_directories,
-            HashSet::from(["/".to_owned(), "/sales".to_owned()])
-        );
+        assert_eq!(panel.open_directories, HashSet::from([k("/"), k("/sales")]));
     }
 
     #[test]
     fn unknown_directory_command_is_a_noop() {
         let (mut cx, mut panel) = project_tree_test_context();
-        panel.directory_addresses.insert("/sales".into());
-        panel.open_directories.insert("/sales".into());
+        panel.directory_addresses.insert(k("/sales"));
+        panel.open_directories.insert(k("/sales"));
         let before = panel.open_directories.clone();
 
-        assert!(!panel.toggle_directory(&mut cx, "/unknown"));
+        assert!(!panel.toggle_directory(&mut cx, &k("/unknown")));
         assert_eq!(panel.open_directories, before);
     }
 
@@ -1930,20 +1970,21 @@ mod tests {
         let (id_to_key, id_to_concept, openable) = build_id_maps(&tree);
 
         // Every node's key recovers through LiveId::from_str.
-        for key in ["/", "orders-diagram", "customer", "runbook"] {
-            let id = LiveId::from_str(key);
-            assert_eq!(id_to_key.get(&id).map(String::as_str), Some(key));
+        for path in ["/", "orders-diagram", "customer", "runbook"] {
+            let key = k(path);
+            let id = LiveId::from_str(&key);
+            assert_eq!(id_to_key.get(&id).map(String::as_str), Some(key.as_str()));
         }
         assert_eq!(id_to_key.len(), 4);
         assert_eq!(
             id_to_concept
-                .get(&LiveId::from_str("customer"))
+                .get(&LiveId::from_str(&k("customer")))
                 .map(String::as_str),
             Some("customer")
         );
-        assert!(openable.contains(&LiveId::from_str("orders-diagram")));
-        assert!(openable.contains(&LiveId::from_str("runbook")));
-        assert!(!openable.contains(&LiveId::from_str("/")));
+        assert!(openable.contains(&LiveId::from_str(&k("orders-diagram"))));
+        assert!(openable.contains(&LiveId::from_str(&k("runbook"))));
+        assert!(!openable.contains(&LiveId::from_str(&k("/"))));
     }
 
     #[test]
@@ -1983,10 +2024,7 @@ mod tests {
         let tree = nested_two_deep();
         // The scope row and the packages directly under it; the user drills in
         // from there, so the doubly-nested "inner" stays folded.
-        assert_eq!(
-            folders_to_open(&tree),
-            vec!["/".to_string(), "outer".to_string()]
-        );
+        assert_eq!(folders_to_open(&tree), vec![k("/"), k("outer")]);
     }
 }
 

@@ -19,7 +19,10 @@ use super::surface::SurfaceId;
 /// This stage's reserved `ViewId` name. Never produced by a declared
 /// `view:` entry -- see [`super::chain::DEPTH_GUARD_OWNER`] for the sibling
 /// reserved name.
-pub(crate) const ROOT_VIEW_OWNER: &str = "index";
+///
+/// Public because a host that pins a chain to `[index]` (the raw OKF layer)
+/// must be able to say so: every row in such a chain is owned by this id.
+pub const ROOT_VIEW_OWNER: &str = "index";
 
 fn folder_surface() -> SurfaceId {
     SurfaceId("folder".to_string())
