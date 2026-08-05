@@ -16,14 +16,16 @@ use waml::view::row::{Row, RowId, RowTarget};
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
 };
+use crate::extension_editor::resolve_icon;
+use crate::icons::Icon;
 use crate::navigation::NavigationTarget;
 
-/// One projected row, ready for display: bullet, label, optional blurb, and
+/// One projected row, ready for display: icon, label, optional blurb, and
 /// the navigation action a click on it performs. Order matches the chain's
 /// projected order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FolderRowView {
-    pub bullet: &'static str,
+    pub icon: Icon,
     pub label: String,
     pub blurb: Option<String>,
     pub action: FolderRowAction,
@@ -63,17 +65,18 @@ pub fn navigation_for(action: &FolderRowAction) -> Option<NavigationTarget> {
     }
 }
 
-fn row_view(row: &Row) -> FolderRowView {
+fn row_view(row: &Row, table: &[(&str, Icon)]) -> FolderRowView {
+    let (icon, _diagnostic) = resolve_icon(row.icon.as_ref(), &row.target, table, "", 0);
     FolderRowView {
-        bullet: "\u{2022}",
+        icon,
         label: row.label.clone(),
         blurb: row.blurb.clone(),
         action: action_for(row),
     }
 }
 
-pub fn row_views(rows: &[Row]) -> Vec<FolderRowView> {
-    rows.iter().map(row_view).collect()
+pub fn row_views(rows: &[Row], table: &[(&str, Icon)]) -> Vec<FolderRowView> {
+    rows.iter().map(|row| row_view(row, table)).collect()
 }
 
 /// Task G3's keyboard-gesture -> `RowOp` mapping. Pure and headless: the
@@ -234,7 +237,7 @@ impl FolderView {
     }
 
     pub fn row_views(&self) -> Vec<FolderRowView> {
-        row_views(&self.rows)
+        row_views(&self.rows, &crate::folder_projection::icon_table())
     }
 
     /// The projected rows themselves, for Task G3's gesture->`RowOp`
@@ -454,7 +457,44 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].label, "Orders");
         assert_eq!(rows[1].label, "Sales");
-        assert!(rows.iter().all(|row| row.bullet == "\u{2022}"));
+        assert_eq!(
+            rows[1].icon,
+            Icon::Book,
+            "a folder row carries the book glyph"
+        );
+    }
+
+    /// Task 10: a mixed listing -- a `uml-domain` child, a plain child, a
+    /// `uml.Class` concept, and a `note` concept -- projected through a
+    /// declared `view: uml` chain resolves every row to the icon the plan's
+    /// V2/V4 checks expect: the box glyph is `uml`'s alone, the book glyph is
+    /// every plain folder's, and the class/note glyphs are exactly what they
+    /// resolve to today, unchanged.
+    #[test]
+    fn row_views_resolves_the_icon_table_for_a_mixed_listing() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "---\nview: uml\n---\n# Root\n\n* [Pkg](pkg/)\n* [Docs](docs/)\n* [Order](order.md)\n* [Notes](notes.md)\n",
+            ),
+            ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
+            ("docs/index.md", "# Docs\n"),
+            ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("notes.md", "---\ntype: note\n---\n# Notes\n"),
+        ]);
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
+        let rows = view.row_views();
+        assert_eq!(
+            rows.iter().map(|row| row.icon).collect::<Vec<_>>(),
+            vec![Icon::Box, Icon::Book, Icon::PanelTop, Icon::FileText],
+            "class and note glyphs are exactly what they resolve to today",
+        );
     }
 
     /// The end-to-end check the headless tests structurally cannot make: they

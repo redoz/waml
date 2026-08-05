@@ -201,7 +201,13 @@ impl FolderRow {
         focused: bool,
         label_override: Option<&str>,
     ) {
-        self.view.label(cx, ids!(bullet)).set_text(cx, row.bullet);
+        // Task 10 moved the projected glyph from a `&str` bullet to a real
+        // `Icon`; the bullet Label itself is replaced by an icon-drawing
+        // anchor View in Task 12 (`recent_row.rs`'s `IconSet::draw` pattern).
+        // Until then this keeps drawing the placeholder bullet unconditionally
+        // so the row view-model's shape can change ahead of the widget.
+        let _ = row.icon;
+        self.view.label(cx, ids!(bullet)).set_text(cx, "\u{2022}");
         self.view
             .label(cx, ids!(textcol.label))
             .set_text(cx, label_override.unwrap_or(&row.label));
@@ -678,7 +684,7 @@ mod tests {
 
     fn row(label: &str, action: FolderRowAction) -> FolderRowView {
         FolderRowView {
-            bullet: "\u{2022}",
+            icon: crate::icons::Icon::FileText,
             label: label.to_string(),
             blurb: None,
             action,

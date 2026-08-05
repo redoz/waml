@@ -10,6 +10,7 @@
 //! it and its behaviour is unit-testable with no window.
 
 use crate::extension_editor::{CoreEditorExtension, EditorExtension, UmlEditorExtension};
+use crate::icons::Icon;
 use waml::diagnostic::Diagnostic;
 use waml::okf::Directory;
 use waml::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
@@ -55,6 +56,18 @@ pub fn core_registry() -> MiddlewareRegistry {
 #[allow(dead_code)]
 pub fn editor_registry() -> Vec<Box<dyn EditorExtension>> {
     vec![Box::new(CoreEditorExtension), Box::new(UmlEditorExtension)]
+}
+
+/// The `IconId` name -> `Icon` table every icon-resolving surface (the folder
+/// listing, the tree panel) draws against: `editor_registry()`'s extensions'
+/// `icons()`, flattened. One function so every consumer resolves against the
+/// same set `editor_registry()` names -- a stage registered in the extension
+/// list but missing here would stamp a name nothing resolves.
+pub fn icon_table() -> Vec<(&'static str, Icon)> {
+    editor_registry()
+        .into_iter()
+        .flat_map(|ext| ext.icons())
+        .collect()
 }
 
 /// The chain `directory` runs under `mode`, plus any build-level diagnostics
