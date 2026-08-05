@@ -350,6 +350,33 @@ impl Concept {
             .and_then(|generated| generated.at.as_deref())
             .or(self.timestamp.as_deref())
     }
+
+    /// The derived trust tier (OKF §5.3). Never stored on the concept itself
+    /// — `verified` entries can be appended by a later producer run, so a
+    /// cached tier would go stale the moment it did; deriving it on read
+    /// keeps it always current with whatever `verified` holds right now.
+    pub fn trust_tier(&self) -> TrustTier {
+        if self.verified.is_empty() {
+            TrustTier::Unverified
+        } else if self
+            .verified
+            .iter()
+            .any(|v| v.by.kind.as_deref() == Some("human"))
+        {
+            TrustTier::HumanReviewed
+        } else {
+            TrustTier::MachineConfirmed
+        }
+    }
+}
+
+/// The derived trust tier for a concept (OKF §5.3). Computed by
+/// [`Concept::trust_tier`], never stored — see that method's doc comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustTier {
+    Unverified,
+    MachineConfirmed,
+    HumanReviewed,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1164,6 +1191,26 @@ mod tests {
 
         assert_eq!(c.stale_after.as_deref(), Some("2026-12-31"));
         assert!(c.extra.get("stale_after").is_none());
+    }
+
+    #[test]
+    fn trust_tier_unverified_without_verified_entries() {
+        let c = project("note.md", "---\ntype: Note\n---\n# Note\n").unwrap();
+        assert_eq!(c.trust_tier(), TrustTier::Unverified);
+    }
+
+    #[test]
+    fn trust_tier_machine_confirmed_for_nonhuman_actors_only() {
+        let src = "---\ntype: Note\nverified:\n  - by: process:nightly\n  - by: finance-nightly\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+        assert_eq!(c.trust_tier(), TrustTier::MachineConfirmed);
+    }
+
+    #[test]
+    fn trust_tier_human_reviewed_when_any_human_actor_present() {
+        let src = "---\ntype: Note\nverified:\n  - by: process:nightly\n  - by: human:ahormati\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+        assert_eq!(c.trust_tier(), TrustTier::HumanReviewed);
     }
 
     #[test]
