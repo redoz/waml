@@ -9,6 +9,7 @@
 //! Deliberately makepad-free, like `tree.rs`, so both consumers can depend on
 //! it and its behaviour is unit-testable with no window.
 
+use crate::extension_editor::{CoreEditorExtension, EditorExtension, UmlEditorExtension};
 use waml::diagnostic::Diagnostic;
 use waml::okf::Directory;
 use waml::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
@@ -41,8 +42,19 @@ pub enum ViewMode {
 /// every model refresh, and re-minting the name table per directory put that
 /// cost on a path that runs per document activation.
 pub fn core_registry() -> MiddlewareRegistry {
-    MiddlewareRegistry::from_extensions(&[&waml::extension::CoreExt])
+    MiddlewareRegistry::from_extensions(&[&waml::extension::CoreExt, &waml::extension::UmlExt])
         .expect("the core extension registers a conflict-free name table")
+}
+
+/// The `EditorExtension` list every editor-side registry (surfaces, icons)
+/// resolves against -- the sibling of `core_registry()`'s middleware list, so
+/// the two construction sites cannot disagree about which extensions are
+/// live. Grows alongside `core_registry()`: a middleware whose editor half
+/// is missing here mints rows nothing can open or draw an icon for.
+// Consumer: Tasks 10-11's icon-resolution wiring, deferred.
+#[allow(dead_code)]
+pub fn editor_registry() -> Vec<Box<dyn EditorExtension>> {
+    vec![Box::new(CoreEditorExtension), Box::new(UmlEditorExtension)]
 }
 
 /// The chain `directory` runs under `mode`, plus any build-level diagnostics
@@ -104,7 +116,31 @@ pub fn project_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+    use waml::extension::CoreExtension;
     use waml::source::SourceBundle;
+
+    /// Task 9: the middleware registry and the editor registry must name the
+    /// same extension set -- two construction sites that disagree are
+    /// invisible until a reader opens a row nothing can draw or resolve.
+    #[test]
+    fn middleware_and_editor_registries_name_the_same_extensions() {
+        let middleware_names: BTreeSet<&str> = [
+            waml::extension::CoreExt.name(),
+            waml::extension::UmlExt.name(),
+        ]
+        .into_iter()
+        .collect();
+        let editor_names_owned: BTreeSet<String> = editor_registry()
+            .into_iter()
+            .map(|ext| ext.name().to_string())
+            .collect();
+        let editor_names: BTreeSet<&str> = editor_names_owned.iter().map(String::as_str).collect();
+        assert_eq!(
+            middleware_names, editor_names,
+            "core_registry() and editor_registry() must name the same extension set"
+        );
+    }
 
     fn analysis(
         pairs: impl IntoIterator<Item = (&'static str, &'static str)>,
