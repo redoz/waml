@@ -712,7 +712,7 @@ inferred, not measured by a coverage run.
 
 ## 2026-08-04 code-smell review (five-domain, against `2fd4b609`)
 
-Five parallel staff-engineer reviews over the `docs/review-rules` rulebooks:
+Five parallel staff-engineer reviews over the `.claude/review-dimensions` rulebooks:
 UML domain, headless core (solve/okf), waml-syntax, waml-editor, and
 waml-markdown-editor + waml-cli. New findings only; overlaps with existing
 entries are cross-referenced rather than duplicated.

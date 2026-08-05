@@ -3,7 +3,7 @@
 Repo root: `C:\dev\waml` (Rust workspace, MPL-2.0, edition 2021, rust-version 1.80).
 All paths below are repo-relative unless noted. Sizes are lines of Rust unless stated.
 
-Reviewer rule files: `docs/review-rules/{correctness,performance,testability,security,maintainability,observability,resilience}.md`.
+Reviewer rule files: `.claude/review-dimensions/{correctness,performance,testability,security,maintainability,observability,resilience}.md`.
 
 ---
 
