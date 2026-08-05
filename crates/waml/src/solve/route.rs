@@ -151,7 +151,7 @@ pub fn route_keyed_with(
         // Leaf rects are always obstacles (except this edge's endpoints); a
         // group is an obstacle for THIS edge only when neither endpoint is one
         // of its (transitive) members.
-        let obstacles: Vec<Obstacle> = all_obstacles
+        let obstacles: Vec<&Obstacle> = all_obstacles
             .iter()
             .filter(|o| match &o.id {
                 BoxId::Node(_) => o.id != *s && o.id != *t,
@@ -160,14 +160,13 @@ pub fn route_keyed_with(
                 }
                 BoxId::Inline(_) => false, // never an obstacle (matches leaf/group_obstacles)
             })
-            .cloned()
             .collect();
-        let (ovg, srcv, tgtv) = build_ovg(&obstacles, src, tgt);
-        let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
         let inflated: Vec<Rect> = obstacles
             .iter()
             .map(|o| inflate(o.rect, ROUTE_MARGIN))
             .collect();
+        let (ovg, srcv, tgtv) = build_ovg(&inflated, src, tgt);
+        let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
         let points = astar(&ovg, &srcv, &tgtv, goal, cost, &inflated, *label_size)
             .unwrap_or_else(|| fallback_l(src, tgt));
         routes.push(Route {
@@ -393,12 +392,11 @@ fn axis_coords(mut v: Vec<f64>) -> Vec<f64> {
     v
 }
 
-fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, Vec<usize>) {
-    let inflated: Vec<Rect> = obstacles
-        .iter()
-        .map(|o| inflate(o.rect, ROUTE_MARGIN))
-        .collect();
-
+/// `inflated` must be the caller's `inflate(obstacle, ROUTE_MARGIN)` per
+/// obstacle, in the same order as the obstacle list used to build `A*`'s
+/// blocked-fraction lookups downstream — callers that already inflate for
+/// `astar` pass that same `Vec<Rect>` in here rather than inflating again.
+fn build_ovg(inflated: &[Rect], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, Vec<usize>) {
     // Interesting coordinates: inflated obstacle borders + endpoint box borders
     // + endpoint box centre lines. The centre lines give the side-midpoint
     // attach points a grid line to join, so the router can leave a border away
@@ -421,7 +419,7 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
         tgt.y + tgt.h,
         tgt.y + tgt.h / 2.0,
     ];
-    for r in &inflated {
+    for r in inflated {
         xs.push(r.x);
         xs.push(r.x + r.w);
         ys.push(r.y);
@@ -450,7 +448,7 @@ fn build_ovg(obstacles: &[Obstacle], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, 
         } else if degenerate_y {
             y_slab.candidates(a.1.min(b.1))
         } else {
-            return segment_blocked(&inflated, a, b); // never hit: OVG is orthogonal
+            return segment_blocked(inflated, a, b); // never hit: OVG is orthogonal
         };
         idxs.iter().any(|&i| segment_cuts(&inflated[i], a, b))
     };
@@ -859,14 +857,14 @@ fn astar(
 const NUDGE_GAP: f64 = 8.0;
 
 /// A single interior segment of a route, keyed by its channel coordinate.
+/// `src`/`tgt` are the route's endpoint ids, looked up (once per route, not
+/// per segment) via the `keys` table passed alongside — see `nudge`.
 #[derive(Clone)]
 struct Seg {
     ri: usize,
     a: usize,
     b: usize,
     other_mid: f64,
-    src: String,
-    tgt: String,
 }
 
 /// Split parallel segments that share a routing channel (same axis + coincident
@@ -876,6 +874,13 @@ fn nudge(routes: &mut [Route]) {
     let mut chan_h: BTreeMap<i64, Vec<Seg>> = BTreeMap::new(); // key = quantized y
     let mut chan_v: BTreeMap<i64, Vec<Seg>> = BTreeMap::new(); // key = quantized x
     let q = |c: f64| (c * 1e6).round() as i64;
+
+    // Sort tie-break keys, one clone per ROUTE rather than per segment (a
+    // route can contribute several interior segments to `chan_h`/`chan_v`).
+    let keys: Vec<(String, String)> = routes
+        .iter()
+        .map(|r| (r.source.clone(), r.target.clone()))
+        .collect();
 
     for (ri, route) in routes.iter().enumerate() {
         let n = route.points.len();
@@ -892,8 +897,6 @@ fn nudge(routes: &mut [Route]) {
                     a: i,
                     b: i + 1,
                     other_mid: (a.0 + b.0) / 2.0,
-                    src: route.source.clone(),
-                    tgt: route.target.clone(),
                 });
             } else if (a.0 - b.0).abs() < 1e-9 {
                 chan_v.entry(q(a.0)).or_default().push(Seg {
@@ -901,14 +904,17 @@ fn nudge(routes: &mut [Route]) {
                     a: i,
                     b: i + 1,
                     other_mid: (a.1 + b.1) / 2.0,
-                    src: route.source.clone(),
-                    tgt: route.target.clone(),
                 });
             }
         }
     }
 
-    fn sweep(chan: BTreeMap<i64, Vec<Seg>>, routes: &mut [Route], horizontal: bool) {
+    fn sweep(
+        chan: BTreeMap<i64, Vec<Seg>>,
+        routes: &mut [Route],
+        keys: &[(String, String)],
+        horizontal: bool,
+    ) {
         for (key, mut segs) in chan {
             if segs.len() < 2 {
                 continue;
@@ -916,8 +922,8 @@ fn nudge(routes: &mut [Route]) {
             segs.sort_by(|p, r| {
                 p.other_mid
                     .total_cmp(&r.other_mid)
-                    .then(p.src.cmp(&r.src))
-                    .then(p.tgt.cmp(&r.tgt))
+                    .then(keys[p.ri].0.cmp(&keys[r.ri].0))
+                    .then(keys[p.ri].1.cmp(&keys[r.ri].1))
             });
             let base = key as f64 / 1e6;
             let m = segs.len();
@@ -934,8 +940,8 @@ fn nudge(routes: &mut [Route]) {
             }
         }
     }
-    sweep(chan_h, routes, true);
-    sweep(chan_v, routes, false);
+    sweep(chan_h, routes, &keys, true);
+    sweep(chan_v, routes, &keys, false);
 }
 
 /// A side of a box's border, used for hub-attachment grouping.
@@ -1210,8 +1216,8 @@ mod tests {
         };
         let src = r(0.0, 0.0, 100.0, 60.0);
         let tgt = r(350.0, 0.0, 100.0, 60.0);
-        let (ovg, _s, _t) = build_ovg(std::slice::from_ref(&mid), src, tgt);
         let inflated = inflate(mid.rect, ROUTE_MARGIN);
+        let (ovg, _s, _t) = build_ovg(std::slice::from_ref(&inflated), src, tgt);
         for &(x, y) in &ovg.verts {
             assert!(
                 !strictly_inside(&inflated, x, y),
@@ -1306,7 +1312,8 @@ mod tests {
             id: BoxId::Node("m".into()),
             rect: r(150.0, -30.0, 80.0, 120.0),
         };
-        let (ovg, srcv, tgtv) = build_ovg(std::slice::from_ref(&mid), src, tgt);
+        let inflated = inflate(mid.rect, ROUTE_MARGIN);
+        let (ovg, srcv, tgtv) = build_ovg(std::slice::from_ref(&inflated), src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
         let path =
             astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default(), &[], None).expect("path exists");
@@ -2405,7 +2412,11 @@ mod tests {
             });
             obstacles.sort_by(|a, b| a.id.cmp(&b.id));
             let (src, tgt) = (rects[&s], rects[&t]);
-            let (fast, fs, ft) = build_ovg(&obstacles, src, tgt);
+            let inflated: Vec<Rect> = obstacles
+                .iter()
+                .map(|o| inflate(o.rect, ROUTE_MARGIN))
+                .collect();
+            let (fast, fs, ft) = build_ovg(&inflated, src, tgt);
             let (refr, rs, rt) = build_ovg_reference(&obstacles, src, tgt);
             assert_eq!(fast.verts, refr.verts, "verts differ (seed {seed})");
             assert_eq!(fast.adj, refr.adj, "adjacency differs (seed {seed})");
