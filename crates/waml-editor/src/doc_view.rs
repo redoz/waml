@@ -401,6 +401,7 @@ pub enum DocViewIdentity {
     ClassifierPreview(crate::document::NavCategory),
     GenericOkf,
     Source,
+    Folder,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
