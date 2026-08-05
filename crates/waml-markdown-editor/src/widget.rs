@@ -633,6 +633,12 @@ pub struct MarkdownEditor {
     last_ime_point: DVec2,
     #[rust]
     scroll_y: f64,
+    /// Set by `clear_presentation`, consumed by the next `draw_walk_with_session`.
+    /// The widget does not own the session, so a clear can only zero its own two
+    /// halves of the scroll; without this flag the draw prologue would push the
+    /// stale `session.scroll()` straight back into them.
+    #[rust]
+    pending_scroll_reset: bool,
     #[rust]
     has_focus: bool,
     #[live]
@@ -968,11 +974,25 @@ impl MarkdownEditor {
         scope: &mut Scope,
         walk: Walk,
     ) -> Result<DrawStep, MarkdownEditorError> {
-        let requested_scroll = dvec2(session.scroll().x, session.scroll().y);
-        if self.scroll_bars.get_scroll_pos() != requested_scroll {
+        if self.pending_scroll_reset {
+            // `clear_presentation` zeroed the widget's two halves; the session
+            // still holds the old offset. Finish the clear here -- pushing the
+            // zero into the session as well -- instead of restoring the offset
+            // we were told to drop. This must happen before the early returns
+            // below: a cleared editor has no installed presentation, so the
+            // draw bails out and the tail-end session write never runs.
+            self.pending_scroll_reset = false;
             self.scroll_bars
-                .set_scroll_pos_no_clip(cx, requested_scroll);
-            self.scroll_y = requested_scroll.y;
+                .set_scroll_pos_no_clip(cx, DVec2::default());
+            self.scroll_y = 0.0;
+            session.set_scroll(ScrollState::default());
+        } else {
+            let requested_scroll = dvec2(session.scroll().x, session.scroll().y);
+            if self.scroll_bars.get_scroll_pos() != requested_scroll {
+                self.scroll_bars
+                    .set_scroll_pos_no_clip(cx, requested_scroll);
+                self.scroll_y = requested_scroll.y;
+            }
         }
         let viewport = cx.peek_walk_turtle(walk);
         let gutter = self.gutter_width(cx, session);
@@ -2092,13 +2112,16 @@ impl MarkdownEditorRef {
             inner.pipeline = LayoutPipeline::default();
             // `scroll_y` (hit-testing) and the scrollbar position (painting)
             // are two halves of the same scroll: zero them together, or the
-            // next frame hit-tests against an origin it never drew at --
-            // `draw_walk_with_session` only resyncs when the *session* scroll
-            // disagrees with the scrollbar, so the split would not self-heal.
+            // next frame hit-tests against an origin it never drew at.
             inner.scroll_y = 0.0;
             inner
                 .scroll_bars
                 .set_scroll_pos_no_clip(cx, DVec2::default());
+            // The session holds the third half, and this type does not own it.
+            // `draw_walk_with_session` opens by pushing `session.scroll()` back
+            // into both fields above, so without this flag the very next frame
+            // would restore the offset we just cleared.
+            inner.pending_scroll_reset = true;
             inner.redraw(cx);
         }
     }

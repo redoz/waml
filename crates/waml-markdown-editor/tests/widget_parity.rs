@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
-use makepad_widgets::{dvec2, Cx, Event, Rect, ScriptNew, TextInputEvent, WidgetRef};
+use makepad_widgets::{
+    dvec2, Cx, Cx2d, CxDraw, CxOsApi, DrawEvent, DrawList2d, DrawListExt, DrawPass, Event, Layout,
+    Rect, Scope, ScriptNew, TextInputEvent, Walk, WidgetRef,
+};
 use waml_markdown_editor::{
     document::MarkdownDocumentSnapshot,
     input::{
         ControllerError, EditorInput, EditorResponse, MarkdownEditorController, PointerGesture,
-        SelectionModifier,
+        ScrollState, SelectionModifier,
     },
     layout::{Affinity, CaretStop, GlyphCluster, LayoutError, LayoutSnapshot, VisualLine},
     selection::TextPosition,
@@ -583,15 +586,62 @@ fn range(start: usize, end: usize) -> TextRange {
     TextRange::new(t(start), t(end)).unwrap()
 }
 
-/// `clear_presentation` must zero the hit-test scroll and the painted
-/// scrollbar position together: `draw_walk_with_session` only resyncs the two
-/// when the *session* scroll disagrees with the scrollbar, so a split between
-/// them survives every later frame.
+/// `clear_presentation` must zero the hit-test scroll, the painted scrollbar
+/// position, *and* the session scroll -- and the clear must survive the next
+/// frame. `draw_walk_with_session` opens by pushing `session.scroll()` back
+/// into both widget halves, so a clear that leaves the session untouched is
+/// undone by the very next draw.
 #[test]
 fn clear_presentation_resets_both_halves_of_the_scroll_state() {
-    let (mut cx, editor, _session) = mounted_editor("alpha\nbeta\n");
+    let (mut cx, editor, mut session) = mounted_editor("alpha\nbeta\n");
+    cx.init_cx_os();
     editor.test_set_scroll_y(&mut cx, 120.0);
+    session.set_scroll_state(ScrollState { x: 0.0, y: 120.0 });
     assert_eq!(editor.test_scroll_state(), (120.0, 120.0));
+
     editor.clear_presentation(&mut cx);
     assert_eq!(editor.test_scroll_state(), (0.0, 0.0));
+
+    draw_once(&mut cx, &editor, &mut session);
+    assert_eq!(
+        editor.test_scroll_state(),
+        (0.0, 0.0),
+        "the frame after clear_presentation must not restore the old scroll"
+    );
+    assert_eq!(
+        session.scroll(),
+        ScrollState::default(),
+        "the session half of the scroll must be cleared too"
+    );
+}
+
+/// Drives one real `draw_walk` over the editor with `session` in scope. The
+/// draw is expected to bail out (`clear_presentation` dropped the installed
+/// presentation) -- what matters is that the scroll-resync prologue ran.
+fn draw_once(cx: &mut Cx, editor: &MarkdownEditorRef, session: &mut MarkdownDocumentSession) {
+    let draw_event = DrawEvent {
+        redraw_all: true,
+        ..DrawEvent::default()
+    };
+    let pass = DrawPass::new_with_name(cx, "markdown-editor-clear-scroll-test");
+    let mut draw_list = DrawList2d::new(cx);
+    let mut draw_cx = CxDraw::new(cx, &draw_event);
+    draw_cx.begin_pass(&pass, None);
+    draw_list.begin_always(&mut draw_cx);
+    {
+        let mut cx_2d = Cx2d::new(&mut draw_cx);
+        cx_2d.begin_root_turtle(dvec2(400.0, 300.0), Layout::default());
+        let mut scope = Scope::with_data(session);
+        editor.draw_walk_all(
+            &mut cx_2d,
+            &mut scope,
+            Walk::abs_rect(Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(400.0, 300.0),
+            }),
+        );
+        cx_2d.end_turtle();
+        draw_list.end(&mut cx_2d);
+    }
+    draw_cx.end_pass(&pass);
 }

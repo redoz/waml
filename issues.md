@@ -141,6 +141,27 @@ the full `get_scroll_pos()` (safe only because the DSL sets
 `show_scroll_x: false`), and `widget.rs:722` vs `:847` assume
 `scroll_bars.area().rect(cx).pos` equals `cx.peek_walk_turtle(walk).pos`.
 
+## P2 — Gutter width is read one frame before the faces it measures are refreshed
+
+Surfaced 2026-08-04 by the issue-33 end-review; pre-existing.
+
+`crates/waml-markdown-editor/src/widget.rs:997` — `draw_walk_with_session`
+calls `gutter_width()` (`widget.rs:1141`), which consults the cached
+`GutterMetrics`, *before*
+`install_layout()` runs `refresh_faces()`. On the first frame after a theme or
+live-apply swap of the mono family, the gutter width — and therefore the wrap
+width fed into layout — is computed from the previous face's digit advance.
+The frame paints one gutter and wraps to another, then self-heals on the next
+frame.
+
+This is exactly the cached-metric drift class that issue 33 Task 3 set out to
+remove; the ordering inside the draw prologue kept one instance alive.
+
+Fix: refresh the faces before the first metric read of the frame (hoist
+`refresh_faces` out of `install_layout` into the top of
+`draw_walk_with_session`), or invalidate `GutterMetrics` from the same signal
+that marks the faces stale, so a swap cannot be observed half-applied.
+
 ## P3 — Deserialized bundles are not checked for duplicate ids
 
 `crates/waml/src/okf.rs:274` — `Bundle::parse` rejects duplicate concept ids
@@ -152,6 +173,30 @@ duplicates where `iter().find()` previously returned the first.
 No live caller is known to feed a duplicate-bearing bundle through serde, so
 this is latent. Enforcing uniqueness on deserialize (or reusing `parse`'s
 validation) closes it.
+
+## P3 — The gutter-measurement fallback is scaled by the value that may have failed
+
+Surfaced 2026-08-04 by the issue-33 end-review; pre-existing.
+
+`crates/waml-markdown-editor/src/widget.rs:273` — when shaping the digit run
+fails, the fallback is `GutterMetrics::FALLBACK.scaled(mono.font_scale)`. A
+degenerate `font_scale` (0.0, or NaN from a bad live-apply) yields a
+`digit_width`/`ascent` of 0 or NaN: the gutter collapses to `GUTTER_GAP` and
+every line number paints stacked at `right`. The degraded path multiplies by
+the very quantity that is the most likely cause of the measurement failing, so
+a bad scale is laundered into a bad layout instead of a legible one.
+
+A clamped scale (`font_scale.is_finite() && > 0.0`, else 1.0) or the unscaled
+constant would degrade to a readable gutter instead of a pile of glyphs.
+
+Note the existing test `a_failed_measurement_is_not_cached`
+(`widget.rs:1889`) pins `scaled(0.0)` as the intended result, so changing this
+means changing that assertion deliberately — it is not an oversight to patch
+silently.
+
+Fix: clamp `font_scale` to a finite positive value before scaling the
+fallback, and update `a_failed_measurement_is_not_cached` to assert the
+clamped shape.
 
 ## P1 — Shell and frontmatter diagnostics disappear at public boundaries
 
