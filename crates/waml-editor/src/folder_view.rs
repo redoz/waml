@@ -103,14 +103,12 @@ pub fn enter_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
 }
 
 /// Live retitling commits a `Rename` on the focused row, gated on its
-/// declared `caps.rename`.
+/// declared `caps.rename`. `title` is the edit buffer `folder_list.rs`
+/// accumulated over `F2` + `Hit::TextInput`/`Hit::KeyDown::Backspace`,
+/// committed on `ReturnKey`/blur -- mirroring `inspector_panel.rs`'s field
+/// editing.
 ///
-/// Not yet called from `folder_list.rs`: the inline-text-entry UI (an edit
-/// mode on the focused row, buffered `Hit::TextInput`/`Hit::KeyDown`, commit
-/// on `ReturnKey`/blur -- mirroring `inspector_panel.rs`'s field editing) is
-/// deferred to a following unit; `enter_row_op`/`tab_row_op`/
-/// `shift_tab_row_op` land the structural half of Task G3 first.
-#[allow(dead_code)]
+/// Called from `FolderView::handle` on `FolderListViewAction::RenameCommitted`.
 pub fn rename_row_op(rows: &[Row], index: usize, title: String) -> Option<(RowId, RowOp)> {
     let row = rows.get(index)?;
     if !row.caps.rename {
@@ -405,6 +403,13 @@ impl DocView for FolderView {
                 data.okf_analysis,
                 shift_tab_row_op(&self.rows, index),
                 "Move row out",
+                &mut outcome,
+            );
+        } else if let Some((index, title)) = body.folder_list().rename_committed(actions) {
+            self.commit_gesture(
+                data.okf_analysis,
+                rename_row_op(&self.rows, index, title),
+                "Rename row",
                 &mut outcome,
             );
         }

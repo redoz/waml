@@ -232,11 +232,20 @@ impl FolderRow {
     /// `focused` is `FolderListView`'s keyboard-focused row index (Task G3),
     /// compared by the caller -- presentational only, mirrors `hovered`'s
     /// wash so the focused row stays visibly distinct without a click.
-    pub fn set_row(&mut self, cx: &mut Cx, row: &FolderRowView, focused: bool) {
+    /// `label_override`, when `Some`, is the live rename edit buffer drawn
+    /// in place of `row.label` -- "typing retitles live" without touching
+    /// `row` (the projected view-model is not re-run on every keystroke).
+    pub fn set_row(
+        &mut self,
+        cx: &mut Cx,
+        row: &FolderRowView,
+        focused: bool,
+        label_override: Option<&str>,
+    ) {
         self.view.label(cx, ids!(bullet)).set_text(cx, row.bullet);
         self.view
             .label(cx, ids!(textcol.label))
-            .set_text(cx, &row.label);
+            .set_text(cx, label_override.unwrap_or(&row.label));
         let blurb = row.blurb.as_deref().unwrap_or("");
         self.view.label(cx, ids!(textcol.blurb)).set_text(cx, blurb);
         self.view
@@ -258,9 +267,15 @@ impl FolderRow {
 }
 
 impl FolderRowRef {
-    pub fn set_row(&self, cx: &mut Cx, row: &FolderRowView, focused: bool) {
+    pub fn set_row(
+        &self,
+        cx: &mut Cx,
+        row: &FolderRowView,
+        focused: bool,
+        label_override: Option<&str>,
+    ) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.set_row(cx, row, focused);
+            inner.set_row(cx, row, focused, label_override);
         }
     }
     pub fn clicked(&self, actions: &Actions) -> bool {
@@ -286,6 +301,12 @@ pub enum FolderListViewAction {
     TabPressed(usize),
     /// `KeyCode::Tab` with shift held. Maps through `shift_tab_row_op`.
     ShiftTabPressed(usize),
+    /// `KeyCode::ReturnKey` fired while `index` was mid-rename, carrying the
+    /// accumulated edit buffer. `FolderView::handle` maps this through
+    /// `rename_row_op`. A cancelled rename (`Escape`, focus loss, or a
+    /// resync out from under it) never fires this -- the buffer is dropped
+    /// instead.
+    RenameCommitted(usize, String),
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -305,6 +326,19 @@ pub struct FolderListView {
     /// ignored while some other widget (e.g. a text field) has focus.
     #[rust]
     has_key_focus: bool,
+    /// The row index mid-rename (Task G3's "typing retitles live"), if any.
+    /// `Some` while `F2` is held on the focused row; every path that could
+    /// leave the list in a stale edit state (`Escape`, `Hit::KeyFocusLost`,
+    /// a `set_rows` resync out from under the edit) clears it, mirroring
+    /// `inspector_panel.rs`'s `editing` field.
+    #[rust]
+    renaming: Option<usize>,
+    /// The accumulated edit buffer while `renaming.is_some()`, seeded from
+    /// the row's current label on `F2` and drawn in the row's place instead
+    /// of `FolderRowView::label` -- the live part of "typing retitles live".
+    /// Discarded (never committed) on cancel.
+    #[rust]
+    rename_buffer: String,
 }
 
 impl Widget for FolderListView {
@@ -333,6 +367,38 @@ impl Widget for FolderListView {
             }
             Hit::KeyFocusLost(_) => {
                 self.has_key_focus = false;
+                // Every armed edit clears on focus loss (correctness.md) --
+                // an unfinished rename must never survive to the next click.
+                self.renaming = None;
+            }
+            Hit::KeyDown(ke) if self.has_key_focus && self.renaming.is_some() => {
+                let index = self.renaming.expect("checked by the guard above");
+                match ke.key_code {
+                    KeyCode::ReturnKey => {
+                        let title = std::mem::take(&mut self.rename_buffer);
+                        self.renaming = None;
+                        cx.widget_action(uid, FolderListViewAction::RenameCommitted(index, title));
+                        self.view.redraw(cx);
+                    }
+                    KeyCode::Escape => {
+                        self.renaming = None;
+                        self.rename_buffer.clear();
+                        self.view.redraw(cx);
+                    }
+                    KeyCode::Backspace => {
+                        self.rename_buffer.pop();
+                        self.view.redraw(cx);
+                    }
+                    _ => {}
+                }
+            }
+            Hit::TextInput(ti) if self.has_key_focus && self.renaming.is_some() => {
+                for ch in ti.input.chars() {
+                    if !ch.is_control() {
+                        self.rename_buffer.push(ch);
+                    }
+                }
+                self.view.redraw(cx);
             }
             Hit::KeyDown(ke) if self.has_key_focus => {
                 let Some(index) = self.focused else {
@@ -362,6 +428,13 @@ impl Widget for FolderListView {
                         };
                         cx.widget_action(uid, action);
                     }
+                    KeyCode::F2 => {
+                        if let Some(row) = self.rows.get(index) {
+                            self.renaming = Some(index);
+                            self.rename_buffer = row.label.clone();
+                            self.view.redraw(cx);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -376,8 +449,14 @@ impl Widget for FolderListView {
                 for (i, row_data) in self.rows.iter().enumerate() {
                     let item_id = LiveId::from_str(&format!("{i}:{}", row_data.label));
                     let row = list.item(cx, item_id, id!(Row)).unwrap();
-                    row.as_folder_row()
-                        .set_row(cx, row_data, self.focused == Some(i));
+                    let label_override =
+                        (self.renaming == Some(i)).then_some(self.rename_buffer.as_str());
+                    row.as_folder_row().set_row(
+                        cx,
+                        row_data,
+                        self.focused == Some(i),
+                        label_override,
+                    );
                     row.draw_all(cx, &mut Scope::empty());
                 }
             }
@@ -419,6 +498,12 @@ impl FolderListView {
             _ if self.rows.is_empty() => None,
             _ => Some(0),
         };
+        // A resync (e.g. after this same rename committed and reprojected
+        // the chain) always drops an in-flight rename -- the row it was
+        // editing may no longer exist at that index, or may no longer be
+        // the same row, so there is nothing safe to resume.
+        self.renaming = None;
+        self.rename_buffer.clear();
         self.view.redraw(cx);
     }
 
@@ -451,7 +536,8 @@ impl FolderListView {
             | FolderListViewAction::RawRequested
             | FolderListViewAction::EnterPressed(_)
             | FolderListViewAction::TabPressed(_)
-            | FolderListViewAction::ShiftTabPressed(_) => None,
+            | FolderListViewAction::ShiftTabPressed(_)
+            | FolderListViewAction::RenameCommitted(_, _) => None,
         }
     }
 
@@ -499,6 +585,15 @@ impl FolderListView {
         self.view.view(cx, ids!(raw_link)).set_visible(cx, !raw);
     }
 
+    /// The `(index, title)` a rename committed on, if any this pass.
+    /// `FolderView::handle` maps it through `rename_row_op`.
+    pub fn rename_committed(&self, actions: &Actions) -> Option<(usize, String)> {
+        match self.actions_action(actions) {
+            FolderListViewAction::RenameCommitted(i, title) => Some((i, title)),
+            _ => None,
+        }
+    }
+
     fn actions_action(&self, actions: &Actions) -> FolderListViewAction {
         actions
             .find_widget_action(self.widget_uid())
@@ -539,6 +634,10 @@ impl FolderListViewRef {
     pub fn shift_tab_pressed(&self, actions: &Actions) -> Option<usize> {
         self.borrow()
             .and_then(|inner| inner.shift_tab_pressed(actions))
+    }
+    pub fn rename_committed(&self, actions: &Actions) -> Option<(usize, String)> {
+        self.borrow()
+            .and_then(|inner| inner.rename_committed(actions))
     }
 }
 
