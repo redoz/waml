@@ -21,6 +21,7 @@ pub mod solve;
 pub mod source;
 pub mod uml;
 pub mod validate;
+pub mod view;
 
 #[cfg(test)]
 mod smoke {

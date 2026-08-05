@@ -1,0 +1,5 @@
+//! A folder's view as a middleware chain over its contents. Headless: no
+//! editor dependency, no makepad, no window. See
+//! `docs/superpowers/specs/2026-08-05-folder-view-middleware-design.md`.
+
+pub mod decl;
