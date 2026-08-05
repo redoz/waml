@@ -201,6 +201,24 @@ fn unterminated_multiplicity_is_declared_invalid_not_absent() {
 }
 
 #[test]
+fn unresolvable_href_type_ref_has_no_ref_but_keeps_the_label() {
+    let source = SourceBundle::try_from_pairs([(
+        "order.md",
+        "---\ntype: uml.Class\n---\n# Order\n\n## Attributes\n- id: [OrderId](./missing.md) [1]\n",
+    )])
+    .unwrap();
+    let analysis = analyze(&source);
+    let attribute = &analysis.declared.concept("order").unwrap().attributes[0];
+    match &attribute.ty {
+        uml::DeclaredField::Valid { value, .. } => {
+            assert_eq!(value.name, "OrderId");
+            assert!(value.ref_.is_none());
+        }
+        _ => panic!("expected a valid type ref"),
+    }
+}
+
+#[test]
 fn only_shell_confirmed_top_level_h2_opens_the_attribute_island() {
     let authored = "---\ntype: uml.Class\n---\n# Order\n\n```md\n## Attributes\n- fenced: Bad [1]\n```\n\n> ## Attributes\n> - quoted: Bad [1]\n\n- ## Attributes\n  - listed: Bad [1]\n\n<div>\n## Attributes\n- html: Bad [1]\n</div>\n\nordinary ## Attributes\n- prose: Bad [1]\n\n## Attributes\n- real: Good [1]\n";
     let source = SourceBundle::try_from_pairs([("order.md", authored)]).unwrap();

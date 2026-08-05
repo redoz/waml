@@ -414,107 +414,10 @@ pub fn analyze(
         let sequence_operands = items(tree.root(), syntax::UmlSyntaxKind::SequenceOperand);
         let sequence_fragments = items(tree.root(), syntax::UmlSyntaxKind::SequenceFragment);
         let interaction_uses = items(tree.root(), syntax::UmlSyntaxKind::InteractionUse);
-        let mut fields = Vec::new();
-        for syntax in attributes {
-            let name = syntax.name_token().text().write_to_string();
-            let name_node = syntax.syntax().clone();
-            let ty = syntax.type_syntax();
-            let multiplicity = syntax.multiplicity().map(|node| node.0);
-            let visibility = syntax
-                .visibility_token()
-                .and_then(|token| token.text().write_to_string().chars().next())
-                .and_then(crate::model::Visibility::from_marker)
-                .map(|value| crate::uml::DeclaredField::Valid {
-                    value,
-                    syntax: name_node.clone(),
-                })
-                .unwrap_or(crate::uml::DeclaredField::Absent);
-            let name_field = if name.is_empty() {
-                crate::uml::DeclaredField::Incomplete {
-                    syntax: name_node.clone(),
-                    expected: crate::uml::ExpectedSyntax::TypeReference,
-                }
-            } else {
-                crate::uml::DeclaredField::Valid {
-                    value: name.clone(),
-                    syntax: name_node.clone(),
-                }
-            };
-            let ty_field = match ty {
-                Some(typed) => {
-                    let node = typed.syntax().clone();
-                    let (name, ref_) = match (typed.link_text_token(), typed.link_target_token()) {
-                        (Some(label), Some(href)) => {
-                            let href = href.text().write_to_string();
-                            let resolved =
-                                crate::okf::resolve_href(document.path().as_str(), &href);
-                            (
-                                label.text().write_to_string(),
-                                context
-                                    .okf
-                                    .concept(&resolved)
-                                    .filter(|target| super::recognizes(target))
-                                    .map(|_| resolved),
-                            )
-                        }
-                        _ => (
-                            node.children()
-                                .find_map(|e| e.into_token())
-                                .map(|t| t.text().write_to_string())
-                                .unwrap_or_default(),
-                            None,
-                        ),
-                    };
-                    crate::uml::DeclaredField::Valid {
-                        value: crate::model::TypeRef { name, ref_ },
-                        syntax: node,
-                    }
-                }
-                None => crate::uml::DeclaredField::Incomplete {
-                    syntax: name_node.clone(),
-                    expected: crate::uml::ExpectedSyntax::TypeReference,
-                },
-            };
-            let mult_field = match multiplicity {
-                Some(node) => {
-                    let missing_close = node.children().any(|element| {
-                        element.kind() == syntax::UmlSyntaxKind::CloseBracketToken
-                            && element
-                                .into_token()
-                                .is_some_and(|token| token.flags().is_missing())
-                    });
-                    let raw = node
-                        .children()
-                        .filter_map(|e| e.into_token())
-                        .map(|t| t.text().write_to_string())
-                        .collect::<String>();
-                    let value = raw.trim_matches(['[', ']', '{', '}']).to_string();
-                    match (!missing_close)
-                        .then(|| crate::multiplicity::Multiplicity::parse(&value))
-                        .flatten()
-                    {
-                        Some(value) => crate::uml::DeclaredField::Valid {
-                            value,
-                            syntax: node,
-                        },
-                        None => crate::uml::DeclaredField::Invalid {
-                            syntax: node,
-                            diagnostics: Arc::from([
-                                crate::diagnostic::DiagCode::MalformedAttribute,
-                            ]),
-                        },
-                    }
-                }
-                None => crate::uml::DeclaredField::Absent,
-            };
-            fields.push(DeclaredAttribute {
-                syntax,
-                visibility,
-                name: name_field,
-                ty: ty_field,
-                multiplicity: mult_field,
-            });
-        }
+        let fields: Vec<DeclaredAttribute> = attributes
+            .into_iter()
+            .map(|syntax| declared_attribute(&context, &document, syntax))
+            .collect();
         let layout_fields = layout.into_iter().map(declared_layout).collect::<Vec<_>>();
         for field in &layout_fields {
             let syntax = match field {
@@ -2623,6 +2526,108 @@ fn has_direct_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
         .any(|child| {
             child.kind() == syntax::UmlSyntaxKind::BehaviorRecovery && has_recovery(&child)
         })
+}
+
+fn declared_attribute(
+    context: &DomainAnalysisContext<'_>,
+    document: &crate::analysis::DocumentVersion,
+    syntax: syntax::AttributeSyntax,
+) -> DeclaredAttribute {
+    let name = syntax.name_token().text().write_to_string();
+    let name_node = syntax.syntax().clone();
+    let ty = syntax.type_syntax();
+    let multiplicity = syntax.multiplicity().map(|node| node.0);
+    let visibility = syntax
+        .visibility_token()
+        .and_then(|token| token.text().write_to_string().chars().next())
+        .and_then(crate::model::Visibility::from_marker)
+        .map(|value| crate::uml::DeclaredField::Valid {
+            value,
+            syntax: name_node.clone(),
+        })
+        .unwrap_or(crate::uml::DeclaredField::Absent);
+    let name_field = if name.is_empty() {
+        crate::uml::DeclaredField::Incomplete {
+            syntax: name_node.clone(),
+            expected: crate::uml::ExpectedSyntax::TypeReference,
+        }
+    } else {
+        crate::uml::DeclaredField::Valid {
+            value: name.clone(),
+            syntax: name_node.clone(),
+        }
+    };
+    let ty_field = match ty {
+        Some(typed) => {
+            let node = typed.syntax().clone();
+            let (name, ref_) = match (typed.link_text_token(), typed.link_target_token()) {
+                (Some(label), Some(href)) => {
+                    let href = href.text().write_to_string();
+                    let resolved = crate::okf::resolve_href(document.path().as_str(), &href);
+                    (
+                        label.text().write_to_string(),
+                        context
+                            .okf
+                            .concept(&resolved)
+                            .filter(|target| super::recognizes(target))
+                            .map(|_| resolved),
+                    )
+                }
+                _ => (
+                    node.children()
+                        .find_map(|e| e.into_token())
+                        .map(|t| t.text().write_to_string())
+                        .unwrap_or_default(),
+                    None,
+                ),
+            };
+            crate::uml::DeclaredField::Valid {
+                value: crate::model::TypeRef { name, ref_ },
+                syntax: node,
+            }
+        }
+        None => crate::uml::DeclaredField::Incomplete {
+            syntax: name_node.clone(),
+            expected: crate::uml::ExpectedSyntax::TypeReference,
+        },
+    };
+    let mult_field = match multiplicity {
+        Some(node) => {
+            let missing_close = node.children().any(|element| {
+                element.kind() == syntax::UmlSyntaxKind::CloseBracketToken
+                    && element
+                        .into_token()
+                        .is_some_and(|token| token.flags().is_missing())
+            });
+            let raw = node
+                .children()
+                .filter_map(|e| e.into_token())
+                .map(|t| t.text().write_to_string())
+                .collect::<String>();
+            let value = raw.trim_matches(['[', ']', '{', '}']).to_string();
+            match (!missing_close)
+                .then(|| crate::multiplicity::Multiplicity::parse(&value))
+                .flatten()
+            {
+                Some(value) => crate::uml::DeclaredField::Valid {
+                    value,
+                    syntax: node,
+                },
+                None => crate::uml::DeclaredField::Invalid {
+                    syntax: node,
+                    diagnostics: Arc::from([crate::diagnostic::DiagCode::MalformedAttribute]),
+                },
+            }
+        }
+        None => crate::uml::DeclaredField::Absent,
+    };
+    DeclaredAttribute {
+        syntax,
+        visibility,
+        name: name_field,
+        ty: ty_field,
+        multiplicity: mult_field,
+    }
 }
 
 fn declared_flow_node(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredFlowNode {
