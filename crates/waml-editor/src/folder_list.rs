@@ -249,7 +249,7 @@ impl FolderRow {
         let blurb = row.blurb.as_deref().unwrap_or("");
         self.view.label(cx, ids!(textcol.blurb)).set_text(cx, blurb);
         self.view
-            .view(cx, ids!(textcol.blurb))
+            .label(cx, ids!(textcol.blurb))
             .set_visible(cx, !blurb.is_empty());
         let clickable = !matches!(row.action, FolderRowAction::None);
         if self.clickable != clickable {
