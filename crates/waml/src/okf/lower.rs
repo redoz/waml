@@ -1039,6 +1039,248 @@ pub(crate) fn op_pkg_insert(
     Ok(())
 }
 
+fn okf_frontmatter_number(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let whole = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    !whole.is_empty()
+        && whole.bytes().all(|byte| byte.is_ascii_digit())
+        && fraction.map_or(true, |digits| {
+            !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        && parts.next().is_none()
+}
+
+/// Encode a scalar value as YAML-ish frontmatter, quoting whenever bare
+/// emission would change meaning on reparse (mirrors the read side's
+/// `crate::frontmatter::parse_value` quoting rules).
+fn okf_scalar(value: &str) -> String {
+    let needs_quote = value.is_empty()
+        || value != value.trim()
+        || matches!(value, "true" | "false")
+        || okf_frontmatter_number(value)
+        || (value.starts_with('[') && value.ends_with(']'))
+        || value.starts_with('"')
+        || value.contains('"')
+        || value.contains('\\')
+        || value.contains('\n')
+        || value.contains('\r');
+    if needs_quote {
+        format!(
+            "\"{}\"",
+            value
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+        )
+    } else {
+        value.to_owned()
+    }
+}
+
+fn okf_shell(source: &str, op: &str) -> Result<ShellParse, EditError> {
+    let text = SourceText::from_shared(Arc::new(source.to_owned()))
+        .map_err(|error| EditError::at(op, error.to_string()))?;
+    parse_markdown(
+        DocumentRevision::INITIAL,
+        text,
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .map(|snapshot| ShellParse {
+        tree: snapshot.tree().clone(),
+        structure: snapshot.structure().clone(),
+    })
+    .map_err(|error| EditError::at(op, error.to_string()))
+}
+
+fn okf_line_ending(source: &str) -> &'static str {
+    if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+fn okf_frontmatter_entries(
+    source: &str,
+    op: &str,
+) -> Result<Vec<(String, std::ops::Range<usize>)>, EditError> {
+    let parsed = okf_shell(source, op)?;
+    let mut entries = Vec::new();
+    for frontmatter in parsed
+        .tree
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .filter(|node| node.kind() == OkfMarkdownSyntaxKind::Frontmatter)
+    {
+        let entry_parent = frontmatter
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .find(|node| node.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping);
+        let entry_source: Box<dyn Iterator<Item = SyntaxElement<_>>> = match &entry_parent {
+            Some(mapping) => Box::new(mapping.children()),
+            None => Box::new(frontmatter.children()),
+        };
+        for node in entry_source
+            .filter_map(SyntaxElement::into_node)
+            .filter(|node| node.kind() == OkfMarkdownSyntaxKind::FrontmatterEntry)
+        {
+            let key = node
+                .children()
+                .filter_map(SyntaxElement::into_token)
+                .find(|token| token.kind() == OkfMarkdownSyntaxKind::FrontmatterKey)
+                .map(|token| token.text().write_to_string().trim().to_owned())
+                .unwrap_or_default();
+            entries.push((
+                key,
+                node.range().start().to_usize()..node.range().end().to_usize(),
+            ));
+        }
+    }
+    Ok(entries)
+}
+
+/// Set (or clear, when `value` is `None`) a top-level frontmatter key,
+/// inserting it just before the closing fence when absent. Used by concept
+/// ops that must not disturb fields they were not asked to touch.
+fn okf_set_frontmatter(
+    source: &mut String,
+    key: &str,
+    value: Option<&str>,
+    op: &str,
+) -> Result<(), EditError> {
+    if let Some((_, range)) = okf_frontmatter_entries(source, op)?
+        .into_iter()
+        .find(|(existing, _)| existing == key)
+    {
+        let newline = okf_line_ending(source);
+        let replacement = value
+            .map(|value| format!("{key}: {value}{newline}"))
+            .unwrap_or_default();
+        source.replace_range(range, &replacement);
+        return Ok(());
+    }
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let parsed = okf_shell(source, op)?;
+    let close = parsed
+        .tree
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .find(|node| node.kind() == OkfMarkdownSyntaxKind::Frontmatter)
+        .and_then(|node| {
+            node.children()
+                .filter_map(SyntaxElement::into_token)
+                .find(|token| {
+                    token.kind() == OkfMarkdownSyntaxKind::FrontmatterCloseFence
+                        && !token.flags().is_missing()
+                })
+        })
+        .ok_or_else(|| EditError::at(op, "claimed document has no clean frontmatter"))?;
+    let newline = okf_line_ending(source);
+    source.insert_str(
+        close.range().start().to_usize(),
+        &format!("{key}: {value}{newline}"),
+    );
+    Ok(())
+}
+
+fn okf_set_h1(source: &mut String, title: &str, op: &str) -> Result<(), EditError> {
+    let parsed = okf_shell(source, op)?;
+    let heading = parsed
+        .structure
+        .headings
+        .iter()
+        .find(|heading| heading.level == 1)
+        .ok_or_else(|| EditError::at(op, "claimed document has no title heading"))?;
+    let range = heading.text_range.start().to_usize()..heading.text_range.end().to_usize();
+    let authored = &source[range.clone()];
+    let leading = authored.len() - authored.trim_start().len();
+    let trailing = authored.len() - authored.trim_end().len();
+    source.replace_range(range.start + leading..range.end - trailing, title);
+    Ok(())
+}
+
+/// Create a new concept document on the OKF substrate. `ty` is a free-text
+/// `type` frontmatter string, never `ElementType` -- an empty `ty` omits the
+/// `type:` line, which is valid for a profileless folder. Errors if a document
+/// with the same id already exists.
+pub(crate) fn op_concept_new(
+    work: &mut SourceBundle,
+    directory: &str,
+    slug: &str,
+    ty: &str,
+    title: &str,
+    description: &Option<String>,
+) -> Result<(), EditError> {
+    let path = join(directory, slug);
+    if work
+        .documents()
+        .iter()
+        .any(|document| crate::okf::id_of(document.path().as_str()) == crate::okf::id_of(&path))
+    {
+        return Err(EditError::at(
+            "concept.new",
+            format!("document '{slug}' already exists"),
+        ));
+    }
+    let mut source = String::from("---\n");
+    if !ty.is_empty() {
+        source.push_str(&format!("type: {}\n", okf_scalar(ty)));
+    }
+    source.push_str(&format!("title: {}\n", okf_scalar(title)));
+    if let Some(description) = description {
+        source.push_str(&format!("description: {}\n", okf_scalar(description)));
+    }
+    source.push_str(&format!("---\n\n# {title}\n"));
+    work.push_document(path, source)
+        .map_err(|error| EditError::at("concept.new", error.to_string()))
+}
+
+/// Retitle/redescribe an existing concept. Unmentioned fields, including
+/// `type`, are left untouched -- OKF does not claim ownership of a field it
+/// was not asked to write.
+pub(crate) fn op_concept_set(
+    work: &mut SourceBundle,
+    id: &str,
+    title: &Option<String>,
+    description: &Option<String>,
+) -> Result<(), EditError> {
+    let idx = find_doc(work, id, "concept.set")?;
+    let mut source = work
+        .document_at(idx)
+        .expect("resolved document")
+        .text()
+        .to_owned();
+    if let Some(value) = title {
+        okf_set_frontmatter(
+            &mut source,
+            "title",
+            Some(&okf_scalar(value)),
+            "concept.set",
+        )?;
+        okf_set_h1(&mut source, value, "concept.set")?;
+    }
+    if let Some(value) = description {
+        okf_set_frontmatter(
+            &mut source,
+            "description",
+            Some(&okf_scalar(value)),
+            "concept.set",
+        )?;
+    }
+    *work
+        .document_at_mut(idx)
+        .expect("resolved document")
+        .text_mut() = source;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::edit::{Batch, EditError, Step};

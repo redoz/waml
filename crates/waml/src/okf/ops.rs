@@ -38,6 +38,23 @@ pub enum Op {
         name: String,
         bundle: SourceBundle,
     },
+    /// Create a new concept document on the OKF substrate. `ty` is a free-text
+    /// OKF `type` frontmatter string (NOT `ElementType`) -- empty is valid for a
+    /// profileless folder, and omits the `type:` line entirely.
+    ConceptNew {
+        directory: DirectoryAddress,
+        slug: String,
+        ty: String,
+        title: String,
+        description: Option<String>,
+    },
+    /// Retitle/redescribe an existing concept OKF does not otherwise claim.
+    /// Unmentioned fields (including `type`) are left untouched.
+    ConceptSet {
+        id: String,
+        title: Option<String>,
+        description: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -110,6 +127,25 @@ pub(crate) fn lower_one_with_state(
             name,
             bundle,
         } => super::lower::op_pkg_insert(work, &legacy_path(parent), name, &bundle.to_pairs()),
+        Op::ConceptNew {
+            directory,
+            slug,
+            ty,
+            title,
+            description,
+        } => super::lower::op_concept_new(
+            work,
+            &legacy_path(directory),
+            slug,
+            ty,
+            title,
+            description,
+        ),
+        Op::ConceptSet {
+            id,
+            title,
+            description,
+        } => super::lower::op_concept_set(work, id, title, description),
     }
 }
 
@@ -382,6 +418,112 @@ mod tests {
             ]),
             SourceBundle::try_from_pairs([("archive/order.md", doc)]).unwrap(),
         );
+    }
+
+    #[test]
+    fn concept_new_writes_a_free_text_type_with_no_uml_involvement() {
+        let source = SourceBundle::default();
+        let applied = Batch(vec![Op::ConceptNew {
+            directory: DirectoryAddress::parse("/sales").unwrap(),
+            slug: "order".into(),
+            ty: "invoice".into(),
+            title: "Order".into(),
+            description: Some("A customer order".into()),
+        }])
+        .lower(context(&source))
+        .unwrap();
+        let doc = applied
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "sales/order.md")
+            .expect("concept doc created");
+        assert!(doc.text().contains("type: invoice"));
+        assert!(doc.text().contains("title: Order"));
+        assert!(doc.text().contains("description: A customer order"));
+        assert!(doc.text().contains("# Order"));
+    }
+
+    #[test]
+    fn concept_new_accepts_an_empty_type_for_a_profileless_folder() {
+        let source = SourceBundle::default();
+        let applied = Batch(vec![Op::ConceptNew {
+            directory: DirectoryAddress::parse("/").unwrap(),
+            slug: "note".into(),
+            ty: String::new(),
+            title: "Note".into(),
+            description: None,
+        }])
+        .lower(context(&source))
+        .unwrap();
+        let doc = applied
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "note.md")
+            .expect("concept doc created");
+        assert!(!doc.text().contains("type:"));
+        assert!(doc.text().contains("title: Note"));
+    }
+
+    #[test]
+    fn concept_new_refuses_to_overwrite_an_existing_document() {
+        let source = SourceBundle::try_from_pairs([("sales/order.md", "# Order\n")]).unwrap();
+        let result = Batch(vec![Op::ConceptNew {
+            directory: DirectoryAddress::parse("/sales").unwrap(),
+            slug: "order".into(),
+            ty: "invoice".into(),
+            title: "Order Again".into(),
+            description: None,
+        }])
+        .lower(context(&source));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn concept_set_retitles_a_concept_uml_does_not_claim() {
+        let source = SourceBundle::try_from_pairs([(
+            "sales/order.md",
+            "---\ntype: invoice\ntitle: Order\n---\n\n# Order\n",
+        )])
+        .unwrap();
+        let applied = Batch(vec![Op::ConceptSet {
+            id: "sales/order".into(),
+            title: Some("Purchase Order".into()),
+            description: None,
+        }])
+        .lower(context(&source))
+        .unwrap();
+        let doc = applied
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "sales/order.md")
+            .expect("concept doc present");
+        assert!(doc.text().contains("title: Purchase Order"));
+        assert!(doc.text().contains("# Purchase Order"));
+        assert!(doc.text().contains("type: invoice"));
+    }
+
+    #[test]
+    fn concept_set_leaves_unmentioned_fields_alone() {
+        let source = SourceBundle::try_from_pairs([(
+            "sales/order.md",
+            "---\ntype: invoice\ntitle: Order\ndescription: Original\n---\n\n# Order\n",
+        )])
+        .unwrap();
+        let applied = Batch(vec![Op::ConceptSet {
+            id: "sales/order".into(),
+            title: None,
+            description: Some("Updated".into()),
+        }])
+        .lower(context(&source))
+        .unwrap();
+        let doc = applied
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "sales/order.md")
+            .expect("concept doc present");
+        assert!(doc.text().contains("title: Order"));
+        assert!(doc.text().contains("description: Updated"));
+        assert!(doc.text().contains("type: invoice"));
     }
 
     #[test]

@@ -237,6 +237,29 @@ pub enum OpDto {
         subject_slug: String,
         reference_slug: String,
     },
+    #[serde(rename = "concept.new")]
+    ConceptNew {
+        #[serde(default = "one")]
+        v: u32,
+        #[serde(default)]
+        dir: String,
+        slug: String,
+        #[serde(default)]
+        ty: String,
+        title: String,
+        #[serde(default)]
+        desc: Option<String>,
+    },
+    #[serde(rename = "concept.set")]
+    ConceptSet {
+        #[serde(default = "one")]
+        v: u32,
+        id: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        desc: Option<String>,
+    },
     #[serde(rename = "diagram.set")]
     DiagramSet {
         #[serde(default = "one")]
@@ -622,6 +645,31 @@ impl OpDto {
                         .map_err(|error| error.to_string())?,
                 })
             }
+            OpDto::ConceptNew {
+                v,
+                dir,
+                slug,
+                ty,
+                title,
+                desc,
+            } => {
+                check_v(*v, "concept.new")?;
+                Step::Okf(okf::Op::ConceptNew {
+                    directory: directory(dir)?,
+                    slug: slug.clone(),
+                    ty: ty.clone(),
+                    title: title.clone(),
+                    description: desc.clone(),
+                })
+            }
+            OpDto::ConceptSet { v, id, title, desc } => {
+                check_v(*v, "concept.set")?;
+                Step::Okf(okf::Op::ConceptSet {
+                    id: id.clone(),
+                    title: title.clone(),
+                    description: desc.clone(),
+                })
+            }
             OpDto::PlaceSet {
                 v,
                 diagram,
@@ -744,6 +792,30 @@ impl OpDto {
                     parent_path: legacy_directory(parent),
                     name: name.clone(),
                     docs: bundle.to_pairs(),
+                },
+                okf::Op::ConceptNew {
+                    directory,
+                    slug,
+                    ty,
+                    title,
+                    description,
+                } => OpDto::ConceptNew {
+                    v: 1,
+                    dir: legacy_directory(directory),
+                    slug: slug.clone(),
+                    ty: ty.clone(),
+                    title: title.clone(),
+                    desc: description.clone(),
+                },
+                okf::Op::ConceptSet {
+                    id,
+                    title,
+                    description,
+                } => OpDto::ConceptSet {
+                    v: 1,
+                    id: id.clone(),
+                    title: title.clone(),
+                    desc: description.clone(),
                 },
             },
             Step::Uml(op) => match op {
