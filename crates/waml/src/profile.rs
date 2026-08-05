@@ -29,7 +29,40 @@ const PROFILES: &[ProfileDef] = &[
 /// Look up a shipped profile by its exact name. No case folding: `"UML-Domain"`
 /// does not match `"uml-domain"`.
 pub fn profile(name: &str) -> Option<&'static ProfileDef> {
-    PROFILES.iter().find(|p| p.name == name)
+    PROFILES
+        .iter()
+        .find(|p| p.name == name)
+        .or_else(|| test_override(name))
+}
+
+// Test-only seam: lets a `resolved_view` test drive the "inherited profile
+// default" step for real, without a fixture profile ever shipping in
+// `PROFILES`. Registrations are leaked (test-scoped, never freed) and
+// thread-local so parallel tests do not interfere with each other.
+#[cfg(test)]
+thread_local! {
+    static TEST_OVERRIDES: std::cell::RefCell<std::collections::HashMap<&'static str, &'static ProfileDef>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(test)]
+fn test_override(name: &str) -> Option<&'static ProfileDef> {
+    TEST_OVERRIDES.with(|overrides| overrides.borrow().get(name).copied())
+}
+
+#[cfg(not(test))]
+fn test_override(_name: &str) -> Option<&'static ProfileDef> {
+    None
+}
+
+/// Register a profile for the duration of the current test thread. Overwrites
+/// a prior registration under the same name.
+#[cfg(test)]
+pub(crate) fn register_test_profile(def: ProfileDef) {
+    let leaked: &'static ProfileDef = Box::leak(Box::new(def));
+    TEST_OVERRIDES.with(|overrides| {
+        overrides.borrow_mut().insert(leaked.name, leaked);
+    });
 }
 
 #[cfg(test)]

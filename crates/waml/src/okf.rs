@@ -531,6 +531,53 @@ impl Bundle {
     pub fn directories(&self) -> &[Directory] {
         &self.directories
     }
+
+    /// Nearest declaring ancestor, self first. Stops at the first index
+    /// declaring a `profile:` — an explicit declaration beats an inherited
+    /// one. `None` when no directory in `self`'s ancestry (or `self`) declares
+    /// a profile, or when `directory` is not a well-formed directory address.
+    pub fn resolved_profile(&self, directory: &str) -> Option<&str> {
+        let mut current = DirectoryAddress::parse(directory).ok()?;
+        loop {
+            if let Some(profile) = self
+                .index(current.as_str())
+                .and_then(|index| index.profile.as_deref())
+            {
+                return Some(profile);
+            }
+            current = current.parent()?;
+        }
+    }
+
+    /// The chain in EFFECT for `directory`: (1) its own `view:` declaration,
+    /// else (2) the inherited profile's `default_view`, else (3) the
+    /// root-only chain. `Chain::build` handles an unknown middleware name;
+    /// diagnostics ride along with the returned chain.
+    pub fn resolved_view(
+        &self,
+        directory: &str,
+        registry: &crate::view::chain::MiddlewareRegistry,
+    ) -> (
+        crate::view::chain::Chain,
+        Vec<crate::diagnostic::Diagnostic>,
+    ) {
+        use crate::view::chain::Chain;
+
+        let Some(index) = self.index(directory) else {
+            return (Chain::root_only(registry), Vec::new());
+        };
+        if let Some(decl) = &index.view {
+            return Chain::build(decl, registry, index);
+        }
+        if let Some(decl) = self
+            .resolved_profile(directory)
+            .and_then(crate::profile::profile)
+            .and_then(|profile_def| profile_def.default_view.as_ref())
+        {
+            return Chain::build(decl, registry, index);
+        }
+        (Chain::root_only(registry), Vec::new())
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -1559,5 +1606,200 @@ mod tests {
         assert!(v.get("tags").is_none());
         assert!(v.get("links").is_none());
         assert!(v.get("extra").is_none());
+    }
+
+    mod resolved_profile_and_view {
+        use super::*;
+        use crate::profile::{register_test_profile, ProfileDef};
+        use crate::view::chain::MiddlewareRegistry;
+        use crate::view::decl::{ViewDecl, ViewEntry};
+        use crate::view::projection::{
+            Next, PassThrough, Projection, ProjectionCtx, ProjectionError, RowOp, Unresolved,
+            Unsupported,
+        };
+        use crate::view::row::{Row, RowPath};
+        use crate::view::surface::SurfaceId;
+
+        /// A test-only middleware that stamps its own `SurfaceId` and
+        /// otherwise forwards. Lets a test tell which chain actually ran
+        /// (the identity behaviour of `PassThrough` alone cannot).
+        struct MarkerStage(&'static str);
+
+        impl Projection for MarkerStage {
+            fn project(
+                &self,
+                ctx: &ProjectionCtx<'_>,
+                next: Next<'_>,
+            ) -> Result<Vec<Row>, ProjectionError> {
+                next.project(ctx)
+            }
+            fn resolve(
+                &self,
+                _ctx: &ProjectionCtx<'_>,
+                _path: &RowPath,
+            ) -> Result<Vec<Row>, Unresolved> {
+                Err(Unresolved)
+            }
+            fn apply(
+                &self,
+                ctx: &ProjectionCtx<'_>,
+                path: &RowPath,
+                op: RowOp,
+                next: Next<'_>,
+            ) -> Result<Vec<Op>, Unsupported> {
+                next.apply(ctx, path, op)
+            }
+            fn surface(&self, _ctx: &ProjectionCtx<'_>, _next: Next<'_>) -> SurfaceId {
+                SurfaceId(self.0.to_string())
+            }
+        }
+
+        fn view_decl(name: &str) -> ViewDecl {
+            ViewDecl {
+                entries: vec![ViewEntry {
+                    raw: name.to_string(),
+                    line: 1,
+                }],
+            }
+        }
+
+        fn registry() -> MiddlewareRegistry {
+            let mut registry = MiddlewareRegistry::new();
+            registry.register("pass-through", || Box::new(PassThrough));
+            registry.register("local-marker", || Box::new(MarkerStage("local")));
+            registry.register("profile-marker", || Box::new(MarkerStage("profile")));
+            registry
+        }
+
+        fn run_surface(
+            bundle: &Bundle,
+            directory: &str,
+            chain: &crate::view::chain::Chain,
+        ) -> String {
+            let dir = bundle.directory(directory).unwrap().clone();
+            let params = Frontmatter::default();
+            let descend = |_: &Directory| crate::view::chain::Chain::default();
+            let ctx = ProjectionCtx {
+                dir: &dir,
+                bundle,
+                params: &params,
+                descend: &descend,
+            };
+            chain
+                .run(&ctx, crate::view::chain::ChainLimits::default())
+                .surface
+                .0
+        }
+
+        #[test]
+        fn resolved_profile_prefers_self_then_nearest_ancestor_then_none() {
+            let source = SourceBundle::try_from_pairs([
+                (
+                    "index.md",
+                    "---\nprofile: uml-domain\n---\n# Root\n\n* [Sales](sales/)\n",
+                ),
+                ("sales/index.md", "# Sales\n\n* [Orders](orders/)\n"),
+                (
+                    "sales/orders/index.md",
+                    "---\nprofile: okf\n---\n# Orders\n",
+                ),
+            ])
+            .unwrap();
+            let bundle = Bundle::parse(&source).unwrap();
+
+            assert_eq!(bundle.resolved_profile("/sales/orders"), Some("okf"));
+            assert_eq!(bundle.resolved_profile("/sales"), Some("uml-domain"));
+            assert_eq!(bundle.resolved_profile("/"), Some("uml-domain"));
+        }
+
+        #[test]
+        fn resolved_profile_is_none_when_nothing_declares() {
+            let source = SourceBundle::try_from_pairs([
+                ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+                ("sales/index.md", "# Sales\n"),
+            ])
+            .unwrap();
+            let bundle = Bundle::parse(&source).unwrap();
+
+            assert_eq!(bundle.resolved_profile("/sales"), None);
+            assert_eq!(bundle.resolved_profile("/"), None);
+        }
+
+        #[test]
+        fn resolved_view_walks_local_then_profile_default_then_root_only() {
+            let registry = registry();
+
+            // Step 1: an explicit `view:` on the folder's own index.
+            let local_source = SourceBundle::try_from_pairs([(
+                "index.md",
+                "---\nview: local-marker\n---\n# Root\n",
+            )])
+            .unwrap();
+            let local_bundle = Bundle::parse(&local_source).unwrap();
+            let (chain, diags) = local_bundle.resolved_view("/", &registry);
+            assert!(diags.is_empty());
+            assert_eq!(run_surface(&local_bundle, "/", &chain), "local");
+
+            // Step 3: no local view, no declared/inherited profile -- root-only,
+            // whose surface is the root view's own.
+            let bare_source = SourceBundle::try_from_pairs([("index.md", "# Root\n")]).unwrap();
+            let bare_bundle = Bundle::parse(&bare_source).unwrap();
+            let (chain, diags) = bare_bundle.resolved_view("/", &registry);
+            assert!(diags.is_empty());
+            assert_eq!(run_surface(&bare_bundle, "/", &chain), "folder");
+        }
+
+        #[test]
+        fn an_explicit_local_view_beats_an_inherited_profile_default() {
+            register_test_profile(ProfileDef {
+                name: "marked-profile",
+                default_view: Some(view_decl("profile-marker")),
+            });
+            let registry = registry();
+
+            let source = SourceBundle::try_from_pairs([(
+                "index.md",
+                "---\nprofile: marked-profile\nview: local-marker\n---\n# Root\n",
+            )])
+            .unwrap();
+            let bundle = Bundle::parse(&source).unwrap();
+
+            // The profile's default is real (drives the marker if step 1 is
+            // skipped) -- but the local `view:` wins, so "local" wins out.
+            let (chain, diags) = bundle.resolved_view("/", &registry);
+            assert!(diags.is_empty());
+            assert_eq!(run_surface(&bundle, "/", &chain), "local");
+        }
+
+        #[test]
+        fn an_inherited_profile_default_drives_the_chain_when_nothing_local_is_declared() {
+            register_test_profile(ProfileDef {
+                name: "inherited-only",
+                default_view: Some(view_decl("profile-marker")),
+            });
+            let registry = registry();
+
+            let source = SourceBundle::try_from_pairs([(
+                "index.md",
+                "---\nprofile: inherited-only\n---\n# Root\n",
+            )])
+            .unwrap();
+            let bundle = Bundle::parse(&source).unwrap();
+
+            let (chain, diags) = bundle.resolved_view("/", &registry);
+            assert!(diags.is_empty());
+            assert_eq!(run_surface(&bundle, "/", &chain), "profile");
+        }
+
+        #[test]
+        fn an_unknown_directory_resolves_to_the_root_only_chain() {
+            let source = SourceBundle::try_from_pairs([("index.md", "# Root\n")]).unwrap();
+            let bundle = Bundle::parse(&source).unwrap();
+            let registry = registry();
+
+            let (chain, diags) = bundle.resolved_view("/nowhere", &registry);
+            assert!(diags.is_empty());
+            assert_eq!(run_surface(&bundle, "/", &chain), "folder");
+        }
     }
 }
