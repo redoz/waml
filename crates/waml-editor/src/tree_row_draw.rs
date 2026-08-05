@@ -10,25 +10,29 @@ use makepad_widgets::*;
 
 const ICON_SIZE: f64 = 14.0;
 const ICON_LEFT_MARGIN: f64 = 20.0;
-/// Fold-chevron box, drawn ahead of the row glyph on expandable rows only. Leaf
-/// rows leave the slot empty so both columns stay aligned down the tree.
-const CHEVRON_SIZE: f64 = 10.0;
-const CHEVRON_LEFT_MARGIN: f64 = 4.0;
-/// Per-depth x step for the row glyph. Must match the label's
-/// EFFECTIVE step, which is `indent_width` (10.0 in the DSL) plus the per-depth
-/// margins `indent_walk` tacks on (`left: depth*1.0`, `right: depth*4.0`) -- so
-/// the visible step is 15px, not `indent_width`. Any mismatch here makes the
-/// icon/label gap grow per level.
-const ICON_DEPTH_INDENT: f64 = 15.0;
+// The fold-chevron box's size and left margin live in `tree_layout`, which
+// positions it: drawing reads that rect rather than keeping a second copy of
+// the numbers here.
+/// Per-depth x step, shared by the glyph column and the label. The fork's
+/// label step was `indent_width` (10.0 in its DSL) PLUS the per-depth margins
+/// its `indent_walk` tacked on (`left: depth*1.0`, `right: depth*4.0`), so the
+/// visible step was 15px, not 10. Both columns step by that one number here:
+/// give them different steps and the gap between glyph and text drifts 5px per
+/// level, until around depth 3 the label lands on top of the glyph.
+const DEPTH_INDENT: f64 = 15.0;
 
-/// Left edge of a row's label. The fork placed labels at `padding.left: 38.0`
-/// with `indent_width: 10.0` per depth; reproduce both here so the glyph column
-/// and the text stay aligned exactly as before.
+/// Left edge of a row's glyph and of its label, at depth 0. The fork placed
+/// labels at `padding.left: 38.0`; reproduce that so the two columns sit
+/// exactly where they always did.
+const ICON_LEFT: f64 = ICON_LEFT_MARGIN;
 pub const LABEL_LEFT: f64 = 38.0;
-pub const LABEL_INDENT: f64 = 10.0;
+
+fn indent_x(row_x: f64, left: f64, depth: usize, scale: f64) -> f64 {
+    row_x + (left + depth as f64 * DEPTH_INDENT) * scale
+}
 
 fn label_x(row_x: f64, depth: usize, scale: f64) -> f64 {
-    row_x + (LABEL_LEFT + depth as f64 * LABEL_INDENT) * scale
+    indent_x(row_x, LABEL_LEFT, depth, scale)
 }
 
 /// Draw the provider-supplied row-leading glyph at `rect.pos`.
@@ -51,7 +55,10 @@ pub fn row_icon(
     scale: f64,
 ) {
     let size = ICON_SIZE * scale;
-    let x = (rect.pos.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
+    // Scaled exactly like the label's x: mid-collapse both columns have to
+    // squeeze toward the row's left edge at the same rate, or the glyph drifts
+    // out from under its text for the length of the fold.
+    let x = indent_x(rect.pos.x, ICON_LEFT, depth, scale).round();
     let y = (rect.pos.y + (ROW_HEIGHT * scale - size) / 2.0).round();
     icons.draw(
         cx,
@@ -64,29 +71,24 @@ pub fn row_icon(
     );
 }
 
-/// Draw the fold chevron for an expandable row at `rect.pos`, rotated by `open`
-/// (0 collapsed / 1 expanded) and shrunk/faded by `scale` (see `row_icon`).
-/// Same pixel rounding as `row_icon`: the chevron is a 1.3px stroke, so a
-/// subpixel origin would smear it.
-pub fn row_chevron(
-    cx: &mut Cx2d,
-    draw: &mut DrawChevron,
-    rect: Rect,
-    depth: usize,
-    open: f32,
-    scale: f64,
-) -> Rect {
-    let size = CHEVRON_SIZE * scale;
-    let x = (rect.pos.x + CHEVRON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
-    let y = (rect.pos.y + (ROW_HEIGHT * scale - size) / 2.0).round();
+/// Draw the fold chevron into `rect`, rotated by `open` (0 collapsed / 1
+/// expanded) and faded by `scale` (see `row_icon`).
+///
+/// `rect` is `TreeLayout::chevron_rect` verbatim -- the SAME rect the press
+/// path hit-tests. Recomputing the position from the row here is what would
+/// let the drawn chevron and its click target drift apart, which is the whole
+/// reason the geometry lives in the core.
+///
+/// Only the origin is rounded, matching `row_icon`: the chevron is a 1.3px
+/// stroke and a subpixel origin would smear it.
+pub fn row_chevron(cx: &mut Cx2d, draw: &mut DrawChevron, rect: Rect, open: f32, scale: f64) {
     let chevron_rect = Rect {
-        pos: dvec2(x, y),
-        size: dvec2(size, size),
+        pos: dvec2(rect.pos.x.round(), rect.pos.y.round()),
+        size: rect.size,
     };
     draw.open = open;
     draw.fade = scale as f32;
     draw.draw_abs(cx, chevron_rect);
-    chevron_rect
 }
 
 /// Draw the degraded-chain marker: a small solid dot at the row's right edge,
@@ -179,10 +181,35 @@ mod tests {
 
     #[test]
     fn label_starts_past_the_glyph_column() {
-        // The fork sat labels at padding.left 38 plus indent_width 10 per depth.
+        // The fork sat labels at padding.left 38, stepping 15px per depth.
         assert_eq!(label_x(0.0, 0, 1.0), 38.0);
-        assert_eq!(label_x(0.0, 2, 1.0), 58.0);
+        assert_eq!(label_x(0.0, 2, 1.0), 68.0);
         // Mid-collapse the whole column shrinks with the row.
         assert_eq!(label_x(0.0, 0, 0.5), 19.0);
+    }
+
+    /// Regression: the glyph column stepped 15px per depth while the label
+    /// stepped 10, so the gap closed 5px a level and the text landed on the
+    /// glyph around depth 3.
+    #[test]
+    fn the_glyph_to_label_gap_is_the_same_at_every_depth() {
+        let gap = |depth| label_x(0.0, depth, 1.0) - indent_x(0.0, ICON_LEFT, depth, 1.0);
+        let at_root = gap(0);
+        assert!(at_root > 0.0, "label sits right of the glyph");
+        for depth in 1..8 {
+            assert_eq!(gap(depth), at_root, "gap drifted by depth {depth}");
+        }
+    }
+
+    #[test]
+    fn both_columns_shrink_together_mid_fold() {
+        for scale in [1.0, 0.6, 0.25] {
+            let icon = indent_x(0.0, ICON_LEFT, 3, scale);
+            let label = label_x(0.0, 3, scale);
+            assert!(
+                (label - icon - (LABEL_LEFT - ICON_LEFT) * scale).abs() < 1e-9,
+                "columns diverged at scale {scale}"
+            );
+        }
     }
 }

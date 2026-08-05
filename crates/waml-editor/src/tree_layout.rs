@@ -220,7 +220,9 @@ impl TreeLayout {
         let size = CHEVRON_SIZE * scale;
         Rect {
             pos: dvec2(
-                row.pos.x + CHEVRON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT,
+                // Scaled like the glyph and label columns: mid-fold every
+                // column squeezes toward the row's left edge at one rate.
+                row.pos.x + (CHEVRON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT) * scale,
                 row.pos.y + (ROW_HEIGHT * scale - size) / 2.0,
             ),
             size: dvec2(size, size),

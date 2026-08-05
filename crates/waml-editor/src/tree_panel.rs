@@ -793,7 +793,6 @@ impl Widget for ProjectTree {
                     cx,
                     &mut self.draw_chevron,
                     self.layout.chevron_rect(index),
-                    row.depth,
                     row.fold,
                     row.scale,
                 );
