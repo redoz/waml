@@ -3443,4 +3443,3 @@ fn a_line_of_only_hidden_markers_collapses_while_a_mixed_line_keeps_its_height()
         "a line of nothing but hidden markers - a code fence, a frontmatter          line - collapses instead of leaving a blank row          (visible {visible_height}, hidden {hidden_height})"
     );
 }
-
