@@ -11,7 +11,7 @@ use makepad_widgets::*;
 use waml::frontmatter::Frontmatter;
 use waml::okf::Directory;
 use waml::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
-use waml::view::projection::{ProjectionCtx, RowOp};
+use waml::view::projection::{ProjectionCtx, RowOp, Unsupported};
 use waml::view::row::{Row, RowId, RowTarget};
 
 use crate::doc_view::{
@@ -90,11 +90,7 @@ pub fn row_views(rows: &[Row]) -> Vec<FolderRowView> {
 /// `RowId` passed back addresses the anchor row itself -- `RootView::apply`
 /// keys `InsertConcept`'s position off the `path` argument matching `after`.
 ///
-/// Not yet called from `folder_list.rs`'s event handling -- the widget-side
-/// focus/keyboard wiring and the `chain.apply` -> edit-pipeline plumbing are
-/// the remaining half of Task G3, left for a following unit. Exercised here
-/// by the headless gesture tests the plan names.
-#[allow(dead_code)]
+/// Called from `FolderView::handle` on `FolderListViewAction::EnterPressed`.
 pub fn enter_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
     let row = rows.get(index)?;
     Some((
@@ -109,7 +105,11 @@ pub fn enter_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
 /// Live retitling commits a `Rename` on the focused row, gated on its
 /// declared `caps.rename`.
 ///
-/// Not yet called from `folder_list.rs` -- see `enter_row_op`'s note.
+/// Not yet called from `folder_list.rs`: the inline-text-entry UI (an edit
+/// mode on the focused row, buffered `Hit::TextInput`/`Hit::KeyDown`, commit
+/// on `ReturnKey`/blur -- mirroring `inspector_panel.rs`'s field editing) is
+/// deferred to a following unit; `enter_row_op`/`tab_row_op`/
+/// `shift_tab_row_op` land the structural half of Task G3 first.
 #[allow(dead_code)]
 pub fn rename_row_op(rows: &[Row], index: usize, title: String) -> Option<(RowId, RowOp)> {
     let row = rows.get(index)?;
@@ -125,8 +125,7 @@ pub fn rename_row_op(rows: &[Row], index: usize, title: String) -> Option<(RowId
 /// here): a concept with no preceding sibling directory refuses rather than
 /// promoting itself to `<slug>/index.md`.
 ///
-/// Not yet called from `folder_list.rs` -- see `enter_row_op`'s note.
-#[allow(dead_code)]
+/// Called from `FolderView::handle` on `FolderListViewAction::TabPressed`.
 pub fn tab_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
     let row = rows.get(index)?;
     let sibling = rows[..index].iter().rev().find(|candidate| {
@@ -144,8 +143,7 @@ pub fn tab_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
 /// its declared `caps.move_out` (never satisfiable at the bundle root --
 /// `RootView::apply`'s own `MoveOut` branch refuses there too).
 ///
-/// Not yet called from `folder_list.rs` -- see `enter_row_op`'s note.
-#[allow(dead_code)]
+/// Called from `FolderView::handle` on `FolderListViewAction::ShiftTabPressed`.
 pub fn shift_tab_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
     let row = rows.get(index)?;
     if !row.caps.move_out {
@@ -168,6 +166,12 @@ pub fn folder_document_tab_id(directory: &str) -> LiveId {
 pub struct FolderView {
     directory: String,
     rows: Vec<Row>,
+    /// The chain the rows above were projected through, retained so a later
+    /// gesture (Task G3) can call `Chain::apply` against the exact same
+    /// stages that produced the `RowId`s the gesture addresses -- rebuilding
+    /// the chain from `directory` alone could resolve a different (possibly
+    /// stale) middleware set if the bundle's frontmatter changed underneath.
+    chain: Chain,
     diagnostics: Vec<waml::diagnostic::Diagnostic>,
     /// Set when this view was opened through the raw route (Task D3): the
     /// identity listing, bypassing whatever chain `directory` declares.
@@ -194,6 +198,7 @@ impl FolderView {
         Some(FolderView {
             directory: directory.to_string(),
             rows,
+            chain,
             diagnostics,
             raw: false,
         })
@@ -213,6 +218,7 @@ impl FolderView {
         Some(FolderView {
             directory: directory.to_string(),
             rows,
+            chain,
             diagnostics,
             raw: true,
         })
@@ -258,8 +264,89 @@ impl FolderView {
         &self.rows
     }
 
+    /// Lower one `(RowId, RowOp)` gesture (as produced by `enter_row_op` et
+    /// al.) to the real OKF op batch, by re-running `id`'s owning stage's
+    /// `apply` through the SAME chain the rows were projected through.
+    /// Never touches disk itself -- the caller wraps the batch in a
+    /// `PendingEdit` and hands it to `ViewOutcome::edit`, so it goes through
+    /// the normal edit pipeline (undo, atomic save, reparse) like every
+    /// other surface's edits.
+    ///
+    /// Called from `FolderView::handle` (below); kept as its own method so
+    /// the headless test below can exercise it without a `Cx`.
+    pub fn apply_gesture(
+        &self,
+        analysis: &waml::analysis::OkfAnalysis,
+        id: &RowId,
+        op: RowOp,
+    ) -> Result<Vec<waml::okf::Op>, Unsupported> {
+        // `RootView::apply`'s `MoveIn` arm (crates/waml/src/view/root.rs)
+        // reads its DESTINATION directory off `ctx.dir`, not off `id`/`path`
+        // -- `tab_row_op` addresses `id` at the target sibling's OWN row
+        // (still projected within `self.directory`'s listing), so for this
+        // one op the apply context must be that sibling's directory, not
+        // `self.directory` itself. Every other `RowOp` variant resolves its
+        // row from `path` against `ctx.dir` directly, so `self.directory`
+        // is correct for them.
+        let ctx_directory = if matches!(op, RowOp::MoveIn { .. }) {
+            match self
+                .rows
+                .iter()
+                .find(|row| &row.id == id)
+                .map(|row| &row.target)
+            {
+                Some(RowTarget::Folder(address)) => address.as_str(),
+                _ => return Err(Unsupported),
+            }
+        } else {
+            self.directory.as_str()
+        };
+        let Some(dir) = analysis.bundle.directory(ctx_directory).cloned() else {
+            return Err(Unsupported);
+        };
+        let params = Frontmatter::default();
+        let descend = |_: &Directory| Chain::default();
+        let ctx = ProjectionCtx {
+            dir: &dir,
+            bundle: &analysis.bundle,
+            params: &params,
+            descend: &descend,
+        };
+        self.chain.apply(&ctx, id, op)
+    }
+
     pub fn diagnostics(&self) -> &[waml::diagnostic::Diagnostic] {
         &self.diagnostics
+    }
+
+    /// Lower a `(RowId, RowOp)` gesture (as `enter_row_op`/`tab_row_op`/
+    /// `shift_tab_row_op` produce) into `outcome.edit`, through
+    /// `apply_gesture`. A `None` gesture (the row/child caps refused, or the
+    /// focused index no longer exists) is a silent no-op, never a crash --
+    /// same for an `apply_gesture` refusal (a stale `RowId` from a chain
+    /// shape that changed underneath). `label` is the undo-stack entry.
+    fn commit_gesture(
+        &self,
+        analysis: &waml::analysis::OkfAnalysis,
+        gesture: Option<(RowId, RowOp)>,
+        label: &str,
+        outcome: &mut ViewOutcome,
+    ) {
+        let Some((id, op)) = gesture else {
+            return;
+        };
+        let Ok(ops) = self.apply_gesture(analysis, &id, op) else {
+            return;
+        };
+        if ops.is_empty() {
+            return;
+        }
+        outcome.edit = Some(crate::document::EditIntent {
+            edit: waml::edit::PendingEdit::new(waml::okf::Batch(ops)),
+            label: label.to_string(),
+            merge_key: None,
+            after_location: None,
+        });
     }
 }
 
@@ -280,7 +367,7 @@ impl DocView for FolderView {
         _cx: &mut Cx,
         body: &BodyWidgets,
         actions: &Actions,
-        _data: ViewData<'_>,
+        data: ViewData<'_>,
     ) -> ViewOutcome {
         let mut outcome = ViewOutcome::default();
         if let Some(index) = body.folder_list().row_opened(actions) {
@@ -299,6 +386,27 @@ impl DocView for FolderView {
                 },
                 disposition: crate::navigation::OpenDisposition::Preview,
             });
+        } else if let Some(index) = body.folder_list().enter_pressed(actions) {
+            self.commit_gesture(
+                data.okf_analysis,
+                enter_row_op(&self.rows, index),
+                "Insert row",
+                &mut outcome,
+            );
+        } else if let Some(index) = body.folder_list().tab_pressed(actions) {
+            self.commit_gesture(
+                data.okf_analysis,
+                tab_row_op(&self.rows, index),
+                "Move row in",
+                &mut outcome,
+            );
+        } else if let Some(index) = body.folder_list().shift_tab_pressed(actions) {
+            self.commit_gesture(
+                data.okf_analysis,
+                shift_tab_row_op(&self.rows, index),
+                "Move row out",
+                &mut outcome,
+            );
         }
         outcome
     }
@@ -530,6 +638,49 @@ mod tests {
         assert_eq!(
             folder_document_tab_id("/sales"),
             folder_document_tab_id("/sales")
+        );
+    }
+
+    /// `apply_gesture` is the piece `FolderView::handle` calls to turn an
+    /// `enter_row_op`/`tab_row_op`/`shift_tab_row_op` result into the real
+    /// `okf::Op` batch `ViewOutcome::edit` carries into the normal edit
+    /// pipeline (undo, atomic save, reparse) -- nothing here writes a file
+    /// directly.
+    #[test]
+    fn apply_gesture_lowers_enter_row_op_to_a_concept_new_and_reorder_batch() {
+        let prepared = analysis([
+            ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
+            ("orders.md", "# Orders\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let (id, op) = enter_row_op(view.rows(), 0).unwrap();
+        let ops = view.apply_gesture(prepared.okf(), &id, op).unwrap();
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, waml::okf::Op::ConceptNew { .. })),
+            "enter inserts a new concept: {ops:?}"
+        );
+    }
+
+    #[test]
+    fn apply_gesture_lowers_tab_row_op_to_a_move_in() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "# Root\n\n* [Sales](sales/)\n* [Orders](orders.md)\n",
+            ),
+            ("sales/index.md", "# Sales\n"),
+            ("orders.md", "# Orders\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let (id, op) = tab_row_op(view.rows(), 1).unwrap();
+        let ops = view.apply_gesture(prepared.okf(), &id, op).unwrap();
+        assert_eq!(
+            ops,
+            vec![waml::okf::Op::ConceptMove {
+                id: "orders".to_string(),
+                to_directory: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
+            }]
         );
     }
 }

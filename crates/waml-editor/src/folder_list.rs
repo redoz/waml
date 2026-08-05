@@ -187,6 +187,11 @@ pub struct FolderRow {
     clickable: bool,
     #[rust]
     hovered: bool,
+    /// Whether this row holds `FolderListView`'s keyboard focus (Task G3).
+    /// Presentational only -- the same tint uniform as hover, distinct
+    /// state so focus survives the pointer moving off the row.
+    #[rust]
+    focused: bool,
 }
 
 impl Widget for FolderRow {
@@ -214,16 +219,20 @@ impl Widget for FolderRow {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        let tinted = self.hovered || self.focused;
         self.view
             .draw_bg
-            .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
+            .set_uniform(cx, live_id!(hover), &[if tinted { 1.0 } else { 0.0 }]);
         self.view.draw_walk(cx, scope, walk)
     }
 }
 
 impl FolderRow {
     /// Bind one projected row's view-model onto this widget instance.
-    pub fn set_row(&mut self, cx: &mut Cx, row: &FolderRowView) {
+    /// `focused` is `FolderListView`'s keyboard-focused row index (Task G3),
+    /// compared by the caller -- presentational only, mirrors `hovered`'s
+    /// wash so the focused row stays visibly distinct without a click.
+    pub fn set_row(&mut self, cx: &mut Cx, row: &FolderRowView, focused: bool) {
         self.view.label(cx, ids!(bullet)).set_text(cx, row.bullet);
         self.view
             .label(cx, ids!(textcol.label))
@@ -238,6 +247,7 @@ impl FolderRow {
             self.clickable = clickable;
             self.hovered = false;
         }
+        self.focused = focused;
     }
 
     pub fn clicked(&self, actions: &Actions) -> bool {
@@ -248,9 +258,9 @@ impl FolderRow {
 }
 
 impl FolderRowRef {
-    pub fn set_row(&self, cx: &mut Cx, row: &FolderRowView) {
+    pub fn set_row(&self, cx: &mut Cx, row: &FolderRowView, focused: bool) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.set_row(cx, row);
+            inner.set_row(cx, row, focused);
         }
     }
     pub fn clicked(&self, actions: &Actions) -> bool {
@@ -268,6 +278,14 @@ pub enum FolderListViewAction {
     /// The "View raw" affordance was clicked (Task D3). Never fired while
     /// the view is already raw -- `raw_link` is hidden in that state.
     RawRequested,
+    /// `KeyCode::ReturnKey` fired while `index` held keyboard focus (Task
+    /// G3). `FolderView::handle` maps this through `enter_row_op`.
+    EnterPressed(usize),
+    /// `KeyCode::Tab` (no shift) fired while `index` held keyboard focus.
+    /// Maps through `tab_row_op`.
+    TabPressed(usize),
+    /// `KeyCode::Tab` with shift held. Maps through `shift_tab_row_op`.
+    ShiftTabPressed(usize),
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -276,6 +294,17 @@ pub struct FolderListView {
     view: View,
     #[rust]
     rows: Vec<FolderRowView>,
+    /// Keyboard-focused row index (Task G3), independent of any click --
+    /// a row click still opens its target immediately (unchanged), so focus
+    /// only drives Up/Down/Return/Tab. Re-clamped in `set_rows` so a resync
+    /// after an edit never points past the new row count.
+    #[rust]
+    focused: Option<usize>,
+    /// Whether this list currently holds keyboard focus, tracked off
+    /// `Hit::KeyFocus`/`Hit::KeyFocusLost` so arrow/Return/Tab keys are
+    /// ignored while some other widget (e.g. a text field) has focus.
+    #[rust]
+    has_key_focus: bool,
 }
 
 impl Widget for FolderListView {
@@ -295,6 +324,49 @@ impl Widget for FolderListView {
             }
             _ => {}
         }
+        match event.hits(cx, self.view.area()) {
+            Hit::FingerDown(_) => {
+                cx.set_key_focus(self.view.area());
+            }
+            Hit::KeyFocus(_) => {
+                self.has_key_focus = true;
+            }
+            Hit::KeyFocusLost(_) => {
+                self.has_key_focus = false;
+            }
+            Hit::KeyDown(ke) if self.has_key_focus => {
+                let Some(index) = self.focused else {
+                    return;
+                };
+                match ke.key_code {
+                    KeyCode::ArrowDown => {
+                        if index + 1 < self.rows.len() {
+                            self.focused = Some(index + 1);
+                            self.view.redraw(cx);
+                        }
+                    }
+                    KeyCode::ArrowUp => {
+                        if index > 0 {
+                            self.focused = Some(index - 1);
+                            self.view.redraw(cx);
+                        }
+                    }
+                    KeyCode::ReturnKey => {
+                        cx.widget_action(uid, FolderListViewAction::EnterPressed(index));
+                    }
+                    KeyCode::Tab => {
+                        let action = if ke.modifiers.shift {
+                            FolderListViewAction::ShiftTabPressed(index)
+                        } else {
+                            FolderListViewAction::TabPressed(index)
+                        };
+                        cx.widget_action(uid, action);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
         self.widget_match_event(cx, event, scope);
     }
 
@@ -304,7 +376,8 @@ impl Widget for FolderListView {
                 for (i, row_data) in self.rows.iter().enumerate() {
                     let item_id = LiveId::from_str(&format!("{i}:{}", row_data.label));
                     let row = list.item(cx, item_id, id!(Row)).unwrap();
-                    row.as_folder_row().set_row(cx, row_data);
+                    row.as_folder_row()
+                        .set_row(cx, row_data, self.focused == Some(i));
                     row.draw_all(cx, &mut Scope::empty());
                 }
             }
@@ -341,6 +414,11 @@ impl FolderListView {
     /// resolved chain's projected rows, in order.
     pub fn set_rows(&mut self, cx: &mut Cx, rows: Vec<FolderRowView>) {
         self.rows = rows;
+        self.focused = match self.focused {
+            Some(index) if index < self.rows.len() => Some(index),
+            _ if self.rows.is_empty() => None,
+            _ => Some(0),
+        };
         self.view.redraw(cx);
     }
 
@@ -369,7 +447,11 @@ impl FolderListView {
     pub fn row_opened(&self, actions: &Actions) -> Option<usize> {
         match self.actions_action(actions) {
             FolderListViewAction::RowOpened(i) => Some(i),
-            FolderListViewAction::None | FolderListViewAction::RawRequested => None,
+            FolderListViewAction::None
+            | FolderListViewAction::RawRequested
+            | FolderListViewAction::EnterPressed(_)
+            | FolderListViewAction::TabPressed(_)
+            | FolderListViewAction::ShiftTabPressed(_) => None,
         }
     }
 
@@ -380,6 +462,33 @@ impl FolderListView {
             self.actions_action(actions),
             FolderListViewAction::RawRequested
         )
+    }
+
+    /// The row index Enter was pressed on (Task G3), if any this pass.
+    /// `FolderView::handle` maps it through `enter_row_op`.
+    pub fn enter_pressed(&self, actions: &Actions) -> Option<usize> {
+        match self.actions_action(actions) {
+            FolderListViewAction::EnterPressed(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// The row index Tab (no shift) was pressed on, if any this pass.
+    /// `FolderView::handle` maps it through `tab_row_op`.
+    pub fn tab_pressed(&self, actions: &Actions) -> Option<usize> {
+        match self.actions_action(actions) {
+            FolderListViewAction::TabPressed(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// The row index Shift-Tab was pressed on, if any this pass.
+    /// `FolderView::handle` maps it through `shift_tab_row_op`.
+    pub fn shift_tab_pressed(&self, actions: &Actions) -> Option<usize> {
+        match self.actions_action(actions) {
+            FolderListViewAction::ShiftTabPressed(i) => Some(i),
+            _ => None,
+        }
     }
 
     /// Toggle between the "View raw" affordance and the raw-mode banner:
@@ -420,6 +529,16 @@ impl FolderListViewRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_raw(cx, raw);
         }
+    }
+    pub fn enter_pressed(&self, actions: &Actions) -> Option<usize> {
+        self.borrow().and_then(|inner| inner.enter_pressed(actions))
+    }
+    pub fn tab_pressed(&self, actions: &Actions) -> Option<usize> {
+        self.borrow().and_then(|inner| inner.tab_pressed(actions))
+    }
+    pub fn shift_tab_pressed(&self, actions: &Actions) -> Option<usize> {
+        self.borrow()
+            .and_then(|inner| inner.shift_tab_pressed(actions))
     }
 }
 
