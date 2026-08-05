@@ -1553,13 +1553,18 @@ fn relationship_end_verdict(
     };
     let (from_present, to_present) = (present(from_end), present(to_end));
     let either_unparsable = unparsable(from_end) || unparsable(to_end);
-    if kind == crate::model::RelationshipKind::Associates {
+    // An unparsable end outranks the missing-end verdicts: `1 to 0` has one
+    // valid and one unreadable end, and reporting it as "only one end" would
+    // name the wrong defect — the author gave two ends, one of which the
+    // grammar could not read.
+    if either_unparsable && (kind == crate::model::RelationshipKind::Associates || kind.is_ended())
+    {
+        EndVerdict::EndsUnparsable
+    } else if kind == crate::model::RelationshipKind::Associates {
         if from_present && to_present {
             EndVerdict::Ok
         } else if from_present || to_present {
             EndVerdict::OneEnded
-        } else if either_unparsable {
-            EndVerdict::EndsUnparsable
         } else {
             // Neither end was authored: an end-less association.
             EndVerdict::Ok
@@ -1570,8 +1575,6 @@ fn relationship_end_verdict(
             EndVerdict::Ok
         } else if from_present || to_present {
             EndVerdict::OneEnded
-        } else if either_unparsable {
-            EndVerdict::EndsUnparsable
         } else {
             EndVerdict::EndsRequired
         }
@@ -3288,6 +3291,16 @@ fn declared_relationship(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredR
             return crate::uml::DeclaredField::Absent;
         };
         let raw = end.multiplicity_token().text().write_to_string();
+        if raw.trim().is_empty() {
+            // No multiplicity text at all (`: 1 to`): the end was expected but
+            // never written. That is a missing end, not an unreadable one —
+            // `Invalid` is reserved for text the grammar could not read (`0`,
+            // an inverted range), so the two produce different diagnostics.
+            return crate::uml::DeclaredField::Incomplete {
+                syntax: end.0,
+                expected: crate::uml::ExpectedSyntax::ValidMultiplicity,
+            };
+        }
         let Some(multiplicity) = crate::multiplicity::Multiplicity::parse(&raw) else {
             return invalid(end.0);
         };

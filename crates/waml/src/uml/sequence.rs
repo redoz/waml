@@ -269,6 +269,101 @@ fn lifeline_classifier_map(concept: &DeclaredConcept, path: &str) -> BTreeMap<St
         .collect()
 }
 
+/// The verdict for one declared lifeline. This is the ONE derivation of which
+/// lifelines a sequence concept admits and what classifier each is bound to:
+/// `lower` consumes it to report the rejections and build the nodes, and
+/// `interaction_use_graph` consumes it silently. Neither re-derives the rule.
+enum LifelineAdmission {
+    Admitted {
+        id: String,
+        title: String,
+        alias: Option<String>,
+        /// The resolved classifier, when it is a claimed concept.
+        classifier: Option<String>,
+    },
+    /// No link or no title: there is nothing to name, and nothing to report.
+    Unnamed,
+    /// The handle is a reserved sequence name.
+    ReservedName(String),
+    /// A lifeline with this handle was already admitted.
+    Duplicate(String),
+}
+
+fn lifeline_admissions<'a>(
+    concept: &'a DeclaredConcept,
+    path: &str,
+    claimed: &BTreeSet<&str>,
+) -> Vec<(&'a super::DeclaredLifeline, LifelineAdmission)> {
+    let mut admitted = BTreeSet::new();
+    concept
+        .lifelines
+        .iter()
+        .map(|lifeline| {
+            let (Some(slug), Some(title)) = (value(&lifeline.target), value(&lifeline.title))
+            else {
+                return (lifeline, LifelineAdmission::Unnamed);
+            };
+            let alias = value(&lifeline.alias).cloned();
+            let id = alias.clone().unwrap_or_else(|| title.clone());
+            let admission = if !is_sequence_identifier(&id) {
+                LifelineAdmission::ReservedName(id)
+            } else if !admitted.insert(id.clone()) {
+                LifelineAdmission::Duplicate(id)
+            } else {
+                let target = crate::okf::resolve_href(path, slug);
+                LifelineAdmission::Admitted {
+                    id,
+                    title: title.clone(),
+                    alias,
+                    classifier: claimed.contains(target.as_str()).then_some(target),
+                }
+            };
+            (lifeline, admission)
+        })
+        .collect()
+}
+
+/// The admitted lifeline handles and their claimed classifiers, for callers
+/// that only need the outcome of [`lifeline_admissions`].
+fn admitted_lifelines(
+    concept: &DeclaredConcept,
+    path: &str,
+    claimed: &BTreeSet<&str>,
+) -> (BTreeSet<String>, BTreeMap<String, String>) {
+    let mut handles = BTreeSet::new();
+    let mut classifiers = BTreeMap::new();
+    for (_, admission) in lifeline_admissions(concept, path, claimed) {
+        if let LifelineAdmission::Admitted { id, classifier, .. } = admission {
+            if let Some(classifier) = classifier {
+                classifiers.insert(id.clone(), classifier);
+            }
+            handles.insert(id);
+        }
+    }
+    (handles, classifiers)
+}
+
+/// The bindings of an interaction use whose local and target endpoints both
+/// resolved, paired with the syntax they came from. Shared so the silent and
+/// the diagnosed copy check the same set.
+fn resolved_binding_entries(
+    declared_use: &super::DeclaredInteractionUse,
+) -> Vec<(SeqBinding, &super::DeclaredBinding)> {
+    declared_use
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            Some((
+                SeqBinding {
+                    local: value(&binding.local)?.clone(),
+                    target: value(&binding.target)?.clone(),
+                },
+                binding,
+            ))
+        })
+        .collect()
+}
+
 fn participating_lifelines(concept: &DeclaredConcept) -> BTreeSet<String> {
     let mut first: BTreeMap<String, bool> = BTreeMap::new();
     for message in concept.messages.iter() {
@@ -358,22 +453,7 @@ fn interaction_use_graph(
         let Some(path) = concept_paths.get(concept.concept_id.as_str()).cloned() else {
             continue;
         };
-        let mut lifelines = BTreeSet::new();
-        let mut local_classifiers = BTreeMap::new();
-        for lifeline in concept.lifelines.iter() {
-            let (Some(link), Some(title)) = (value(&lifeline.target), value(&lifeline.title))
-            else {
-                continue;
-            };
-            let handle = value(&lifeline.alias).unwrap_or(title);
-            if !is_sequence_identifier(handle) || !lifelines.insert(handle.clone()) {
-                continue;
-            }
-            let classifier = crate::okf::resolve_href(&path, link);
-            if claimed.contains(classifier.as_str()) {
-                local_classifiers.insert(handle.clone(), classifier);
-            }
-        }
+        let (lifelines, local_classifiers) = admitted_lifelines(concept, &path, claimed);
         let mut aliases = lifelines.clone();
         for (index, interaction_use) in concept.interaction_uses.iter().enumerate() {
             let (Some(link), Some(alias)) =
@@ -401,19 +481,11 @@ fn interaction_use_graph(
                 .unwrap_or_else(|| target.clone());
             let target_lifelines = lifeline_classifier_map(target_concept, &target_path);
             let participating = participating_lifelines(target_concept);
-            let has_unresolved_binding = interaction_use
-                .bindings
+            let binding_entries = resolved_binding_entries(interaction_use);
+            let has_unresolved_binding = binding_entries.len() != interaction_use.bindings.len();
+            let resolved_bindings = binding_entries
                 .iter()
-                .any(|binding| value(&binding.local).is_none() || value(&binding.target).is_none());
-            let resolved_bindings = interaction_use
-                .bindings
-                .iter()
-                .filter_map(|binding| {
-                    Some(SeqBinding {
-                        local: value(&binding.local)?.clone(),
-                        target: value(&binding.target)?.clone(),
-                    })
-                })
+                .map(|(binding, _)| binding.clone())
                 .collect::<Vec<_>>();
             let issues = validate_use_bindings(
                 &resolved_bindings,
@@ -490,44 +562,45 @@ pub(crate) fn lower(
     let mut nodes = Vec::new();
     let mut lifelines = BTreeSet::new();
     let mut lifeline_classifiers = BTreeMap::new();
-    for lifeline in concept.lifelines.iter() {
-        let (Some(slug), Some(title)) = (value(&lifeline.target), value(&lifeline.title)) else {
-            continue;
-        };
-        let alias = value(&lifeline.alias).cloned();
-        let id = alias.clone().unwrap_or_else(|| title.clone());
-        if !validate_sequence_identifier(
-            context,
-            diagnostics,
-            &id,
-            "lifeline name",
-            path,
-            lifeline.syntax.syntax(),
-        ) {
-            continue;
-        }
-        if !lifelines.insert(id.clone()) {
-            report_at(
+    for (lifeline, admission) in lifeline_admissions(concept, path, claimed) {
+        match admission {
+            LifelineAdmission::Unnamed => {}
+            LifelineAdmission::ReservedName(id) => {
+                validate_sequence_identifier(
+                    context,
+                    diagnostics,
+                    &id,
+                    "lifeline name",
+                    path,
+                    lifeline.syntax.syntax(),
+                );
+            }
+            LifelineAdmission::Duplicate(id) => report_at(
                 context,
                 diagnostics,
                 DiagCode::DuplicateSequenceName,
                 format!("duplicate sequence lifeline name '{id}'"),
                 path,
                 lifeline.syntax.syntax(),
-            );
-            continue;
+            ),
+            LifelineAdmission::Admitted {
+                id,
+                title,
+                alias,
+                classifier,
+            } => {
+                lifelines.insert(id.clone());
+                if let Some(classifier) = &classifier {
+                    lifeline_classifiers.insert(id.clone(), classifier.clone());
+                }
+                nodes.push(SeqNode::Lifeline {
+                    id,
+                    title,
+                    alias,
+                    ref_: classifier,
+                });
+            }
         }
-        let target = crate::okf::resolve_href(path, slug);
-        let ref_ = claimed.contains(target.as_str()).then_some(target);
-        if let Some(classifier) = &ref_ {
-            lifeline_classifiers.insert(id.clone(), classifier.clone());
-        }
-        nodes.push(SeqNode::Lifeline {
-            id,
-            title: title.clone(),
-            alias,
-            ref_,
-        });
     }
 
     let mut gates = Vec::new();
@@ -660,19 +733,7 @@ pub(crate) fn lower(
                 valid_use = false;
             }
         }
-        let binding_entries = declared_use
-            .bindings
-            .iter()
-            .filter_map(|binding| {
-                Some((
-                    SeqBinding {
-                        local: value(&binding.local)?.clone(),
-                        target: value(&binding.target)?.clone(),
-                    },
-                    binding,
-                ))
-            })
-            .collect::<Vec<_>>();
+        let binding_entries = resolved_binding_entries(declared_use);
         let bindings = binding_entries
             .iter()
             .map(|(binding, _)| binding.clone())
@@ -726,26 +787,14 @@ pub(crate) fn lower(
         let is_graph_link = use_graph
             .get(&concept.concept_id)
             .is_some_and(|links| links.contains(&(declared_use_index, target.clone())));
-        // `interaction_use_graph` applies the same admission rules as the
-        // diagnosed checks above, so a use that survived every diagnostic
-        // should also be an edge in the graph. If it is not, the two copies
-        // have drifted and the demotion below would be a silent drop. Report
-        // it instead: the signal reaches the operator without a
-        // document-reachable panic taking the session down.
-        if valid_use && !is_graph_link {
-            report_at(
-                context,
-                diagnostics,
-                DiagCode::InvalidInteractionUse,
-                format!(
-                    "interaction use '{alias}' passed every check but is absent from the \
-                     interaction-use graph and was dropped"
-                ),
-                path,
-                declared_use.syntax.syntax(),
-            );
-            valid_use = false;
-        }
+        // The graph is built from the same shared derivations as the checks
+        // above (`admitted_lifelines`, `resolved_binding_entries`,
+        // `validate_use_bindings`), so a use that survived every diagnostic is
+        // an edge in the graph. The guard is defensive only: the cycle check
+        // below traverses the graph, so a use with no edge in it cannot be
+        // admitted. It reports nothing — there is no defect in the document to
+        // name.
+        valid_use = valid_use && is_graph_link;
         if valid_use
             && graph_reaches(
                 &use_graph,

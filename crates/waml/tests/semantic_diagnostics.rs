@@ -217,6 +217,20 @@ fn composes_with_one_end_is_flagged_and_dropped() {
 }
 
 #[test]
+fn composes_with_one_valid_and_one_unparsable_end_names_the_unparsable_end() {
+    let class = "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- composes [Line](./line.md): 1 to 0\n";
+    let found = diagnostics([
+        ("c/order.md", class),
+        ("c/line.md", "---\ntype: uml.Class\n---\n# Line\n"),
+    ]);
+    exact(
+        &found,
+        DiagCode::MalformedRelationship,
+        "'composes' has a multiplicity end that could not be parsed",
+    );
+}
+
+#[test]
 fn associates_with_unparsable_ends_is_flagged_and_dropped() {
     let class = "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- associates [Line](./line.md): 0 to 0\n";
     let analysis = prepared(
