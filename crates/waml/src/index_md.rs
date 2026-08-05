@@ -1,4 +1,6 @@
+use crate::frontmatter::{FmValue, Frontmatter};
 use crate::source::{BundlePath, SourceBundle};
+use crate::view::decl::ViewDecl;
 
 pub struct IndexEntry {
     pub key: String,
@@ -39,24 +41,84 @@ pub(crate) fn render_members(dir: &str, members: &[IndexEntry], newline: &str) -
     out
 }
 
+/// Declarations rendered into a non-root index's frontmatter block. Every
+/// field is `None`/absent by default — a caller with nothing to declare
+/// (`IndexFrontmatter::default()`) renders no frontmatter block at all, so
+/// today's plain-listing bytes are unchanged.
+#[derive(Default)]
+pub struct IndexFrontmatter<'a> {
+    pub profile: Option<&'a str>,
+    pub view: Option<&'a ViewDecl>,
+    pub extra: Option<&'a Frontmatter>,
+}
+
+/// A one-entry `ViewDecl` renders as a scalar (`view: outline`); a
+/// multi-entry chain renders as a flow sequence
+/// (`view: [hide-refs, group-by-tag]`), first entry outermost.
+fn view_decl_to_fm_value(decl: &ViewDecl) -> FmValue {
+    match decl.entries.as_slice() {
+        [one] => FmValue::Str(one.raw.clone()),
+        entries => FmValue::List(
+            entries
+                .iter()
+                .map(|entry| FmValue::Str(entry.raw.clone()))
+                .collect(),
+        ),
+    }
+}
+
+fn render_index_frontmatter(title: Option<&str>, frontmatter: &IndexFrontmatter<'_>) -> String {
+    let mut entries: Vec<(String, FmValue)> = Vec::new();
+    // `title` enters frontmatter only when some other key is present —
+    // a title-only index still renders as a plain H1, matching today's bytes.
+    let has_other = frontmatter.profile.is_some()
+        || frontmatter.view.is_some()
+        || frontmatter
+            .extra
+            .is_some_and(|extra| !extra.entries.is_empty());
+    if !has_other {
+        return String::new();
+    }
+    if let Some(title) = title.map(str::trim).filter(|t| !t.is_empty()) {
+        entries.push(("title".into(), FmValue::Str(title.to_owned())));
+    }
+    if let Some(profile) = frontmatter.profile {
+        entries.push(("profile".into(), FmValue::Str(profile.to_owned())));
+    }
+    if let Some(view) = frontmatter.view {
+        entries.push(("view".into(), view_decl_to_fm_value(view)));
+    }
+    if let Some(extra) = frontmatter.extra {
+        entries.extend(extra.entries.iter().cloned());
+    }
+    let rendered = crate::frontmatter::render_frontmatter(&Frontmatter { entries });
+    format!("---\n{rendered}\n---\n")
+}
+
 pub fn render_index(
     dir: &str,
     title: Option<&str>,
     description: Option<&str>,
     members: &[IndexEntry],
+    frontmatter: &IndexFrontmatter<'_>,
 ) -> String {
     let fallback = if dir.is_empty() {
         "index"
     } else {
         dir.rsplit('/').next().unwrap_or(dir)
     };
+    let fm_block = render_index_frontmatter(title, frontmatter);
     // A custom title (parsed from the existing H1, or set by pkg.retitle) is
     // emitted verbatim; only an absent/blank title falls back to the basename.
+    // When the title already moved into frontmatter, the H1 still carries it
+    // verbatim too (frontmatter is the parse-time source of truth; the H1
+    // stays human-readable and in sync).
     let heading = title
         .map(str::trim)
         .filter(|t| !t.is_empty())
         .unwrap_or(fallback);
-    let mut out = format!("# {heading}\n");
+    let mut out = fm_block;
+    out.push_str(&format!("# {heading}\n"));
     if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
         out.push('\n');
         out.push_str(d.trim());
@@ -118,6 +180,11 @@ pub fn reindex_source(bundle: &SourceBundle) -> SourceBundle {
                 index.title.as_deref(),
                 index.description.as_deref(),
                 &entries,
+                &IndexFrontmatter {
+                    profile: index.profile.as_deref(),
+                    view: index.view.as_ref(),
+                    extra: Some(&index.extra),
+                },
             ),
         );
     }
@@ -156,6 +223,7 @@ mod tests {
                 is_package: false,
                 blurb: None,
             }],
+            &IndexFrontmatter::default(),
         );
         let source = SourceBundle::try_from_pairs([
             ("index.md", index.as_str()),
@@ -191,7 +259,13 @@ mod tests {
             },
         ];
         // title None => fall back to the dir basename.
-        let out = render_index("sales", None, Some("Sales bounded context."), &members);
+        let out = render_index(
+            "sales",
+            None,
+            Some("Sales bounded context."),
+            &members,
+            &IndexFrontmatter::default(),
+        );
         assert!(out.starts_with("# sales\n"));
         assert!(out.contains("Sales bounded context."));
         assert!(out.contains("* [orders](orders/)"));
@@ -201,7 +275,13 @@ mod tests {
 
     #[test]
     fn render_index_emits_a_custom_title_verbatim() {
-        let out = render_index("sales", Some("Sales Domain"), None, &[]);
+        let out = render_index(
+            "sales",
+            Some("Sales Domain"),
+            None,
+            &[],
+            &IndexFrontmatter::default(),
+        );
         assert!(
             out.starts_with("# Sales Domain\n"),
             "custom title must be the H1: {out}"
@@ -211,8 +291,132 @@ mod tests {
     #[test]
     fn render_index_root_uses_title_over_index_fallback() {
         // Root ("" dir): a Some title wins; None falls back to "index".
-        assert!(render_index("", Some("My Domain"), None, &[]).starts_with("# My Domain\n"));
-        assert!(render_index("", None, None, &[]).starts_with("# index\n"));
+        assert!(render_index(
+            "",
+            Some("My Domain"),
+            None,
+            &[],
+            &IndexFrontmatter::default()
+        )
+        .starts_with("# My Domain\n"));
+        assert!(
+            render_index("", None, None, &[], &IndexFrontmatter::default())
+                .starts_with("# index\n")
+        );
+    }
+
+    #[test]
+    fn render_index_emits_declared_frontmatter_before_the_heading() {
+        let out = render_index(
+            "sales",
+            Some("Sales"),
+            None,
+            &[],
+            &IndexFrontmatter {
+                profile: Some("uml-domain"),
+                view: None,
+                extra: None,
+            },
+        );
+        assert!(
+            out.starts_with("---\ntitle: Sales\nprofile: uml-domain\n---\n# Sales\n"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn render_index_emits_a_chain_as_a_flow_sequence() {
+        let view = ViewDecl {
+            entries: vec![
+                crate::view::decl::ViewEntry {
+                    raw: "hide-refs".into(),
+                    line: 0,
+                },
+                crate::view::decl::ViewEntry {
+                    raw: "group-by-tag".into(),
+                    line: 0,
+                },
+            ],
+        };
+        let out = render_index(
+            "sales",
+            None,
+            None,
+            &[],
+            &IndexFrontmatter {
+                profile: None,
+                view: Some(&view),
+                extra: None,
+            },
+        );
+        assert!(
+            out.contains("view: [hide-refs, group-by-tag]"),
+            "got: {out}"
+        );
+
+        let reparsed = crate::okf::Bundle::parse(
+            &SourceBundle::try_from_pairs([("sales/index.md", out.as_str())]).unwrap(),
+        )
+        .unwrap();
+        let index = reparsed.index("/sales").unwrap();
+        let entries: Vec<&str> = index
+            .view
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .map(|e| e.raw.as_str())
+            .collect();
+        assert_eq!(entries, ["hide-refs", "group-by-tag"]);
+    }
+
+    #[test]
+    fn render_index_without_declarations_is_byte_identical_to_today() {
+        let members = vec![IndexEntry {
+            key: "customer".into(),
+            title: "Customer".into(),
+            blurb: None,
+            is_package: false,
+        }];
+        let with_default = render_index(
+            "sales",
+            Some("Sales"),
+            None,
+            &members,
+            &IndexFrontmatter::default(),
+        );
+        let legacy = "# Sales\n\n* [Customer](./customer.md)\n";
+        assert_eq!(with_default, legacy);
+    }
+
+    #[test]
+    fn index_frontmatter_survives_parse_render_reparse() {
+        let source = SourceBundle::try_from_pairs([(
+            "sales/index.md",
+            "---\ntitle: Sales\nprofile: uml-domain\nview: [hide-refs, group-by-tag]\ngenerator: acme\n---\n# Sales\n\n* [Customer](./customer.md)\n",
+        ),
+        (
+            "sales/customer.md",
+            "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n",
+        )])
+        .unwrap();
+
+        let once = reindex_source(&source);
+        let twice = reindex_source(&once);
+
+        let parsed_once = crate::okf::Bundle::parse(&once).unwrap();
+        let parsed_twice = crate::okf::Bundle::parse(&twice).unwrap();
+        let index_once = parsed_once.index("/sales").unwrap();
+        let index_twice = parsed_twice.index("/sales").unwrap();
+        assert_eq!(index_once.title, index_twice.title);
+        assert_eq!(index_once.profile, index_twice.profile);
+        assert_eq!(index_once.view, index_twice.view);
+        assert_eq!(index_once.extra, index_twice.extra);
+        assert_eq!(index_once.members, index_twice.members);
+        assert!(
+            once.shares_text_with(&twice, "sales/index.md"),
+            "second pass must be byte-stable"
+        );
     }
 
     #[test]

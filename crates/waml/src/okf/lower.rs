@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::edit::{EditContext, EditError};
-use crate::index_md::{render_index, render_members, IndexEntry};
+use crate::index_md::{render_index, render_members, IndexEntry, IndexFrontmatter};
 use crate::source::{BundlePath, SourceBundle};
 use waml_syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, OkfMarkdownSyntaxKind, ShellParse,
@@ -569,6 +569,68 @@ fn frontmatter_value(
     Ok(None)
 }
 
+/// Byte range of the `title` frontmatter value in `path`'s source, if a
+/// closed frontmatter block declares one. Used to retitle through
+/// frontmatter (which wins at parse) instead of only rewriting the H1.
+fn frontmatter_title_value_range(
+    work: &SourceBundle,
+    state: &mut OkfLoweringState,
+    path: &BundlePath,
+    op: &str,
+) -> Result<Option<std::ops::Range<usize>>, EditError> {
+    let shell = state.shell(work, path, op)?;
+    for child in shell
+        .tree
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+    {
+        if child.kind() != OkfMarkdownSyntaxKind::Frontmatter {
+            continue;
+        }
+        let closed = child.children().any(|element| {
+            element.into_token().is_some_and(|token| {
+                token.kind() == OkfMarkdownSyntaxKind::FrontmatterCloseFence
+                    && !token.flags().is_missing()
+            })
+        });
+        if !closed {
+            return Ok(None);
+        }
+        let entry_parent = child
+            .children()
+            .filter_map(SyntaxElement::into_node)
+            .find(|n| n.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping);
+        let entries: Box<dyn Iterator<Item = SyntaxElement<_>>> = match &entry_parent {
+            Some(mapping) => Box::new(mapping.children()),
+            None => Box::new(child.children()),
+        };
+        for entry in entries.filter_map(SyntaxElement::into_node) {
+            if entry.kind() != OkfMarkdownSyntaxKind::FrontmatterEntry {
+                continue;
+            }
+            let mut key = None;
+            let mut value_range = None;
+            for token in entry.children().filter_map(SyntaxElement::into_token) {
+                match token.kind() {
+                    OkfMarkdownSyntaxKind::FrontmatterKey => {
+                        key = Some(token.text().write_to_string())
+                    }
+                    OkfMarkdownSyntaxKind::FrontmatterValue if !token.flags().is_missing() => {
+                        let range = token.range();
+                        value_range = Some(range.start().to_usize()..range.end().to_usize());
+                    }
+                    _ => {}
+                }
+            }
+            if key.as_deref().is_some_and(|key| key.trim() == "title") {
+                return Ok(value_range);
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn authored_member_order(
     work: &SourceBundle,
     state: &mut OkfLoweringState,
@@ -725,9 +787,35 @@ fn update_authored_index(
         });
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
     if let Some(title) = title_override {
-        match h1 {
-            Some(range) => edits.push((range, title.to_owned())),
-            None => edits.push((0..0, format!("# {title}{newline}{newline}"))),
+        // A frontmatter `title:` wins at parse (see `document_title`); a
+        // retitle that only rewrites the H1 would silently do nothing.
+        // Move the frontmatter value when one is declared, otherwise fall
+        // back to the H1 as before. Never ADD a `title:` key here.
+        let frontmatter_title =
+            frontmatter_title_value_range(work, state, index_path, "pkg.index")?;
+        match frontmatter_title {
+            Some(range) => {
+                // The value token's range can include leading whitespace
+                // trivia between the `:` and the scalar; preserve it rather
+                // than dropping the separating space.
+                let leading_ws = source[range.clone()]
+                    .len()
+                    .saturating_sub(source[range.clone()].trim_start().len());
+                let value_start = range.start + leading_ws;
+                edits.push((
+                    value_start..range.end,
+                    crate::frontmatter::render_value(&crate::frontmatter::FmValue::Str(
+                        title.to_owned(),
+                    )),
+                ));
+                if let Some(range) = h1 {
+                    edits.push((range, title.to_owned()));
+                }
+            }
+            None => match h1 {
+                Some(range) => edits.push((range, title.to_owned())),
+                None => edits.push((0..0, format!("# {title}{newline}{newline}"))),
+            },
         }
     }
     let listing = render_members(directory, entries, newline);
@@ -865,7 +953,12 @@ fn write_package_index(
     } else {
         let title = title_override
             .or_else(|| (!path.is_empty()).then_some(path.rsplit('/').next().unwrap_or(path)));
-        work.upsert(idx_path.clone(), render_index(path, title, None, &entries));
+        // This branch creates a fresh index.md — no parsed `Index` exists
+        // yet to carry declarations, so it always renders `default()`.
+        work.upsert(
+            idx_path.clone(),
+            render_index(path, title, None, &entries, &IndexFrontmatter::default()),
+        );
         state.reparse(work, &idx_path, "pkg.index")?;
     }
     Ok(())
@@ -1179,6 +1272,47 @@ mod tests {
         assert!(
             idx.contains("./order.md") && idx.contains("./customer.md"),
             "members preserved: {idx}"
+        );
+    }
+
+    #[test]
+    fn pkg_retitle_moves_a_frontmatter_title_not_just_the_h1() {
+        // A declaring folder's `title:` wins at parse; a retitle that only
+        // rewrites the H1 would silently appear to do nothing.
+        let b = vec![
+            (
+                "sales/index.md".to_string(),
+                "---\ntitle: Old\nprofile: uml-domain\n---\n# Old\n\n* [order](./order.md)\n"
+                    .to_string(),
+            ),
+            (
+                "sales/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+        ];
+        let out = apply(
+            &b,
+            vec![Step::Okf(okf::Op::IndexRetitle {
+                directory: dir("sales"),
+                title: "Sales Domain".into(),
+            })],
+        )
+        .unwrap();
+        let idx = &out.iter().find(|(p, _)| p == "sales/index.md").unwrap().1;
+        assert!(
+            idx.contains("title: Sales Domain"),
+            "frontmatter title moved: {idx}"
+        );
+        assert!(
+            idx.contains("profile: uml-domain"),
+            "other frontmatter keys preserved: {idx}"
+        );
+        let bundle =
+            crate::okf::Bundle::parse(&SourceBundle::try_from_pairs(out.clone()).unwrap()).unwrap();
+        assert_eq!(
+            bundle.index("/sales").unwrap().title.as_deref(),
+            Some("Sales Domain"),
+            "the effective (parsed) title must be the new one"
         );
     }
 

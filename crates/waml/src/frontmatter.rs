@@ -782,7 +782,7 @@ fn render_key(key: &str) -> String {
     }
 }
 
-fn render_value(v: &FmValue) -> String {
+pub(crate) fn render_value(v: &FmValue) -> String {
     render_value_at(v, 0)
 }
 
