@@ -11,7 +11,7 @@
 
 use super::{BoxId, Rect, Size, SolveConfig};
 use crate::layout::Margin;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::f64::consts::PI;
 
 /// Tunables for the stress solve. Defaults are a first pass; the spec calls for
@@ -112,12 +112,22 @@ pub fn layout_grouped(
     }
 
     let clean = dedup_edges(n, edges);
-    if clean.is_empty() && groups.is_empty() {
+    let co_depth = comembership_depths(groups);
+    let co_edges: Vec<(usize, usize)> = co_depth.keys().copied().collect();
+    // Merged adjacency: real edges plus a clique per group, so a group can
+    // never be split across two independently shelf-packed components, and
+    // `bfs_hops` defines a distance for every co-member pair.
+    let merged: Vec<(usize, usize)> = {
+        let mut m = clean.clone();
+        m.extend(co_edges.iter().copied());
+        dedup_edges(n, &m)
+    };
+    if merged.is_empty() {
         // No meaningful distances — degenerate. Fall back to the grid.
         return (grid_pack(ids, sizes, cfg), vec![]);
     }
 
-    let adj = adjacency(n, &clean);
+    let adj = adjacency(n, &merged);
     let comps = components(n, &adj);
 
     // Solve each component independently, normalizing its min corner to the
@@ -130,7 +140,7 @@ pub fn layout_grouped(
     }
     let mut laid: Vec<Laid> = Vec::with_capacity(comps.len());
     for comp in comps {
-        let mut rects = component_layout(&comp, sizes, &adj, cfg);
+        let mut rects = component_layout(&comp, sizes, &adj, cfg, &co_depth);
         remove_overlaps(&mut rects, cfg.gap);
         let (min_x, min_y) = rects
             .iter()
@@ -181,6 +191,27 @@ pub fn layout_grouped(
     }
     let hulls = group_hulls(&out, groups, cfg);
     (out, hulls)
+}
+
+/// For every pair of co-members across `groups`, the depth of the *deepest*
+/// group that contains both (0 = top level). Pairs never sharing a group are
+/// absent. Keyed with the smaller index first. Groups are small, so the O(k^2)
+/// clique per group is fine.
+fn comembership_depths(groups: &[GroupSpec]) -> HashMap<(usize, usize), u8> {
+    let mut depths: HashMap<(usize, usize), u8> = HashMap::new();
+    for g in groups {
+        for (i, &a) in g.members.iter().enumerate() {
+            for &b in &g.members[i + 1..] {
+                if a == b {
+                    continue;
+                }
+                let key = if a < b { (a, b) } else { (b, a) };
+                let entry = depths.entry(key).or_insert(g.depth);
+                *entry = (*entry).max(g.depth);
+            }
+        }
+    }
+    depths
 }
 
 /// Bounding box of each group's member rects, grown by `cfg.hull_pad`. A
@@ -371,11 +402,14 @@ fn majorize(
 }
 
 /// Solve one connected component to node-centered `Rect`s (in `comp` order).
+/// `co_depth` maps a co-member pair (global indices, smaller first) to the
+/// depth of its deepest common group, for the cohesion override below.
 fn component_layout(
     comp: &[usize],
     sizes: &[Size],
     adj: &[Vec<usize>],
     cfg: &StressConfig,
+    co_depth: &HashMap<(usize, usize), u8>,
 ) -> Vec<Rect> {
     let m = comp.len();
     if m == 1 {
@@ -389,7 +423,11 @@ fn component_layout(
     }
 
     // Target distances: hops * edge_len, inflated by combined half-extents so
-    // boxes have room for their footprints. Weights w = 1 / d^2.
+    // boxes have room for their footprints. Co-member pairs are then pulled in
+    // to `group_len` (whichever is tighter) — cohesion is soft: an edge-adjacent
+    // pair that is also co-member keeps the tighter of the two distances.
+    // Weights w = 1 / d^2, with co-member pairs weighted up by
+    // `group_weight^(depth+1)` using the deepest group containing both.
     let n = adj.len();
     let mut dist = vec![vec![0.0; m]; m];
     let mut w = vec![vec![0.0; m]; m];
@@ -400,9 +438,19 @@ fn component_layout(
                 continue;
             }
             let h = hops[gb].expect("connected component is fully reachable") as f64;
-            let d = h * cfg.edge_len + half_extent(&sizes[ga]) + half_extent(&sizes[gb]);
+            let mut d = h * cfg.edge_len + half_extent(&sizes[ga]) + half_extent(&sizes[gb]);
+            let key = if ga < gb { (ga, gb) } else { (gb, ga) };
+            let depth = co_depth.get(&key).copied();
+            if depth.is_some() {
+                let group_d = cfg.group_len + half_extent(&sizes[ga]) + half_extent(&sizes[gb]);
+                d = d.min(group_d);
+            }
             dist[la][lb] = d;
-            w[la][lb] = 1.0 / (d * d);
+            let mut weight = 1.0 / (d * d);
+            if let Some(depth) = depth {
+                weight *= cfg.group_weight.powi(depth as i32 + 1);
+            }
+            w[la][lb] = weight;
         }
     }
     let wsum: Vec<f64> = (0..m).map(|a| w[a].iter().sum()).collect();
@@ -837,5 +885,120 @@ mod tests {
         assert!((h.y - (0.0 - cfg.hull_pad)).abs() < 1e-9);
         assert!((h.w - (300.0 + 2.0 * cfg.hull_pad)).abs() < 1e-9);
         assert!((h.h - (140.0 + 2.0 * cfg.hull_pad)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn comembership_depths_uses_deepest_shared_group() {
+        // Outer group {0,1,2} depth 0, inner group {0,1} depth 1.
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1, 2],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![0, 1],
+                depth: 1,
+            },
+        ];
+        let d = comembership_depths(&groups);
+        assert_eq!(d.get(&(0, 1)), Some(&1)); // deepest shared group wins
+        assert_eq!(d.get(&(0, 2)), Some(&0));
+        assert_eq!(d.get(&(1, 2)), Some(&0));
+    }
+
+    #[test]
+    fn cohesion_pulls_co_members_closer_than_bare_hops_would() {
+        // Star: hub 0 connects to a (1) and to the group {b(2), c(3), d(4)} via b
+        // only — so c and d have no real edge at all, just co-membership. Without
+        // cohesion c/d would sit far apart (2+ hops through b); with cohesion they
+        // must land within a `group_len`-ish target distance of each other.
+        let cfg = StressConfig::default();
+        let g = ids(&["hub", "a", "b", "c", "d"]);
+        let szs = sizes(5, 80.0, 40.0);
+        let edges = [(0, 1), (0, 2)];
+        let groups = vec![GroupSpec {
+            members: vec![2, 3, 4], // b, c, d
+            depth: 0,
+        }];
+        // c (3) and d (4) are unreachable via `edges` alone.
+        let plain_adj = adjacency(5, &dedup_edges(5, &edges));
+        assert!(bfs_hops(5, &plain_adj, 3)[4].is_none());
+
+        let (rects, hulls) = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        assert_eq!(hulls.len(), 1);
+        let c = &rects[3];
+        let d = &rects[4];
+        let cx = c.x + c.w / 2.0;
+        let cy = c.y + c.h / 2.0;
+        let dx = d.x + d.w / 2.0;
+        let dy = d.y + d.h / 2.0;
+        let dist = (cx - dx).hypot(cy - dy);
+        // c and d have no edge at all — without cohesion their target distance
+        // through the merged graph would be 2 hops (b-c, b-d), i.e. ~2*edge_len.
+        // Cohesion pulls the *target* distance down to ~group_len instead, so the
+        // solved distance should land well under the bare-hop distance.
+        assert!(
+            dist < 2.0 * cfg.edge_len,
+            "c/d too far apart: {dist} (expected well under {})",
+            2.0 * cfg.edge_len
+        );
+
+        // Sibling group members' bboxes must sit inside the emitted hull.
+        let hull = hulls[0];
+        for m in [2usize, 3, 4] {
+            let r = &rects[m];
+            assert!(
+                r.x >= hull.x - 1e-6
+                    && r.y >= hull.y - 1e-6
+                    && r.x + r.w <= hull.x + hull.w + 1e-6
+                    && r.y + r.h <= hull.y + hull.h + 1e-6,
+                "member {m} rect not inside hull"
+            );
+        }
+    }
+
+    #[test]
+    fn strong_outside_edge_still_pulls_a_member_away() {
+        // Two members b,c grouped, but c also carries a direct edge to an
+        // outside anchor `x` — cohesion is soft, so c should sit closer to its
+        // real edge-neighbor x than an ungrouped member would to nothing, i.e.
+        // adding the group must not force c on top of b regardless of the edge.
+        let cfg = StressConfig::default();
+        let g = ids(&["b", "c", "x"]);
+        let szs = sizes(3, 80.0, 40.0);
+        let edges = [(1, 2)]; // c -- x
+        let groups = vec![GroupSpec {
+            members: vec![0, 1], // b, c
+            depth: 0,
+        }];
+        let (rects, _hulls) = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        let b = &rects[0];
+        let c = &rects[1];
+        let x = &rects[2];
+        let dist = |p: &Rect, q: &Rect| {
+            let px = p.x + p.w / 2.0;
+            let py = p.y + p.h / 2.0;
+            let qx = q.x + q.w / 2.0;
+            let qy = q.y + q.h / 2.0;
+            (px - qx).hypot(py - qy)
+        };
+        // c's real edge to x still shapes the result: c is not glued to b.
+        assert!(dist(c, x) > 0.0);
+        assert!(dist(b, c) > 0.0);
+    }
+
+    #[test]
+    fn layout_grouped_is_deterministic() {
+        let cfg = StressConfig::default();
+        let g = ids(&["a", "b", "c", "d", "e"]);
+        let szs = sizes(5, 100.0, 40.0);
+        let edges = [(0, 1), (2, 3)];
+        let groups = vec![GroupSpec {
+            members: vec![0, 1, 2],
+            depth: 0,
+        }];
+        let one = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        let two = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        assert_eq!(one, two);
     }
 }
