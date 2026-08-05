@@ -828,11 +828,12 @@ fn render_value_at(v: &FmValue, depth: usize) -> String {
                 .join(", ");
             format!("[{inner}]")
         }
-        // Bare block-mapping text, used only when a `Map` appears as a value
-        // outside `render_frontmatter`'s own entry rendering (debug/test
-        // paths) — `render_frontmatter` itself renders a `Map` entry via
-        // `render_top_entry`/`render_map_block` with the key on its own line.
-        // The full key-carrying nested/sequence-of-maps writer is Task 8's.
+        // Bare block-mapping text. No writer path reaches this arm — every
+        // caller that can hold a `Map` (`render_entry`, `render_flow_item`,
+        // `render_block_sequence_item`) matches `Map` before delegating here,
+        // so a map is always rendered with its key on its own line. Kept as a
+        // total fallback rather than an `unreachable!`: this renderer runs on
+        // untrusted document content, where a panic costs the session.
         FmValue::Map(entries) => render_map_block(entries, depth),
     }
 }
