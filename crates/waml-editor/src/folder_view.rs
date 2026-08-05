@@ -211,8 +211,13 @@ impl FolderView {
         limits: ChainLimits,
         mode: crate::folder_projection::ViewMode,
     ) -> Option<FolderView> {
-        let (chain, rows, diagnostics) =
-            crate::folder_projection::project_rows(analysis, directory, mode, limits)?;
+        let (chain, rows, diagnostics) = crate::folder_projection::project_rows(
+            analysis,
+            directory,
+            mode,
+            limits,
+            &crate::folder_projection::core_registry(),
+        )?;
         Some(FolderView {
             directory: directory.to_string(),
             rows,

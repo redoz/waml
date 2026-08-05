@@ -28,10 +28,6 @@ use waml::view::row::Row;
 pub enum ViewMode {
     #[default]
     Projected,
-    /// Unconstructed outside tests until Task 9/10 wire the tree-panel and
-    /// folder-tab toggle that flips `App::view_mode` to it; this task only
-    /// lands the mode and the row source that honors it.
-    #[allow(dead_code)]
     Raw,
 }
 
@@ -40,8 +36,10 @@ pub enum ViewMode {
 ///
 /// One function because two construction sites that disagree are invisible --
 /// a folder resolves fine in one and reports `unknown view middleware` in the
-/// other, with the gate green either way. Cheap enough to build per call;
-/// nothing here caches across frames.
+/// other, with the gate green either way. Build it ONCE per listing pass and
+/// pass it down: `build_tree` recurses over every directory in the bundle on
+/// every model refresh, and re-minting the name table per directory put that
+/// cost on a path that runs per document activation.
 pub fn core_registry() -> MiddlewareRegistry {
     MiddlewareRegistry::from_extensions(&[&waml::extension::CoreExt])
         .expect("the core extension registers a conflict-free name table")
@@ -56,9 +54,10 @@ pub fn chain_for(
     analysis: &waml::analysis::OkfAnalysis,
     directory: &str,
     mode: ViewMode,
+    registry: &MiddlewareRegistry,
 ) -> (Chain, Vec<Diagnostic>) {
     match mode {
-        ViewMode::Projected => analysis.bundle.resolved_view(directory, &core_registry()),
+        ViewMode::Projected => analysis.bundle.resolved_view(directory, registry),
         ViewMode::Raw => (Chain::raw(), Vec::new()),
     }
 }
@@ -77,9 +76,10 @@ pub fn project_rows(
     directory: &str,
     mode: ViewMode,
     limits: ChainLimits,
+    registry: &MiddlewareRegistry,
 ) -> Option<(Chain, Vec<Row>, Vec<Diagnostic>)> {
     let dir: Directory = analysis.bundle.directory(directory)?.clone();
-    let (chain, mut diagnostics) = chain_for(analysis, directory, mode);
+    let (chain, mut diagnostics) = chain_for(analysis, directory, mode, registry);
     // A middleware's params ARE the folder's own index frontmatter -- `hide`
     // reads its globs from here, and `Chain::build` validated them against
     // this same map. Passing an empty one makes every param-taking stage fail
@@ -129,8 +129,14 @@ mod tests {
         let prepared = hidden_bundle();
         let limits = ChainLimits::default();
 
-        let (_, projected, diagnostics) =
-            project_rows(prepared.okf(), "/", ViewMode::Projected, limits).unwrap();
+        let (_, projected, diagnostics) = project_rows(
+            prepared.okf(),
+            "/",
+            ViewMode::Projected,
+            limits,
+            &core_registry(),
+        )
+        .unwrap();
         assert!(
             diagnostics.is_empty(),
             "a correctly authored `view: hide` must not be diagnosed: {diagnostics:?}"
@@ -144,7 +150,7 @@ mod tests {
         );
 
         let (_, raw, raw_diagnostics) =
-            project_rows(prepared.okf(), "/", ViewMode::Raw, limits).unwrap();
+            project_rows(prepared.okf(), "/", ViewMode::Raw, limits, &core_registry()).unwrap();
         assert!(
             raw_diagnostics.is_empty(),
             "raw never builds the declared chain"
@@ -167,11 +173,18 @@ mod tests {
         ]);
         let limits = ChainLimits::default();
 
-        let (_, _, declared) =
-            project_rows(prepared.okf(), "/", ViewMode::Projected, limits).unwrap();
+        let (_, _, declared) = project_rows(
+            prepared.okf(),
+            "/",
+            ViewMode::Projected,
+            limits,
+            &core_registry(),
+        )
+        .unwrap();
         assert!(!declared.is_empty(), "an unknown middleware name diagnoses");
 
-        let (_, _, raw) = project_rows(prepared.okf(), "/", ViewMode::Raw, limits).unwrap();
+        let (_, _, raw) =
+            project_rows(prepared.okf(), "/", ViewMode::Raw, limits, &core_registry()).unwrap();
         assert!(raw.is_empty());
     }
 
@@ -182,7 +195,8 @@ mod tests {
             prepared.okf(),
             "/missing",
             ViewMode::Projected,
-            ChainLimits::default()
+            ChainLimits::default(),
+            &core_registry(),
         )
         .is_none());
     }
@@ -190,8 +204,14 @@ mod tests {
     #[test]
     fn raw_mode_owns_every_row_through_the_root_view() {
         let prepared = hidden_bundle();
-        let (_, rows, _) =
-            project_rows(prepared.okf(), "/", ViewMode::Raw, ChainLimits::default()).unwrap();
+        let (_, rows, _) = project_rows(
+            prepared.okf(),
+            "/",
+            ViewMode::Raw,
+            ChainLimits::default(),
+            &core_registry(),
+        )
+        .unwrap();
         assert!(
             rows.iter()
                 .all(|row| row.id.owner.as_str() == waml::view::ROOT_VIEW_OWNER),

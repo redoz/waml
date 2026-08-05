@@ -24,8 +24,6 @@ pub enum DocumentCommand {
     /// a markdown editor's scroll position or an in-flight edit. Only a caller
     /// that KNOWS the view must change -- a session-wide projected/raw flip --
     /// asks for this.
-    // Constructed once the session-wide toggle lands in Task 10.
-    #[allow(dead_code)]
     ReopenInPlace {
         document: OpenDocument,
     },

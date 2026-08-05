@@ -33,18 +33,36 @@ pub struct TreeNode {
     /// yield Unsupported.
     pub caps: waml::view::row::RowCaps,
     pub child_caps: waml::view::row::ChildCaps,
-    /// Directory rows only: whether this folder's declared `view:` chain
-    /// failed to build (an unknown middleware name, bad params) and fell
-    /// back to the root view. Drives the tree's degraded-chain marker so a
-    /// folder inside a collapsed subtree is not silently wrong. Always
-    /// `false` for a non-directory row.
+    /// Directory rows only: whether the projection that produced this row's
+    /// children diagnosed anything -- the SAME diagnostics the folder tab
+    /// shows when this folder is opened, from the SAME run. Drives the tree's
+    /// degraded-chain marker so a folder inside a collapsed subtree is not
+    /// silently wrong.
+    ///
+    /// Mode-dependent by construction: `Raw` never builds the declared chain,
+    /// so it never diagnoses one, and the marker is absent exactly where the
+    /// folder tab would also show nothing. Always `false` for a non-directory
+    /// row.
     pub view_degraded: bool,
     pub children: Vec<TreeNode>,
 }
 
+/// The bundle root's own `RowPath`. The root is not a projected row -- nothing
+/// emits it -- so it mints its own id, and that id must not be one any chain
+/// could also mint: a literal `"root"` segment is exactly what a top-level
+/// `root.md` concept or a `/root` directory produces, and two rows sharing a
+/// `key_string` share one `LiveId` and therefore one selection, fold, and
+/// chevron state in the panel.
+///
+/// `\u{1}` is the one segment no real row carries: it is `key_string`'s own
+/// separator, and no `ViewId` or `RowPath` segment in the bundle contains it
+/// (see `key_string`).
+pub const ROOT_ROW_SEGMENT: &str = "\u{1}";
+
 /// The flat string the tree panel keys its `LiveId` maps and cached chevron
 /// rects on. `\u{1}` separates the two halves: neither a `ViewId` nor a
-/// `RowPath` segment can contain it, so distinct `RowId`s never collide.
+/// `RowPath` segment produced by a projection can contain it, so distinct
+/// `RowId`s never collide.
 pub fn key_string(key: &waml::view::row::RowId) -> String {
     format!("{}\u{1}{}", key.owner, key.path)
 }
@@ -97,6 +115,7 @@ pub fn build_tree(
         root_fallback: &str,
         mode: crate::folder_projection::ViewMode,
         limits: waml::view::chain::ChainLimits,
+        registry: &waml::view::chain::MiddlewareRegistry,
     ) -> Option<TreeNode> {
         let bundle = &okf.bundle;
         // Confirms the directory still exists; its member lists are no
@@ -160,16 +179,31 @@ pub fn build_tree(
         // directory contains. `project_rows` returning None means the
         // directory left the bundle underneath us; an empty child list is the
         // honest answer, not a panic.
-        let projected = crate::folder_projection::project_rows(okf, address.as_str(), mode, limits);
+        let projected =
+            crate::folder_projection::project_rows(okf, address.as_str(), mode, limits, registry);
+        // The marker reads the diagnostics of the run that produced the
+        // children above -- the folder tab runs the same chain in the same
+        // mode and shows the same list, so a second `resolved_view` here would
+        // only be a chance to disagree (and a second full chain run per
+        // directory, recursively, on every model refresh).
+        let view_degraded = projected
+            .as_ref()
+            .is_some_and(|(_, _, diagnostics)| !diagnostics.is_empty());
         for row in projected.iter().flat_map(|(_, rows, _)| rows.iter()) {
             match &row.target {
                 waml::view::row::RowTarget::Folder(child_address) => {
                     let Ok(child) = waml::okf::DirectoryAddress::parse(child_address) else {
                         continue;
                     };
-                    if let Some(mut node) =
-                        directory_node(okf, uml_analysis, &child, root_fallback, mode, limits)
-                    {
+                    if let Some(mut node) = directory_node(
+                        okf,
+                        uml_analysis,
+                        &child,
+                        root_fallback,
+                        mode,
+                        limits,
+                        registry,
+                    ) {
                         // The chain owns the label, the identity, and the
                         // declared capabilities; a middleware may relabel a
                         // folder row, and the tree must show and key on what
@@ -214,21 +248,13 @@ pub fn build_tree(
                 }
             }
         }
-        // Build-level diagnostics only (unknown middleware name, bad params):
-        // `Chain::build` catches these without running anything. Must be the
-        // SAME registry `FolderView::build` uses, or the tree marks a folder
-        // degraded that opens fine, or misses one that does not.
-        let registry = crate::folder_projection::core_registry();
-        let (_, diagnostics) = bundle.resolved_view(address.as_str(), &registry);
         Some(TreeNode {
-            // The bundle root is not itself a projected row -- nothing emits
-            // it -- so it mints its own id. `RowPath::parse` rejects a
-            // leading '/', hence the literal "root" segment; a directory
-            // child immediately overwrites this with the row that produced
-            // it (see the `Folder` arm above).
+            // The bundle root mints its own id (see `ROOT_ROW_SEGMENT`); a
+            // directory child immediately overwrites this with the row that
+            // produced it (see the `Folder` arm above).
             key: waml::view::row::RowId {
                 owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
-                path: waml::view::row::RowPath::parse("root")
+                path: waml::view::row::RowPath::parse(ROOT_ROW_SEGMENT)
                     .expect("literal non-empty single segment parses"),
             },
             address: Some(address.as_str().to_string()),
@@ -240,16 +266,28 @@ pub fn build_tree(
             concept_id: None,
             caps: waml::view::row::RowCaps::default(),
             child_caps: waml::view::row::ChildCaps::default(),
-            view_degraded: !diagnostics.is_empty(),
+            view_degraded,
             children,
         })
     }
 
     let root = waml::okf::DirectoryAddress::parse("/").expect("root address is valid");
+    // One registry for the whole recursion: `FolderView::build` resolves
+    // against the same name table, and minting it per directory put a fresh
+    // allocation on a path that runs for every directory on every refresh.
+    let registry = crate::folder_projection::core_registry();
     ProjectTree {
-        roots: directory_node(okf, uml_analysis, &root, root_fallback, mode, limits)
-            .into_iter()
-            .collect(),
+        roots: directory_node(
+            okf,
+            uml_analysis,
+            &root,
+            root_fallback,
+            mode,
+            limits,
+            &registry,
+        )
+        .into_iter()
+        .collect(),
     }
 }
 
@@ -324,9 +362,14 @@ mod tests {
         ] {
             let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
             let sales = &tree.roots[0].children[0];
-            let (_, rows, _) =
-                crate::folder_projection::project_rows(prepared.okf(), "/sales", mode, limits)
-                    .unwrap();
+            let (_, rows, _) = crate::folder_projection::project_rows(
+                prepared.okf(),
+                "/sales",
+                mode,
+                limits,
+                &crate::folder_projection::core_registry(),
+            )
+            .unwrap();
             assert_eq!(
                 sales
                     .children
@@ -461,8 +504,14 @@ mod tests {
         let mode = crate::folder_projection::ViewMode::Projected;
         let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
         let sales = &tree.roots[0].children[0];
-        let (_, rows, _) =
-            crate::folder_projection::project_rows(prepared.okf(), "/sales", mode, limits).unwrap();
+        let (_, rows, _) = crate::folder_projection::project_rows(
+            prepared.okf(),
+            "/sales",
+            mode,
+            limits,
+            &crate::folder_projection::core_registry(),
+        )
+        .unwrap();
 
         assert_eq!(sales.children.len(), rows.len());
         for (node, row) in sales.children.iter().zip(rows.iter()) {
@@ -511,6 +560,73 @@ mod tests {
         assert!(!tree.roots[0].view_degraded);
     }
 
+    /// Raw never builds the declared chain, so the folder tab opened in Raw
+    /// shows no diagnostics at all. The tree must not contradict it by marking
+    /// the same folder degraded.
+    #[test]
+    fn raw_does_not_mark_a_folder_degraded_the_folder_tab_reports_clean() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "---\nview: no-such-middleware\n---\n# Sales\n",
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let limits = waml::view::chain::ChainLimits::default();
+        let mode = crate::folder_projection::ViewMode::Raw;
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
+        let sales = &tree.roots[0].children[0];
+        let (_, _, diagnostics) = crate::folder_projection::project_rows(
+            prepared.okf(),
+            "/sales",
+            mode,
+            limits,
+            &crate::folder_projection::core_registry(),
+        )
+        .unwrap();
+        assert!(diagnostics.is_empty(), "raw builds no declared chain");
+        assert!(
+            !sales.view_degraded,
+            "the tree marked a folder degraded that the raw folder tab reports clean",
+        );
+    }
+
+    /// The root mints its own `RowId`; a real row that happened to mint the
+    /// same one would share the root's `LiveId`, and with it the root's
+    /// selection, fold, and chevron state.
+    #[test]
+    fn the_bundle_roots_key_cannot_collide_with_a_projected_row() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root\n\n* [Root doc](root.md)\n* [Root dir](root/)\n",
+            ),
+            ("root.md", "# Root doc\n"),
+            ("root/index.md", "# Root dir\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let tree = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
+        let root = &tree.roots[0];
+        let root_key = key_string(&root.key);
+        for child in &root.children {
+            assert_ne!(
+                key_string(&child.key),
+                root_key,
+                "{} collides with the bundle root's key",
+                child.title,
+            );
+        }
+    }
+
     /// In Raw the chain is [index], so the root view owns every row and
     /// RootView::resolve answers every path -- Raw is today's listing.
     #[test]
@@ -544,6 +660,7 @@ mod tests {
             "/sales",
             crate::folder_projection::ViewMode::Raw,
             limits,
+            &crate::folder_projection::core_registry(),
         )
         .unwrap();
         let dir = prepared.okf().bundle.directory("/sales").unwrap().clone();

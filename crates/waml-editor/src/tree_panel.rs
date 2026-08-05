@@ -454,10 +454,6 @@ pub struct ProjectTree {
     /// The mode this panel is currently DISPLAYING, pushed by the app. The
     /// panel never decides it -- it reports a click and redraws what it is
     /// told, so the tree and the folder tabs can never disagree.
-    ///
-    /// Unread outside this widget until Task 10 wires `App` to push it via
-    /// `set_view_mode`; the `#[allow]` below is removed in that commit.
-    #[allow(dead_code)]
     #[rust]
     view_mode: ViewMode,
     #[live]
@@ -1036,6 +1032,20 @@ impl Widget for ProjectTree {
         // Presentation-visible: restore the body.
         self.view.view(cx, ids!(tree_scroll)).set_visible(cx, true);
 
+        // Seed the toggle's glyph from the mode this panel is displaying, the
+        // same way `tool_dock` seeds its buttons. `IconButton::icon` is
+        // `#[rust]` and defaults to `None` -- nothing draws -- and the DSL
+        // cannot give it one, so without this the button is an empty 28px hole
+        // on every draw that precedes the first `App::refresh_nav`.
+        // `set_view_mode` still pushes on a flip; this only guarantees the
+        // resting state is never blank.
+        let toggle = self.view.icon_button(cx, ids!(view_mode_btn));
+        toggle.set_icon(cx, self.view_mode_icon());
+        toggle.set_active(
+            cx,
+            matches!(self.view_mode, crate::folder_projection::ViewMode::Raw),
+        );
+
         // Expanded draws a flush column butted to the window edge: strip the
         // docked-edge (left) margin + the float top/bottom margins so no
         // window-bg frame shows. `Pinned` reserves an equal-width slot (see
@@ -1139,10 +1149,6 @@ impl ProjectTree {
     /// chain is running, `SquareCode` when it is bypassed. Not the action the
     /// button would perform: a reader must be able to read the panel and know
     /// what they are looking at.
-    ///
-    /// Unread outside tests until Task 10 wires `App` to call `set_view_mode`;
-    /// the `#[allow]`s here are removed in that commit.
-    #[allow(dead_code)]
     pub fn view_mode_icon(&self) -> Icon {
         match self.view_mode {
             crate::folder_projection::ViewMode::Projected => Icon::SquareLibrary,
@@ -1150,7 +1156,6 @@ impl ProjectTree {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_view_mode(&mut self, cx: &mut Cx, mode: crate::folder_projection::ViewMode) {
         self.view_mode = mode;
         let icon = self.view_mode_icon();
