@@ -242,7 +242,7 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
     previous: &SyntaxTree<L>,
     candidate: &SyntaxTree<L>,
     map: &ChangeMap,
-) -> GreenNode<L> {
+) -> Result<GreenNode<L>, ParseError> {
     let mut previous_annotations = HashMap::new();
     collect_occurrences(
         previous.root(),
@@ -278,11 +278,19 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
         copied: &HashMap<OccurrenceKey<L::Kind>, Vec<SyntaxAnnotation>>,
         occurrences: &mut HashMap<(L::Kind, TextRange, bool), usize>,
         start: TextSize,
-    ) -> GreenNode<L> {
-        let range = TextRange::new(start, start.checked_add(node.width()).unwrap()).unwrap();
+    ) -> Result<GreenNode<L>, ParseError> {
+        let range = TextRange::new(
+            start,
+            start
+                .checked_add(node.width())
+                .map_err(|_| ParseError::WidthOverflow)?,
+        )
+        .map_err(|_| ParseError::WidthOverflow)?;
         let base = (node.kind(), range, false);
         let ordinal = *occurrences.entry(base).or_insert(0);
-        *occurrences.get_mut(&base).unwrap() += 1;
+        *occurrences
+            .get_mut(&base)
+            .ok_or(ParseError::WidthOverflow)? += 1;
         let node_annotations = merge(
             node.annotations(),
             copied.get(&OccurrenceKey {
@@ -294,59 +302,61 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
         );
         let mut offset = start;
         let mut children_changed = false;
-        let children = node
-            .children()
-            .iter()
-            .enumerate()
-            .map(|(index, child)| {
-                let result = match child {
-                    GreenElement::Node(child) => {
-                        path.push(index as u32);
-                        let rebuilt = rebuild(child, path, copied, occurrences, offset);
-                        path.pop();
-                        children_changed |= !Arc::ptr_eq(child, &rebuilt);
-                        GreenElement::Node(rebuilt)
-                    }
-                    GreenElement::Token(token) => {
-                        let range =
-                            TextRange::new(offset, offset.checked_add(token.width()).unwrap())
-                                .unwrap();
-                        let base = (token.kind(), range, true);
-                        let ordinal = *occurrences.entry(base).or_insert(0);
-                        *occurrences.get_mut(&base).unwrap() += 1;
-                        let annotations = merge(
-                            token.syntax_annotations(),
-                            copied.get(&OccurrenceKey {
-                                kind: token.kind(),
-                                range,
-                                token: true,
-                                ordinal,
-                            }),
-                        );
-                        let rebuilt = if annotations.as_ref() == token.syntax_annotations() {
-                            token.clone()
-                        } else {
-                            GreenFactory::new().token_with_syntax_annotations(token, annotations)
-                        };
-                        children_changed |= !Arc::ptr_eq(token, &rebuilt);
-                        GreenElement::Token(rebuilt)
-                    }
-                };
-                offset = offset
-                    .checked_add(match &result {
-                        GreenElement::Node(node) => node.width(),
-                        GreenElement::Token(token) => token.width(),
-                    })
-                    .unwrap();
-                result
-            })
-            .collect::<Vec<_>>();
+        let mut children = Vec::with_capacity(node.children().len());
+        for (index, child) in node.children().iter().enumerate() {
+            let result = match child {
+                GreenElement::Node(child) => {
+                    path.push(index as u32);
+                    let rebuilt = rebuild(child, path, copied, occurrences, offset)?;
+                    path.pop();
+                    children_changed |= !Arc::ptr_eq(child, &rebuilt);
+                    GreenElement::Node(rebuilt)
+                }
+                GreenElement::Token(token) => {
+                    let range = TextRange::new(
+                        offset,
+                        offset
+                            .checked_add(token.width())
+                            .map_err(|_| ParseError::WidthOverflow)?,
+                    )
+                    .map_err(|_| ParseError::WidthOverflow)?;
+                    let base = (token.kind(), range, true);
+                    let ordinal = *occurrences.entry(base).or_insert(0);
+                    *occurrences
+                        .get_mut(&base)
+                        .ok_or(ParseError::WidthOverflow)? += 1;
+                    let annotations = merge(
+                        token.syntax_annotations(),
+                        copied.get(&OccurrenceKey {
+                            kind: token.kind(),
+                            range,
+                            token: true,
+                            ordinal,
+                        }),
+                    );
+                    let rebuilt = if annotations.as_ref() == token.syntax_annotations() {
+                        token.clone()
+                    } else {
+                        GreenFactory::new().token_with_syntax_annotations(token, annotations)
+                    };
+                    children_changed |= !Arc::ptr_eq(token, &rebuilt);
+                    GreenElement::Token(rebuilt)
+                }
+            };
+            offset = offset
+                .checked_add(match &result {
+                    GreenElement::Node(node) => node.width(),
+                    GreenElement::Token(token) => token.width(),
+                })
+                .map_err(|_| ParseError::WidthOverflow)?;
+            children.push(result);
+        }
         if !children_changed && node_annotations.as_ref() == node.annotations() {
-            node.clone()
+            Ok(node.clone())
         } else {
             GreenFactory::new()
                 .node_with_annotations(node.kind(), children, node_annotations)
-                .unwrap()
+                .map_err(|_| ParseError::WidthOverflow)
         }
     }
     rebuild(
@@ -354,7 +364,7 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
         &mut Vec::new(),
         &previous_annotations,
         &mut HashMap::new(),
-        TextSize::try_from_usize(0).unwrap(),
+        TextSize::try_from_usize(0).map_err(|_| ParseError::WidthOverflow)?,
     )
 }
 
@@ -963,7 +973,7 @@ pub(crate) fn reparse_okf_markdown_with_structure(
     }
     let candidate = SyntaxTree::new(root, diagnostics.into(), dialect);
     let root = if has_syntax_annotations(previous.root_green()) {
-        transfer_mapped_annotations(previous, &candidate, &map)
+        transfer_mapped_annotations(previous, &candidate, &map)?
     } else {
         candidate.root_green().clone()
     };

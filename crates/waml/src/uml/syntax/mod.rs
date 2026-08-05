@@ -214,7 +214,7 @@ pub(in crate::uml) fn reparse_island(
     diagnostics.sort_by_key(|d| (d.range.start(), d.range.end(), d.code as u8));
     let candidate = SyntaxTree::new(root, diagnostics.into(), structure.dialect);
     let root = if has_annotations(previous.root_green()) {
-        transfer_mapped_annotations(previous, &candidate, &map)
+        transfer_mapped_annotations(previous, &candidate, &map).ok()?
     } else {
         candidate.root_green().clone()
     };

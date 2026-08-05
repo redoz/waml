@@ -1100,7 +1100,7 @@ fn mapped_annotations_preserve_node_and_token_occurrences() {
         MarkdownDialect::WAML_DEFAULT,
     );
     let transferred = SyntaxTree::new(
-        transfer_mapped_annotations(&previous, &candidate, &map),
+        transfer_mapped_annotations(&previous, &candidate, &map).unwrap(),
         candidate_diagnostics,
         MarkdownDialect::WAML_DEFAULT,
     );
