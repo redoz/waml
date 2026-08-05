@@ -11,8 +11,8 @@ use makepad_widgets::*;
 use waml::frontmatter::Frontmatter;
 use waml::okf::Directory;
 use waml::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
-use waml::view::projection::ProjectionCtx;
-use waml::view::row::{Row, RowTarget};
+use waml::view::projection::{ProjectionCtx, RowOp};
+use waml::view::row::{Row, RowId, RowTarget};
 
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
@@ -75,6 +75,83 @@ fn row_view(row: &Row) -> FolderRowView {
 
 pub fn row_views(rows: &[Row]) -> Vec<FolderRowView> {
     rows.iter().map(row_view).collect()
+}
+
+/// Task G3's keyboard-gesture -> `RowOp` mapping. Pure and headless: the
+/// caller (`folder_list.rs`'s widget) supplies the projected rows and the
+/// focused index; the result is what `Chain::apply` (or the equivalent
+/// terminal `RootView::apply`) should be called with. Affordances gate on
+/// declared `caps`/`child_caps` here too (advisory, matching the row-list
+/// rendering), but `apply` remains the authority -- a `None` here just means
+/// the gesture never reaches `apply` at all, and an `apply` refusal past
+/// this point is a no-op, never a crash.
+///
+/// Enter inserts a new concept immediately after the focused row. The
+/// `RowId` passed back addresses the anchor row itself -- `RootView::apply`
+/// keys `InsertConcept`'s position off the `path` argument matching `after`.
+///
+/// Not yet called from `folder_list.rs`'s event handling -- the widget-side
+/// focus/keyboard wiring and the `chain.apply` -> edit-pipeline plumbing are
+/// the remaining half of Task G3, left for a following unit. Exercised here
+/// by the headless gesture tests the plan names.
+#[allow(dead_code)]
+pub fn enter_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
+    let row = rows.get(index)?;
+    Some((
+        row.id.clone(),
+        RowOp::InsertConcept {
+            after: Some(row.id.path.clone()),
+            title: "Untitled".to_string(),
+        },
+    ))
+}
+
+/// Live retitling commits a `Rename` on the focused row, gated on its
+/// declared `caps.rename`.
+///
+/// Not yet called from `folder_list.rs` -- see `enter_row_op`'s note.
+#[allow(dead_code)]
+pub fn rename_row_op(rows: &[Row], index: usize, title: String) -> Option<(RowId, RowOp)> {
+    let row = rows.get(index)?;
+    if !row.caps.rename {
+        return None;
+    }
+    Some((row.id.clone(), RowOp::Rename { title }))
+}
+
+/// Tab reparents the focused row into the nearest PRECEDING sibling that is
+/// itself a directory accepting move-in, addressed at that sibling's
+/// `RowId`. INTERIM (open question 1, carried forward -- not resolved
+/// here): a concept with no preceding sibling directory refuses rather than
+/// promoting itself to `<slug>/index.md`.
+///
+/// Not yet called from `folder_list.rs` -- see `enter_row_op`'s note.
+#[allow(dead_code)]
+pub fn tab_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
+    let row = rows.get(index)?;
+    let sibling = rows[..index].iter().rev().find(|candidate| {
+        matches!(candidate.target, RowTarget::Folder(_)) && candidate.child_caps.accept_move_in
+    })?;
+    Some((
+        sibling.id.clone(),
+        RowOp::MoveIn {
+            from: row.id.clone(),
+        },
+    ))
+}
+
+/// Shift-Tab moves the focused row out to its parent directory, gated on
+/// its declared `caps.move_out` (never satisfiable at the bundle root --
+/// `RootView::apply`'s own `MoveOut` branch refuses there too).
+///
+/// Not yet called from `folder_list.rs` -- see `enter_row_op`'s note.
+#[allow(dead_code)]
+pub fn shift_tab_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
+    let row = rows.get(index)?;
+    if !row.caps.move_out {
+        return None;
+    }
+    Some((row.id.clone(), RowOp::MoveOut))
 }
 
 /// The `__doc_tab_folder__`-namespaced tab identity for a directory address.
@@ -169,6 +246,16 @@ impl FolderView {
 
     pub fn row_views(&self) -> Vec<FolderRowView> {
         row_views(&self.rows)
+    }
+
+    /// The projected rows themselves, for Task G3's gesture->`RowOp`
+    /// mapping functions (`enter_row_op` et al.), which need `caps` and
+    /// `RowId` -- `row_views` erases both into a display-only shape.
+    ///
+    /// Not yet called from `folder_list.rs` -- see `enter_row_op`'s note.
+    #[allow(dead_code)]
+    pub fn rows(&self) -> &[Row] {
+        &self.rows
     }
 
     pub fn diagnostics(&self) -> &[waml::diagnostic::Diagnostic] {
@@ -322,6 +409,116 @@ mod tests {
         );
 
         assert!(FolderView::build_raw(prepared.okf(), "/missing").is_none());
+    }
+
+    #[test]
+    fn enter_on_a_row_emits_insert_concept_at_that_position() {
+        let prepared = analysis([
+            ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
+            ("orders.md", "# Orders\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let (id, op) = enter_row_op(view.rows(), 0).unwrap();
+        assert_eq!(id, view.rows()[0].id);
+        assert_eq!(
+            op,
+            RowOp::InsertConcept {
+                after: Some(view.rows()[0].id.path.clone()),
+                title: "Untitled".to_string(),
+            }
+        );
+        assert!(enter_row_op(view.rows(), 99).is_none());
+    }
+
+    #[test]
+    fn typing_commits_a_rename_row_op() {
+        let prepared = analysis([
+            ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
+            ("orders.md", "# Orders\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        assert!(view.rows()[0].caps.rename, "a concept row declares rename");
+        let (id, op) = rename_row_op(view.rows(), 0, "Purchase Orders".to_string()).unwrap();
+        assert_eq!(id, view.rows()[0].id);
+        assert_eq!(
+            op,
+            RowOp::Rename {
+                title: "Purchase Orders".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn tab_emits_move_in_to_the_preceding_sibling_directory() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "# Root\n\n* [Sales](sales/)\n* [Orders](orders.md)\n",
+            ),
+            ("sales/index.md", "# Sales\n"),
+            ("orders.md", "# Orders\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let rows = view.rows();
+        assert_eq!(rows[0].label, "Sales");
+        assert_eq!(rows[1].label, "Orders");
+        let (id, op) = tab_row_op(rows, 1).unwrap();
+        assert_eq!(id, rows[0].id, "addressed at the preceding directory row");
+        assert_eq!(
+            op,
+            RowOp::MoveIn {
+                from: rows[1].id.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn tab_with_no_preceding_sibling_directory_refuses() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "# Root\n\n* [Orders](orders.md)\n* [Sales](sales/)\n",
+            ),
+            ("orders.md", "# Orders\n"),
+            ("sales/index.md", "# Sales\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        // Orders (index 0) has no preceding row at all; Sales (index 1) has
+        // only a concept row preceding it, not a directory.
+        assert!(tab_row_op(view.rows(), 0).is_none());
+        assert!(tab_row_op(view.rows(), 1).is_none());
+    }
+
+    #[test]
+    fn shift_tab_emits_move_out() {
+        let prepared = analysis([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            ("sales/index.md", "# Sales\n\n* [Orders](orders.md)\n"),
+            ("sales/orders.md", "# Orders\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/sales", ChainLimits::default()).unwrap();
+        let rows = view.rows();
+        assert!(
+            rows[0].caps.move_out,
+            "a row inside a non-root directory declares move_out"
+        );
+        let (id, op) = shift_tab_row_op(rows, 0).unwrap();
+        assert_eq!(id, rows[0].id);
+        assert_eq!(op, RowOp::MoveOut);
+    }
+
+    #[test]
+    fn shift_tab_refuses_at_the_bundle_root() {
+        let prepared = analysis([
+            ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
+            ("orders.md", "# Orders\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        assert!(
+            !view.rows()[0].caps.move_out,
+            "the bundle root has no parent to move out to"
+        );
+        assert!(shift_tab_row_op(view.rows(), 0).is_none());
     }
 
     #[test]
