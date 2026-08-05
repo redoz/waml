@@ -1342,12 +1342,19 @@ fn edit_touches_frontmatter_leading_whitespace(
         if start <= content_start {
             return true;
         }
-        // A same-length (or any) replacement can still remove or introduce a
-        // newline WITHOUT starting at a line's leading whitespace — merging
-        // or splitting two lines restructures the tree just as an indent
-        // change does, and the column check above cannot see it. Check both
-        // the bytes being replaced (OLD side) and the bytes replacing them
-        // (NEW side) for a newline.
+        // A same-length (or any) replacement can still restructure the mapping
+        // WITHOUT starting at a line's leading whitespace, and the column check
+        // above cannot see it:
+        //
+        // - A newline merges or splits two lines.
+        // - A colon decides whether a line is a mapping key at all. Removing
+        //   the one in `meta:` demotes it to a plain scalar, which reclassifies
+        //   every more-indented line beneath it — those entries are no longer
+        //   nested under anything. Reusing them keeps a stale subtree.
+        //
+        // Check both the bytes being replaced (OLD side) and the bytes
+        // replacing them (NEW side), since either direction restructures.
+        const RESTRUCTURING: [char; 2] = ['\n', ':'];
         if old_frontmatter.is_some_and(|old_frontmatter| {
             let old_source = old.shared();
             let old_range = segment.old;
@@ -1356,12 +1363,12 @@ fn edit_touches_frontmatter_leading_whitespace(
             clamped_start < clamped_end
                 && old_range.start() < old_frontmatter.end()
                 && old_frontmatter.start() < old_range.end()
-                && old_source[clamped_start..clamped_end].contains('\n')
+                && old_source[clamped_start..clamped_end].contains(RESTRUCTURING)
         }) {
             return true;
         }
         let clamped_end = range.end().to_usize().min(source.len());
-        start < clamped_end && source[start..clamped_end].contains('\n')
+        start < clamped_end && source[start..clamped_end].contains(RESTRUCTURING)
     })
 }
 

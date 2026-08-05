@@ -570,6 +570,44 @@ fn frontmatter_indent_edit_forces_full_reparse() {
     ));
 }
 
+#[test]
+fn frontmatter_key_colon_removal_forces_full_reparse() {
+    // Replacing `a:` inside `meta:` demotes the line to a plain scalar, so the
+    // more-indented entries below it are no longer nested under anything and a
+    // full parse marks them bad. The edit starts past its line's content start
+    // and carries no newline, so neither the indentation column check nor the
+    // line merge/split check can see it — only the colon does.
+    let candidate = NESTED_FRONTMATTER_BASE.to_owned();
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        source(&candidate),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let start = candidate.find("a:\n  owner").unwrap();
+    let end = start + "a:".len();
+    let replacement: Arc<str> = Arc::from("  ");
+    let mut edited = candidate.clone();
+    edited.replace_range(start..end, &replacement);
+    let update = reparse_markdown(
+        &snapshot,
+        DocumentRevision::INITIAL.checked_next().unwrap(),
+        source(&edited),
+        &[TextChange {
+            old_range: range(start, end),
+            replacement,
+        }],
+    )
+    .unwrap();
+    assert_full_oracle(&update.snapshot, &edited);
+    assert!(matches!(
+        update.outcome,
+        MarkdownReparseOutcome::Full {
+            reason: FullReparseReason::FrontmatterBoundaryChanged
+        }
+    ));
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
     #[test]
