@@ -10,6 +10,7 @@
 //! Not yet wired into `solve_diagram`; that is Phase 3, gated on screenshot review.
 
 use super::{BoxId, Rect, Size, SolveConfig};
+use crate::layout::Margin;
 use std::collections::VecDeque;
 use std::f64::consts::PI;
 
@@ -25,6 +26,13 @@ pub struct StressConfig {
     pub epsilon: f64,
     /// Minimum pixels between node boxes after overlap removal.
     pub gap: f64,
+    /// Ideal co-member separation for grouped nodes (the group's target-distance
+    /// unit). Shorter than `edge_len` so groups pull tighter than a bare edge.
+    pub group_len: f64,
+    /// Weight multiplier applied to co-member pairs, per group-nesting depth.
+    pub group_weight: f64,
+    /// Padding from a group's member bounding box out to its hull.
+    pub hull_pad: f64,
 }
 
 impl Default for StressConfig {
@@ -34,8 +42,21 @@ impl Default for StressConfig {
             max_iter: 300,
             epsilon: 1e-4,
             gap: SolveConfig::default().min_sep,
+            group_len: 120.0 * 0.75,
+            group_weight: 4.0,
+            hull_pad: SolveConfig::default().margin(Margin::Medium),
         }
     }
+}
+
+/// One diagram group's membership for the cohesion force.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupSpec {
+    /// Indices into `ids`/`sizes` of every member, including members of nested
+    /// children — a nested group's members are also listed in its ancestors.
+    pub members: Vec<usize>,
+    /// Nesting depth; 0 is top level. Deeper groups bind tighter.
+    pub depth: u8,
 }
 
 /// Guard against division by zero when two points coincide (Guttman denom).
@@ -57,24 +78,43 @@ pub fn layout(
     edges: &[(usize, usize)],
     cfg: &StressConfig,
 ) -> Vec<Rect> {
+    layout_grouped(ids, sizes, edges, &[], cfg).0
+}
+
+/// Lay out `ids` under undirected `edges` plus a soft cohesion force from
+/// `groups`: co-members are pulled toward a shorter target distance and
+/// weighted more heavily in the SMACOF solve, without hard-constraining them —
+/// a strong outside edge can still pull a member away. Returns `(node rects,
+/// one hull rect per group in `groups` order)`. With `groups` empty this is
+/// exactly `layout`'s behavior (the regression guard for "groups change
+/// nothing when there are none").
+pub fn layout_grouped(
+    ids: &[BoxId],
+    sizes: &[Size],
+    edges: &[(usize, usize)],
+    groups: &[GroupSpec],
+    cfg: &StressConfig,
+) -> (Vec<Rect>, Vec<Rect>) {
     let n = ids.len();
     assert_eq!(n, sizes.len(), "ids and sizes length mismatch");
     if n == 0 {
-        return vec![];
+        return (vec![], vec![]);
     }
     if n == 1 {
-        return vec![Rect {
+        let rects = vec![Rect {
             x: 0.0,
             y: 0.0,
             w: sizes[0].w,
             h: sizes[0].h,
         }];
+        let hulls = group_hulls(&rects, groups, cfg);
+        return (rects, hulls);
     }
 
     let clean = dedup_edges(n, edges);
-    if clean.is_empty() {
+    if clean.is_empty() && groups.is_empty() {
         // No meaningful distances — degenerate. Fall back to the grid.
-        return grid_pack(ids, sizes, cfg);
+        return (grid_pack(ids, sizes, cfg), vec![]);
     }
 
     let adj = adjacency(n, &clean);
@@ -139,7 +179,44 @@ pub fn layout(
         cursor_x += l.w + cfg.gap;
         shelf_h = shelf_h.max(l.h);
     }
-    out
+    let hulls = group_hulls(&out, groups, cfg);
+    (out, hulls)
+}
+
+/// Bounding box of each group's member rects, grown by `cfg.hull_pad`. A
+/// group with no members (all keys missing from `sizes`, or genuinely empty)
+/// gets a degenerate zero-size hull at the origin.
+fn group_hulls(rects: &[Rect], groups: &[GroupSpec], cfg: &StressConfig) -> Vec<Rect> {
+    groups
+        .iter()
+        .map(|g| {
+            let mut min_x = f64::INFINITY;
+            let mut min_y = f64::INFINITY;
+            let mut max_x = f64::NEG_INFINITY;
+            let mut max_y = f64::NEG_INFINITY;
+            for &m in &g.members {
+                let Some(r) = rects.get(m) else { continue };
+                min_x = min_x.min(r.x);
+                min_y = min_y.min(r.y);
+                max_x = max_x.max(r.x + r.w);
+                max_y = max_y.max(r.y + r.h);
+            }
+            if !min_x.is_finite() {
+                return Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                };
+            }
+            Rect {
+                x: min_x - cfg.hull_pad,
+                y: min_y - cfg.hull_pad,
+                w: (max_x - min_x) + 2.0 * cfg.hull_pad,
+                h: (max_y - min_y) + 2.0 * cfg.hull_pad,
+            }
+        })
+        .collect()
 }
 
 // --- helpers -------------------------------------------------------------
@@ -707,5 +784,58 @@ mod tests {
             disjoint,
             "component bounding boxes overlap: a=({ax0},{ay0},{ax1},{ay1}) b=({bx0},{by0},{bx1},{by1})"
         );
+    }
+
+    #[test]
+    fn layout_grouped_with_no_groups_matches_layout() {
+        let cfg = StressConfig::default();
+        let g = ids(&["a", "b", "c", "d", "e"]);
+        let szs = sizes(5, 160.0, 80.0);
+        let edges = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)];
+        let plain = layout(&g, &szs, &edges, &cfg);
+        let (grouped, hulls) = layout_grouped(&g, &szs, &edges, &[], &cfg);
+        assert_eq!(plain, grouped);
+        assert!(hulls.is_empty());
+    }
+
+    #[test]
+    fn layout_grouped_edgeless_with_no_groups_matches_grid() {
+        let cfg = StressConfig::default();
+        let g = ids(&["a", "b", "c", "d"]);
+        let szs = sizes(4, 100.0, 40.0);
+        let via_grid = grid_pack(&g, &szs, &cfg);
+        let (grouped, hulls) = layout_grouped(&g, &szs, &[], &[], &cfg);
+        assert_eq!(grouped, via_grid);
+        assert!(hulls.is_empty());
+    }
+
+    #[test]
+    fn group_hulls_bound_members_with_padding() {
+        let cfg = StressConfig::default();
+        let rects = vec![
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 40.0,
+            },
+            Rect {
+                x: 200.0,
+                y: 100.0,
+                w: 100.0,
+                h: 40.0,
+            },
+        ];
+        let groups = vec![GroupSpec {
+            members: vec![0, 1],
+            depth: 0,
+        }];
+        let hulls = group_hulls(&rects, &groups, &cfg);
+        assert_eq!(hulls.len(), 1);
+        let h = hulls[0];
+        assert!((h.x - (0.0 - cfg.hull_pad)).abs() < 1e-9);
+        assert!((h.y - (0.0 - cfg.hull_pad)).abs() < 1e-9);
+        assert!((h.w - (300.0 + 2.0 * cfg.hull_pad)).abs() < 1e-9);
+        assert!((h.h - (140.0 + 2.0 * cfg.hull_pad)).abs() < 1e-9);
     }
 }
