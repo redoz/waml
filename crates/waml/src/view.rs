@@ -5,6 +5,7 @@
 pub mod chain;
 pub mod decl;
 pub(crate) mod hide;
+pub mod kind;
 pub mod projection;
 pub(crate) mod root;
 pub mod row;
