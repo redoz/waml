@@ -2,7 +2,9 @@
 //! [`super::decl::ViewDecl`] against a [`MiddlewareRegistry`], and runs it
 //! with whole-chain failure fallback to the root view.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::diagnostic::{DiagCode, Diagnostic};
@@ -12,8 +14,32 @@ use super::decl::ViewDecl;
 use super::projection::{
     Next, Projection, ProjectionCtx, ProjectionError, RowOp, Unresolved, Unsupported,
 };
-use super::row::{Row, RowId, ViewId};
+use super::row::{Row, RowId, RowPath, RowTarget, ViewId};
 use super::surface::SurfaceId;
+
+/// Which bound the runner's descent guard tripped on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Trip {
+    DepthExceeded,
+    Cycle,
+}
+
+/// Runner-owned descent bookkeeping. Lives behind an `Rc<RefCell<_>>` shared
+/// by every `Chain` handed out along one descent path (via the wrapped
+/// `descend` closure installed by [`Chain::run`]), so a stage cannot reset it
+/// by constructing its own `ProjectionCtx` or calling `run` again — the
+/// state, and the `max_depth` it was seeded with, travel with the chain, not
+/// with whatever `ChainLimits` a later `run` call happens to be passed.
+#[derive(Debug)]
+struct DescentState {
+    depth: usize,
+    visited: HashSet<String>,
+    max_depth: usize,
+}
+
+/// The reserved owner of a depth-cap/cycle diagnostic row. Never produced by
+/// registered middleware -- reserved by the runner.
+const DEPTH_GUARD_OWNER: &str = "view-depth-guard";
 
 /// A name -> stage-factory map. Populated by the host (Task E1's
 /// `CoreExtension`, later others); the chain looks names up the same way
@@ -56,6 +82,14 @@ fn entry_name(raw: &str) -> &str {
 pub struct Chain {
     ids: Arc<[ViewId]>,
     stages: Arc<[Box<dyn Projection>]>,
+    /// Set only on a chain returned by a tripped descent guard: `run` then
+    /// short-circuits to a single diagnostic row instead of running stages.
+    tripped: Option<Arc<(Trip, String)>>,
+    /// Shared descent state, installed on a chain handed back by a wrapped
+    /// `descend` closure so a recursive `run` continues counting instead of
+    /// starting over at depth zero. `None` means "top-level" -- `run` seeds
+    /// a fresh state from the `ChainLimits` it is given.
+    descent: Option<Rc<RefCell<DescentState>>>,
 }
 
 /// Outcome of running a [`Chain`].
@@ -105,6 +139,8 @@ impl Chain {
             Chain {
                 ids: ids.into(),
                 stages: stages.into(),
+                tripped: None,
+                descent: None,
             },
             Vec::new(),
         )
@@ -127,11 +163,36 @@ impl Chain {
     /// Run. A stage returning `Err` discards ALL stage output and re-runs
     /// the root view alone (the same object -- the fallback path IS the
     /// default path), attaching a document-level diagnostic.
-    pub fn run(&self, ctx: &ProjectionCtx<'_>, _limits: ChainLimits) -> ChainOutcome {
-        match self.next().project(ctx) {
+    ///
+    /// Enforces the descent depth cap and the visited-directory cycle guard
+    /// around every `ctx.descend` call a stage makes while projecting: see
+    /// [`DescentState`]. A chain returned by a tripped guard (`self.tripped`)
+    /// short-circuits here to a single diagnostic row -- it never reaches a
+    /// stage's `project`.
+    pub fn run(&self, ctx: &ProjectionCtx<'_>, limits: ChainLimits) -> ChainOutcome {
+        if let Some(trip) = &self.tripped {
+            return Chain::tripped_outcome(trip, ctx);
+        }
+
+        let state = self.descent.clone().unwrap_or_else(|| {
+            Rc::new(RefCell::new(DescentState {
+                depth: 0,
+                visited: HashSet::from([ctx.dir.address.as_str().to_string()]),
+                max_depth: limits.max_depth,
+            }))
+        });
+        let wrapped_descend = guard_descend(ctx.descend, Rc::clone(&state));
+        let guarded_ctx = ProjectionCtx {
+            dir: ctx.dir,
+            bundle: ctx.bundle,
+            params: ctx.params,
+            descend: &wrapped_descend,
+        };
+
+        match self.next().project(&guarded_ctx) {
             Ok(rows) => ChainOutcome {
                 rows,
-                surface: self.next().surface(ctx),
+                surface: self.next().surface(&guarded_ctx),
                 diagnostics: Vec::new(),
             },
             Err(ProjectionError { message }) => {
@@ -150,6 +211,49 @@ impl Chain {
                     diagnostics: vec![diagnostic],
                 }
             }
+        }
+    }
+
+    /// The chain returned by a tripped descent guard: no stages, just the
+    /// trip marker. `run` on this never calls a stage.
+    fn tripped_chain(trip: Trip, address: String) -> Chain {
+        Chain {
+            tripped: Some(Arc::new((trip, address))),
+            ..Chain::default()
+        }
+    }
+
+    /// One diagnostic row plus a document-level diagnostic, naming the
+    /// folder the guard tripped on. Never a silent truncation.
+    fn tripped_outcome(trip: &(Trip, String), ctx: &ProjectionCtx<'_>) -> ChainOutcome {
+        let (kind, address) = trip;
+        let (code, label, message) = match kind {
+            Trip::DepthExceeded => (
+                DiagCode::ViewDepthExceeded,
+                format!("(view depth limit reached at {address})"),
+                format!("view chain descent exceeded the depth cap at `{address}`"),
+            ),
+            Trip::Cycle => (
+                DiagCode::ViewCycle,
+                format!("(view chain cycle detected at {address})"),
+                format!("view chain descent revisited `{address}`, stopping to avoid a cycle"),
+            ),
+        };
+        let row = Row::new(
+            RowId {
+                owner: ViewId::new(DEPTH_GUARD_OWNER),
+                path: RowPath::parse("limit").expect("literal row path is valid"),
+            },
+            label,
+            RowTarget::Virtual,
+            Some(SurfaceId("default".to_string())),
+        )
+        .expect("a Virtual row with an explicit surface always constructs");
+        let diagnostic = Diagnostic::new(code, message, ctx.dir.address.as_str().to_string(), 0);
+        ChainOutcome {
+            rows: vec![row],
+            surface: SurfaceId("default".to_string()),
+            diagnostics: vec![diagnostic],
         }
     }
 
@@ -185,6 +289,43 @@ impl Chain {
         Next {
             remaining: &self.stages[index.min(self.stages.len())..],
         }
+    }
+}
+
+/// Wraps a host-supplied `descend` closure with the depth cap and
+/// visited-directory cycle guard. Called every time a stage descends into a
+/// child folder's chain while a `run` is in flight. On a trip, returns
+/// [`Chain::tripped_chain`] instead of consulting the host closure at all --
+/// the offending directory's real chain is never even built. Otherwise
+/// advances `state` and hands the child chain the SAME shared state, so
+/// further descent below it keeps counting from here rather than resetting.
+fn guard_descend<'a>(
+    original: &'a dyn Fn(&okf::Directory) -> Chain,
+    state: Rc<RefCell<DescentState>>,
+) -> impl Fn(&okf::Directory) -> Chain + 'a {
+    move |dir: &okf::Directory| {
+        let address = dir.address.as_str().to_string();
+        let trip = {
+            let state = state.borrow();
+            if state.visited.contains(&address) {
+                Some(Trip::Cycle)
+            } else if state.depth + 1 > state.max_depth {
+                Some(Trip::DepthExceeded)
+            } else {
+                None
+            }
+        };
+        if let Some(trip) = trip {
+            return Chain::tripped_chain(trip, address);
+        }
+        {
+            let mut state = state.borrow_mut();
+            state.depth += 1;
+            state.visited.insert(address);
+        }
+        let mut chain = original(dir);
+        chain.descent = Some(Rc::clone(&state));
+        chain
     }
 }
 
@@ -466,5 +607,264 @@ mod tests {
         // assertion against a live bundle is added once B6's runner exists.
         let limits = ChainLimits::default();
         assert_eq!(limits.max_depth, 20);
+    }
+
+    // --- Task B6: depth cap and cycle guard ------------------------------
+
+    fn dir_at(address: &str) -> okf::Directory {
+        okf::Directory {
+            address: okf::DirectoryAddress::parse(address).unwrap(),
+            parent: okf::DirectoryAddress::parse(address).unwrap().parent(),
+            child_directories: Vec::new(),
+            concepts: Vec::new(),
+        }
+    }
+
+    /// A synthesized folder whose declared chain descends into itself: each
+    /// `project` emits one row for a synthesized child (a distinct address
+    /// per level, since a synthesized descent need not track a real one)
+    /// with `expand` set to that child's chain -- true lazy descent, per
+    /// [`Row::expand`]'s contract. Nothing here forces it; the CALLER (real
+    /// usage: the editor, one click at a time; here: the test, standing in
+    /// for repeated clicks) decides whether and when to `run` it.
+    struct SelfDescendingDouble;
+    impl Projection for SelfDescendingDouble {
+        fn project(
+            &self,
+            ctx: &ProjectionCtx<'_>,
+            _next: Next<'_>,
+        ) -> Result<Vec<Row>, ProjectionError> {
+            let child_dir = dir_at(&format!("{}/child", ctx.dir.address.as_str()));
+            let expand = (ctx.descend)(&child_dir);
+            let mut row = Row::new(
+                RowId {
+                    owner: ViewId::new("self-descend"),
+                    path: RowPath::parse("child").expect("literal row path is valid"),
+                },
+                "Child".to_string(),
+                RowTarget::Virtual,
+                Some(SurfaceId("default".to_string())),
+            )
+            .expect("a Virtual row with an explicit surface always constructs");
+            row.expand = Some(expand);
+            Ok(vec![row])
+        }
+        fn resolve(
+            &self,
+            _ctx: &ProjectionCtx<'_>,
+            _path: &RowPath,
+        ) -> Result<Vec<Row>, Unresolved> {
+            Err(Unresolved)
+        }
+        fn apply(
+            &self,
+            ctx: &ProjectionCtx<'_>,
+            path: &RowPath,
+            op: RowOp,
+            next: Next<'_>,
+        ) -> Result<Vec<okf::Op>, Unsupported> {
+            next.apply(ctx, path, op)
+        }
+        fn surface(&self, ctx: &ProjectionCtx<'_>, next: Next<'_>) -> SurfaceId {
+            next.surface(ctx)
+        }
+    }
+
+    fn self_descending_chain() -> Chain {
+        Chain {
+            ids: vec![ViewId::new("self-descend")].into(),
+            stages: vec![Box::new(SelfDescendingDouble) as Box<dyn Projection>].into(),
+            tripped: None,
+            descent: None,
+        }
+    }
+
+    /// Walks a lazily self-descending chain by repeatedly `run`ning the sole
+    /// row's `expand` chain, the way a UI would descend one click at a time,
+    /// stopping when a row has no `expand` left (the guard tripped, or the
+    /// stage stopped emitting one). Bounded so a broken guard fails the test
+    /// instead of hanging it.
+    fn walk_to_the_end(chain: Chain, root: okf::Directory, limits: ChainLimits) -> ChainOutcome {
+        let bundle = okf::Bundle::default();
+        let params = Frontmatter::default();
+        let descend = |_: &okf::Directory| self_descending_chain();
+
+        let mut current_chain = chain;
+        let mut current_dir = root;
+        let mut outcome;
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            assert!(
+                steps <= 10,
+                "runaway descent -- the guard failed to stop it"
+            );
+            let ctx = ctx(&current_dir, &bundle, &params, &descend);
+            outcome = current_chain.run(&ctx, limits);
+            let mut rows = std::mem::take(&mut outcome.rows);
+            let row = rows.pop().expect("self-descend always emits one row");
+            match row.expand {
+                Some(next_chain) => {
+                    current_dir = dir_at(&format!("{}/child", current_dir.address.as_str()));
+                    current_chain = next_chain;
+                }
+                None => {
+                    outcome.rows = vec![row];
+                    return outcome;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn depth_cap_trips_at_the_configured_value() {
+        let chain = self_descending_chain();
+        let root = dir_at("/root");
+
+        let outcome = walk_to_the_end(chain, root, ChainLimits { max_depth: 3 });
+
+        assert_eq!(outcome.rows.len(), 1, "the descent terminates at the cap");
+        assert_eq!(outcome.rows[0].id.owner, ViewId::new(DEPTH_GUARD_OWNER));
+        assert_eq!(outcome.diagnostics.len(), 1);
+        assert_eq!(outcome.diagnostics[0].code, DiagCode::ViewDepthExceeded);
+    }
+
+    #[test]
+    fn cycle_guard_trips_on_first_revisit() {
+        // A's chain descends into B, B's chain descends back into A -- a
+        // real two-directory cycle, not a synthesized one.
+        let dir_a = dir_at("/a");
+        let dir_b = dir_at("/b");
+
+        struct CrossDescendingDouble {
+            partner: okf::Directory,
+        }
+        impl Projection for CrossDescendingDouble {
+            fn project(
+                &self,
+                ctx: &ProjectionCtx<'_>,
+                _next: Next<'_>,
+            ) -> Result<Vec<Row>, ProjectionError> {
+                let expand = (ctx.descend)(&self.partner);
+                let mut row = Row::new(
+                    RowId {
+                        owner: ViewId::new("cross-descend"),
+                        path: RowPath::parse("partner").expect("literal row path is valid"),
+                    },
+                    "Partner".to_string(),
+                    RowTarget::Virtual,
+                    Some(SurfaceId("default".to_string())),
+                )
+                .expect("a Virtual row with an explicit surface always constructs");
+                row.expand = Some(expand);
+                Ok(vec![row])
+            }
+            fn resolve(
+                &self,
+                _ctx: &ProjectionCtx<'_>,
+                _path: &RowPath,
+            ) -> Result<Vec<Row>, Unresolved> {
+                Err(Unresolved)
+            }
+            fn apply(
+                &self,
+                ctx: &ProjectionCtx<'_>,
+                path: &RowPath,
+                op: RowOp,
+                next: Next<'_>,
+            ) -> Result<Vec<okf::Op>, Unsupported> {
+                next.apply(ctx, path, op)
+            }
+            fn surface(&self, ctx: &ProjectionCtx<'_>, next: Next<'_>) -> SurfaceId {
+                next.surface(ctx)
+            }
+        }
+
+        fn cross_chain(partner: okf::Directory) -> Chain {
+            Chain {
+                ids: vec![ViewId::new("cross-descend")].into(),
+                stages: vec![Box::new(CrossDescendingDouble { partner }) as Box<dyn Projection>]
+                    .into(),
+                tripped: None,
+                descent: None,
+            }
+        }
+
+        let chain_a = cross_chain(dir_b.clone());
+        let chain_b = cross_chain(dir_a.clone());
+        let bundle = okf::Bundle::default();
+        let params = Frontmatter::default();
+        let descend = |dir: &okf::Directory| {
+            if dir.address == dir_b.address {
+                chain_b.clone()
+            } else {
+                chain_a.clone()
+            }
+        };
+
+        // Step 1: A, whose row expands into B.
+        let ctx_a = ctx(&dir_a, &bundle, &params, &descend);
+        let step1 = chain_a.run(&ctx_a, ChainLimits::default());
+        assert!(step1.diagnostics.is_empty(), "no trip yet, depth 1 « cap");
+        let row = step1.rows.into_iter().next().unwrap();
+        let chain_at_b = row.expand.expect("A's row expands into B");
+
+        // Step 2: B. Its row wants to expand back into A -- the wrapped
+        // `descend` trips right here (first revisit of A) and hands B's
+        // stage an already-tripped chain instead; no diagnostic yet, the
+        // trip is still lazy on that row's `expand`.
+        let ctx_b = ctx(&dir_b, &bundle, &params, &descend);
+        let step2 = chain_at_b.run(&ctx_b, ChainLimits::default());
+        assert!(
+            step2.diagnostics.is_empty(),
+            "the trip is lazy, not forced yet"
+        );
+        let row = step2.rows.into_iter().next().unwrap();
+        let tripped_chain = row.expand.expect("B's row still carries an expand chain");
+
+        // Step 3: running that tripped chain (the next click, back on A) is
+        // where the guard actually surfaces -- at the first revisit, well
+        // short of the default depth cap.
+        let ctx_a_again = ctx(&dir_a, &bundle, &params, &descend);
+        let step3 = tripped_chain.run(&ctx_a_again, ChainLimits::default());
+
+        assert_eq!(step3.rows.len(), 1);
+        assert_eq!(step3.rows[0].id.owner, ViewId::new(DEPTH_GUARD_OWNER));
+        assert_eq!(step3.diagnostics.len(), 1);
+        assert_eq!(step3.diagnostics[0].code, DiagCode::ViewCycle);
+    }
+
+    #[test]
+    fn bundle_max_view_depth_does_not_change_the_trip_point() {
+        // A bundle can declare `max_view_depth: 50` in its index frontmatter
+        // (Task B4), but `ChainLimits` has no constructor that reads it --
+        // the runner is built with whatever the HOST decided, here 3, and
+        // the bundle's own claim is never consulted on this path.
+        let mut idx = index();
+        idx.extra.entries.push((
+            "max_view_depth".to_string(),
+            crate::frontmatter::FmValue::Num(50.0),
+        ));
+        assert!(idx.extra.get("max_view_depth").is_some());
+
+        let chain = self_descending_chain();
+        let root = dir_at("/root");
+
+        let outcome = walk_to_the_end(chain, root, ChainLimits { max_depth: 3 });
+
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.diagnostics[0].code, DiagCode::ViewDepthExceeded);
+    }
+
+    #[test]
+    fn the_trip_is_a_diagnostic_row_not_a_missing_row() {
+        let chain = self_descending_chain();
+        let root = dir_at("/root");
+
+        let outcome = walk_to_the_end(chain, root, ChainLimits { max_depth: 3 });
+
+        let last = outcome.rows.last().expect("never a silently empty list");
+        assert_eq!(last.target, RowTarget::Virtual);
+        assert_eq!(last.id.owner, ViewId::new(DEPTH_GUARD_OWNER));
     }
 }
