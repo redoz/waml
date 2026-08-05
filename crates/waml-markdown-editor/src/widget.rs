@@ -714,6 +714,19 @@ pub struct MarkdownEditor {
     last_draw: DrawRecorder,
     #[rust]
     paint_evidence: PaintEvidence,
+    /// Last-logged `handle_event_with_session` failure message, so a
+    /// persistent failure (e.g. a steady-state `StalePresentation`) logs
+    /// once instead of every event. Cleared on the next success.
+    #[rust]
+    last_event_error: Option<String>,
+    /// Same throttle as `last_event_error`, for `draw_walk_with_session`
+    /// failures.
+    #[rust]
+    last_draw_error: Option<String>,
+    /// Same throttle, for `install_presentation` rejecting an invalid
+    /// presentation.
+    #[rust]
+    last_install_validation_error: Option<String>,
 }
 
 /// The draw layers in paint order -- the single sequence `draw_walk` runs.
@@ -783,8 +796,17 @@ impl Widget for MarkdownEditor {
             return;
         };
         match self.handle_event_with_session(cx, event, session) {
-            Ok(actions) => cx.extend_actions(actions),
-            Err(error) => log!("markdown editor event failed: {error:?}"),
+            Ok(actions) => {
+                self.last_event_error = None;
+                cx.extend_actions(actions)
+            }
+            Err(error) => {
+                let message = format!("markdown editor event failed: {error:?}");
+                if self.last_event_error.as_deref() != Some(message.as_str()) {
+                    log!("{message}");
+                    self.last_event_error = Some(message);
+                }
+            }
         }
     }
 
@@ -794,9 +816,16 @@ impl Widget for MarkdownEditor {
         };
         let mut child_scope = Scope::empty();
         match self.draw_walk_with_session(cx, session, &mut child_scope, walk) {
-            Ok(step) => step,
+            Ok(step) => {
+                self.last_draw_error = None;
+                step
+            }
             Err(error) => {
-                log!("markdown editor draw failed: {error:?}");
+                let message = format!("markdown editor draw failed: {error:?}");
+                if self.last_draw_error.as_deref() != Some(message.as_str()) {
+                    log!("{message}");
+                    self.last_draw_error = Some(message);
+                }
                 self.view.draw_walk(cx, &mut child_scope, walk)
             }
         }
@@ -2092,10 +2121,23 @@ impl MarkdownEditorRef {
         presentation: Arc<InstalledPresentation>,
         cause: LayoutChangeCause,
     ) {
-        if presentation.validate().is_err() {
+        if let Err(validation_error) = presentation.validate() {
+            let message = format!(
+                "install_presentation rejected revision {:?}: {validation_error}",
+                presentation.revision
+            );
+            if let Some(mut inner) = self.borrow_mut() {
+                if inner.last_install_validation_error.as_deref() != Some(message.as_str()) {
+                    log!("{message}");
+                    inner.last_install_validation_error = Some(message);
+                }
+            } else {
+                log!("{message}");
+            }
             return;
         }
         if let Some(mut inner) = self.borrow_mut() {
+            inner.last_install_validation_error = None;
             inner.pipeline.installed = Some(presentation);
             // A pending clear belongs to the presentation that was cleared. This
             // install supersedes it, so the next frame must resync from whatever
