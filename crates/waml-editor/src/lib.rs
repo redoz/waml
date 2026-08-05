@@ -43,6 +43,7 @@ mod documents;
 mod edge_labels;
 pub mod editor_history;
 mod editor_session;
+mod extension_editor;
 mod folder_documents;
 mod folder_list;
 mod folder_view;
