@@ -45,6 +45,7 @@ script_mod! {
         draw_text_mono_italic +: {text_style: theme.font_code}
         draw_text_mono_semibold +: {text_style: theme.font_code}
         draw_text_mono_semibold_italic +: {text_style: theme.font_code}
+        draw_text_scratch +: {text_style: theme.font_regular}
         motion_duration: 0.100
         motion_ease: OutCubic
         body_color: #202124
@@ -650,6 +651,13 @@ pub struct MarkdownEditor {
     draw_text_mono_semibold: DrawText,
     #[live]
     draw_text_mono_semibold_italic: DrawText,
+    /// Scratch `DrawText` the shaper and the glyph painter reconfigure per run
+    /// (`configure_face` overwrites its family, size, and line spacing). It is
+    /// deliberately *not* one of the eight face fields: those stay pristine so
+    /// the face-refresh loop can compare against them, and a run painted in
+    /// mono can never be mistaken for a live-apply of the sans family.
+    #[live]
+    draw_text_scratch: DrawText,
     #[live]
     draw_background: DrawColor,
     #[live]
@@ -1344,7 +1352,7 @@ impl MarkdownEditor {
             return;
         };
         self.fonts
-            .configure_face(paint.face, paint.metrics, &mut self.draw_text_sans);
+            .configure_face(paint.face, paint.metrics, &mut self.draw_text_scratch);
         let cluster_offset = paint
             .range
             .start()
@@ -1376,7 +1384,7 @@ impl MarkdownEditor {
                 ))
             })
             .collect::<Vec<_>>();
-        self.draw_text_sans.draw_rasterized_glyphs_abs(
+        self.draw_text_scratch.draw_rasterized_glyphs_abs(
             cx,
             &glyphs,
             self.color_for_role(paint.color),
@@ -1479,6 +1487,27 @@ impl MarkdownEditor {
         }
     }
 
+    /// Syncs `self.fonts` with the eight `#[live] DrawText` faces.
+    ///
+    /// Compare before cloning: the steady state costs eight `FontFamily`
+    /// comparisons instead of eight clones, but a live-apply or theme
+    /// rehydrate that swaps a `#[live] DrawText` family is still picked up on
+    /// the next install (and drops the measured gutter metrics with it), so the
+    /// cache self-heals rather than shaping with a stale face. This only holds
+    /// because the face fields are read-only sources — the per-run
+    /// reconfiguration happens on `draw_text_scratch`.
+    fn refresh_faces(&mut self) {
+        for face in TextFace::ALL {
+            let stale = !self
+                .fonts
+                .face_matches(face, &self.draw_text_for(face).text_style.font_family);
+            if stale {
+                let family = self.draw_text_for(face).text_style.font_family.clone();
+                self.fonts.install_face(face, family);
+            }
+        }
+    }
+
     fn install_layout(
         &mut self,
         cx: &mut Cx,
@@ -1504,20 +1533,7 @@ impl MarkdownEditor {
         }
         let viewport_size =
             resolved_layout_viewport(self.scroll_bars.area().rect(cx).size, requested_viewport);
-        // Compare before cloning: the steady state costs eight `FontFamily`
-        // comparisons instead of eight clones, but a live-apply or theme
-        // rehydrate that swaps a `#[live] DrawText` family is still picked up
-        // on the next install (and drops the measured gutter metrics with it),
-        // so the cache self-heals rather than shaping with a stale face.
-        for face in TextFace::ALL {
-            let stale = !self
-                .fonts
-                .face_matches(face, &self.draw_text_for(face).text_style.font_family);
-            if stale {
-                let family = self.draw_text_for(face).text_style.font_family.clone();
-                self.fonts.install_face(face, family);
-            }
-        }
+        self.refresh_faces();
         // A width change reflows every block whatever the caller claimed, and a
         // caller that claimed nothing has no cache worth trusting.
         let width_changed = self
@@ -1533,7 +1549,7 @@ impl MarkdownEditor {
         self.text_layout_cache.retain_revision(installed.revision);
         let mut shaper = MakepadTextShaper {
             cx,
-            draw_text: &mut self.draw_text_sans,
+            draw_text: &mut self.draw_text_scratch,
             fonts: &mut self.fonts,
             revision: installed.revision,
             cache: Some(&mut self.text_layout_cache),
@@ -1791,6 +1807,7 @@ mod text_face_index_tests {
 #[cfg(test)]
 mod gutter_metrics_tests {
     use super::*;
+    use crate::layout::{FontKey, FontWeight};
 
     /// A `Cx` plus the editor's own mono `DrawText`, taken from the widget's
     /// script default so it carries a *resolved* `theme.font_code` family.
@@ -1907,6 +1924,55 @@ mod gutter_metrics_tests {
             "a face swap must invalidate the measured gutter metrics",
         );
         assert!(fonts.face_matches(TextFace::MonoRegular, &family));
+    }
+
+    /// The face fields are *sources*: painting or shaping a run must never
+    /// write back into one of them. When `configure_face` targeted
+    /// `draw_text_sans` (the old shared scratch), the very next `refresh_faces`
+    /// saw `SansRegular` as changed, re-installed whatever face was painted
+    /// last as the sans family, and dropped the measured gutter metrics on
+    /// every relayout -- defeating both caches and shaping sans text through
+    /// the mono family.
+    #[test]
+    fn reconfiguring_the_scratch_face_does_not_stale_the_face_cache() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        crate::live_design(&mut cx);
+        let mut editor = cx.with_vm(MarkdownEditor::script_new_with_default);
+        editor.refresh_faces();
+        editor.gutter_metrics(&mut cx);
+        assert!(
+            editor.fonts.gutter_metrics.is_some(),
+            "the probe must measure once before the invalidation is meaningful",
+        );
+
+        // Stands in for one painted/shaped mono run.
+        let metrics = TextMetrics {
+            font: FontKey(0),
+            font_size: GUTTER_FONT_SIZE,
+            line_spacing: 1.0,
+            weight: FontWeight(400),
+            italic: false,
+        };
+        editor.fonts.configure_face(
+            TextFace::MonoRegular,
+            metrics,
+            &mut editor.draw_text_scratch,
+        );
+
+        editor.refresh_faces();
+        for face in TextFace::ALL {
+            assert!(
+                editor
+                    .fonts
+                    .face_matches(face, &editor.draw_text_for(face).text_style.font_family),
+                "{face:?} went stale after a run was painted through the scratch",
+            );
+        }
+        assert!(
+            editor.fonts.gutter_metrics.is_some(),
+            "a painted run must not invalidate the measured gutter metrics",
+        );
     }
 }
 
@@ -2299,6 +2365,7 @@ mod viewport_tests {
 mod layout_pipeline_tests {
     use super::*;
     use crate::{
+        document::MarkdownDocumentSnapshot,
         layout::LayoutDocument,
         presentation::{EmbeddedAssetFrame, PresentationPlan, PresentationStyles},
         selection::SelectionSet,
@@ -2401,5 +2468,52 @@ mod layout_pipeline_tests {
         assert!(pipeline.pending_invalidation.is_none());
         assert!(pipeline.last_layout_width.is_none());
         assert!(pipeline.draw_commands_cache.is_none());
+    }
+
+    /// The reset above is only useful if `clear_presentation` actually goes
+    /// through it. Build a real draw-commands cache on a mounted editor, clear
+    /// the presentation, and require the cache to be gone: if
+    /// `clear_presentation` ever goes back to enumerating fields by hand, this
+    /// fails at exactly the field that drifted before (issue 33).
+    #[test]
+    fn clear_presentation_drops_the_draw_commands_cache() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        crate::live_design(&mut cx);
+        let widget = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(MarkdownEditor::script_new_with_default),
+        ));
+        let editor = widget.as_markdown_editor();
+
+        let installed = installed_presentation();
+        let layout = layout_snapshot();
+        let source = waml_syntax::SourceText::new(String::new()).unwrap();
+        let syntax = waml_syntax::parse_markdown(
+            DocumentRevision::INITIAL,
+            source,
+            waml_syntax::MarkdownDialect::WAML_DEFAULT,
+        )
+        .expect("empty markdown parses");
+        let session = MarkdownDocumentSession::new(Arc::new(MarkdownDocumentSnapshot::new(syntax)));
+
+        {
+            let mut inner = editor.borrow_mut().expect("mounted editor");
+            inner.pipeline.installed = Some(installed.clone());
+            inner
+                .cached_draw_commands(&session, &installed, &layout)
+                .expect("draw commands build for an empty document");
+            assert!(
+                inner.pipeline.draw_commands_cache.is_some(),
+                "the cache must be populated before the clear is meaningful",
+            );
+        }
+
+        editor.clear_presentation(&mut cx);
+
+        let inner = editor.borrow().expect("mounted editor");
+        assert!(
+            inner.pipeline.draw_commands_cache.is_none(),
+            "clear_presentation must drop the cached draw commands",
+        );
+        assert!(inner.pipeline.installed.is_none());
     }
 }
