@@ -1102,6 +1102,15 @@ impl RelationshipSyntax {
             .find(|e| e.kind() == UmlSyntaxKind::LinkTargetToken)
             .and_then(SyntaxElement::into_token)
     }
+    /// The range a diagnostic about this relationship reports against. A
+    /// malformed relationship may be missing its target token entirely, so
+    /// every reporting site falls back to the relationship's own range
+    /// rather than going silent.
+    pub fn report_range(&self) -> waml_syntax::TextRange {
+        self.target_token()
+            .map(|token| token.range())
+            .unwrap_or_else(|| self.syntax().range())
+    }
 }
 impl RelationshipEndSyntax {
     pub fn multiplicity_token(&self) -> SyntaxToken<UmlLanguage> {
@@ -1153,5 +1162,76 @@ impl MemberGroupSyntax {
             .children()
             .find(|e| e.kind() == UmlSyntaxKind::IdentifierToken)
             .and_then(|e| e.into_token())
+    }
+}
+
+#[cfg(test)]
+mod relationship_report_range_tests {
+    use super::{RelationshipSyntax, UmlLanguage, UmlSyntaxKind};
+    use std::sync::Arc;
+    use waml_syntax::{
+        AstNode, GreenElement, GreenFactory, GreenText, MarkdownDialect, SyntaxTree,
+    };
+
+    fn relationship(children: Vec<GreenElement<UmlLanguage>>) -> RelationshipSyntax {
+        let factory = GreenFactory::<UmlLanguage>::new();
+        let node = factory
+            .node(UmlSyntaxKind::Relationship, children)
+            .expect("relationship node");
+        let root = factory
+            .node(UmlSyntaxKind::Root, [GreenElement::Node(node)])
+            .expect("root node");
+        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
+        let node = tree
+            .root()
+            .children()
+            .filter_map(waml_syntax::SyntaxElement::into_node)
+            .next()
+            .expect("relationship child");
+        RelationshipSyntax::cast(node).expect("relationship casts")
+    }
+
+    fn token(kind: UmlSyntaxKind, text: &'static str) -> GreenElement<UmlLanguage> {
+        let factory = GreenFactory::<UmlLanguage>::new();
+        GreenElement::Token(
+            factory
+                .token(kind, GreenText::Static(text), [], [])
+                .expect("token"),
+        )
+    }
+
+    #[test]
+    fn report_range_is_the_target_token_when_the_link_carries_one() {
+        let factory = GreenFactory::<UmlLanguage>::new();
+        let link = factory
+            .node(
+                UmlSyntaxKind::Link,
+                [token(UmlSyntaxKind::LinkTargetToken, "./line.md")],
+            )
+            .expect("link node");
+        let relationship = relationship(vec![
+            token(UmlSyntaxKind::RelationshipKindToken, "associates"),
+            GreenElement::Node(link),
+        ]);
+        let target = relationship.target_token().expect("target token");
+        assert_eq!(relationship.report_range(), target.range());
+    }
+
+    #[test]
+    fn report_range_falls_back_to_the_relationship_when_the_link_is_absent() {
+        // A relationship without a `Link` child has no target token at all;
+        // every diagnostic site reports against the relationship's own range
+        // instead of going silent.
+        let relationship = relationship(vec![token(
+            UmlSyntaxKind::RelationshipKindToken,
+            "associates",
+        )]);
+        assert!(relationship.target_token().is_none());
+        assert_eq!(
+            relationship.report_range(),
+            relationship.syntax().range(),
+            "the fallback must cover the whole relationship"
+        );
+        assert!(relationship.report_range().len().to_usize() > 0);
     }
 }

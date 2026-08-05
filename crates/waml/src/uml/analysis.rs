@@ -1052,16 +1052,17 @@ fn validate_declared_semantics(
                 && !is_communication_party(&source_ty)
                 && !target_ty.as_ref().is_some_and(is_communication_party)
             {
-                if let Some(token) = relationship.syntax.target_token() {
-                    diagnostics.push(declared_diagnostic_range(
-                        context,
-                        path,
-                        token.range(),
-                        crate::diagnostic::DiagCode::MalformedRelationship,
-                        "'associates' between classifiers requires ': <near> to <far>' multiplicity ends (ends are optional only on an actor↔use-case communication link)".into(),
-                        false,
-                    )?);
-                }
+                // Same contract as the `end_message` report below: a
+                // relationship missing its target token still reports,
+                // against its own range, rather than going silent.
+                diagnostics.push(declared_diagnostic_range(
+                    context,
+                    path,
+                    relationship.syntax.report_range(),
+                    crate::diagnostic::DiagCode::MalformedRelationship,
+                    "'associates' between classifiers requires ': <near> to <far>' multiplicity ends (ends are optional only on an actor↔use-case communication link)".into(),
+                    false,
+                )?);
             }
             let end_verdict =
                 relationship_end_verdict(*kind, &relationship.from_end, &relationship.to_end);
@@ -1092,11 +1093,7 @@ fn validate_declared_semantics(
                 diagnostics.push(declared_diagnostic_range(
                     context,
                     path,
-                    relationship
-                        .syntax
-                        .target_token()
-                        .map(|token| token.range())
-                        .unwrap_or_else(|| relationship.syntax.syntax().range()),
+                    relationship.syntax.report_range(),
                     crate::diagnostic::DiagCode::MalformedRelationship,
                     message,
                     false,
@@ -1152,11 +1149,7 @@ fn validate_declared_semantics(
                 diagnostics.push(declared_diagnostic_range(
                     context,
                     path,
-                    relationship
-                        .syntax
-                        .target_token()
-                        .map(|token| token.range())
-                        .unwrap_or_else(|| relationship.syntax.syntax().range()),
+                    relationship.syntax.report_range(),
                     crate::diagnostic::DiagCode::InstanceOfNonClassifier,
                     format!("'instance of' target '{target}' is not a classifier"),
                     true,
