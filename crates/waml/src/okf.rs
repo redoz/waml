@@ -1801,5 +1801,48 @@ mod tests {
             assert!(diags.is_empty());
             assert_eq!(run_surface(&bundle, "/", &chain), "folder");
         }
+
+        #[test]
+        fn uml_domain_profile_default_reaches_the_surface_end_to_end() {
+            use crate::extension::{CoreExt, UmlExt};
+            use crate::view::row::{IconId, RowTarget};
+
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt, &UmlExt])
+                .expect("core and uml register no duplicate names");
+
+            let source = SourceBundle::try_from_pairs([
+                (
+                    "index.md",
+                    "---\nprofile: uml-domain\n---\n# Root\n\n* [Pkg](pkg/)\n",
+                ),
+                ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
+            ])
+            .unwrap();
+            let bundle = Bundle::parse(&source).unwrap();
+
+            let (chain, diags) = bundle.resolved_view("/", &registry);
+            assert!(
+                diags.is_empty(),
+                "the uml-domain profile default resolves the [\"uml\"] chain cleanly"
+            );
+
+            let dir = bundle.directory("/").unwrap().clone();
+            let params = Frontmatter::default();
+            let descend = |_: &Directory| crate::view::chain::Chain::default();
+            let ctx = ProjectionCtx {
+                dir: &dir,
+                bundle: &bundle,
+                params: &params,
+                descend: &descend,
+            };
+            let rows = chain
+                .run(&ctx, crate::view::chain::ChainLimits::default())
+                .rows;
+            let pkg_row = rows
+                .iter()
+                .find(|row| matches!(&row.target, RowTarget::Folder(addr) if addr == "/pkg"))
+                .expect("pkg folder row present");
+            assert_eq!(pkg_row.icon.as_ref().map(IconId::as_str), Some("box"));
+        }
     }
 }

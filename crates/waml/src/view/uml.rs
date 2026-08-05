@@ -15,10 +15,6 @@ use super::projection::{
 use super::row::{IconId, Row, RowPath, RowTarget};
 use super::surface::SurfaceId;
 
-// Not wired into any `MiddlewareRegistry` yet -- `UmlExt` (Task 6) registers
-// `UmlView` under the `"uml"` name. Exercised directly by this module's own
-// tests until then.
-#[allow(dead_code)]
 fn is_package(ctx: &ProjectionCtx<'_>, row: &Row) -> bool {
     match &row.target {
         RowTarget::Folder(addr) => {
@@ -31,7 +27,6 @@ fn is_package(ctx: &ProjectionCtx<'_>, row: &Row) -> bool {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) struct UmlView;
 
 impl Projection for UmlView {

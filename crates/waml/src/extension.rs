@@ -22,9 +22,8 @@ pub trait CoreExtension {
     fn profiles(&self) -> Vec<ProfileDef>;
 }
 
-/// The one registered extension today: the `index` (root view) middleware,
-/// plus the shipped `okf` and `uml-domain` profiles. Compiled-in; no
-/// dynamic loading.
+/// The core registered extension: the `index` (root view) middleware, plus
+/// the shipped `okf` profile. Compiled-in; no dynamic loading.
 pub struct CoreExt;
 
 impl CoreExtension for CoreExt {
@@ -47,6 +46,28 @@ impl CoreExtension for CoreExt {
 
     fn profiles(&self) -> Vec<ProfileDef> {
         crate::profile::shipped_profiles()
+    }
+}
+
+/// The `uml` extension: the `uml` decorator middleware, plus the shipped
+/// `uml-domain` profile. A profile the UML extension owns must not resolve
+/// with that extension absent -- that is why it is not in `CoreExt::profiles`.
+pub struct UmlExt;
+
+impl CoreExtension for UmlExt {
+    fn name(&self) -> &str {
+        "uml"
+    }
+
+    fn middleware(&self) -> Vec<(&'static str, MiddlewareFactory)> {
+        vec![(
+            "uml",
+            Arc::new(|| Box::new(crate::view::uml::UmlView) as Box<dyn Projection>),
+        )]
+    }
+
+    fn profiles(&self) -> Vec<ProfileDef> {
+        crate::profile::uml_profiles()
     }
 }
 
@@ -138,6 +159,33 @@ mod tests {
         hand_built.register("index", || Box::new(RootView) as Box<dyn Projection>);
 
         assert_eq!(run_ids(&from_ext), run_ids(&hand_built));
+    }
+
+    #[test]
+    fn core_and_uml_extensions_register_with_no_duplicate_names() {
+        let registry = MiddlewareRegistry::from_extensions(&[&CoreExt, &UmlExt])
+            .expect("core and uml share no middleware names");
+
+        let index_rows = run_ids(&registry);
+        assert!(index_rows.is_empty());
+
+        let (chain, diagnostics) = Chain::build(&decl_one("uml"), &registry, &index());
+        assert!(
+            diagnostics.is_empty(),
+            "the `uml` name must resolve through a registry built from UmlExt"
+        );
+        let directory = dir();
+        let bundle = okf::Bundle::default();
+        let params = Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let ctx = ProjectionCtx {
+            dir: &directory,
+            bundle: &bundle,
+            params: &params,
+            descend: &descend,
+        };
+        // Empty directory: the chain runs, nothing decorates.
+        assert!(chain.run(&ctx, ChainLimits::default()).rows.is_empty());
     }
 
     struct DupA;
