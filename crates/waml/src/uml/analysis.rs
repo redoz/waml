@@ -27,6 +27,16 @@ use waml_syntax::{
     AstNode, ChangeMap, SyntaxElement, SyntaxIdentity, SyntaxNode, SyntaxToken, SyntaxTree,
     TextRange, TextSize, WamlSectionKind,
 };
+/// Field visibility rule: a field is `pub` when it is a direct analysis
+/// output a frontend reads as-is (claims, syntax trees, the declared bundle,
+/// the projected model, diagnostics, the Markdown syntax set). A field stays
+/// private, behind a getter, when reading it correctly requires applying an
+/// invariant the getter enforces — a default for an island with no recorded
+/// freshness (`projection_freshness`), a key lookup into a map
+/// (`diagram_projections`), or internal incremental-analysis bookkeeping
+/// callers must not mutate directly (`affected`, `revisioned_diagnostics`,
+/// `session_revision`). New fields follow whichever side of that line they
+/// fall on.
 pub struct Analysis {
     pub claims: ClaimSet,
     pub syntax: SyntaxSet<UmlLanguage>,
@@ -172,16 +182,10 @@ impl Analysis {
                 (crate::okf::id_of(document.path().as_str()) == target).then_some((*id, document))
             })
             .or_else(|| {
-                let mut matches = self
-                    .syntax
-                    .catalog()
-                    .documents()
-                    .iter()
-                    .filter(|(_, document)| document_slug(document.path().as_str()) == target);
-                match (matches.next(), matches.next()) {
-                    (Some((id, document)), None) => Some((*id, document)),
-                    _ => None,
-                }
+                super::unique_match(self.syntax.catalog().documents().iter(), |(_, document)| {
+                    document_slug(document.path().as_str()) == target
+                })
+                .map(|(id, document)| (*id, document))
             });
         let target_slug = target_document
             .map(|(_, document)| document_slug(document.path().as_str()))
@@ -254,6 +258,20 @@ fn syntax_nodes(
     collect(&tree.root(), kind, &mut output);
     output
 }
+/// Orchestrates one UML analysis pass. Phases, in order:
+/// 1. Validate the shared context and index the catalog by concept id.
+/// 2. Per claimed concept: recover each island's syntax tree
+///    (`recover_island_tree`, reusing the previous analysis where the edit
+///    left it unchanged), compose the full compatibility tree, and lower its
+///    syntax into a `DeclaredConcept` via the `declared_*` family
+///    (`declared_attribute` is the one case built inline, since it needs
+///    both `context.okf` and the document rather than a bare syntax node).
+/// 3. Translate parser diagnostics for the concept's tree
+///    (`translate_parser_diagnostics`).
+/// 4. Once every concept's declared bundle is assembled: validate declared
+///    semantics, project the domain model (`declared_projection`), and
+///    compute incremental-analysis metadata (`analysis_metadata`) — which
+///    islands/diagrams are affected or stale relative to `previous`.
 pub fn analyze(
     context: DomainAnalysisContext<'_>,
     previous: Option<&Analysis>,
@@ -385,45 +403,7 @@ pub fn analyze(
             .map(|syntax| declared_attribute(&context, &document, syntax))
             .collect();
         let layout_fields = layout.into_iter().map(declared_layout).collect::<Vec<_>>();
-        for field in &layout_fields {
-            let syntax = match field {
-                crate::uml::DeclaredField::Valid { .. } | crate::uml::DeclaredField::Absent => {
-                    continue
-                }
-                crate::uml::DeclaredField::Incomplete { syntax, .. }
-                | crate::uml::DeclaredField::Invalid { syntax, .. } => syntax,
-            };
-            let range = syntax.range();
-            let start = document
-                .line_index()
-                .line_col(document.text(), range.start())
-                .map_err(|_| AnalysisError::CatalogInvariant {
-                    reason: "layout diagnostic start is not a document offset".into(),
-                })?;
-            let end = document
-                .line_index()
-                .line_col(document.text(), range.end())
-                .map_err(|_| AnalysisError::CatalogInvariant {
-                    reason: "layout diagnostic end is not a document offset".into(),
-                })?;
-            diagnostics.push(
-                Diagnostic::new(
-                    crate::diagnostic::DiagCode::MalformedLayout,
-                    "malformed layout statement",
-                    document.path().as_str(),
-                    start.line as usize + 1,
-                )
-                .with_span((
-                    start.byte_column as usize,
-                    (if start.line == end.line {
-                        end.byte_column
-                    } else {
-                        start.byte_column
-                    }) as usize,
-                ))
-                .with_provenance(id, document.revision(), range),
-            );
-        }
+        translate_layout_diagnostics(&document, id, &layout_fields, &mut diagnostics)?;
         declared.concepts.insert(
             concept.id.clone(),
             crate::uml::DeclaredConcept {
@@ -2489,6 +2469,55 @@ fn has_direct_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
         .any(|child| {
             child.kind() == syntax::UmlSyntaxKind::BehaviorRecovery && has_recovery(&child)
         })
+}
+
+/// Emits a `MalformedLayout` diagnostic for every `layout_fields` entry that
+/// failed to resolve cleanly (`Incomplete` or `Invalid`); `Valid` and
+/// `Absent` fields need no diagnostic.
+fn translate_layout_diagnostics(
+    document: &crate::analysis::DocumentVersion,
+    id: DocumentId,
+    layout_fields: &[crate::uml::DeclaredField<UmlLanguage, crate::uml::DeclaredLayoutStatement>],
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), AnalysisError> {
+    for field in layout_fields {
+        let syntax = match field {
+            crate::uml::DeclaredField::Valid { .. } | crate::uml::DeclaredField::Absent => continue,
+            crate::uml::DeclaredField::Incomplete { syntax, .. }
+            | crate::uml::DeclaredField::Invalid { syntax, .. } => syntax,
+        };
+        let range = syntax.range();
+        let start = document
+            .line_index()
+            .line_col(document.text(), range.start())
+            .map_err(|_| AnalysisError::CatalogInvariant {
+                reason: "layout diagnostic start is not a document offset".into(),
+            })?;
+        let end = document
+            .line_index()
+            .line_col(document.text(), range.end())
+            .map_err(|_| AnalysisError::CatalogInvariant {
+                reason: "layout diagnostic end is not a document offset".into(),
+            })?;
+        diagnostics.push(
+            Diagnostic::new(
+                crate::diagnostic::DiagCode::MalformedLayout,
+                "malformed layout statement",
+                document.path().as_str(),
+                start.line as usize + 1,
+            )
+            .with_span((
+                start.byte_column as usize,
+                (if start.line == end.line {
+                    end.byte_column
+                } else {
+                    start.byte_column
+                }) as usize,
+            ))
+            .with_provenance(id, document.revision(), range),
+        );
+    }
+    Ok(())
 }
 
 fn translate_parser_diagnostics(

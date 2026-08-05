@@ -50,6 +50,23 @@ pub fn recognizes(concept: &crate::okf::Concept) -> bool {
     recognizes_type(&crate::model::ElementType::parse(&concept.ty))
 }
 
+/// Returns the single item matching `predicate`, or `None` if zero or more
+/// than one item matches. Shared by every unique-basename disambiguation
+/// site (`analysis::Analysis::referrers`, `lower::resolve_id`,
+/// `lower::resolve_index`): each falls back to this "exactly one" match on a
+/// document's basename slug when an id lookup misses, so an ambiguous
+/// basename resolves to nothing rather than to an arbitrary document.
+pub(crate) fn unique_match<T>(
+    iter: impl Iterator<Item = T>,
+    predicate: impl Fn(&T) -> bool,
+) -> Option<T> {
+    let mut matches = iter.filter(predicate);
+    match (matches.next(), matches.next()) {
+        (Some(item), None) => Some(item),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

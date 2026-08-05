@@ -134,14 +134,10 @@ impl UmlLoweringState {
         if let Some((id, _)) = self.current_paths.get_key_value(target) {
             return Some(id);
         }
-        let mut matches = self
-            .current_paths
-            .iter()
-            .filter(|(_, path)| slug_of(path.as_str()) == target);
-        match (matches.next(), matches.next()) {
-            (Some((id, _)), None) => Some(id),
-            _ => None,
-        }
+        super::unique_match(self.current_paths.iter(), |(_, path)| {
+            slug_of(path.as_str()) == target
+        })
+        .map(|(id, _)| id.as_str())
     }
 
     fn tree(
@@ -447,15 +443,10 @@ pub(crate) fn resolve_index(work: &SourceBundle, target: &str) -> Option<usize> 
     {
         return Some(index);
     }
-    let mut matches = work
-        .documents()
-        .iter()
-        .enumerate()
-        .filter(|(_, document)| slug_of(document.path().as_str()) == target);
-    match (matches.next(), matches.next()) {
-        (Some((index, _)), None) => Some(index),
-        _ => None,
-    }
+    super::unique_match(work.documents().iter().enumerate(), |(_, document)| {
+        slug_of(document.path().as_str()) == target
+    })
+    .map(|(index, _)| index)
 }
 
 pub(crate) fn find_doc(work: &SourceBundle, target: &str, op: &str) -> Result<usize, EditError> {
