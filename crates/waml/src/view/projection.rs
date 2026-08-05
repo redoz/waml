@@ -71,10 +71,15 @@ pub struct Next<'a> {
 }
 
 impl<'a> Next<'a> {
+    /// Reaching the end of `remaining` is not "no more rows" -- it is the
+    /// declared chain running out, at which point the terminal stage (the
+    /// root view, [`super::root::RootView`]) takes over. This is how "a
+    /// folder with no `view:` declaration" and "a chain's tail" end up being
+    /// the same one row of code, per the design's terminal-stage model.
     pub fn project(self, ctx: &ProjectionCtx<'_>) -> Result<Vec<Row>, ProjectionError> {
         match self.remaining.split_first() {
             Some((stage, rest)) => stage.project(ctx, Next { remaining: rest }),
-            None => Ok(Vec::new()),
+            None => super::root::RootView.project(ctx, Next { remaining: &[] }),
         }
     }
 
@@ -93,7 +98,7 @@ impl<'a> Next<'a> {
     pub fn surface(self, ctx: &ProjectionCtx<'_>) -> SurfaceId {
         match self.remaining.split_first() {
             Some((stage, rest)) => stage.surface(ctx, Next { remaining: rest }),
-            None => SurfaceId("default".to_string()),
+            None => super::root::RootView.surface(ctx, Next { remaining: &[] }),
         }
     }
 }

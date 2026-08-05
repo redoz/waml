@@ -5,5 +5,6 @@
 pub mod chain;
 pub mod decl;
 pub mod projection;
+pub(crate) mod root;
 pub mod row;
 pub mod surface;
