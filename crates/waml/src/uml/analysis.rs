@@ -1518,7 +1518,9 @@ enum EndVerdict {
     /// tolerated — the classifier-vs-communication-link distinction is a
     /// diagnostic-only concern layered on top, not an admission rule).
     Ok,
-    /// An ended kind (`aggregates`/`composes`) declared with neither end.
+    /// A kind that takes ends was declared with neither end usable: an ended
+    /// kind (`aggregates`/`composes`) with no ends at all, or any such kind
+    /// whose ends were authored (a colon is present) but left blank.
     EndsRequired,
     /// A non-ended kind declared with at least one end.
     EndsForbidden,
@@ -1537,9 +1539,9 @@ fn relationship_end_verdict(
     to_end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>,
 ) -> EndVerdict {
     // An end is "given" only when it fully parsed to `Valid`, and "not given"
-    // when no end text was authored at all — `Absent`, or `Incomplete` when the
-    // grammar expected a colon it did not find. `Invalid` is neither: text was
-    // authored and could not be read (`0`, an inverted range). It must never be
+    // only when no end text was authored at all — `Absent`. `Incomplete` (a
+    // colon with blank multiplicity) and `Invalid` (text the grammar could not
+    // read: `0`, an inverted range) are both authored ends. Neither may be
     // folded into the not-given case, which would admit a malformed
     // relationship with its ends silently discarded.
     let present = |end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>| {
@@ -1565,9 +1567,16 @@ fn relationship_end_verdict(
             EndVerdict::Ok
         } else if from_present || to_present {
             EndVerdict::OneEnded
-        } else {
-            // Neither end was authored: an end-less association.
+        } else if truly_absent(from_end) && truly_absent(to_end) {
+            // Neither end was authored at all (no colon): an end-less
+            // association, which `associates` permits.
             EndVerdict::Ok
+        } else {
+            // A colon was authored but the multiplicity text is blank
+            // (`- associates [Line](./line.md):`). The ends are `Incomplete`,
+            // not `Absent` — the author asked for ends and gave none, so this
+            // is a malformed relationship, not an end-less association.
+            EndVerdict::EndsRequired
         }
     } else if kind.is_ended() {
         // aggregates / composes

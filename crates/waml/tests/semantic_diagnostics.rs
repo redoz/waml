@@ -253,6 +253,33 @@ fn associates_with_unparsable_ends_is_flagged_and_dropped() {
 }
 
 #[test]
+fn associates_with_a_dangling_colon_is_flagged_and_dropped() {
+    let class =
+        "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- associates [Line](./line.md):\n";
+    let analysis = prepared(
+        [
+            ("c/order.md", class),
+            ("c/line.md", "---\ntype: uml.Class\n---\n# Line\n"),
+        ],
+        0,
+    );
+    assert!(
+        analysis
+            .uml()
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::MalformedRelationship),
+        "an authored-but-empty end must be reported: {:#?}",
+        analysis.uml().diagnostics
+    );
+    assert!(
+        analysis.uml().projection.edges.is_empty(),
+        "a relationship with an authored-but-empty end must not be admitted: {:#?}",
+        analysis.uml().projection.edges
+    );
+}
+
+#[test]
 fn non_ended_kind_with_ends_is_flagged_and_dropped() {
     let class = "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- depends [Line](./line.md): 1 to 1\n";
     let found = diagnostics([
