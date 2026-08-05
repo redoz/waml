@@ -617,28 +617,25 @@ impl App {
     /// Rebuild the nav projection from the current `nav_state` and push it to
     /// the tree panel. The single choke point for every scope change.
     ///
-    /// `scope_changed` gates the scope title, whose lookup runs a full
-    /// `nav::packages` tree build -- so a plain model refresh costs one tree
-    /// build (the `view` below), not two.
+    /// A tree build runs the folder-view chain for every directory in the
+    /// bundle, recursively, so the view and the scope-title lookup share ONE
+    /// build: a refresh costs one projection run over the bundle regardless of
+    /// `scope_changed`.
     pub(super) fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
-        let view = crate::nav::view(
+        let full = crate::tree::build_tree(
             self.session.okf_analysis(),
             self.session.uml_analysis(),
-            &self.nav_state,
+            "Untitled",
             self.view_mode,
             self.chain_limits,
         );
+        let view = crate::nav::view_of(&full, &self.nav_state);
         let title = scope_changed.then(|| {
-            crate::nav::packages(
-                self.session.okf_analysis(),
-                self.session.uml_analysis(),
-                self.view_mode,
-                self.chain_limits,
-            )
-            .into_iter()
-            .find(|r| r.key == self.nav_state.scope)
-            .map(|r| r.title)
-            .unwrap_or_else(|| "Untitled".to_string())
+            crate::nav::packages_of(&full, self.session.okf_analysis())
+                .into_iter()
+                .find(|r| r.key == self.nav_state.scope)
+                .map(|r| r.title)
+                .unwrap_or_else(|| "Untitled".to_string())
         });
         if let Some(mut panel) = self
             .ui

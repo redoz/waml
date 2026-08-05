@@ -108,6 +108,31 @@ pub fn build_tree(
     mode: crate::folder_projection::ViewMode,
     limits: waml::view::chain::ChainLimits,
 ) -> ProjectTree {
+    // One registry for the whole recursion: `FolderView::build` resolves
+    // against the same name table, and minting it per directory put a fresh
+    // allocation on a path that runs for every directory on every refresh.
+    build_tree_with_registry(
+        okf,
+        uml_analysis,
+        root_fallback,
+        mode,
+        limits,
+        &crate::folder_projection::core_registry(),
+    )
+}
+
+/// `build_tree` against a caller-supplied registry. The registry decides which
+/// middleware names resolve, so a test can install a hostile stage; production
+/// always passes `folder_projection::core_registry`.
+fn build_tree_with_registry(
+    okf: &waml::analysis::OkfAnalysis,
+    uml_analysis: &waml::uml::Analysis,
+    root_fallback: &str,
+    mode: crate::folder_projection::ViewMode,
+    limits: waml::view::chain::ChainLimits,
+    registry: &waml::view::chain::MiddlewareRegistry,
+) -> ProjectTree {
+    #[allow(clippy::too_many_arguments)]
     fn directory_node(
         okf: &waml::analysis::OkfAnalysis,
         uml_analysis: &waml::uml::Analysis,
@@ -116,6 +141,9 @@ pub fn build_tree(
         mode: crate::folder_projection::ViewMode,
         limits: waml::view::chain::ChainLimits,
         registry: &waml::view::chain::MiddlewareRegistry,
+        // The directory addresses on the path from the bundle root down to
+        // (and including) `address`.
+        ancestors: &mut Vec<String>,
     ) -> Option<TreeNode> {
         let bundle = &okf.bundle;
         // Confirms the directory still exists; its member lists are no
@@ -172,6 +200,16 @@ pub fn build_tree(
                 children: Vec::new(),
             })
         };
+        // The child addresses this recursion descends on come from the chain,
+        // not from `bundle.child_directories`, so they are NOT acyclic by
+        // construction: a middleware may emit a `Folder` row addressing this
+        // very directory or one of its ancestors. Descending into one recurses
+        // forever and takes the whole editor down with a stack overflow. The
+        // row still gets a node -- dropping it would make the tree disagree
+        // with the folder view about what is listed -- it simply has no
+        // children, and the cycle stops here.
+        let cycles = ancestors.iter().any(|seen| seen == address.as_str());
+        ancestors.push(address.as_str().to_string());
         let mut children = Vec::new();
         // Children ARE the chain's rows for this directory, in the chain's
         // order, carrying the chain's labels -- not the OKF member list. The
@@ -179,8 +217,17 @@ pub fn build_tree(
         // directory contains. `project_rows` returning None means the
         // directory left the bundle underneath us; an empty child list is the
         // honest answer, not a panic.
-        let projected =
-            crate::folder_projection::project_rows(okf, address.as_str(), mode, limits, registry);
+        let projected = (!cycles)
+            .then(|| {
+                crate::folder_projection::project_rows(
+                    okf,
+                    address.as_str(),
+                    mode,
+                    limits,
+                    registry,
+                )
+            })
+            .flatten();
         // The marker reads the diagnostics of the run that produced the
         // children above -- the folder tab runs the same chain in the same
         // mode and shows the same list, so a second `resolved_view` here would
@@ -195,7 +242,7 @@ pub fn build_tree(
                     let Ok(child) = waml::okf::DirectoryAddress::parse(child_address) else {
                         continue;
                     };
-                    if let Some(mut node) = directory_node(
+                    let child_node = directory_node(
                         okf,
                         uml_analysis,
                         &child,
@@ -203,7 +250,9 @@ pub fn build_tree(
                         mode,
                         limits,
                         registry,
-                    ) {
+                        ancestors,
+                    );
+                    if let Some(mut node) = child_node {
                         // The chain owns the label, the identity, and the
                         // declared capabilities; a middleware may relabel a
                         // folder row, and the tree must show and key on what
@@ -248,6 +297,7 @@ pub fn build_tree(
                 }
             }
         }
+        ancestors.pop();
         Some(TreeNode {
             // The bundle root mints its own id (see `ROOT_ROW_SEGMENT`); a
             // directory child immediately overwrites this with the row that
@@ -272,10 +322,6 @@ pub fn build_tree(
     }
 
     let root = waml::okf::DirectoryAddress::parse("/").expect("root address is valid");
-    // One registry for the whole recursion: `FolderView::build` resolves
-    // against the same name table, and minting it per directory put a fresh
-    // allocation on a path that runs for every directory on every refresh.
-    let registry = crate::folder_projection::core_registry();
     ProjectTree {
         roots: directory_node(
             okf,
@@ -284,7 +330,8 @@ pub fn build_tree(
             root_fallback,
             mode,
             limits,
-            &registry,
+            registry,
+            &mut Vec::new(),
         )
         .into_iter()
         .collect(),
@@ -518,6 +565,117 @@ mod tests {
             assert_eq!(node.caps, row.caps);
             assert_eq!(node.child_caps, row.child_caps);
         }
+    }
+
+    /// A middleware that emits a `Folder` row addressing the bundle root, from
+    /// whatever directory it runs in. Nothing in the core extension does this
+    /// -- both shipped emitters constrain themselves to `child_directories` --
+    /// but nothing in the chain contract forbids it either, and the tree
+    /// descends on the address the row carries.
+    struct CycleBack;
+
+    impl waml::view::projection::Projection for CycleBack {
+        fn project(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _next: waml::view::projection::Next<'_>,
+        ) -> Result<Vec<waml::view::row::Row>, waml::view::projection::ProjectionError> {
+            Ok(vec![waml::view::row::Row::new(
+                waml::view::row::RowId {
+                    owner: waml::view::row::ViewId::new("cycle-back"),
+                    path: waml::view::row::RowPath::parse("up").unwrap(),
+                },
+                "Up".to_string(),
+                waml::view::row::RowTarget::Folder("/".to_string()),
+                None,
+            )
+            .expect("a Folder target never requires a surface override")])
+        }
+
+        fn resolve(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _path: &waml::view::row::RowPath,
+        ) -> Result<Vec<waml::view::row::Row>, waml::view::projection::Unresolved> {
+            Err(waml::view::projection::Unresolved)
+        }
+
+        fn apply(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _path: &waml::view::row::RowPath,
+            _op: waml::view::projection::RowOp,
+            _next: waml::view::projection::Next<'_>,
+        ) -> Result<Vec<waml::okf::Op>, waml::view::projection::Unsupported> {
+            Err(waml::view::projection::Unsupported)
+        }
+
+        fn surface(
+            &self,
+            ctx: &waml::view::projection::ProjectionCtx<'_>,
+            next: waml::view::projection::Next<'_>,
+        ) -> waml::view::surface::SurfaceId {
+            next.surface(ctx)
+        }
+    }
+
+    struct CycleExt;
+
+    impl waml::extension::CoreExtension for CycleExt {
+        fn name(&self) -> &str {
+            "cycle-test"
+        }
+
+        fn middleware(&self) -> Vec<(&'static str, waml::extension::MiddlewareFactory)> {
+            vec![(
+                "cycle-back",
+                std::sync::Arc::new(|| {
+                    Box::new(CycleBack) as Box<dyn waml::view::projection::Projection>
+                }),
+            )]
+        }
+
+        fn profiles(&self) -> Vec<waml::profile::ProfileDef> {
+            Vec::new()
+        }
+    }
+
+    /// The recursion descends on addresses the CHAIN emitted, which -- unlike
+    /// `bundle.child_directories` -- are not acyclic by construction. Without
+    /// a guard this recurses until the stack is gone and the editor dies; the
+    /// test therefore aborts the process outright when the guard is missing.
+    #[test]
+    fn a_middleware_that_points_a_folder_row_at_an_ancestor_does_not_recurse_forever() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            ("sales/index.md", "---\nview: cycle-back\n---\n# Sales\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let registry = waml::view::chain::MiddlewareRegistry::from_extensions(&[
+            &waml::extension::CoreExt,
+            &CycleExt,
+        ])
+        .unwrap();
+
+        let tree = build_tree_with_registry(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+            &registry,
+        );
+        let sales = &tree.roots[0].children[0];
+        let up = &sales.children[0];
+        assert_eq!(
+            up.title, "Up",
+            "the row stays listed -- the tree must not disagree with the folder view",
+        );
+        assert!(
+            up.children.is_empty(),
+            "the cycle stops at the row that closed it",
+        );
     }
 
     #[test]

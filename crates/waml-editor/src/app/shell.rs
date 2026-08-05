@@ -850,11 +850,7 @@ impl App {
         let chrome = self.documents.active_chrome().document_header;
         let breadcrumb = if chrome.breadcrumb {
             active_concept.as_deref().and_then(|concept_id| {
-                crate::navigation::breadcrumb_for(
-                    self.session.okf_analysis(),
-                    self.session.uml_analysis(),
-                    concept_id,
-                )
+                crate::navigation::breadcrumb_for(self.session.okf_analysis(), concept_id)
             })
         } else {
             None
@@ -875,7 +871,7 @@ impl App {
             .widget(cx, ids!(project_tree))
             .borrow_mut::<crate::tree_panel::ProjectTree>()
         {
-            tree.set_selected_key(cx, active_concept);
+            tree.set_selected_document(cx, active_concept.as_deref());
         }
         self.sync_diagram_switcher_current(cx);
         self.sync_statusbar(cx);

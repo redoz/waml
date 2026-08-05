@@ -1,4 +1,3 @@
-use crate::tree::{build_tree, TreeNode};
 pub use crate::view_history::{DocumentKind, DocumentLocator};
 use url::Url;
 use waml::analysis::DocumentId;
@@ -75,50 +74,80 @@ impl NavigationError {
     }
 }
 
+/// The last `/`-separated segment, or the whole string when there is none.
+fn last_segment(value: &str) -> &str {
+    value
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(value)
+}
+
+/// The authored path from the bundle root down to the directory that declares
+/// `concept_id`, then the document itself.
+///
+/// Read straight off the bundle's own directory tree, NOT off `build_tree`:
+/// a tree build now runs the folder-view middleware chain for every directory
+/// in the bundle, recursively, and this runs on every document activation.
+/// A breadcrumb is the authored location of a file -- the same list in
+/// Projected as in Raw, and under any `ChainLimits` -- so there is nothing
+/// here for a projection to decide, and a document a chain declines to list
+/// still has a place it lives.
 pub fn breadcrumb_for(
     okf: &waml::analysis::OkfAnalysis,
-    uml_analysis: &waml::uml::Analysis,
     concept_id: &str,
 ) -> Option<Vec<BreadcrumbSegment>> {
-    fn find(nodes: &[TreeNode], concept_id: &str, path: &mut Vec<BreadcrumbSegment>) -> bool {
-        for node in nodes {
-            if node.is_directory {
-                let Some(address) = node.address.clone() else {
-                    continue;
-                };
-                path.push(BreadcrumbSegment {
-                    title: node.title.clone(),
-                    target: NavigationTarget::Directory { address },
-                });
-                if find(&node.children, concept_id, path) {
-                    return true;
-                }
-                path.pop();
-            } else if node.concept_id.as_deref() == Some(concept_id) {
-                path.push(BreadcrumbSegment {
-                    title: node.title.clone(),
-                    target: NavigationTarget::Document {
-                        concept_id: concept_id.to_owned(),
-                        fragment: None,
-                    },
-                });
-                return true;
-            }
-        }
-        false
-    }
+    let bundle = &okf.bundle;
+    let concept = bundle.concept(concept_id)?;
+    let owner = bundle
+        .directories()
+        .iter()
+        .find(|directory| directory.concepts.iter().any(|id| id == concept_id))?;
 
-    // Breadcrumbs describe the authored structure a reader navigated through,
-    // so they read the declared chain regardless of the session's mode.
-    let tree = build_tree(
-        okf,
-        uml_analysis,
-        "Untitled",
-        crate::folder_projection::ViewMode::Projected,
-        waml::view::chain::ChainLimits::default(),
-    );
-    let mut path = Vec::new();
-    find(&tree.roots, concept_id, &mut path).then_some(path)
+    // Root-last, then reversed: `Directory::parent` walks upward, and the
+    // bundle's parent links are acyclic by construction (lowering builds them
+    // from the address hierarchy).
+    let mut upward = vec![owner];
+    while let Some(parent) = upward
+        .last()
+        .and_then(|directory| directory.parent.as_ref())
+        .and_then(|parent| bundle.directory(parent.as_str()))
+    {
+        upward.push(parent);
+    }
+    let mut path = upward
+        .iter()
+        .rev()
+        .map(|directory| {
+            let address = directory.address.as_str();
+            BreadcrumbSegment {
+                title: bundle
+                    .index(address)
+                    .and_then(|index| index.title.clone())
+                    .unwrap_or_else(|| {
+                        if address == "/" {
+                            "Untitled".to_string()
+                        } else {
+                            last_segment(address).to_string()
+                        }
+                    }),
+                target: NavigationTarget::Directory {
+                    address: address.to_string(),
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    path.push(BreadcrumbSegment {
+        title: concept
+            .title
+            .clone()
+            .unwrap_or_else(|| last_segment(concept_id).to_string()),
+        target: NavigationTarget::Document {
+            concept_id: concept_id.to_owned(),
+            fragment: None,
+        },
+    });
+    Some(path)
 }
 
 pub fn resolve_link(
@@ -318,9 +347,9 @@ mod tests {
         ])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
-        let (_, okf, uml, _) = prepared.into_parts();
-        let breadcrumb = breadcrumb_for(&okf, &uml, "sales/customer")
-            .expect("customer has a canonical breadcrumb");
+        let (_, okf, _uml, _) = prepared.into_parts();
+        let breadcrumb =
+            breadcrumb_for(&okf, "sales/customer").expect("customer has a canonical breadcrumb");
 
         let tree_document = NavigationIntent::Resolved {
             target: doc("sales/customer", None),
@@ -388,8 +417,8 @@ mod tests {
 
     #[test]
     fn breadcrumb_uses_authored_titles_and_full_tree_hierarchy() {
-        let (okf, uml) = fixture();
-        let segments = breadcrumb_for(&okf, &uml, "sales/archive/order").unwrap();
+        let (okf, _uml) = fixture();
+        let segments = breadcrumb_for(&okf, "sales/archive/order").unwrap();
         assert_eq!(
             segments,
             vec![
@@ -422,10 +451,37 @@ mod tests {
         );
     }
 
+    /// A breadcrumb is the authored location of a file, not a listing: a
+    /// document the folder's declared chain hides is still openable by link,
+    /// and it still has a place it lives. Reading the chain here also made
+    /// every document activation pay a whole-bundle projection run.
+    #[test]
+    fn a_document_a_chain_declines_to_list_still_has_a_breadcrumb() {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "---\nview: hide\nhide: [\"**\"]\n---\n# Sales\n\n* [Order](./order.md)\n",
+            ),
+            ("sales/order.md", "# Order\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let segments =
+            breadcrumb_for(prepared.okf(), "sales/order").expect("a hidden row still has a home");
+        assert_eq!(
+            segments
+                .iter()
+                .map(|segment| segment.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Root", "Sales", "Order"],
+        );
+    }
+
     #[test]
     fn scoped_nav_state_cannot_change_canonical_breadcrumb() {
         let (okf, uml) = fixture();
-        let before = breadcrumb_for(&okf, &uml, "sales/archive/order");
+        let before = breadcrumb_for(&okf, "sales/archive/order");
         let states = [
             crate::nav::NavState {
                 scope: "/sales".into(),
@@ -440,7 +496,7 @@ mod tests {
                 crate::folder_projection::ViewMode::Projected,
                 waml::view::chain::ChainLimits::default(),
             );
-            assert_eq!(breadcrumb_for(&okf, &uml, "sales/archive/order"), before);
+            assert_eq!(breadcrumb_for(&okf, "sales/archive/order"), before);
         }
     }
 

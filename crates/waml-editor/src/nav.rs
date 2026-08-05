@@ -46,7 +46,13 @@ pub fn packages(
     mode: crate::folder_projection::ViewMode,
     limits: waml::view::chain::ChainLimits,
 ) -> Vec<PackageRow> {
-    let full = build_tree(okf, uml, "Untitled", mode, limits);
+    packages_of(&build_tree(okf, uml, "Untitled", mode, limits), okf)
+}
+
+/// `packages` against a tree the caller already built. A tree build runs the
+/// folder-view chain for every directory in the bundle, recursively, so a
+/// refresh that needs both this and `view` must build it once and share it.
+pub fn packages_of(full: &ProjectTree, okf: &waml::analysis::OkfAnalysis) -> Vec<PackageRow> {
     let root_title = okf
         .bundle
         .index("/")
@@ -128,14 +134,18 @@ pub fn view(
     mode: crate::folder_projection::ViewMode,
     limits: waml::view::chain::ChainLimits,
 ) -> NavView {
-    let full = build_tree(okf, uml, "Untitled", mode, limits);
+    view_of(&build_tree(okf, uml, "Untitled", mode, limits), state)
+}
+
+/// `view` against a tree the caller already built; see `packages_of`.
+pub fn view_of(full: &ProjectTree, state: &NavState) -> NavView {
     // A non-`Empty` view is the scope row with its members beneath it: that row
     // is the model's on-screen identity and the thing to select when a whole
     // bundle/directory is the subject.
-    let Some(scope) = scope_node(&full, &state.scope) else {
+    let Some(scope) = scope_node(full, &state.scope) else {
         return NavView::Empty;
     };
-    NavView::Browse(under(&scope, scoped_roots(&full, &state.scope)))
+    NavView::Browse(under(&scope, scoped_roots(full, &state.scope)))
 }
 
 #[cfg(test)]

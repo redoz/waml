@@ -1237,6 +1237,31 @@ impl ProjectTree {
     /// Highlight the row whose key matches `key` (or clear on `None`), mirroring
     /// the active doc tab. Called from the app's `sync_active_tab`, so the tree
     /// tracks the active document regardless of what triggered the switch.
+    /// Highlight the row the active tab is showing, given the tab's
+    /// `concept_id` (or a directory address, for a folder tab).
+    ///
+    /// The panel keys rows on `tree::key_string(RowId)`, NOT on a file
+    /// address, so a raw concept id can never match a row and the caller must
+    /// not pass one to `set_selected_key`. Resolving it here, against the tree
+    /// the panel currently holds, is the same lookup `reveal_target` does.
+    /// `None` -- or a document no row lists -- clears the highlight rather
+    /// than leaving the previous row lit.
+    pub fn set_selected_document(&mut self, cx: &mut Cx, concept_id: Option<&str>) {
+        let key = concept_id.and_then(|id| {
+            let document = NavigationTarget::Document {
+                concept_id: id.to_owned(),
+                fragment: None,
+            };
+            let directory = NavigationTarget::Directory {
+                address: id.to_owned(),
+            };
+            reveal_path(&self.tree.roots, &document, &mut Vec::new())
+                .or_else(|| reveal_path(&self.tree.roots, &directory, &mut Vec::new()))
+                .map(|(key, _)| key)
+        });
+        self.set_selected_key(cx, key);
+    }
+
     pub fn set_selected_key(&mut self, cx: &mut Cx, key: Option<String>) {
         if self.selected_key != key {
             self.selected_key = key;
@@ -1842,9 +1867,9 @@ mod tests {
         .unwrap();
         let bundle = waml::okf::Bundle::parse(&source).unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
-        let (_, okf_analysis, uml_analysis, _) = prepared.into_parts();
+        let (_, okf_analysis, _uml_analysis, _) = prepared.into_parts();
         let tree_intent = row_navigation(Some("/sales"), None, true, false, 1).unwrap();
-        let breadcrumb_target = breadcrumb_for(&okf_analysis, &uml_analysis, "sales/order")
+        let breadcrumb_target = breadcrumb_for(&okf_analysis, "sales/order")
             .unwrap()
             .into_iter()
             .find(|segment| segment.title == "Sales")

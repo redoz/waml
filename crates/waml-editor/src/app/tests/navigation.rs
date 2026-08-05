@@ -1023,6 +1023,18 @@ fn global_history_chord_dispatches_before_the_widget_tree_and_consumes_empty_sta
     );
 }
 
+/// The panel keys rows on `tree::key_string(RowId)`. Pushing the tab's raw
+/// `concept_id` at it matches no row, so the active-tab highlight silently
+/// stops tracking the active document.
+#[test]
+fn activating_a_document_highlights_its_row_by_the_panels_own_key() {
+    let (cx, app) = navigation_app_with_active_order();
+    assert_eq!(
+        project_tree_selected_key(&cx, &app).as_deref(),
+        Some(tree_key("/sales/order").as_str()),
+    );
+}
+
 #[test]
 fn breadcrumb_reveal_pins_tree_without_navigation() {
     let (mut cx, mut app) = navigation_app_with_active_order();
