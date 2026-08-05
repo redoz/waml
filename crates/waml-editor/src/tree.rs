@@ -184,6 +184,11 @@ fn build_tree_with_registry(
         mode: crate::folder_projection::ViewMode,
         limits: waml::view::chain::ChainLimits,
         registry: &waml::view::chain::MiddlewareRegistry,
+        // The `IconId` -> `Icon` table every Folder row's icon resolves
+        // against -- the same table the folder view resolves against (see
+        // `folder_projection::icon_table`), passed down rather than
+        // re-minted per directory for the same reason `registry` is.
+        table: &[(&str, Icon)],
         // Every directory address this build has already expanded, anywhere in
         // the tree -- NOT just the current ancestor path.
         expanded: &mut std::collections::HashSet<String>,
@@ -298,6 +303,7 @@ fn build_tree_with_registry(
                             mode,
                             limits,
                             registry,
+                            table,
                             expanded,
                         )
                     };
@@ -310,6 +316,20 @@ fn build_tree_with_registry(
                         node.key = row.id.clone();
                         node.caps = row.caps;
                         node.child_caps = row.child_caps;
+                        // The row's own `IconId` (or the target's default,
+                        // resolved against the SAME table the folder view
+                        // resolves against) -- a directory row in the tree
+                        // must draw the same glyph the folder tab for that
+                        // same directory would, and `resolve_icon` is the
+                        // one place both surfaces resolve through.
+                        let (icon, _diagnostic) = crate::extension_editor::resolve_icon(
+                            row.icon.as_ref(),
+                            &row.target,
+                            table,
+                            "",
+                            0,
+                        );
+                        node.presentation.icon = icon;
                         children.push(node);
                     }
                 }
@@ -370,6 +390,7 @@ fn build_tree_with_registry(
     }
 
     let root = waml::okf::DirectoryAddress::parse("/").expect("root address is valid");
+    let table = crate::folder_projection::icon_table();
     ProjectTree {
         roots: directory_node(
             okf,
@@ -379,6 +400,7 @@ fn build_tree_with_registry(
             mode,
             limits,
             registry,
+            &table,
             &mut std::collections::HashSet::new(),
         )
         .into_iter()
@@ -1118,5 +1140,46 @@ mod tests {
         assert!(!domain.is_directory);
         assert!(domain.openable);
         assert!(crate::documents::open(prepared.okf(), prepared.uml(), "domain").is_some());
+    }
+
+    /// Task 11: a tree row and the folder row for the same directory resolve
+    /// to the same `Icon` -- both surfaces resolve the SAME `IconId` against
+    /// the SAME table (`folder_projection::icon_table`), so a `uml-domain`
+    /// package draws the box glyph and a plain folder draws the book glyph in
+    /// the tree exactly as it does in the folder tab for that directory.
+    #[test]
+    fn tree_row_icon_matches_the_folder_row_icon_for_the_same_directory() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "---\nview: uml\n---\n# Root\n\n* [Pkg](pkg/)\n* [Docs](docs/)\n",
+            ),
+            ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
+            ("docs/index.md", "# Docs\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let limits = waml::view::chain::ChainLimits::default();
+        let mode = crate::folder_projection::ViewMode::Projected;
+
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
+        let tree_icons: std::collections::HashMap<String, Icon> = tree.roots[0]
+            .children
+            .iter()
+            .map(|node| (node.title.clone(), node.presentation.icon))
+            .collect();
+
+        let folder = crate::folder_view::FolderView::build(prepared.okf(), "/", limits, mode)
+            .expect("root is in the bundle");
+        let folder_icons: std::collections::HashMap<String, Icon> = folder
+            .row_views()
+            .iter()
+            .map(|row| (row.label.clone(), row.icon))
+            .collect();
+
+        assert_eq!(tree_icons["Pkg"], Icon::Box, "a uml-domain package");
+        assert_eq!(tree_icons["Docs"], Icon::Book, "a plain folder");
+        assert_eq!(tree_icons["Pkg"], folder_icons["Pkg"]);
+        assert_eq!(tree_icons["Docs"], folder_icons["Docs"]);
     }
 }
