@@ -687,41 +687,32 @@ pub(crate) fn reparse_okf_markdown_with_structure(
 > {
     let dialect = previous.dialect();
     let new_structure = Arc::new(crate::markdown::shell_map(&new_text, dialect)?);
+    let full = |reason| -> Result<_, ParseError> {
+        let parsed = crate::markdown::parser::parse_with_structure(
+            new_text.clone(),
+            dialect,
+            new_structure.clone(),
+        )?;
+        let public_structure = parsed.structure.clone();
+        Ok((
+            ReparseOutcome::Full {
+                tree: parsed.tree,
+                reason,
+            },
+            public_structure,
+        ))
+    };
     let recovered = match previous_text {
         Some(text) if verify_exact_source(previous.root_green(), text) => Some(text.clone()),
         _ => recover_exact_source(previous.root_green()),
     };
     let Some(old) = recovered else {
-        let parsed = crate::markdown::parser::parse_with_structure(
-            new_text,
-            dialect,
-            new_structure.clone(),
-        )?;
-        let public_structure = parsed.structure.clone();
-        return Ok((
-            ReparseOutcome::Full {
-                tree: parsed.tree,
-                reason: FullReparseReason::UnsafeSynchronization,
-            },
-            public_structure,
-        ));
+        return full(FullReparseReason::UnsafeSynchronization);
     };
     let map = match ChangeMap::checked(&old, changes) {
         Ok(map) => map,
         Err(reason) => {
-            let parsed = crate::markdown::parser::parse_with_structure(
-                new_text,
-                dialect,
-                new_structure.clone(),
-            )?;
-            let public_structure = parsed.structure.clone();
-            return Ok((
-                ReparseOutcome::Full {
-                    tree: parsed.tree,
-                    reason,
-                },
-                public_structure,
-            ));
+            return full(reason);
         }
     };
     if map.new_len() != new_text.len() {
@@ -779,21 +770,6 @@ pub(crate) fn reparse_okf_markdown_with_structure(
         ));
     }
     let old_structure = Arc::new(crate::markdown::shell_map(&old, dialect)?);
-    let full = |reason| -> Result<_, ParseError> {
-        let parsed = crate::markdown::parser::parse_with_structure(
-            new_text.clone(),
-            dialect,
-            new_structure.clone(),
-        )?;
-        let public_structure = parsed.structure.clone();
-        Ok((
-            ReparseOutcome::Full {
-                tree: parsed.tree,
-                reason,
-            },
-            public_structure,
-        ))
-    };
     let old_projection: Arc<MarkdownStructureMap> = match previous_projection {
         Some(projection)
             if previous_text.is_some_and(|text| Arc::ptr_eq(text.shared(), old.shared())) =>
