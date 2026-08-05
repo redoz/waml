@@ -198,6 +198,116 @@ Fix: clamp `font_scale` to a finite positive value before scaling the
 fallback, and update `a_failed_measurement_is_not_cached` to assert the
 clamped shape.
 
+## P2 — `MarkdownEditorError` has no `Display`
+
+Surfaced 2026-08-04 by the triage-batch end-reviews; verified against
+`12a0ec59`.
+
+`crates/waml-markdown-editor/src/widget.rs:102` — `MarkdownEditorError`
+derives `Debug` and implements `From<ControllerError>`, but has no `Display`
+impl. Every site that reports one therefore emits a `Debug` dump, including
+the quarantine path issue 31 added: a `StalePresentation { .. }` struct
+literal reaches the log where a sentence belongs.
+
+The same review class fixed this once already — `install_presentation`'s
+revision was switched to `Display` in `99687d4b`. The error type itself was
+not.
+
+Fix: implement `Display` (and `std::error::Error`) for `MarkdownEditorError`,
+then let the reporting sites format with `{}` instead of `{:?}`.
+
+## P2 — `validate_fragments` detects operand under-run but not over-run
+
+Surfaced 2026-08-04 by the triage-batch end-reviews; verified against
+`12a0ec59`.
+
+`crates/waml/src/uml/sequence.rs:1394` — `validate_fragments` zips runtime
+`SeqNode::Fragment`s against `declared_fragments` (the declared fragments
+filtered by `value(&fragment.kind).is_some()`). When the runtime side has more
+fragments than the declared side, `declared_fragments.next()` returns `None`
+and a `debug_assert!(false, "runtime fragment without typed declared
+fragment")` fires. The opposite drift is unchecked: the iterator is dropped at
+the end of the loop with no test for leftover declared fragments, so declared
+fragments that never got a runtime node are silently skipped and never
+diagnosed.
+
+Both sides are guarded by the same coupled-filter comment; only one direction
+is enforced.
+
+Fix: after the loop, assert (or diagnose) that `declared_fragments.next()`
+is `None`.
+
+## P3 — Two "empty children" failures are reported as `ParseError::WidthOverflow`
+
+Surfaced 2026-08-04 by the triage-batch end-reviews; verified against
+`12a0ec59`.
+
+`crates/waml-syntax/src/incremental.rs:176` and `:1164` both compute
+`root_green().children().len().checked_sub(1).ok_or(ParseError::WidthOverflow)?`
+to find the EOF child index. The `checked_sub` can only fail when the root has
+zero children — an empty-tree condition, not a text-width overflow. Every
+other `WidthOverflow` in the file comes from a genuine `TextSize`/`TextRange`
+conversion.
+
+Consequence is a misleading fallback: the incremental path bails to a full
+reparse citing width overflow for a tree that is merely empty, and the reason
+is wrong in any log or diagnostic that surfaces it.
+
+Fix: give `ParseError` a distinct variant for a root with no children (or
+assert the invariant if it is genuinely unreachable), and stop overloading
+`WidthOverflow`.
+
+## P3 — Editor scroll position has four writers and no owner
+
+Surfaced 2026-08-04 by the triage-batch end-reviews; verified against
+`12a0ec59`.
+
+`crates/waml-markdown-editor/src/widget.rs` writes the scroll position from
+several places, each pairing `self.scroll_y = …` with a
+`set_scroll_pos_no_clip(…)` call that must agree: `:850`/`:856`,
+`:1015`/`:1016`, `:1022`/`:1023`, `:2162`/`:2165`, `:2297`/`:2300`, plus bare
+`self.scroll_y` writes at `:877` and `:1093`. Nothing owns the pair, so the
+two halves can be updated independently and the cached `scroll_y` can drift
+from the scroll bars' actual position.
+
+Fix: funnel every write through one method that sets both, and make the field
+private to it.
+
+## P3 — Fixture `mid()` hashes where issue 29 established `MessageId == index`
+
+Surfaced 2026-08-04 by the triage-batch end-reviews; verified against
+`12a0ec59`.
+
+`crates/waml/tests/interaction_solver_golden.rs:16` — `mid()` derives a
+`MessageId` from an FNV-1a hash of a human-readable test id. Issue 29
+established that production `MessageId`s are document-order indices, and the
+function now carries a doc comment saying exactly that. The comment documents
+the divergence rather than removing it: the fixtures exercise the solver with
+`MessageId`s that no real document can produce, so any solver logic that comes
+to depend on the index invariant will pass these tests and fail in production.
+
+Fix: assign fixture ids by declaration order (a counter or an explicit index
+per fixture) and keep the readable name in a side map.
+
+## P3 — Four linear scans survive over the document catalog
+
+Surfaced 2026-08-04 by the triage-batch end-reviews; the first two verified
+against `12a0ec59`, the other two carry pre-triage line numbers and need
+re-locating.
+
+`crates/waml/src/uml/analysis.rs:174` (`referrers`) and
+`crates/waml/src/uml/lower.rs:446` (`resolve_index`) each walk
+`catalog().documents()` / `work.documents()` with `find_map` / `position`,
+then fall through to a second full pass via `unique_match`. Two more scans of
+the same shape were flagged in `lower.rs` around `:853` and `:1367`.
+
+These are O(documents) per lookup on a path that runs per reference, so cost
+is O(references × documents) per analysis. Bundles are small today, which is
+why this is P3 rather than a performance issue.
+
+Fix: build the id and slug indexes once per catalog and share them across the
+lookup sites; re-verify the two `lower.rs` line numbers before touching them.
+
 ## P1 — Shell and frontmatter diagnostics disappear at public boundaries
 
 Evidence:
