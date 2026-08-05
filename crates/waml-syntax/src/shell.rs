@@ -23,7 +23,33 @@ pub enum ParseError {
 }
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "shell parse error: {self:?}")
+        match self {
+            Self::SourceTooLarge { bytes } => {
+                write!(f, "source is too large to parse: {bytes} bytes")
+            }
+            Self::InvalidRange { range } => write!(
+                f,
+                "invalid text range: {}..{}",
+                range.start().to_usize(),
+                range.end().to_usize()
+            ),
+            Self::WidthOverflow => write!(f, "text width overflow"),
+            Self::StructuralInvariant { reason } => {
+                write!(f, "structural invariant violated: {reason}")
+            }
+            Self::ParserStalled { offset } => {
+                write!(f, "parser stalled at byte offset {}", offset.to_usize())
+            }
+            Self::NonMonotonicRevision {
+                previous,
+                requested,
+            } => write!(
+                f,
+                "document revision must increase: previous {}, requested {}",
+                previous.get(),
+                requested.get()
+            ),
+        }
     }
 }
 impl std::error::Error for ParseError {}

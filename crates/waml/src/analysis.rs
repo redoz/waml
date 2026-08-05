@@ -1444,10 +1444,16 @@ mod tests {
         let path = crate::source::BundlePath::parse("broken.md").unwrap();
         let error = AnalysisError::Shell {
             path: path.clone(),
-            source: waml_syntax::ParseError::WidthOverflow,
+            source: waml_syntax::ParseError::StructuralInvariant {
+                reason: "child span escapes parent".into(),
+            },
         };
         let message = error.to_string();
         assert!(message.contains("broken.md"), "message: {message}");
+        assert!(
+            message.contains("child span escapes parent"),
+            "message: {message}"
+        );
         assert!(
             !message.contains('{') && !message.contains('}'),
             "message: {message}"
