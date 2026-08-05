@@ -65,6 +65,263 @@ pub struct RebasedGreen<L: SyntaxLanguage> {
     pub shared_source_independent_green: usize,
 }
 
+/// The outcome of successfully planning a windowed (non-full) reparse: the
+/// spliced tree plus the bookkeeping [`ReparseOutcome::Incremental`] needs.
+/// Carries exactly the fields [`reparse_okf_markdown_with_structure`]'s tail
+/// reads back out of a successful [`plan_window_reparse`] call.
+struct WindowPlan {
+    tree: Arc<SyntaxTree<OkfMarkdownLanguage>>,
+    shared_source_independent_green: usize,
+    reparsed_range: TextRange,
+    public_structure: Arc<MarkdownStructureMap>,
+}
+
+/// Plans a windowed reparse against `old`/`new_text`, or reports the reason a
+/// full reparse is required. Guard checks that only rule out incremental
+/// reuse (island/frontmatter/heading/container boundaries, unsafe
+/// synchronization) come back as `Ok(Err(reason))` — the caller's job is to
+/// fall back to a full parse for those. Hard structural errors (arithmetic
+/// overflow, an unrecoverable tree shape) come back as the outer `Err`,
+/// exactly as they did before this function existed; they are not
+/// recoverable by falling back to a full parse of `new_text`.
+#[allow(clippy::too_many_arguments)]
+fn plan_window_reparse(
+    previous: &SyntaxTree<OkfMarkdownLanguage>,
+    old: &SourceText,
+    new_text: &SourceText,
+    dialect: crate::MarkdownDialect,
+    changes: &[TextChange],
+    map: &ChangeMap,
+    new_structure: &Arc<crate::markdown::ShellStructure>,
+    old_projection: &Arc<MarkdownStructureMap>,
+) -> Result<Result<WindowPlan, FullReparseReason>, ParseError> {
+    let old_structure = Arc::new(crate::markdown::shell_map(old, dialect)?);
+    if old_projection.islands.iter().any(|island| {
+        let island_range = island.heading_range.cover(island.content_range);
+        map.segments().iter().any(|segment| {
+            if segment.old.start() == segment.old.end() {
+                island_range.start() <= segment.old.start()
+                    && segment.old.start() <= island_range.end()
+            } else {
+                segment.old.start() < island_range.end() && island_range.start() < segment.old.end()
+            }
+        })
+    }) {
+        return Ok(Err(FullReparseReason::IslandBoundaryChanged));
+    }
+    if dialect.waml_sections()
+        && new_structure
+            .headings
+            .iter()
+            .chain(new_structure.nested_headings.iter())
+            .filter(|heading| {
+                crate::markdown::waml_kind(new_text.shared(), heading.text_range).is_some()
+            })
+            .any(|heading| {
+                map.segments().iter().any(|segment| {
+                    segment.new.start() < heading.range.end()
+                        && heading.range.start() < segment.new.end()
+                })
+            })
+    {
+        return Ok(Err(FullReparseReason::IslandBoundaryChanged));
+    }
+    let old_frontmatter = crate::shell::frontmatter_range(old, &old_structure)?;
+    let new_frontmatter = crate::shell::frontmatter_range(new_text, new_structure)?;
+    if !same_optional_range(old_frontmatter, new_frontmatter, map)
+        || !same_frontmatter_fences(old, new_text, old_frontmatter, new_frontmatter, map)
+        || edit_touches_frontmatter_leading_whitespace(
+            old,
+            new_text,
+            old_frontmatter,
+            new_frontmatter,
+            map,
+        )
+    {
+        return Ok(Err(FullReparseReason::FrontmatterBoundaryChanged));
+    }
+    if !same_headings(&old_structure, new_structure, map) {
+        return Ok(Err(FullReparseReason::HeadingBoundaryChanged));
+    }
+    if !same_containers(&old_structure, new_structure, map) {
+        return Ok(Err(FullReparseReason::MarkdownContainerBoundaryChanged));
+    }
+    if width_change_may_shift_reference_definition(previous, map) {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    }
+    if crate::markdown::reparse::change_may_affect_reference_use(
+        old,
+        previous.root_green(),
+        new_text,
+        changes,
+        map,
+    )? {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    }
+
+    let windows = shell_windows(previous, old)?;
+    let Some(mut window) = select_window(&windows, map) else {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    };
+    if window.kind == crate::shell::ShellWindowKind::Heading
+        && window.range.end() == old.len()
+        && matches!(new_text.shared().as_bytes().last(), Some(b' ' | b'\t'))
+    {
+        window.kind = crate::shell::ShellWindowKind::Tail;
+        window.last = previous
+            .root_green()
+            .children()
+            .len()
+            .checked_sub(1)
+            .ok_or(ParseError::WidthOverflow)?;
+    }
+    if previous.diagnostics().iter().any(|diagnostic| {
+        diagnostic.range.start() == diagnostic.range.end()
+            && (diagnostic.range.start() == window.range.start()
+                || diagnostic.range.start() == window.range.end())
+    }) {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    }
+    let Some(new_range) = expanded_window_range(window.range, map) else {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    };
+    if crate::markdown::reparse::window_reparse_may_lose_reference_resolution(
+        old,
+        previous.root_green(),
+        window.range,
+        new_text,
+        new_range,
+    )? {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    }
+    let parsed_window = match crate::shell::parse_window(
+        new_text,
+        new_structure,
+        crate::shell::ShellWindow {
+            kind: window.kind,
+            range: new_range,
+        },
+    ) {
+        Ok(parsed_window) => parsed_window,
+        Err(ParseError::StructuralInvariant { reason })
+            if reason.as_ref() == "shell window parser did not consume the selected range" =>
+        {
+            return Ok(Err(FullReparseReason::UnsafeSynchronization));
+        }
+        Err(error) => return Err(error),
+    };
+    if parsed_window
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock)
+    {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    }
+    let mut children = Vec::new();
+    for (index, child) in previous.root_green().children().iter().enumerate() {
+        if index == window.first {
+            children.extend(parsed_window.elements.iter().cloned());
+        }
+        if (window.first..=window.last).contains(&index) {
+            continue;
+        }
+        let Some(rebased) =
+            rebase_unchanged_green(child, new_text, map).map_err(|_| ParseError::WidthOverflow)?
+        else {
+            return Ok(Err(FullReparseReason::UnsafeSynchronization));
+        };
+        children.push(rebased.element);
+    }
+    let root = GreenFactory::new()
+        .node(OkfMarkdownSyntaxKind::Root, children)
+        .map_err(|_| ParseError::WidthOverflow)?;
+    let mut diagnostics: Vec<TreeDiagnostic<_>> = previous
+        .diagnostics()
+        .iter()
+        .filter_map(|diagnostic| {
+            (diagnostic.range.end() <= window.range.start()
+                || diagnostic.range.start() >= window.range.end())
+            .then(|| map.translate_unchanged(diagnostic.range))?
+            .map(|range| TreeDiagnostic {
+                code: diagnostic.code,
+                severity: diagnostic.severity,
+                message: diagnostic.message.clone(),
+                range,
+            })
+        })
+        .collect();
+    diagnostics.extend(parsed_window.diagnostics.iter().cloned());
+    diagnostics.sort_by_key(|d| (d.range.start(), d.range.end(), d.code as u8));
+    // A malformed block anywhere in the merged diagnostics (the window's own
+    // malformed blocks already fell back above, so this catches carried-over
+    // ones outside the window) means the shell is not trustworthy enough to
+    // synchronize against; hand the document back to the full parser.
+    if dialect.waml_sections()
+        && diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock)
+    {
+        return Ok(Err(FullReparseReason::UnsafeSynchronization));
+    }
+    let candidate = SyntaxTree::new(root, diagnostics.into(), dialect);
+    let root = if has_syntax_annotations(previous.root_green()) {
+        // Width arithmetic that does not fit means the spliced tree is not a
+        // sound base to carry annotations onto; degrade to a full parse rather
+        // than ending the document's reparse in an error.
+        match transfer_mapped_annotations(previous, &candidate, map) {
+            Ok(root) => root,
+            Err(_) => return Ok(Err(FullReparseReason::UnsafeSynchronization)),
+        }
+    } else {
+        candidate.root_green().clone()
+    };
+    let shared_source_independent_green =
+        count_shared_source_independent_greens(previous.root_green(), &root);
+    let tree = Arc::new(SyntaxTree::new(
+        root,
+        Arc::from(candidate.diagnostics()),
+        dialect,
+    ));
+    let public_structure = Arc::new(crate::markdown::from_tree(&tree, new_text.shared())?);
+    // The island-boundary guards above refuse any change that touches an old
+    // island or a new WAML heading, so a successful window reparse must keep
+    // the island count. A mismatch means the splice drifted; fall back.
+    if dialect.waml_sections() && public_structure.islands.len() != old_projection.islands.len() {
+        return Ok(Err(FullReparseReason::IslandBoundaryChanged));
+    }
+    // Debug-only oracle: cross-check the spliced result against a full parse.
+    // This used to run unconditionally in production, making every
+    // "incremental" reparse strictly more expensive than a full one; the
+    // property suites (built with debug assertions) keep exercising it.
+    #[cfg(debug_assertions)]
+    if dialect.waml_sections() {
+        let oracle = crate::markdown::parser::parse_with_structure(
+            new_text.clone(),
+            dialect,
+            new_structure.clone(),
+        )?;
+        debug_assert!(
+            !oracle
+                .tree
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock),
+            "incremental reparse accepted a document the full parser marks malformed"
+        );
+        debug_assert_eq!(
+            public_structure.islands.len(),
+            oracle.structure.islands.len(),
+            "incremental reparse island count diverged from the full parse"
+        );
+    }
+    Ok(Ok(WindowPlan {
+        tree,
+        shared_source_independent_green,
+        reparsed_range: new_range,
+        public_structure,
+    }))
+}
+
 fn rebase_text(
     text: &GreenText,
     new_text: &SourceText,
@@ -769,7 +1026,6 @@ pub(crate) fn reparse_okf_markdown_with_structure(
             public_structure,
         ));
     }
-    let old_structure = Arc::new(crate::markdown::shell_map(&old, dialect)?);
     let old_projection: Arc<MarkdownStructureMap> = match previous_projection {
         Some(projection)
             if previous_text.is_some_and(|text| Arc::ptr_eq(text.shared(), old.shared())) =>
@@ -778,232 +1034,26 @@ pub(crate) fn reparse_okf_markdown_with_structure(
         }
         _ => Arc::new(crate::markdown::from_tree(previous, old.shared())?),
     };
-    if old_projection.islands.iter().any(|island| {
-        let island_range = island.heading_range.cover(island.content_range);
-        map.segments().iter().any(|segment| {
-            if segment.old.start() == segment.old.end() {
-                island_range.start() <= segment.old.start()
-                    && segment.old.start() <= island_range.end()
-            } else {
-                segment.old.start() < island_range.end() && island_range.start() < segment.old.end()
-            }
-        })
-    }) {
-        return full(FullReparseReason::IslandBoundaryChanged);
-    }
-    if dialect.waml_sections()
-        && new_structure
-            .headings
-            .iter()
-            .chain(new_structure.nested_headings.iter())
-            .filter(|heading| {
-                crate::markdown::waml_kind(new_text.shared(), heading.text_range).is_some()
-            })
-            .any(|heading| {
-                map.segments().iter().any(|segment| {
-                    segment.new.start() < heading.range.end()
-                        && heading.range.start() < segment.new.end()
-                })
-            })
-    {
-        return full(FullReparseReason::IslandBoundaryChanged);
-    }
-    let old_frontmatter = crate::shell::frontmatter_range(&old, &old_structure)?;
-    let new_frontmatter = crate::shell::frontmatter_range(&new_text, &new_structure)?;
-    if !same_optional_range(old_frontmatter, new_frontmatter, &map)
-        || !same_frontmatter_fences(&old, &new_text, old_frontmatter, new_frontmatter, &map)
-        || edit_touches_frontmatter_leading_whitespace(
-            &old,
-            &new_text,
-            old_frontmatter,
-            new_frontmatter,
-            &map,
-        )
-    {
-        return full(FullReparseReason::FrontmatterBoundaryChanged);
-    }
-    if !same_headings(&old_structure, &new_structure, &map) {
-        return full(FullReparseReason::HeadingBoundaryChanged);
-    }
-    if !same_containers(&old_structure, &new_structure, &map) {
-        return full(FullReparseReason::MarkdownContainerBoundaryChanged);
-    }
-    if width_change_may_shift_reference_definition(previous, &map) {
-        return full(FullReparseReason::UnsafeSynchronization);
-    }
-    if crate::markdown::reparse::change_may_affect_reference_use(
+    match plan_window_reparse(
+        previous,
         &old,
-        previous.root_green(),
         &new_text,
+        dialect,
         changes,
         &map,
-    )? {
-        return full(FullReparseReason::UnsafeSynchronization);
-    }
-
-    let windows = shell_windows(previous, &old)?;
-    let Some(mut window) = select_window(&windows, &map) else {
-        return full(FullReparseReason::UnsafeSynchronization);
-    };
-    if window.kind == crate::shell::ShellWindowKind::Heading
-        && window.range.end() == old.len()
-        && matches!(new_text.shared().as_bytes().last(), Some(b' ' | b'\t'))
-    {
-        window.kind = crate::shell::ShellWindowKind::Tail;
-        window.last = previous
-            .root_green()
-            .children()
-            .len()
-            .checked_sub(1)
-            .ok_or(ParseError::WidthOverflow)?;
-    }
-    if previous.diagnostics().iter().any(|diagnostic| {
-        diagnostic.range.start() == diagnostic.range.end()
-            && (diagnostic.range.start() == window.range.start()
-                || diagnostic.range.start() == window.range.end())
-    }) {
-        return full(FullReparseReason::UnsafeSynchronization);
-    }
-    let Some(new_range) = expanded_window_range(window.range, &map) else {
-        return full(FullReparseReason::UnsafeSynchronization);
-    };
-    if crate::markdown::reparse::window_reparse_may_lose_reference_resolution(
-        &old,
-        previous.root_green(),
-        window.range,
-        &new_text,
-        new_range,
-    )? {
-        return full(FullReparseReason::UnsafeSynchronization);
-    }
-    let parsed_window = match crate::shell::parse_window(
-        &new_text,
         &new_structure,
-        crate::shell::ShellWindow {
-            kind: window.kind,
-            range: new_range,
-        },
-    ) {
-        Ok(parsed_window) => parsed_window,
-        Err(ParseError::StructuralInvariant { reason })
-            if reason.as_ref() == "shell window parser did not consume the selected range" =>
-        {
-            return full(FullReparseReason::UnsafeSynchronization);
-        }
-        Err(error) => return Err(error),
-    };
-    if parsed_window
-        .diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock)
-    {
-        return full(FullReparseReason::UnsafeSynchronization);
+        &old_projection,
+    )? {
+        Ok(plan) => Ok((
+            ReparseOutcome::Incremental {
+                tree: plan.tree,
+                shared_source_independent_green: plan.shared_source_independent_green,
+                reparsed_range: plan.reparsed_range,
+            },
+            plan.public_structure,
+        )),
+        Err(reason) => full(reason),
     }
-    let mut children = Vec::new();
-    for (index, child) in previous.root_green().children().iter().enumerate() {
-        if index == window.first {
-            children.extend(parsed_window.elements.iter().cloned());
-        }
-        if (window.first..=window.last).contains(&index) {
-            continue;
-        }
-        let Some(rebased) = rebase_unchanged_green(child, &new_text, &map)
-            .map_err(|_| ParseError::WidthOverflow)?
-        else {
-            return full(FullReparseReason::UnsafeSynchronization);
-        };
-        children.push(rebased.element);
-    }
-    let root = GreenFactory::new()
-        .node(OkfMarkdownSyntaxKind::Root, children)
-        .map_err(|_| ParseError::WidthOverflow)?;
-    let mut diagnostics: Vec<TreeDiagnostic<_>> = previous
-        .diagnostics()
-        .iter()
-        .filter_map(|diagnostic| {
-            (diagnostic.range.end() <= window.range.start()
-                || diagnostic.range.start() >= window.range.end())
-            .then(|| map.translate_unchanged(diagnostic.range))?
-            .map(|range| TreeDiagnostic {
-                code: diagnostic.code,
-                severity: diagnostic.severity,
-                message: diagnostic.message.clone(),
-                range,
-            })
-        })
-        .collect();
-    diagnostics.extend(parsed_window.diagnostics.iter().cloned());
-    diagnostics.sort_by_key(|d| (d.range.start(), d.range.end(), d.code as u8));
-    // A malformed block anywhere in the merged diagnostics (the window's own
-    // malformed blocks already fell back above, so this catches carried-over
-    // ones outside the window) means the shell is not trustworthy enough to
-    // synchronize against; hand the document back to the full parser.
-    if dialect.waml_sections()
-        && diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock)
-    {
-        return full(FullReparseReason::UnsafeSynchronization);
-    }
-    let candidate = SyntaxTree::new(root, diagnostics.into(), dialect);
-    let root = if has_syntax_annotations(previous.root_green()) {
-        // Width arithmetic that does not fit means the spliced tree is not a
-        // sound base to carry annotations onto; degrade to a full parse rather
-        // than ending the document's reparse in an error.
-        match transfer_mapped_annotations(previous, &candidate, &map) {
-            Ok(root) => root,
-            Err(_) => return full(FullReparseReason::UnsafeSynchronization),
-        }
-    } else {
-        candidate.root_green().clone()
-    };
-    let shared_source_independent_green =
-        count_shared_source_independent_greens(previous.root_green(), &root);
-    let tree = Arc::new(SyntaxTree::new(
-        root,
-        Arc::from(candidate.diagnostics()),
-        dialect,
-    ));
-    let public_structure = Arc::new(crate::markdown::from_tree(&tree, new_text.shared())?);
-    // The island-boundary guards above refuse any change that touches an old
-    // island or a new WAML heading, so a successful window reparse must keep
-    // the island count. A mismatch means the splice drifted; fall back.
-    if dialect.waml_sections() && public_structure.islands.len() != old_projection.islands.len() {
-        return full(FullReparseReason::IslandBoundaryChanged);
-    }
-    // Debug-only oracle: cross-check the spliced result against a full parse.
-    // This used to run unconditionally in production, making every
-    // "incremental" reparse strictly more expensive than a full one; the
-    // property suites (built with debug assertions) keep exercising it.
-    #[cfg(debug_assertions)]
-    if dialect.waml_sections() {
-        let oracle = crate::markdown::parser::parse_with_structure(
-            new_text.clone(),
-            dialect,
-            new_structure.clone(),
-        )?;
-        debug_assert!(
-            !oracle
-                .tree
-                .diagnostics()
-                .iter()
-                .any(|diagnostic| diagnostic.code == OkfSyntaxDiagnosticCode::MalformedBlock),
-            "incremental reparse accepted a document the full parser marks malformed"
-        );
-        debug_assert_eq!(
-            public_structure.islands.len(),
-            oracle.structure.islands.len(),
-            "incremental reparse island count diverged from the full parse"
-        );
-    }
-    Ok((
-        ReparseOutcome::Incremental {
-            tree,
-            shared_source_independent_green,
-            reparsed_range: new_range,
-        },
-        public_structure,
-    ))
 }
 
 fn green_uses_source(node: &GreenNode<OkfMarkdownLanguage>, source: &SourceText) -> bool {
@@ -1686,5 +1736,108 @@ mod tests {
             )
             .unwrap();
         assert!(recover_exact_source(&source_independent).is_none());
+    }
+
+    /// Plans a window reparse from `previous_src` to `next_src` directly
+    /// (bypassing the outer full-parse fallback wrapper) and asserts it comes
+    /// back as `Ok(Err(expected))` — a windowed reparse is possible in
+    /// principle, but this specific boundary class rules it out.
+    fn assert_plan_reason(
+        previous_src: &str,
+        next_src: &str,
+        changes: &[TextChange],
+        expected: FullReparseReason,
+    ) {
+        let dialect = crate::MarkdownDialect::WAML_DEFAULT;
+        let previous = crate::markdown::parser::parse(
+            SourceText::from_shared(Arc::new(previous_src.to_owned())).unwrap(),
+            dialect,
+        )
+        .unwrap()
+        .tree;
+        let old = recover_exact_source(previous.root_green()).unwrap();
+        let new_text = SourceText::from_shared(Arc::new(next_src.to_owned())).unwrap();
+        let map = ChangeMap::checked(&old, changes).unwrap();
+        let new_structure = Arc::new(crate::markdown::shell_map(&new_text, dialect).unwrap());
+        let old_projection = Arc::new(crate::markdown::from_tree(&previous, old.shared()).unwrap());
+        let plan = plan_window_reparse(
+            &previous,
+            &old,
+            &new_text,
+            dialect,
+            changes,
+            &map,
+            &new_structure,
+            &old_projection,
+        )
+        .unwrap();
+        match plan {
+            Err(reason) => assert_eq!(reason, expected),
+            Ok(_) => panic!("expected {expected:?}, got a successful window plan"),
+        }
+    }
+
+    #[test]
+    fn plan_window_reparse_reports_island_boundary_changed() {
+        // The edit lands inside the WAML heading/content span of an existing
+        // island, which the island-boundary guard refuses outright.
+        let previous_src = "# Document\n## Attributes\none\n";
+        let start = previous_src.find("one").unwrap();
+        assert_plan_reason(
+            previous_src,
+            "# Document\n## Attributes\ntwo\n",
+            &[TextChange {
+                old_range: range(start, start + "one".len()),
+                replacement: Arc::from("two"),
+            }],
+            FullReparseReason::IslandBoundaryChanged,
+        );
+    }
+
+    #[test]
+    fn plan_window_reparse_reports_frontmatter_boundary_changed() {
+        assert_plan_reason(
+            "body\n",
+            "---\ntype: x\n---\nbody\n",
+            &[TextChange {
+                old_range: range(0, 0),
+                replacement: Arc::from("---\ntype: x\n---\n"),
+            }],
+            FullReparseReason::FrontmatterBoundaryChanged,
+        );
+    }
+
+    #[test]
+    fn plan_window_reparse_reports_heading_boundary_changed() {
+        assert_plan_reason(
+            "# H\nbody\n",
+            "## H\nbody\n",
+            &[TextChange {
+                old_range: range(0, 1),
+                replacement: Arc::from("##"),
+            }],
+            FullReparseReason::HeadingBoundaryChanged,
+        );
+    }
+
+    #[test]
+    fn plan_window_reparse_reports_markdown_container_boundary_changed() {
+        assert_plan_reason(
+            "body\n",
+            "- body\n",
+            &[TextChange {
+                old_range: range(0, 0),
+                replacement: Arc::from("- "),
+            }],
+            FullReparseReason::MarkdownContainerBoundaryChanged,
+        );
+    }
+
+    fn range(start: usize, end: usize) -> TextRange {
+        TextRange::new(
+            TextSize::try_from_usize(start).unwrap(),
+            TextSize::try_from_usize(end).unwrap(),
+        )
+        .unwrap()
     }
 }
