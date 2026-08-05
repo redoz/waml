@@ -326,37 +326,6 @@ impl App {
                 }
                 opened
             }
-            crate::navigation::NavigationTarget::DirectoryRaw { address } => {
-                // The raw OKF layer's route (Task D3): built via
-                // `open_folder_raw` (`Chain::raw()`) instead of the
-                // declared-chain path above -- reached only through an
-                // explicit affordance, never leaked into the declared
-                // listing.
-                let Some(document) = crate::documents::open_folder_raw(
-                    self.session.okf_analysis(),
-                    &address,
-                    self.chain_limits,
-                ) else {
-                    self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
-                    return false;
-                };
-                let tab_id = document.tab_id;
-                self.documents.transition(
-                    cx,
-                    &self.ui,
-                    &self.session,
-                    DocumentCommand::Open {
-                        document,
-                        persistent: disposition == crate::navigation::OpenDisposition::Persistent,
-                    },
-                );
-                let opened = self.documents.active_id() == tab_id;
-                if opened {
-                    cx.redraw_all();
-                    self.set_navigation_message(cx, None);
-                }
-                opened
-            }
             crate::navigation::NavigationTarget::ExternalUrl(url) => match browser.open(cx, &url) {
                 Ok(()) => {
                     self.set_navigation_message(cx, None);
