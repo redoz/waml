@@ -65,18 +65,44 @@ pub fn navigation_for(action: &FolderRowAction) -> Option<NavigationTarget> {
     }
 }
 
-fn row_view(row: &Row, table: &[(&str, Icon)]) -> FolderRowView {
-    let (icon, _diagnostic) = resolve_icon(row.icon.as_ref(), &row.target, table, "", 0);
-    FolderRowView {
-        icon,
-        label: row.label.clone(),
-        blurb: row.blurb.clone(),
-        action: action_for(row),
-    }
+fn row_view(
+    row: &Row,
+    table: &[(&str, Icon)],
+    file: &str,
+) -> (FolderRowView, Option<waml::diagnostic::Diagnostic>) {
+    let (icon, diagnostic) = resolve_icon(row.icon.as_ref(), &row.target, table, file, 0);
+    (
+        FolderRowView {
+            icon,
+            label: row.label.clone(),
+            blurb: row.blurb.clone(),
+            action: action_for(row),
+        },
+        diagnostic,
+    )
 }
 
-pub fn row_views(rows: &[Row], table: &[(&str, Icon)]) -> Vec<FolderRowView> {
-    rows.iter().map(|row| row_view(row, table)).collect()
+/// The display shape of every row, plus every `UnknownIcon` warning resolving
+/// them produced. The diagnostics are returned rather than dropped because
+/// this listing's diagnostics strip is the only place such a warning can
+/// reach a reader -- a stage stamping a name nothing resolves otherwise just
+/// degrades to the default glyph, silently.
+///
+/// `file` is the directory address the rows were projected for, matching what
+/// the chain's own run-level diagnostics carry (`view/chain.rs`).
+pub fn row_views(
+    rows: &[Row],
+    table: &[(&str, Icon)],
+    file: &str,
+) -> (Vec<FolderRowView>, Vec<waml::diagnostic::Diagnostic>) {
+    let mut views = Vec::with_capacity(rows.len());
+    let mut diagnostics = Vec::new();
+    for row in rows {
+        let (view, diagnostic) = row_view(row, table, file);
+        views.push(view);
+        diagnostics.extend(diagnostic);
+    }
+    (views, diagnostics)
 }
 
 /// Task G3's keyboard-gesture -> `RowOp` mapping. Pure and headless: the
@@ -202,6 +228,10 @@ pub struct FolderView {
     /// the chain from `directory` alone could resolve a different (possibly
     /// stale) middleware set if the bundle's frontmatter changed underneath.
     chain: Chain,
+    /// The display shape of `rows`, resolved ONCE at build time so the
+    /// `UnknownIcon` warnings that resolution produces can be folded into
+    /// `diagnostics` below instead of being re-derived and dropped per draw.
+    views: Vec<FolderRowView>,
     diagnostics: Vec<waml::diagnostic::Diagnostic>,
 }
 
@@ -214,17 +244,23 @@ impl FolderView {
         limits: ChainLimits,
         mode: crate::folder_projection::ViewMode,
     ) -> Option<FolderView> {
-        let (chain, rows, diagnostics) = crate::folder_projection::project_rows(
+        let (chain, rows, mut diagnostics) = crate::folder_projection::project_rows(
             analysis,
             directory,
             mode,
             limits,
             &crate::folder_projection::core_registry(),
         )?;
+        let (views, icon_diagnostics) =
+            row_views(&rows, &crate::folder_projection::icon_table(), directory);
+        // An icon name nothing resolves is a warning a reader must be able to
+        // see, not a silent degrade to the default glyph.
+        diagnostics.extend(icon_diagnostics);
         Some(FolderView {
             directory: directory.to_string(),
             rows,
             chain,
+            views,
             diagnostics,
         })
     }
@@ -237,7 +273,7 @@ impl FolderView {
     }
 
     pub fn row_views(&self) -> Vec<FolderRowView> {
-        row_views(&self.rows, &crate::folder_projection::icon_table())
+        self.views.clone()
     }
 
     /// The projected rows themselves, for Task G3's gesture->`RowOp`
@@ -871,5 +907,38 @@ mod tests {
                 to_directory: waml::okf::DirectoryAddress::parse("/sales").unwrap(),
             }]
         );
+    }
+
+    /// Task 8's warning path, reached from the surface that can show it: an
+    /// icon name nothing resolves degrades to the default glyph AND produces
+    /// an `UnknownIcon` diagnostic for the folder's diagnostics strip. Dropped
+    /// on the floor, the name silently draws as a plain folder and no reader
+    /// ever learns the stage named something that does not exist.
+    #[test]
+    fn an_unknown_icon_name_is_diagnosed_not_silently_degraded() {
+        let folder_row = || {
+            Row::new(
+                RowId {
+                    owner: waml::view::row::ViewId::new("test"),
+                    path: waml::view::row::RowPath::parse("pkg").unwrap(),
+                },
+                "Pkg".to_string(),
+                RowTarget::Folder("/pkg".to_string()),
+                None,
+            )
+            .unwrap()
+        };
+        let mut stamped = folder_row();
+        stamped.icon = Some(waml::view::row::IconId::new("no-such-icon"));
+
+        let table = crate::folder_projection::icon_table();
+        let (views, diagnostics) = row_views(&[stamped], &table, "/");
+        assert_eq!(views[0].icon, Icon::Folder, "degrades to the default glyph");
+        assert_eq!(diagnostics.len(), 1, "and says so: {diagnostics:?}");
+        assert_eq!(diagnostics[0].code, waml::diagnostic::DiagCode::UnknownIcon,);
+        assert_eq!(diagnostics[0].file, "/");
+
+        let (_, clean) = row_views(&[folder_row()], &table, "/");
+        assert!(clean.is_empty(), "a row with no icon is not a warning");
     }
 }

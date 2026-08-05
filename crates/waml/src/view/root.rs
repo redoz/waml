@@ -25,6 +25,15 @@ use super::surface::SurfaceId;
 /// must be able to say so: every row in such a chain is owned by this id.
 pub const ROOT_VIEW_OWNER: &str = "index";
 
+/// The `IconId` name this stage stamps on every folder row it mints.
+///
+/// Public because a surface that shows a directory it did NOT receive as a
+/// projected row (the tree's own root node, which has no parent listing to
+/// carry an icon) must resolve the same glyph a listing of that directory's
+/// parent would have given it -- two spellings of "the folder glyph" is the
+/// exact cross-surface disagreement the icon table exists to prevent.
+pub const FOLDER_ROW_ICON: &str = "book";
+
 fn folder_surface() -> SurfaceId {
     SurfaceId("folder".to_string())
 }
@@ -135,7 +144,7 @@ impl RootView {
             None,
         )
         .expect("a Folder target never requires a surface override");
-        row.icon = Some(IconId::new("book"));
+        row.icon = Some(IconId::new(FOLDER_ROW_ICON));
         row.caps = super::row::RowCaps {
             rename: true,
             delete: true,

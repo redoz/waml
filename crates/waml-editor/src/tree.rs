@@ -146,11 +146,34 @@ fn build_tree_with_registry(
     limits: waml::view::chain::ChainLimits,
     registry: &waml::view::chain::MiddlewareRegistry,
 ) -> ProjectTree {
+    /// The glyph a directory node draws when no projected row supplied one:
+    /// the tree's own ROOT (nothing lists it, so no row carries its icon) and
+    /// a repeat occurrence's shallow children. Resolved through `resolve_icon`
+    /// against the SAME table every projected row resolves through, from the
+    /// very `IconId` `RootView` stamps on the folder rows it mints -- so the
+    /// root row cannot draw one glyph while its own directory children draw
+    /// another. Any diagnostic is the caller's to fold into `view_degraded`.
+    fn default_directory_icon(
+        address: &waml::okf::DirectoryAddress,
+        table: &[(&str, Icon)],
+    ) -> (Icon, Option<waml::diagnostic::Diagnostic>) {
+        crate::extension_editor::resolve_icon(
+            Some(&waml::view::row::IconId::new(waml::view::FOLDER_ROW_ICON)),
+            &waml::view::row::RowTarget::Folder(address.as_str().to_string()),
+            table,
+            address.as_str(),
+            0,
+        )
+    }
+
     /// A directory node with no chain run and no children, used for a
     /// directory the build has already descended into once. The caller
     /// overwrites `key`, `title`, and the caps from the row that produced it,
     /// so the only thing this decides is "folder, nothing beneath it here".
-    fn shallow_directory_node(address: &waml::okf::DirectoryAddress) -> Option<TreeNode> {
+    fn shallow_directory_node(
+        address: &waml::okf::DirectoryAddress,
+        table: &[(&str, Icon)],
+    ) -> Option<TreeNode> {
         Some(TreeNode {
             key: waml::view::row::RowId {
                 owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
@@ -161,7 +184,7 @@ fn build_tree_with_registry(
             title: String::new(),
             kind: NavCategory::Directory,
             presentation: DocumentPresentation {
-                icon: Icon::Folder,
+                icon: default_directory_icon(address, table).0,
                 accent: crate::accent::tree_kind_color(NavCategory::Directory),
                 category: NavCategory::Directory,
             },
@@ -215,8 +238,12 @@ fn build_tree_with_registry(
                         .to_string()
                 }
             });
+        // Only the tree's ROOT keeps this presentation: every other directory
+        // node is overwritten below with the icon the row that produced it
+        // resolved to.
+        let (default_icon, default_icon_diagnostic) = default_directory_icon(address, table);
         let presentation = DocumentPresentation {
-            icon: Icon::Folder,
+            icon: default_icon,
             accent: crate::accent::tree_kind_color(NavCategory::Directory),
             category: NavCategory::Directory,
         };
@@ -279,9 +306,15 @@ fn build_tree_with_registry(
         // mode and shows the same list, so a second `resolved_view` here would
         // only be a chance to disagree (and a second full chain run per
         // directory, recursively, on every model refresh).
-        let view_degraded = projected
-            .as_ref()
-            .is_some_and(|(_, _, diagnostics)| !diagnostics.is_empty());
+        // An icon this build could not resolve (an `UnknownIcon` warning, from
+        // this node's own fallback glyph or from any child row's stamped one)
+        // degrades this directory too -- the tree has no diagnostics strip of
+        // its own, so the marker is the only way the warning reaches a reader
+        // here; opening the folder tab shows the text.
+        let mut view_degraded = default_icon_diagnostic.is_some()
+            || projected
+                .as_ref()
+                .is_some_and(|(_, _, diagnostics)| !diagnostics.is_empty());
         for row in projected.iter().flat_map(|(_, rows, _)| rows.iter()) {
             match &row.target {
                 waml::view::row::RowTarget::Folder(child_address) => {
@@ -293,7 +326,7 @@ fn build_tree_with_registry(
                     // shallow: same identity, same label, no chain run and
                     // no recursion.
                     let child_node = if repeat {
-                        shallow_directory_node(&child)
+                        shallow_directory_node(&child, table)
                     } else {
                         directory_node(
                             okf,
@@ -322,14 +355,15 @@ fn build_tree_with_registry(
                         // must draw the same glyph the folder tab for that
                         // same directory would, and `resolve_icon` is the
                         // one place both surfaces resolve through.
-                        let (icon, _diagnostic) = crate::extension_editor::resolve_icon(
+                        let (icon, diagnostic) = crate::extension_editor::resolve_icon(
                             row.icon.as_ref(),
                             &row.target,
                             table,
-                            "",
+                            address.as_str(),
                             0,
                         );
                         node.presentation.icon = icon;
+                        view_degraded |= diagnostic.is_some();
                         children.push(node);
                     }
                 }
@@ -1181,5 +1215,160 @@ mod tests {
         assert_eq!(tree_icons["Docs"], Icon::Book, "a plain folder");
         assert_eq!(tree_icons["Pkg"], folder_icons["Pkg"]);
         assert_eq!(tree_icons["Docs"], folder_icons["Docs"]);
+    }
+
+    /// The ROOT node is the one directory in the tree that no listing
+    /// produced, so nothing hands it a row icon. It must still draw the glyph
+    /// a directory row draws -- a root drawing the folder glyph while every
+    /// directory beneath it draws the book glyph is exactly the cross-surface
+    /// disagreement the icon table exists to prevent (visual check V5).
+    #[test]
+    fn the_root_node_draws_the_same_glyph_as_its_directory_children() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root
+
+* [Docs](docs/)
+",
+            ),
+            (
+                "docs/index.md",
+                "# Docs
+",
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let tree = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
+        let root = &tree.roots[0];
+        assert_eq!(root.presentation.icon, Icon::Book);
+        assert_eq!(
+            root.presentation.icon, root.children[0].presentation.icon,
+            "the root and its directory children draw one glyph, not two",
+        );
+    }
+
+    /// A stage that stamps an icon name nothing resolves. The core extension
+    /// ships no such stage -- the gate (`script_gate.rs`) asserts every
+    /// mintable name has a registered `Icon` -- but a third-party stage can,
+    /// and the tree must not degrade to the default glyph silently.
+    struct UnknownIcon;
+
+    impl waml::view::projection::Projection for UnknownIcon {
+        fn project(
+            &self,
+            ctx: &waml::view::projection::ProjectionCtx<'_>,
+            next: waml::view::projection::Next<'_>,
+        ) -> Result<Vec<waml::view::row::Row>, waml::view::projection::ProjectionError> {
+            let mut rows = next.project(ctx)?;
+            for row in &mut rows {
+                row.icon = Some(waml::view::row::IconId::new("no-such-icon"));
+            }
+            Ok(rows)
+        }
+
+        fn resolve(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _path: &waml::view::row::RowPath,
+        ) -> Result<Vec<waml::view::row::Row>, waml::view::projection::Unresolved> {
+            Err(waml::view::projection::Unresolved)
+        }
+
+        fn apply(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _path: &waml::view::row::RowPath,
+            _op: waml::view::projection::RowOp,
+            _next: waml::view::projection::Next<'_>,
+        ) -> Result<Vec<waml::okf::Op>, waml::view::projection::Unsupported> {
+            Err(waml::view::projection::Unsupported)
+        }
+
+        fn surface(
+            &self,
+            ctx: &waml::view::projection::ProjectionCtx<'_>,
+            next: waml::view::projection::Next<'_>,
+        ) -> waml::view::surface::SurfaceId {
+            next.surface(ctx)
+        }
+    }
+
+    struct UnknownIconExt;
+
+    impl waml::extension::CoreExtension for UnknownIconExt {
+        fn name(&self) -> &str {
+            "unknown-icon-test"
+        }
+
+        fn middleware(&self) -> Vec<(&'static str, waml::extension::MiddlewareFactory)> {
+            vec![(
+                "unknown-icon",
+                std::sync::Arc::new(|| {
+                    Box::new(UnknownIcon) as Box<dyn waml::view::projection::Projection>
+                }),
+            )]
+        }
+
+        fn profiles(&self) -> Vec<waml::profile::ProfileDef> {
+            Vec::new()
+        }
+    }
+
+    /// The tree has no diagnostics strip, so its degraded marker is the only
+    /// way an `UnknownIcon` warning can reach a reader here. Without it the
+    /// row simply draws the default glyph and nothing anywhere says why.
+    #[test]
+    fn an_unknown_icon_name_marks_the_directory_degraded() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "---
+view: unknown-icon
+---
+# Root
+
+* [Docs](docs/)
+",
+            ),
+            (
+                "docs/index.md",
+                "# Docs
+",
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let registry = waml::view::chain::MiddlewareRegistry::from_extensions(&[
+            &waml::extension::CoreExt,
+            &UnknownIconExt,
+        ])
+        .unwrap();
+
+        let tree = build_tree_with_registry(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+            &registry,
+        );
+        let root = &tree.roots[0];
+        assert_eq!(
+            root.children[0].presentation.icon,
+            Icon::Folder,
+            "an unresolvable name degrades to the target's default glyph",
+        );
+        assert!(
+            root.view_degraded,
+            "an unresolvable icon name must be visible as a degraded listing",
+        );
     }
 }
