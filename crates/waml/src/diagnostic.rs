@@ -57,6 +57,12 @@ pub enum DiagCode {
     InvalidInteractionUse,
     InteractionUseCycle,
     UnsupportedSequenceForm,
+    UnknownViewMiddleware,
+    InvalidViewParams,
+    ViewStageFailed,
+    ViewDepthExceeded,
+    ViewCycle,
+    UnknownSurface,
 }
 
 impl DiagCode {
@@ -105,6 +111,12 @@ impl DiagCode {
             DiagCode::InvalidInteractionUse => "invalid-interaction-use",
             DiagCode::InteractionUseCycle => "interaction-use-cycle",
             DiagCode::UnsupportedSequenceForm => "unsupported-sequence-form",
+            DiagCode::UnknownViewMiddleware => "unknown-view-middleware",
+            DiagCode::InvalidViewParams => "invalid-view-params",
+            DiagCode::ViewStageFailed => "view-stage-failed",
+            DiagCode::ViewDepthExceeded => "view-depth-exceeded",
+            DiagCode::ViewCycle => "view-cycle",
+            DiagCode::UnknownSurface => "unknown-surface",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
@@ -120,7 +132,8 @@ impl DiagCode {
             | DiagCode::UninvolvedLifeline
             | DiagCode::FragmentZeroOperands
             | DiagCode::EmptyOperandStream
-            | DiagCode::FragmentNestingTooDeep => Severity::Warning,
+            | DiagCode::FragmentNestingTooDeep
+            | DiagCode::UnknownSurface => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -230,6 +243,22 @@ mod tests {
             Severity::Warning
         );
         assert_eq!(DiagCode::InstanceOfUnresolved.severity(), Severity::Warning);
+
+        assert_eq!(
+            DiagCode::UnknownViewMiddleware.as_str(),
+            "unknown-view-middleware"
+        );
+        assert_eq!(DiagCode::UnknownViewMiddleware.severity(), Severity::Error);
+        assert_eq!(DiagCode::InvalidViewParams.as_str(), "invalid-view-params");
+        assert_eq!(DiagCode::InvalidViewParams.severity(), Severity::Error);
+        assert_eq!(DiagCode::ViewStageFailed.as_str(), "view-stage-failed");
+        assert_eq!(DiagCode::ViewStageFailed.severity(), Severity::Error);
+        assert_eq!(DiagCode::ViewDepthExceeded.as_str(), "view-depth-exceeded");
+        assert_eq!(DiagCode::ViewDepthExceeded.severity(), Severity::Error);
+        assert_eq!(DiagCode::ViewCycle.as_str(), "view-cycle");
+        assert_eq!(DiagCode::ViewCycle.severity(), Severity::Error);
+        assert_eq!(DiagCode::UnknownSurface.as_str(), "unknown-surface");
+        assert_eq!(DiagCode::UnknownSurface.severity(), Severity::Warning);
     }
 
     #[test]

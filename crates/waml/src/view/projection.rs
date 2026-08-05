@@ -122,10 +122,8 @@ pub trait Projection {
 
 /// Identity middleware — forwards everything to the rest of the chain.
 /// Used as the filter-shaped test double by the chain runner tests
-/// (`pass_through_is_the_identity_on_every_method`, Task B5); unused until
-/// that consumer lands, hence the dead_code allow below.
+/// (`pass_through_chain_equals_root_only_chain`, `view::chain::tests`).
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) struct PassThrough;
 
 #[cfg(test)]
