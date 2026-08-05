@@ -17,6 +17,7 @@ use makepad_widgets::*;
 
 use crate::cursor;
 use crate::folder_view::{FolderRowAction, FolderRowView};
+use crate::icons::{Icon, IconSet};
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -44,13 +45,17 @@ script_mod! {
             }
         }
 
-        bullet := Label {
-            width: Fit
-            text: "\u{2022}"
-            draw_text +: {
-                color: atlas.text_dim
-                text_style: fonts.text_label
-            }
+        // Colour-only holder (never drawn): the immediate-mode glyph copies
+        // `color` from this per draw, matching `recent_row.rs`'s `draw_pkg`
+        // pattern -- no RGBA crosses Rust.
+        draw_icon +: { color: atlas.text_dim }
+
+        // Icon anchor: a 16x16 spacer reserving the flow slot the bullet used
+        // to occupy. `Icon::draw` (Task 12) draws the row's resolved `Icon`
+        // immediate-mode over this rect in `draw_walk`.
+        icon_anchor := View {
+            width: 16.0
+            height: 16.0
         }
 
         textcol := View {
@@ -139,6 +144,20 @@ pub enum FolderRowClickAction {
 pub struct FolderRow {
     #[deref]
     view: View,
+    /// SDF icon set (shared Atlas material), drawn via `IconSet::draw` --
+    /// the `recent_row.rs` pattern (Task 12).
+    #[live]
+    icons: IconSet,
+    /// Colour-only holder, copied into the glyph tint per draw.
+    #[live]
+    draw_icon: DrawColor,
+    /// This row's resolved icon, bound in `set_row`.
+    #[rust]
+    icon: Icon,
+    /// The icon anchor's absolute rect, captured during `draw_walk` for the
+    /// immediate-mode glyph drawn over it.
+    #[rust]
+    icon_rect: Rect,
     /// Whether this row has a navigation target -- gates both the hover wash
     /// and the click. A `Virtual` row (`FolderRowAction::None`) is drawn but
     /// never clickable, matching `action_for`.
@@ -182,7 +201,11 @@ impl Widget for FolderRow {
         self.view
             .draw_bg
             .set_uniform(cx, live_id!(hover), &[if tinted { 1.0 } else { 0.0 }]);
-        self.view.draw_walk(cx, scope, walk)
+        let step = self.view.draw_walk(cx, scope, walk);
+        self.icon_rect = self.view.view(cx, ids!(icon_anchor)).area().rect(cx);
+        self.icons
+            .draw(cx, self.icon, self.icon_rect, self.draw_icon.color);
+        step
     }
 }
 
@@ -201,13 +224,7 @@ impl FolderRow {
         focused: bool,
         label_override: Option<&str>,
     ) {
-        // Task 10 moved the projected glyph from a `&str` bullet to a real
-        // `Icon`; the bullet Label itself is replaced by an icon-drawing
-        // anchor View in Task 12 (`recent_row.rs`'s `IconSet::draw` pattern).
-        // Until then this keeps drawing the placeholder bullet unconditionally
-        // so the row view-model's shape can change ahead of the widget.
-        let _ = row.icon;
-        self.view.label(cx, ids!(bullet)).set_text(cx, "\u{2022}");
+        self.icon = row.icon;
         self.view
             .label(cx, ids!(textcol.label))
             .set_text(cx, label_override.unwrap_or(&row.label));

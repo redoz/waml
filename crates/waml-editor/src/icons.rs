@@ -4612,11 +4612,12 @@ impl IconSet {
 
 /// One variant per catalog glyph, in the exact `IconSet` field order (the
 /// load-bearing order invariant: enum == field == DSL == `ALL` == `label`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 // The catalog is deliberately complete: unused glyph variants are kept so the
 // enum == field == DSL == `get` == `ALL` == `label` order invariant holds.
 #[allow(dead_code)]
 pub enum Icon {
+    #[default]
     Package,
     Message,
     PackagePlus,
