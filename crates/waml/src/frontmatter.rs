@@ -7,7 +7,11 @@ use waml_syntax::{
 /// a hostile `[[[[…]]]]` or deeply nested `{"a":{"a":…}}` value must produce a
 /// value or an error, never a stack overflow. Real frontmatter nests one or
 /// two levels deep.
-const MAX_VALUE_DEPTH: usize = 32;
+///
+/// Pinned to the parser's own frontmatter cap rather than a second, tighter
+/// number: nesting the parser accepts as clean must read back whole, or the
+/// reader silently truncates a document the user is about to save.
+const MAX_VALUE_DEPTH: usize = waml_syntax::FRONTMATTER_MAX_NESTING_DEPTH;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -1353,6 +1357,39 @@ mod tests {
         // Beyond the cap the bracketed remainder is kept verbatim as a Str.
         let rendered = render_value(&parsed);
         assert_eq!(parse_value(&rendered), parsed, "capped value round-trips");
+    }
+
+    /// The model's cap must never be tighter than the parser's: nesting the
+    /// parser accepts without a diagnostic has to read back whole. When the
+    /// reader stopped short, the levels past the cap — and the leaf under
+    /// them — were silently rewritten away on the next save.
+    #[test]
+    fn nesting_the_parser_accepts_reads_back_without_truncation() {
+        let levels = 40;
+        let mut source = String::from("---\n");
+        for level in 0..levels {
+            source.push_str(&"  ".repeat(level));
+            source.push_str("k:\n");
+        }
+        source.push_str(&"  ".repeat(levels));
+        source.push_str("leaf: 1\n---\n");
+
+        let fm = parse_frontmatter_for_test(&source);
+        let mut value = fm.get("k").expect("the top-level key is present");
+        for level in 1..levels {
+            let FmValue::Map(entries) = value else {
+                panic!("level {level} truncated to {value:?}");
+            };
+            value = &entries
+                .iter()
+                .find(|(key, _)| key == "k")
+                .unwrap_or_else(|| panic!("level {level} has no nested `k`"))
+                .1;
+        }
+        assert_eq!(
+            value,
+            &FmValue::Map(vec![("leaf".to_string(), FmValue::Num(1.0))])
+        );
     }
 
     #[cfg(feature = "serde")]

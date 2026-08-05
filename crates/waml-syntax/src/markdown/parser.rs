@@ -1414,12 +1414,14 @@ fn build_frontmatter_mapping(
                 continue;
             }
             // Nesting cap, mirroring `MD_MAX_CONTAINER_DEPTH` for markdown
-            // containers: every frame becomes one more level of the green
+            // containers and published as `FRONTMATTER_MAX_NESTING_DEPTH` so
+            // tree consumers cap at the same depth: every frame becomes one
+            // more level of the green
             // tree, and reading or dropping that tree recurses. Without the
             // cap a document of progressively indented `k:` lines — cheap to
             // write, cheaper still to hit on wasm's 1MB stack — overflows the
             // stack instead of producing a diagnostic.
-            if stack.len() >= super::MD_MAX_CONTAINER_DEPTH {
+            if stack.len() >= super::FRONTMATTER_MAX_NESTING_DEPTH {
                 clean = false;
                 diagnostics.push(diagnostic(
                     OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,

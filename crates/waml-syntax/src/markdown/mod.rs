@@ -40,6 +40,13 @@ use scan::{scan_blocks, ScanEvent, ScanProfile, ScanTag, ScanTagKind};
 /// parser runs on (wasm's default ~1 MB, with large recursive frames).
 pub(crate) const MD_MAX_CONTAINER_DEPTH: usize = 64;
 
+/// Maximum frontmatter block-structure nesting depth the parser will
+/// materialize (see `parser.rs`), published so every consumer that walks the
+/// resulting tree caps at the SAME depth. A consumer capping lower would read
+/// nesting the parser accepted — and diagnosed as clean — back as `Null`, then
+/// write that truncation into the user's document on the next save.
+pub const FRONTMATTER_MAX_NESTING_DEPTH: usize = MD_MAX_CONTAINER_DEPTH;
+
 /// Maximum inline nesting depth (emphasis, strikethrough, link labels, ...)
 /// `inline.rs::parse_inlines` will recurse into. Beyond this, the
 /// strikethrough/emphasis/link arms are skipped so the delimiters flush as

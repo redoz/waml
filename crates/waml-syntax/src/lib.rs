@@ -30,7 +30,7 @@ pub use markdown::{
     MarkdownSourceRole, MarkdownStructureMap, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot,
     MarkdownSyntaxSpan, MarkdownSyntaxUpdate, MarkdownTableCell, OkfMarkdownLanguage,
     OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity, TableAlignment, TaskListState,
-    WamlLanguageIsland, WamlSectionKind,
+    WamlLanguageIsland, WamlSectionKind, FRONTMATTER_MAX_NESTING_DEPTH,
 };
 pub use red::{
     RewriteError, SyntaxElement, SyntaxLocator, SyntaxNode, SyntaxPath, SyntaxSeverity,
