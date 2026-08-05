@@ -1898,6 +1898,64 @@ mod tests {
     }
 
     #[test]
+    fn groups_linked_fixture_clusters_and_never_overlaps() {
+        // Groups + relationships + no `## Layout` section: the one combination
+        // previously uncovered anywhere in the tree (see plan Task 6). Members
+        // must land inside their own hull and sibling hulls must never overlap.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/groups-linked");
+        let model = load::load_model(&dir).unwrap();
+        let diagram = &model.diagrams[0];
+        assert!(
+            diagram.layout.is_empty(),
+            "fixture must have no ## Layout section"
+        );
+        assert!(use_stress_default(diagram), "expected stress path");
+
+        let (scene, _) = build_scene(
+            &model,
+            diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(
+            scene.groups.len(),
+            2,
+            "expected the Users and Billing hulls"
+        );
+
+        fn rect_inside(r: Rect, hull: Rect) -> bool {
+            r.x >= hull.x - 1e-6
+                && r.y >= hull.y - 1e-6
+                && r.x + r.w <= hull.x + hull.w + 1e-6
+                && r.y + r.h <= hull.y + hull.h + 1e-6
+        }
+        fn rects_overlap(a: Rect, b: Rect) -> bool {
+            a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+        }
+
+        let users = ["customer", "account"];
+        let billing = ["order", "invoice"];
+        for (hull, members) in [
+            (scene.groups[0].rect, users.as_slice()),
+            (scene.groups[1].rect, billing.as_slice()),
+        ] {
+            for key in members {
+                let node = scene.nodes.iter().find(|n| n.key == *key).unwrap();
+                assert!(
+                    rect_inside(node.rect, hull),
+                    "{key} rect not inside its group hull"
+                );
+            }
+        }
+        assert!(
+            !rects_overlap(scene.groups[0].rect, scene.groups[1].rect),
+            "sibling hulls overlap: {:?} vs {:?}",
+            scene.groups[0].rect,
+            scene.groups[1].rect
+        );
+    }
+
+    #[test]
     fn conflict_statement_reads_as_dsl() {
         use waml::layout::Direction;
         let c = SceneConflict {
