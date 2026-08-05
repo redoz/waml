@@ -683,3 +683,44 @@ fn quoted_and_bare_keys_that_decode_alike_report_a_duplicate() {
         .iter()
         .any(|d| d.code == OkfSyntaxDiagnosticCode::DuplicateFrontmatterKey));
 }
+
+/// The slice scanner must never disagree with the frontmatter classifier: it
+/// answers `Some` only for a canonical fence, and `None` — "parse the whole
+/// document" — for every shape the two rules resolve differently.
+#[test]
+fn leading_frontmatter_slice_bails_out_where_the_classifier_could_disagree() {
+    use crate::markdown::{has_leading_frontmatter_fence, leading_frontmatter_slice};
+
+    assert_eq!(
+        leading_frontmatter_slice("---\ntype: uml.Class\n---\n# Order\n"),
+        Some("---\ntype: uml.Class\n---\n")
+    );
+    assert_eq!(
+        leading_frontmatter_slice("---\ntype: uml.Class\n...\n# Order\n"),
+        Some("---\ntype: uml.Class\n...\n")
+    );
+    assert_eq!(
+        leading_frontmatter_slice("\u{feff}---\na: 1\n---\n"),
+        Some("\u{feff}---\na: 1\n---\n")
+    );
+
+    for ambiguous in [
+        "---   \na: 1\n---\n",              // trailing space on the open fence
+        "---\na: 1\n---  \n",               // trailing space on the close fence
+        "---\na: 1\n  ---\n",               // indented close fence
+        "---\nnote: |\n  ---\na: 1\n---\n", // fence hidden in a block scalar
+        "---\na: 1\n",                      // unclosed, classifier recovers it
+        "# Order\n",                        // no frontmatter at all
+    ] {
+        assert_eq!(
+            leading_frontmatter_slice(ambiguous),
+            None,
+            "expected a bail-out for {ambiguous:?}"
+        );
+    }
+
+    assert!(has_leading_frontmatter_fence("---   \na: 1\n"));
+    assert!(has_leading_frontmatter_fence("\u{feff}---\na: 1\n---\n"));
+    assert!(!has_leading_frontmatter_fence("# Order\n"));
+    assert!(!has_leading_frontmatter_fence("  ---\na: 1\n---\n"));
+}

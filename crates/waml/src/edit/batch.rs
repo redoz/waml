@@ -9,8 +9,8 @@ use crate::{okf, uml};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use waml_syntax::{
-    leading_frontmatter_slice, parse_markdown, DocumentRevision, MarkdownDialect,
-    OkfMarkdownSyntaxKind, SourceText, SyntaxElement,
+    has_leading_frontmatter_fence, leading_frontmatter_slice, parse_markdown, DocumentRevision,
+    MarkdownDialect, OkfMarkdownSyntaxKind, SourceText, SyntaxElement,
 };
 
 /// One primitive edit, either an OKF structural operation or a UML domain
@@ -199,9 +199,36 @@ fn snapshot(source: &SourceBundle) -> BTreeMap<BundlePath, Arc<String>> {
 /// (a cheap line scan away, see [`leading_frontmatter_slice`]) instead of the
 /// whole document. A directory move of N documents now costs N small parses
 /// instead of N full-document parses.
+///
+/// The slice scanner is deliberately stricter than the parser's frontmatter
+/// classifier, and answers `None` for every shape the two could resolve
+/// differently (odd fence whitespace, a fence inside a block scalar, an
+/// unclosed-but-recovered block). Those fall back to the full parse, so the
+/// resolved id is exactly what a full parse yields — the fast path is an
+/// optimization, never a behavior change.
 fn claimed_id(path: &BundlePath, text: &Arc<String>) -> Option<String> {
-    let slice = leading_frontmatter_slice(text.as_str())?;
-    let source = SourceText::from_shared(Arc::new(slice.to_owned())).ok()?;
+    let ty = claimed_type(text)?;
+    uml::recognizes_type(&crate::model::ElementType::parse(&ty))
+        .then(|| path.concept_id().map(str::to_owned))
+        .flatten()
+}
+
+/// The frontmatter `type` of `text`, read from the leading frontmatter slice
+/// when that slice is provably equivalent and from the whole document
+/// otherwise.
+fn claimed_type(text: &Arc<String>) -> Option<String> {
+    if !has_leading_frontmatter_fence(text.as_str()) {
+        return None;
+    }
+    let shared = match leading_frontmatter_slice(text.as_str()) {
+        Some(slice) => Arc::new(slice.to_owned()),
+        None => text.clone(),
+    };
+    frontmatter_type(shared)
+}
+
+fn frontmatter_type(shared: Arc<String>) -> Option<String> {
+    let source = SourceText::from_shared(shared).ok()?;
     let snapshot = parse_markdown(
         DocumentRevision::INITIAL,
         source,
@@ -218,9 +245,7 @@ fn claimed_id(path: &BundlePath, text: &Arc<String>) -> Option<String> {
     let crate::frontmatter::FmValue::Str(ty) = parsed.get("type")? else {
         return None;
     };
-    uml::recognizes_type(&crate::model::ElementType::parse(ty))
-        .then(|| path.concept_id().map(str::to_owned))
-        .flatten()
+    Some(ty.clone())
 }
 
 fn invalidations(
@@ -375,6 +400,70 @@ mod tests {
             }
             other => panic!("expected a Renamed invalidation, got {other:?}"),
         }
+    }
+
+    /// The slice fast path must never change what the full parse claims. Each
+    /// case is a frontmatter shape whose boundaries the slice scanner and the
+    /// parser's classifier resolve by different rules - the scanner bails out
+    /// and `claimed_type` falls back, so both sides must agree exactly.
+    #[test]
+    fn claimed_type_agrees_with_the_full_parse_for_every_frontmatter_shape() {
+        for (label, text) in [
+            ("canonical", "---\ntype: uml.Class\n---\n# Order\n"),
+            (
+                "trailing spaces on both fences",
+                "---   \ntype: uml.Class\n---  \n# Order\n",
+            ),
+            (
+                "indented close fence",
+                "---\ntype: uml.Class\n  ---\n# Order\n",
+            ),
+            ("dot close fence", "---\ntype: uml.Class\n...\n# Order\n"),
+            (
+                "byte order mark",
+                "\u{feff}---\ntype: uml.Class\n---\n# Order\n",
+            ),
+            ("unclosed but recovered", "---\ntype: uml.Class\n"),
+            (
+                "fence hidden in a block scalar",
+                "---\nnote: |\n  ---\ntype: uml.Class\n---\n# Order\n",
+            ),
+            ("no frontmatter at all", "# Order\n"),
+        ] {
+            let shared = Arc::new(text.to_owned());
+            assert_eq!(
+                claimed_type(&shared),
+                frontmatter_type(shared.clone()),
+                "{label}"
+            );
+        }
+    }
+
+    /// Parity alone would be satisfied by two `None`s: pin that the shapes the
+    /// parser does accept still reach a resolved id through `claimed_id`.
+    #[test]
+    fn claimed_id_resolves_the_shapes_the_parser_accepts() {
+        for text in [
+            "---\ntype: uml.Class\n---\n# Order\n",
+            "---   \ntype: uml.Class\n---  \n# Order\n",
+            "---\ntype: uml.Class\n...\n# Order\n",
+            "\u{feff}---\ntype: uml.Class\n---\n# Order\n",
+        ] {
+            let bundle = SourceBundle::try_from_pairs([("sales/order.md", text)]).unwrap();
+            let document = &bundle.documents()[0];
+            assert_eq!(
+                claimed_id(document.path(), document.text_shared()).as_deref(),
+                Some("sales/order"),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn claimed_id_is_none_without_a_leading_frontmatter_fence() {
+        let bundle = SourceBundle::try_from_pairs([("sales/order.md", "# Order\n")]).unwrap();
+        let document = &bundle.documents()[0];
+        assert_eq!(claimed_id(document.path(), document.text_shared()), None);
     }
 
     #[test]

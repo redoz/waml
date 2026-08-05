@@ -24,13 +24,14 @@ pub use markdown::scalar::{
     FrontmatterScalarKind,
 };
 pub use markdown::{
-    leading_frontmatter_slice, parse_markdown, reparse_markdown, ConfirmedHeading, FencedCodeInfo,
-    HtmlTagFilter, MarkdownEntity, MarkdownHeading, MarkdownImage, MarkdownLink, MarkdownLinkKind,
-    MarkdownList, MarkdownListKind, MarkdownRawHtml, MarkdownReparseOutcome, MarkdownSemanticRole,
-    MarkdownSourceRole, MarkdownStructureMap, MarkdownSyntaxQueries, MarkdownSyntaxSnapshot,
-    MarkdownSyntaxSpan, MarkdownSyntaxUpdate, MarkdownTableCell, OkfMarkdownLanguage,
-    OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode, SyntaxIdentity, TableAlignment, TaskListState,
-    WamlLanguageIsland, WamlSectionKind, FRONTMATTER_MAX_NESTING_DEPTH,
+    has_leading_frontmatter_fence, leading_frontmatter_slice, parse_markdown, reparse_markdown,
+    ConfirmedHeading, FencedCodeInfo, HtmlTagFilter, MarkdownEntity, MarkdownHeading,
+    MarkdownImage, MarkdownLink, MarkdownLinkKind, MarkdownList, MarkdownListKind, MarkdownRawHtml,
+    MarkdownReparseOutcome, MarkdownSemanticRole, MarkdownSourceRole, MarkdownStructureMap,
+    MarkdownSyntaxQueries, MarkdownSyntaxSnapshot, MarkdownSyntaxSpan, MarkdownSyntaxUpdate,
+    MarkdownTableCell, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode,
+    SyntaxIdentity, TableAlignment, TaskListState, WamlLanguageIsland, WamlSectionKind,
+    FRONTMATTER_MAX_NESTING_DEPTH,
 };
 pub use red::{
     RewriteError, SyntaxElement, SyntaxLocator, SyntaxNode, SyntaxPath, SyntaxSeverity,

@@ -205,18 +205,63 @@ fn normalize(mut ranges: Vec<TextRange>) -> Vec<TextRange> {
     normalized
 }
 
-/// Returns the leading frontmatter fence slice of `source` — from the
-/// opening `---` through the matching closing `---`/`...` line, inclusive —
-/// or `None` when `source` carries no closed leading frontmatter block. Cheap
-/// line scan, no tree built; callers that only need the frontmatter (e.g.
-/// classifying a document's claimed `type`/id without a full parse) can hand
-/// this small slice to [`crate::parse_markdown`] instead of the whole
-/// document. Uses the same fence-recognition rule as the shell pre-pass
-/// (`initial_frontmatter_end`), so it is consistent with how the full parser
-/// bounds the frontmatter block elsewhere in this module.
+/// Whether `source` opens with the frontmatter fence line the full parser
+/// requires — the classifier's own open rule: the first line, minus trailing
+/// horizontal whitespace and the line break, is exactly `---` at column 0
+/// (an optional BOM aside). When this is `false` the full parser produces no
+/// frontmatter at all, so a caller that only wants the frontmatter can stop
+/// without parsing anything.
+pub fn has_leading_frontmatter_fence(source: &str) -> bool {
+    let bom = usize::from(source.starts_with('\u{feff}')) * 3;
+    let Some(first_end) = line_end(source, bom) else {
+        return false;
+    };
+    source[bom..first_end]
+        .trim_end_matches(['\r', '\n'])
+        .trim_end_matches([' ', '\t'])
+        == "---"
+}
+
+/// Returns the leading frontmatter fence slice of `source` — from the opening
+/// `---` through the matching closing `---`/`...` line, inclusive — but ONLY
+/// when the block is unambiguous, meaning parsing this slice alone yields the
+/// same frontmatter the full parser (`parser::classify_frontmatter`) would.
+/// Cheap line scan, no tree built; callers that only need the frontmatter
+/// (e.g. classifying a document's claimed `type` without a full parse) can
+/// hand this small slice to [`crate::parse_markdown`].
+///
+/// `None` means "cannot prove it — parse the whole document", NEVER "there is
+/// no frontmatter" (use [`has_leading_frontmatter_fence`] for that question).
+/// This scan is deliberately stricter than the classifier, so every shape the
+/// two could resolve differently bails out here instead of silently
+/// disagreeing: a fence line carrying trailing whitespace or indentation
+/// (the classifier trims both, this does not), a fence that the classifier
+/// would skip because it sits inside a YAML block scalar, and an unclosed
+/// block the classifier recovers via `plausible_unclosed_frontmatter`.
 pub fn leading_frontmatter_slice(source: &str) -> Option<&str> {
-    let end = initial_frontmatter_end(source);
-    (end > 0).then(|| &source[..end])
+    let bom = usize::from(source.starts_with('\u{feff}')) * 3;
+    let first_end = line_end(source, bom)?;
+    if source[bom..first_end].trim_end_matches(['\r', '\n']) != "---" {
+        return None;
+    }
+    let mut at = first_end;
+    while let Some(end) = line_end(source, at) {
+        let content = source[at..end].trim_end_matches(['\r', '\n']);
+        if matches!(content, "---" | "...") {
+            return Some(&source[..end]);
+        }
+        // A fence the classifier would accept but this scan would not, and a
+        // block scalar that could hide a fence from the classifier, both make
+        // the two rules diverge — bail out and let the caller parse in full.
+        // `|`/`>` anywhere is a deliberate over-approximation of a block
+        // scalar header: cheap, and its only cost is a full parse.
+        if matches!(content.trim(), "---" | "...") || content.contains('|') || content.contains('>')
+        {
+            return None;
+        }
+        at = end;
+    }
+    None
 }
 
 fn initial_frontmatter_end(source: &str) -> usize {
