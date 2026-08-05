@@ -22,6 +22,23 @@ pub enum RowKind {
 }
 
 impl RowKind {
+    /// Every `RowKind` variant, in declaration order. The one place that
+    /// enumerates the ten kinds outside a `match` -- callers that need "all
+    /// of them" (an icon table, an exhaustiveness test) iterate this instead
+    /// of hand-listing the variants a second time.
+    pub const ALL: [RowKind; 10] = [
+        RowKind::Directory,
+        RowKind::OkfDocument,
+        RowKind::Class,
+        RowKind::Interface,
+        RowKind::Enum,
+        RowKind::DataType,
+        RowKind::Diagram,
+        RowKind::Behavior,
+        RowKind::Sequence,
+        RowKind::Note,
+    ];
+
     /// The shipped `IconId` name for this kind, kebab-case.
     pub fn as_icon_name(&self) -> &'static str {
         match self {

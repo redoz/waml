@@ -63,6 +63,7 @@ pub enum DiagCode {
     ViewDepthExceeded,
     ViewCycle,
     UnknownSurface,
+    UnknownIcon,
 }
 
 impl DiagCode {
@@ -117,6 +118,7 @@ impl DiagCode {
             DiagCode::ViewDepthExceeded => "view-depth-exceeded",
             DiagCode::ViewCycle => "view-cycle",
             DiagCode::UnknownSurface => "unknown-surface",
+            DiagCode::UnknownIcon => "unknown-icon",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
@@ -133,7 +135,8 @@ impl DiagCode {
             | DiagCode::FragmentZeroOperands
             | DiagCode::EmptyOperandStream
             | DiagCode::FragmentNestingTooDeep
-            | DiagCode::UnknownSurface => Severity::Warning,
+            | DiagCode::UnknownSurface
+            | DiagCode::UnknownIcon => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -259,6 +262,8 @@ mod tests {
         assert_eq!(DiagCode::ViewCycle.severity(), Severity::Error);
         assert_eq!(DiagCode::UnknownSurface.as_str(), "unknown-surface");
         assert_eq!(DiagCode::UnknownSurface.severity(), Severity::Warning);
+        assert_eq!(DiagCode::UnknownIcon.as_str(), "unknown-icon");
+        assert_eq!(DiagCode::UnknownIcon.severity(), Severity::Warning);
     }
 
     #[test]

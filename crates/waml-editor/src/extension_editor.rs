@@ -16,13 +16,17 @@
 //! `waml::view::surface::resolve_surface`.
 
 use waml::analysis::OkfAnalysis;
+use waml::diagnostic::{DiagCode, Diagnostic};
 use waml::view::chain::ChainLimits;
-use waml::view::row::{Row, RowId, RowTarget};
+use waml::view::kind::RowKind;
+use waml::view::row::{IconId, Row, RowId, RowTarget};
 
 use crate::class_diagram_view::ClassDiagramView;
 use crate::doc_view::DocView;
+use crate::document::NavCategory;
 use crate::folder_view::FolderView;
 use crate::generic_okf_view::GenericOkfView;
+use crate::icons::{Icon, IconSet};
 use crate::markdown_hosts::SharedMarkdownAssetHost;
 use crate::source_view::SourceView;
 
@@ -62,6 +66,12 @@ pub trait EditorExtension {
     /// gate assertion, not at runtime.
     fn name(&self) -> &str;
     fn surfaces(&self) -> Vec<(&'static str, SurfaceFactory)>;
+    /// The `IconId` names this extension's stage can stamp, paired with the
+    /// `Icon` they resolve to. Default empty: most extensions mint no icons
+    /// of their own and rely on the row's default-by-target degrade path.
+    fn icons(&self) -> Vec<(&'static str, Icon)> {
+        Vec::new()
+    }
 }
 
 /// Today's four surfaces: markdown reading, source, canvas, and the folder
@@ -83,6 +93,72 @@ impl EditorExtension for CoreEditorExtension {
             ("canvas", Box::new(open_canvas)),
             ("folder", Box::new(open_folder)),
         ]
+    }
+
+    fn icons(&self) -> Vec<(&'static str, Icon)> {
+        let mut icons: Vec<(&'static str, Icon)> = RowKind::ALL
+            .into_iter()
+            .filter_map(|kind| {
+                IconSet::icon_for(NavCategory::from(kind)).map(|icon| (kind.as_icon_name(), icon))
+            })
+            .collect();
+        icons.push(("book", Icon::Book));
+        icons
+    }
+}
+
+/// `uml`'s editor half: no surfaces of its own yet (it decorates rows the
+/// core surfaces already open), and one icon -- the package/box glyph its
+/// `UmlView` middleware stamps on `uml-domain` folders.
+#[allow(dead_code)]
+pub struct UmlEditorExtension;
+
+impl EditorExtension for UmlEditorExtension {
+    fn name(&self) -> &str {
+        "uml"
+    }
+
+    fn surfaces(&self) -> Vec<(&'static str, SurfaceFactory)> {
+        Vec::new()
+    }
+
+    fn icons(&self) -> Vec<(&'static str, Icon)> {
+        vec![("box", Icon::Box)]
+    }
+}
+
+/// Resolve a row's `IconId` to the `Icon` it draws, against the table an
+/// editor build actually registered. `None` (no stage stamped an icon)
+/// degrades to the row's default by target -- a pure degrade path now that
+/// every shipped stage names its icon. An unknown name degrades to that same
+/// default **and** emits an `UnknownIcon` warning diagnostic, mirroring
+/// `waml::view::surface::resolve_surface` exactly.
+#[allow(dead_code)]
+pub fn resolve_icon(
+    icon: Option<&IconId>,
+    target: &RowTarget,
+    known: &[(&str, Icon)],
+    file: &str,
+    line: usize,
+) -> (Icon, Option<Diagnostic>) {
+    let default = match target {
+        RowTarget::Folder(_) => Icon::Folder,
+        RowTarget::Concept(_) | RowTarget::Virtual => Icon::FileText,
+    };
+    match icon {
+        None => (default, None),
+        Some(id) => match known.iter().find(|(name, _)| *name == id.as_str()) {
+            Some((_, icon)) => (*icon, None),
+            None => {
+                let diagnostic = Diagnostic::new(
+                    DiagCode::UnknownIcon,
+                    format!("unknown icon `{id}`, falling back to the default glyph"),
+                    file,
+                    line,
+                );
+                (default, Some(diagnostic))
+            }
+        },
     }
 }
 
@@ -150,6 +226,85 @@ mod tests {
     #[test]
     fn core_editor_extension_name_is_core() {
         assert_eq!(CoreEditorExtension.name(), "core");
+    }
+
+    #[test]
+    fn every_row_kind_resolves_to_the_same_icon_it_resolves_to_through_icon_set() {
+        for kind in RowKind::ALL {
+            let via_extension = CoreEditorExtension
+                .icons()
+                .into_iter()
+                .find(|(name, _)| *name == kind.as_icon_name())
+                .map(|(_, icon)| icon);
+            let via_icon_set = IconSet::icon_for(NavCategory::from(kind));
+            assert_eq!(
+                via_extension, via_icon_set,
+                "kind {:?} disagrees between CoreEditorExtension::icons and IconSet::icon_for",
+                kind
+            );
+        }
+        let names: BTreeSet<&'static str> = CoreEditorExtension
+            .icons()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(names.contains("book"));
+    }
+
+    #[test]
+    fn uml_editor_extension_names_and_icons() {
+        let ext = UmlEditorExtension;
+        assert_eq!(ext.name(), "uml");
+        assert!(ext.surfaces().is_empty());
+        assert_eq!(ext.icons(), vec![("box", Icon::Box)]);
+    }
+
+    #[test]
+    fn resolve_icon_a_known_name_resolves_silently() {
+        let table = CoreEditorExtension.icons();
+        let (icon, diagnostic) = resolve_icon(
+            Some(&IconId::new("class")),
+            &RowTarget::Concept("order".to_string()),
+            &table,
+            "index.waml",
+            1,
+        );
+        assert_eq!(icon, Icon::PanelTop);
+        assert!(diagnostic.is_none());
+    }
+
+    #[test]
+    fn resolve_icon_an_unknown_name_degrades_and_warns() {
+        let table = CoreEditorExtension.icons();
+        let (icon, diagnostic) = resolve_icon(
+            Some(&IconId::new("no-such-icon")),
+            &RowTarget::Concept("order".to_string()),
+            &table,
+            "index.waml",
+            3,
+        );
+        assert_eq!(icon, Icon::FileText);
+        let diagnostic = diagnostic.expect("unknown icon must produce a diagnostic");
+        assert_eq!(diagnostic.code, DiagCode::UnknownIcon);
+        assert_eq!(diagnostic.severity, waml::diagnostic::Severity::Warning);
+    }
+
+    #[test]
+    fn resolve_icon_none_degrades_with_no_diagnostic() {
+        let table = CoreEditorExtension.icons();
+        let (icon, diagnostic) = resolve_icon(
+            None,
+            &RowTarget::Folder("/sales".to_string()),
+            &table,
+            "index.waml",
+            1,
+        );
+        assert_eq!(icon, Icon::Folder);
+        assert!(diagnostic.is_none());
+
+        let (icon, diagnostic) = resolve_icon(None, &RowTarget::Virtual, &table, "index.waml", 1);
+        assert_eq!(icon, Icon::FileText);
+        assert!(diagnostic.is_none());
     }
 
     fn analysis() -> waml::analysis::OkfAnalysis {
