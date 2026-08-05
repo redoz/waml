@@ -993,16 +993,8 @@ impl Widget for ProjectTree {
                 }
             }
             if let Some((id, abs)) = file_tree.file_right_clicked(actions) {
-                if let Some(key) = self.id_to_key.get(&id) {
-                    if self.openable_ids.contains(&id) {
-                        cx.widget_action(
-                            uid,
-                            ProjectTreeAction::ContextMenu {
-                                key: key.clone(),
-                                anchor: abs,
-                            },
-                        );
-                    }
+                if let Some(key) = self.context_menu_key(id) {
+                    cx.widget_action(uid, ProjectTreeAction::ContextMenu { key, anchor: abs });
                 }
             }
         }
@@ -1345,6 +1337,18 @@ impl ProjectTree {
             None
         }
         find(&self.tree.roots, key)
+    }
+
+    /// The subject `App` dispatches the node context menu against: a *concept
+    /// id*, not the row's flat `key_string`. Rows are keyed on `RowId`
+    /// (owner + path), which no document provider can resolve, so the menu
+    /// only opens for an openable row that carries a concept id -- the same
+    /// pair the left-click navigation path uses.
+    fn context_menu_key(&self, id: LiveId) -> Option<String> {
+        if !self.openable_ids.contains(&id) {
+            return None;
+        }
+        self.id_to_concept.get(&id).cloned()
     }
 
     pub fn navigation(&self, actions: &Actions) -> Option<NavigationIntent> {
@@ -2112,6 +2116,30 @@ mod tests {
 
         assert!(!panel.toggle_directory(&mut cx, &k("/unknown")));
         assert_eq!(panel.open_directories, before);
+    }
+
+    /// Regression: the context menu must carry the row's *concept id*. Rows
+    /// are keyed on `RowId` (`owner\u{1}path`), which no document provider
+    /// resolves, so emitting `id_to_key` made every menu command a no-op.
+    #[test]
+    fn context_menu_key_is_the_concept_id_not_the_row_key() {
+        let (mut cx, mut panel) = project_tree_test_context();
+        panel.set_view(
+            &mut cx,
+            NavView::Browse(ProjectTreeData {
+                roots: vec![node(
+                    "/",
+                    "bundle",
+                    TreeKind::Directory,
+                    vec![node("customer", "Customer", TreeKind::Class, vec![])],
+                )],
+            }),
+        );
+
+        let row = LiveId::from_str(&k("customer"));
+        assert_eq!(panel.context_menu_key(row).as_deref(), Some("customer"));
+        // Directories are not openable: no menu.
+        assert_eq!(panel.context_menu_key(LiveId::from_str(&k("/"))), None);
     }
 
     #[test]
