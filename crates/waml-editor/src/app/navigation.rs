@@ -322,6 +322,12 @@ impl App {
                 // changed".
                 let opened = self.documents.active_id() == tab_id;
                 if opened {
+                    // The `Document` arm reaches this through
+                    // `transition_to_location`; a folder open bypasses that
+                    // path entirely, so without this the shell projections --
+                    // including the tree panel's selected row -- keep pointing
+                    // at whatever document was active before the folder.
+                    self.sync_document_shell(cx);
                     cx.redraw_all();
                     self.set_navigation_message(cx, None);
                 }

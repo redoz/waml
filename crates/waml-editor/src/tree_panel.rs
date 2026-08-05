@@ -49,9 +49,14 @@ script_mod! {
         ..mod.draw.DrawQuad
         color: instance(#fff)
         // Ride-along alpha so a chevron fades with its rows while its parent
-        // folder collapses (see `draw_row_chevron`); an instance, like `open`,
-        // because each row carries its own value in one batch.
-        fade: instance(1.0)
+        // folder collapses (see `draw_row_chevron`). Per-row like `open`, and
+        // for the same reason: both are Rust `#[live] f32` fields on
+        // `DrawChevron`, so they already ride the instance buffer. Re-declaring
+        // it here as `instance(1.0)` assigned a shader-field OBJECT over a slot
+        // the Rust struct had already typed `f32`, which the script VM rejected
+        // at load ("type mismatch for property fade"). A plain literal is a
+        // default VALUE for that existing field, which is all this ever wanted.
+        fade: 1.0
         stroke_w: uniform(1.3)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)

@@ -1035,6 +1035,30 @@ fn activating_a_document_highlights_its_row_by_the_panels_own_key() {
     );
 }
 
+/// Opening a folder bypasses `transition_to_location`, so the shell sync that
+/// drives the tree highlight has to be invoked by the `Directory` arm itself.
+/// Without it the tree keeps the previously active document's row lit while a
+/// folder tab is on screen.
+#[test]
+fn opening_a_folder_highlights_its_row() {
+    let (mut cx, mut app) = navigation_app_with_active_order();
+    let mut browser = FakeBrowser::default();
+
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/sales".into(),
+        },
+        OpenDisposition::Preview,
+        &mut browser,
+    ));
+
+    assert_eq!(
+        project_tree_selected_key(&cx, &app).as_deref(),
+        Some(tree_key("/sales").as_str())
+    );
+}
+
 #[test]
 fn breadcrumb_reveal_pins_tree_without_navigation() {
     let (mut cx, mut app) = navigation_app_with_active_order();
