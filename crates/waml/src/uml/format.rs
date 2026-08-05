@@ -224,88 +224,24 @@ fn canonical_prefix(prefix: &str) -> String {
     let close_start = 4 + relative_close;
     let close_end = close_start + delimiter_len;
     let rest = normalized[close_end..].trim_start_matches('\n');
-    let frontmatter = &normalized[4..close_start];
+    // The fence is re-rendered through the shared reader and writer, so the
+    // formatter speaks exactly the dialect the model reads back. A private
+    // second spelling here drifts from `waml::frontmatter` and rewrites a
+    // quoted `"null"` into a real null on the next format.
+    let Some(parsed) = crate::frontmatter::parse_frontmatter_source(&normalized[..close_end])
+    else {
+        return normalized;
+    };
     let mut out = String::from("---\n");
-    for line in frontmatter.lines() {
-        if let Some((key, value)) = line.split_once(':') {
-            out.push_str(key.trim());
-            out.push_str(": ");
-            out.push_str(&canonical_frontmatter_value(value));
-        } else {
-            out.push_str(line.trim_end());
-        }
+    let rendered = crate::frontmatter::render_frontmatter(&parsed);
+    if !rendered.is_empty() {
+        out.push_str(&rendered);
         out.push('\n');
     }
     out.push_str("---\n");
     out.push('\n');
     out.push_str(rest);
     out
-}
-
-fn canonical_frontmatter_value(value: &str) -> String {
-    let value = value.trim();
-    if let Some(inner) = value
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-    {
-        let items = inner
-            .split(',')
-            .map(|item| item.trim())
-            .filter(|item| !item.is_empty())
-            .map(canonical_frontmatter_value)
-            .collect::<Vec<_>>();
-        return format!("[{}]", items.join(", "));
-    }
-    if let Some(inner) = value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-    {
-        let decoded = inner.replace("\\\"", "\"").replace("\\\\", "\\");
-        return render_frontmatter_string(&decoded);
-    }
-    if frontmatter_number(value) {
-        if let Ok(number) = value.parse::<f64>() {
-            return if number.fract() == 0.0 {
-                format!("{}", number as i64)
-            } else {
-                format!("{number}")
-            };
-        }
-    }
-    if matches!(value, "true" | "false") {
-        return value.to_owned();
-    }
-    render_frontmatter_string(value)
-}
-
-fn frontmatter_number(value: &str) -> bool {
-    let value = value.strip_prefix('-').unwrap_or(value);
-    let mut parts = value.split('.');
-    let whole = parts.next().unwrap_or_default();
-    let fraction = parts.next();
-    !whole.is_empty()
-        && whole.bytes().all(|byte| byte.is_ascii_digit())
-        && fraction.map_or(true, |digits| {
-            !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
-        })
-        && parts.next().is_none()
-}
-
-fn render_frontmatter_string(value: &str) -> String {
-    let needs_quote = value.is_empty()
-        || value != value.trim()
-        || matches!(value, "true" | "false")
-        || frontmatter_number(value)
-        || (value.starts_with('[') && value.ends_with(']'))
-        || value.starts_with('"')
-        || value.contains('"')
-        || value.contains('\\')
-        || value.contains('\n');
-    if needs_quote {
-        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        value.to_owned()
-    }
 }
 
 fn top_level_section_starts<'a>(

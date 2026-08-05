@@ -362,6 +362,72 @@ fn formatter_preserves_unowned_claimed_body_while_formatting_both_sides() {
     assert!(actual.contains("## Values\n- Ready"));
 }
 
+/// The formatter rewrites frontmatter, so it must speak the same YAML 1.2 core
+/// dialect as the reader. A quoted string that looks like a `null`, a number in
+/// a non-decimal spelling, or an infinity must survive a format round trip as a
+/// string, and nested structure must keep its indentation.
+#[test]
+fn formatter_keeps_frontmatter_scalars_in_the_readers_dialect() {
+    let source = concat!(
+        "---\n",
+        "type: uml.Class\n",
+        "title: \"null\"\n",
+        "tilde: \"~\"\n",
+        "inf: \".inf\"\n",
+        "nan: \".nan\"\n",
+        "hex: \"0x10\"\n",
+        "octal: \"0o17\"\n",
+        "no: NO\n",
+        "owner:\n",
+        "  name: Ada\n",
+        "  team: \"12\"\n",
+        "tags: [a, b]\n",
+        "---\n",
+        "# C\n",
+        "\n",
+        "## Values\n",
+        "- Ready\n",
+    );
+    let candidate = prepared("class.md", source, 90);
+    let action = Formatter
+        .format(
+            ActionContext::from_prepared(&candidate).unwrap(),
+            document(&candidate, "class.md"),
+        )
+        .unwrap();
+    let formatted = apply(&candidate, action);
+    let actual = formatted
+        .document(&BundlePath::parse("class.md").unwrap())
+        .unwrap()
+        .text()
+        .to_owned();
+    for expected in [
+        "title: \"null\"\n",
+        "tilde: \"~\"\n",
+        "inf: \".inf\"\n",
+        "nan: \".nan\"\n",
+        "hex: \"0x10\"\n",
+        "octal: \"0o17\"\n",
+        "no: NO\n",
+        "owner:\n  name: Ada\n  team: \"12\"\n",
+        "tags: [a, b]\n",
+    ] {
+        assert!(
+            actual.contains(expected),
+            "missing {expected:?} in {actual:?}"
+        );
+    }
+
+    let reparsed = prepared("class.md", &actual, 91);
+    let second = Formatter
+        .format(
+            ActionContext::from_prepared(&reparsed).unwrap(),
+            document(&reparsed, "class.md"),
+        )
+        .unwrap();
+    assert!(second.changes[0].edits.is_empty(), "{second:?}");
+}
+
 #[test]
 fn formatter_preserves_multiline_crlf_unicode_body_between_owned_regions() {
     let body = "Body 😀 stays.  \r\n\r\n- raw café item  \r\n> quoted `code`\r\n";

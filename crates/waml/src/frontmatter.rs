@@ -394,6 +394,30 @@ fn fold_radix_digits(digits: &str, radix: f64) -> f64 {
     })
 }
 
+/// Reads the leading frontmatter fence of a whole document's `source`, using
+/// the same parser and the same value rules as every other reader. Returns
+/// `None` when the source carries no closed frontmatter fence — a caller that
+/// is about to rewrite the fence must then leave the bytes alone rather than
+/// guess at their meaning.
+pub(crate) fn parse_frontmatter_source(source: &str) -> Option<Frontmatter> {
+    let text = waml_syntax::SourceText::from_shared(std::sync::Arc::new(source.into())).ok()?;
+    let snapshot = waml_syntax::parse_markdown(
+        waml_syntax::DocumentRevision::INITIAL,
+        text,
+        waml_syntax::MarkdownDialect::WAML_DEFAULT,
+    )
+    .ok()?;
+    if !snapshot.diagnostics().is_empty() {
+        return None;
+    }
+    snapshot
+        .tree()
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .find_map(|node| parse_closed_syntax(&node))
+}
+
 pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Option<Frontmatter> {
     if node.kind() != OkfMarkdownSyntaxKind::Frontmatter
         || !node.children().any(|element| {
