@@ -3,8 +3,8 @@
 //! (spec 2026-08-05-folder-view-middleware-design.md).
 //!
 //! Modeled on `generic_okf_view.rs` -- the closest existing read-only
-//! `DocView` + provider pair. `FolderListView` (Task D1b) binds the row
-//! view-model here to a widget; nothing in this module draws.
+//! `DocView` + provider pair. `FolderListView` (`folder_list.rs`) is the
+//! widget the row view-model here is bound to; nothing in this module draws.
 
 use makepad_widgets::*;
 
@@ -22,10 +22,6 @@ use crate::navigation::NavigationTarget;
 /// One projected row, ready for display: bullet, label, optional blurb, and
 /// the navigation action a click on it performs. Order matches the chain's
 /// projected order.
-///
-/// Unused outside tests until Task D1b binds it to `FolderListView`; that
-/// commit removes this allow.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FolderRowView {
     pub bullet: &'static str,
@@ -37,10 +33,6 @@ pub struct FolderRowView {
 /// What clicking a projected row does. `Virtual` rows (no file behind them)
 /// carry no navigation target -- surfaced as `None` rather than guessed;
 /// a future middleware that wants one must say so explicitly.
-///
-/// Unused outside tests until Task D1b binds it to `FolderListView`; that
-/// commit removes this allow.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FolderRowAction {
     OpenConcept(String),
@@ -48,12 +40,7 @@ pub enum FolderRowAction {
     None,
 }
 
-/// The row -> navigation-action mapping, plain function form -- no widget
-/// behind it yet.
-///
-/// Unused outside tests until Task D1b binds it to `FolderListView`; that
-/// commit removes this allow.
-#[allow(dead_code)]
+/// The row -> navigation-action mapping, plain function form.
 pub fn action_for(row: &Row) -> FolderRowAction {
     match &row.target {
         RowTarget::Concept(concept_id) => FolderRowAction::OpenConcept(concept_id.clone()),
@@ -64,10 +51,6 @@ pub fn action_for(row: &Row) -> FolderRowAction {
 
 /// The row -> navigation-target mapping the shell's `NavigationIntent`
 /// expects, built from the action-enum above.
-///
-/// Unused outside tests until Task D1b/D2 wire a row click to navigation;
-/// that commit removes this allow.
-#[allow(dead_code)]
 pub fn navigation_for(action: &FolderRowAction) -> Option<NavigationTarget> {
     match action {
         FolderRowAction::OpenConcept(concept_id) => Some(NavigationTarget::Document {
@@ -81,9 +64,6 @@ pub fn navigation_for(action: &FolderRowAction) -> Option<NavigationTarget> {
     }
 }
 
-/// Unused outside tests until Task D1b binds it to `FolderListView`; that
-/// commit removes this allow.
-#[allow(dead_code)]
 fn row_view(row: &Row) -> FolderRowView {
     FolderRowView {
         bullet: "\u{2022}",
@@ -93,9 +73,6 @@ fn row_view(row: &Row) -> FolderRowView {
     }
 }
 
-/// Unused outside tests until Task D1b binds it to `FolderListView`; that
-/// commit removes this allow.
-#[allow(dead_code)]
 pub fn row_views(rows: &[Row]) -> Vec<FolderRowView> {
     rows.iter().map(row_view).collect()
 }
@@ -113,9 +90,6 @@ pub fn folder_document_tab_id(directory: &str) -> LiveId {
 /// these; this task only carries them).
 pub struct FolderView {
     directory: String,
-    /// Unused as a field read outside tests until Task D1b binds it to
-    /// `FolderListView`; that commit removes this allow.
-    #[allow(dead_code)]
     rows: Vec<Row>,
     diagnostics: Vec<waml::diagnostic::Diagnostic>,
 }
@@ -157,9 +131,6 @@ impl FolderView {
         &self.directory
     }
 
-    /// Unused outside tests until Task D1b binds it to `FolderListView`;
-    /// that commit removes this allow.
-    #[allow(dead_code)]
     pub fn row_views(&self) -> Vec<FolderRowView> {
         row_views(&self.rows)
     }
@@ -177,18 +148,30 @@ impl DocView for FolderView {
         DocViewIdentity::Folder
     }
 
-    fn sync(&mut self, _cx: &mut Cx, _body: &BodyWidgets, _data: ViewData<'_>) {
-        // No widget bound yet -- Task D1b wires `FolderListView` here.
+    fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {
+        body.show_folder_view(cx);
+        body.folder_list().set_rows(cx, self.row_views());
     }
 
     fn handle(
         &mut self,
         _cx: &mut Cx,
-        _body: &BodyWidgets,
-        _actions: &Actions,
+        body: &BodyWidgets,
+        actions: &Actions,
         _data: ViewData<'_>,
     ) -> ViewOutcome {
-        ViewOutcome::default()
+        let mut outcome = ViewOutcome::default();
+        if let Some(index) = body.folder_list().row_opened(actions) {
+            if let Some(row) = self.rows.get(index) {
+                if let Some(target) = navigation_for(&action_for(row)) {
+                    outcome.navigation = Some(crate::navigation::NavigationIntent::Resolved {
+                        target,
+                        disposition: crate::navigation::OpenDisposition::Preview,
+                    });
+                }
+            }
+        }
+        outcome
     }
 
     fn chrome(&self) -> BodyChrome {

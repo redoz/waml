@@ -1,0 +1,331 @@
+//! `FolderListView`: the widget surface for a folder's projected chain
+//! (Task D1b, spec 2026-08-05-folder-view-middleware-design.md). Renders the
+//! `FolderRowView` view-model built in `folder_view.rs`: bullet, label,
+//! optional blurb, one row per projected `Row`, in order. Modeled on
+//! `start_screen.rs`'s capped `FlatList` of real row widgets -- here the list
+//! is uncapped (a folder's declared view controls its own row count) and
+//! scrolls instead of clamping.
+//!
+//! `FolderRow` is the per-row widget (declared in this same file: a widget
+//! must register before any consumer that embeds it, and `FolderListView`'s
+//! `FlatList` template is that consumer, so `FolderRow` is registered first in
+//! the `script_mod!` block below). It only fires a click for a row whose
+//! `action` carries a navigation target -- a `Virtual` row (no file behind it)
+//! draws inert, matching `action_for`'s `FolderRowAction::None`.
+
+use makepad_widgets::*;
+
+use crate::cursor;
+use crate::folder_view::{FolderRowAction, FolderRowView};
+
+script_mod! {
+    use mod.prelude.widgets_internal.*
+    use mod.atlas
+    use mod.widgets.*
+    use mod.text.*
+    use mod.fonts
+
+    mod.widgets.FolderRowBase = #(FolderRow::register_widget(vm))
+
+    mod.widgets.FolderRow = set_type_default() do mod.widgets.FolderRowBase{
+        width: Fill
+        height: Fit
+        flow: Right
+        align: Align{y: 0.0}
+        padding: Inset{left: 4.0, right: 4.0, top: 6.0, bottom: 6.0}
+        spacing: 8.0
+        show_bg: true
+        draw_bg +: {
+            color: atlas.accent
+            hover: uniform(0.0)
+            pixel: fn() {
+                let a = 0.10 * self.hover
+                return vec4(self.color.x * a, self.color.y * a, self.color.z * a, a)
+            }
+        }
+
+        bullet := Label {
+            width: Fit
+            text: "\u{2022}"
+            draw_text +: {
+                color: atlas.text_dim
+                text_style: fonts.text_label
+            }
+        }
+
+        textcol := View {
+            width: Fill
+            height: Fit
+            flow: Down
+            spacing: 2.0
+            label := Label {
+                width: Fill
+                text: ""
+                draw_text +: {
+                    color: atlas.text
+                    text_style: fonts.text_label
+                }
+            }
+            blurb := Label {
+                width: Fill
+                text: ""
+                visible: false
+                draw_text +: {
+                    color: atlas.text_dim
+                    text_style: fonts.text_micro
+                }
+            }
+        }
+    }
+
+    mod.widgets.FolderListViewBase = #(FolderListView::register_widget(vm))
+
+    mod.widgets.FolderListView = set_type_default() do mod.widgets.FolderListViewBase{
+        width: Fill
+        height: Fill
+        flow: Down
+        rows_scroll := ScrollYView {
+            width: Fill
+            height: Fill
+            padding: Inset{left: 24.0, right: 24.0, top: 16.0, bottom: 24.0}
+            rows_list := FlatList {
+                width: Fill
+                height: Fill
+                flow: Down
+                spacing: 2.0
+                Row := mod.widgets.FolderRow { }
+            }
+        }
+    }
+}
+
+/// Emitted (grouped through the parent `FlatList`) when a row with a
+/// navigation target is clicked. `Virtual` rows never fire this.
+#[derive(Clone, Debug, Default)]
+pub enum FolderRowClickAction {
+    #[default]
+    None,
+    Clicked,
+}
+
+#[derive(Script, ScriptHook, Widget)]
+pub struct FolderRow {
+    #[deref]
+    view: View,
+    /// Whether this row has a navigation target -- gates both the hover wash
+    /// and the click. A `Virtual` row (`FolderRowAction::None`) is drawn but
+    /// never clickable, matching `action_for`.
+    #[rust]
+    clickable: bool,
+    #[rust]
+    hovered: bool,
+}
+
+impl Widget for FolderRow {
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, _scope: &mut Scope) {
+        if !self.clickable {
+            return;
+        }
+        let uid = self.widget_uid();
+        match event.hits(cx, self.view.area()) {
+            Hit::FingerUp(fe) if fe.is_primary_hit() && fe.is_over => {
+                cx.widget_action(uid, FolderRowClickAction::Clicked);
+            }
+            Hit::FingerHoverIn(_) => {
+                self.hovered = true;
+                cursor::hover_in(cx, MouseCursor::Hand);
+                self.view.redraw(cx);
+            }
+            Hit::FingerHoverOut(_) => {
+                self.hovered = false;
+                cursor::hover_out(cx);
+                self.view.redraw(cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.view
+            .draw_bg
+            .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
+        self.view.draw_walk(cx, scope, walk)
+    }
+}
+
+impl FolderRow {
+    /// Bind one projected row's view-model onto this widget instance.
+    pub fn set_row(&mut self, cx: &mut Cx, row: &FolderRowView) {
+        self.view.label(cx, ids!(bullet)).set_text(cx, row.bullet);
+        self.view
+            .label(cx, ids!(textcol.label))
+            .set_text(cx, &row.label);
+        let blurb = row.blurb.as_deref().unwrap_or("");
+        self.view.label(cx, ids!(textcol.blurb)).set_text(cx, blurb);
+        self.view
+            .view(cx, ids!(textcol.blurb))
+            .set_visible(cx, !blurb.is_empty());
+        let clickable = !matches!(row.action, FolderRowAction::None);
+        if self.clickable != clickable {
+            self.clickable = clickable;
+            self.hovered = false;
+        }
+    }
+
+    pub fn clicked(&self, actions: &Actions) -> bool {
+        actions
+            .find_widget_action(self.widget_uid())
+            .is_some_and(|a| matches!(a.cast(), FolderRowClickAction::Clicked))
+    }
+}
+
+impl FolderRowRef {
+    pub fn set_row(&self, cx: &mut Cx, row: &FolderRowView) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_row(cx, row);
+        }
+    }
+    pub fn clicked(&self, actions: &Actions) -> bool {
+        self.borrow().is_some_and(|inner| inner.clicked(actions))
+    }
+}
+
+/// Emitted when a row with a navigation target is clicked, indexing the rows
+/// last passed to `set_rows`.
+#[derive(Clone, Debug, Default)]
+pub enum FolderListViewAction {
+    #[default]
+    None,
+    RowOpened(usize),
+}
+
+#[derive(Script, ScriptHook, Widget)]
+pub struct FolderListView {
+    #[deref]
+    view: View,
+    #[rust]
+    rows: Vec<FolderRowView>,
+}
+
+impl Widget for FolderListView {
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        self.view.handle_event(cx, event, scope);
+        self.widget_match_event(cx, event, scope);
+    }
+
+    fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
+            if let Some(mut list) = item.as_flat_list().borrow_mut() {
+                for (i, row_data) in self.rows.iter().enumerate() {
+                    let item_id = LiveId::from_str(&format!("{i}:{}", row_data.label));
+                    let row = list.item(cx, item_id, id!(Row)).unwrap();
+                    row.as_folder_row().set_row(cx, row_data);
+                    row.draw_all(cx, &mut Scope::empty());
+                }
+            }
+        }
+        DrawStep::done()
+    }
+}
+
+/// Map a `FlatList` row `item_id` back to its index in `rows`. Rows are keyed
+/// `"{index}:{label}"` in the draw loop, so re-derive each candidate and
+/// match. Pure, so the round-trip is unit-tested without a `Cx`.
+fn row_index_for(rows: &[FolderRowView], item_id: LiveId) -> Option<usize> {
+    rows.iter()
+        .enumerate()
+        .position(|(i, row)| LiveId::from_str(&format!("{i}:{}", row.label)) == item_id)
+}
+
+impl WidgetMatchEvent for FolderListView {
+    fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions, _scope: &mut Scope) {
+        let uid = self.widget_uid();
+        let list = self.view.flat_list(cx, ids!(rows_list));
+        for (item_id, item) in list.items_with_actions(actions) {
+            if item.as_folder_row().clicked(actions) {
+                if let Some(i) = row_index_for(&self.rows, item_id) {
+                    cx.widget_action(uid, FolderListViewAction::RowOpened(i));
+                }
+            }
+        }
+    }
+}
+
+impl FolderListView {
+    /// Replace the rendered rows. `FolderView::sync` calls this with the
+    /// resolved chain's projected rows, in order.
+    pub fn set_rows(&mut self, cx: &mut Cx, rows: Vec<FolderRowView>) {
+        self.rows = rows;
+        self.view.redraw(cx);
+    }
+
+    /// The row index that was clicked in `actions`, if any. `FolderView::handle`
+    /// maps it back to a navigation target via `action_for`/`navigation_for`.
+    pub fn row_opened(&self, actions: &Actions) -> Option<usize> {
+        match self.actions_action(actions) {
+            FolderListViewAction::RowOpened(i) => Some(i),
+            FolderListViewAction::None => None,
+        }
+    }
+
+    fn actions_action(&self, actions: &Actions) -> FolderListViewAction {
+        actions
+            .find_widget_action(self.widget_uid())
+            .map(|item| item.cast())
+            .unwrap_or_default()
+    }
+}
+
+impl FolderListViewRef {
+    pub fn set_rows(&self, cx: &mut Cx, rows: Vec<FolderRowView>) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_rows(cx, rows);
+        }
+    }
+    pub fn row_opened(&self, actions: &Actions) -> Option<usize> {
+        self.borrow().and_then(|inner| inner.row_opened(actions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(label: &str, action: FolderRowAction) -> FolderRowView {
+        FolderRowView {
+            bullet: "\u{2022}",
+            label: label.to_string(),
+            blurb: None,
+            action,
+        }
+    }
+
+    #[test]
+    fn folder_row_action_default_is_none() {
+        assert!(matches!(
+            FolderRowClickAction::default(),
+            FolderRowClickAction::None
+        ));
+    }
+
+    #[test]
+    fn folder_list_action_default_is_none() {
+        assert!(matches!(
+            FolderListViewAction::default(),
+            FolderListViewAction::None
+        ));
+    }
+
+    #[test]
+    fn row_index_round_trips_through_item_id() {
+        let rows = vec![
+            row("Orders", FolderRowAction::OpenConcept("orders".into())),
+            row("Sales", FolderRowAction::OpenFolder("/sales".into())),
+        ];
+        for (i, r) in rows.iter().enumerate() {
+            let item_id = LiveId::from_str(&format!("{i}:{}", r.label));
+            assert_eq!(row_index_for(&rows, item_id), Some(i));
+        }
+        assert_eq!(row_index_for(&rows, LiveId::from_str("unknown")), None);
+    }
+}

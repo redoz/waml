@@ -64,6 +64,7 @@ script_mod! {
     use mod.widgets.DocumentHeader
     use mod.widgets.MarkdownEditor
     use mod.widgets.MarkdownViewer
+    use mod.widgets.FolderListView
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -449,6 +450,27 @@ script_mod! {
                                     // The view-source toggle lives in the
                                     // breadcrumb header's trailing button row,
                                     // not on this surface.
+                                }
+                                // A folder's own view: the resolved middleware
+                                // chain's projected rows. Mutually exclusive
+                                // with the canvas and both markdown surfaces
+                                // above (`FolderView::sync` -> `show_folder_view`).
+                                folder_view_surface := View{
+                                    width: Fill
+                                    height: Fill
+                                    visible: false
+                                    show_bg: true
+                                    draw_bg +: {
+                                        color: atlas.surface
+                                        pixel: fn() {
+                                            return vec4(self.color.rgb * self.color.a, self.color.a)
+                                        }
+                                    }
+                                    flow: Down
+                                    folder_list := FolderListView{
+                                        width: Fill
+                                        height: Fill
+                                    }
                                 }
                                 // Tool dock: left edge of the CENTER, vertically
                                 // centered. Anchors to the real center rect now,
@@ -1181,6 +1203,10 @@ impl AppMain for App {
         crate::action_link::script_mod(vm);
         crate::recent_row::script_mod(vm);
         crate::start_screen::script_mod(vm);
+        // `FolderRow` must register before `FolderListView`'s own DSL, which
+        // mounts it as the `FlatList` row template -- an unregistered child
+        // silently becomes a dead, invisible node.
+        crate::folder_list::script_mod(vm);
         // Registered so the design surface compiles into the crate, but never
         // mounted in the live UI -- it is viewable only via the
         // `node_editor_harness` bin (see `node_design_editor.rs`).

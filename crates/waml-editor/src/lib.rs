@@ -44,6 +44,7 @@ mod edge_labels;
 pub mod editor_history;
 mod editor_session;
 mod folder_documents;
+mod folder_list;
 mod folder_view;
 pub mod fonts;
 mod fonts_overlay;

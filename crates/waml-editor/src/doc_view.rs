@@ -9,6 +9,7 @@ use waml::source::SourceBundle;
 
 use crate::document::EditIntent;
 use crate::editor_session::SessionChange;
+use crate::folder_list::{FolderListViewRef, FolderListViewWidgetRefExt};
 use crate::icons::Icon;
 use crate::navigation::NavigationIntent;
 use crate::popup::base::PopupItem;
@@ -29,6 +30,7 @@ pub struct BodyWidgets {
     behavior_canvas: WidgetRef,
     markdown_editor: MarkdownEditorRef,
     markdown_viewer: MarkdownViewerRef,
+    folder_list: FolderListViewRef,
 }
 
 impl BodyWidgets {
@@ -43,6 +45,9 @@ impl BodyWidgets {
             markdown_viewer: ui
                 .widget(_cx, ids!(markdown_viewer_surface.viewer_body.viewer))
                 .as_markdown_viewer(),
+            folder_list: ui
+                .widget(_cx, ids!(folder_view_surface.folder_list))
+                .as_folder_list_view(),
         }
     }
 
@@ -176,6 +181,9 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(markdown_viewer_surface))
             .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(folder_view_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
         self.set_canvas_interaction_enabled(cx, true);
     }
@@ -186,6 +194,9 @@ impl BodyWidgets {
             .set_visible(cx, true);
         self.ui
             .widget(cx, ids!(markdown_viewer_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(folder_view_surface))
             .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
@@ -201,8 +212,31 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(markdown_viewer_surface))
             .set_visible(cx, true);
+        self.ui
+            .widget(cx, ids!(folder_view_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
+    }
+
+    /// Show the folder-listing surface (`folder_view_surface`), mutually
+    /// exclusive with the canvas and both markdown surfaces above.
+    pub fn show_folder_view(&self, cx: &mut Cx) {
+        self.ui
+            .widget(cx, ids!(markdown_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(markdown_viewer_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(folder_view_surface))
+            .set_visible(cx, true);
+        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.set_canvas_interaction_enabled(cx, false);
+    }
+
+    pub fn folder_list(&self) -> FolderListViewRef {
+        self.folder_list.clone()
     }
 
     pub fn markdown_editor(&self) -> MarkdownEditorRef {
