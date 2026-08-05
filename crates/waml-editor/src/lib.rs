@@ -100,6 +100,7 @@ mod telemetry;
 pub mod theme_atlas;
 mod tool_dock;
 mod tree;
+mod tree_layout;
 mod tree_panel;
 mod uml_documents;
 mod view_bar;

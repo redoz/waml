@@ -7,6 +7,37 @@ use waml::model::{BehaviorKind, ElementType, UmlMetaclass};
 
 pub type TreeKind = NavCategory;
 
+#[cfg(test)]
+pub mod test_support {
+    use super::*;
+
+    /// A minimal leaf `TreeNode` whose `key_string` is `key`. Callers mutate
+    /// the fields they care about.
+    pub fn node(key: &str) -> TreeNode {
+        TreeNode {
+            key: waml::view::row::RowId {
+                owner: waml::view::row::ViewId::new("test"),
+                path: waml::view::row::RowPath::parse(key).unwrap(),
+            },
+            address: None,
+            title: key.to_string(),
+            kind: TreeKind::OkfDocument,
+            presentation: DocumentPresentation {
+                icon: crate::icons::Icon::Package,
+                accent: None,
+                category: NavCategory::OkfDocument,
+            },
+            is_directory: false,
+            openable: false,
+            concept_id: None,
+            caps: waml::view::row::RowCaps::default(),
+            child_caps: waml::view::row::ChildCaps::default(),
+            view_degraded: false,
+            children: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeNode {
     /// The projected row's identity, NOT a file address. Stable across a
