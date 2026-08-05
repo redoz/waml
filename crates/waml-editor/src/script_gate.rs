@@ -121,3 +121,95 @@ fn mod_fonts_carries_exactly_the_twelve_role_keys() {
         "mod.fonts key set drifted from the 12 declared role tokens"
     );
 }
+
+/// Task E4: a `CoreExtension` whose middleware is reachable while its
+/// `EditorExtension` half is absent yields rows that cannot be opened -- the
+/// `script_mod!` failure mode exactly (a name registered on one side, silently
+/// missing on the other). Asserted here at gate time, not at runtime
+/// discovery: set equality on `name()` across the two registries.
+#[test]
+fn every_core_extension_has_a_paired_editor_extension_by_name() {
+    use crate::extension_editor::{CoreEditorExtension, EditorExtension};
+    use waml::extension::{CoreExt, CoreExtension};
+
+    let core_names: BTreeSet<&str> = [CoreExt.name()].into_iter().collect();
+    let editor_names: BTreeSet<&str> = [CoreEditorExtension.name()].into_iter().collect();
+    assert_eq!(
+        core_names, editor_names,
+        "every registered CoreExtension must have a same-named EditorExtension, \
+         or rows it projects can never be opened"
+    );
+}
+
+/// Task E4: enumerate every surface id the core side can actually mint --
+/// `default_surface`'s total match over `RowTarget` (the root view's default
+/// set) plus Task E3's `markdown`/`member:<href>` chain surface resolutions,
+/// which themselves bottom out in `default_surface` and mint no id outside
+/// that same set -- and assert each has a registered `SurfaceFactory`. A
+/// middleware that resolves a surface with no factory must fail the gate,
+/// not degrade silently in front of the user.
+#[test]
+fn every_surface_id_resolvable_by_a_registered_chain_has_a_registered_factory() {
+    use crate::extension_editor::{CoreEditorExtension, EditorExtension};
+    use waml::model::ElementType;
+    use waml::okf::Bundle;
+    use waml::source::SourceBundle;
+    use waml::view::row::RowTarget;
+    use waml::view::surface::default_surface;
+
+    let bundle_from = |path: &str, source: &str| -> Bundle {
+        let source_bundle = SourceBundle::try_from_pairs([(path, source)]).unwrap();
+        waml::analysis::prepare_candidate(source_bundle, None, 1)
+            .unwrap()
+            .into_parts()
+            .1
+            .bundle
+    };
+    let diagram_bundle = bundle_from("order.md", "---\ntype: uml.Class\n---\n# Order\n");
+    let plain_bundle = bundle_from("notes.md", "---\ntype: note\n---\n# Notes\n");
+    let empty_bundle = Bundle::default();
+
+    // Sanity: the diagram-like fixture actually parses to a diagram-like
+    // type, or this test would silently stop covering the `canvas` arm.
+    let concept = diagram_bundle.concept("order").unwrap();
+    assert!(matches!(
+        ElementType::parse(&concept.ty),
+        ElementType::Uml(_) | ElementType::Behavior(_) | ElementType::Diagram
+    ));
+
+    let mintable: BTreeSet<&'static str> = [
+        default_surface(&RowTarget::Concept("order".to_string()), &diagram_bundle).0,
+        default_surface(&RowTarget::Concept("notes".to_string()), &plain_bundle).0,
+        default_surface(&RowTarget::Folder("/sales".to_string()), &empty_bundle).0,
+        default_surface(&RowTarget::Virtual, &empty_bundle).0,
+    ]
+    .into_iter()
+    .map(|surface_id| -> &'static str {
+        match surface_id.as_str() {
+            "markdown" => "markdown",
+            "canvas" => "canvas",
+            "folder" => "folder",
+            "source" => "source",
+            other => panic!(
+                "default_surface minted an id `{other}` this gate does not \
+                 yet enumerate -- add it to the mintable set"
+            ),
+        }
+    })
+    .collect();
+
+    let registered: BTreeSet<&'static str> = CoreEditorExtension
+        .surfaces()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+
+    for surface_id in &mintable {
+        assert!(
+            registered.contains(surface_id),
+            "surface `{surface_id}` is mintable by the core chain but has no \
+             registered SurfaceFactory -- a row would resolve to a surface \
+             nothing can open"
+        );
+    }
+}
