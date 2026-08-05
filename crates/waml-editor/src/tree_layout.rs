@@ -76,6 +76,8 @@ pub struct TreeLayout {
     origin: DVec2,
     size: DVec2,
     scroll: f64,
+    selected: Option<String>,
+    hover: Option<String>,
 }
 
 impl TreeLayout {
@@ -256,6 +258,40 @@ impl TreeLayout {
         } else if bottom > self.scroll + self.size.y {
             self.set_scroll(bottom - self.size.y);
         }
+        true
+    }
+
+    pub fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
+    /// Returns `true` when the selection actually moved, so the caller can skip
+    /// a redraw otherwise.
+    pub fn set_selected(&mut self, key: Option<String>) -> bool {
+        if self.selected == key {
+            return false;
+        }
+        self.selected = key;
+        true
+    }
+
+    pub fn hover(&self) -> Option<&str> {
+        self.hover.as_deref()
+    }
+
+    /// Resolve the hovered row from a pointer position (`None` = pointer left
+    /// the panel). Driven from `MouseMove` containment rather than
+    /// `Hit::FingerHover`, so an arbiter handing the hit to another widget
+    /// cannot strand the tint on a row (see `bc53c22`). Returns `true` when the
+    /// hovered row changed.
+    pub fn set_hover_at(&mut self, pos: Option<DVec2>) -> bool {
+        let next = pos
+            .and_then(|pos| self.row_at(pos))
+            .map(|index| self.rows[index].key.clone());
+        if self.hover == next {
+            return false;
+        }
+        self.hover = next;
         true
     }
 
@@ -474,5 +510,43 @@ mod tests {
         assert_eq!(layout.scroll(), ROW_HEIGHT, "scrolled just enough");
         assert!(layout.hit(dvec2(100.0, ROW_HEIGHT * 1.5)).is_some());
         assert!(!layout.scroll_key_into_view("no-such-key"));
+    }
+
+    #[test]
+    fn hover_follows_the_pointer_and_clears_off_the_rows() {
+        let mut layout = laid_out();
+        let first = layout.rows()[0].key.clone();
+
+        assert!(layout.set_hover_at(Some(dvec2(100.0, 5.0))));
+        assert_eq!(layout.hover(), Some(first.as_str()));
+        // Same row again: no change, so no redraw.
+        assert!(!layout.set_hover_at(Some(dvec2(120.0, 6.0))));
+
+        // Off the panel entirely.
+        assert!(layout.set_hover_at(None));
+        assert_eq!(layout.hover(), None);
+    }
+
+    #[test]
+    fn scrolling_a_row_out_from_under_the_pointer_clears_hover() {
+        let mut layout = laid_out();
+        layout.set_hover_at(Some(dvec2(100.0, ROW_HEIGHT * 1.5)));
+        let hovered = layout.hover().expect("row hovered").to_string();
+
+        layout.set_scroll(ROW_HEIGHT);
+        // Re-resolve at the same pointer position after the scroll.
+        layout.set_hover_at(Some(dvec2(100.0, ROW_HEIGHT * 1.5)));
+        assert_ne!(layout.hover(), Some(hovered.as_str()));
+    }
+
+    #[test]
+    fn selection_is_set_and_cleared_by_key() {
+        let mut layout = laid_out();
+        let key = layout.rows()[1].key.clone();
+        assert!(layout.set_selected(Some(key.clone())));
+        assert_eq!(layout.selected(), Some(key.as_str()));
+        assert!(!layout.set_selected(Some(key)), "unchanged: no redraw");
+        assert!(layout.set_selected(None));
+        assert_eq!(layout.selected(), None);
     }
 }
