@@ -91,7 +91,7 @@ fn rebuild(
     if node.kind() == Kind::Paragraph {
         *at = end;
         let owner = SyntaxIdentity::fresh()?;
-        let children = parse_inlines(context, start, end, owner, true, 0)?;
+        let children = parse_inlines(context, start, end, owner, true)?;
         let rebuilt = semantic_with_identity(Kind::Paragraph, children, owner, Vec::new())?;
         context.inline_roots.push(rebuilt.clone());
         return Ok(rebuilt);
@@ -134,7 +134,6 @@ fn rebuild(
                         token_end,
                         owner,
                         true,
-                        0,
                     )?);
                     *at = token_end;
                 }
@@ -180,14 +179,7 @@ fn rebuild(
                 GreenElement::Token(token) if token.kind() == Kind::TextToken => {
                     let token_start = *at;
                     let token_end = token_start + token.width().to_usize();
-                    children.extend(parse_inlines(
-                        context,
-                        token_start,
-                        token_end,
-                        owner,
-                        true,
-                        0,
-                    )?);
+                    children.extend(parse_inlines(context, token_start, token_end, owner, true)?);
                     *at = token_end;
                 }
                 GreenElement::Token(token) => {
@@ -297,13 +289,51 @@ fn first_demoted_delimiter(
         .min_by_key(|range| range.start)
 }
 
+/// Inline-parse `[start, end)` from the top: scans the protected code and
+/// angle spans once for the whole range and hands them to the recursion, which
+/// only ever narrows them to a sub-range.
 fn parse_inlines(
     context: &mut InlineContext<'_>,
     start: usize,
     end: usize,
     owner: SyntaxIdentity,
     allow_links: bool,
+) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
+    let protected = {
+        let source = context.text.shared();
+        let mut protected = code_spans(source, start, end);
+        protected.extend(angle_spans(source, start, end));
+        protected
+    };
+    parse_inlines_within(context, start, end, owner, allow_links, 0, &protected)
+}
+
+/// The protected spans of `protected` that overlap `[start, end)`.
+///
+/// A code or angle span never straddles a delimiter the recursion descends
+/// through — the delimiter would itself be protected and so never matched — so
+/// narrowing the top-level scan is equivalent to rescanning the sub-range, at a
+/// cost in the number of spans rather than in the length of the range.
+fn protected_within(
+    protected: &[std::ops::Range<usize>],
+    start: usize,
+    end: usize,
+) -> Vec<std::ops::Range<usize>> {
+    protected
+        .iter()
+        .filter(|range| range.start < end && range.end > start)
+        .cloned()
+        .collect()
+}
+
+fn parse_inlines_within(
+    context: &mut InlineContext<'_>,
+    start: usize,
+    end: usize,
+    owner: SyntaxIdentity,
+    allow_links: bool,
     depth: usize,
+    protected: &[std::ops::Range<usize>],
 ) -> Result<Vec<GreenElement<OkfMarkdownLanguage>>, ParseError> {
     let source = context.text.shared();
     // Beyond `MD_MAX_INLINE_DEPTH`, stop matching strikethrough, emphasis,
@@ -321,10 +351,9 @@ fn parse_inlines(
             open_inside != close_inside
         })
     };
-    // `code_spans`/`angle_spans` protect the same [start, end) range for both
-    // pair scans below; compute once per level instead of once per scan.
-    let mut protected = code_spans(source, start, end);
-    protected.extend(angle_spans(source, start, end));
+    // The protected spans were scanned once for the whole inline range by
+    // `parse_inlines`; narrow that set to this level instead of rescanning.
+    let protected = protected_within(protected, start, end);
     let mut emphasis: Vec<_> = emphasis_pairs(source, start, end, &protected)
         .into_iter()
         .filter(|pair| !crosses_link_label(&brackets, pair))
@@ -401,13 +430,14 @@ fn parse_inlines(
                 pair.open + 2,
                 Kind::StrikethroughDelimiterToken,
             )?];
-            children.extend(parse_inlines(
+            children.extend(parse_inlines_within(
                 context,
                 pair.open + 2,
                 pair.close,
                 owner,
                 allow_links,
                 depth + 1,
+                &protected,
             )?);
             children.push(tok(
                 context.text,
@@ -434,13 +464,14 @@ fn parse_inlines(
                 pair.open + pair.width,
                 Kind::EmphasisDelimiterToken,
             )?];
-            children.extend(parse_inlines(
+            children.extend(parse_inlines_within(
                 context,
                 pair.open + pair.width,
                 pair.close,
                 owner,
                 allow_links,
                 depth + 1,
+                &protected,
             )?);
             children.push(tok(
                 context.text,
@@ -594,7 +625,7 @@ fn parse_inlines(
                 let inside = &source[at + 1..close - 1];
                 let kind = if is_autolink(inside) {
                     Some(Kind::Autolink)
-                } else if is_raw_html(inside) {
+                } else if is_raw_html(&source[at..close]) {
                     Some(Kind::RawHtml)
                 } else {
                     None
@@ -674,7 +705,15 @@ fn parse_inlines(
             }
         }
         if let Some(matched) = bracket_by_start.get(&at).map(|&index| brackets[index]) {
-            let parsed = parse_link(context, matched, end, owner, allow_links, depth + 1)?;
+            let parsed = parse_link(
+                context,
+                matched,
+                end,
+                owner,
+                allow_links,
+                depth + 1,
+                &protected,
+            )?;
             flush(context.text, plain, at, &mut out)?;
             out.push(GreenElement::Node(parsed.node));
             at = parsed.end;
@@ -761,8 +800,7 @@ fn bracket_matches(
         }
         if rest.starts_with('<') {
             if let Some(close) = html_close(source, at, end) {
-                let inside = &source[at + 1..close - 1];
-                if is_autolink(inside) || is_raw_html(inside) {
+                if is_autolink(&source[at + 1..close - 1]) || is_raw_html(&source[at..close]) {
                     at = close;
                     continue;
                 }
@@ -871,6 +909,7 @@ fn parse_link(
     owner: SyntaxIdentity,
     allow_links: bool,
     depth: usize,
+    protected: &[std::ops::Range<usize>],
 ) -> Result<ParsedLink, ParseError> {
     let source = context.text.shared();
     let BracketMatch {
@@ -953,13 +992,14 @@ fn parse_link(
         children.push(tok(context.text, start, open, Kind::ImageBangToken)?);
     }
     children.push(tok(context.text, open, open + 1, Kind::LinkLabelOpenToken)?);
-    children.extend(parse_inlines(
+    children.extend(parse_inlines_within(
         context,
         open + 1,
         label_end,
         owner,
         image && allow_links,
         depth,
+        protected,
     )?);
     children.push(tok(
         context.text,
@@ -1409,8 +1449,7 @@ fn angle_spans(source: &str, start: usize, end: usize) -> Vec<std::ops::Range<us
         let Some(close) = html_close(source, at, end) else {
             break;
         };
-        let inside = &source[at + 1..close - 1];
-        if is_autolink(inside) || is_raw_html(inside) {
+        if is_autolink(&source[at + 1..close - 1]) || is_raw_html(&source[at..close]) {
             spans.push(at..close);
         }
         at = close;
@@ -1482,7 +1521,15 @@ fn is_autolink(value: &str) -> bool {
     email || uri
 }
 
-fn is_raw_html(value: &str) -> bool {
+/// Whether `candidate` — the whole `<...>` slice, angle brackets included — is
+/// raw inline HTML.
+///
+/// Taking the bracketed slice rather than its interior lets the scanner be
+/// handed the source directly, with no per-candidate `String` on the parse
+/// path.
+fn is_raw_html(candidate: &str) -> bool {
+    debug_assert!(candidate.starts_with('<') && candidate.ends_with('>'));
+    let value = &candidate[1..candidate.len() - 1];
     if let Some(comment) = value.strip_prefix("!--") {
         return value.ends_with("--") && !comment.starts_with('>') && !comment.starts_with("->");
     }
@@ -1494,8 +1541,7 @@ fn is_raw_html(value: &str) -> bool {
     {
         return true;
     }
-    let candidate = format!("<{value}>");
-    scan_is_inline_html(&candidate)
+    scan_is_inline_html(candidate)
 }
 
 struct ExtendedAutolink {
