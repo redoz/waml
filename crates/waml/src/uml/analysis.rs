@@ -660,7 +660,16 @@ pub fn analyze(
                         syntax::UmlSyntaxDiagnosticCode::UnresolvedTarget => {
                             crate::diagnostic::DiagCode::UnresolvedTarget
                         }
-                        _ => crate::diagnostic::DiagCode::MalformedAttribute,
+                        // Attribute-line parse errors (missing ':', missing type, an
+                        // unparsable multiplicity) and generic parser recovery all
+                        // surface on an attribute/member line, so they share
+                        // MalformedAttribute.
+                        syntax::UmlSyntaxDiagnosticCode::MissingColon
+                        | syntax::UmlSyntaxDiagnosticCode::MissingType
+                        | syntax::UmlSyntaxDiagnosticCode::InvalidMultiplicity
+                        | syntax::UmlSyntaxDiagnosticCode::UnexpectedToken => {
+                            crate::diagnostic::DiagCode::MalformedAttribute
+                        }
                     },
                     diagnostic.message.to_string(),
                     document.path().as_str(),
