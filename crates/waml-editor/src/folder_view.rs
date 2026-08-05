@@ -135,9 +135,6 @@ impl FolderView {
         row_views(&self.rows)
     }
 
-    /// Unused outside tests until Task D2 surfaces the diagnostics strip;
-    /// that commit removes this allow.
-    #[allow(dead_code)]
     pub fn diagnostics(&self) -> &[waml::diagnostic::Diagnostic] {
         &self.diagnostics
     }
@@ -151,6 +148,7 @@ impl DocView for FolderView {
     fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {
         body.show_folder_view(cx);
         body.folder_list().set_rows(cx, self.row_views());
+        body.folder_list().set_diagnostics(cx, self.diagnostics());
     }
 
     fn handle(

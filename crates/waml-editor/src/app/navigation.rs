@@ -291,15 +291,40 @@ impl App {
                 changed
             }
             crate::navigation::NavigationTarget::Directory { address } => {
-                let toggled = self
-                    .ui
-                    .widget(cx, ids!(project_tree))
-                    .borrow_mut::<crate::tree_panel::ProjectTree>()
-                    .is_some_and(|mut tree| tree.toggle_directory(cx, &address));
-                if toggled {
+                // Opens the folder's own view -- the tree's fold/unfold
+                // affordance moved to the chevron (`tree_panel.rs`'s
+                // chevron-vs-row-body split); a `Directory` navigation
+                // target now always means "open", never "toggle".
+                let Some(document) = crate::documents::open_folder(
+                    self.session.okf_analysis(),
+                    &address,
+                    waml::view::chain::ChainLimits::default(),
+                ) else {
+                    self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
+                    return false;
+                };
+                let tab_id = document.tab_id;
+                self.documents.transition(
+                    cx,
+                    &self.ui,
+                    &self.session,
+                    DocumentCommand::Open {
+                        document,
+                        persistent: disposition == crate::navigation::OpenDisposition::Persistent,
+                    },
+                );
+                // `transition`'s own return reports whether the tab STATE
+                // changed, which is false for re-navigating to an already
+                // active preview tab (matches the `Document` arm's own
+                // same-document short circuit in `transition_to_location`) --
+                // success here means "landed on the folder's tab", not "tabs
+                // changed".
+                let opened = self.documents.active_id() == tab_id;
+                if opened {
+                    cx.redraw_all();
                     self.set_navigation_message(cx, None);
                 }
-                toggled
+                opened
             }
             crate::navigation::NavigationTarget::ExternalUrl(url) => match browser.open(cx, &url) {
                 Ok(()) => {

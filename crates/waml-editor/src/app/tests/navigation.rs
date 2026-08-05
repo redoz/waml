@@ -1246,7 +1246,12 @@ fn navigation_markdown_failures_preserve_document_and_report_exact_status() {
 }
 
 #[test]
-fn navigation_root_toggles_without_resetting_navigation_or_docks() {
+fn navigation_root_opens_the_folder_view_without_resetting_navigation_or_docks() {
+    // `Directory` navigation used to toggle the tree row's fold state; that
+    // moved to the tree's own chevron hit-test (`tree_panel.rs`), and a
+    // `Directory` target now always opens the folder's own view -- verified
+    // here by tab identity, matching the folder's dedicated
+    // `folder_document_tab_id` namespace (distinct from every concept tab).
     let (mut cx, mut app) = navigation_app();
     let mut browser = FakeBrowser::default();
     app.narrow = true;
@@ -1264,11 +1269,15 @@ fn navigation_root_toggles_without_resetting_navigation_or_docks() {
         .expect("test inspector is mounted")
         .open_dock(&mut cx);
     let expected_nav = app.nav_state.clone();
-    let expected_document = app.documents.active_id();
-    let expected_docks = app.dock_states(&mut cx);
+    // The folder view has no right-dock content (`FolderView::chrome`), so
+    // opening it closes the inspector the same way any other right-dock-less
+    // view does (`BodyWidgets::apply_chrome`) -- the tree dock, which this
+    // test closed explicitly and which the navigation never touches, stays
+    // put.
+    let expected_tree_dock = app.dock_states(&mut cx).0;
+    let folder_tab = crate::folder_view::folder_document_tab_id("/");
 
-    assert!(project_tree_folder_is_open(&mut cx, &app, "/"));
-    for expected_open in [false, true] {
+    for _ in 0..2 {
         assert!(app.navigate_with(
             &mut cx,
             NavigationTarget::Directory {
@@ -1277,13 +1286,12 @@ fn navigation_root_toggles_without_resetting_navigation_or_docks() {
             OpenDisposition::Preview,
             &mut browser,
         ));
-        assert_eq!(
-            project_tree_folder_is_open(&mut cx, &app, "/"),
-            expected_open
-        );
+        assert_eq!(app.documents.active_id(), folder_tab);
         assert_eq!(app.nav_state, expected_nav);
-        assert_eq!(app.documents.active_id(), expected_document);
-        assert_eq!(app.dock_states(&mut cx), expected_docks);
+        assert_eq!(
+            app.dock_states(&mut cx),
+            (expected_tree_dock, crate::dock::DockState::Flag)
+        );
     }
 }
 

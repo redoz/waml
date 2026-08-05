@@ -84,6 +84,33 @@ script_mod! {
         width: Fill
         height: Fill
         flow: Down
+        // Chain-diagnostics strip: hidden when the chain built and ran
+        // clean, shown above the rows when it degraded (whole-chain fallback
+        // to the root view). Named the stage and the reason -- written for
+        // the document author, not the runner -- so a folder's `view:`
+        // mistake is visible the moment its tab opens, not just as the tree
+        // marker on a collapsed row.
+        diag_strip := View {
+            width: Fill
+            height: Fit
+            visible: false
+            padding: Inset{left: 24.0, right: 24.0, top: 10.0, bottom: 10.0}
+            show_bg: true
+            draw_bg +: {
+                color: atlas.danger
+                pixel: fn() {
+                    return vec4(self.color.x, self.color.y, self.color.z, 0.12)
+                }
+            }
+            diag_label := Label {
+                width: Fill
+                text: ""
+                draw_text +: {
+                    color: atlas.text
+                    text_style: fonts.text_label
+                }
+            }
+        }
         rows_scroll := ScrollYView {
             width: Fill
             height: Fill
@@ -259,6 +286,26 @@ impl FolderListView {
         self.view.redraw(cx);
     }
 
+    /// Show or hide the chain-diagnostics strip. Empty `diagnostics` hides
+    /// it -- the common case, a chain that built and ran clean -- otherwise
+    /// every message joins into one line naming what degraded.
+    pub fn set_diagnostics(&mut self, cx: &mut Cx, diagnostics: &[waml::diagnostic::Diagnostic]) {
+        let degraded = !diagnostics.is_empty();
+        self.view
+            .view(cx, ids!(diag_strip))
+            .set_visible(cx, degraded);
+        if degraded {
+            let text = diagnostics
+                .iter()
+                .map(|diag| diag.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            self.view
+                .label(cx, ids!(diag_strip.diag_label))
+                .set_text(cx, &text);
+        }
+    }
+
     /// The row index that was clicked in `actions`, if any. `FolderView::handle`
     /// maps it back to a navigation target via `action_for`/`navigation_for`.
     pub fn row_opened(&self, actions: &Actions) -> Option<usize> {
@@ -280,6 +327,11 @@ impl FolderListViewRef {
     pub fn set_rows(&self, cx: &mut Cx, rows: Vec<FolderRowView>) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_rows(cx, rows);
+        }
+    }
+    pub fn set_diagnostics(&self, cx: &mut Cx, diagnostics: &[waml::diagnostic::Diagnostic]) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_diagnostics(cx, diagnostics);
         }
     }
     pub fn row_opened(&self, actions: &Actions) -> Option<usize> {

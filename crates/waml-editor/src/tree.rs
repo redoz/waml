@@ -18,6 +18,12 @@ pub struct TreeNode {
     pub concept_id: Option<String>,
     pub can_edit_classifier: bool,
     pub can_delete_classifier: bool,
+    /// Directory rows only: whether this folder's declared `view:` chain
+    /// failed to build (an unknown middleware name, bad params) and fell
+    /// back to the root view. Drives the tree's degraded-chain marker so a
+    /// folder inside a collapsed subtree is not silently wrong. Always
+    /// `false` for a non-directory row.
+    pub view_degraded: bool,
     pub children: Vec<TreeNode>,
 }
 
@@ -111,6 +117,7 @@ pub fn build_tree(
                 concept_id: Some(concept_id.to_owned()),
                 can_edit_classifier: descriptor.capabilities.can_edit_classifier,
                 can_delete_classifier: descriptor.capabilities.can_delete_classifier,
+                view_degraded: false,
                 children: Vec::new(),
             })
         };
@@ -149,6 +156,12 @@ pub fn build_tree(
                 }
             }
         }
+        // Build-level diagnostics only (unknown middleware name, bad params):
+        // `Chain::build` catches these without running anything. An empty
+        // registry is correct here and matches `FolderView::build` -- no
+        // middleware beyond the root view is registered yet (Task E1/F1).
+        let registry = waml::view::chain::MiddlewareRegistry::new();
+        let (_, diagnostics) = bundle.resolved_view(address.as_str(), &registry);
         Some(TreeNode {
             key: address.as_str().to_string(),
             title,
@@ -159,6 +172,7 @@ pub fn build_tree(
             concept_id: None,
             can_edit_classifier: false,
             can_delete_classifier: false,
+            view_degraded: !diagnostics.is_empty(),
             children,
         })
     }
@@ -243,6 +257,24 @@ mod tests {
             kind_of(&ElementType::parse("vendor.Custom")),
             NavCategory::OkfDocument
         );
+    }
+
+    #[test]
+    fn a_degraded_chain_outcome_flags_the_tree_row() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "---\nview: no-such-middleware\n---\n# Sales\n",
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback");
+        let sales = &tree.roots[0].children[0];
+        assert_eq!(sales.key, "/sales");
+        assert!(sales.view_degraded);
+        assert!(!tree.roots[0].view_degraded);
     }
 
     #[test]

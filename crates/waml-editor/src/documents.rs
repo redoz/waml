@@ -22,11 +22,8 @@ pub fn open_with_asset_host(
 
 /// The folder-view provider entry: keyed on a directory address, not a
 /// concept id, so it sits beside `open_with_asset_host` rather than inside
-/// its `.or_else` chain -- a folder and a concept never share a key.
-///
-/// Unused outside tests until Task D1b/D2 wire a folder click to this path;
-/// that commit removes this allow.
-#[allow(dead_code)]
+/// its `.or_else` chain -- a folder and a concept never share a key. Called
+/// from `App::navigate_with`'s `Directory` arm.
 pub fn open_folder(
     okf: &waml::analysis::OkfAnalysis,
     directory: &str,

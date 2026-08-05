@@ -106,6 +106,14 @@ script_mod! {
         draw_reveal: mod.draw.DrawColor{
             color: atlas.accent
         }
+        // Small degraded-chain marker, drawn at the row's right edge for a
+        // folder whose declared `view:` chain failed and fell back to the
+        // root view (see `draw_row_diag_marker`). Distinct from `draw_reveal`
+        // (a translucent full-row wash) -- this is a solid dot, always ink,
+        // never faded by selection.
+        draw_diag: mod.draw.DrawColor{
+            color: atlas.danger
+        }
         // Fold affordance, drawn at the head of every EXPANDABLE row (packages /
         // bundles). Leaf rows leave the slot empty but keep the indent, so the
         // glyph column stays aligned down the whole tree.
@@ -327,6 +335,16 @@ fn is_classifier_kind(kind: TreeKind) -> bool {
     )
 }
 
+/// Whether `abs` falls inside the chevron rect drawn this frame for `key`.
+/// Pure so the chevron-vs-body split is unit-testable without a `Cx`. No
+/// cached rect (a row that scrolled out, or never had a chevron) means "not
+/// on the chevron" -- the click falls through to the row body, never lost.
+fn chevron_hit(chevron_rects: &HashMap<String, Rect>, key: &str, abs: DVec2) -> bool {
+    chevron_rects
+        .get(key)
+        .is_some_and(|rect| rect.contains(abs))
+}
+
 fn row_navigation(
     key: &str,
     concept_id: Option<&str>,
@@ -400,6 +418,17 @@ pub struct ProjectTree {
     open_directories: HashSet<String>,
     #[rust]
     pending_tap_count: u32,
+    /// Absolute position of the last primary-hit `FingerDown`, consumed by
+    /// the next `FolderClicked` action in the same click cycle to decide
+    /// chevron vs. row-body -- mirrors `pending_tap_count`'s FingerDown ->
+    /// Actions handoff across the two `handle_event` dispatches.
+    #[rust]
+    pending_click_abs: Option<DVec2>,
+    /// This frame's chevron rect per directory key, cached at draw time so
+    /// `handle_event`'s hit-test reads exactly what was drawn (same
+    /// coordinate space, same rect) rather than recomputing independently.
+    #[rust]
+    chevron_rects: HashMap<String, Rect>,
     #[live]
     icons: IconSet,
     // Tint for the row glyphs. Without this the glyphs render at DrawColor's dim
@@ -416,6 +445,8 @@ pub struct ProjectTree {
     draw_selection: DrawColor,
     #[live]
     draw_reveal: DrawColor,
+    #[live]
+    draw_diag: DrawColor,
     #[live]
     draw_chevron: DrawChevron,
     #[live]
@@ -640,13 +671,33 @@ fn draw_row_chevron(
     depth: usize,
     open: f32,
     scale: f64,
-) {
+) -> Rect {
     let size = CHEVRON_SIZE * scale;
     let x = (row_top.x + CHEVRON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
     let y = (row_top.y + (ROW_HEIGHT * scale - size) / 2.0).round();
+    let rect = Rect {
+        pos: dvec2(x, y),
+        size: dvec2(size, size),
+    };
     draw_chevron.open = open;
     draw_chevron.fade = scale as f32;
-    draw_chevron.draw_abs(
+    draw_chevron.draw_abs(cx, rect);
+    rect
+}
+
+/// Draw the degraded-chain marker: a small solid dot at the row's right edge,
+/// for a directory row whose declared `view:` chain fell back to the root
+/// view. Purely additive to `draw_row_icon`/`draw_row_chevron` -- no hit test
+/// reads this rect, it is presentation only.
+fn draw_row_diag_marker(cx: &mut Cx2d, draw_diag: &mut DrawColor, row_top: Vec2d, scale: f64) {
+    let width = cx.turtle().rect().size.x;
+    if !width.is_finite() {
+        return;
+    }
+    let size = 6.0 * scale;
+    let x = (row_top.x + width - size - 10.0).round();
+    let y = (row_top.y + (ROW_HEIGHT * scale - size) / 2.0).round();
+    draw_diag.draw_abs(
         cx,
         Rect {
             pos: dvec2(x, y),
@@ -711,6 +762,8 @@ fn draw_nodes(
     reveal_key: Option<&str>,
     reveal_strength: f32,
     scale: f64,
+    draw_diag: &mut DrawColor,
+    chevron_rects: &mut HashMap<String, Rect>,
 ) -> bool {
     let mut reveal_was_drawn = false;
     for node in nodes {
@@ -766,7 +819,12 @@ fn draw_nodes(
                 // second timer. Only read inside `drawn`: a culled folder's node
                 // is forgotten, so `folder_opened` would report it closed.
                 let child_open = ft.folder_opened(id);
-                draw_row_chevron(cx, draw_chevron, row_top, depth, child_open, scale);
+                let chevron_rect =
+                    draw_row_chevron(cx, draw_chevron, row_top, depth, child_open, scale);
+                chevron_rects.insert(node.key.clone(), chevron_rect);
+                if node.view_degraded {
+                    draw_row_diag_marker(cx, draw_diag, row_top, scale);
+                }
             }
             if opened {
                 reveal_was_drawn |= draw_nodes(
@@ -790,6 +848,8 @@ fn draw_nodes(
                     // descendant's marks away while their labels drew at full
                     // size (the scrolled-tree "icons vanish" bug).
                     ft.current_scale(),
+                    draw_diag,
+                    chevron_rects,
                 );
                 ft.end_folder();
             }
@@ -846,6 +906,7 @@ impl Widget for ProjectTree {
         if let Hit::FingerDown(fe) = tree_panel_hit(event, cx, self.view.area()) {
             if fe.is_primary_hit() {
                 self.pending_tap_count = fe.tap_count;
+                self.pending_click_abs = Some(fe.abs);
             }
         }
 
@@ -853,16 +914,33 @@ impl Widget for ProjectTree {
             // The panel owns no `IconButton` children any more -- collapse and
             // expand both arrive from the caption bar's tree toggle -- so the
             // only actions read here are the `FileTree`'s row clicks.
-            if let Some(id) = file_tree
-                .file_clicked(actions)
-                .or_else(|| file_tree.folder_clicked(actions))
-            {
+            //
+            // A folder row splits in two: a hit inside the chevron rect
+            // cached at draw time folds/unfolds locally (same as before this
+            // task), while a hit anywhere else on the row body opens the
+            // folder's own view -- neither does the other's job. Files are
+            // unaffected: every click opens the document, as before.
+            if let Some(id) = file_tree.folder_clicked(actions) {
                 let tap_count = std::mem::take(&mut self.pending_tap_count);
+                let click_abs = self.pending_click_abs.take();
+                if let Some(key) = self.id_to_key.get(&id).cloned() {
+                    let on_chevron =
+                        click_abs.is_some_and(|abs| chevron_hit(&self.chevron_rects, &key, abs));
+                    if on_chevron {
+                        self.toggle_directory(cx, &key);
+                    } else if let Some(intent) = row_navigation(&key, None, true, false, tap_count)
+                    {
+                        cx.widget_action(uid, ProjectTreeAction::Navigate(intent));
+                    }
+                }
+            } else if let Some(id) = file_tree.file_clicked(actions) {
+                let tap_count = std::mem::take(&mut self.pending_tap_count);
+                self.pending_click_abs = None;
                 if let Some(key) = self.id_to_key.get(&id) {
                     if let Some(intent) = row_navigation(
                         key,
                         self.id_to_concept.get(&id).map(String::as_str),
-                        self.directory_addresses.contains(key),
+                        false,
                         self.openable_ids.contains(&id),
                         tap_count,
                     ) {
@@ -925,6 +1003,7 @@ impl Widget for ProjectTree {
         walk.margin.bottom = 0.0;
 
         let mut reveal_was_drawn = false;
+        self.chevron_rects.clear();
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut file_tree) = step.as_file_tree().borrow_mut() {
                 reveal_was_drawn |= draw_nodes(
@@ -943,6 +1022,8 @@ impl Widget for ProjectTree {
                     self.reveal_key.as_deref(),
                     self.reveal_strength,
                     1.0,
+                    &mut self.draw_diag,
+                    &mut self.chevron_rects,
                 );
             }
         }
@@ -1490,6 +1571,7 @@ mod tests {
             concept_id: (kind != TreeKind::Directory).then(|| key.to_owned()),
             can_edit_classifier: is_classifier,
             can_delete_classifier: is_classifier,
+            view_degraded: false,
             children,
         }
     }
@@ -1645,6 +1727,72 @@ mod tests {
         assert!(panel.toggle_directory(&mut cx, "/sales"));
         assert!(!panel.open_directories.contains("/sales"));
         assert!(!file_tree_folder_is_open(&mut cx, &file_tree, "/sales"));
+    }
+
+    #[test]
+    fn chevron_hit_only_matches_within_the_cached_rect() {
+        let mut rects = HashMap::new();
+        rects.insert(
+            "/sales".to_string(),
+            Rect {
+                pos: dvec2(10.0, 10.0),
+                size: dvec2(10.0, 10.0),
+            },
+        );
+        assert!(chevron_hit(&rects, "/sales", dvec2(12.0, 12.0)));
+        assert!(!chevron_hit(&rects, "/sales", dvec2(30.0, 30.0)));
+        assert!(!chevron_hit(&rects, "/other", dvec2(12.0, 12.0)));
+        assert!(!chevron_hit(&rects, "/other", dvec2(1000.0, 1000.0)));
+    }
+
+    #[test]
+    fn a_chevron_hit_folds_locally_while_a_body_hit_opens_without_folding() {
+        let (mut cx, mut panel, file_tree) = mounted_project_tree_test_context();
+        let tree = ProjectTreeData {
+            roots: vec![node("/sales", "Sales", TreeKind::Directory, vec![])],
+        };
+        panel.set_view(&mut cx, NavView::Browse(tree));
+        panel.chevron_rects.insert(
+            "/sales".to_string(),
+            Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(10.0, 10.0),
+            },
+        );
+
+        // A click inside the chevron rect folds locally: no Navigate action.
+        let was_open = panel.open_directories.contains("/sales");
+        panel.pending_click_abs = Some(dvec2(5.0, 5.0));
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str("/sales"))),
+            widget_uid: file_tree.widget_uid(),
+            group: None,
+        })];
+        panel.handle_event(&mut cx, &Event::Actions(actions), &mut Scope::empty());
+        assert_eq!(panel.navigation(&cx.new_actions), None);
+        assert_ne!(panel.open_directories.contains("/sales"), was_open);
+
+        // A click outside the chevron rect opens (Navigate) without folding.
+        let before_open = panel.open_directories.contains("/sales");
+        panel.pending_click_abs = Some(dvec2(100.0, 100.0));
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(FileTreeAction::FolderClicked(LiveId::from_str("/sales"))),
+            widget_uid: file_tree.widget_uid(),
+            group: None,
+        })];
+        panel.handle_event(&mut cx, &Event::Actions(actions), &mut Scope::empty());
+        assert_eq!(
+            panel.navigation(&cx.new_actions),
+            Some(NavigationIntent::Resolved {
+                target: NavigationTarget::Directory {
+                    address: "/sales".into(),
+                },
+                disposition: OpenDisposition::Preview,
+            })
+        );
+        assert_eq!(panel.open_directories.contains("/sales"), before_open);
     }
 
     #[test]
