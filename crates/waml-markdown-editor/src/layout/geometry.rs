@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, ops::Range, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    ops::Range,
+    sync::{Arc, OnceLock},
+};
 
 use makepad_widgets::{dvec2, DVec2, Rect};
 use waml_syntax::{
@@ -277,6 +282,10 @@ pub struct LayoutSnapshot {
     block_summaries: Arc<[BlockSummary]>,
     block_layouts: Arc<[Arc<BlockLayoutData>]>,
     dirty_block_range: Range<usize>,
+    /// Lazily-built `GeometryElementId -> clusters[]` index (P-2). Shared via
+    /// `Arc` so cloning the snapshot does not lose or duplicate the cache;
+    /// the snapshot is immutable so a cache built once stays valid forever.
+    cluster_index: Arc<OnceLock<HashMap<GeometryElementId, usize>>>,
 }
 
 pub struct LayoutSnapshotMetadata {
@@ -318,6 +327,7 @@ impl LayoutSnapshot {
             block_summaries,
             block_layouts,
             dirty_block_range: metadata.dirty_block_range,
+            cluster_index: Arc::new(OnceLock::new()),
         }
     }
 
@@ -387,6 +397,19 @@ impl LayoutSnapshot {
     /// source/caret/selection geometry.
     pub fn glyph_clusters(&self) -> &[GlyphCluster] {
         &self.clusters
+    }
+
+    /// Cluster by `id`, via a `HashMap` index built once and cached (P-2)
+    /// instead of a linear `find` per text paint operation.
+    pub fn glyph_cluster(&self, id: GeometryElementId) -> Option<&GlyphCluster> {
+        let index = self.cluster_index.get_or_init(|| {
+            self.clusters
+                .iter()
+                .enumerate()
+                .map(|(i, cluster)| (cluster.id, i))
+                .collect()
+        });
+        index.get(&id).map(|&i| &self.clusters[i])
     }
 
     pub fn block_summaries(&self) -> &[BlockSummary] {
@@ -496,6 +519,8 @@ impl LayoutSnapshot {
             block_summaries: target.block_summaries.clone(),
             block_layouts: target.block_layouts.clone(),
             dirty_block_range: target.dirty_block_range.clone(),
+            // `clusters` above is freshly rebuilt, so the index must be too.
+            cluster_index: Arc::new(OnceLock::new()),
         }
     }
 

@@ -1333,11 +1333,7 @@ impl MarkdownEditor {
         layout: &LayoutSnapshot,
         paint: TextGlyphPaint,
     ) {
-        let Some(cluster) = layout
-            .glyph_clusters()
-            .iter()
-            .find(|cluster| cluster.id == paint.id)
-        else {
+        let Some(cluster) = layout.glyph_cluster(paint.id) else {
             return;
         };
         let origin = paint.rect.pos - cluster.rect.pos;
