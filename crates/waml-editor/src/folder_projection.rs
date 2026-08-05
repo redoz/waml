@@ -43,7 +43,13 @@ pub enum ViewMode {
 /// every model refresh, and re-minting the name table per directory put that
 /// cost on a path that runs per document activation.
 pub fn core_registry() -> MiddlewareRegistry {
-    MiddlewareRegistry::from_extensions(&[&waml::extension::CoreExt, &waml::extension::UmlExt])
+    // Driven off `SHIPPED_EXTENSIONS` so this registry and `waml::profile`'s
+    // name-check table are built from the same list by construction.
+    let extensions: Vec<&dyn waml::extension::CoreExtension> = waml::extension::SHIPPED_EXTENSIONS
+        .iter()
+        .map(|ext| *ext as &dyn waml::extension::CoreExtension)
+        .collect();
+    MiddlewareRegistry::from_extensions(&extensions)
         .expect("the core extension registers a conflict-free name table")
 }
 

@@ -41,16 +41,35 @@ pub(crate) fn uml_profiles() -> Vec<ProfileDef> {
     }]
 }
 
+/// Every profile the compiled-in extension set ships, flattened once. The set
+/// is deliberately the *union* over `SHIPPED_EXTENSIONS`, not `CoreExt` alone:
+/// the parse-time name check and `okf::resolved_view` must agree with the one
+/// registry the app actually builds (`folder_projection`, `CoreExt + UmlExt`),
+/// or a `profile: uml-domain` folder would name-check against a table that
+/// never heard of the `uml` middleware its own default chain asks for.
+/// Extensions are compiled in, so this table is fixed for the life of the
+/// process -- cached in a `OnceLock` because `profile()` is on the
+/// per-directory parse and `build_tree` walks it recursively on every refresh.
+fn all_shipped_profiles() -> &'static [ProfileDef] {
+    static ALL: std::sync::OnceLock<Vec<ProfileDef>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        crate::extension::SHIPPED_EXTENSIONS
+            .iter()
+            .flat_map(|ext| ext.profiles())
+            .collect()
+    })
+}
+
 /// Look up a shipped profile by its exact name. No case folding: `"UML-Domain"`
 /// does not match `"uml-domain"`. Searches the whole shipped set -- extension
 /// order must never change whether a name resolves, since this is the
 /// parse-time name check. Returns owned data: `default_view` can no longer be
 /// handed back as `&'static` now that it holds a `Vec`.
 pub fn profile(name: &str) -> Option<ProfileDef> {
-    shipped_profiles()
-        .into_iter()
-        .chain(uml_profiles())
+    all_shipped_profiles()
+        .iter()
         .find(|p| p.name == name)
+        .cloned()
         .or_else(|| test_override(name))
 }
 
@@ -104,6 +123,29 @@ mod tests {
         let okf = profile("okf").expect("okf is shipped");
         assert_eq!(okf.name, "okf");
         assert_eq!(okf.default_view, None);
+    }
+
+    /// The name-check table must stay the union over the shipped extension
+    /// set -- if an extension is added or dropped, `profile()` follows without
+    /// anyone remembering to edit a second list.
+    #[test]
+    fn shipped_table_is_the_union_over_shipped_extensions() {
+        let expected: Vec<ProfileDef> = crate::extension::SHIPPED_EXTENSIONS
+            .iter()
+            .flat_map(|ext| ext.profiles())
+            .collect();
+        assert_eq!(all_shipped_profiles(), expected.as_slice());
+        for def in &expected {
+            assert_eq!(profile(def.name).as_ref(), Some(def));
+        }
+    }
+
+    /// `profile()` sits on the per-directory parse path; the table is built
+    /// once and every later call reads the same allocation.
+    #[test]
+    fn shipped_table_is_built_once() {
+        let first = all_shipped_profiles().as_ptr();
+        assert_eq!(all_shipped_profiles().as_ptr(), first);
     }
 
     #[test]

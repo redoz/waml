@@ -50,8 +50,13 @@ impl CoreExtension for CoreExt {
 }
 
 /// The `uml` extension: the `uml` decorator middleware, plus the shipped
-/// `uml-domain` profile. A profile the UML extension owns must not resolve
-/// with that extension absent -- that is why it is not in `CoreExt::profiles`.
+/// `uml-domain` profile. Kept out of `CoreExt::profiles` so that ownership is
+/// legible -- a profile is declared by the extension that also registers the
+/// middleware its default chain names. Note this is *not* a runtime gate:
+/// [`crate::profile::profile`] name-checks against the whole
+/// [`SHIPPED_EXTENSIONS`] union, so `uml-domain` resolves wherever waml is
+/// compiled in. Gating it on a per-registry basis would need the registry
+/// threaded through the parse path, which no caller does today.
 pub struct UmlExt;
 
 impl CoreExtension for UmlExt {
@@ -70,6 +75,11 @@ impl CoreExtension for UmlExt {
         crate::profile::uml_profiles()
     }
 }
+
+/// Every extension compiled into waml, in registration order. The single
+/// source of truth for "what ships": `crate::profile`'s name-check table is
+/// built from it, and `waml-editor`'s registry registers the same set.
+pub static SHIPPED_EXTENSIONS: &[&(dyn CoreExtension + Sync)] = &[&CoreExt, &UmlExt];
 
 #[cfg(test)]
 mod tests {
