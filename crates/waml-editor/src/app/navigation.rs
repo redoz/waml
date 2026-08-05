@@ -625,13 +625,20 @@ impl App {
             self.session.okf_analysis(),
             self.session.uml_analysis(),
             &self.nav_state,
+            self.view_mode,
+            self.chain_limits,
         );
         let title = scope_changed.then(|| {
-            crate::nav::packages(self.session.okf_analysis(), self.session.uml_analysis())
-                .into_iter()
-                .find(|r| r.key == self.nav_state.scope)
-                .map(|r| r.title)
-                .unwrap_or_else(|| "Untitled".to_string())
+            crate::nav::packages(
+                self.session.okf_analysis(),
+                self.session.uml_analysis(),
+                self.view_mode,
+                self.chain_limits,
+            )
+            .into_iter()
+            .find(|r| r.key == self.nav_state.scope)
+            .map(|r| r.title)
+            .unwrap_or_else(|| "Untitled".to_string())
         });
         if let Some(mut panel) = self
             .ui

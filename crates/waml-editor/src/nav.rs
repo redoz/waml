@@ -40,8 +40,13 @@ pub struct PackageRow {
 }
 
 /// Nested directory-only rows for the title dropdown, depth-indented.
-pub fn packages(okf: &waml::analysis::OkfAnalysis, uml: &waml::uml::Analysis) -> Vec<PackageRow> {
-    let full = build_tree(okf, uml, "Untitled");
+pub fn packages(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    mode: crate::folder_projection::ViewMode,
+    limits: waml::view::chain::ChainLimits,
+) -> Vec<PackageRow> {
+    let full = build_tree(okf, uml, "Untitled", mode, limits);
     let root_title = okf
         .bundle
         .index("/")
@@ -116,8 +121,10 @@ pub fn view(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
     state: &NavState,
+    mode: crate::folder_projection::ViewMode,
+    limits: waml::view::chain::ChainLimits,
 ) -> NavView {
-    let full = build_tree(okf, uml, "Untitled");
+    let full = build_tree(okf, uml, "Untitled", mode, limits);
     // A non-`Empty` view is the scope row with its members beneath it: that row
     // is the model's on-screen identity and the thing to select when a whole
     // bundle/directory is the subject.
@@ -157,7 +164,12 @@ mod tests {
     #[test]
     fn packages_lead_with_synthetic_root_then_nest_real_packages() {
         let (bundle, projection) = built();
-        let rows = packages(&bundle, &projection);
+        let rows = packages(
+            &bundle,
+            &projection,
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
         // Row 0: synthetic whole-model root, key "", titled from model.path.
         assert_eq!(
             rows[0],
@@ -180,7 +192,12 @@ mod tests {
     #[test]
     fn packages_exclude_documents() {
         let (bundle, projection) = built();
-        let rows = packages(&bundle, &projection);
+        let rows = packages(
+            &bundle,
+            &projection,
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
         assert!(!rows.iter().any(|row| row.key == "sub/cls"));
     }
 
@@ -207,7 +224,13 @@ mod tests {
     #[test]
     fn empty_scope_puts_the_whole_model_under_the_bundle_root_row() {
         let (bundle, projection) = built();
-        let v = view(&bundle, &projection, &NavState::default());
+        let v = view(
+            &bundle,
+            &projection,
+            &NavState::default(),
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
         let t = browse_roots(&v);
         // The scope package IS the single root row; its members hang beneath it.
         let roots: Vec<&str> = t.roots.iter().map(|r| r.key.as_str()).collect();
@@ -222,7 +245,13 @@ mod tests {
             scope: "/sub".to_string(),
         };
         let (bundle, projection) = built();
-        let v = view(&bundle, &projection, &state);
+        let v = view(
+            &bundle,
+            &projection,
+            &state,
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
         let t = browse_roots(&v);
         // "sub" is the root row; its members hang beneath it.
         assert_eq!(
@@ -240,6 +269,15 @@ mod tests {
             scope: "/nope".to_string(),
         };
         let (bundle, projection) = built();
-        assert_eq!(view(&bundle, &projection, &state), NavView::Empty);
+        assert_eq!(
+            view(
+                &bundle,
+                &projection,
+                &state,
+                crate::folder_projection::ViewMode::Projected,
+                waml::view::chain::ChainLimits::default(),
+            ),
+            NavView::Empty
+        );
     }
 }

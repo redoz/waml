@@ -65,15 +65,21 @@ pub fn build_tree(
     okf: &waml::analysis::OkfAnalysis,
     uml_analysis: &waml::uml::Analysis,
     root_fallback: &str,
+    mode: crate::folder_projection::ViewMode,
+    limits: waml::view::chain::ChainLimits,
 ) -> ProjectTree {
     fn directory_node(
         okf: &waml::analysis::OkfAnalysis,
         uml_analysis: &waml::uml::Analysis,
         address: &waml::okf::DirectoryAddress,
         root_fallback: &str,
+        mode: crate::folder_projection::ViewMode,
+        limits: waml::view::chain::ChainLimits,
     ) -> Option<TreeNode> {
         let bundle = &okf.bundle;
-        let directory = bundle
+        // Confirms the directory still exists; its member lists are no
+        // longer read here -- children come from the chain's rows instead.
+        bundle
             .directories()
             .iter()
             .find(|directory| &directory.address == address)?;
@@ -122,37 +128,55 @@ pub fn build_tree(
             })
         };
         let mut children = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        if let Some(index) = index {
-            for member in &index.members {
-                if let Some(child) = directory
-                    .child_directories
-                    .iter()
-                    .find(|child| child.as_str() == member)
-                {
-                    if let Some(row) = directory_node(okf, uml_analysis, child, root_fallback) {
-                        seen.insert(member.clone());
-                        children.push(row);
-                    }
-                } else if directory.concepts.iter().any(|concept| concept == member) {
-                    if let Some(row) = concept_node(member) {
-                        seen.insert(member.clone());
-                        children.push(row);
+        // Children ARE the chain's rows for this directory, in the chain's
+        // order, carrying the chain's labels -- not the OKF member list. The
+        // tree and the folder surface therefore cannot disagree about what a
+        // directory contains. `project_rows` returning None means the
+        // directory left the bundle underneath us; an empty child list is the
+        // honest answer, not a panic.
+        let projected = crate::folder_projection::project_rows(okf, address.as_str(), mode, limits);
+        for row in projected.iter().flat_map(|(_, rows, _)| rows.iter()) {
+            match &row.target {
+                waml::view::row::RowTarget::Folder(child_address) => {
+                    let Ok(child) = waml::okf::DirectoryAddress::parse(child_address) else {
+                        continue;
+                    };
+                    if let Some(mut node) =
+                        directory_node(okf, uml_analysis, &child, root_fallback, mode, limits)
+                    {
+                        // The chain owns the label; a middleware may relabel a
+                        // folder row, and the tree must show what it said.
+                        node.title = row.label.clone();
+                        children.push(node);
                     }
                 }
-            }
-        }
-        for child in &directory.child_directories {
-            if seen.insert(child.as_str().to_owned()) {
-                if let Some(row) = directory_node(okf, uml_analysis, child, root_fallback) {
-                    children.push(row);
+                waml::view::row::RowTarget::Concept(concept_id) => {
+                    if let Some(mut node) = concept_node(concept_id) {
+                        node.title = row.label.clone();
+                        children.push(node);
+                    }
                 }
-            }
-        }
-        for concept_id in &directory.concepts {
-            if seen.insert(concept_id.clone()) {
-                if let Some(row) = concept_node(concept_id) {
-                    children.push(row);
+                // No file behind it, so nothing to open by concept id or
+                // address. It still gets a row: dropping it would make the
+                // tree disagree with the folder view about what is there.
+                waml::view::row::RowTarget::Virtual => {
+                    children.push(TreeNode {
+                        key: row.id.path.as_str().to_string(),
+                        title: row.label.clone(),
+                        kind: NavCategory::OkfDocument,
+                        presentation: DocumentPresentation {
+                            icon: Icon::FileText,
+                            accent: None,
+                            category: NavCategory::OkfDocument,
+                        },
+                        is_directory: false,
+                        openable: false,
+                        concept_id: None,
+                        can_edit_classifier: false,
+                        can_delete_classifier: false,
+                        view_degraded: false,
+                        children: Vec::new(),
+                    });
                 }
             }
         }
@@ -179,7 +203,7 @@ pub fn build_tree(
 
     let root = waml::okf::DirectoryAddress::parse("/").expect("root address is valid");
     ProjectTree {
-        roots: directory_node(okf, uml_analysis, &root, root_fallback)
+        roots: directory_node(okf, uml_analysis, &root, root_fallback, mode, limits)
             .into_iter()
             .collect(),
     }
@@ -189,6 +213,89 @@ pub fn build_tree(
 mod tests {
     use super::*;
     use waml::source::SourceBundle;
+
+    fn hidden() -> waml::analysis::PreparedCandidate {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "---\nview: hide\nhide: [\"**\"]\n---\n# Sales\n\n* [Order](./order.md)\n",
+            ),
+            ("sales/order.md", "# Order\n"),
+        ])
+        .unwrap();
+        waml::analysis::prepare_candidate(source, None, 1).unwrap()
+    }
+
+    /// The folder-view spec's own checklist item that did not hold: an opaque
+    /// folder showed no rows in its folder view and still listed every hidden
+    /// child in the tree.
+    #[test]
+    fn an_opaque_folder_has_no_tree_children_projected_and_all_of_them_raw() {
+        let prepared = hidden();
+        let limits = waml::view::chain::ChainLimits::default();
+
+        let projected = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            limits,
+        );
+        let sales = &projected.roots[0].children[0];
+        assert!(
+            sales.children.is_empty(),
+            "hide: [\"**\"] leaves nothing for the tree to list",
+        );
+
+        let raw = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Raw,
+            limits,
+        );
+        let sales = &raw.roots[0].children[0];
+        assert_eq!(
+            sales
+                .children
+                .iter()
+                .map(|row| row.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Order"],
+            "raw bypasses the chain, so the row is reachable again",
+        );
+    }
+
+    /// The tree and the folder surface must never disagree about what a
+    /// directory contains -- they read the same projection now, so this is a
+    /// regression fence, not an aspiration.
+    #[test]
+    fn tree_children_equal_the_folder_views_rows_row_for_row_in_both_modes() {
+        let prepared = hidden();
+        let limits = waml::view::chain::ChainLimits::default();
+        for mode in [
+            crate::folder_projection::ViewMode::Projected,
+            crate::folder_projection::ViewMode::Raw,
+        ] {
+            let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
+            let sales = &tree.roots[0].children[0];
+            let (_, rows, _) =
+                crate::folder_projection::project_rows(prepared.okf(), "/sales", mode, limits)
+                    .unwrap();
+            assert_eq!(
+                sales
+                    .children
+                    .iter()
+                    .map(|node| node.title.as_str())
+                    .collect::<Vec<_>>(),
+                rows.iter()
+                    .map(|row| row.label.as_str())
+                    .collect::<Vec<_>>(),
+                "{mode:?}: tree children must be the chain's rows, in the chain's order",
+            );
+        }
+    }
 
     fn mixed() -> (waml::analysis::OkfAnalysis, waml::uml::Analysis) {
         let source = SourceBundle::try_from_pairs([
@@ -210,7 +317,13 @@ mod tests {
     #[test]
     fn navigator_uses_okf_directories_and_authored_index_order() {
         let (bundle, projection) = mixed();
-        let tree = build_tree(&bundle, &projection, "Fallback");
+        let tree = build_tree(
+            &bundle,
+            &projection,
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
         let root = &tree.roots[0];
         assert_eq!((root.key.as_str(), root.title.as_str()), ("/", "Root"));
         let sales = &root.children[0];
@@ -231,7 +344,13 @@ mod tests {
     #[test]
     fn providers_decorate_claimed_and_generic_rows_with_capabilities() {
         let (bundle, projection) = mixed();
-        let tree = build_tree(&bundle, &projection, "Fallback");
+        let tree = build_tree(
+            &bundle,
+            &projection,
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
         let rows = &tree.roots[0].children[0].children;
         let order = rows.iter().find(|row| row.key == "sales/order").unwrap();
         assert_eq!(order.kind, NavCategory::Class);
@@ -270,7 +389,13 @@ mod tests {
         ])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
-        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback");
+        let tree = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
         let sales = &tree.roots[0].children[0];
         assert_eq!(sales.key, "/sales");
         assert!(sales.view_degraded);
@@ -288,7 +413,13 @@ mod tests {
         ])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
-        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback");
+        let tree = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
         let domain = &tree.roots[0].children[0];
 
         assert_eq!(domain.kind, NavCategory::Directory);

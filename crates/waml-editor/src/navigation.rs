@@ -107,7 +107,15 @@ pub fn breadcrumb_for(
         false
     }
 
-    let tree = build_tree(okf, uml_analysis, "Untitled");
+    // Breadcrumbs describe the authored structure a reader navigated through,
+    // so they read the declared chain regardless of the session's mode.
+    let tree = build_tree(
+        okf,
+        uml_analysis,
+        "Untitled",
+        crate::folder_projection::ViewMode::Projected,
+        waml::view::chain::ChainLimits::default(),
+    );
     let mut path = Vec::new();
     find(&tree.roots, concept_id, &mut path).then_some(path)
 }
@@ -424,7 +432,13 @@ mod tests {
             crate::nav::NavState { scope: "/".into() },
         ];
         for state in states {
-            let _projected = crate::nav::view(&okf, &uml, &state);
+            let _projected = crate::nav::view(
+                &okf,
+                &uml,
+                &state,
+                crate::folder_projection::ViewMode::Projected,
+                waml::view::chain::ChainLimits::default(),
+            );
             assert_eq!(breadcrumb_for(&okf, &uml, "sales/archive/order"), before);
         }
     }

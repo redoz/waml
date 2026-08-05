@@ -57,6 +57,8 @@ fn navigation_app() -> (Cx, App) {
             app.session.okf_analysis(),
             app.session.uml_analysis(),
             &NavState::default(),
+            app.view_mode,
+            app.chain_limits,
         ),
     );
     let project_tree = WidgetRef::new_with_inner(Box::new(project_tree));
