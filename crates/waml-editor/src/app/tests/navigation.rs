@@ -480,25 +480,12 @@ fn tree_key(address: &str) -> String {
     })
 }
 
-fn project_tree_folder_is_open(cx: &mut Cx, app: &App, address: &str) -> bool {
-    let project_tree = app.ui.widget(cx, ids!(project_tree));
-    let file_tree = project_tree.file_tree(cx, ids!(file_tree));
-    let draw_event = DrawEvent::default();
-    let mut draw_cx = CxDraw::new(cx, &draw_event);
-    let mut cx_2d = Cx2d::new(&mut draw_cx);
-    cx_2d.begin_root_turtle(dvec2(0.0, 0.0), Layout::default());
-    let mut file_tree = file_tree
-        .borrow_mut()
-        .expect("mounted ProjectTree has a FileTree");
-    let is_open = file_tree
-        .begin_folder(&mut cx_2d, LiveId::from_str(address), address)
-        .is_ok();
-    if is_open {
-        file_tree.end_folder();
-    }
-    drop(file_tree);
-    cx_2d.end_turtle();
-    is_open
+fn project_tree_folder_is_open(cx: &mut Cx, app: &App, key: &str) -> bool {
+    app.ui
+        .widget(cx, ids!(project_tree))
+        .borrow::<crate::tree_panel::ProjectTree>()
+        .expect("production shell mounts project_tree")
+        .test_folder_is_open(key)
 }
 
 fn mounted_project_tree_state(cx: &Cx, app: &App) -> DockState {

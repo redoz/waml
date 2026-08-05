@@ -501,10 +501,8 @@ impl App {
             cx.redraw_all();
         }
         self.sync_document_shell(cx);
-        // Re-submit the complete composed tree after the selection change.
-        // Makepad's immediate-mode `FileTree` otherwise retains only the rows
-        // visited before its clicked leaf on that redraw, making a trailing
-        // Generic OKF row disappear until the next query/filter event.
+        // Re-submit the composed tree after the selection change so the panel's
+        // projection matches the newly active document.
         self.refresh_nav(cx, false);
         let Some(mut arriving) = self.documents.capture_active_location(cx, &self.ui) else {
             return false;

@@ -1,12 +1,12 @@
-//! The `ProjectTree` widget: a thin container that drives makepad's shipped
-//! `FileTree` immediate-mode from a pure `ProjectTree` (see `tree.rs`). Provides
-//! scroll/fold/selection for free. Each row's kind (see `TreeKind`) is shown as
-//! a HUD glyph icon overlaid at the left of the row via `DrawColor::draw_abs`
-//! (the SDF glyph set in `icons.rs`), in immediate mode right after `FileTree`
-//! draws that row. Row clicks emit unified `ProjectTreeAction::Navigate` intent.
+//! The `ProjectTree` widget: a draw loop plus event routing over a pure
+//! `ProjectTree` (see `tree.rs`). It owns no per-row widgets. `tree_layout.rs`
+//! flattens the tree into rows and hands out their rects; `tree_row_draw.rs`
+//! paints one row into a rect; this file does the walking and the input.
 //!
-//! Structure mirrors studio's `DesktopFileTree` / `FlatFileTree`, minus the
-//! filter page and git-status dots.
+//! Selection, fold state, scroll and hit-testing all live in that one core, so
+//! the rects a press is tested against are the rects that were drawn -- there
+//! is no second copy of the row state to drift out of agreement with. Row
+//! clicks emit unified `ProjectTreeAction::Navigate` intent.
 //!
 //! There is no header band: the search field and the type-filter chip that used
 //! to be hand-drawn over one are gone, and the rows start at the top of the
@@ -116,7 +116,7 @@ script_mod! {
         draw_reveal: mod.draw.DrawColor{
             color: atlas.accent
         }
-        // Row label ink. The fork FileTree drew labels with its own text style;
+        // Row label ink. The fork widget drew labels with its own text style;
         // this reproduces it (fonts.text_menu, atlas.text) so rows read the same.
         draw_row_text +: {
             color: atlas.text
@@ -170,13 +170,13 @@ script_mod! {
                 return vec4(self.color.rgb * self.color.a, self.color.a)
             }
         }
-        // Keeps the FileTree rows and the header band off the column's own
-        // edges; it used to double as clearance for the 1.5px frame ring.
+        // Keeps the rows and the header band off the column's own edges; it
+        // used to double as clearance for the 1.5px frame ring.
         //
-        // The RIGHT edge is deliberately flush (0): the FileTree's own scrollbar
-        // rides its turtle's right edge, so any padding here parks the bar that
-        // far in from the column edge and reads as misaligned. Rows gain the 6px
-        // back as label width instead.
+        // The RIGHT edge is deliberately flush (0): the scrollbar rides its
+        // turtle's right edge, so any padding here parks the bar that far in
+        // from the column edge and reads as misaligned. Rows gain the 6px back
+        // as label width instead.
         padding: Inset{left: 6.0, top: 6.0, bottom: 6.0}
 
         // No header band: the search field and type-filter chip that used to be
@@ -205,14 +205,10 @@ script_mod! {
             view_mode_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
         }
 
-        // Plain-View wrapper around the fork `FileTree`. The fork widget's
-        // `Widget::set_visible` is a layout no-op (it keeps Fill-claiming its
-        // height even when hidden), so the collapsed Flag state -- which draws
-        // the panel into a zero-size walk -- must hide THIS View instead (a real
-        // View yields its space) or the FileTree keeps claiming height inside it.
-        // We draw rows ourselves; this view exists to clip them and to own
-        // the scrollbars. Same tinted bar the FileTree carried, so an
-        // overflowing tree still visibly says "there's more".
+        // The row body. We draw rows into this view's rect ourselves; it exists
+        // to claim and clip that rect and to own the scrollbars. The collapsed
+        // Flag state hides THIS view, which really does yield its space, so the
+        // panel occupies zero pixels rather than merely drawing nothing.
         tree_scroll := View {
             width: Fill
             height: Fill
@@ -335,8 +331,8 @@ pub struct DrawChevron {
     #[deref]
     draw_super: DrawQuad,
     /// 0.0 = collapsed (chevron points right), 1.0 = expanded (points down).
-    /// Fed straight from the fork `FileTree`'s animated `folder_opened`, so the
-    /// arrow swings with the rows instead of on a second timer.
+    /// Fed the core's animated fold amount, so the arrow swings with the rows
+    /// instead of on a second timer.
     #[live]
     pub open: f32,
     /// Alpha multiplier, fed the same fold scale the rows shrink by, so a
@@ -401,10 +397,14 @@ pub struct ProjectTree {
     reveal_color: Vec4,
     /// Vestigial but load-bearing. Nothing draws with it since the scope title
     /// left the header for the tree's root row -- but deleting the field (and
-    /// its DSL block) silently blanks every FileTree row label below: the rows
-    /// keep their immediate-mode glyphs and lose their text. Bisected against
-    /// the `mini` fixture; kept until the underlying makepad/live-DSL cause is
+    /// its DSL block) silently blanked every row label below: the rows kept
+    /// their immediate-mode glyphs and lost their text. Bisected against the
+    /// `mini` fixture; kept until the underlying makepad/live-DSL cause is
     /// understood.
+    ///
+    /// The rows that blanked were the fork widget's. Whether the same holds now
+    /// that this file draws its own labels is UNVERIFIED -- do not delete it to
+    /// find out as a side effect of some other change.
     #[allow(dead_code)]
     #[redraw]
     #[live]
@@ -965,6 +965,14 @@ impl ProjectTree {
     #[cfg(test)]
     pub(crate) fn test_selected_key(&self) -> Option<&str> {
         self.layout.selected()
+    }
+
+    /// Whether the row keyed `key` is unfolded. Test-only reader for the app
+    /// suite, which used to probe the fork widget's retained fold state; the
+    /// core is now the only place that state exists.
+    #[cfg(test)]
+    pub(crate) fn test_folder_is_open(&self, key: &str) -> bool {
+        self.layout.is_folder_open(key)
     }
 
     fn update_reveal_pulse(&mut self, cx: &mut Cx, time: f64) {

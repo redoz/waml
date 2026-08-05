@@ -48,9 +48,6 @@ fn navigation_app() -> (Cx, App) {
     .unwrap();
     app.session.replace(source).unwrap();
     let mut project_tree = cx.with_vm(crate::tree_panel::ProjectTree::script_new_with_default);
-    let file_tree =
-        WidgetRef::new_with_inner(Box::new(cx.with_vm(FileTree::script_new_with_default)));
-    project_tree.children.push((live_id!(file_tree), file_tree));
     project_tree.set_view(
         &mut cx,
         crate::nav::view(

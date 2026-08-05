@@ -14,7 +14,7 @@ const ICON_LEFT_MARGIN: f64 = 20.0;
 /// rows leave the slot empty so both columns stay aligned down the tree.
 const CHEVRON_SIZE: f64 = 10.0;
 const CHEVRON_LEFT_MARGIN: f64 = 4.0;
-/// Per-depth x step for the overlay glyph. Must match the FileTree label's
+/// Per-depth x step for the row glyph. Must match the label's
 /// EFFECTIVE step, which is `indent_width` (10.0 in the DSL) plus the per-depth
 /// margins `indent_walk` tacks on (`left: depth*1.0`, `right: depth*4.0`) -- so
 /// the visible step is 15px, not `indent_width`. Any mismatch here makes the
@@ -33,7 +33,7 @@ fn label_x(row_x: f64, depth: usize, scale: f64) -> f64 {
 
 /// Draw the provider-supplied row-leading glyph at `rect.pos`.
 ///
-/// `scale` is the fold amount the fork `FileTree` is drawing this row at (1.0
+/// `scale` is the fold amount the core is drawing this row at (1.0
 /// at rest, shrinking to 0 as an ancestor folder closes): the glyph shrinks and
 /// fades with it, so the row's hand-drawn marks dissolve together with the
 /// widget-drawn label rather than staying full-size over a collapsing row.
@@ -136,7 +136,7 @@ pub fn row_fill(cx: &mut Cx2d, draw: &mut DrawColor, rect: Rect, scale: f64) {
     draw.color = color;
 }
 
-/// Draw a row's label. Previously the fork `FileTree`'s job; ours now.
+/// Draw a row's label. Previously the fork widget's job; ours now.
 ///
 /// Vertically centred in the row's SCALED band and faded with it, so a label
 /// dissolves with its row mid-collapse instead of standing at full ink.

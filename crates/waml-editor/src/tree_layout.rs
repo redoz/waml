@@ -13,7 +13,7 @@ use makepad_widgets::*;
 use crate::icons::Icon;
 use crate::tree::{key_string, TreeKind, TreeNode};
 
-/// Row band height in lpx. Matches the `node_height: 27.0` the fork `FileTree`
+/// Row band height in lpx. Matches the `node_height: 27.0` the fork widget
 /// was configured with, so rows land where they always did.
 pub const ROW_HEIGHT: f64 = 27.0;
 
@@ -25,7 +25,7 @@ pub const CHEVRON_SIZE: f64 = 10.0;
 /// the icon after it).
 pub const ICON_DEPTH_INDENT: f64 = 15.0;
 
-/// Fold transition duration in seconds. Matches the fork `FileTree`'s
+/// Fold transition duration in seconds. Matches the fork widget's
 /// `Play.Forward {duration: 0.2}` so the motion is indistinguishable.
 pub const FOLD_SECS: f64 = 0.2;
 
