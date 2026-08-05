@@ -430,10 +430,90 @@ pub enum InvalidPromotedMarkdownUpdateReason {
 }
 impl fmt::Display for AnalysisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "analysis error: {self:?}")
+        match self {
+            AnalysisError::SourceTooLarge { path, bytes } => write!(
+                f,
+                "document '{path}' is too large to analyze ({bytes} bytes)"
+            ),
+            AnalysisError::Shell { path, source } => {
+                write!(f, "failed to parse '{path}': {source}")
+            }
+            AnalysisError::Okf(source) => write!(f, "{source}"),
+            AnalysisError::CatalogInvariant { reason } => {
+                write!(f, "catalog invariant violated: {reason}")
+            }
+            AnalysisError::InvalidPromotedMarkdownUpdate { document, reason } => {
+                write!(
+                    f,
+                    "invalid promoted markdown update for document {document:?}: {reason}"
+                )
+            }
+            AnalysisError::Specialization { name, reason } => {
+                write!(f, "{name} analysis failed: {reason}")
+            }
+            AnalysisError::AmbiguousClaim {
+                concept_id,
+                first,
+                second,
+            } => write!(
+                f,
+                "ambiguous claim for concept '{concept_id}': '{first}' conflicts with '{second}'"
+            ),
+            AnalysisError::StructuralInvariant { stage, reason } => {
+                write!(
+                    f,
+                    "structural invariant violated during {stage:?}: {reason}"
+                )
+            }
+        }
     }
 }
 impl std::error::Error for AnalysisError {}
+
+impl fmt::Display for InvalidPromotedMarkdownUpdateReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument => {
+                write!(f, "the previous analysis has no matching document")
+            }
+            InvalidPromotedMarkdownUpdateReason::MissingCandidateDocument => {
+                write!(f, "the candidate source has no matching document")
+            }
+            InvalidPromotedMarkdownUpdateReason::SourcePathMismatch => {
+                write!(
+                    f,
+                    "the update's source path does not match the document's path"
+                )
+            }
+            InvalidPromotedMarkdownUpdateReason::StaleBaseRevision { expected, actual } => write!(
+                f,
+                "the update's base revision is stale (expected {expected:?}, found {actual:?})"
+            ),
+            InvalidPromotedMarkdownUpdateReason::NonSuccessorRevision { expected, actual } => {
+                write!(
+                    f,
+                    "the update's revision does not directly succeed the base revision (expected {expected:?}, found {actual:?})"
+                )
+            }
+            InvalidPromotedMarkdownUpdateReason::DuplicateDocument => {
+                write!(f, "the document was already promoted in this update")
+            }
+            InvalidPromotedMarkdownUpdateReason::ResultTextMismatch => write!(
+                f,
+                "the promoted document's text does not match the accepted candidate text"
+            ),
+            InvalidPromotedMarkdownUpdateReason::InvalidAffectedRange { range } => {
+                write!(f, "the update's affected range {range:?} is invalid")
+            }
+            InvalidPromotedMarkdownUpdateReason::RecoveryRevisionNotNewer { previous, actual } => {
+                write!(
+                    f,
+                    "the recovery revision is not newer than the previous revision (previous {previous:?}, found {actual:?})"
+                )
+            }
+        }
+    }
+}
 
 impl From<AnalysisError> for crate::edit::EditError {
     fn from(error: AnalysisError) -> Self {
@@ -1344,6 +1424,37 @@ mod tests {
     }
 
     #[test]
+    fn source_too_large_display_names_path_and_bytes_without_debug_braces() {
+        let path = crate::source::BundlePath::parse("big.md").unwrap();
+        let error = AnalysisError::SourceTooLarge {
+            path: path.clone(),
+            bytes: 12345,
+        };
+        let message = error.to_string();
+        assert!(message.contains("big.md"), "message: {message}");
+        assert!(message.contains("12345"), "message: {message}");
+        assert!(
+            !message.contains('{') && !message.contains('}'),
+            "message: {message}"
+        );
+    }
+
+    #[test]
+    fn shell_display_names_path_without_debug_braces() {
+        let path = crate::source::BundlePath::parse("broken.md").unwrap();
+        let error = AnalysisError::Shell {
+            path: path.clone(),
+            source: waml_syntax::ParseError::WidthOverflow,
+        };
+        let message = error.to_string();
+        assert!(message.contains("broken.md"), "message: {message}");
+        assert!(
+            !message.contains('{') && !message.contains('}'),
+            "message: {message}"
+        );
+    }
+
+    #[test]
     fn candidate_failure_is_non_mutating() {
         let committed_source = SourceBundle::try_from_pairs([("one.md", "# one")]).unwrap();
         let committed = analyze_okf(&committed_source, None, 1).unwrap();
@@ -1491,7 +1602,8 @@ mod tests {
         let huge = BundlePath::parse("huge.md").unwrap();
         assert!(analysis.catalog.id_for_path(&huge).is_none());
         assert!(analysis.quarantined.contains_key(&huge));
-        assert!(analysis.quarantined[&huge].contains("SourceTooLarge"));
+        assert!(analysis.quarantined[&huge].contains("huge.md"));
+        assert!(analysis.quarantined[&huge].contains("too large"));
 
         let good = BundlePath::parse("good.md").unwrap();
         let good_id = analysis.catalog.id_for_path(&good).expect("good survives");
