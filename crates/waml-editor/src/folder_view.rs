@@ -150,6 +150,36 @@ pub fn shift_tab_row_op(rows: &[Row], index: usize) -> Option<(RowId, RowOp)> {
     Some((row.id.clone(), RowOp::MoveOut))
 }
 
+/// Task G4's drag-reorder -> `RowOp` mapping. `from_index` is the row the
+/// drag armed on; `drop_index` is where `folder_list.rs` computed the
+/// pointer landed (`drop_index_from_pointer_y`), in the SAME pre-drag row
+/// indexing -- an index into `rows` as they stood before any row moves.
+/// Dropping a row onto itself or immediately after itself (`drop_index ==
+/// from_index` or `drop_index == from_index + 1`) is a no-op: nothing
+/// changed, so nothing is emitted, matching "on-self is a no-op" from the
+/// plan's own test list. `RootView::apply`'s `Reorder` arm resolves `before`
+/// by identity (the sibling's `RowPath`), not by index, so handing it the
+/// row currently at `drop_index` is correct even though removing `from_index`
+/// first would shift indices -- the identity survives the shift, only the
+/// index would not.
+///
+/// Called from `FolderView::handle` on `FolderListViewAction::RowDropped`.
+pub fn reorder_row_op(
+    rows: &[Row],
+    from_index: usize,
+    drop_index: usize,
+) -> Option<(RowId, RowOp)> {
+    let row = rows.get(from_index)?;
+    if drop_index > rows.len() {
+        return None;
+    }
+    if drop_index == from_index || drop_index == from_index + 1 {
+        return None;
+    }
+    let before = rows.get(drop_index).map(|sibling| sibling.id.path.clone());
+    Some((row.id.clone(), RowOp::Reorder { before }))
+}
+
 /// The `__doc_tab_folder__`-namespaced tab identity for a directory address.
 /// Distinct from every concept-id tab namespace (`okf_documents`,
 /// `uml_documents`) -- opening a folder never collides with opening a
@@ -412,6 +442,13 @@ impl DocView for FolderView {
                 "Rename row",
                 &mut outcome,
             );
+        } else if let Some((from_index, drop_index)) = body.folder_list().row_dropped(actions) {
+            self.commit_gesture(
+                data.okf_analysis,
+                reorder_row_op(&self.rows, from_index, drop_index),
+                "Reorder row",
+                &mut outcome,
+            );
         }
         outcome
     }
@@ -632,6 +669,56 @@ mod tests {
             "the bundle root has no parent to move out to"
         );
         assert!(shift_tab_row_op(view.rows(), 0).is_none());
+    }
+
+    #[test]
+    fn reorder_emits_before_the_row_at_the_drop_index() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "# Root\n\n* [Orders](orders.md)\n* [Sales](sales/)\n* [Refunds](refunds.md)\n",
+            ),
+            ("orders.md", "# Orders\n"),
+            ("sales/index.md", "# Sales\n"),
+            ("refunds.md", "# Refunds\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let rows = view.rows();
+        // Drag row 0 (Orders) to drop index 2: lands before the row that was
+        // at index 2 (Refunds) pre-drag.
+        let (id, op) = reorder_row_op(rows, 0, 2).unwrap();
+        assert_eq!(id, rows[0].id);
+        assert_eq!(
+            op,
+            RowOp::Reorder {
+                before: Some(rows[2].id.path.clone())
+            }
+        );
+        // Dropped past the end: no sibling to land before.
+        let (_, op) = reorder_row_op(rows, 0, 3).unwrap();
+        assert_eq!(op, RowOp::Reorder { before: None });
+    }
+
+    #[test]
+    fn a_refused_reorder_leaves_row_order_unchanged() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "# Root\n\n* [Orders](orders.md)\n* [Sales](sales/)\n",
+            ),
+            ("orders.md", "# Orders\n"),
+            ("sales/index.md", "# Sales\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        // Dropped on itself, and dropped immediately after itself: both are
+        // no-ops -- nothing is emitted, so nothing could reorder the rows.
+        assert!(reorder_row_op(view.rows(), 0, 0).is_none());
+        assert!(reorder_row_op(view.rows(), 0, 1).is_none());
+        assert!(reorder_row_op(view.rows(), 1, 1).is_none());
+        // Out of bounds drop index refuses too, rather than panicking.
+        assert!(reorder_row_op(view.rows(), 0, 99).is_none());
+        let before = view.row_views();
+        assert_eq!(view.row_views(), before, "row order is unchanged");
     }
 
     #[test]

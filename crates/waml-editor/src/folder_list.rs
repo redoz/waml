@@ -307,6 +307,12 @@ pub enum FolderListViewAction {
     /// resync out from under it) never fires this -- the buffer is dropped
     /// instead.
     RenameCommitted(usize, String),
+    /// A drag armed on row `from_index` released with the pointer over
+    /// `drop_index` (Task G4), both indexing the rows last passed to
+    /// `set_rows` in their pre-drag order. `FolderView::handle` maps this
+    /// through `reorder_row_op`, which treats an on-self or
+    /// immediately-after-self drop as a no-op.
+    RowDropped(usize, usize),
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -339,6 +345,19 @@ pub struct FolderListView {
     /// Discarded (never committed) on cancel.
     #[rust]
     rename_buffer: String,
+    /// Each row's absolute draw-time rect, recorded in `draw_walk` in the
+    /// same order as `rows` -- the coordinate space `drop_index_from_pointer_y`
+    /// needs to turn a `FingerUp` position into a drop index (Task G4).
+    /// Reset to the current row count's length every draw pass, so a resync
+    /// mid-drag (a row inserted/removed underneath) never reads a stale rect.
+    #[rust]
+    row_rects: Vec<Rect>,
+    /// The row index a reorder drag armed on (Task G4), if a drag is live.
+    /// Cleared on EVERY `FingerUp`, including a drop with no rect recorded
+    /// for its landing position (`row_rects` empty or stale) -- an armed
+    /// drag must never survive past its own release (correctness.md).
+    #[rust]
+    dragging: Option<usize>,
 }
 
 impl Widget for FolderListView {
@@ -440,10 +459,55 @@ impl Widget for FolderListView {
             }
             _ => {}
         }
+        // Reorder drag (Task G4). A separate hit-test against the row list's
+        // own area (not `self.view.area()` above) -- both can match the same
+        // physical event, which is fine: a plain click (no move) both opens
+        // via `FolderRow`'s own `Clicked` action AND arms/releases a drag
+        // whose `drop_index` lands on-self, a no-op `reorder_row_op` refuses.
+        // Every armed drag clears on `FingerUp` unconditionally
+        // (correctness.md) -- an aborted drag (dropped past the last row, or
+        // with a stale `row_rects`) still releases, it just computes a
+        // `drop_index` that `reorder_row_op` then no-ops on.
+        let rows_area = self.view.view(cx, ids!(rows_scroll.rows_list)).area();
+        match event.hits(cx, rows_area) {
+            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                if let Some(index) = row_index_at(&self.row_rects, fe.abs.y) {
+                    if self
+                        .rows
+                        .get(index)
+                        .is_some_and(|row| !matches!(row.action, FolderRowAction::None))
+                    {
+                        self.dragging = Some(index);
+                    }
+                }
+            }
+            Hit::FingerMove(_) => {
+                if self.dragging.is_some() {
+                    // Ghost tracking is presentational only -- redraw so a
+                    // future ghost overlay can read the live pointer
+                    // position; no ghost is drawn yet (visual verification
+                    // owed, see the plan's outstanding visual-verification
+                    // table).
+                    self.view.redraw(cx);
+                }
+            }
+            Hit::FingerUp(fe) => {
+                if let Some(from_index) = self.dragging.take() {
+                    let drop_index = drop_index_from_pointer_y(&self.row_rects, fe.abs.y);
+                    cx.widget_action(
+                        uid,
+                        FolderListViewAction::RowDropped(from_index, drop_index),
+                    );
+                    self.view.redraw(cx);
+                }
+            }
+            _ => {}
+        }
         self.widget_match_event(cx, event, scope);
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.row_rects.clear();
         while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut list) = item.as_flat_list().borrow_mut() {
                 for (i, row_data) in self.rows.iter().enumerate() {
@@ -458,11 +522,42 @@ impl Widget for FolderListView {
                         label_override,
                     );
                     row.draw_all(cx, &mut Scope::empty());
+                    debug_assert_eq!(self.row_rects.len(), i, "rows draw in index order");
+                    self.row_rects.push(row.area().rect(cx));
                 }
             }
         }
         DrawStep::done()
     }
+}
+
+/// The row index whose recorded draw-time rect contains `y`, if any --
+/// `Hit::FingerDown`'s arm-the-drag lookup. `None` when `y` falls in the
+/// list's padding/gaps between rows, or `row_rects` is stale/empty (nothing
+/// drawn yet this pass), which correctly refuses to arm a drag rather than
+/// guessing a row.
+fn row_index_at(row_rects: &[Rect], y: f64) -> Option<usize> {
+    row_rects
+        .iter()
+        .position(|rect| y >= rect.pos.y && y < rect.pos.y + rect.size.y)
+}
+
+/// Turn a drop `y` position into a row index, in the SAME pre-drag `rows`
+/// indexing `row_rects` was recorded in (Task G4). Compares against each
+/// row's vertical MIDPOINT, not its top edge, so a drop anywhere in a row's
+/// upper half lands before it and the lower half lands after -- the usual
+/// drag-reorder feel. A `y` past every recorded rect's midpoint (including
+/// an empty `row_rects`) lands at the end (`rects.len()`); `reorder_row_op`
+/// is the one that turns an on-self or stale index into a no-op, so this
+/// function never needs to special-case `from_index` itself.
+fn drop_index_from_pointer_y(row_rects: &[Rect], y: f64) -> usize {
+    for (i, rect) in row_rects.iter().enumerate() {
+        let midpoint = rect.pos.y + rect.size.y * 0.5;
+        if y < midpoint {
+            return i;
+        }
+    }
+    row_rects.len()
 }
 
 /// Map a `FlatList` row `item_id` back to its index in `rows`. Rows are keyed
@@ -504,6 +599,10 @@ impl FolderListView {
         // the same row, so there is nothing safe to resume.
         self.renaming = None;
         self.rename_buffer.clear();
+        // Same reasoning as the rename buffer above: a resync may retarget
+        // or remove the row a drag was armed on, so there is nothing safe to
+        // continue dragging.
+        self.dragging = None;
         self.view.redraw(cx);
     }
 
@@ -537,7 +636,8 @@ impl FolderListView {
             | FolderListViewAction::EnterPressed(_)
             | FolderListViewAction::TabPressed(_)
             | FolderListViewAction::ShiftTabPressed(_)
-            | FolderListViewAction::RenameCommitted(_, _) => None,
+            | FolderListViewAction::RenameCommitted(_, _)
+            | FolderListViewAction::RowDropped(_, _) => None,
         }
     }
 
@@ -594,6 +694,18 @@ impl FolderListView {
         }
     }
 
+    /// The `(from_index, drop_index)` a reorder drag released on, if any
+    /// this pass (Task G4). `FolderView::handle` maps it through
+    /// `reorder_row_op`.
+    pub fn row_dropped(&self, actions: &Actions) -> Option<(usize, usize)> {
+        match self.actions_action(actions) {
+            FolderListViewAction::RowDropped(from_index, drop_index) => {
+                Some((from_index, drop_index))
+            }
+            _ => None,
+        }
+    }
+
     fn actions_action(&self, actions: &Actions) -> FolderListViewAction {
         actions
             .find_widget_action(self.widget_uid())
@@ -639,6 +751,9 @@ impl FolderListViewRef {
         self.borrow()
             .and_then(|inner| inner.rename_committed(actions))
     }
+    pub fn row_dropped(&self, actions: &Actions) -> Option<(usize, usize)> {
+        self.borrow().and_then(|inner| inner.row_dropped(actions))
+    }
 }
 
 #[cfg(test)]
@@ -681,5 +796,53 @@ mod tests {
             assert_eq!(row_index_for(&rows, item_id), Some(i));
         }
         assert_eq!(row_index_for(&rows, LiveId::from_str("unknown")), None);
+    }
+
+    /// Three 20px-tall rows stacked with no gaps, starting at y = 0.
+    fn three_rows() -> Vec<Rect> {
+        vec![
+            Rect {
+                pos: dvec2(0.0, 0.0),
+                size: dvec2(100.0, 20.0),
+            },
+            Rect {
+                pos: dvec2(0.0, 20.0),
+                size: dvec2(100.0, 20.0),
+            },
+            Rect {
+                pos: dvec2(0.0, 40.0),
+                size: dvec2(100.0, 20.0),
+            },
+        ]
+    }
+
+    #[test]
+    fn drop_index_from_pointer_y_is_correct_at_boundaries() {
+        let rects = three_rows();
+        // First row's upper half: before row 0.
+        assert_eq!(drop_index_from_pointer_y(&rects, 0.0), 0);
+        assert_eq!(drop_index_from_pointer_y(&rects, 9.0), 0);
+        // Crossing row 0's midpoint (y = 10): lands before row 1.
+        assert_eq!(drop_index_from_pointer_y(&rects, 10.0), 1);
+        // Between rows, at row 1's midpoint (y = 30): before row 2.
+        assert_eq!(drop_index_from_pointer_y(&rects, 30.0), 2);
+        // Past every row's midpoint, including past the last rect entirely:
+        // lands at the end.
+        assert_eq!(drop_index_from_pointer_y(&rects, 50.0), 3);
+        assert_eq!(drop_index_from_pointer_y(&rects, 1_000.0), 3);
+        // Empty rects: nothing recorded yet, lands at the (empty) end.
+        assert_eq!(drop_index_from_pointer_y(&[], 5.0), 0);
+    }
+
+    #[test]
+    fn row_index_at_finds_the_containing_row_and_refuses_the_gaps() {
+        let rects = three_rows();
+        assert_eq!(row_index_at(&rects, 0.0), Some(0));
+        assert_eq!(row_index_at(&rects, 19.9), Some(0));
+        assert_eq!(row_index_at(&rects, 20.0), Some(1));
+        assert_eq!(row_index_at(&rects, 45.0), Some(2));
+        // Past the last row, and an empty list: neither is inside any row.
+        assert_eq!(row_index_at(&rects, 60.0), None);
+        assert_eq!(row_index_at(&[], 0.0), None);
     }
 }
