@@ -739,9 +739,7 @@ impl DocView for ClassDiagramView {
                         resolve_display(&diagram.display),
                         &self.expanded,
                     );
-                    for d in &diags {
-                        log!("diagnostic: {d:?}");
-                    }
+                    self.set_scene_diagnostics(cx, body, &diags);
                     if let Some(mut canvas) = body
                         .canvas(cx)
                         .borrow_mut::<crate::canvas::ClassDiagramSurface>()
