@@ -331,48 +331,14 @@ pub fn analyze(
         let mut islands = HashMap::new();
         let mut island_trees = HashMap::new();
         for island in structure.islands.iter() {
-            let source_range =
-                TextRange::new(island.heading_range.start(), island.content_range.end()).map_err(
-                    |_| AnalysisError::CatalogInvariant {
-                        reason: "UML Markdown island has a reversed source range".into(),
-                    },
-                )?;
-            let reusable = previous_islands
-                .and_then(|snapshots| {
-                    snapshots
-                        .values()
-                        .find(|snapshot| snapshot.owner == island.owner)
-                })
-                .filter(|snapshot| snapshot.kind == island.kind)
-                .filter(|snapshot| {
-                    if previous_document
-                        .is_some_and(|previous| Arc::ptr_eq(previous.document(), &document))
-                    {
-                        return snapshot.source_range == source_range
-                            && snapshot.content_range == island.content_range;
-                    }
-                    change_map.as_ref().is_some_and(|map| {
-                        map.translate_unchanged(snapshot.source_range) == Some(source_range)
-                            && map.translate_unchanged(snapshot.content_range)
-                                == Some(island.content_range)
-                    })
-                });
-            let island_tree = match reusable.map(|snapshot| snapshot.syntax.clone()) {
-                Some(tree) => tree,
-                // Seam invariant (structure map identifies its islands): a
-                // break here must surface as an error, not panic the editor
-                // in-process or poison the wasm instance.
-                None => syntax::parse_authoritative_island(
-                    document.text().clone(),
-                    structure,
-                    island.owner,
-                    island.content_range,
-                )
-                .ok_or_else(|| AnalysisError::Specialization {
-                    name: "uml",
-                    reason: "validated Markdown structure does not identify its UML island".into(),
-                })?,
-            };
+            let (source_range, island_tree) = recover_island_tree(
+                &document,
+                structure,
+                island,
+                previous_islands,
+                previous_document,
+                change_map.as_ref(),
+            )?;
             let key = (island.owner, island.content_range);
             island_trees.insert(key, island_tree.clone());
             islands.insert(
@@ -564,6 +530,60 @@ pub fn analyze(
         revisioned_diagnostics: metadata.revisioned_diagnostics,
         session_revision: context.session_revision,
     })
+}
+
+/// Recovers the authoritative syntax tree for one UML island, reusing the
+/// previous analysis's tree when the island's source and content ranges
+/// translate unchanged across the edit, and otherwise falling back to a
+/// fresh authoritative parse of the island.
+///
+/// Seam invariant (structure map identifies its islands): a break in the
+/// fallback parse must surface as an error, not panic the editor in-process
+/// or poison the wasm instance.
+fn recover_island_tree(
+    document: &Arc<crate::analysis::DocumentVersion>,
+    structure: &waml_syntax::MarkdownStructureMap,
+    island: &waml_syntax::WamlLanguageIsland,
+    previous_islands: Option<&Arc<UmlIslandDocument>>,
+    previous_document: Option<&Arc<SyntaxSnapshot<UmlLanguage>>>,
+    change_map: Option<&ChangeMap>,
+) -> Result<(TextRange, Arc<SyntaxTree<UmlLanguage>>), AnalysisError> {
+    let source_range = TextRange::new(island.heading_range.start(), island.content_range.end())
+        .map_err(|_| AnalysisError::CatalogInvariant {
+            reason: "UML Markdown island has a reversed source range".into(),
+        })?;
+    let reusable = previous_islands
+        .and_then(|snapshots| {
+            snapshots
+                .values()
+                .find(|snapshot| snapshot.owner == island.owner)
+        })
+        .filter(|snapshot| snapshot.kind == island.kind)
+        .filter(|snapshot| {
+            if previous_document.is_some_and(|previous| Arc::ptr_eq(previous.document(), document))
+            {
+                return snapshot.source_range == source_range
+                    && snapshot.content_range == island.content_range;
+            }
+            change_map.is_some_and(|map| {
+                map.translate_unchanged(snapshot.source_range) == Some(source_range)
+                    && map.translate_unchanged(snapshot.content_range) == Some(island.content_range)
+            })
+        });
+    let island_tree = match reusable.map(|snapshot| snapshot.syntax.clone()) {
+        Some(tree) => tree,
+        None => syntax::parse_authoritative_island(
+            document.text().clone(),
+            structure,
+            island.owner,
+            island.content_range,
+        )
+        .ok_or_else(|| AnalysisError::Specialization {
+            name: "uml",
+            reason: "validated Markdown structure does not identify its UML island".into(),
+        })?,
+    };
+    Ok((source_range, island_tree))
 }
 
 struct AnalysisMetadata {
