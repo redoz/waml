@@ -10,10 +10,11 @@ use std::collections::HashSet;
 
 use crate::okf;
 
+use super::kind::kind_of;
 use super::projection::{
     Next, Projection, ProjectionCtx, ProjectionError, RowOp, Unresolved, Unsupported,
 };
-use super::row::{Row, RowId, RowPath, RowTarget, ViewId};
+use super::row::{IconId, Row, RowId, RowPath, RowTarget, ViewId};
 use super::surface::SurfaceId;
 
 /// This stage's reserved `ViewId` name. Never produced by a declared
@@ -70,6 +71,9 @@ impl RootView {
         )
         .expect("a Concept target never requires a surface override");
         row.blurb = concept.description.clone();
+        row.icon = Some(IconId::new(
+            kind_of(&crate::model::ElementType::parse(&concept.ty)).as_icon_name(),
+        ));
         row.caps = super::row::RowCaps {
             rename: true,
             delete: true,
@@ -131,6 +135,7 @@ impl RootView {
             None,
         )
         .expect("a Folder target never requires a surface override");
+        row.icon = Some(IconId::new("book"));
         row.caps = super::row::RowCaps {
             rename: true,
             delete: true,
@@ -1206,5 +1211,65 @@ mod tests {
         let (chain, build_diags) = bundle.resolved_view("/", &registry);
         assert!(build_diags.is_empty());
         assert_every_declared_capability_is_accepted_by_apply(&chain, &projection_ctx);
+    }
+
+    #[test]
+    fn rows_carry_the_icon_their_kind_or_target_implies() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root\n\n* [Class](./a.md)\n* [Note](./b.md)\n* [Archive](archive/)\n* [Loose](./loose.md)\n",
+            ),
+            (
+                "a.md",
+                "---\ntype: uml.Class\ntitle: Class\n---\n# Class\n",
+            ),
+            ("b.md", "---\ntype: uml.Note\ntitle: Note\n---\n# Note\n"),
+            ("archive/index.md", "---\ntitle: Archive\n---\n# Archive\n"),
+            // Not authored in `index.md`'s members, so it never resolves
+            // through `bundle.concept` for the icon lookup path -- but the
+            // regular unlisted-file rules still surface the row.
+            ("loose.md", "not-a-concept-frontmatter\n"),
+        ])
+        .unwrap();
+        let prepared = prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, _uml, _) = prepared.into_parts();
+        let bundle = okf.bundle;
+        let root_address = okf::DirectoryAddress::parse("/").unwrap();
+
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let registry = MiddlewareRegistry::new();
+        let chain = Chain::root_only(&registry);
+        let outcome = chain.run(&projection_ctx, ChainLimits::default());
+
+        let icon_for = |path: &str| -> Option<String> {
+            outcome
+                .rows
+                .iter()
+                .find(|row| row.id.path.as_str() == path)
+                .and_then(|row| row.icon.as_ref())
+                .map(|icon| icon.as_str().to_string())
+        };
+        assert_eq!(icon_for("a"), Some("class".to_string()));
+        assert_eq!(icon_for("b"), Some("note".to_string()));
+        assert_eq!(icon_for("archive"), Some("book".to_string()));
+        // No `type` frontmatter -> ElementType::Unknown -> RowKind::OkfDocument.
+        assert_eq!(icon_for("loose"), Some("okf-document".to_string()));
+    }
+
+    #[test]
+    fn a_concept_row_for_an_id_absent_from_the_bundle_carries_no_icon() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        assert!(bundle.concept("not-in-the-bundle").is_none());
+        assert!(RootView::concept_row(&projection_ctx, "not-in-the-bundle").is_none());
     }
 }
