@@ -15,6 +15,20 @@ pub enum DocumentCommand {
     Activate(LiveId),
     Promote(LiveId),
     Close(LiveId),
+    /// Swap the view behind an ALREADY-OPEN tab, leaving tab order,
+    /// selection, and the active tab untouched. A no-op when `document`'s tab
+    /// is not open.
+    ///
+    /// Distinct from `Open`, which deliberately keeps the existing view when
+    /// the tab id is already open: an ordinary re-navigation must not discard
+    /// a markdown editor's scroll position or an in-flight edit. Only a caller
+    /// that KNOWS the view must change -- a session-wide projected/raw flip --
+    /// asks for this.
+    // Constructed once the session-wide toggle lands in Task 10.
+    #[allow(dead_code)]
+    ReopenInPlace {
+        document: OpenDocument,
+    },
 }
 
 #[derive(Default)]
@@ -84,6 +98,13 @@ impl DocumentHost {
                 self.tabs.promote(id);
             }
             DocumentCommand::Close(id) => self.tabs.close(id),
+            DocumentCommand::ReopenInPlace { document } => {
+                let tab_id = document.tab_id;
+                if self.tabs.tabs.iter().any(|tab| tab.id == tab_id) {
+                    let (_tab, view) = document.into_tab(true);
+                    self.views.insert(tab_id, view);
+                }
+            }
         }
         let removed = self.reconcile_registry();
         (self.tabs != before, removed)
@@ -666,6 +687,46 @@ mod tests {
         assert!(!host.views.contains_key(&first_id));
         assert_eq!(host.tabs.tabs.len(), 1);
         assert_eq!(host.tabs.tabs[0].concept_id, "second");
+    }
+
+    /// The capability whose absence made the old per-folder "View raw" inert:
+    /// `Open` keeps the existing view whenever the tab id is already open, so
+    /// re-navigating a folder tab built the new view and discarded it. A mode
+    /// flip must swap the view of a tab that stays put, in place, without
+    /// closing and reopening it (which would lose tab order and selection).
+    #[test]
+    fn reopen_in_place_replaces_the_view_of_an_already_open_tab() {
+        let mut host = DocumentHost::default();
+        let first = prepared("first", NavCategory::Class, Rc::new(Cell::new(0)));
+        let tab_id = first.tab_id;
+        host.apply_command(DocumentCommand::Open {
+            document: first,
+            persistent: false,
+        });
+        assert_eq!(host.tabs().len(), 1);
+
+        let mut replacement = prepared("first", NavCategory::OkfDocument, Rc::new(Cell::new(0)));
+        replacement.tab_id = tab_id;
+        host.apply_command(DocumentCommand::ReopenInPlace {
+            document: replacement,
+        });
+
+        assert_eq!(host.tabs().len(), 1, "no second tab for the same document");
+        assert_eq!(host.tabs()[0].id, tab_id, "the tab keeps its identity");
+        assert_eq!(
+            host.views.get(&tab_id).map(|view| view.identity()),
+            Some(DocViewIdentity::GenericOkf),
+            "the view was replaced, not discarded",
+        );
+    }
+
+    #[test]
+    fn reopen_in_place_on_a_closed_tab_opens_nothing() {
+        let mut host = DocumentHost::default();
+        host.apply_command(DocumentCommand::ReopenInPlace {
+            document: prepared("first", NavCategory::Class, Rc::new(Cell::new(0))),
+        });
+        assert!(host.tabs().is_empty(), "ReopenInPlace never opens a tab");
     }
 
     #[test]
