@@ -100,6 +100,28 @@ pub(crate) struct ProjectSettings {
     /// Dock column widths; absent in a hand-trimmed file -> defaults.
     #[serde(default)]
     pub dock: DockWidths,
+    /// Maximum folder-view middleware chain descent depth; `None` (absent in
+    /// a hand-trimmed file, or explicit `null`) maps to the runner's default
+    /// of 20 via [`ProjectSettings::chain_limits`]. This is the ONLY source
+    /// the runner is ever built from -- a bundle or index frontmatter never
+    /// reaches `waml::view::chain::ChainLimits`.
+    #[serde(default)]
+    pub max_view_depth: Option<usize>,
+}
+
+impl ProjectSettings {
+    /// Map `max_view_depth` to the runner's [`waml::view::chain::ChainLimits`],
+    /// defaulting an absent or `null` value to the runner's built-in default.
+    ///
+    /// Unused outside tests until Task B6 wires the runner into the tree
+    /// panel; that commit removes this allow.
+    #[allow(dead_code)]
+    pub(crate) fn chain_limits(&self) -> waml::view::chain::ChainLimits {
+        match self.max_view_depth {
+            Some(max_depth) => waml::view::chain::ChainLimits { max_depth },
+            None => waml::view::chain::ChainLimits::default(),
+        }
+    }
 }
 
 /// `<project>/.waml`.
@@ -161,6 +183,7 @@ mod tests {
                 tree_w,
                 inspector_w,
             },
+            max_view_depth: None,
         }
     }
 
@@ -246,6 +269,30 @@ mod tests {
         );
         // ...while the settings themselves still updated.
         assert_eq!(load(tmp.path()).dock.tree_w, 305.0);
+    }
+
+    #[test]
+    fn project_settings_max_view_depth_round_trips() {
+        let tmp = TempDir::new();
+        let mut want = settings(300.0, 300.0);
+        want.max_view_depth = Some(7);
+        store(tmp.path(), &want).unwrap();
+        assert_eq!(load(tmp.path()).max_view_depth, Some(7));
+        assert_eq!(load(tmp.path()).chain_limits().max_depth, 7);
+    }
+
+    #[test]
+    fn absent_field_yields_default_20() {
+        let tmp = TempDir::new();
+        let dir = project_dir(tmp.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(SETTINGS_FILE), br#"{"version":1}"#).unwrap();
+        let loaded = load(tmp.path());
+        assert_eq!(loaded.max_view_depth, None);
+        assert_eq!(
+            loaded.chain_limits(),
+            waml::view::chain::ChainLimits::default()
+        );
     }
 
     /// Minimal temp dir, mirroring `config.rs`'s: the repo has no temp-dir
