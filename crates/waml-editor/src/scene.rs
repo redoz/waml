@@ -2,7 +2,10 @@
 //! Nothing below this module touches makepad; nothing here touches a GPU.
 
 use waml::diagnostic::Diagnostic;
-use waml::model::{CardinalityVisibility, Diagram, ElementType, Model, RelEnd, RelationshipKind};
+use waml::layout::Shape;
+use waml::model::{
+    CardinalityVisibility, Diagram, DiagramGroup, ElementType, Model, RelEnd, RelationshipKind,
+};
 use waml::multiplicity::Multiplicity;
 use waml::solve::{
     route, solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
@@ -258,10 +261,12 @@ pub fn project_scene_node_with_display(
     }
 }
 
-/// A diagram with no authored layout statements and only trivial (unnamed,
-/// childless) member groups gets the semi-smart stress-majorization default
-/// instead of the constraint solver's edge-blind left-to-right strip. Authored
-/// named/nested groups still route to `solve_diagram` — structure wins.
+/// A diagram with no authored `## Layout` section gets the semi-smart
+/// stress-majorization default instead of the constraint solver's edge-blind
+/// left-to-right strip — regardless of whether it has member groups. Groups
+/// are not layout: `stress_default` folds them into the solve as a soft
+/// cohesion force (see `stress::layout_grouped`), so an authored `## Layout`
+/// section is what routes a diagram to `solve_diagram`, not group membership.
 fn use_stress_default(diagram: &Diagram) -> bool {
     diagram.layout.is_empty()
 }
@@ -419,11 +424,59 @@ pub fn conflict_participants(c: &SceneConflict) -> Vec<String> {
     out
 }
 
+/// Flatten a `DiagramGroup` forest into `stress::GroupSpec`s (member indices
+/// into `index`, resolved recursively so a nested group's members are also
+/// listed in every ancestor) plus a parallel `(title, depth)` list for
+/// emission, in the same pre-order the input tree is walked. Member keys
+/// absent from `index` (not part of this diagram's sized set) are skipped.
+fn flatten_groups(
+    groups: &[DiagramGroup],
+    index: &std::collections::BTreeMap<&str, usize>,
+    depth: u8,
+    specs: &mut Vec<stress::GroupSpec>,
+    meta: &mut Vec<(Option<String>, u8)>,
+) {
+    fn collect_members(
+        g: &DiagramGroup,
+        index: &std::collections::BTreeMap<&str, usize>,
+        acc: &mut Vec<usize>,
+    ) {
+        for m in &g.members {
+            if let Some(&i) = index.get(m.as_str()) {
+                acc.push(i);
+            }
+        }
+        for c in &g.children {
+            collect_members(c, index, acc);
+        }
+    }
+
+    for g in groups {
+        let mut members = Vec::new();
+        collect_members(g, index, &mut members);
+        specs.push(stress::GroupSpec { members, depth });
+        let title = if g.name.is_empty() {
+            None
+        } else {
+            Some(g.name.clone())
+        };
+        meta.push((title, depth));
+        flatten_groups(&g.children, index, depth + 1, specs, meta);
+    }
+}
+
 /// Native-only stress/grid default layout. Kept at this call seam (not inside
 /// `solve_diagram`) so the wasm/web path stays unchanged — web keeps dagre.
 /// Node set is every sized member; the caller's undirected drawable edges among
-/// them drive the stress solve, and an edgeless set falls back to `grid_pack`.
-fn stress_default(model_edges: &[&waml::model::Edge], sizes: &SizeMap) -> (Solved, SolvedRouting) {
+/// them drive the stress solve, and `diagram_groups` folds in as a soft
+/// cohesion force (`stress::layout_grouped`). An edgeless, groupless set falls
+/// back to `grid_pack`; edgeless-but-grouped still goes through
+/// `layout_grouped` so cohesion still applies.
+fn stress_default(
+    model_edges: &[&waml::model::Edge],
+    sizes: &SizeMap,
+    diagram_groups: &[DiagramGroup],
+) -> (Solved, SolvedRouting) {
     use std::collections::{BTreeMap, BTreeSet};
 
     let keys: Vec<String> = sizes.keys().cloned().collect();
@@ -451,11 +504,15 @@ fn stress_default(model_edges: &[&waml::model::Edge], sizes: &SizeMap) -> (Solve
         }
     }
 
+    let mut group_specs: Vec<stress::GroupSpec> = Vec::new();
+    let mut group_meta: Vec<(Option<String>, u8)> = Vec::new();
+    flatten_groups(diagram_groups, &index, 0, &mut group_specs, &mut group_meta);
+
     let cfg = stress::StressConfig::default();
-    let rects = if pairs.is_empty() {
-        stress::grid_pack(&ids, &dims, &cfg)
+    let (rects, hulls) = if pairs.is_empty() && group_specs.is_empty() {
+        (stress::grid_pack(&ids, &dims, &cfg), Vec::new())
     } else {
-        stress::layout(&ids, &dims, &pairs, &cfg)
+        stress::layout_grouped(&ids, &dims, &pairs, &group_specs, &cfg)
     };
 
     // Rects keyed by BoxId for the router (obstacles derive from these rects).
@@ -470,13 +527,25 @@ fn stress_default(model_edges: &[&waml::model::Edge], sizes: &SizeMap) -> (Solve
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
 
-    // Empty boxes slice: the stress layout is group-less, so build_membership(&[])
-    // yields no groups and routing degrades to pure leaf-obstacle avoidance.
+    // Empty boxes slice: containment-aware routing (feeding the group hulls in
+    // as `BoxId::Group` obstacles) is separate follow-up work, so routing still
+    // degrades to pure leaf-obstacle avoidance here even though hulls exist.
     let routes = route::route(&[], &rect_map, &route_edges, &SolveConfig::default());
+
+    let groups: Vec<SolvedGroup> = hulls
+        .into_iter()
+        .zip(group_meta)
+        .map(|(rect, (title, depth))| SolvedGroup {
+            rect,
+            shape: Shape::Shrink,
+            title,
+            depth,
+        })
+        .collect();
 
     let solved = Solved {
         nodes: keys.into_iter().zip(rects).collect(),
-        groups: Vec::new(),
+        groups,
         flags: BTreeMap::new(),
         routes,
         labels: Vec::new(),
@@ -551,7 +620,7 @@ pub fn build_scene(
     // `model_edges`, which is the same list (same order) as `edges`.
     let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
     let (mut solved, diags, dropped, routing) = if use_stress_default(diagram) {
-        let (solved, routing) = stress_default(&model_edges, &sizes);
+        let (solved, routing) = stress_default(&model_edges, &sizes, &diagram.groups);
         (solved, Vec::new(), Vec::new(), routing)
     } else {
         waml::solve::solve_diagram_routed(
@@ -1626,7 +1695,7 @@ mod tests {
             &model.diagrams[0],
             &std::collections::HashSet::new(),
         );
-        let (solved, _routing) = stress_default(&drawable_edges(&model), &sizes);
+        let (solved, _routing) = stress_default(&drawable_edges(&model), &sizes, &[]);
         // mini declares one associates edge order -> customer.
         assert_eq!(solved.routes.len(), 1);
         assert!(!solved.routes[0].points.is_empty());
@@ -1758,6 +1827,46 @@ mod tests {
             !scene.edges[0].points.is_empty(),
             "stress-default edges must carry a routed polyline"
         );
+    }
+
+    #[test]
+    fn stress_default_emits_group_hull_from_diagram_groups() {
+        let model = mini();
+        // Clearing `layout` routes build_scene through stress_default, and a
+        // group with no `with frame` layout statement still emits a hull for
+        // containment-aware routing / the show-hidden overlay (it just renders
+        // as `GroupDraw::Skip` normally).
+        let mut diagram = model.diagrams[0].clone();
+        diagram.layout = Vec::new();
+        diagram.groups = vec![DiagramGroup {
+            name: "Ordering".into(),
+            members: vec!["order".into(), "customer".into()],
+            children: Vec::new(),
+        }];
+        assert!(use_stress_default(&diagram), "expected stress path");
+
+        let (scene, _) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(scene.groups.len(), 1);
+        let hull = scene.groups[0].rect;
+        assert_eq!(scene.groups[0].title.as_deref(), Some("Ordering"));
+        assert_eq!(scene.groups[0].depth, 0);
+        assert_eq!(scene.groups[0].shape, Shape::Shrink);
+        for key in ["order", "customer"] {
+            let node = scene.nodes.iter().find(|n| n.key == key).unwrap();
+            let r = node.rect;
+            assert!(
+                r.x >= hull.x - 1e-6
+                    && r.y >= hull.y - 1e-6
+                    && r.x + r.w <= hull.x + hull.w + 1e-6
+                    && r.y + r.h <= hull.y + hull.h + 1e-6,
+                "{key} rect not inside the emitted hull"
+            );
+        }
     }
 
     #[test]
