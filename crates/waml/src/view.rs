@@ -4,5 +4,6 @@
 
 pub mod chain;
 pub mod decl;
+pub mod projection;
 pub mod row;
 pub mod surface;
