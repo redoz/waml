@@ -619,19 +619,36 @@ impl App {
     ///
     /// A tree build runs the folder-view chain for every directory in the
     /// bundle, recursively, so the view and the scope-title lookup share ONE
-    /// build: a refresh costs one projection run over the bundle regardless of
-    /// `scope_changed`.
+    /// build. `refresh_nav` fires on every row click and every navigation
+    /// change too, where nothing about the projection moved -- so the build is
+    /// memoized on everything it reads: the session revision (bumped by every
+    /// edit and by `replace`), the mode, and the descent cap. Scope and
+    /// selection are applied to the CACHED tree by `view_of`, which is why
+    /// they are not part of the key.
     pub(super) fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
-        let full = crate::tree::build_tree(
-            self.session.okf_analysis(),
-            self.session.uml_analysis(),
-            "Untitled",
+        let key = (
+            self.session.revision(),
             self.view_mode,
-            self.chain_limits,
+            self.chain_limits.max_depth,
         );
-        let view = crate::nav::view_of(&full, &self.nav_state);
+        if self.nav_tree.as_ref().map(|(cached, _)| *cached) != Some(key) {
+            let tree = crate::tree::build_tree(
+                self.session.okf_analysis(),
+                self.session.uml_analysis(),
+                "Untitled",
+                self.view_mode,
+                self.chain_limits,
+            );
+            self.nav_tree = Some((key, tree));
+        }
+        let full = &self
+            .nav_tree
+            .as_ref()
+            .expect("the build above populates the cache")
+            .1;
+        let view = crate::nav::view_of(full, &self.nav_state);
         let title = scope_changed.then(|| {
-            crate::nav::packages_of(&full, self.session.okf_analysis())
+            crate::nav::packages_of(full, self.session.okf_analysis())
                 .into_iter()
                 .find(|r| r.key == self.nav_state.scope)
                 .map(|r| r.title)

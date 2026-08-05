@@ -712,6 +712,15 @@ pub struct App {
     /// never disagree about what a directory contains.
     #[rust]
     view_mode: ViewMode,
+    /// The last `tree::build_tree` result, with the key it was built from:
+    /// `(session revision, mode, chain descent cap)`. A build runs the
+    /// folder-view chain for every directory in the bundle, recursively, and
+    /// `refresh_nav` fires on every row click; nothing in that key moves on a
+    /// click, so the projection is not re-run for one. Every input the build
+    /// reads is in the key -- the revision covers the bundle itself, since
+    /// both an edit and `EditorSession::replace` bump it.
+    #[rust]
+    nav_tree: Option<((u64, ViewMode, usize), crate::tree::ProjectTree)>,
     /// Springy give, in px, currently shown by a collapsed-but-still-held
     /// panel: `(tree, inspector)`. Non-zero only for the length of a drag that
     /// has snapped the panel shut, and reset the moment the finger lifts or the

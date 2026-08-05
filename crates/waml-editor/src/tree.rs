@@ -141,9 +141,9 @@ fn build_tree_with_registry(
         mode: crate::folder_projection::ViewMode,
         limits: waml::view::chain::ChainLimits,
         registry: &waml::view::chain::MiddlewareRegistry,
-        // The directory addresses on the path from the bundle root down to
-        // (and including) `address`.
-        ancestors: &mut Vec<String>,
+        // Every directory address this build has already expanded, anywhere in
+        // the tree -- NOT just the current ancestor path.
+        expanded: &mut std::collections::HashSet<String>,
     ) -> Option<TreeNode> {
         let bundle = &okf.bundle;
         // Confirms the directory still exists; its member lists are no
@@ -201,15 +201,17 @@ fn build_tree_with_registry(
             })
         };
         // The child addresses this recursion descends on come from the chain,
-        // not from `bundle.child_directories`, so they are NOT acyclic by
-        // construction: a middleware may emit a `Folder` row addressing this
-        // very directory or one of its ancestors. Descending into one recurses
-        // forever and takes the whole editor down with a stack overflow. The
-        // row still gets a node -- dropping it would make the tree disagree
-        // with the folder view about what is listed -- it simply has no
-        // children, and the cycle stops here.
-        let cycles = ancestors.iter().any(|seen| seen == address.as_str());
-        ancestors.push(address.as_str().to_string());
+        // not from `bundle.child_directories`, so they are neither acyclic nor
+        // even a tree: a middleware may emit a `Folder` row addressing an
+        // ancestor (infinite recursion, stack overflow, dead editor) or one
+        // addressing a directory another branch already listed (a DAG, whose
+        // full expansion is exponential in the bundle's depth). `ChainLimits`
+        // bounds one directory's run and nothing bounds this descent, so the
+        // guard is global: a directory is expanded at most ONCE per build, and
+        // the total cost stays proportional to the bundle. A repeat row still
+        // gets a node -- dropping it would make the tree disagree with the
+        // folder view about what is listed -- it simply has no children.
+        let repeat = !expanded.insert(address.as_str().to_string());
         let mut children = Vec::new();
         // Children ARE the chain's rows for this directory, in the chain's
         // order, carrying the chain's labels -- not the OKF member list. The
@@ -217,7 +219,7 @@ fn build_tree_with_registry(
         // directory contains. `project_rows` returning None means the
         // directory left the bundle underneath us; an empty child list is the
         // honest answer, not a panic.
-        let projected = (!cycles)
+        let projected = (!repeat)
             .then(|| {
                 crate::folder_projection::project_rows(
                     okf,
@@ -250,7 +252,7 @@ fn build_tree_with_registry(
                         mode,
                         limits,
                         registry,
-                        ancestors,
+                        expanded,
                     );
                     if let Some(mut node) = child_node {
                         // The chain owns the label, the identity, and the
@@ -297,7 +299,6 @@ fn build_tree_with_registry(
                 }
             }
         }
-        ancestors.pop();
         Some(TreeNode {
             // The bundle root mints its own id (see `ROOT_ROW_SEGMENT`); a
             // directory child immediately overwrites this with the row that
@@ -331,7 +332,7 @@ fn build_tree_with_registry(
             mode,
             limits,
             registry,
-            &mut Vec::new(),
+            &mut std::collections::HashSet::new(),
         )
         .into_iter()
         .collect(),
@@ -675,6 +676,152 @@ mod tests {
         assert!(
             up.children.is_empty(),
             "the cycle stops at the row that closed it",
+        );
+    }
+
+    /// A middleware that lists the SAME directory from two different branches:
+    /// a DAG, not a cycle, so an ancestor-path-only guard never fires on it and
+    /// the shared subtree is rebuilt once per path that reaches it -- which is
+    /// exponential in the bundle's depth, not linear in its size.
+    struct Fanout;
+
+    fn folder_row(path: &str, label: &str, target: &str) -> waml::view::row::Row {
+        waml::view::row::Row::new(
+            waml::view::row::RowId {
+                owner: waml::view::row::ViewId::new("fanout"),
+                path: waml::view::row::RowPath::parse(path).unwrap(),
+            },
+            label.to_string(),
+            waml::view::row::RowTarget::Folder(target.to_string()),
+            None,
+        )
+        .expect("a Folder target never requires a surface override")
+    }
+
+    impl waml::view::projection::Projection for Fanout {
+        fn project(
+            &self,
+            ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _next: waml::view::projection::Next<'_>,
+        ) -> Result<Vec<waml::view::row::Row>, waml::view::projection::ProjectionError> {
+            Ok(match ctx.dir.address.as_str() {
+                "/" => vec![
+                    folder_row("left", "Left", "/left"),
+                    folder_row("right", "Right", "/right"),
+                ],
+                "/left" | "/right" => vec![folder_row("shared", "Shared", "/shared")],
+                "/shared" => vec![folder_row("deep", "Deep", "/shared/deep")],
+                _ => Vec::new(),
+            })
+        }
+
+        fn resolve(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _path: &waml::view::row::RowPath,
+        ) -> Result<Vec<waml::view::row::Row>, waml::view::projection::Unresolved> {
+            Err(waml::view::projection::Unresolved)
+        }
+
+        fn apply(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _path: &waml::view::row::RowPath,
+            _op: waml::view::projection::RowOp,
+            _next: waml::view::projection::Next<'_>,
+        ) -> Result<Vec<waml::okf::Op>, waml::view::projection::Unsupported> {
+            Err(waml::view::projection::Unsupported)
+        }
+
+        fn surface(
+            &self,
+            ctx: &waml::view::projection::ProjectionCtx<'_>,
+            next: waml::view::projection::Next<'_>,
+        ) -> waml::view::surface::SurfaceId {
+            next.surface(ctx)
+        }
+    }
+
+    struct FanoutExt;
+
+    impl waml::extension::CoreExtension for FanoutExt {
+        fn name(&self) -> &str {
+            "fanout-test"
+        }
+
+        fn middleware(&self) -> Vec<(&'static str, waml::extension::MiddlewareFactory)> {
+            vec![(
+                "fanout",
+                std::sync::Arc::new(|| {
+                    Box::new(Fanout) as Box<dyn waml::view::projection::Projection>
+                }),
+            )]
+        }
+
+        fn profiles(&self) -> Vec<waml::profile::ProfileDef> {
+            Vec::new()
+        }
+    }
+
+    fn count_titled(node: &TreeNode, title: &str) -> usize {
+        usize::from(node.title == title)
+            + node
+                .children
+                .iter()
+                .map(|child| count_titled(child, title))
+                .sum::<usize>()
+    }
+
+    /// `ChainLimits` bounds ONE directory's run; nothing bounds the descent
+    /// `build_tree` performs across directories. A chain that lists the same
+    /// non-ancestor directory from several branches therefore re-expands it
+    /// once per branch, and a chain of such levels multiplies. A directory is
+    /// expanded at most once per build; the repeat row stays listed, without
+    /// children.
+    #[test]
+    fn a_directory_listed_from_two_branches_is_expanded_only_once() {
+        let index = "---\nview: fanout\n---\n# Dir\n";
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", index),
+            ("left/index.md", index),
+            ("right/index.md", index),
+            ("shared/index.md", index),
+            ("shared/deep/index.md", index),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let registry = waml::view::chain::MiddlewareRegistry::from_extensions(&[
+            &waml::extension::CoreExt,
+            &FanoutExt,
+        ])
+        .unwrap();
+
+        let tree = build_tree_with_registry(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+            &registry,
+        );
+        let root = &tree.roots[0];
+        assert_eq!(
+            root.children
+                .iter()
+                .map(|node| node.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Left", "Right"],
+            "both branches stay listed -- the tree must not disagree with the folder view",
+        );
+        assert_eq!(
+            count_titled(root, "Shared"),
+            2,
+            "the repeat row is listed by both branches",
+        );
+        assert_eq!(
+            count_titled(root, "Deep"),
+            1,
+            "the shared subtree must be expanded once, not once per branch",
         );
     }
 
