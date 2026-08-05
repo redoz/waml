@@ -88,6 +88,11 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(ArrowLeftRight, "Association kind"),
             ie!(StickyNote, "Note kind"),
             ie!(ChevronsUpDown, "Scope / select dropdown"),
+            ie!(
+                SquareLibrary,
+                "Tree/folder view is projected (chain running)"
+            ),
+            ie!(SquareCode, "Tree/folder view is raw (chain bypassed)"),
         ],
     ),
     (
@@ -307,6 +312,10 @@ mod drift {
         // Catalogued ahead of a call site, same as FileCodeCorner / Plus above.
         Icon::Book,
         Icon::Box,
+        // Removed from this list by the tree-panel projected/raw toggle, which is
+        // their call site. Temporary: they are catalogued a commit ahead of it.
+        Icon::SquareCode,
+        Icon::SquareLibrary,
     ];
 
     fn table_icons() -> Vec<Icon> {

@@ -4014,6 +4014,67 @@ script_mod! {
         }
     }
 
+    // SquareCode: catalogued ahead of a call site. Faithful port of
+    // resources/icons/square-code.svg via scripts/gen-icon.py.
+    mod.draw.IconSquareCode = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.4167, s * 0.3750)
+            sdf.line_to(s * 0.2917, s * 0.5000)
+            sdf.line_to(s * 0.4167, s * 0.6250)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5833, s * 0.6250)
+            sdf.line_to(s * 0.7083, s * 0.5000)
+            sdf.line_to(s * 0.5833, s * 0.3750)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // SquareLibrary: catalogued ahead of a call site. Faithful port of
+    // resources/icons/square-library.svg via scripts/gen-icon.py.
+    mod.draw.IconSquareLibrary = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.2917, s * 0.2917)
+            sdf.line_to(s * 0.2917, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.4583, s * 0.2917)
+            sdf.line_to(s * 0.4583, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.2917)
+            sdf.line_to(s * 0.7083, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2083, s * 0.1250)
+            sdf.line_to(s * 0.7917, s * 0.1250)
+            sdf.arc_to(s * 0.7917, s * 0.2083, s * 0.0833, -1.5708, 0.0000)
+            sdf.line_to(s * 0.8750, s * 0.7917)
+            sdf.arc_to(s * 0.7917, s * 0.7917, s * 0.0833, 0.0000, 1.5708)
+            sdf.line_to(s * 0.2083, s * 0.8750)
+            sdf.arc_to(s * 0.2083, s * 0.7917, s * 0.0833, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.2083)
+            sdf.arc_to(s * 0.2083, s * 0.2083, s * 0.0833, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -4142,6 +4203,8 @@ script_mod! {
         plus: mod.draw.IconPlus{ color: atlas.accent }
         book: mod.draw.IconBook{ color: atlas.accent }
         box_: mod.draw.IconBox{ color: atlas.accent }
+        square_code: mod.draw.IconSquareCode{ color: atlas.accent }
+        square_library: mod.draw.IconSquareLibrary{ color: atlas.accent }
     }
 }
 
@@ -4398,6 +4461,10 @@ pub struct IconSet {
     /// also rejects the raw identifier `r#box`, so this field is `box_`
     /// (trailing underscore) on both the Rust struct and the DSL block.
     pub box_: DrawColor,
+    #[live]
+    pub square_code: DrawColor,
+    #[live]
+    pub square_library: DrawColor,
 }
 
 impl IconSet {
@@ -4528,6 +4595,8 @@ impl IconSet {
             Icon::Plus => &mut self.plus,
             Icon::Book => &mut self.book,
             Icon::Box => &mut self.box_,
+            Icon::SquareCode => &mut self.square_code,
+            Icon::SquareLibrary => &mut self.square_library,
         }
     }
 
@@ -4671,12 +4740,14 @@ pub enum Icon {
     Plus,
     Book,
     Box,
+    SquareCode,
+    SquareLibrary,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 123] = [
+    pub const ALL: [Icon; 125] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4800,6 +4871,8 @@ impl Icon {
         Icon::Plus,
         Icon::Book,
         Icon::Box,
+        Icon::SquareCode,
+        Icon::SquareLibrary,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -4929,6 +5002,8 @@ impl Icon {
             Icon::Plus => "plus",
             Icon::Book => "book",
             Icon::Box => "box",
+            Icon::SquareCode => "square-code",
+            Icon::SquareLibrary => "square-library",
         }
     }
 }
@@ -4939,7 +5014,7 @@ mod tests {
 
     #[test]
     fn icon_all_has_121_entries() {
-        assert_eq!(Icon::ALL.len(), 123);
+        assert_eq!(Icon::ALL.len(), 125);
     }
 
     // ------------------------------------------------------------------
@@ -5161,7 +5236,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 123);
+        assert_eq!(seen.len(), 125);
     }
 
     #[test]
