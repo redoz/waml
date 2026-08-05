@@ -1987,3 +1987,55 @@ fn pumping_a_draw_applies_the_latest_pending_restore_and_refreshes_its_entry() {
         .expect("sales/order entry exists at index 0");
     assert_eq!(refreshed.document.concept_id, "sales/order");
 }
+
+/// A flip re-runs every open folder tab IN PLACE -- same tab, view
+/// swapped -- and leaves concept tabs alone. Opening a second tab for the
+/// same folder, or leaving the old view behind, are both the defect the
+/// old "View raw" had.
+#[test]
+fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
+    let (mut cx, mut app) = navigation_app();
+    let mut browser = FakeBrowser::default();
+
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/sales".into(),
+        },
+        OpenDisposition::Persistent,
+        &mut browser,
+    ));
+    let tabs_before = app.documents.tabs().len();
+    let tab_id = app.documents.active_id();
+
+    app.toggle_view_mode(&mut cx);
+
+    assert_eq!(app.view_mode, crate::folder_projection::ViewMode::Raw);
+    assert_eq!(app.documents.tabs().len(), tabs_before, "no second tab");
+    assert_eq!(
+        app.documents.active_id(),
+        tab_id,
+        "the tab keeps its identity"
+    );
+
+    app.toggle_view_mode(&mut cx);
+    assert_eq!(app.view_mode, crate::folder_projection::ViewMode::Projected);
+    assert_eq!(app.documents.tabs().len(), tabs_before);
+}
+
+/// Mode is a session fact, not a preference. Nothing writes it anywhere.
+#[test]
+fn the_mode_starts_projected_and_is_never_persisted() {
+    let (mut cx, mut app) = navigation_app();
+    assert_eq!(app.view_mode, crate::folder_projection::ViewMode::Projected);
+    app.toggle_view_mode(&mut cx);
+    // The settings type has no field for it, by construction. This
+    // assertion is the fence: adding one must break a test, not pass
+    // silently.
+    let settings = crate::project_settings::ProjectSettings::default();
+    let json = serde_json::to_string(&settings).unwrap();
+    assert!(
+        !json.contains("view_mode"),
+        "the mode must not reach settings"
+    );
+}

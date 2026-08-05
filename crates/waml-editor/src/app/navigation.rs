@@ -649,6 +649,67 @@ impl App {
             if let Some(title) = title {
                 panel.set_scope_title(cx, title);
             }
+            panel.set_view_mode(cx, self.view_mode);
+        }
+    }
+
+    /// Flip the session-wide projected/raw switch.
+    ///
+    /// Both surfaces read the same flag, so there is no state in which the
+    /// tree and a folder view disagree about what a directory contains. The
+    /// flag lives in memory only: raw is a deliberate act, not a preference,
+    /// so it is never written to `.waml/settings.json` and every launch
+    /// starts Projected.
+    ///
+    /// This is presentational. A row the declared chain does not emit is not
+    /// protected by anything; raw simply asks for the identity listing.
+    pub(super) fn toggle_view_mode(&mut self, cx: &mut Cx) {
+        self.view_mode = match self.view_mode {
+            crate::folder_projection::ViewMode::Projected => {
+                crate::folder_projection::ViewMode::Raw
+            }
+            crate::folder_projection::ViewMode::Raw => {
+                crate::folder_projection::ViewMode::Projected
+            }
+        };
+        self.refresh_nav(cx, false);
+        self.refresh_folder_tabs(cx);
+        cx.redraw_all();
+    }
+
+    /// Re-run every OPEN folder tab under the current mode, in place -- same
+    /// tab, view swapped. Concept tabs are untouched: a mode is about how a
+    /// container lists its contents, and a concept has none.
+    ///
+    /// `ReopenInPlace` rather than `Open` because `Open` keeps the existing
+    /// view whenever the tab id is already open; that is exactly what made
+    /// the old per-folder "View raw" build a view and throw it away.
+    pub(super) fn refresh_folder_tabs(&mut self, cx: &mut Cx) {
+        let folders: Vec<String> = self
+            .documents
+            .tabs()
+            .iter()
+            .filter(|tab| tab.presentation.category == crate::document::NavCategory::Directory)
+            .map(|tab| tab.concept_id.clone())
+            .collect();
+        for directory in folders {
+            let Some(document) = crate::documents::open_folder(
+                self.session.okf_analysis(),
+                &directory,
+                self.chain_limits,
+                self.view_mode,
+            ) else {
+                // The directory left the bundle underneath us. Leaving the
+                // stale view up is wrong, but so is silently closing a tab
+                // the user opened; the next model refresh reconciles it.
+                continue;
+            };
+            self.documents.transition(
+                cx,
+                &self.ui,
+                &self.session,
+                DocumentCommand::ReopenInPlace { document },
+            );
         }
     }
 }

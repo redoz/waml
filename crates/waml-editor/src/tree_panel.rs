@@ -1310,6 +1310,16 @@ impl ProjectTree {
         None
     }
 
+    /// The projected/raw toggle button was clicked. The panel does not flip
+    /// its own mode -- `App` owns the session-wide switch and pushes the new
+    /// mode back via `set_view_mode`.
+    pub fn view_mode_toggled(&self, actions: &Actions) -> bool {
+        let Some(item) = actions.find_widget_action(self.widget_uid()) else {
+            return false;
+        };
+        matches!(item.cast(), ProjectTreeAction::ToggleViewMode)
+    }
+
     pub fn toggle_directory(&mut self, cx: &mut Cx, address: &str) -> bool {
         if !self.directory_addresses.contains(address) {
             return false;
