@@ -102,6 +102,7 @@ mod tool_dock;
 mod tree;
 mod tree_layout;
 mod tree_panel;
+mod tree_row_draw;
 mod uml_documents;
 mod view_bar;
 pub mod view_history;

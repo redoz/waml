@@ -333,18 +333,6 @@ impl IconSet {
 /// Row height in the `FileTree` DSL (`node_height: 27.0`); used to vertically
 /// center the icon within each row.
 const ROW_HEIGHT: f64 = 27.0;
-const ICON_SIZE: f64 = 14.0;
-const ICON_LEFT_MARGIN: f64 = 20.0;
-/// Fold-chevron box, drawn ahead of the row glyph on expandable rows only. Leaf
-/// rows leave the slot empty so both columns stay aligned down the tree.
-const CHEVRON_SIZE: f64 = 10.0;
-const CHEVRON_LEFT_MARGIN: f64 = 4.0;
-/// Per-depth x step for the overlay glyph. Must match the FileTree label's
-/// EFFECTIVE step, which is `indent_width` (10.0 in the DSL) plus the per-depth
-/// margins `indent_walk` tacks on (`left: depth*1.0`, `right: depth*4.0`) -- so
-/// the visible step is 15px, not `indent_width`. Any mismatch here makes the
-/// icon/label gap grow per level.
-const ICON_DEPTH_INDENT: f64 = 15.0;
 
 /// Inset (px) of the hand-drawn empty-state message from the panel edge.
 const PAD: f64 = 10.0;
@@ -417,12 +405,12 @@ pub struct DrawChevron {
     /// Fed straight from the fork `FileTree`'s animated `folder_opened`, so the
     /// arrow swings with the rows instead of on a second timer.
     #[live]
-    open: f32,
+    pub open: f32,
     /// Alpha multiplier, fed the same fold scale the rows shrink by, so a
     /// chevron dissolves as its ancestor folder closes instead of staying at
     /// full ink over a 1px-tall row.
     #[live]
-    fade: f32,
+    pub fade: f32,
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -660,113 +648,6 @@ fn reconcile_open_directories(
     open
 }
 
-/// Draw the provider-supplied row-leading glyph at `row_top`.
-///
-/// `scale` is the fold amount the fork `FileTree` is drawing this row at (1.0
-/// at rest, shrinking to 0 as an ancestor folder closes): the glyph shrinks and
-/// fades with it, so the row's hand-drawn marks dissolve together with the
-/// widget-drawn label rather than staying full-size over a collapsing row.
-///
-/// The draw position is rounded to whole device pixels before `draw_abs` so the
-/// SDF glyph's thin strokes land pixel-aligned; a subpixel `x`/`y` would soften
-/// them.
-fn draw_row_icon(
-    cx: &mut Cx2d,
-    icons: &mut IconSet,
-    icon: Icon,
-    row_top: Vec2d,
-    depth: usize,
-    color: Vec4,
-    scale: f64,
-) {
-    let size = ICON_SIZE * scale;
-    let x = (row_top.x + ICON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
-    let y = (row_top.y + (ROW_HEIGHT * scale - size) / 2.0).round();
-    icons.draw(
-        cx,
-        icon,
-        Rect {
-            pos: dvec2(x, y),
-            size: dvec2(size, size),
-        },
-        fade(color, scale),
-    );
-}
-
-/// Draw the fold chevron for an expandable row at `row_top`, rotated by `open`
-/// (0 collapsed / 1 expanded) and shrunk/faded by `scale` (see
-/// `draw_row_icon`). Same pixel rounding as `draw_row_icon`: the chevron is a
-/// 1.3px stroke, so a subpixel origin would smear it.
-fn draw_row_chevron(
-    cx: &mut Cx2d,
-    draw_chevron: &mut DrawChevron,
-    row_top: Vec2d,
-    depth: usize,
-    open: f32,
-    scale: f64,
-) -> Rect {
-    let size = CHEVRON_SIZE * scale;
-    let x = (row_top.x + CHEVRON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT).round();
-    let y = (row_top.y + (ROW_HEIGHT * scale - size) / 2.0).round();
-    let rect = Rect {
-        pos: dvec2(x, y),
-        size: dvec2(size, size),
-    };
-    draw_chevron.open = open;
-    draw_chevron.fade = scale as f32;
-    draw_chevron.draw_abs(cx, rect);
-    rect
-}
-
-/// Draw the degraded-chain marker: a small solid dot at the row's right edge,
-/// for a directory row whose declared `view:` chain fell back to the root
-/// view. Purely additive to `draw_row_icon`/`draw_row_chevron` -- no hit test
-/// reads this rect, it is presentation only.
-fn draw_row_diag_marker(cx: &mut Cx2d, draw_diag: &mut DrawColor, row_top: Vec2d, scale: f64) {
-    let width = cx.turtle().rect().size.x;
-    if !width.is_finite() {
-        return;
-    }
-    let size = 6.0 * scale;
-    let x = (row_top.x + width - size - 10.0).round();
-    let y = (row_top.y + (ROW_HEIGHT * scale - size) / 2.0).round();
-    draw_diag.draw_abs(
-        cx,
-        Rect {
-            pos: dvec2(x, y),
-            size: dvec2(size, size),
-        },
-    );
-}
-
-/// Paint the active-row highlight over the row at `row_top`, spanning the full
-/// tree width and the row's current (folded) height. Translucent, so it drops
-/// over the already-drawn row (bg + label) without hiding the text. Drawn before
-/// the glyph so the icon stays on top.
-fn draw_row_highlight(cx: &mut Cx2d, draw_selection: &mut DrawColor, row_top: Vec2d, scale: f64) {
-    let width = cx.turtle().rect().size.x;
-    if !width.is_finite() {
-        return;
-    }
-    // The pen's colour is the theme's (or, for the reveal pulse, the caller's);
-    // put it back after the fade so repeated rows don't compound the multiply.
-    let color = draw_selection.color;
-    draw_selection.color = fade(color, scale);
-    draw_selection.draw_abs(
-        cx,
-        Rect {
-            pos: dvec2(row_top.x, row_top.y),
-            size: dvec2(width, ROW_HEIGHT * scale),
-        },
-    );
-    draw_selection.color = color;
-}
-
-/// `color` with its alpha scaled by the row's fold amount.
-fn fade(color: Vec4, scale: f64) -> Vec4 {
-    vec4(color.x, color.y, color.z, color.w * scale as f32)
-}
-
 /// Emit `begin_folder`/`end_folder` for packages and `file` for leaves, overlay
 /// a HUD glyph icon at the left of every row, and paint the active-row highlight
 /// on the row whose key matches `selected`. A collapsed folder returns `Err`
@@ -811,6 +692,10 @@ fn draw_nodes(
             color
         };
         let row_top = cx.turtle().pos();
+        let row_rect = Rect {
+            pos: row_top,
+            size: dvec2(cx.turtle().rect().size.x, ROW_HEIGHT * scale),
+        };
         let is_selected = selected == Some(key.as_str());
         let is_reveal = reveal_key == Some(key.as_str());
         if node.is_directory {
@@ -828,7 +713,7 @@ fn draw_nodes(
             }
             if drawn {
                 if is_selected {
-                    draw_row_highlight(cx, draw_selection, row_top, scale);
+                    crate::tree_row_draw::row_fill(cx, draw_selection, row_rect, scale);
                 }
                 if is_reveal {
                     draw_reveal.color = vec4(
@@ -837,13 +722,13 @@ fn draw_nodes(
                         reveal_color.z,
                         0.24 * reveal_strength,
                     );
-                    draw_row_highlight(cx, draw_reveal, row_top, scale);
+                    crate::tree_row_draw::row_fill(cx, draw_reveal, row_rect, scale);
                 }
-                draw_row_icon(
+                crate::tree_row_draw::row_icon(
                     cx,
                     icons,
                     node.presentation.icon,
-                    row_top,
+                    row_rect,
                     depth,
                     icon_color,
                     scale,
@@ -853,11 +738,17 @@ fn draw_nodes(
                 // second timer. Only read inside `drawn`: a culled folder's node
                 // is forgotten, so `folder_opened` would report it closed.
                 let child_open = ft.folder_opened(id);
-                let chevron_rect =
-                    draw_row_chevron(cx, draw_chevron, row_top, depth, child_open, scale);
+                let chevron_rect = crate::tree_row_draw::row_chevron(
+                    cx,
+                    draw_chevron,
+                    row_rect,
+                    depth,
+                    child_open,
+                    scale,
+                );
                 chevron_rects.insert(key.clone(), chevron_rect);
                 if node.view_degraded {
-                    draw_row_diag_marker(cx, draw_diag, row_top, scale);
+                    crate::tree_row_draw::row_diag_marker(cx, draw_diag, row_rect, scale);
                 }
             }
             if opened {
@@ -895,7 +786,7 @@ fn draw_nodes(
             }
             if drawn {
                 if is_selected {
-                    draw_row_highlight(cx, draw_selection, row_top, scale);
+                    crate::tree_row_draw::row_fill(cx, draw_selection, row_rect, scale);
                 }
                 if is_reveal {
                     draw_reveal.color = vec4(
@@ -904,13 +795,13 @@ fn draw_nodes(
                         reveal_color.z,
                         0.24 * reveal_strength,
                     );
-                    draw_row_highlight(cx, draw_reveal, row_top, scale);
+                    crate::tree_row_draw::row_fill(cx, draw_reveal, row_rect, scale);
                 }
-                draw_row_icon(
+                crate::tree_row_draw::row_icon(
                     cx,
                     icons,
                     node.presentation.icon,
-                    row_top,
+                    row_rect,
                     depth,
                     icon_color,
                     scale,
