@@ -1242,7 +1242,10 @@ mod tests {
             },
         ));
         // Ancestors of the target, up to and including the scope row.
-        assert_eq!(panel.layout.open_keys(), HashSet::from([k("/"), k("/sales")]));
+        assert_eq!(
+            panel.layout.open_keys(),
+            HashSet::from([k("/"), k("/sales")])
+        );
     }
 
     #[test]
@@ -1597,7 +1600,10 @@ mod tests {
             HashSet::from([k("/"), k("/sales"), k("/sales/archive")])
         );
         // The scope row plus the packages directly under it.
-        assert_eq!(panel.layout.open_keys(), HashSet::from([k("/"), k("/sales")]));
+        assert_eq!(
+            panel.layout.open_keys(),
+            HashSet::from([k("/"), k("/sales")])
+        );
     }
 
     #[test]
@@ -1669,7 +1675,10 @@ mod tests {
 
         panel.set_view_with_fold_reset(&mut cx, NavView::Browse(tree()), true);
 
-        assert_eq!(panel.layout.open_keys(), HashSet::from([k("/"), k("/sales")]));
+        assert_eq!(
+            panel.layout.open_keys(),
+            HashSet::from([k("/"), k("/sales")])
+        );
     }
 
     #[test]
