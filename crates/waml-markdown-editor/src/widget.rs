@@ -2097,6 +2097,10 @@ impl MarkdownEditorRef {
         }
         if let Some(mut inner) = self.borrow_mut() {
             inner.pipeline.installed = Some(presentation);
+            // A pending clear belongs to the presentation that was cleared. This
+            // install supersedes it, so the next frame must resync from whatever
+            // session it draws -- not zero a scroll it was never asked to drop.
+            inner.pending_scroll_reset = false;
             inner.pipeline.pending_cause = Some(cause);
             inner.pipeline.pending_invalidation = Some(LayoutInvalidation::Document);
             inner.pipeline.target_layout = None;

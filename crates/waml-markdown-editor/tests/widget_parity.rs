@@ -10,7 +10,13 @@ use waml_markdown_editor::{
         ControllerError, EditorInput, EditorResponse, MarkdownEditorController, PointerGesture,
         ScrollState, SelectionModifier,
     },
-    layout::{Affinity, CaretStop, GlyphCluster, LayoutError, LayoutSnapshot, VisualLine},
+    layout::{
+        Affinity, CaretStop, GlyphCluster, LayoutDocument, LayoutError, LayoutSnapshot, VisualLine,
+    },
+    motion::LayoutChangeCause,
+    presentation::{
+        EmbeddedAssetFrame, InstalledPresentation, PresentationPlan, PresentationStyles,
+    },
     selection::TextPosition,
     session::MarkdownDocumentSession,
     widget::{
@@ -613,6 +619,73 @@ fn clear_presentation_resets_both_halves_of_the_scroll_state() {
         ScrollState::default(),
         "the session half of the scroll must be cleared too"
     );
+}
+
+/// The pending clear is a property of the *cleared* presentation, not of the
+/// widget forever. Installing a presentation before the next frame means the
+/// editor is no longer in the cleared state, so the frame after the install
+/// must resync from the session it is now showing -- not zero it. Without this,
+/// a clear on one document silently ate the restored scroll of the next.
+#[test]
+fn install_presentation_cancels_a_pending_clear() {
+    let (mut cx, editor, _cleared) = mounted_editor("alpha\nbeta\n");
+    cx.init_cx_os();
+
+    editor.clear_presentation(&mut cx);
+    assert_eq!(editor.test_scroll_state(), (0.0, 0.0));
+
+    // A different document takes over the shared editor, carrying its own
+    // restored scroll offset. Its revision is ahead of the presentation's, so
+    // the draw bails out right after the scroll prologue -- the same early
+    // return the cleared editor takes, which is what makes the session scroll a
+    // clean read of the prologue rather than of the scrollbar's content clamp.
+    let mut session = session_at_revision("alpha\nbeta\n", DocumentRevision::new(1));
+    session.set_scroll_state(ScrollState { x: 0.0, y: 120.0 });
+    editor.install_presentation(
+        &mut cx,
+        installed_presentation(),
+        LayoutChangeCause::ExternalReplacement,
+    );
+
+    draw_once(&mut cx, &editor, &mut session);
+    assert_eq!(
+        session.scroll(),
+        ScrollState { x: 0.0, y: 120.0 },
+        "the newly installed session's scroll must survive an earlier clear"
+    );
+    assert_eq!(
+        editor.test_scroll_state(),
+        (120.0, 120.0),
+        "the widget halves must resync to the newly installed session"
+    );
+}
+
+fn installed_presentation() -> Arc<InstalledPresentation> {
+    let revision = DocumentRevision::INITIAL;
+    InstalledPresentation::new(
+        Arc::new(PresentationPlan {
+            revision,
+            source_len: TextSize::new(0),
+            items: Arc::from([]),
+            links: Arc::from([]),
+            blocks: Arc::from([]),
+            diagnostics: Arc::from([]),
+        }),
+        Arc::new(PresentationStyles::balanced()),
+        Arc::new(LayoutDocument {
+            revision,
+            content_insets: Default::default(),
+            blocks: Arc::from([]),
+            text_runs: Arc::from([]),
+            embedded_blocks: Arc::from([]),
+        }),
+        Arc::from([]),
+        Arc::new(EmbeddedAssetFrame {
+            revision,
+            items: Arc::from([]),
+        }),
+    )
+    .expect("minimal presentation validates")
 }
 
 /// Drives one real `draw_walk` over the editor with `session` in scope. The
