@@ -8,12 +8,22 @@
 
 use std::collections::{HashMap, HashSet};
 
+use makepad_widgets::*;
+
 use crate::icons::Icon;
 use crate::tree::{key_string, TreeKind, TreeNode};
 
 /// Row band height in lpx. Matches the `node_height: 27.0` the fork `FileTree`
 /// was configured with, so rows land where they always did.
 pub const ROW_HEIGHT: f64 = 27.0;
+
+/// Left margin of the fold chevron box within its row.
+pub const CHEVRON_LEFT_MARGIN: f64 = 4.0;
+/// Side length of the (square) fold chevron box.
+pub const CHEVRON_SIZE: f64 = 10.0;
+/// Per-depth-level indent applied to the chevron (and, by the fork's layout,
+/// the icon after it).
+pub const ICON_DEPTH_INDENT: f64 = 15.0;
 
 /// Fold transition duration in seconds. Matches the fork `FileTree`'s
 /// `Play.Forward {duration: 0.2}` so the motion is indistinguishable.
@@ -43,6 +53,15 @@ pub struct VisibleRow {
     pub scale: f64,
 }
 
+/// What a pointer position resolves to. `Chevron` only ever names a directory
+/// row; every other position on a row -- and every position on a file row --
+/// is `Row`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TreeHit {
+    Chevron(String),
+    Row(String),
+}
+
 #[derive(Default)]
 pub struct TreeLayout {
     roots: Vec<TreeNode>,
@@ -54,6 +73,9 @@ pub struct TreeLayout {
     /// Per-key animation target, present only while a fold is in flight.
     fold_target: HashMap<String, f32>,
     rows: Vec<VisibleRow>,
+    origin: DVec2,
+    size: DVec2,
+    scroll: f64,
 }
 
 impl TreeLayout {
@@ -138,6 +160,103 @@ impl TreeLayout {
         }
         self.reflow();
         !self.fold_target.is_empty()
+    }
+
+    /// The panel's drawn rect for this frame, in absolute coordinates. Set at
+    /// draw time; hit-testing reads exactly what was drawn rather than
+    /// recomputing it, which is what removes the cached-rect side table.
+    pub fn set_viewport(&mut self, origin: DVec2, size: DVec2) {
+        self.origin = origin;
+        self.size = size;
+        // A shorter viewport can strand the scroll past the new maximum.
+        self.scroll = self.scroll.clamp(0.0, self.max_scroll());
+    }
+
+    /// Total height of every visible row, honouring mid-collapse scale.
+    pub fn content_height(&self) -> f64 {
+        self.rows.iter().map(|row| ROW_HEIGHT * row.scale).sum()
+    }
+
+    pub fn max_scroll(&self) -> f64 {
+        (self.content_height() - self.size.y).max(0.0)
+    }
+
+    pub fn scroll(&self) -> f64 {
+        self.scroll
+    }
+
+    pub fn set_scroll(&mut self, scroll: f64) {
+        self.scroll = scroll.clamp(0.0, self.max_scroll());
+    }
+
+    /// Absolute rect of row `index`, already shifted by the scroll offset. Rows
+    /// are stacked by their SCALED heights so a collapsing subtree closes the
+    /// gap as it shrinks.
+    pub fn row_rect(&self, index: usize) -> Rect {
+        let mut y = self.origin.y - self.scroll;
+        for row in &self.rows[..index.min(self.rows.len())] {
+            y += ROW_HEIGHT * row.scale;
+        }
+        let scale = self.rows.get(index).map_or(1.0, |row| row.scale);
+        Rect {
+            pos: dvec2(self.origin.x, y),
+            size: dvec2(self.size.x, ROW_HEIGHT * scale),
+        }
+    }
+
+    /// Absolute rect of row `index`'s fold chevron. Meaningful for directory
+    /// rows; computed for any row so drawing and hit-testing share one formula.
+    pub fn chevron_rect(&self, index: usize) -> Rect {
+        let row = self.row_rect(index);
+        let depth = self.rows.get(index).map_or(0, |r| r.depth);
+        let scale = self.rows.get(index).map_or(1.0, |r| r.scale);
+        let size = CHEVRON_SIZE * scale;
+        Rect {
+            pos: dvec2(
+                row.pos.x + CHEVRON_LEFT_MARGIN + depth as f64 * ICON_DEPTH_INDENT,
+                row.pos.y + (ROW_HEIGHT * scale - size) / 2.0,
+            ),
+            size: dvec2(size, size),
+        }
+    }
+
+    /// Index of the row under `pos`, or `None` off the rows. A row outside the
+    /// clipped viewport is not hittable even though its band still maps -- the
+    /// same rule `popup/menu.rs` applies to a scrolled menu.
+    pub fn row_at(&self, pos: DVec2) -> Option<usize> {
+        if pos.x < self.origin.x || pos.x > self.origin.x + self.size.x {
+            return None;
+        }
+        if pos.y < self.origin.y || pos.y >= self.origin.y + self.size.y {
+            return None;
+        }
+        (0..self.rows.len()).find(|index| self.row_rect(*index).contains(pos))
+    }
+
+    pub fn hit(&self, pos: DVec2) -> Option<TreeHit> {
+        let index = self.row_at(pos)?;
+        let row = &self.rows[index];
+        if row.is_directory && self.chevron_rect(index).contains(pos) {
+            return Some(TreeHit::Chevron(row.key.clone()));
+        }
+        Some(TreeHit::Row(row.key.clone()))
+    }
+
+    /// Scroll the row named `key` into the viewport. Returns `false` if no
+    /// visible row carries that key (a collapsed ancestor, or a stale key).
+    pub fn scroll_key_into_view(&mut self, key: &str) -> bool {
+        let Some(index) = self.rows.iter().position(|row| row.key == key) else {
+            return false;
+        };
+        let rect = self.row_rect(index);
+        let top = rect.pos.y - self.origin.y + self.scroll;
+        let bottom = top + rect.size.y;
+        if top < self.scroll {
+            self.set_scroll(top);
+        } else if bottom > self.scroll + self.size.y {
+            self.set_scroll(bottom - self.size.y);
+        }
+        true
     }
 
     /// Rebuild the visible-row list from the roots and the fold map.
@@ -285,5 +404,75 @@ mod tests {
         let outer_fold = layout.rows()[0].fold as f64;
         assert!(outer_fold > 0.0 && outer_fold < 1.0);
         assert!((layout.rows()[2].scale - outer_fold).abs() < 1e-6);
+    }
+
+    fn laid_out() -> TreeLayout {
+        let mut layout = TreeLayout::new();
+        layout.set_roots(vec![dir("pkg", vec![file("a"), file("b")])]);
+        let key = layout.rows()[0].key.clone();
+        layout.set_folder_open(&key, true, false);
+        layout.set_viewport(dvec2(0.0, 0.0), dvec2(280.0, ROW_HEIGHT * 2.0));
+        layout
+    }
+
+    #[test]
+    fn rows_stack_by_row_height_and_shift_with_scroll() {
+        let mut layout = laid_out();
+        assert_eq!(layout.row_rect(0).pos.y, 0.0);
+        assert_eq!(layout.row_rect(1).pos.y, ROW_HEIGHT);
+
+        layout.set_scroll(ROW_HEIGHT);
+        assert_eq!(layout.row_rect(0).pos.y, -ROW_HEIGHT);
+        assert_eq!(layout.row_rect(1).pos.y, 0.0);
+    }
+
+    #[test]
+    fn scroll_clamps_to_the_content() {
+        let mut layout = laid_out();
+        // 3 rows in a 2-row viewport: one row of overflow.
+        assert_eq!(layout.content_height(), ROW_HEIGHT * 3.0);
+        assert_eq!(layout.max_scroll(), ROW_HEIGHT);
+
+        layout.set_scroll(9999.0);
+        assert_eq!(layout.scroll(), ROW_HEIGHT);
+        layout.set_scroll(-50.0);
+        assert_eq!(layout.scroll(), 0.0);
+    }
+
+    #[test]
+    fn hit_splits_chevron_from_row_body_and_rejects_outside_the_viewport() {
+        let layout = laid_out();
+        let folder_key = layout.rows()[0].key.clone();
+
+        // Over the chevron box of the folder row.
+        let chevron = layout.chevron_rect(0);
+        let hit = layout.hit(chevron.pos + dvec2(2.0, 2.0));
+        assert_eq!(hit, Some(TreeHit::Chevron(folder_key.clone())));
+
+        // Further right on the same row: the body.
+        let hit = layout.hit(dvec2(200.0, ROW_HEIGHT * 0.5));
+        assert_eq!(hit, Some(TreeHit::Row(folder_key)));
+
+        // A file row has no chevron: a hit in the chevron band is still body.
+        let file_key = layout.rows()[1].key.clone();
+        let hit = layout.hit(dvec2(chevron.pos.x + 2.0, ROW_HEIGHT * 1.5));
+        assert_eq!(hit, Some(TreeHit::Row(file_key)));
+
+        // Row 2 is scrolled out of the 2-row viewport: not hittable.
+        assert_eq!(layout.hit(dvec2(100.0, ROW_HEIGHT * 2.5)), None);
+        // Above the first row.
+        assert_eq!(layout.hit(dvec2(100.0, -5.0)), None);
+        // Left of the panel.
+        assert_eq!(layout.hit(dvec2(-5.0, 5.0)), None);
+    }
+
+    #[test]
+    fn scroll_key_into_view_moves_an_offscreen_row_into_the_viewport() {
+        let mut layout = laid_out();
+        let last = layout.rows()[2].key.clone();
+        assert!(layout.scroll_key_into_view(&last));
+        assert_eq!(layout.scroll(), ROW_HEIGHT, "scrolled just enough");
+        assert!(layout.hit(dvec2(100.0, ROW_HEIGHT * 1.5)).is_some());
+        assert!(!layout.scroll_key_into_view("no-such-key"));
     }
 }
