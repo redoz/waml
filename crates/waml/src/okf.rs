@@ -164,13 +164,64 @@ pub struct Link {
     pub href: String,
 }
 
-/// A citation: a link to an external source backing a claim, listed under a
-/// `# Citations` heading (OKF §8).
+/// An actor reference (`kind:id`, e.g. `human:ahormati`) naming who or what
+/// performed an action such as generating or verifying a concept (OKF §7).
+/// The `kind:` prefix is a convention, not a validation gate — parsing never
+/// fails; a bare id (no `:`) simply carries no `kind`.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Citation {
-    pub text: String,
-    pub href: String,
+pub struct Actor {
+    pub kind: Option<String>,
+    pub id: String,
+}
+
+/// A usage window: the span of time a source was consulted or is valid for
+/// (OKF §5.1). Either bound may be absent.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UsageWindow {
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// A source: a link to external material backing a claim, with optional
+/// credibility signals (OKF §5.1). Replaces the v0.1 `Citation`, whose
+/// legacy `# Citations` body heading still projects here (see
+/// `extract_legacy_sources`) with every credibility signal absent.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Source {
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub id: Option<String>,
+    pub resource: String,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub title: Option<String>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub author: Option<Actor>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub usage_count: Option<f64>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub last_modified: Option<String>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub usage_window: Option<UsageWindow>,
 }
 
 /// The domain-agnostic projection of one markdown document. Round-trips every
@@ -221,7 +272,7 @@ pub struct Concept {
         feature = "serde",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
-    pub citations: Vec<Citation>,
+    pub sources: Vec<Source>,
     /// Producer-specific frontmatter keys with no dedicated field above.
     #[cfg_attr(
         feature = "serde",
@@ -844,8 +895,8 @@ mod tests {
         // A body link is captured; the citation link is separated out.
         assert_eq!(c.links.len(), 1);
         assert_eq!(c.links[0].href, "/tables/customers.md");
-        assert_eq!(c.citations.len(), 1);
-        assert_eq!(c.citations[0].href, "https://cloud.google.com/blog/x");
+        assert_eq!(c.sources.len(), 1);
+        assert_eq!(c.sources[0].resource, "https://cloud.google.com/blog/x");
         // Unknown frontmatter survives in `extra`; known keys do not leak in.
         assert_eq!(c.extra.get_str("owner"), Some("data-team"));
         assert!(c.extra.get("type").is_none());
@@ -854,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn concept_links_and_citations_follow_authoritative_markdown_queries() {
+    fn concept_links_and_sources_follow_authoritative_markdown_queries() {
         let concept = project(
             "links.md",
             "---\ntype: Note\n---\n# Links\n\n[real **nested**](./real.md)\n\n![image](./image.md)\n\n\\[escaped](./escaped.md)\n\n[reference][ref]\n\n```md\n[fenced](./fenced.md)\n```\n\n# Citations\n\n[citation](https://example.test/citation)\n\n![citation image](./citation.png)\n\n[ref]: ./reference.md\n",
@@ -874,12 +925,28 @@ mod tests {
         );
         assert_eq!(
             concept
-                .citations
+                .sources
                 .iter()
-                .map(|citation| (citation.text.as_str(), citation.href.as_str()))
+                .map(|source| (source.title.as_deref(), source.resource.as_str()))
                 .collect::<Vec<_>>(),
-            [("citation", "https://example.test/citation")]
+            [(Some("citation"), "https://example.test/citation")]
         );
+    }
+
+    #[test]
+    fn legacy_citation_maps_to_source_with_absent_signals() {
+        let src = "---\ntype: Note\n---\n# Note\n\n# Citations\n\n[1] [BigQuery announcement](https://cloud.google.com/blog/x)\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.sources.len(), 1);
+        let source = &c.sources[0];
+        assert_eq!(source.resource, "https://cloud.google.com/blog/x");
+        assert_eq!(source.title.as_deref(), Some("BigQuery announcement"));
+        assert_eq!(source.id, None);
+        assert_eq!(source.author, None);
+        assert_eq!(source.usage_count, None);
+        assert_eq!(source.last_modified, None);
+        assert_eq!(source.usage_window, None);
     }
 
     #[test]

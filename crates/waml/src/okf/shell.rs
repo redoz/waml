@@ -18,8 +18,8 @@ use crate::{
 };
 
 use super::{
-    resolve_href, Bundle, BundleError, Citation, Concept, Directory, DirectoryAddress, Index, Link,
-    Log,
+    resolve_href, Bundle, BundleError, Concept, Directory, DirectoryAddress, Index, Link, Log,
+    Source,
 };
 
 const KNOWN_KEYS: &[&str] = &[
@@ -347,7 +347,7 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
         timestamp,
         body: shell.body.clone(),
         links: extract_links(shell, prose_range),
-        citations: extract_citations(shell, citation_range),
+        sources: extract_legacy_sources(shell, citation_range),
         extra,
     }
 }
@@ -417,7 +417,11 @@ fn extract_links(shell: &ShellDocument<'_>, range: TextRange) -> Vec<Link> {
         .collect()
 }
 
-fn extract_citations(shell: &ShellDocument<'_>, range: TextRange) -> Vec<Citation> {
+/// Maps a v0.1 `# Citations` body list to `Source` entries: `resource` is the
+/// link destination, `title` is the link text, and every credibility signal
+/// (`id`, `author`, `usage_count`, `last_modified`, `usage_window`) is absent
+/// — the legacy heading names nothing about them.
+fn extract_legacy_sources(shell: &ShellDocument<'_>, range: TextRange) -> Vec<Source> {
     shell
         .snapshot
         .queries()
@@ -429,9 +433,14 @@ fn extract_citations(shell: &ShellDocument<'_>, range: TextRange) -> Vec<Citatio
             ) && link_is_inside(link, range)
                 && !is_image_link(shell, link)
         })
-        .map(|link| Citation {
-            text: exact_link_text(shell, link),
-            href: link.destination.to_string(),
+        .map(|link| Source {
+            id: None,
+            resource: link.destination.to_string(),
+            title: Some(exact_link_text(shell, link)),
+            author: None,
+            usage_count: None,
+            last_modified: None,
+            usage_window: None,
         })
         .collect()
 }
