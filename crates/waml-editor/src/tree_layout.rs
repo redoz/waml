@@ -98,11 +98,16 @@ impl TreeLayout {
         &self.rows
     }
 
+    /// Every key currently open-or-opening, by the SAME rule `is_folder_open`
+    /// applies. Reading the resting amounts alone would disagree with it for
+    /// the length of an animation -- a folder mid-close would still be listed
+    /// open -- and callers use the two interchangeably to persist fold state.
     pub fn open_keys(&self) -> HashSet<String> {
         self.fold
-            .iter()
-            .filter(|(_, &amount)| amount > 0.5)
-            .map(|(key, _)| key.clone())
+            .keys()
+            .chain(self.fold_target.keys())
+            .filter(|key| self.is_folder_open(key))
+            .cloned()
             .collect()
     }
 
@@ -422,6 +427,36 @@ mod tests {
         assert_eq!(layout.rows()[0].fold, 0.0);
         assert_eq!(layout.rows().len(), 1, "culled below 0.001");
         assert!(!layout.advance(0.02));
+    }
+
+    /// Regression: `open_keys` used to read the resting fold amounts while
+    /// `is_folder_open` read the animation target, so for the length of a
+    /// close the two answered differently. `set_view` persists fold state
+    /// through `open_keys`, which made a folder closed mid-animation come back
+    /// open on the next refresh.
+    #[test]
+    fn open_keys_agrees_with_is_folder_open_mid_animation() {
+        let mut layout = TreeLayout::new();
+        layout.set_roots(vec![dir("pkg", vec![file("a")])]);
+        let key = layout.rows()[0].key.clone();
+        layout.set_folder_open(&key, true, false);
+        assert!(layout.open_keys().contains(&key));
+
+        // Closing, but not yet arrived: still animating.
+        layout.set_folder_open(&key, false, true);
+        layout.advance(0.02);
+        assert!(layout.rows()[0].fold > 0.0, "still mid-close");
+        assert!(!layout.is_folder_open(&key));
+        assert!(
+            !layout.open_keys().contains(&key),
+            "a folder on its way closed is not open"
+        );
+
+        // ...and the same holds for an in-flight OPEN.
+        layout.set_folder_open(&key, true, true);
+        layout.advance(0.02);
+        assert!(layout.is_folder_open(&key));
+        assert!(layout.open_keys().contains(&key));
     }
 
     #[test]
