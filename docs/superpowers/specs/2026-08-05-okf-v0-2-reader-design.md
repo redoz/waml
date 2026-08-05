@@ -125,9 +125,13 @@ pub stale_after: Option<String>,
 pub timestamp: Option<String>,   // retained; v0.1 only
 ```
 
-- `generated.at` falls back to `timestamp` when `generated` is absent
-  (§13.1). `timestamp` itself is retained on `Concept` so a v0.1 document
-  round-trips unchanged.
+- The `timestamp` fallback (§13.1) is a **reader-side accessor**,
+  `Concept::generated_at() -> Option<&str>`, returning `generated.at` when
+  present and `timestamp` otherwise. `Concept::generated` itself stays `None`
+  for a v0.1 document: §5.2 makes `by` REQUIRED within `generated`, a v0.1
+  document names no actor, and synthesizing one would put a fact in the model
+  that the document does not contain. `timestamp` is retained on `Concept` so
+  a v0.1 document round-trips unchanged.
 - `verified` written as a bare `{ by, at }` mapping normalizes to a
   one-element list — §5.2 makes this a MUST.
 - Absent `status` is `Stable` (§5.4), so `Status` needs no `Option`.
@@ -159,14 +163,30 @@ that wants the comparison passes today's date.
 §11 requires a consumer not to reject a document over these fields. Every
 promotion failure is local:
 
+Promotion is **all-or-nothing per key**. A list key promotes only when every
+entry promotes; one bad entry and the key promotes nothing:
+
 | Input | Behaviour |
 |---|---|
-| `sources` entry without `resource` | Entry skipped; other entries still promote |
-| `sources` not a list, or an entry not a map | No `Source` promoted |
+| `sources` entry without `resource` | Nothing promotes for `sources`; the key stays whole in `extra` |
+| `sources` not a list, or an entry not a map | Nothing promotes for `sources` |
 | `generated` without `by` | `generated` stays `None` |
-| `verified` entry without `by` | That entry skipped |
+| `verified` entry without `by` | Nothing promotes for `verified` |
 | `status` not one of the three tokens | Falls back to `Stable` |
-| `usage_count` not a number | Field stays `None` |
+| `usage_count` not a number | Field stays `None`; the entry still promotes |
+
+All-or-nothing rather than skip-the-bad-entry, because the alternative
+satisfies "promote what we understood" and "keep what we declined" only by
+representing a valid entry twice — once typed in `sources` and once inside
+the raw list in `extra`. A consumer reading both would double-count it. With
+all-or-nothing, `extra` holding a key means exactly "we did not read this",
+and a populated `Concept::sources` means "we read all of it". Neither is ever
+half-true.
+
+`usage_count` is deliberately not an all-or-nothing trigger: it is one
+optional credibility signal on an otherwise valid entry, not part of what
+makes the entry an entry. `resource` is the opposite — §5.1 makes it REQUIRED,
+and a `Source` without one is not a `Source`.
 
 In every one of these cases the raw value is **left in `Concept::extra`**.
 `Concept`'s doc comment promises the projection is lossless — "nothing a
