@@ -1085,16 +1085,22 @@ fn validate_declared_semantics(
                 )),
             };
             if let Some(message) = end_message {
-                if let Some(token) = relationship.syntax.target_token() {
-                    diagnostics.push(declared_diagnostic_range(
-                        context,
-                        path,
-                        token.range(),
-                        crate::diagnostic::DiagCode::MalformedRelationship,
-                        message,
-                        false,
-                    )?);
-                }
+                // A malformed-end relationship may also be missing its target
+                // token; `declared_projection` drops it either way, so the
+                // report falls back to the relationship's own range rather
+                // than going silent.
+                diagnostics.push(declared_diagnostic_range(
+                    context,
+                    path,
+                    relationship
+                        .syntax
+                        .target_token()
+                        .map(|token| token.range())
+                        .unwrap_or_else(|| relationship.syntax.syntax().range()),
+                    crate::diagnostic::DiagCode::MalformedRelationship,
+                    message,
+                    false,
+                )?);
             }
         }
     }

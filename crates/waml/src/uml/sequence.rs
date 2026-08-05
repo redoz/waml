@@ -794,6 +794,11 @@ pub(crate) fn lower(
         // below traverses the graph, so a use with no edge in it cannot be
         // admitted. It reports nothing — there is no defect in the document to
         // name.
+        debug_assert!(
+            !valid_use || is_graph_link,
+            "interaction use '{}' passed every binding diagnostic but has no edge in the use graph",
+            alias
+        );
         valid_use = valid_use && is_graph_link;
         if valid_use
             && graph_reaches(
