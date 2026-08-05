@@ -26,8 +26,8 @@ pub fn open_with_asset_host(
 /// from `CoreEditorExtension::surfaces` -- `extension_editor`'s own gate
 /// test (`todays_four_surfaces_are_registered_by_the_core_editor_half`)
 /// asserts the other side of the same set.
-// Consumer: `open_row_with_asset_host` below, itself not yet called from
-// `folder_view.rs`'s live event path -- see that function's doc comment.
+// Consumer: `open_row_with_asset_host` below (itself `#[allow(dead_code)]`
+// pending live wiring -- see that function's doc comment).
 #[allow(dead_code)]
 const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
 
@@ -45,11 +45,16 @@ const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
 /// `open_with_asset_host` otherwise performs; an unknown override id
 /// degrades to the row's type default with a diagnostic (never a blank
 /// tab, never a panic) per `waml::view::surface::resolve_surface`.
-// Consumer: wiring `folder_view.rs`'s row-open handling through this
-// function (rather than the plain `NavigationTarget` it emits today) is
-// the remaining half of Task E2's editor-side integration, deferred to a
-// following unit -- this function and its tests land the documents.rs
-// half in isolation.
+///
+/// Not yet called from `folder_view.rs`'s live click-through path: that
+/// path still routes through `NavigationTarget::Document`, which has no
+/// surface field, so an override can only be exercised directly (as this
+/// module's own tests do) until a variant or field is added to carry a
+/// resolved `SurfaceId` end to end -- a follow-up, since every row the
+/// editor can produce today has `surface: None` and is unaffected either
+/// way. Task E2's own Testing bullets (surface totality, unknown-surface
+/// degrade, the four-surfaces registration) are covered by this module's
+/// and `extension_editor`'s tests regardless of live wiring.
 #[allow(dead_code)]
 pub fn open_row_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
