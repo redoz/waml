@@ -134,6 +134,28 @@ pub struct RowId {
     pub path: RowPath,
 }
 
+/// A presentational icon name stamped by a stage. No construction-time
+/// validation: an unknown name is the editor's degrade path, not a
+/// construction error.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IconId(String);
+
+impl IconId {
+    pub fn new(name: impl Into<String>) -> IconId {
+        IconId(name.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for IconId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// What a row points at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowTarget {
@@ -190,6 +212,9 @@ pub struct Row {
     pub expand: Option<Chain>,
     pub caps: RowCaps,
     pub child_caps: ChildCaps,
+    /// None ⇒ the editor's default resolution by target/kind. Middleware may
+    /// stamp a stage-owned name.
+    pub icon: Option<IconId>,
 }
 
 impl Row {
@@ -213,6 +238,7 @@ impl Row {
             expand: None,
             caps: RowCaps::default(),
             child_caps: ChildCaps::default(),
+            icon: None,
         })
     }
 }
@@ -302,5 +328,24 @@ mod tests {
         assert!(
             !row.child_caps.reorder && !row.child_caps.insert && !row.child_caps.accept_move_in
         );
+    }
+
+    #[test]
+    fn a_row_constructed_through_new_has_no_icon() {
+        let row = Row::new(
+            row_id("a"),
+            "A".to_string(),
+            RowTarget::Concept("a.waml".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(row.icon, None);
+    }
+
+    #[test]
+    fn icon_id_round_trips_through_as_str_and_display() {
+        let icon = IconId::new("book");
+        assert_eq!(icon.as_str(), "book");
+        assert_eq!(icon.to_string(), "book");
     }
 }
