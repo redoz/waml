@@ -9,7 +9,7 @@
 use makepad_widgets::*;
 
 use waml::okf::Directory;
-use waml::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
+use waml::view::chain::{Chain, ChainLimits};
 use waml::view::projection::{ProjectionCtx, RowOp, Unsupported};
 use waml::view::row::{Row, RowId, RowTarget};
 
@@ -202,65 +202,23 @@ pub struct FolderView {
     diagnostics: Vec<waml::diagnostic::Diagnostic>,
 }
 
-/// The middleware registry every folder-view path in the editor resolves
-/// against: the core extension's `index` and `hide`.
-///
-/// One function because two construction sites that disagree are invisible --
-/// a folder resolves fine in one and reports `unknown view middleware` in the
-/// other, with the gate green either way. `script_gate.rs` asserts the pairing
-/// with the editor half; this asserts there is only one core half to pair
-/// with. Cheap enough to build per call; nothing here caches across frames.
-pub fn core_registry() -> MiddlewareRegistry {
-    MiddlewareRegistry::from_extensions(&[&waml::extension::CoreExt])
-        .expect("the core extension registers a conflict-free name table")
-}
-
 impl FolderView {
-    /// Resolve `directory`'s declared view against the core middleware
-    /// registry and run it under `limits`.
+    /// Resolve `directory`'s rows for `mode` and hold the chain that produced
+    /// them. `Raw` bypasses the declared chain; `Projected` runs it.
     pub fn build(
         analysis: &waml::analysis::OkfAnalysis,
         directory: &str,
         limits: ChainLimits,
+        mode: crate::folder_projection::ViewMode,
     ) -> Option<FolderView> {
-        let registry = core_registry();
-        let (chain, mut diagnostics) = analysis.bundle.resolved_view(directory, &registry);
-        let (rows, outcome_diags) = Self::run(analysis, directory, &chain, limits)?;
-        diagnostics.extend(outcome_diags);
+        let (chain, rows, diagnostics) =
+            crate::folder_projection::project_rows(analysis, directory, mode, limits)?;
         Some(FolderView {
             directory: directory.to_string(),
             rows,
             chain,
             diagnostics,
         })
-    }
-
-    fn run(
-        analysis: &waml::analysis::OkfAnalysis,
-        directory: &str,
-        chain: &Chain,
-        limits: ChainLimits,
-    ) -> Option<(Vec<Row>, Vec<waml::diagnostic::Diagnostic>)> {
-        let dir: Directory = analysis.bundle.directory(directory)?.clone();
-        // A middleware's params ARE the folder's own index frontmatter --
-        // `hide` reads its globs from here, and `Chain::build` validated them
-        // against this same map. Passing an empty one makes every
-        // param-taking stage fail its own declaration check and trip the
-        // whole-chain fallback.
-        let params = analysis
-            .bundle
-            .index(directory)
-            .map(|index| index.extra.clone())
-            .unwrap_or_default();
-        let descend = |_: &Directory| Chain::default();
-        let ctx = ProjectionCtx {
-            dir: &dir,
-            bundle: &analysis.bundle,
-            params: &params,
-            descend: &descend,
-        };
-        let outcome = chain.run(&ctx, limits);
-        Some((outcome.rows, outcome.diagnostics))
     }
 
     /// Unused outside tests until Task D2 surfaces the diagnostics strip;
@@ -480,7 +438,13 @@ mod tests {
             ("orders.md", "# Orders\n"),
             ("sales/index.md", "# Sales\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         let rows = view.row_views();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].label, "Orders");
@@ -504,7 +468,13 @@ mod tests {
             ("orders.md", "# Orders\n"),
             ("references/index.md", "# References\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
 
         assert!(
             view.diagnostics().is_empty(),
@@ -535,8 +505,15 @@ mod tests {
         ]);
         let bundle = &prepared.okf().bundle;
 
-        let (_, tree_diagnostics) = bundle.resolved_view("/", &core_registry());
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let (_, tree_diagnostics) =
+            bundle.resolved_view("/", &crate::folder_projection::core_registry());
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
 
         assert!(tree_diagnostics.is_empty());
         assert_eq!(tree_diagnostics.is_empty(), view.diagnostics().is_empty());
@@ -552,7 +529,13 @@ mod tests {
             ("orders.md", "# Orders\n"),
             ("sales/index.md", "# Sales\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         let rows = view.row_views();
 
         assert_eq!(
@@ -576,7 +559,13 @@ mod tests {
             ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
             ("orders.md", "# Orders\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         let (id, op) = enter_row_op(view.rows(), 0).unwrap();
         assert_eq!(id, view.rows()[0].id);
         assert_eq!(
@@ -595,7 +584,13 @@ mod tests {
             ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
             ("orders.md", "# Orders\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         assert!(view.rows()[0].caps.rename, "a concept row declares rename");
         let (id, op) = rename_row_op(view.rows(), 0, "Purchase Orders".to_string()).unwrap();
         assert_eq!(id, view.rows()[0].id);
@@ -617,7 +612,13 @@ mod tests {
             ("sales/index.md", "# Sales\n"),
             ("orders.md", "# Orders\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         let rows = view.rows();
         assert_eq!(rows[0].label, "Sales");
         assert_eq!(rows[1].label, "Orders");
@@ -641,7 +642,13 @@ mod tests {
             ("orders.md", "# Orders\n"),
             ("sales/index.md", "# Sales\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         // Orders (index 0) has no preceding row at all; Sales (index 1) has
         // only a concept row preceding it, not a directory.
         assert!(tab_row_op(view.rows(), 0).is_none());
@@ -655,7 +662,13 @@ mod tests {
             ("sales/index.md", "# Sales\n\n* [Orders](orders.md)\n"),
             ("sales/orders.md", "# Orders\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/sales", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/sales",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         let rows = view.rows();
         assert!(
             rows[0].caps.move_out,
@@ -672,7 +685,13 @@ mod tests {
             ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
             ("orders.md", "# Orders\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         assert!(
             !view.rows()[0].caps.move_out,
             "the bundle root has no parent to move out to"
@@ -691,7 +710,13 @@ mod tests {
             ("sales/index.md", "# Sales\n"),
             ("refunds.md", "# Refunds\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         let rows = view.rows();
         // Drag row 0 (Orders) to drop index 2: lands before the row that was
         // at index 2 (Refunds) pre-drag.
@@ -718,7 +743,13 @@ mod tests {
             ("orders.md", "# Orders\n"),
             ("sales/index.md", "# Sales\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         // Dropped on itself, and dropped immediately after itself: both are
         // no-ops -- nothing is emitted, so nothing could reorder the rows.
         assert!(reorder_row_op(view.rows(), 0, 0).is_none());
@@ -753,7 +784,13 @@ mod tests {
             ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
             ("orders.md", "# Orders\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         let (id, op) = enter_row_op(view.rows(), 0).unwrap();
         let ops = view.apply_gesture(prepared.okf(), &id, op).unwrap();
         assert!(
@@ -773,7 +810,13 @@ mod tests {
             ("sales/index.md", "# Sales\n"),
             ("orders.md", "# Orders\n"),
         ]);
-        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+        let view = FolderView::build(
+            prepared.okf(),
+            "/",
+            ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
+        )
+        .unwrap();
         let (id, op) = tab_row_op(view.rows(), 1).unwrap();
         let ops = view.apply_gesture(prepared.okf(), &id, op).unwrap();
         assert_eq!(

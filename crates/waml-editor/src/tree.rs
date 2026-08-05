@@ -160,7 +160,7 @@ pub fn build_tree(
         // `Chain::build` catches these without running anything. Must be the
         // SAME registry `FolderView::build` uses, or the tree marks a folder
         // degraded that opens fine, or misses one that does not.
-        let registry = crate::folder_view::core_registry();
+        let registry = crate::folder_projection::core_registry();
         let (_, diagnostics) = bundle.resolved_view(address.as_str(), &registry);
         Some(TreeNode {
             key: address.as_str().to_string(),

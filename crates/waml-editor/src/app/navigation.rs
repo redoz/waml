@@ -299,6 +299,7 @@ impl App {
                     self.session.okf_analysis(),
                     &address,
                     self.chain_limits,
+                    self.view_mode,
                 ) else {
                     self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
                     return false;

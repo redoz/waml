@@ -123,7 +123,12 @@ fn open_folder(ctx: &OpenCtx<'_>, id: &RowId) -> Option<Box<dyn DocView>> {
         RowTarget::Folder(directory) => directory,
         RowTarget::Concept(_) | RowTarget::Virtual => return None,
     };
-    let view = FolderView::build(ctx.analysis, &directory, ctx.limits)?;
+    let view = FolderView::build(
+        ctx.analysis,
+        &directory,
+        ctx.limits,
+        crate::folder_projection::ViewMode::Projected,
+    )?;
     Some(Box::new(view))
 }
 

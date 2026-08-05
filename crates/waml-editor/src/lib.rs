@@ -46,6 +46,7 @@ mod editor_session;
 mod extension_editor;
 mod folder_documents;
 mod folder_list;
+mod folder_projection;
 mod folder_view;
 pub mod fonts;
 mod fonts_overlay;

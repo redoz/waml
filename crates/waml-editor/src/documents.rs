@@ -64,7 +64,15 @@ pub fn open_row_with_asset_host(
     limits: waml::view::chain::ChainLimits,
 ) -> (Option<OpenDocument>, Option<waml::diagnostic::Diagnostic>) {
     match &row.target {
-        RowTarget::Folder(directory) => (open_folder(okf, directory, limits), None),
+        RowTarget::Folder(directory) => (
+            open_folder(
+                okf,
+                directory,
+                limits,
+                crate::folder_projection::ViewMode::Projected,
+            ),
+            None,
+        ),
         // No file behind a Virtual row; the owning middleware would need to
         // interpret the path itself. No middleware does yet -- degrades to
         // "nothing to open" rather than guessing.
@@ -103,8 +111,9 @@ pub fn open_folder(
     okf: &waml::analysis::OkfAnalysis,
     directory: &str,
     limits: waml::view::chain::ChainLimits,
+    mode: crate::folder_projection::ViewMode,
 ) -> Option<OpenDocument> {
-    crate::folder_documents::open(okf, directory, limits)
+    crate::folder_documents::open(okf, directory, limits, mode)
 }
 
 #[cfg(test)]

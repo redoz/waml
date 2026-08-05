@@ -42,9 +42,10 @@ pub fn open(
     analysis: &waml::analysis::OkfAnalysis,
     directory: &str,
     limits: waml::view::chain::ChainLimits,
+    mode: crate::folder_projection::ViewMode,
 ) -> Option<OpenDocument> {
     let presentation = describe(analysis, directory)?.presentation;
-    let view = FolderView::build(analysis, directory, limits)?;
+    let view = FolderView::build(analysis, directory, limits, mode)?;
     let title = title_for(analysis, directory);
     Some(OpenDocument {
         tab_id: folder_document_tab_id(directory),
@@ -75,6 +76,7 @@ mod tests {
             prepared.okf(),
             "/sales",
             waml::view::chain::ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
         )
         .unwrap();
         assert_eq!(document.presentation.category, NavCategory::Directory);
@@ -84,7 +86,8 @@ mod tests {
         assert!(open(
             prepared.okf(),
             "/missing",
-            waml::view::chain::ChainLimits::default()
+            waml::view::chain::ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
         )
         .is_none());
     }
