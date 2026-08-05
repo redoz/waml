@@ -1113,3 +1113,19 @@ fn alt_lifetime_states_join_only_definitely_alive_lifelines() {
         diagnostic.file == "definite.md" && diagnostic.code == DiagCode::InvalidLifelineLifetime
     }));
 }
+
+#[test]
+fn sequence_describes_resolves_through_the_shared_link_ref_parser() {
+    let analysis = analyze([
+        ("m/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
+        (
+            "m/checkout.md",
+            "---\ntype: uml.Sequence\ndescribes: [Order](./order.md)\n---\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as o\n\n## Messages\n- outside calls o `place()`\n",
+        ),
+    ]);
+
+    assert_eq!(
+        interaction(&analysis, "m/checkout").describes.as_deref(),
+        Some("m/order")
+    );
+}
