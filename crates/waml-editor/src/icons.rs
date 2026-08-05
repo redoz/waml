@@ -3958,6 +3958,62 @@ script_mod! {
         }
     }
 
+    // Book: catalogued ahead of a call site. Faithful port of
+    // resources/icons/book.svg via scripts/gen-icon.py.
+    mod.draw.IconBook = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.1667, s * 0.8125)
+            sdf.arc_to(s * 0.2708, s * 0.8125, s * 0.1042, 3.1416, 4.7124)
+            sdf.line_to(s * 0.8333, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2708, s * 0.0833)
+            sdf.line_to(s * 0.8333, s * 0.0833)
+            sdf.line_to(s * 0.8333, s * 0.9167)
+            sdf.line_to(s * 0.2708, s * 0.9167)
+            sdf.arc_to(s * 0.2708, s * 0.8125, s * 0.1042, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1667, s * 0.1875)
+            sdf.arc_to(s * 0.2708, s * 0.1875, s * 0.1042, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Box: catalogued ahead of a call site. Faithful port of
+    // resources/icons/box.svg via scripts/gen-icon.py.
+    mod.draw.IconBox = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.8750, s * 0.3333)
+            sdf.arc_to(s * 0.7917, s * 0.3334, s * 0.0833, -0.0010, -1.0472)
+            sdf.line_to(s * 0.5417, s * 0.0946)
+            sdf.arc_to(s * 0.5000, s * 0.1668, s * 0.0833, -1.0472, -2.0944)
+            sdf.line_to(s * 0.1667, s * 0.2613)
+            sdf.arc_to(s * 0.2083, s * 0.3334, s * 0.0833, -2.0944, -3.1406)
+            sdf.line_to(s * 0.1250, s * 0.6667)
+            sdf.arc_to(s * 0.2083, s * 0.6666, s * 0.0833, 3.1406, 2.0944)
+            sdf.line_to(s * 0.4583, s * 0.9054)
+            sdf.arc_to(s * 0.5000, s * 0.8332, s * 0.0833, 2.0944, 1.0472)
+            sdf.line_to(s * 0.8333, s * 0.7388)
+            sdf.arc_to(s * 0.7917, s * 0.6666, s * 0.0833, 1.0472, 0.0010)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1375, s * 0.2917)
+            sdf.line_to(s * 0.5000, s * 0.5000)
+            sdf.line_to(s * 0.8625, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.9167)
+            sdf.line_to(s * 0.5000, s * 0.5000)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -4084,6 +4140,8 @@ script_mod! {
         file_code: mod.draw.IconFileCode{ color: atlas.accent }
         file_code_corner: mod.draw.IconFileCodeCorner{ color: atlas.accent }
         plus: mod.draw.IconPlus{ color: atlas.accent }
+        book: mod.draw.IconBook{ color: atlas.accent }
+        box_: mod.draw.IconBox{ color: atlas.accent }
     }
 }
 
@@ -4333,6 +4391,13 @@ pub struct IconSet {
     pub file_code_corner: DrawColor,
     #[live]
     pub plus: DrawColor,
+    #[live]
+    pub book: DrawColor,
+    #[live]
+    /// `box` is a reserved word in Rust; the derive macro backing `#[live]`
+    /// also rejects the raw identifier `r#box`, so this field is `box_`
+    /// (trailing underscore) on both the Rust struct and the DSL block.
+    pub box_: DrawColor,
 }
 
 impl IconSet {
@@ -4461,6 +4526,8 @@ impl IconSet {
             Icon::FileCode => &mut self.file_code,
             Icon::FileCodeCorner => &mut self.file_code_corner,
             Icon::Plus => &mut self.plus,
+            Icon::Book => &mut self.book,
+            Icon::Box => &mut self.box_,
         }
     }
 
@@ -4602,12 +4669,14 @@ pub enum Icon {
     FileCode,
     FileCodeCorner,
     Plus,
+    Book,
+    Box,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 121] = [
+    pub const ALL: [Icon; 123] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4729,6 +4798,8 @@ impl Icon {
         Icon::FileCode,
         Icon::FileCodeCorner,
         Icon::Plus,
+        Icon::Book,
+        Icon::Box,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -4856,6 +4927,8 @@ impl Icon {
             Icon::FileCode => "file-code",
             Icon::FileCodeCorner => "file-code-corner",
             Icon::Plus => "plus",
+            Icon::Book => "book",
+            Icon::Box => "box",
         }
     }
 }
@@ -4866,7 +4939,7 @@ mod tests {
 
     #[test]
     fn icon_all_has_121_entries() {
-        assert_eq!(Icon::ALL.len(), 121);
+        assert_eq!(Icon::ALL.len(), 123);
     }
 
     // ------------------------------------------------------------------
@@ -4897,7 +4970,14 @@ mod tests {
 
     /// `IconSet` field-name spelling of a variant name (the same convention
     /// throughout: an underscore before every interior capital or digit).
+    ///
+    /// `Box` is the one exception: `box` is a reserved Rust word, and the
+    /// `#[live]` derive backing `IconSet` rejects the raw identifier
+    /// `r#box`, so its field carries a trailing underscore instead.
     fn snake(name: &str) -> String {
+        if name == "Box" {
+            return "box_".to_string();
+        }
         let mut out = String::new();
         for (i, ch) in name.chars().enumerate() {
             if i > 0 && (ch.is_ascii_uppercase() || ch.is_ascii_digit()) {
@@ -5081,7 +5161,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 121);
+        assert_eq!(seen.len(), 123);
     }
 
     #[test]

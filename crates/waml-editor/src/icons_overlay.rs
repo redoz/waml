@@ -133,6 +133,8 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(PanelLeft, "Retired static left-dock toggle"),
             ie!(Plus, "Add / new -- catalog glyph, no current call site"),
             ie!(FileBraces, "Retired source-document glyph"),
+            ie!(Book, "Catalogued ahead of a call site"),
+            ie!(Box, "Catalogued ahead of a call site"),
         ],
     ),
 ];
@@ -302,6 +304,9 @@ mod drift {
         Icon::FileCodeCorner,
         Icon::Plus,
         Icon::FileBraces,
+        // Catalogued ahead of a call site, same as FileCodeCorner / Plus above.
+        Icon::Book,
+        Icon::Box,
     ];
 
     fn table_icons() -> Vec<Icon> {
