@@ -12,6 +12,7 @@ use crate::frontmatter::FmValue;
 /// One entry of a `view:` declaration, verbatim, with the source line for
 /// spans.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ViewEntry {
     pub raw: String,
     pub line: usize,
@@ -20,6 +21,7 @@ pub struct ViewEntry {
 /// A parsed `view:` declaration. A scalar is a one-element chain. First
 /// entry is outermost.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ViewDecl {
     pub entries: Vec<ViewEntry>,
 }

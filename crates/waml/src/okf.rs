@@ -388,6 +388,12 @@ pub struct Index {
     pub members: Vec<String>,
     pub body: Option<SourceSlice>,
     pub authored: bool,
+    /// Locally declared profile. What is in EFFECT is `Bundle::resolved_profile`.
+    pub profile: Option<String>,
+    /// Locally declared view chain. What is in EFFECT is `Bundle::resolved_view`.
+    pub view: Option<crate::view::decl::ViewDecl>,
+    /// Producer keys with no dedicated field. Preserved verbatim on round-trip.
+    pub extra: Frontmatter,
 }
 
 #[derive(Debug, Clone, PartialEq)]

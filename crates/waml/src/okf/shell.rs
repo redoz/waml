@@ -36,6 +36,10 @@ const KNOWN_KEYS: &[&str] = &[
     "timestamp",
 ];
 
+/// Frontmatter keys `parse_authored_index` promotes to dedicated `Index`
+/// fields. Everything else lands in `Index::extra`, preserved verbatim.
+const INDEX_KNOWN_KEYS: &[&str] = &["title", "profile", "view"];
+
 struct ShellDocument<'a> {
     document: &'a Arc<DocumentVersion>,
     snapshot: &'a Arc<MarkdownSyntaxSnapshot>,
@@ -305,6 +309,9 @@ fn project(documents: Vec<ShellDocument<'_>>) -> Result<Bundle, BundleError> {
                 members: default_order,
                 body: None,
                 authored: false,
+                profile: None,
+                view: None,
+                extra: Frontmatter::default(),
             }),
         }
     }
@@ -679,6 +686,36 @@ fn parse_authored_index(shell: &ShellDocument<'_>, directory: DirectoryAddress) 
         .map(str::trim)
         .filter(|title| !title.is_empty())
         .map(str::to_owned);
+    let profile = shell
+        .frontmatter
+        .get_str("profile")
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .map(str::to_owned);
+    // Line tracking for `view:` spans is not yet threaded through
+    // `Frontmatter` (see `crate::view::decl::ViewEntry::line`); 0 is a
+    // placeholder until a later task carries real source lines.
+    let view = shell
+        .frontmatter
+        .get("view")
+        .and_then(|value| crate::view::decl::parse_view_decl(value, 0));
+    let extra = Frontmatter {
+        entries: shell
+            .frontmatter
+            .entries
+            .iter()
+            .filter(|(key, _)| {
+                // A `view:` value this layer rejected (e.g. a mapping shape)
+                // is not promoted, so it must stay in `extra` — otherwise a
+                // re-render silently erases what the author wrote.
+                if key == "view" && view.is_none() {
+                    return true;
+                }
+                !INDEX_KNOWN_KEYS.contains(&key.as_str())
+            })
+            .cloned()
+            .collect(),
+    };
     let heading =
         shell.snapshot.queries().headings().find(|heading| {
             heading.level == 1 && heading.range.start() >= shell.body_range.start()
@@ -761,6 +798,9 @@ fn parse_authored_index(shell: &ShellDocument<'_>, directory: DirectoryAddress) 
             members: Vec::new(),
             body: Some(shell.body.clone()),
             authored: true,
+            profile,
+            view,
+            extra,
         },
         authored_order,
     }
@@ -825,8 +865,116 @@ fn structural(reason: impl Into<Arc<str>>) -> AnalysisError {
 #[cfg(test)]
 mod tests {
     use super::exact_tree_source;
+    use crate::okf::Bundle;
+    use crate::source::SourceBundle;
     use std::sync::Arc;
     use waml_syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
+
+    #[test]
+    fn index_frontmatter_promotes_profile_and_view_and_keeps_unknown_keys() {
+        let source = SourceBundle::try_from_pairs([(
+            "sales/index.md",
+            "---\ntitle: Sales\nprofile: uml-domain\nview: outline\ngenerator: acme\n---\n# Sales\n",
+        )])
+        .unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+        let index = bundle.index("/sales").unwrap();
+
+        assert_eq!(index.profile.as_deref(), Some("uml-domain"));
+        let view = index.view.as_ref().expect("view declared");
+        assert_eq!(view.entries.len(), 1);
+        assert_eq!(view.entries[0].raw, "outline");
+        assert_eq!(
+            index.extra.get_str("generator"),
+            Some("acme"),
+            "unknown key preserved"
+        );
+        assert!(
+            index.extra.get("title").is_none(),
+            "promoted key must not double up in extra"
+        );
+        assert!(
+            index.extra.get("profile").is_none(),
+            "promoted key must not double up in extra"
+        );
+        assert!(
+            index.extra.get("view").is_none(),
+            "promoted key must not double up in extra"
+        );
+    }
+
+    #[test]
+    fn view_sequence_in_index_frontmatter_parses_in_order() {
+        let source = SourceBundle::try_from_pairs([(
+            "index.md",
+            "---\nview: [hide-refs, group-by-tag]\n---\n# Root\n",
+        )])
+        .unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+        let index = bundle.index("/").unwrap();
+
+        let view = index.view.as_ref().expect("view declared");
+        let entries: Vec<&str> = view
+            .entries
+            .iter()
+            .map(|entry| entry.raw.as_str())
+            .collect();
+        assert_eq!(entries, ["hide-refs", "group-by-tag"]);
+    }
+
+    #[test]
+    fn an_index_without_frontmatter_parses_exactly_as_before() {
+        let source =
+            SourceBundle::try_from_pairs([("index.md", "# Root\n\n* [Note](note.md)\n")]).unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+        let index = bundle.index("/").unwrap();
+
+        assert_eq!(index.profile, None);
+        assert_eq!(index.view, None);
+        assert_eq!(index.extra, crate::frontmatter::Frontmatter::default());
+    }
+
+    #[test]
+    fn a_malformed_view_value_stays_in_extra() {
+        let source = SourceBundle::try_from_pairs([(
+            "index.md",
+            "---\nview:\n  nested: mapping\n---\n# Root\n",
+        )])
+        .unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+        let index = bundle.index("/").unwrap();
+
+        assert_eq!(index.view, None);
+        assert!(
+            index.extra.get("view").is_some(),
+            "rejected view shape must survive in extra so a re-render does not erase it"
+        );
+    }
+
+    #[test]
+    fn a_synthesized_index_declares_nothing() {
+        let source =
+            SourceBundle::try_from_pairs([("sales/order.md", "---\ntype: Note\n---\n# Order\n")])
+                .unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+        let index = bundle.index("/sales").unwrap();
+
+        assert!(!index.authored);
+        assert_eq!(index.profile, None);
+        assert_eq!(index.view, None);
+        assert_eq!(index.extra, crate::frontmatter::Frontmatter::default());
+    }
+
+    #[test]
+    fn max_view_depth_in_bundle_frontmatter_is_just_an_unknown_key() {
+        let source =
+            SourceBundle::try_from_pairs([("index.md", "---\nmax_view_depth: 3\n---\n# Root\n")])
+                .unwrap();
+        let bundle = Bundle::parse(&source).unwrap();
+        let index = bundle.index("/").unwrap();
+
+        assert!(index.extra.get("max_view_depth").is_some());
+    }
 
     #[test]
     fn streaming_tree_source_comparator_covers_exact_mismatch_short_and_trailing() {
