@@ -4,7 +4,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use waml_syntax::{
@@ -21,11 +21,14 @@ pub(crate) struct WamlCodeSyntaxSnapshot {
     pub(crate) revision: DocumentRevision,
     pub(crate) fenced: bool,
     pub(crate) content_range: TextRange,
-    /// Walked/sorted/deduped once at construction so `code_spans()` is a
-    /// clone rather than a tree walk on every call (issue 34, Task 4). The
-    /// source `syntax` tree and `source_range` used to compute this are not
-    /// retained beyond construction — nothing else in this type reads them.
-    spans: Option<Arc<[WamlCodeSpan]>>,
+    source_range: TextRange,
+    syntax: Arc<SyntaxTree<super::syntax::UmlLanguage>>,
+    /// Walked/sorted/deduped at most once per snapshot, and only when
+    /// `code_spans()` is actually queried (issue 34, Task 4). Building the
+    /// snapshot must stay cheap: `build_code_syntax` runs for every island
+    /// and fence of every document on each analysis rebuild, while the spans
+    /// are asked for only by the document being highlighted.
+    spans: OnceLock<Option<Arc<[WamlCodeSpan]>>>,
 }
 
 impl WamlCodeSyntaxSnapshot {
@@ -37,18 +40,37 @@ impl WamlCodeSyntaxSnapshot {
         content_range: TextRange,
         syntax: Arc<SyntaxTree<super::syntax::UmlLanguage>>,
     ) -> Self {
-        let spans = compute_waml_code_spans(&syntax, source_range, content_range);
         Self {
             document,
             revision,
             fenced,
             content_range,
-            spans,
+            source_range,
+            syntax,
+            spans: OnceLock::new(),
         }
     }
 
     pub(crate) fn code_spans(&self) -> Option<Arc<[WamlCodeSpan]>> {
-        self.spans.clone()
+        self.spans
+            .get_or_init(|| {
+                compute_waml_code_spans(&self.syntax, self.source_range, self.content_range)
+            })
+            .clone()
+    }
+
+    /// Test-only copy recorded under a different revision, used to exercise
+    /// the stale-revision rejection branch of `OkfAnalysis::code_spans`.
+    #[cfg(test)]
+    pub(crate) fn with_revision(&self, revision: DocumentRevision) -> Self {
+        Self::new(
+            self.document,
+            revision,
+            self.fenced,
+            self.source_range,
+            self.content_range,
+            self.syntax.clone(),
+        )
     }
 }
 

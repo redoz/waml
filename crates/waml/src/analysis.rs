@@ -1398,6 +1398,72 @@ mod tests {
         }
     }
 
+    /// `code_spans` resolves the owning snapshot directly and then validates
+    /// it against the owning document: cover the island branch, the fenced
+    /// branch, the `content_range` mismatch that precedes both, and the
+    /// stale-revision rejection.
+    #[test]
+    fn code_spans_validate_both_owner_branches_and_reject_a_stale_revision() {
+        let authored = "---\ntype: uml.Class\n---\n# Example\n\n## Attributes\n- unknown: Number {0..42}\n\n```waml\n## Attributes\n- unknown: Number {0..42}\n```\n";
+        let candidate = prepare_candidate(
+            SourceBundle::try_from_pairs([("example.md", authored)]).unwrap(),
+            None,
+            7,
+        )
+        .unwrap();
+        let analysis = candidate.okf();
+        let document = DocumentId(0);
+        let markdown = analysis.markdown_snapshot(document).unwrap();
+        let full_range = TextRange::new(TextSize::new(0), markdown.text().len()).unwrap();
+        let fence_owner = markdown
+            .queries()
+            .spans(full_range)
+            .find(|span| span.semantic_role == MarkdownSemanticRole::FencedCode)
+            .expect("the fenced code must have a semantic owner")
+            .owner;
+        let fence = markdown.queries().fenced_code(fence_owner).unwrap();
+        let island = markdown
+            .structure()
+            .islands
+            .iter()
+            .find(|island| island.kind == waml_syntax::WamlSectionKind::Attributes)
+            .expect("the document must retain its attributes island");
+
+        assert!(analysis
+            .code_spans(island.owner, island.content_range)
+            .is_some());
+        assert!(analysis
+            .code_spans(fence.owner, fence.content_range)
+            .is_some());
+        // Each owner is rejected under the other's content range, before
+        // either owner branch is consulted.
+        assert!(analysis
+            .code_spans(island.owner, fence.content_range)
+            .is_none());
+        assert!(analysis
+            .code_spans(fence.owner, island.content_range)
+            .is_none());
+
+        let bumped = markdown.revision().checked_next().unwrap();
+        let stale = OkfAnalysis {
+            catalog: analysis.catalog.clone(),
+            markdown: analysis.markdown.clone(),
+            bundle: analysis.bundle.clone(),
+            code_syntax: Arc::new(
+                analysis
+                    .code_syntax
+                    .iter()
+                    .map(|(owner, snapshot)| (*owner, snapshot.with_revision(bumped)))
+                    .collect(),
+            ),
+            quarantined: analysis.quarantined.clone(),
+        };
+        assert!(stale
+            .code_spans(island.owner, island.content_range)
+            .is_none());
+        assert!(stale.code_spans(fence.owner, fence.content_range).is_none());
+    }
+
     struct QuarantineHooks {
         fail_path: BundlePath,
     }

@@ -409,10 +409,27 @@ fn parse_inlines_within(
         .collect();
     let mut strikethrough_cursor = 0usize;
     let mut emphasis_cursor = 0usize;
+    debug_assert!(
+        emphasis.windows(2).all(|pair| pair[0].open <= pair[1].open),
+        "emphasis pairs must be sorted ascending by `open` for the monotone cursor"
+    );
+    debug_assert!(
+        strikethrough
+            .windows(2)
+            .all(|pair| pair[0].open <= pair[1].open),
+        "strikethrough pairs must be sorted ascending by `open` for the monotone cursor"
+    );
     let mut out = Vec::new();
     let mut at = start;
     let mut plain = start;
+    let mut previous_at = start;
     while at < end {
+        debug_assert!(
+            at >= previous_at,
+            "the inline cursor must not move backwards: the monotone \
+             emphasis/strikethrough cursors would silently skip a pair"
+        );
+        previous_at = at;
         while strikethrough
             .get(strikethrough_cursor)
             .is_some_and(|pair| pair.open < at)
@@ -1923,6 +1940,59 @@ pub(crate) fn entity_value_annotation() -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::{parse_markdown, DocumentRevision, OkfSyntaxDiagnosticCode as Diagnostic};
+
+    /// The protected set the recursion used to rescan for every sub-range.
+    fn protected_scan(source: &str, start: usize, end: usize) -> Vec<std::ops::Range<usize>> {
+        let mut protected = super::code_spans(source, start, end);
+        protected.extend(super::angle_spans(source, start, end));
+        protected.sort_by_key(|range| (range.start, range.end));
+        protected
+    }
+
+    /// `protected_within` narrows the one top-level scan instead of
+    /// rescanning each sub-range; pin that the narrowed set is what a rescan
+    /// of that sub-range would have produced, over the sub-ranges the
+    /// recursion actually descends into (emphasis and strikethrough
+    /// interiors), including unpaired backticks and angle spans that sit
+    /// beside or straddle an emphasis run.
+    #[test]
+    fn narrowed_protected_set_matches_a_rescan_of_the_sub_range() {
+        for source in [
+            "*a `code` b* c",
+            "*a ` b* c",
+            "a ` *b* ` *c*",
+            "*a `` b ` c `` d*",
+            "``a `b` c`` *d*",
+            "*a <https://example.com/x> b*",
+            "*a <b> c* <d>",
+            "*a <not closed b* c",
+            "~~a `b` c~~ *d `e` f*",
+            "*a **b `c` d** e*",
+            "`*a*` *b* `*c*`",
+        ] {
+            let top = protected_scan(source, 0, source.len());
+            let mut interiors = Vec::new();
+            for pair in super::emphasis_pairs(source, 0, source.len(), &top) {
+                interiors.push(pair.open + pair.width..pair.close);
+            }
+            for pair in super::strikethrough_pairs(source, 0, source.len(), &top) {
+                interiors.push(pair.open + 2..pair.close);
+            }
+            assert!(
+                !interiors.is_empty(),
+                "fixture {source:?} exercises no sub-range"
+            );
+            for interior in interiors {
+                let mut narrowed = super::protected_within(&top, interior.start, interior.end);
+                narrowed.sort_by_key(|range| (range.start, range.end));
+                assert_eq!(
+                    narrowed,
+                    protected_scan(source, interior.start, interior.end),
+                    "narrowing disagrees with a rescan of {interior:?} in {source:?}"
+                );
+            }
+        }
+    }
 
     /// A hostile paragraph of 10,000 `*` markers on each side of a single
     /// word peels off nested `Emphasis`/`StrongEmphasis` pairs from the
