@@ -1,5 +1,6 @@
 use crate::document::{DocumentDescriptor, OpenDocument};
 use crate::view_history::{DocumentKind, DocumentLocator};
+use waml::view::row::{Row, RowTarget};
 
 pub fn describe(
     okf: &waml::analysis::OkfAnalysis,
@@ -18,6 +19,75 @@ pub fn open_with_asset_host(
 ) -> Option<OpenDocument> {
     crate::uml_documents::open_with_asset_host(okf, uml, concept_id, assets)
         .or_else(|| crate::okf_documents::open_with_asset_host(okf, concept_id, assets))
+}
+
+/// The four registered surface ids (Task E2), for `resolve_surface`'s
+/// `known` slice. Kept beside the call site so it cannot silently drift
+/// from `CoreEditorExtension::surfaces` -- `extension_editor`'s own gate
+/// test (`todays_four_surfaces_are_registered_by_the_core_editor_half`)
+/// asserts the other side of the same set.
+// Consumer: `open_row_with_asset_host` below, itself not yet called from
+// `folder_view.rs`'s live event path -- see that function's doc comment.
+#[allow(dead_code)]
+const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
+
+/// Opens a projected chain `Row` (Task E2's "open rows through the surface
+/// table"), honoring an explicit `row.surface` override (a future
+/// middleware's `surface:` declaration -- unreachable today, since neither
+/// `hide` nor the root view sets one, but this is the seam Task E3's
+/// `member:`/`markdown` resolutions and any later middleware plug into).
+///
+/// A row with no override (`row.surface == None`) -- today's only reachable
+/// case -- delegates unchanged to `open_with_asset_host`/`open_folder`, so
+/// this function is byte-for-byte behavior-preserving for every row the
+/// editor can currently produce. An explicit override dispatches to the
+/// matching surface directly, bypassing the uml-vs-generic type detection
+/// `open_with_asset_host` otherwise performs; an unknown override id
+/// degrades to the row's type default with a diagnostic (never a blank
+/// tab, never a panic) per `waml::view::surface::resolve_surface`.
+// Consumer: wiring `folder_view.rs`'s row-open handling through this
+// function (rather than the plain `NavigationTarget` it emits today) is
+// the remaining half of Task E2's editor-side integration, deferred to a
+// following unit -- this function and its tests land the documents.rs
+// half in isolation.
+#[allow(dead_code)]
+pub fn open_row_with_asset_host(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    row: &Row,
+    assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    limits: waml::view::chain::ChainLimits,
+) -> (Option<OpenDocument>, Option<waml::diagnostic::Diagnostic>) {
+    match &row.target {
+        RowTarget::Folder(directory) => (open_folder(okf, directory, limits), None),
+        // No file behind a Virtual row; the owning middleware would need to
+        // interpret the path itself. No middleware does yet -- degrades to
+        // "nothing to open" rather than guessing.
+        RowTarget::Virtual => (None, None),
+        RowTarget::Concept(concept_id) => {
+            let Some(requested) = row.surface.as_ref() else {
+                return (open_with_asset_host(okf, uml, concept_id, assets), None);
+            };
+            let (surface, diagnostic) = waml::view::surface::resolve_surface(
+                Some(requested.as_str()),
+                &row.target,
+                &okf.bundle,
+                KNOWN_SURFACES,
+                "index.md",
+                0,
+            );
+            let doc = match surface.as_str() {
+                "source" => {
+                    crate::okf_documents::open_source_with_asset_host(okf, concept_id, assets)
+                }
+                "canvas" => open_with_asset_host(okf, uml, concept_id, assets),
+                // "markdown" and any other resolved default: the generic
+                // reading surface.
+                _ => crate::okf_documents::open_with_asset_host(okf, concept_id, assets),
+            };
+            (doc, diagnostic)
+        }
+    }
 }
 
 /// The folder-view provider entry: keyed on a directory address, not a
@@ -216,6 +286,128 @@ mod tests {
 
         assert!(open_with_asset_host(prepared.okf(), prepared.uml(), "index", &assets()).is_none());
         assert!(open_with_asset_host(prepared.okf(), prepared.uml(), "log", &assets()).is_none());
+    }
+
+    fn test_row(target: waml::view::row::RowTarget, surface: Option<&str>) -> Row {
+        Row::new(
+            waml::view::row::RowId {
+                owner: waml::view::row::ViewId::new("root"),
+                path: waml::view::row::RowPath::parse("x").unwrap(),
+            },
+            "x".to_string(),
+            target,
+            surface.map(|s| waml::view::surface::SurfaceId(s.to_string())),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_row_with_no_surface_override_delegates_unchanged_to_open_with_asset_host() {
+        let source =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let row = test_row(RowTarget::Concept("order".to_string()), None);
+
+        let (doc, diagnostic) = open_row_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &row,
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+        );
+        assert!(diagnostic.is_none());
+        assert_eq!(
+            doc.unwrap().tab_id,
+            crate::uml_documents::uml_document_tab_id("order")
+        );
+    }
+
+    #[test]
+    fn an_explicit_surface_override_bypasses_uml_type_detection() {
+        let source =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 3).unwrap();
+        let row = test_row(RowTarget::Concept("order".to_string()), Some("source"));
+
+        let (doc, diagnostic) = open_row_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &row,
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+        );
+        assert!(diagnostic.is_none());
+        assert_eq!(
+            doc.unwrap().tab_id,
+            crate::okf_documents::source_document_tab_id("order")
+        );
+    }
+
+    #[test]
+    fn an_unknown_surface_override_degrades_with_a_diagnostic() {
+        let source =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 5).unwrap();
+        let row = test_row(
+            RowTarget::Concept("order".to_string()),
+            Some("no-such-surface"),
+        );
+
+        let (doc, diagnostic) = open_row_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &row,
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+        );
+        assert!(diagnostic.is_some());
+        // Degrades to the type default -- uml.Class -> canvas -> the same
+        // uml-aware open path as the unadorned case.
+        assert_eq!(
+            doc.unwrap().tab_id,
+            crate::uml_documents::uml_document_tab_id("order")
+        );
+    }
+
+    #[test]
+    fn a_folder_row_opens_through_open_folder() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            ("sales/index.md", "# Sales\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 7).unwrap();
+        let row = test_row(RowTarget::Folder("/sales".to_string()), None);
+
+        let (doc, diagnostic) = open_row_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &row,
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+        );
+        assert!(diagnostic.is_none());
+        assert!(doc.is_some());
+    }
+
+    #[test]
+    fn a_virtual_row_has_nothing_to_open() {
+        let source = SourceBundle::try_from_pairs([("index.md", "# Root\n")]).unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 9).unwrap();
+        let row = test_row(waml::view::row::RowTarget::Virtual, Some("markdown"));
+
+        let (doc, diagnostic) = open_row_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &row,
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+        );
+        assert!(diagnostic.is_none());
+        assert!(doc.is_none());
     }
 
     #[test]
