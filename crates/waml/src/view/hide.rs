@@ -202,6 +202,31 @@ impl Projection for Hide {
     fn surface(&self, ctx: &ProjectionCtx<'_>, next: Next<'_>) -> SurfaceId {
         next.surface(ctx)
     }
+
+    /// The half of "hidden means hidden" that `resolve` alone cannot deliver.
+    ///
+    /// A row this stage drops keeps the `ViewId` of whichever stage minted it
+    /// -- the root view, for an ordinary listing -- so a `RowId` captured
+    /// while the row was visible names an owner further down the chain, and
+    /// owner dispatch would sail straight past this stage. The runner asks
+    /// every stage ahead of the owner this question instead.
+    ///
+    /// Rebuilds the row through the root view so the candidate string matches
+    /// `project`'s exactly: one glob, one meaning, whether the path arrived by
+    /// projection or by deep link. A path naming nothing in this folder
+    /// occludes nothing -- it is not ours to hide.
+    ///
+    /// Presentational, never a permission boundary: the raw OKF layer resolves
+    /// this same path, by design.
+    fn occludes(&self, ctx: &ProjectionCtx<'_>, path: &RowPath) -> bool {
+        let Ok(globs) = parse_hide_globs(ctx.params) else {
+            return false;
+        };
+        match super::root::RootView.resolve(ctx, path) {
+            Ok(rows) => rows.last().is_some_and(|row| matches_any(&globs, row)),
+            Err(Unresolved) => false,
+        }
+    }
 }
 
 #[cfg(test)]

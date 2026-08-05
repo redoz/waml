@@ -8,7 +8,6 @@
 
 use makepad_widgets::*;
 
-use waml::frontmatter::Frontmatter;
 use waml::okf::Directory;
 use waml::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
 use waml::view::projection::{ProjectionCtx, RowOp, Unsupported};
@@ -209,17 +208,28 @@ pub struct FolderView {
     raw: bool,
 }
 
+/// The middleware registry every folder-view path in the editor resolves
+/// against: the core extension's `index` and `hide`.
+///
+/// One function because two construction sites that disagree are invisible --
+/// a folder resolves fine in one and reports `unknown view middleware` in the
+/// other, with the gate green either way. `script_gate.rs` asserts the pairing
+/// with the editor half; this asserts there is only one core half to pair
+/// with. Cheap enough to build per call; nothing here caches across frames.
+pub fn core_registry() -> MiddlewareRegistry {
+    MiddlewareRegistry::from_extensions(&[&waml::extension::CoreExt])
+        .expect("the core extension registers a conflict-free name table")
+}
+
 impl FolderView {
-    /// Resolve `directory`'s declared view against an empty middleware
-    /// registry (Task E1's `CoreExtension` populates the real registry;
-    /// until then the terminal `RootView` fallback alone is reachable) and
-    /// run it under `limits`.
+    /// Resolve `directory`'s declared view against the core middleware
+    /// registry and run it under `limits`.
     pub fn build(
         analysis: &waml::analysis::OkfAnalysis,
         directory: &str,
         limits: ChainLimits,
     ) -> Option<FolderView> {
-        let registry = MiddlewareRegistry::new();
+        let registry = core_registry();
         let (chain, mut diagnostics) = analysis.bundle.resolved_view(directory, &registry);
         let (rows, outcome_diags) = Self::run(analysis, directory, &chain, limits)?;
         diagnostics.extend(outcome_diags);
@@ -240,9 +250,10 @@ impl FolderView {
     pub fn build_raw(
         analysis: &waml::analysis::OkfAnalysis,
         directory: &str,
+        limits: ChainLimits,
     ) -> Option<FolderView> {
         let chain = Chain::raw();
-        let (rows, diagnostics) = Self::run(analysis, directory, &chain, ChainLimits::default())?;
+        let (rows, diagnostics) = Self::run(analysis, directory, &chain, limits)?;
         Some(FolderView {
             directory: directory.to_string(),
             rows,
@@ -259,7 +270,16 @@ impl FolderView {
         limits: ChainLimits,
     ) -> Option<(Vec<Row>, Vec<waml::diagnostic::Diagnostic>)> {
         let dir: Directory = analysis.bundle.directory(directory)?.clone();
-        let params = Frontmatter::default();
+        // A middleware's params ARE the folder's own index frontmatter --
+        // `hide` reads its globs from here, and `Chain::build` validated them
+        // against this same map. Passing an empty one makes every
+        // param-taking stage fail its own declaration check and trip the
+        // whole-chain fallback.
+        let params = analysis
+            .bundle
+            .index(directory)
+            .map(|index| index.extra.clone())
+            .unwrap_or_default();
         let descend = |_: &Directory| Chain::default();
         let ctx = ProjectionCtx {
             dir: &dir,
@@ -332,7 +352,14 @@ impl FolderView {
         let Some(dir) = analysis.bundle.directory(ctx_directory).cloned() else {
             return Err(Unsupported);
         };
-        let params = Frontmatter::default();
+        // Same params as `run`: the folder's own index frontmatter. A stage
+        // deciding whether it owns or occludes this row must see what it saw
+        // when it projected, or an edit routes differently than the listing.
+        let params = analysis
+            .bundle
+            .index(ctx_directory)
+            .map(|index| index.extra.clone())
+            .unwrap_or_default();
         let descend = |_: &Directory| Chain::default();
         let ctx = ProjectionCtx {
             dir: &dir,
@@ -497,6 +524,60 @@ mod tests {
         assert!(rows.iter().all(|row| row.bullet == "\u{2022}"));
     }
 
+    /// The end-to-end check the headless tests structurally cannot make: they
+    /// build their own registry and their own params, so both of the editor's
+    /// wiring defects (empty registry, empty params) were invisible to them
+    /// and the gate stayed green while `view: hide` was reporting `unknown
+    /// view middleware` to users. Zero diagnostics is the assertion that
+    /// matters -- a correctly authored document must not be diagnosed.
+    #[test]
+    fn a_declared_hide_chain_filters_rows_with_no_diagnostics_in_the_editor() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "---\nview: hide\nhide: [\"references/**\"]\n---\n# Root\n\n* [Orders](orders.md)\n* [References](references/)\n",
+            ),
+            ("orders.md", "# Orders\n"),
+            ("references/index.md", "# References\n"),
+        ]);
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+
+        assert!(
+            view.diagnostics().is_empty(),
+            "a correctly authored `view: hide` must not be diagnosed: {:?}",
+            view.diagnostics()
+        );
+        let rows = view.row_views();
+        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["Orders"],
+            "the hidden row must be filtered out of the declared listing"
+        );
+    }
+
+    /// The tree marker must agree with what opening the folder actually does.
+    /// Two registries that disagree put a degraded dot on a folder that opens
+    /// clean (or the reverse), and nothing fails.
+    #[test]
+    fn the_tree_and_the_folder_view_agree_on_whether_a_chain_degraded() {
+        let prepared = analysis([
+            (
+                "index.md",
+                "---\nview: hide\nhide: [\"references/**\"]\n---\n# Root\n\n* [Orders](orders.md)\n* [References](references/)\n",
+            ),
+            ("orders.md", "# Orders\n"),
+            ("references/index.md", "# References\n"),
+        ]);
+        let bundle = &prepared.okf().bundle;
+
+        let (_, tree_diagnostics) = bundle.resolved_view("/", &core_registry());
+        let view = FolderView::build(prepared.okf(), "/", ChainLimits::default()).unwrap();
+
+        assert!(tree_diagnostics.is_empty());
+        assert_eq!(tree_diagnostics.is_empty(), view.diagnostics().is_empty());
+    }
+
     #[test]
     fn clicking_a_row_maps_to_the_right_navigation_target() {
         let prepared = analysis([
@@ -546,7 +627,7 @@ mod tests {
             "an unknown declared middleware name diagnoses on the declared route"
         );
 
-        let raw = FolderView::build_raw(prepared.okf(), "/").unwrap();
+        let raw = FolderView::build_raw(prepared.okf(), "/", ChainLimits::default()).unwrap();
         assert!(
             raw.diagnostics().is_empty(),
             "raw never builds the declared chain, so it never diagnoses it either"
@@ -558,7 +639,9 @@ mod tests {
              because its unknown-middleware fallback also lands on the root view"
         );
 
-        assert!(FolderView::build_raw(prepared.okf(), "/missing").is_none());
+        assert!(
+            FolderView::build_raw(prepared.okf(), "/missing", ChainLimits::default()).is_none()
+        );
     }
 
     #[test]

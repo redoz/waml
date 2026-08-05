@@ -30,6 +30,7 @@ use crate::project_settings::DockWidths;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
 use makepad_widgets::*;
 use std::path::{Path, PathBuf};
+use waml::view::chain::ChainLimits;
 
 script_mod! {
     use mod.prelude.widgets.*
@@ -696,6 +697,13 @@ pub struct App {
     /// `responsive_layout` used to be handed.
     #[rust]
     dock_widths: DockWidths,
+    /// The view-chain descent cap in force, from the same
+    /// `.waml/settings.json` read that seeds `dock_widths`. User/workspace
+    /// scope ONLY -- a bundle cannot reach this, by construction: nothing
+    /// builds `ChainLimits` from bundle frontmatter. Defaults to 20 when the
+    /// project declares nothing.
+    #[rust]
+    chain_limits: ChainLimits,
     /// Springy give, in px, currently shown by a collapsed-but-still-held
     /// panel: `(tree, inspector)`. Non-zero only for the length of a drag that
     /// has snapped the panel shut, and reset the moment the finger lifts or the

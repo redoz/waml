@@ -59,9 +59,13 @@ pub fn open(
 /// The raw OKF layer's document open (Task D3): shares `open`'s tab identity
 /// -- opening raw re-navigates the same folder tab into raw mode rather than
 /// opening a second tab for the same directory.
-pub fn open_raw(analysis: &waml::analysis::OkfAnalysis, directory: &str) -> Option<OpenDocument> {
+pub fn open_raw(
+    analysis: &waml::analysis::OkfAnalysis,
+    directory: &str,
+    limits: waml::view::chain::ChainLimits,
+) -> Option<OpenDocument> {
     let presentation = describe(analysis, directory)?.presentation;
-    let view = FolderView::build_raw(analysis, directory)?;
+    let view = FolderView::build_raw(analysis, directory, limits)?;
     let title = title_for(analysis, directory);
     Some(OpenDocument {
         tab_id: folder_document_tab_id(directory),

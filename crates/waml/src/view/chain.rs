@@ -2,9 +2,7 @@
 //! [`super::decl::ViewDecl`] against a [`MiddlewareRegistry`], and runs it
 //! with whole-chain failure fallback to the root view.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::diagnostic::{DiagCode, Diagnostic};
@@ -24,13 +22,22 @@ enum Trip {
     Cycle,
 }
 
-/// Runner-owned descent bookkeeping. Lives behind an `Rc<RefCell<_>>` shared
-/// by every `Chain` handed out along one descent path (via the wrapped
-/// `descend` closure installed by [`Chain::run`]), so a stage cannot reset it
-/// by constructing its own `ProjectionCtx` or calling `run` again — the
-/// state, and the `max_depth` it was seeded with, travel with the chain, not
-/// with whatever `ChainLimits` a later `run` call happens to be passed.
-#[derive(Debug)]
+/// Runner-owned descent bookkeeping, carried BY VALUE down one descent path.
+/// Every `Chain` handed out by the wrapped `descend` closure that [`Chain::run`]
+/// installs gets its own snapshot: `depth` one deeper than its parent's, and
+/// `visited` the parent's set plus the directory just entered. A stage cannot
+/// reset it by constructing its own `ProjectionCtx` or calling `run` again --
+/// the state, and the `max_depth` it was seeded with, travel with the chain,
+/// not with whatever `ChainLimits` a later `run` call happens to be passed.
+///
+/// Deliberately NOT shared mutable state. `depth` measures how deep THIS path
+/// has descended, so listing a folder's twenty sibling subdirectories costs
+/// depth one, not twenty -- a shared counter would let breadth exhaust a cap
+/// that exists to bound recursion. Likewise `visited` holds this path's
+/// ancestors only, so it unwinds for free when a sibling branch is taken and a
+/// cycle trips on a genuine revisit rather than on any second look at a
+/// directory the run already touched elsewhere.
+#[derive(Debug, Clone)]
 struct DescentState {
     depth: usize,
     visited: HashSet<String>,
@@ -139,11 +146,12 @@ pub struct Chain {
     /// Set only on a chain returned by a tripped descent guard: `run` then
     /// short-circuits to a single diagnostic row instead of running stages.
     tripped: Option<Arc<(Trip, String)>>,
-    /// Shared descent state, installed on a chain handed back by a wrapped
-    /// `descend` closure so a recursive `run` continues counting instead of
-    /// starting over at depth zero. `None` means "top-level" -- `run` seeds
-    /// a fresh state from the `ChainLimits` it is given.
-    descent: Option<Rc<RefCell<DescentState>>>,
+    /// This chain's position on the descent path, installed on a chain handed
+    /// back by a wrapped `descend` closure so a recursive `run` continues from
+    /// its parent's depth instead of starting over at zero. `None` means
+    /// "top-level" -- `run` seeds a fresh state from the `ChainLimits` it is
+    /// given. A snapshot, not a shared cell: see [`DescentState`].
+    descent: Option<Arc<DescentState>>,
     /// Task E3's `markdown`/`member:<href>` surface resolution, if the
     /// declared chain named one. `None` for every chain built before Task E3
     /// and for a chain with neither entry -- ordinary stage-walk surface
@@ -291,13 +299,13 @@ impl Chain {
         }
 
         let state = self.descent.clone().unwrap_or_else(|| {
-            Rc::new(RefCell::new(DescentState {
+            Arc::new(DescentState {
                 depth: 0,
                 visited: HashSet::from([ctx.dir.address.as_str().to_string()]),
                 max_depth: limits.max_depth,
-            }))
+            })
         });
-        let wrapped_descend = guard_descend(ctx.descend, Rc::clone(&state));
+        let wrapped_descend = guard_descend(ctx.descend, Arc::clone(&state));
         let guarded_ctx = ProjectionCtx {
             dir: ctx.dir,
             bundle: ctx.bundle,
@@ -335,9 +343,12 @@ impl Chain {
                 }
             }
             Err(ProjectionError { message }) => {
+                // The fallback projects through the GUARDED ctx: the root view
+                // descends into child folders too, and a failed chain must not
+                // buy its children an uncapped descent.
                 let fallback = Chain::default();
-                let rows = fallback.next().project(ctx).unwrap_or_default();
-                let surface = fallback.next().surface(ctx);
+                let rows = fallback.next().project(&guarded_ctx).unwrap_or_default();
+                let surface = fallback.next().surface(&guarded_ctx);
                 let diagnostic = Diagnostic::new(
                     DiagCode::ViewStageFailed,
                     format!("view chain failed, showing the root view instead: {message}"),
@@ -357,20 +368,14 @@ impl Chain {
     /// member it names, then that member's own resolved surface -- a
     /// concept's type default, or a nested folder's own declared chain.
     ///
-    /// For a folder target, prefers the SAME `Chain` this run's own row
-    /// projection already resolved for that row (`rows`, via its `expand`)
-    /// over calling `ctx.descend` again: `RootView::folder_row` already
-    /// called `descend` once per listed folder row to stash it there, and
-    /// the depth/cycle guard counts every `descend` call regardless of
-    /// whether the caller runs the result -- a second call for a folder this
-    /// same pass already touched would trip the guard as a false-positive
-    /// "cycle", not a real one. Only a target that is not one of this
-    /// folder's own listed rows (e.g. filtered out by `hide`) falls back to
-    /// calling `ctx.descend` directly, still guarded against a genuine
-    /// `member:` cycle between two folders the way any `descend`-based cycle
-    /// is. `None` means the href does not name a real member of this folder
-    /// -- the caller degrades to the row-projection surface with a
-    /// diagnostic.
+    /// For a folder target, reuses the `Chain` this run's own row projection
+    /// already resolved for that row (`rows`, via its `expand`) rather than
+    /// calling `ctx.descend` a second time -- `RootView::folder_row` stashed
+    /// it there on the way past, so this is the same chain for free. A target
+    /// that is not one of this folder's own listed rows (e.g. filtered out by
+    /// `hide`) descends directly instead, guarded like any other descent.
+    /// `None` means the href does not name a real member of this folder -- the
+    /// caller degrades to the row-projection surface with a diagnostic.
     fn resolve_member_surface(
         ctx: &ProjectionCtx<'_>,
         href: &str,
@@ -496,8 +501,12 @@ impl Chain {
     /// listing -- `Unresolved` is not a chain failure and never produces a
     /// diagnostic.
     pub fn resolve(&self, ctx: &ProjectionCtx<'_>, id: &RowId) -> Result<Vec<Row>, Unresolved> {
+        let owner_index = self.ids.iter().position(|owned| owned == &id.owner);
         let try_owner = |path: &RowPath| -> Result<Vec<Row>, Unresolved> {
-            match self.ids.iter().position(|owned| owned == &id.owner) {
+            if self.occluded(ctx, owner_index, path) {
+                return Err(Unresolved);
+            }
+            match owner_index {
                 Some(index) => self.stages[index].resolve(ctx, path),
                 None if id.owner.as_str() == super::root::ROOT_VIEW_OWNER => {
                     super::root::RootView.resolve(ctx, path)
@@ -538,6 +547,12 @@ impl Chain {
         op: RowOp,
     ) -> Result<Vec<okf::Op>, Unsupported> {
         let index = self.ids.iter().position(|owned| owned == &id.owner);
+        // A row a stage ahead of the owner would have dropped is not in this
+        // chain's listing, so there is nothing here to edit. Refusing the op is
+        // the same verdict `resolve` gives the same path.
+        if self.occluded(ctx, index, &id.path) {
+            return Err(Unsupported);
+        }
         match index {
             Some(index) => self.stages[index].apply(ctx, &id.path, op, self.next_from(index + 1)),
             None if id.owner.as_str() == super::root::ROOT_VIEW_OWNER => {
@@ -545,6 +560,24 @@ impl Chain {
             }
             None => Err(Unsupported),
         }
+    }
+
+    /// Does any stage AHEAD of the row's owner drop this path?
+    ///
+    /// `owner_index` is the owner's slot in `self.stages`, or `None` for the
+    /// root view, which sits behind every declared stage -- so `None` means
+    /// every stage is ahead of it and every stage gets asked. See
+    /// [`Projection::occludes`] for why owner dispatch alone is not enough.
+    fn occluded(
+        &self,
+        ctx: &ProjectionCtx<'_>,
+        owner_index: Option<usize>,
+        path: &RowPath,
+    ) -> bool {
+        let ahead = owner_index.unwrap_or(self.stages.len());
+        self.stages[..ahead.min(self.stages.len())]
+            .iter()
+            .any(|stage| stage.occludes(ctx, path))
     }
 
     fn next_from(&self, index: usize) -> Next<'_> {
@@ -558,35 +591,27 @@ impl Chain {
 /// visited-directory cycle guard. Called every time a stage descends into a
 /// child folder's chain while a `run` is in flight. On a trip, returns
 /// [`Chain::tripped_chain`] instead of consulting the host closure at all --
-/// the offending directory's real chain is never even built. Otherwise
-/// advances `state` and hands the child chain the SAME shared state, so
-/// further descent below it keeps counting from here rather than resetting.
+/// the offending directory's real chain is never even built. Otherwise hands
+/// the child chain a state one deeper than this one, so further descent below
+/// it keeps counting from here rather than resetting -- while this state, and
+/// therefore every sibling descended from it, is left untouched.
 fn guard_descend<'a>(
     original: &'a dyn Fn(&okf::Directory) -> Chain,
-    state: Rc<RefCell<DescentState>>,
+    state: Arc<DescentState>,
 ) -> impl Fn(&okf::Directory) -> Chain + 'a {
     move |dir: &okf::Directory| {
         let address = dir.address.as_str().to_string();
-        let trip = {
-            let state = state.borrow();
-            if state.visited.contains(&address) {
-                Some(Trip::Cycle)
-            } else if state.depth + 1 > state.max_depth {
-                Some(Trip::DepthExceeded)
-            } else {
-                None
-            }
-        };
-        if let Some(trip) = trip {
-            return Chain::tripped_chain(trip, address);
+        if state.visited.contains(&address) {
+            return Chain::tripped_chain(Trip::Cycle, address);
         }
-        {
-            let mut state = state.borrow_mut();
-            state.depth += 1;
-            state.visited.insert(address);
+        if state.depth + 1 > state.max_depth {
+            return Chain::tripped_chain(Trip::DepthExceeded, address);
         }
+        let mut child = (*state).clone();
+        child.depth += 1;
+        child.visited.insert(address);
         let mut chain = original(dir);
-        chain.descent = Some(Rc::clone(&state));
+        chain.descent = Some(Arc::new(child));
         chain
     }
 }
@@ -1049,6 +1074,96 @@ mod tests {
         assert_eq!(outcome.rows[0].id.owner, ViewId::new(DEPTH_GUARD_OWNER));
         assert_eq!(outcome.diagnostics.len(), 1);
         assert_eq!(outcome.diagnostics[0].code, DiagCode::ViewDepthExceeded);
+    }
+
+    /// Depth is how deep ONE path has descended, not how many times `descend`
+    /// was called. A folder listing twenty-one sibling subdirectories descends
+    /// once per row, all at depth one -- a cap of three must not trip on the
+    /// fourth sibling. The self-descending double emits one row per level, so
+    /// call-count and depth coincide there and this case escapes it entirely.
+    #[test]
+    fn breadth_does_not_consume_the_depth_cap() {
+        let parent = dir_at("/parent");
+        let limits = ChainLimits { max_depth: 3 };
+        let siblings: Vec<okf::Directory> = (0..limits.max_depth + 18)
+            .map(|n| dir_at(&format!("/parent/child{n}")))
+            .collect();
+
+        /// Descends into every sibling once, the way a folder listing does.
+        struct WideDouble {
+            siblings: Vec<okf::Directory>,
+        }
+        impl Projection for WideDouble {
+            fn project(
+                &self,
+                ctx: &ProjectionCtx<'_>,
+                _next: Next<'_>,
+            ) -> Result<Vec<Row>, ProjectionError> {
+                let mut rows = Vec::with_capacity(self.siblings.len());
+                for (n, sibling) in self.siblings.iter().enumerate() {
+                    let mut row = Row::new(
+                        RowId {
+                            owner: ViewId::new("wide"),
+                            path: RowPath::parse(&format!("child{n}"))
+                                .expect("literal row path is valid"),
+                        },
+                        format!("Child {n}"),
+                        RowTarget::Virtual,
+                        Some(SurfaceId("default".to_string())),
+                    )
+                    .expect("a Virtual row with an explicit surface always constructs");
+                    row.expand = Some((ctx.descend)(sibling));
+                    rows.push(row);
+                }
+                Ok(rows)
+            }
+            fn resolve(
+                &self,
+                _ctx: &ProjectionCtx<'_>,
+                _path: &RowPath,
+            ) -> Result<Vec<Row>, Unresolved> {
+                Err(Unresolved)
+            }
+            fn apply(
+                &self,
+                _ctx: &ProjectionCtx<'_>,
+                _path: &RowPath,
+                _op: RowOp,
+                _next: Next<'_>,
+            ) -> Result<Vec<okf::Op>, Unsupported> {
+                Err(Unsupported)
+            }
+            fn surface(&self, _ctx: &ProjectionCtx<'_>, _next: Next<'_>) -> SurfaceId {
+                SurfaceId("default".to_string())
+            }
+        }
+
+        let chain = Chain {
+            ids: vec![ViewId::new("wide")].into(),
+            stages: vec![Box::new(WideDouble {
+                siblings: siblings.clone(),
+            }) as Box<dyn Projection>]
+            .into(),
+            ..Chain::default()
+        };
+        let bundle = okf::Bundle::default();
+        let params = Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let outcome = chain.run(&ctx(&parent, &bundle, &params, &descend), limits);
+
+        assert!(
+            outcome.diagnostics.is_empty(),
+            "listing siblings is not descent: {:?}",
+            outcome.diagnostics
+        );
+        assert_eq!(outcome.rows.len(), siblings.len());
+        for (n, row) in outcome.rows.iter().enumerate() {
+            let expand = row.expand.as_ref().expect("every sibling row expands");
+            assert!(
+                expand.tripped.is_none(),
+                "sibling {n} tripped the guard breadth-wise"
+            );
+        }
     }
 
     #[test]
@@ -1658,13 +1773,16 @@ mod tests {
             let descend = descend_for(&bundle);
             let projection_ctx = ctx(&directory, &bundle, &params, &descend);
 
-            // `hide`'s own `resolve` never forwards a hidden path -- it
-            // always answers `Unresolved`. The runner's parent-prefix loop
-            // then falls back to the folder's own listing (still under the
-            // same, hide-filtered chain): the hidden row itself is never
-            // resolved back, only the containing folder.
+            // The owner here is the ROOT VIEW, not `hide` -- that is the whole
+            // point. `hide` filters rows it did not mint, so a `RowId`
+            // captured while the row was visible (a deep link, a restored
+            // session) names the root view, and owner dispatch alone would
+            // walk straight past `hide` and hand the hidden row back. The
+            // runner asks every stage ahead of the owner whether it occludes
+            // the path first; the parent-prefix loop then falls back to the
+            // folder's own listing, still hide-filtered.
             let hidden_id = RowId {
-                owner: ViewId::new("hide"),
+                owner: ViewId::new(super::super::super::root::ROOT_VIEW_OWNER),
                 path: RowPath::parse("references").unwrap(),
             };
             let resolved = chain
@@ -1676,6 +1794,70 @@ mod tests {
                     .all(|row| row.target != RowTarget::Folder("/references".to_string())),
                 "the hidden row itself must never come back out of resolve"
             );
+        }
+
+        /// The same leak, on the edit path: a row `hide` dropped is not in the
+        /// declared listing, so an op addressed to it must be refused rather
+        /// than forwarded to the root view, which would happily edit the file.
+        #[test]
+        fn a_hidden_path_cannot_be_edited_through_the_chain() {
+            let bundle = hidden_fixture();
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+            let (chain, build_diags) = bundle.resolved_view("/", &registry);
+            assert!(build_diags.is_empty());
+
+            let directory = bundle.directory("/").unwrap().clone();
+            let params = bundle.index("/").unwrap().extra.clone();
+            let descend = descend_for(&bundle);
+            let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+            let hidden_id = RowId {
+                owner: ViewId::new(super::super::super::root::ROOT_VIEW_OWNER),
+                path: RowPath::parse("references").unwrap(),
+            };
+            let refused = chain.apply(
+                &projection_ctx,
+                &hidden_id,
+                RowOp::Rename {
+                    title: "Renamed".to_string(),
+                },
+            );
+            assert!(
+                refused.is_err(),
+                "an op on a hidden row must be Unsupported, not lowered to file edits"
+            );
+        }
+
+        /// A visible row must still edit normally through the same chain --
+        /// the occlusion check must not turn `hide` into a blanket refusal.
+        #[test]
+        fn a_surviving_row_still_edits_through_the_hide_chain() {
+            let bundle = hidden_fixture();
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+            let (chain, _) = bundle.resolved_view("/", &registry);
+
+            let directory = bundle.directory("/").unwrap().clone();
+            let params = bundle.index("/").unwrap().extra.clone();
+            let descend = descend_for(&bundle);
+            let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+            let visible = chain
+                .run(&projection_ctx, ChainLimits::default())
+                .rows
+                .into_iter()
+                .find(|row| matches!(row.target, RowTarget::Concept(_)))
+                .expect("the fixture keeps at least one concept row visible");
+
+            let ops = chain
+                .apply(
+                    &projection_ctx,
+                    &visible.id,
+                    RowOp::Rename {
+                        title: "Renamed".to_string(),
+                    },
+                )
+                .expect("a surviving row edits through hide unchanged");
+            assert!(!ops.is_empty(), "the rename must lower to real OKF ops");
         }
 
         #[test]

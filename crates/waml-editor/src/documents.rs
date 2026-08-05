@@ -110,8 +110,12 @@ pub fn open_folder(
 /// The raw OKF layer entry (Task D3): opens `directory`'s identity listing,
 /// bypassing whatever chain it declares. Called from `App::navigate_with`'s
 /// `DirectoryRaw` arm.
-pub fn open_folder_raw(okf: &waml::analysis::OkfAnalysis, directory: &str) -> Option<OpenDocument> {
-    crate::folder_documents::open_raw(okf, directory)
+pub fn open_folder_raw(
+    okf: &waml::analysis::OkfAnalysis,
+    directory: &str,
+    limits: waml::view::chain::ChainLimits,
+) -> Option<OpenDocument> {
+    crate::folder_documents::open_raw(okf, directory, limits)
 }
 
 #[cfg(test)]

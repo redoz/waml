@@ -298,7 +298,7 @@ impl App {
                 let Some(document) = crate::documents::open_folder(
                     self.session.okf_analysis(),
                     &address,
-                    waml::view::chain::ChainLimits::default(),
+                    self.chain_limits,
                 ) else {
                     self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
                     return false;
@@ -332,9 +332,11 @@ impl App {
                 // declared-chain path above -- reached only through an
                 // explicit affordance, never leaked into the declared
                 // listing.
-                let Some(document) =
-                    crate::documents::open_folder_raw(self.session.okf_analysis(), &address)
-                else {
+                let Some(document) = crate::documents::open_folder_raw(
+                    self.session.okf_analysis(),
+                    &address,
+                    self.chain_limits,
+                ) else {
                     self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
                     return false;
                 };

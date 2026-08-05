@@ -157,10 +157,10 @@ pub fn build_tree(
             }
         }
         // Build-level diagnostics only (unknown middleware name, bad params):
-        // `Chain::build` catches these without running anything. An empty
-        // registry is correct here and matches `FolderView::build` -- no
-        // middleware beyond the root view is registered yet (Task E1/F1).
-        let registry = waml::view::chain::MiddlewareRegistry::new();
+        // `Chain::build` catches these without running anything. Must be the
+        // SAME registry `FolderView::build` uses, or the tree marks a folder
+        // degraded that opens fine, or misses one that does not.
+        let registry = crate::folder_view::core_registry();
         let (_, diagnostics) = bundle.resolved_view(address.as_str(), &registry);
         Some(TreeNode {
             key: address.as_str().to_string(),

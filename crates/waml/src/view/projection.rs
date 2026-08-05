@@ -123,6 +123,24 @@ pub trait Projection {
     /// Which surface renders this container's own tab. Decline by returning
     /// `next.surface(ctx)`.
     fn surface(&self, ctx: &ProjectionCtx<'_>, next: Next<'_>) -> SurfaceId;
+
+    /// Would this stage's `project` have dropped `path` from the listing?
+    ///
+    /// A row carries the `ViewId` of the stage that MINTED it, which for a
+    /// filtering stage like `hide` is some stage further down -- so dispatching
+    /// `resolve`/`apply` straight to the owner would walk straight past the
+    /// filter and hand back a row the declared chain does not contain.
+    /// [`super::chain::Chain::resolve`] and [`super::chain::Chain::apply`] ask
+    /// every stage ahead of the owner this question first, and a `true` means
+    /// the path does not resolve and cannot be edited through this chain.
+    ///
+    /// Default `false`: a stage that drops nothing occludes nothing. A stage
+    /// that filters MUST implement this, or the rows it dropped stay reachable.
+    /// This is presentational, not a permission check -- an occluded path is
+    /// still reachable through the raw OKF layer, by design.
+    fn occludes(&self, _ctx: &ProjectionCtx<'_>, _path: &RowPath) -> bool {
+        false
+    }
 }
 
 /// Identity middleware — forwards everything to the rest of the chain.

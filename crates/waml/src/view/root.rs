@@ -160,9 +160,27 @@ impl RootView {
             .collect())
     }
 
+    /// `slug` in the form `ctx.dir`'s member lists actually use.
+    ///
+    /// `Directory::concepts`, `child_directories`, and the row paths
+    /// `member_order` yields are all bundle-relative ids (`sales/orders`),
+    /// never bare slugs -- so comparing or inserting a bare `orders` matches
+    /// nothing and orders nothing outside the bundle root, where the two
+    /// forms happen to coincide. Everything that keys into those lists goes
+    /// through here.
+    fn qualified(ctx: &ProjectionCtx<'_>, slug: &str) -> String {
+        let dir = ctx.dir.address.as_str().trim_matches('/');
+        if dir.is_empty() {
+            slug.to_string()
+        } else {
+            format!("{dir}/{slug}")
+        }
+    }
+
     /// A directory-unique slug derived from `title`: lowercased, non
     /// alphanumerics folded to `-`, disambiguated against every existing
-    /// concept id and child directory key in `ctx.dir`.
+    /// concept id and child directory key in `ctx.dir`. Returns the BARE
+    /// slug -- `ConceptNew` takes it alongside the directory.
     fn unique_slug(ctx: &ProjectionCtx<'_>, title: &str) -> String {
         let mut base: String = title
             .to_lowercase()
@@ -175,12 +193,13 @@ impl RootView {
         let base = base.trim_matches('-');
         let base = if base.is_empty() { "untitled" } else { base };
         let taken = |slug: &str| {
-            ctx.dir.concepts.iter().any(|concept| concept == slug)
+            let id = Self::qualified(ctx, slug);
+            ctx.dir.concepts.iter().any(|concept| concept == &id)
                 || ctx
                     .dir
                     .child_directories
                     .iter()
-                    .any(|child| child.as_str().trim_start_matches('/') == slug)
+                    .any(|child| child.as_str().trim_start_matches('/') == id)
         };
         if !taken(base) {
             return base.to_string();
@@ -317,7 +336,12 @@ impl Projection for RootView {
                         .unwrap_or(0),
                     None => 0,
                 };
-                order.insert(insert_at.min(order.len()), slug.clone());
+                // `order` holds row paths -- bundle-relative ids. Inserting a
+                // bare slug here would be filtered out by
+                // `write_package_index`'s explicit-order match and the new
+                // concept would silently land at the end of the listing
+                // instead of after the focused row.
+                order.insert(insert_at.min(order.len()), Self::qualified(ctx, &slug));
                 Ok(vec![
                     okf::Op::ConceptNew {
                         directory: ctx.dir.address.clone(),
@@ -842,6 +866,75 @@ mod tests {
             }
             other => panic!("expected a single IndexReorder op, got {other:?}"),
         }
+    }
+
+    /// Every other test for this path sits at the bundle root, where a
+    /// concept's id and its bare slug are the same string -- so a comparison
+    /// or an order key that used the wrong one still worked. In a nested
+    /// directory they differ (`sales/orders` vs `orders`), and both the
+    /// collision check and the insert position depend on getting it right.
+    #[test]
+    fn insert_concept_in_a_nested_directory_disambiguates_and_orders_correctly() {
+        let pairs = vec![
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "# Sales\n\n* [Orders](./orders.md)\n* [Untitled](./untitled.md)\n",
+            ),
+            ("sales/orders.md", "---\ntitle: Orders\n---\n# Orders\n"),
+            (
+                "sales/untitled.md",
+                "---\ntitle: Untitled\n---\n# Untitled\n",
+            ),
+        ];
+        let source = SourceBundle::try_from_pairs(pairs.clone()).unwrap();
+        let prepared = prepare_candidate(source, None, 1).unwrap();
+        let (_, okf_analysis, _uml, _) = prepared.into_parts();
+        let bundle = okf_analysis.bundle;
+        let directory = bundle.directory("/sales").unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let ops = RootView
+            .apply(
+                &projection_ctx,
+                &RowPath::parse("sales/orders").unwrap(),
+                RowOp::InsertConcept {
+                    after: Some(RowPath::parse("sales/orders").unwrap()),
+                    // Collides with the existing `sales/untitled` -- the
+                    // disambiguator only sees that if it compares like for like.
+                    title: "Untitled".to_string(),
+                },
+                Next { remaining: &[] },
+            )
+            .unwrap();
+
+        match &ops[..] {
+            [okf::Op::ConceptNew { slug, .. }, okf::Op::IndexReorder { order, .. }] => {
+                assert_eq!(
+                    slug, "untitled-2",
+                    "a real collision in a nested directory must be disambiguated"
+                );
+                let orders_pos = order.iter().position(|key| key == "sales/orders").unwrap();
+                let new_pos = order
+                    .iter()
+                    .position(|key| key == "sales/untitled-2")
+                    .expect("the new row is ordered by its bundle-relative id");
+                assert_eq!(
+                    new_pos,
+                    orders_pos + 1,
+                    "the new concept lands after the focused row, not at the end"
+                );
+            }
+            other => panic!("expected [ConceptNew, IndexReorder], got {other:?}"),
+        }
+
+        let lowered = lower_and_reparse(pairs, ops);
+        assert!(lowered
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "sales/untitled-2.md"));
     }
 
     #[test]
