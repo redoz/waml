@@ -32,6 +32,10 @@ use std::collections::HashSet;
 
 pub(crate) const PROJECT_TREE_W: f64 = 280.0;
 const REVEAL_PULSE_SECS: f64 = 0.7;
+/// Width of the hand-drawn scroll bar, and the shortest its thumb may get so a
+/// very long tree still leaves something grabbable.
+const SCROLLBAR_W: f64 = 6.0;
+const SCROLLBAR_MIN_THUMB: f64 = 24.0;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -122,6 +126,17 @@ script_mod! {
             color: atlas.text
             text_style: fonts.text_menu
         }
+        // The scroll bar, drawn by us from `TreeLayout`'s offset because the
+        // rows are too (see `tree_scroll`). Same tint the fork's bar carried.
+        draw_scrollbar: mod.draw.DrawColor{
+            color: atlas.text_dim
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.5, 0.5, self.rect_size.x - 1.0, self.rect_size.y - 1.0, 2.0)
+                sdf.fill(self.color)
+                return sdf.result
+            }
+        }
         // Hover tint, painted BENEATH the selection fill so a hovered-and-
         // selected row still reads as selected.
         draw_hover: mod.draw.DrawColor{
@@ -206,22 +221,20 @@ script_mod! {
         }
 
         // The row body. We draw rows into this view's rect ourselves; it exists
-        // to claim and clip that rect and to own the scrollbars. The collapsed
-        // Flag state hides THIS view, which really does yield its space, so the
-        // panel occupies zero pixels rather than merely drawing nothing.
+        // to claim and clip that rect. The collapsed Flag state hides THIS view,
+        // which really does yield its space, so the panel occupies zero pixels
+        // rather than merely drawing nothing.
+        //
+        // Deliberately NOT a `scroll_bars:` View. A makepad ScrollBars derives
+        // its range from the content its turtle laid out, and our rows are drawn
+        // absolutely into the rect AFTER that turtle closed -- the view's own
+        // content is empty, so its bar would have a zero range and scroll
+        // nothing. `TreeLayout` owns the scroll offset instead, and the bar
+        // below is drawn from the core's own numbers.
         tree_scroll := View {
             width: Fill
             height: Fill
             flow: Down
-            scroll_bars: ScrollBars {
-                scroll_bar_y: ScrollBar {
-                    draw_bg +: {
-                        color: atlas.text_dim
-                        color_hover: atlas.accent
-                        color_drag: atlas.accent
-                    }
-                }
-            }
         }
     }
 }
@@ -385,6 +398,8 @@ pub struct ProjectTree {
     draw_selection: DrawColor,
     #[live]
     draw_hover: DrawColor,
+    #[live]
+    draw_scrollbar: DrawColor,
     #[live]
     draw_row_text: DrawText,
     #[live]
@@ -587,6 +602,19 @@ impl Widget for ProjectTree {
         // own view -- neither does the other's job. Files are unaffected: every
         // click opens the document. Both come out of one `TreeLayout::hit`, so
         // the rects tested here are the rects that were drawn, by construction.
+        // Wheel/trackpad scroll. The core owns the offset and clamps it, so a
+        // fling past either end simply stops rather than stranding the rows.
+        if let Hit::FingerScroll(fe) = tree_panel_hit(event, cx, self.view.area()) {
+            let before = self.layout.scroll();
+            self.layout.set_scroll(before + fe.scroll.y);
+            if self.layout.scroll() != before {
+                // The rows moved under a stationary pointer, so whatever was
+                // hovered may no longer be.
+                self.layout.set_hover_at(Some(fe.abs));
+                self.view.redraw(cx);
+            }
+        }
+
         if let Hit::FingerDown(fe) = tree_panel_hit(event, cx, self.view.area()) {
             match (fe.is_primary_hit(), self.layout.hit(fe.abs)) {
                 (true, Some(TreeHit::Chevron(key))) => {
@@ -780,6 +808,31 @@ impl Widget for ProjectTree {
                 row.depth,
                 &row.title,
                 row.scale,
+            );
+        }
+
+        // The scroll bar, only when there is something to scroll. Flush to the
+        // body's right edge -- the panel's padding leaves that edge at 0 for
+        // exactly this reason.
+        let content = self.layout.content_height();
+        if content > body.size.y && body.size.y > 0.0 {
+            let visible = (body.size.y / content).clamp(0.0, 1.0);
+            let thumb_h = (body.size.y * visible).max(SCROLLBAR_MIN_THUMB);
+            let travel = body.size.y - thumb_h;
+            let progress = if self.layout.max_scroll() > 0.0 {
+                self.layout.scroll() / self.layout.max_scroll()
+            } else {
+                0.0
+            };
+            self.draw_scrollbar.draw_abs(
+                cx,
+                Rect {
+                    pos: dvec2(
+                        body.pos.x + body.size.x - SCROLLBAR_W,
+                        body.pos.y + travel * progress,
+                    ),
+                    size: dvec2(SCROLLBAR_W, thumb_h),
+                },
             );
         }
 
