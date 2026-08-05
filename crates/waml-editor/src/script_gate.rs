@@ -129,16 +129,48 @@ fn mod_fonts_carries_exactly_the_twelve_role_keys() {
 /// discovery: set equality on `name()` across the two registries.
 #[test]
 fn every_core_extension_has_a_paired_editor_extension_by_name() {
-    use crate::extension_editor::{CoreEditorExtension, EditorExtension};
-    use waml::extension::{CoreExt, CoreExtension};
+    use crate::extension_editor::{CoreEditorExtension, EditorExtension, UmlEditorExtension};
+    use waml::extension::{CoreExt, CoreExtension, UmlExt};
 
-    let core_names: BTreeSet<&str> = [CoreExt.name()].into_iter().collect();
-    let editor_names: BTreeSet<&str> = [CoreEditorExtension.name()].into_iter().collect();
+    let core_names: BTreeSet<&str> = [CoreExt.name(), UmlExt.name()].into_iter().collect();
+    let editor_names: BTreeSet<&str> = [CoreEditorExtension.name(), UmlEditorExtension.name()]
+        .into_iter()
+        .collect();
     assert_eq!(
         core_names, editor_names,
         "every registered CoreExtension must have a same-named EditorExtension, \
          or rows it projects can never be opened"
     );
+}
+
+/// Task 13: the icon-analogue of
+/// `every_surface_id_resolvable_by_a_registered_chain_has_a_registered_factory`
+/// -- every `IconId` name a registered middleware can stamp on a row
+/// (`RowKind::as_icon_name`'s ten shipped names, `RootView`'s `"book"`, and
+/// `UmlView`'s `"box"`) has a registered `Icon` in `icon_table()`. A stage
+/// stamping a name nothing resolves must fail the gate, not degrade silently
+/// (as an `UnknownIcon` warning) in front of a reader.
+#[test]
+fn every_icon_id_a_registered_middleware_can_mint_has_a_registered_icon() {
+    use crate::folder_projection::icon_table;
+    use waml::view::kind::RowKind;
+
+    let mut mintable: BTreeSet<&'static str> =
+        RowKind::ALL.iter().map(RowKind::as_icon_name).collect();
+    mintable.insert("book"); // RootView::folder_row
+    mintable.insert("box"); // UmlView's package/box glyph
+
+    let registered: BTreeSet<&'static str> =
+        icon_table().into_iter().map(|(name, _)| name).collect();
+
+    for icon_id in &mintable {
+        assert!(
+            registered.contains(icon_id),
+            "icon `{icon_id}` is mintable by a registered middleware but has no \
+             registered Icon in icon_table() -- a row would stamp a name nothing \
+             resolves"
+        );
+    }
 }
 
 /// Task E4: enumerate every surface id the core side can actually mint --
