@@ -572,9 +572,9 @@ impl Bundle {
         if let Some(decl) = self
             .resolved_profile(directory)
             .and_then(crate::profile::profile)
-            .and_then(|profile_def| profile_def.default_view.as_ref())
+            .and_then(|profile_def| profile_def.default_view)
         {
-            return Chain::build(decl, registry, index);
+            return Chain::build(&decl, registry, index);
         }
         (Chain::root_only(registry), Vec::new())
     }

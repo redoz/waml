@@ -6,7 +6,7 @@
 //! `default_view` is now `Option<ViewDecl>` to match the middleware-chain
 //! design: `Chain`-shaped defaults, not a bespoke view enum.
 
-use crate::view::decl::ViewDecl;
+use crate::view::decl::{ViewDecl, ViewEntry};
 
 /// One known profile: its exact name and its optional default view chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,51 +15,62 @@ pub struct ProfileDef {
     pub default_view: Option<ViewDecl>,
 }
 
-const PROFILES: &[ProfileDef] = &[
-    ProfileDef {
-        name: "uml-domain",
-        default_view: None,
-    },
-    ProfileDef {
+/// Core's shipped profiles -- the list `CoreExt` (`crate::extension`) hands
+/// back from `profiles()`. A builder, not a `const`, since `ProfileDef` now
+/// holds a `Vec` (`ViewDecl::entries`) via `default_view`.
+pub(crate) fn shipped_profiles() -> Vec<ProfileDef> {
+    vec![ProfileDef {
         name: "okf",
         default_view: None,
-    },
-];
+    }]
+}
 
-/// All statically shipped profiles, in table order -- the list `CoreExt`
-/// (`crate::extension`) hands back from `profiles()`. Kept separate from
-/// [`profile`] so it never accidentally picks up a test-only override: this
-/// is the real, compiled-in table, nothing else.
-pub(crate) fn shipped_profiles() -> Vec<ProfileDef> {
-    PROFILES.to_vec()
+/// The `uml` extension's shipped profile: `uml-domain` folders default to the
+/// `["uml"]` chain when they declare no `view:` of their own. `line: 0` marks
+/// the entry as never authored in any file -- a diagnostic spanning an
+/// inherited default must not point at a line the author never wrote.
+pub(crate) fn uml_profiles() -> Vec<ProfileDef> {
+    vec![ProfileDef {
+        name: "uml-domain",
+        default_view: Some(ViewDecl {
+            entries: vec![ViewEntry {
+                raw: "uml".to_string(),
+                line: 0,
+            }],
+        }),
+    }]
 }
 
 /// Look up a shipped profile by its exact name. No case folding: `"UML-Domain"`
-/// does not match `"uml-domain"`.
-pub fn profile(name: &str) -> Option<&'static ProfileDef> {
-    PROFILES
-        .iter()
+/// does not match `"uml-domain"`. Searches the whole shipped set -- extension
+/// order must never change whether a name resolves, since this is the
+/// parse-time name check. Returns owned data: `default_view` can no longer be
+/// handed back as `&'static` now that it holds a `Vec`.
+pub fn profile(name: &str) -> Option<ProfileDef> {
+    shipped_profiles()
+        .into_iter()
+        .chain(uml_profiles())
         .find(|p| p.name == name)
         .or_else(|| test_override(name))
 }
 
 // Test-only seam: lets a `resolved_view` test drive the "inherited profile
-// default" step for real, without a fixture profile ever shipping in
-// `PROFILES`. Registrations are leaked (test-scoped, never freed) and
-// thread-local so parallel tests do not interfere with each other.
+// default" step for real, without a fixture profile ever shipping in the
+// builder functions above. Thread-local so parallel tests do not interfere
+// with each other.
 #[cfg(test)]
 thread_local! {
-    static TEST_OVERRIDES: std::cell::RefCell<std::collections::HashMap<&'static str, &'static ProfileDef>> =
+    static TEST_OVERRIDES: std::cell::RefCell<std::collections::HashMap<String, ProfileDef>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 #[cfg(test)]
-fn test_override(name: &str) -> Option<&'static ProfileDef> {
-    TEST_OVERRIDES.with(|overrides| overrides.borrow().get(name).copied())
+fn test_override(name: &str) -> Option<ProfileDef> {
+    TEST_OVERRIDES.with(|overrides| overrides.borrow().get(name).cloned())
 }
 
 #[cfg(not(test))]
-fn test_override(_name: &str) -> Option<&'static ProfileDef> {
+fn test_override(_name: &str) -> Option<ProfileDef> {
     None
 }
 
@@ -67,9 +78,8 @@ fn test_override(_name: &str) -> Option<&'static ProfileDef> {
 /// a prior registration under the same name.
 #[cfg(test)]
 pub(crate) fn register_test_profile(def: ProfileDef) {
-    let leaked: &'static ProfileDef = Box::leak(Box::new(def));
     TEST_OVERRIDES.with(|overrides| {
-        overrides.borrow_mut().insert(leaked.name, leaked);
+        overrides.borrow_mut().insert(def.name.to_string(), def);
     });
 }
 
@@ -78,10 +88,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shipped_profiles_resolve_by_name_and_default_to_no_view() {
+    fn shipped_profiles_resolve_by_name() {
         let uml = profile("uml-domain").expect("uml-domain is shipped");
         assert_eq!(uml.name, "uml-domain");
-        assert_eq!(uml.default_view, None);
+        let chain_names: Vec<&str> = uml
+            .default_view
+            .as_ref()
+            .expect("uml-domain has a default view")
+            .entries
+            .iter()
+            .map(|e| e.raw.as_str())
+            .collect();
+        assert_eq!(chain_names, vec!["uml"]);
 
         let okf = profile("okf").expect("okf is shipped");
         assert_eq!(okf.name, "okf");
