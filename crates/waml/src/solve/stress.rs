@@ -123,8 +123,16 @@ pub fn layout_grouped(
         dedup_edges(n, &m)
     };
     if merged.is_empty() {
-        // No meaningful distances — degenerate. Fall back to the grid.
-        return (grid_pack(ids, sizes, cfg), vec![]);
+        // No meaningful distances — degenerate. Fall back to the grid, but still
+        // honor the hull contract: one hull per group, in `groups` order. This
+        // arm is reachable with non-empty `groups` whenever every group has
+        // fewer than two members (no clique edges) and there are no real edges.
+        let mut rects = grid_pack(ids, sizes, cfg);
+        separate_hulls(&mut rects, groups, cfg);
+        normalize_to_origin(&mut rects);
+        let hulls = group_hulls(&rects, groups, cfg);
+        debug_assert_eq!(hulls.len(), groups.len());
+        return (rects, hulls);
     }
 
     let adj = adjacency(n, &merged);
@@ -193,29 +201,42 @@ pub fn layout_grouped(
 
     // Normalize the min corner to the origin, matching `layout`'s convention;
     // the separation pass can push rects negative.
-    let (min_x, min_y) = out
+    normalize_to_origin(&mut out);
+
+    let hulls = group_hulls(&out, groups, cfg);
+    debug_assert_eq!(hulls.len(), groups.len());
+    (out, hulls)
+}
+
+/// Translate `rects` so their bounding box's min corner sits at the origin.
+fn normalize_to_origin(rects: &mut [Rect]) {
+    let (min_x, min_y) = rects
         .iter()
         .fold((f64::INFINITY, f64::INFINITY), |(mx, my), r| {
             (mx.min(r.x), my.min(r.y))
         });
     if min_x.is_finite() {
-        for r in &mut out {
+        for r in rects {
             r.x -= min_x;
             r.y -= min_y;
         }
     }
-
-    let hulls = group_hulls(&out, groups, cfg);
-    (out, hulls)
 }
 
 /// Bounded separation pass: sibling group hulls that overlap are pushed apart
-/// by translating every member of the deeper/later group, and any non-member
+/// by translating every member of the deeper/later group, and any *ungrouped*
 /// node that lands inside a hull is pushed out through its nearest edge.
 /// Nested (ancestor/descendant) hull pairs are left alone — containment is
 /// expected there. Deterministic: groups are always visited deepest-first
-/// then by index, and the loop is capped at 4 passes, exiting early once a
+/// then by index, and the loop is capped at 6 passes, exiting early once a
 /// pass makes no translation.
+///
+/// Node-node overlap removal runs at the *start* of each pass, before the
+/// checks, so a pass that reports "nothing moved" leaves the rects both
+/// overlap-free and hull-separated — the post-condition the callers assert.
+/// Only nodes that belong to no group at all are pushed out of foreign hulls:
+/// translating a member of some other group in isolation would skew that
+/// group's own hull and undo its just-established separation.
 fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) {
     if groups.is_empty() {
         return;
@@ -231,8 +252,14 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
         member_sets[i].is_subset(&member_sets[j]) || member_sets[j].is_subset(&member_sets[i])
     };
 
-    for _ in 0..4 {
+    // A node in any group is moved only with its group, never in isolation.
+    let ungrouped: Vec<bool> = (0..rects.len())
+        .map(|i| !member_sets.iter().any(|s| s.contains(&i)))
+        .collect();
+
+    for _ in 0..6 {
         let mut moved = false;
+        remove_overlaps(rects, cfg.gap);
 
         let hulls = group_hulls(rects, groups, cfg);
         for (oi, &gi) in order.iter().enumerate() {
@@ -272,38 +299,46 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
             }
         }
 
+        // Hulls stay valid across this loop: only ungrouped nodes move, and no
+        // hull depends on them. Each node is re-tested against every hull until
+        // it is clear of all of them (bounded), so being pushed out of one hull
+        // and straight into another resolves within the same pass.
         let hulls = group_hulls(rects, groups, cfg);
         for (idx, r) in rects.iter_mut().enumerate() {
-            for (gi, g) in groups.iter().enumerate() {
-                if g.members.contains(&idx) {
-                    continue;
-                }
-                let h = &hulls[gi];
-                let ox = (r.x + r.w).min(h.x + h.w) - r.x.max(h.x);
-                let oy = (r.y + r.h).min(h.y + h.h) - r.y.max(h.y);
-                if ox <= 0.0 || oy <= 0.0 {
-                    continue;
-                }
-                moved = true;
-                if ox < oy {
-                    let dir = if r.x + r.w / 2.0 >= h.x + h.w / 2.0 {
-                        1.0
+            if !ungrouped[idx] {
+                continue;
+            }
+            for _ in 0..groups.len().max(1) {
+                let mut hit = false;
+                for h in &hulls {
+                    let ox = (r.x + r.w).min(h.x + h.w) - r.x.max(h.x);
+                    let oy = (r.y + r.h).min(h.y + h.h) - r.y.max(h.y);
+                    if ox <= 0.0 || oy <= 0.0 {
+                        continue;
+                    }
+                    hit = true;
+                    moved = true;
+                    if ox < oy {
+                        let dir = if r.x + r.w / 2.0 >= h.x + h.w / 2.0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        r.x += dir * (ox + cfg.gap);
                     } else {
-                        -1.0
-                    };
-                    r.x += dir * (ox + cfg.gap);
-                } else {
-                    let dir = if r.y + r.h / 2.0 >= h.y + h.h / 2.0 {
-                        1.0
-                    } else {
-                        -1.0
-                    };
-                    r.y += dir * (oy + cfg.gap);
+                        let dir = if r.y + r.h / 2.0 >= h.y + h.h / 2.0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        r.y += dir * (oy + cfg.gap);
+                    }
+                }
+                if !hit {
+                    break;
                 }
             }
         }
-
-        remove_overlaps(rects, cfg.gap);
 
         if !moved {
             break;
@@ -1204,6 +1239,159 @@ mod tests {
         let one = layout_grouped(&g, &szs, &edges, &groups, &cfg);
         let two = layout_grouped(&g, &szs, &edges, &groups, &cfg);
         assert_eq!(one, two);
+    }
+
+    #[test]
+    fn singleton_groups_without_edges_still_emit_one_hull_each() {
+        // Every group has a single member and there are no edges, so the merged
+        // graph is empty and the grid fallback fires — the hull contract ("one
+        // hull per group, in `groups` order") must still hold.
+        let cfg = StressConfig::default();
+        let g = ids(&["a", "b", "c"]);
+        let szs = sizes(3, 100.0, 40.0);
+        let groups = vec![
+            GroupSpec {
+                members: vec![0],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![1],
+                depth: 0,
+            },
+        ];
+        let (rects, hulls) = layout_grouped(&g, &szs, &[], &groups, &cfg);
+        assert_eq!(hulls.len(), groups.len(), "one hull per group");
+        for (gi, group) in groups.iter().enumerate() {
+            let hull = hulls[gi];
+            for &m in &group.members {
+                let r = &rects[m];
+                assert!(
+                    r.x >= hull.x - 1e-6
+                        && r.y >= hull.y - 1e-6
+                        && r.x + r.w <= hull.x + hull.w + 1e-6
+                        && r.y + r.h <= hull.y + hull.h + 1e-6,
+                    "member {m} rect not inside its own hull"
+                );
+            }
+        }
+        assert!(
+            !rects_overlap(&hulls[0], &hulls[1]),
+            "sibling hulls overlap: {:?} vs {:?}",
+            hulls[0],
+            hulls[1]
+        );
+    }
+
+    #[test]
+    fn three_interleaved_groups_end_separated_and_overlap_free() {
+        // Three groups chained by cross-group edges, plus two ungrouped nodes
+        // seeded between them. The post-conditions must hold on the *returned*
+        // rects: sibling hulls disjoint, no node-node overlap, and no ungrouped
+        // node left sitting inside a hull.
+        let cfg = StressConfig::default();
+        let g = ids(&[
+            "a1", "a2", "b1", "b2", "c1", "c2", "loose1", "loose2", "loose3",
+        ]);
+        let szs = sizes(9, 120.0, 60.0);
+        let edges = [(1, 2), (3, 4), (5, 6), (6, 0), (7, 2), (8, 4)];
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![2, 3],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![4, 5],
+                depth: 0,
+            },
+        ];
+        let (rects, hulls) = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        assert_eq!(hulls.len(), groups.len());
+        for i in 0..hulls.len() {
+            for j in (i + 1)..hulls.len() {
+                assert!(
+                    !rects_overlap(&hulls[i], &hulls[j]),
+                    "hulls {i},{j} overlap: {:?} vs {:?}",
+                    hulls[i],
+                    hulls[j]
+                );
+            }
+        }
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                assert!(!overlaps(&rects[i], &rects[j]), "nodes {i},{j} overlap");
+            }
+        }
+        for loose in [6usize, 7, 8] {
+            for (gi, hull) in hulls.iter().enumerate() {
+                assert!(
+                    !rects_overlap(&rects[loose], hull),
+                    "ungrouped node {loose} sits inside hull {gi}"
+                );
+            }
+        }
+    }
+
+    /// The separation post-conditions ("sibling hulls never overlap" and "no
+    /// node-node overlap") must hold on the *returned* rects for every shape of
+    /// input, not just the hand-picked fixtures. Deterministic sweep; the case
+    /// n=11 wk=1 ek=4 gk=1 used to fail when overlap removal ran *after* the
+    /// last separation check.
+    #[test]
+    fn hull_separation_post_conditions_hold_across_configurations() {
+        let cfg = StressConfig::default();
+        for n in 6..12usize {
+            for wk in 0..4 {
+                let szs: Vec<Size> = (0..n)
+                    .map(|i| Size {
+                        w: 60.0 + (wk * 60) as f64 + (i % 3) as f64 * 40.0,
+                        h: 30.0 + (i % 2) as f64 * 50.0,
+                    })
+                    .collect();
+                for ek in 0..6usize {
+                    let edges: Vec<(usize, usize)> = (0..n)
+                        .map(|i| (i, (i * (ek + 1) + 1) % n))
+                        .filter(|(a, b)| a != b)
+                        .collect();
+                    for gk in 1..4usize {
+                        let mut groups = Vec::new();
+                        let per = 2 + gk;
+                        let mut i = 0;
+                        while i + per <= n {
+                            groups.push(GroupSpec {
+                                members: (i..i + per).collect(),
+                                depth: 0,
+                            });
+                            i += per;
+                        }
+                        if groups.len() < 2 {
+                            continue;
+                        }
+                        let g = ids(&vec!["x"; n]);
+                        let (rects, hulls) = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+                        for a in 0..hulls.len() {
+                            for b in (a + 1)..hulls.len() {
+                                assert!(
+                                    !rects_overlap(&hulls[a], &hulls[b]),
+                                    "n={n} wk={wk} ek={ek} gk={gk}: hulls {a},{b} overlap"
+                                );
+                            }
+                        }
+                        for a in 0..rects.len() {
+                            for b in (a + 1)..rects.len() {
+                                assert!(
+                                    !overlaps(&rects[a], &rects[b]),
+                                    "n={n} wk={wk} ek={ek} gk={gk}: nodes {a},{b} overlap"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
