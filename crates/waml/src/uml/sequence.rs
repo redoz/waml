@@ -727,17 +727,23 @@ pub(crate) fn lower(
             .get(&concept.concept_id)
             .is_some_and(|links| links.contains(&(declared_use_index, target.clone())));
         // `interaction_use_graph` applies the same admission rules as the
-        // diagnosed checks above, so a use that survived every diagnostic must
-        // also be an edge in the graph. The demotion below is a silent drop —
-        // no diagnostic names it — so assert the two copies agree rather than
-        // letting a drift hide an unreported interaction use.
-        debug_assert!(
-            !valid_use || is_graph_link,
-            "interaction use '{alias}' passed every diagnosed check but is \
-             absent from the interaction-use graph: the graph copy and the \
-             diagnosed copy have drifted",
-        );
+        // diagnosed checks above, so a use that survived every diagnostic
+        // should also be an edge in the graph. If it is not, the two copies
+        // have drifted and the demotion below would be a silent drop. Report
+        // it instead: the signal reaches the operator without a
+        // document-reachable panic taking the session down.
         if valid_use && !is_graph_link {
+            report_at(
+                context,
+                diagnostics,
+                DiagCode::InvalidInteractionUse,
+                format!(
+                    "interaction use '{alias}' passed every check but is absent from the \
+                     interaction-use graph and was dropped"
+                ),
+                path,
+                declared_use.syntax.syntax(),
+            );
             valid_use = false;
         }
         if valid_use

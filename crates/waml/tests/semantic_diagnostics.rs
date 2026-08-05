@@ -217,6 +217,28 @@ fn composes_with_one_end_is_flagged_and_dropped() {
 }
 
 #[test]
+fn associates_with_unparsable_ends_is_flagged_and_dropped() {
+    let class = "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- associates [Line](./line.md): 0 to 0\n";
+    let analysis = prepared(
+        [
+            ("c/order.md", class),
+            ("c/line.md", "---\ntype: uml.Class\n---\n# Line\n"),
+        ],
+        0,
+    );
+    exact(
+        &analysis.uml().diagnostics,
+        DiagCode::MalformedRelationship,
+        "'associates' has a multiplicity end that could not be parsed",
+    );
+    assert!(
+        analysis.uml().projection.edges.is_empty(),
+        "a relationship with unparsable ends must not be admitted: {:#?}",
+        analysis.uml().projection.edges
+    );
+}
+
+#[test]
 fn non_ended_kind_with_ends_is_flagged_and_dropped() {
     let class = "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- depends [Line](./line.md): 1 to 1\n";
     let found = diagnostics([

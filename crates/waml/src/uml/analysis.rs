@@ -1066,6 +1066,10 @@ fn validate_declared_semantics(
                     "'{}' relationship has only one multiplicity end; both a near and a far end are required",
                     kind.as_str()
                 )),
+                EndVerdict::EndsUnparsable => Some(format!(
+                    "'{}' has a multiplicity end that could not be parsed",
+                    kind.as_str()
+                )),
                 EndVerdict::EndsForbidden => Some(format!(
                     "'{}' does not take multiplicity ends",
                     kind.as_str()
@@ -1520,6 +1524,11 @@ enum EndVerdict {
     EndsForbidden,
     /// Exactly one of the two ends is present.
     OneEnded,
+    /// A kind that takes ends was declared with an end the grammar could not
+    /// parse (`Invalid`/`Incomplete`, e.g. `0` or an inverted range). The end
+    /// was authored, so it must not be read as "no end given" and silently
+    /// dropped into an end-less relationship.
+    EndsUnparsable,
 }
 
 fn relationship_end_verdict(
@@ -1527,38 +1536,50 @@ fn relationship_end_verdict(
     from_end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>,
     to_end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>,
 ) -> EndVerdict {
-    // Anything short of a fully-parsed `Valid` end (`Absent`, `Incomplete` when
-    // the grammar expected a colon it did not find, or `Invalid`) counts as
-    // "no end given" here — the ends verdict only distinguishes given vs not.
+    // An end is "given" only when it fully parsed to `Valid`, and "not given"
+    // when no end text was authored at all — `Absent`, or `Incomplete` when the
+    // grammar expected a colon it did not find. `Invalid` is neither: text was
+    // authored and could not be read (`0`, an inverted range). It must never be
+    // folded into the not-given case, which would admit a malformed
+    // relationship with its ends silently discarded.
     let present = |end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>| {
         matches!(end, crate::uml::DeclaredField::Valid { .. })
     };
+    let truly_absent = |end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>| {
+        matches!(end, crate::uml::DeclaredField::Absent)
+    };
+    let unparsable = |end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>| {
+        matches!(end, crate::uml::DeclaredField::Invalid { .. })
+    };
     let (from_present, to_present) = (present(from_end), present(to_end));
-    let neither_present = !from_present && !to_present;
+    let either_unparsable = unparsable(from_end) || unparsable(to_end);
     if kind == crate::model::RelationshipKind::Associates {
-        if neither_present || (from_present && to_present) {
+        if from_present && to_present {
             EndVerdict::Ok
-        } else {
+        } else if from_present || to_present {
             EndVerdict::OneEnded
+        } else if either_unparsable {
+            EndVerdict::EndsUnparsable
+        } else {
+            // Neither end was authored: an end-less association.
+            EndVerdict::Ok
         }
     } else if kind.is_ended() {
         // aggregates / composes
         if from_present && to_present {
             EndVerdict::Ok
-        } else if neither_present {
-            EndVerdict::EndsRequired
-        } else {
+        } else if from_present || to_present {
             EndVerdict::OneEnded
+        } else if either_unparsable {
+            EndVerdict::EndsUnparsable
+        } else {
+            EndVerdict::EndsRequired
         }
     } else {
         // Non-ended kinds forbid a colon entirely; the lowering pass marks
         // both ends `Invalid` (not `Absent`) when a colon was present but the
-        // kind does not take ends, so check for a truly absent colon rather
-        // than reusing `neither_present` (which would also be true for two
-        // `Invalid` ends and hide a forbidden-ends declaration as `Ok`).
-        let truly_absent = |end: &crate::uml::DeclaredField<UmlLanguage, crate::model::RelEnd>| {
-            matches!(end, crate::uml::DeclaredField::Absent)
-        };
+        // kind does not take ends, so an authored-but-unparsable end is a
+        // forbidden-ends declaration, not an absent one.
         if truly_absent(from_end) && truly_absent(to_end) {
             EndVerdict::Ok
         } else {
