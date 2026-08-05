@@ -47,7 +47,17 @@ of the Extension split.
   output; the root view renders with a spanned diagnostic. Never a half-applied chain.
 - **The fallback path IS the default path** — the same root-view object, not a
   parallel safe mode.
-- **makepad widget rules (editor tasks D1–D2, G3–G4):** every NEW widget must be
+- **Visual verification is DEFERRED to a human-run pass, not waived.** An
+  implementer subagent has no window and cannot screenshot a running editor, so
+  tasks whose verification is visual (D1b, D2, D3's affordance, G3, G4) would
+  otherwise never land. Those tasks ship **gate-green with the visual check
+  outstanding**, and each such commit MUST carry a `Visual-Check: pending` trailer
+  naming what a human has to look at. The claim "verified" is never made on the
+  strength of a green gate. Every pending item is collected in "Outstanding visual
+  verification" at the foot of this plan, and the plan is NOT signed off until that
+  list is walked in a real window. Headless tasks are unaffected: they carry their
+  usual burden of proof and land verified.
+- **makepad widget rules (editor tasks D1a–D2, G3–G4):** every NEW widget must be
   imported BY NAME in `crates/waml-editor/src/app.rs` `script_mod!` (no glob — an
   unregistered widget is silently dropped: no draw, no hit-test, gate stays GREEN),
   must get a boot-list `script_mod(vm)` line, and a child widget must register BEFORE
@@ -681,30 +691,58 @@ Folders open for the first time. GUI limits apply: the gate proves the plumbing
 (view-model tests are headless in the editor crate where possible); the drawing is
 **verified visually and stated as such** in each task below.
 
-### Task D1: `FolderListView` widget + folder document provider
+> **D1 is split into D1a and D1b.** The original single task required three new
+> files plus five wiring points before anything was gate-provable, and two
+> implementer generations exhausted their budget orienting without landing a
+> commit. D1a lands the headless half (view-model + provider + tab identity) with
+> real tests and no widget; D1b lands the widget that renders it. The deliverable
+> and the constraints are unchanged — only the commit boundary moved.
+
+### Task D1a: folder view-model, provider, and tab identity (headless)
 
 **Files:**
-- Create: `crates/waml-editor/src/folder_list.rs` (widget), `crates/waml-editor/src/folder_documents.rs` (provider), `crates/waml-editor/src/folder_view.rs` (the `DocView` impl, holding the `ChainOutcome`)
-- Modify: `crates/waml-editor/src/main.rs` (three `mod` lines), `crates/waml-editor/src/app.rs` (`script_mod!` import by name + boot-list registration — **the widget is silently dead and invisible without both**, gate stays green; register `FolderListView` BEFORE any consumer that embeds it), `crates/waml-editor/src/doc_view.rs` (a `DocViewIdentity` variant + `BodyWidgets` handle), `crates/waml-editor/src/documents.rs` (provider chain entry)
-- Test: headless view-model tests in `folder_view.rs`; drawing verified visually
+- Create: `crates/waml-editor/src/folder_view.rs` (the `DocView` impl, holding the `ChainOutcome`, with the row view-model and the row→navigation mapping as plain functions), `crates/waml-editor/src/folder_documents.rs` (provider)
+- Modify: `crates/waml-editor/src/main.rs` (two `mod` lines), `crates/waml-editor/src/doc_view.rs` (a `DocViewIdentity` variant), `crates/waml-editor/src/documents.rs` (provider chain entry)
+- Test: headless view-model tests in `folder_view.rs`
 
-The `DocView` calls `resolved_view(dir, registry)` then `chain.run(ctx,
-settings.chain_limits())` and renders `ChainOutcome.rows`: bullet, label, optional
-blurb, in order. Clicking a concept row opens the concept; clicking a folder row
-opens that folder's own view (its `expand` chain drives the nested case later; the
-tab-open path re-resolves). A `ChainOutcome` with diagnostics renders the header
-strip (Task D2). Widget name `FolderListView` — verified absent from `crates/`
-before use; never reuse a makepad widget name. Fonts from `fonts.rs` only.
+Model this on `crates/waml-editor/src/generic_okf_view.rs` and `okf_documents.rs` —
+the closest existing read-only `DocView` + provider pair. The view calls
+`resolved_view(dir, registry)` then `chain.run(ctx, settings.chain_limits())` and
+exposes `ChainOutcome.rows` as a row view-model: bullet, label, optional blurb, in
+order. Clicking a concept row opens the concept; clicking a folder row opens that
+folder's own view (its `expand` chain drives the nested case later; the tab-open path
+re-resolves) — expressed here as an action enum, with no widget behind it yet.
+
+`documents.rs` is keyed on concept-id strings today; the folder target needs its own
+locator/tab-identity path. That is the substance of this task.
 
 **Tests:**
-- Headless: `folder_view_model_lists_projected_rows_in_order` (build the outcome from
-  a fixture bundle, assert the row view-model — no window);
-  `clicking_a_row_maps_to_the_right_navigation_target` at the action-enum level.
+- `folder_view_model_lists_projected_rows_in_order` — build the outcome from a fixture
+  bundle, assert the row view-model. No window.
+- `clicking_a_row_maps_to_the_right_navigation_target` — at the action-enum level.
+- `a_folder_target_gets_its_own_tab_identity` — distinct from a concept-id tab.
+
+- [ ] Failing headless tests → implement → targeted pass → full gate.
+- [ ] Commit: `feat(editor): folder view-model and document provider`
+
+### Task D1b: `FolderListView` widget
+
+**Files:**
+- Create: `crates/waml-editor/src/folder_list.rs` (widget)
+- Modify: `crates/waml-editor/src/main.rs` (one `mod` line), `crates/waml-editor/src/app.rs` (`script_mod!` import by name + boot-list registration — **the widget is silently dead and invisible without both**, gate stays green; register `FolderListView` BEFORE any consumer that embeds it), `crates/waml-editor/src/doc_view.rs` (`BodyWidgets` handle), `crates/waml-editor/src/folder_view.rs` (bind the view-model to the widget)
+- Test: the D1a headless tests still pass; drawing verified visually
+
+Renders the D1a row view-model: bullet, label, optional blurb, in order. A
+`ChainOutcome` with diagnostics renders the header strip (Task D2). Widget name
+`FolderListView` — verify absent from `crates/` before use; never reuse a makepad
+widget name. Fonts from `fonts.rs` only, never an inline `font_size`.
+
+**Tests:**
 - **Visual verification required and stated:** open a fixture folder; the listing
   renders titles + blurbs in authored order; a concept row opens the document. A green
   gate is NOT evidence for this.
 
-- [ ] Failing headless tests → implement → targeted pass → full gate → visual verify.
+- [ ] Implement → full gate → visual verify.
 - [ ] Commit: `feat(editor): folder view surface renders the projected chain`
 
 ### Task D2: Tree row-vs-chevron split, diagnostics strip, tree marker
@@ -1088,6 +1126,20 @@ event-time positions must be the same coordinate space (beware `Size::Fill` sibl
 | Visual: chevron vs row body | D2 |
 | Visual: opaque folder shows no descendants | D2 (add to the visual checklist: a take-over double or a `hide: ["**"]` folder shows none) |
 | Visual: diagnostics strip + tree marker on failing chain | D2 |
+
+## Outstanding visual verification
+
+Filled in as GUI tasks land gate-green with `Visual-Check: pending`. Walk this list
+in a real window before signing the plan off; a green gate is not evidence for any
+line here.
+
+| Task | What a human must see |
+|---|---|
+| D1b | A fixture folder opens; titles + blurbs render in authored order; a concept row opens the document. |
+| D2 | Chevron folds without opening; row body opens without folding; the diagnostics strip and the tree marker appear for a folder whose `view:` names an unknown middleware, and its fallback rows still render. An opaque folder (`hide: ["**"]`) shows no descendants. |
+| D3 | The raw affordance opens the full listing for a folder whose chain hides rows, and the raw-mode label is present. |
+| G3 | Enter creates and focuses a new row; typing retitles live; Tab reparents. |
+| G4 | Drag ghost tracks the pointer; drop reorders; bullet-zoom opens the right target; no stuck drag state after an aborted drag. |
 
 ## Open questions (carried forward, NOT resolved here)
 
