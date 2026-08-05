@@ -20,6 +20,12 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DocumentId(u64);
 
+impl fmt::Display for DocumentId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{}", self.0)
+    }
+}
+
 #[derive(Debug)]
 pub struct DocumentVersion {
     id: DocumentId,
@@ -372,6 +378,16 @@ pub enum AnalysisStage {
     Specialization(&'static str),
     Claims,
 }
+impl fmt::Display for AnalysisStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AnalysisStage::Shell => write!(f, "shell parsing"),
+            AnalysisStage::Okf => write!(f, "okf construction"),
+            AnalysisStage::Specialization(name) => write!(f, "{name} analysis"),
+            AnalysisStage::Claims => write!(f, "claim validation"),
+        }
+    }
+}
 #[derive(Debug)]
 pub enum AnalysisError {
     SourceTooLarge {
@@ -445,7 +461,7 @@ impl fmt::Display for AnalysisError {
             AnalysisError::InvalidPromotedMarkdownUpdate { document, reason } => {
                 write!(
                     f,
-                    "invalid promoted markdown update for document {document:?}: {reason}"
+                    "invalid promoted markdown update for document {document}: {reason}"
                 )
             }
             AnalysisError::Specialization { name, reason } => {
@@ -460,10 +476,7 @@ impl fmt::Display for AnalysisError {
                 "ambiguous claim for concept '{concept_id}': '{first}' conflicts with '{second}'"
             ),
             AnalysisError::StructuralInvariant { stage, reason } => {
-                write!(
-                    f,
-                    "structural invariant violated during {stage:?}: {reason}"
-                )
+                write!(f, "structural invariant violated during {stage}: {reason}")
             }
         }
     }
@@ -487,12 +500,16 @@ impl fmt::Display for InvalidPromotedMarkdownUpdateReason {
             }
             InvalidPromotedMarkdownUpdateReason::StaleBaseRevision { expected, actual } => write!(
                 f,
-                "the update's base revision is stale (expected {expected:?}, found {actual:?})"
+                "the update's base revision is stale (expected {}, found {})",
+                expected.get(),
+                actual.get()
             ),
             InvalidPromotedMarkdownUpdateReason::NonSuccessorRevision { expected, actual } => {
                 write!(
                     f,
-                    "the update's revision does not directly succeed the base revision (expected {expected:?}, found {actual:?})"
+                    "the update's revision does not directly succeed the base revision (expected {}, found {})",
+                    expected.get(),
+                    actual.get()
                 )
             }
             InvalidPromotedMarkdownUpdateReason::DuplicateDocument => {
@@ -503,12 +520,19 @@ impl fmt::Display for InvalidPromotedMarkdownUpdateReason {
                 "the promoted document's text does not match the accepted candidate text"
             ),
             InvalidPromotedMarkdownUpdateReason::InvalidAffectedRange { range } => {
-                write!(f, "the update's affected range {range:?} is invalid")
+                write!(
+                    f,
+                    "the update's affected range {}..{} is invalid",
+                    range.start().to_usize(),
+                    range.end().to_usize()
+                )
             }
             InvalidPromotedMarkdownUpdateReason::RecoveryRevisionNotNewer { previous, actual } => {
                 write!(
                     f,
-                    "the recovery revision is not newer than the previous revision (previous {previous:?}, found {actual:?})"
+                    "the recovery revision is not newer than the previous revision (previous {}, found {})",
+                    previous.get(),
+                    actual.get()
                 )
             }
         }
@@ -1458,6 +1482,110 @@ mod tests {
             !message.contains('{') && !message.contains('}'),
             "message: {message}"
         );
+    }
+
+    fn assert_author_facing(message: &str) {
+        assert!(
+            !message.contains('{') && !message.contains('}'),
+            "message: {message}"
+        );
+        assert!(
+            !message.contains("DocumentId(")
+                && !message.contains("DocumentRevision(")
+                && !message.contains("TextRange")
+                && !message.contains("TextSize("),
+            "message: {message}"
+        );
+    }
+
+    #[test]
+    fn every_analysis_error_variant_displays_without_debug_renderings() {
+        let path = crate::source::BundlePath::parse("doc.md").unwrap();
+        let errors = [
+            AnalysisError::SourceTooLarge {
+                path: path.clone(),
+                bytes: 12345,
+            },
+            AnalysisError::Shell {
+                path: path.clone(),
+                source: waml_syntax::ParseError::InvalidRange {
+                    range: TextRange::new(TextSize::new(1), TextSize::new(3)).unwrap(),
+                },
+            },
+            AnalysisError::Okf(okf::BundleError::InvalidConceptId("bad id".into())),
+            AnalysisError::CatalogInvariant {
+                reason: "path missing from catalog".into(),
+            },
+            AnalysisError::InvalidPromotedMarkdownUpdate {
+                document: DocumentId(7),
+                reason: InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+            },
+            AnalysisError::Specialization {
+                name: "uml",
+                reason: "unknown node kind".into(),
+            },
+            AnalysisError::AmbiguousClaim {
+                concept_id: "concept".into(),
+                first: "uml".into(),
+                second: "okf".into(),
+            },
+            AnalysisError::StructuralInvariant {
+                stage: AnalysisStage::Specialization("uml"),
+                reason: "child span escapes parent".into(),
+            },
+        ];
+        for error in errors {
+            assert_author_facing(&error.to_string());
+        }
+    }
+
+    #[test]
+    fn every_invalid_promoted_markdown_update_reason_displays_without_debug_renderings() {
+        let reasons = [
+            InvalidPromotedMarkdownUpdateReason::MissingPreviousDocument,
+            InvalidPromotedMarkdownUpdateReason::MissingCandidateDocument,
+            InvalidPromotedMarkdownUpdateReason::SourcePathMismatch,
+            InvalidPromotedMarkdownUpdateReason::StaleBaseRevision {
+                expected: DocumentRevision::new(4),
+                actual: DocumentRevision::new(2),
+            },
+            InvalidPromotedMarkdownUpdateReason::NonSuccessorRevision {
+                expected: DocumentRevision::new(4),
+                actual: DocumentRevision::new(9),
+            },
+            InvalidPromotedMarkdownUpdateReason::DuplicateDocument,
+            InvalidPromotedMarkdownUpdateReason::ResultTextMismatch,
+            InvalidPromotedMarkdownUpdateReason::InvalidAffectedRange {
+                range: TextRange::new(TextSize::new(0), TextSize::new(5)).unwrap(),
+            },
+            InvalidPromotedMarkdownUpdateReason::RecoveryRevisionNotNewer {
+                previous: DocumentRevision::new(6),
+                actual: DocumentRevision::new(6),
+            },
+        ];
+        for reason in reasons {
+            assert_author_facing(&reason.to_string());
+        }
+    }
+
+    #[test]
+    fn invalid_affected_range_display_uses_start_end_form() {
+        let message = InvalidPromotedMarkdownUpdateReason::InvalidAffectedRange {
+            range: TextRange::new(TextSize::new(2), TextSize::new(9)).unwrap(),
+        }
+        .to_string();
+        assert!(message.contains("2..9"), "message: {message}");
+    }
+
+    #[test]
+    fn revision_pairs_display_as_plain_numbers() {
+        let message = InvalidPromotedMarkdownUpdateReason::StaleBaseRevision {
+            expected: DocumentRevision::new(4),
+            actual: DocumentRevision::new(2),
+        }
+        .to_string();
+        assert!(message.contains("expected 4"), "message: {message}");
+        assert!(message.contains("found 2"), "message: {message}");
     }
 
     #[test]
