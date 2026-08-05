@@ -1281,6 +1281,16 @@ pub(crate) fn op_concept_set(
     Ok(())
 }
 
+/// Remove a single concept document. Mirrors `op_pkg_delete`'s cascade
+/// branch: the file goes away, a parent `index.md` member entry pointing at
+/// it goes stale (the same state a cascaded directory delete already leaves
+/// behind), to be swept by a later `pkg.reorder`/`pkg.sort`.
+pub(crate) fn op_concept_delete(work: &mut SourceBundle, id: &str) -> Result<(), EditError> {
+    let idx = find_doc(work, id, "concept.delete")?;
+    work.remove_document(idx);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::edit::{Batch, EditError, Step};

@@ -67,6 +67,15 @@ impl RootView {
         )
         .expect("a Concept target never requires a surface override");
         row.blurb = concept.description.clone();
+        row.caps = super::row::RowCaps {
+            rename: true,
+            delete: true,
+            // Truthful only where a parent directory exists to move into --
+            // the bundle root has none, and `apply`'s `MoveOut` branch
+            // refuses there (no parent to lower a `ConceptMove`/
+            // `DirectoryMove` to).
+            move_out: ctx.dir.parent.is_some(),
+        };
         Some(row)
     }
 
@@ -119,12 +128,71 @@ impl RootView {
             None,
         )
         .expect("a Folder target never requires a surface override");
+        row.caps = super::row::RowCaps {
+            rename: true,
+            delete: true,
+            move_out: ctx.dir.parent.is_some(),
+        };
+        row.child_caps = super::row::ChildCaps {
+            reorder: true,
+            insert: true,
+            accept_move_in: true,
+        };
         // Honor the child: the default descent policy is to let the caller
         // (a click, a test) run the child's own declared chain lazily.
         if let Some(child_dir) = ctx.bundle.directory(address.as_str()) {
             row.expand = Some((ctx.descend)(child_dir));
         }
         row
+    }
+
+    /// The current member order of `ctx.dir`, keyed exactly as `project`
+    /// keys each row's `RowPath` -- trimmed directory addresses and bare
+    /// concept ids. Used to compute the `IndexReorder` op for `Reorder` and
+    /// `InsertConcept`.
+    fn member_order(&self, ctx: &ProjectionCtx<'_>) -> Result<Vec<String>, Unsupported> {
+        let rows = self
+            .project(ctx, Next { remaining: &[] })
+            .map_err(|_| Unsupported)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| row.id.path.as_str().to_string())
+            .collect())
+    }
+
+    /// A directory-unique slug derived from `title`: lowercased, non
+    /// alphanumerics folded to `-`, disambiguated against every existing
+    /// concept id and child directory key in `ctx.dir`.
+    fn unique_slug(ctx: &ProjectionCtx<'_>, title: &str) -> String {
+        let mut base: String = title
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        while base.contains("--") {
+            base = base.replace("--", "-");
+        }
+        let base = base.trim_matches('-');
+        let base = if base.is_empty() { "untitled" } else { base };
+        let taken = |slug: &str| {
+            ctx.dir.concepts.iter().any(|concept| concept == slug)
+                || ctx
+                    .dir
+                    .child_directories
+                    .iter()
+                    .any(|child| child.as_str().trim_start_matches('/') == slug)
+        };
+        if !taken(base) {
+            return base.to_string();
+        }
+        let mut n = 2;
+        loop {
+            let candidate = format!("{base}-{n}");
+            if !taken(&candidate) {
+                return candidate;
+            }
+            n += 1;
+        }
     }
 }
 
@@ -170,15 +238,142 @@ impl Projection for RootView {
             .ok_or(Unresolved)
     }
 
-    /// Stub until Task G2 lowers `RowOp`s to OKF ops.
+    /// Lowers a `RowOp` to the real OKF op batch: `Rename` retitles a
+    /// concept (`ConceptSet`) or a directory (`IndexRetitle`); `Delete`
+    /// removes a concept document (`ConceptDelete`) or a directory
+    /// (`DirectoryDelete`, cascading); `Reorder` and `InsertConcept` rewrite
+    /// this directory's `IndexReorder` order; `MoveIn`/`MoveOut` move a
+    /// concept or directory across the directory boundary (`ConceptMove`/
+    /// `DirectoryMove`). Nothing here bypasses the model to write files
+    /// directly -- every branch returns `okf::Op`s for the caller to lower
+    /// through the normal edit pipeline.
     fn apply(
         &self,
-        _ctx: &ProjectionCtx<'_>,
-        _path: &RowPath,
-        _op: RowOp,
+        ctx: &ProjectionCtx<'_>,
+        path: &RowPath,
+        op: RowOp,
         _next: Next<'_>,
     ) -> Result<Vec<okf::Op>, Unsupported> {
-        Err(Unsupported)
+        match op {
+            RowOp::Rename { title } => {
+                let row = Self::resolve_member(ctx, path).ok_or(Unsupported)?;
+                match row.target {
+                    RowTarget::Concept(id) => Ok(vec![okf::Op::ConceptSet {
+                        id,
+                        title: Some(title),
+                        description: None,
+                    }]),
+                    RowTarget::Folder(address) => {
+                        let directory =
+                            okf::DirectoryAddress::parse(address).map_err(|_| Unsupported)?;
+                        Ok(vec![okf::Op::IndexRetitle { directory, title }])
+                    }
+                    RowTarget::Virtual => Err(Unsupported),
+                }
+            }
+            RowOp::Delete => {
+                let row = Self::resolve_member(ctx, path).ok_or(Unsupported)?;
+                match row.target {
+                    RowTarget::Concept(id) => Ok(vec![okf::Op::ConceptDelete { id }]),
+                    RowTarget::Folder(address) => {
+                        let directory =
+                            okf::DirectoryAddress::parse(address).map_err(|_| Unsupported)?;
+                        Ok(vec![okf::Op::DirectoryDelete {
+                            directory,
+                            cascade: true,
+                        }])
+                    }
+                    RowTarget::Virtual => Err(Unsupported),
+                }
+            }
+            RowOp::Reorder { before } => {
+                let mut order = self.member_order(ctx)?;
+                let moving = path.as_str().to_string();
+                if !order.iter().any(|key| key == &moving) {
+                    return Err(Unsupported);
+                }
+                order.retain(|key| key != &moving);
+                let insert_at = match &before {
+                    Some(before) => order
+                        .iter()
+                        .position(|key| key == before.as_str())
+                        .unwrap_or(order.len()),
+                    None => order.len(),
+                };
+                order.insert(insert_at, moving);
+                Ok(vec![okf::Op::IndexReorder {
+                    directory: ctx.dir.address.clone(),
+                    order,
+                }])
+            }
+            RowOp::InsertConcept { after, title } => {
+                let slug = Self::unique_slug(ctx, &title);
+                let mut order = self.member_order(ctx)?;
+                let insert_at = match &after {
+                    Some(after) => order
+                        .iter()
+                        .position(|key| key == after.as_str())
+                        .map(|index| index + 1)
+                        .unwrap_or(0),
+                    None => 0,
+                };
+                order.insert(insert_at.min(order.len()), slug.clone());
+                Ok(vec![
+                    okf::Op::ConceptNew {
+                        directory: ctx.dir.address.clone(),
+                        slug,
+                        ty: String::new(),
+                        title,
+                        description: None,
+                    },
+                    okf::Op::IndexReorder {
+                        directory: ctx.dir.address.clone(),
+                        order,
+                    },
+                ])
+            }
+            RowOp::MoveIn { from } => {
+                let source_id = from.path.as_str();
+                if ctx.bundle.concept(source_id).is_some() {
+                    Ok(vec![okf::Op::ConceptMove {
+                        id: source_id.to_string(),
+                        to_directory: ctx.dir.address.clone(),
+                    }])
+                } else {
+                    let candidate = format!("/{source_id}");
+                    let directory =
+                        okf::DirectoryAddress::parse(&candidate).map_err(|_| Unsupported)?;
+                    if ctx.bundle.directory(directory.as_str()).is_none() {
+                        return Err(Unsupported);
+                    }
+                    Ok(vec![okf::Op::DirectoryMove {
+                        directory,
+                        to_parent: ctx.dir.address.clone(),
+                        name: None,
+                    }])
+                }
+            }
+            RowOp::MoveOut => {
+                let row = Self::resolve_member(ctx, path).ok_or(Unsupported)?;
+                let parent = ctx.dir.address.parent().ok_or(Unsupported)?;
+                match row.target {
+                    RowTarget::Concept(id) => Ok(vec![okf::Op::ConceptMove {
+                        id,
+                        to_directory: parent,
+                    }]),
+                    RowTarget::Folder(address) => {
+                        let directory =
+                            okf::DirectoryAddress::parse(address).map_err(|_| Unsupported)?;
+                        Ok(vec![okf::Op::DirectoryMove {
+                            directory,
+                            to_parent: parent,
+                            name: None,
+                        }])
+                    }
+                    RowTarget::Virtual => Err(Unsupported),
+                }
+            }
+        }
     }
 
     fn surface(&self, _ctx: &ProjectionCtx<'_>, _next: Next<'_>) -> SurfaceId {
@@ -500,5 +695,420 @@ mod tests {
 
         let path = RowPath::parse("nonexistent").unwrap();
         assert!(RootView.resolve(&projection_ctx, &path).is_err());
+    }
+
+    // --- Task G2: `apply` lowers RowOps to real OKF ops --------------------
+
+    fn lower_and_reparse(
+        pairs: Vec<(&str, &str)>,
+        ops: Vec<okf::Op>,
+    ) -> crate::source::SourceBundle {
+        use crate::edit::{apply as edit_apply, Batch, Step};
+        let source = crate::source::SourceBundle::try_from_pairs(pairs).unwrap();
+        let steps = ops.into_iter().map(Step::Okf).collect();
+        edit_apply(&source, &Batch::new(steps)).expect("op batch lowers cleanly")
+    }
+
+    #[test]
+    fn apply_rename_on_the_root_view_produces_the_expected_op_batch_and_consistent_indexes() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let path = RowPath::parse("archive").unwrap();
+        let ops = RootView
+            .apply(
+                &projection_ctx,
+                &path,
+                RowOp::Rename {
+                    title: "Renamed Archive".to_string(),
+                },
+                Next { remaining: &[] },
+            )
+            .unwrap();
+        assert_eq!(
+            ops,
+            vec![okf::Op::IndexRetitle {
+                directory: okf::DirectoryAddress::parse("/archive").unwrap(),
+                title: "Renamed Archive".to_string(),
+            }]
+        );
+
+        let lowered = lower_and_reparse(fixture_pairs(), ops);
+        let archive_index = lowered
+            .documents()
+            .iter()
+            .find(|document| document.path().as_str() == "archive/index.md")
+            .expect("archive/index.md untouched by the rename")
+            .text();
+        assert!(archive_index.contains("# Renamed Archive"));
+    }
+
+    #[test]
+    fn apply_rename_on_a_concept_row_lowers_to_concept_set() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let path = RowPath::parse("apple").unwrap();
+        let ops = RootView
+            .apply(
+                &projection_ctx,
+                &path,
+                RowOp::Rename {
+                    title: "Golden Apple".to_string(),
+                },
+                Next { remaining: &[] },
+            )
+            .unwrap();
+        assert_eq!(
+            ops,
+            vec![okf::Op::ConceptSet {
+                id: "apple".to_string(),
+                title: Some("Golden Apple".to_string()),
+                description: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn apply_delete_lowers_by_target_kind() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let concept_ops = RootView
+            .apply(
+                &projection_ctx,
+                &RowPath::parse("apple").unwrap(),
+                RowOp::Delete,
+                Next { remaining: &[] },
+            )
+            .unwrap();
+        assert_eq!(
+            concept_ops,
+            vec![okf::Op::ConceptDelete {
+                id: "apple".to_string(),
+            }]
+        );
+
+        let folder_ops = RootView
+            .apply(
+                &projection_ctx,
+                &RowPath::parse("archive").unwrap(),
+                RowOp::Delete,
+                Next { remaining: &[] },
+            )
+            .unwrap();
+        assert_eq!(
+            folder_ops,
+            vec![okf::Op::DirectoryDelete {
+                directory: okf::DirectoryAddress::parse("/archive").unwrap(),
+                cascade: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn apply_reorder_moves_the_row_before_the_named_sibling() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let ops = RootView
+            .apply(
+                &projection_ctx,
+                &RowPath::parse("apple").unwrap(),
+                RowOp::Reorder {
+                    before: Some(RowPath::parse("zebra").unwrap()),
+                },
+                Next { remaining: &[] },
+            )
+            .unwrap();
+        match &ops[..] {
+            [okf::Op::IndexReorder { directory, order }] => {
+                assert_eq!(directory.as_str(), "/");
+                let apple_pos = order.iter().position(|key| key == "apple").unwrap();
+                let zebra_pos = order.iter().position(|key| key == "zebra").unwrap();
+                assert!(apple_pos < zebra_pos);
+            }
+            other => panic!("expected a single IndexReorder op, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_insert_concept_creates_and_orders_the_new_row() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let ops = RootView
+            .apply(
+                &projection_ctx,
+                &RowPath::parse("apple").unwrap(),
+                RowOp::InsertConcept {
+                    after: Some(RowPath::parse("apple").unwrap()),
+                    title: "Banana".to_string(),
+                },
+                Next { remaining: &[] },
+            )
+            .unwrap();
+        let (new_op, reorder_op) = match &ops[..] {
+            [new_op, reorder_op] => (new_op, reorder_op),
+            other => panic!("expected [ConceptNew, IndexReorder], got {other:?}"),
+        };
+        assert_eq!(
+            new_op,
+            &okf::Op::ConceptNew {
+                directory: okf::DirectoryAddress::parse("/").unwrap(),
+                slug: "banana".to_string(),
+                ty: String::new(),
+                title: "Banana".to_string(),
+                description: None,
+            }
+        );
+        match reorder_op {
+            okf::Op::IndexReorder { order, .. } => {
+                let apple_pos = order.iter().position(|key| key == "apple").unwrap();
+                let banana_pos = order.iter().position(|key| key == "banana").unwrap();
+                assert_eq!(banana_pos, apple_pos + 1);
+            }
+            other => panic!("expected IndexReorder, got {other:?}"),
+        }
+
+        let lowered = lower_and_reparse(fixture_pairs(), ops);
+        assert!(lowered
+            .documents()
+            .iter()
+            .any(|document| document.path().as_str() == "banana.md"));
+    }
+
+    #[test]
+    fn apply_move_in_lowers_by_source_kind() {
+        let (bundle, _root_address) = fixture();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+
+        // Move the concept "apple" into "archive": ctx is the DESTINATION
+        // directory ("archive"), `from` names the source row by its
+        // owner-relative path in the (unrelated) directory it was minted
+        // in -- `apply` looks the id up directly against `ctx.bundle`,
+        // which spans the whole tree, not just `ctx.dir`.
+        let archive_directory = bundle.directory("/archive").unwrap().clone();
+        let archive_ctx = ctx(&archive_directory, &bundle, &params, &descend);
+        let ops = RootView
+            .apply(
+                &archive_ctx,
+                &RowPath::parse("archive").unwrap(),
+                RowOp::MoveIn {
+                    from: RowId {
+                        owner: ViewId::new(ROOT_VIEW_OWNER),
+                        path: RowPath::parse("apple").unwrap(),
+                    },
+                },
+                Next { remaining: &[] },
+            )
+            .unwrap();
+        assert_eq!(
+            ops,
+            vec![okf::Op::ConceptMove {
+                id: "apple".to_string(),
+                to_directory: okf::DirectoryAddress::parse("/archive").unwrap(),
+            }]
+        );
+    }
+
+    #[test]
+    fn apply_move_out_of_the_root_view_is_unsupported_with_no_parent() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let result = RootView.apply(
+            &projection_ctx,
+            &RowPath::parse("apple").unwrap(),
+            RowOp::MoveOut,
+            Next { remaining: &[] },
+        );
+        assert_eq!(result, Err(Unsupported));
+    }
+
+    #[test]
+    fn apply_move_out_of_a_nested_directory_lowers_to_a_move_to_the_parent() {
+        let source = crate::source::SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Archive](archive/)\n"),
+            (
+                "archive/note.md",
+                "---\ntype: uml.Class\ntitle: Note\n---\n# Note\n",
+            ),
+        ])
+        .unwrap();
+        let prepared = crate::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, _uml, _) = prepared.into_parts();
+        let bundle = okf.bundle;
+        let archive_directory = bundle.directory("/archive").unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&archive_directory, &bundle, &params, &descend);
+
+        let ops = RootView
+            .apply(
+                &projection_ctx,
+                &RowPath::parse("archive/note").unwrap(),
+                RowOp::MoveOut,
+                Next { remaining: &[] },
+            )
+            .unwrap();
+        assert_eq!(
+            ops,
+            vec![okf::Op::ConceptMove {
+                id: "archive/note".to_string(),
+                to_directory: okf::DirectoryAddress::parse("/").unwrap(),
+            }]
+        );
+    }
+
+    /// A fixture whose `index.md` declares `view: hide` (matching every
+    /// path except a name that never occurs) -- built with `prepare_candidate`
+    /// so `bundle.resolved_view` sees the declared `view:` frontmatter, unlike
+    /// `fixture()` above whose bundle carries no `view:` declaration at all.
+    fn hide_fixture() -> okf::Bundle {
+        let source = crate::source::SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "---\nview: hide\nhide:\n  - nothing/**\n---\n# Root\n\n* [Zebra](./zebra.md)\n* [Apple](./apple.md)\n",
+            ),
+            (
+                "apple.md",
+                "---\ntype: uml.Class\ntitle: Apple\n---\n# Apple\n",
+            ),
+            (
+                "zebra.md",
+                "---\ntype: uml.Class\ntitle: Zebra\n---\n# Zebra\n",
+            ),
+        ])
+        .unwrap();
+        let prepared = crate::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, _uml, _) = prepared.into_parts();
+        okf.bundle
+    }
+
+    #[test]
+    fn hide_forwards_apply_to_the_real_root_view() {
+        let bundle = hide_fixture();
+        let directory = bundle.directory("/").unwrap().clone();
+        let params = bundle.index("/").unwrap().extra.clone();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let registry = MiddlewareRegistry::from_extensions(&[&crate::extension::CoreExt]).unwrap();
+        let (chain, build_diags) = bundle.resolved_view("/", &registry);
+        assert!(build_diags.is_empty());
+
+        let id = RowId {
+            owner: ViewId::new(ROOT_VIEW_OWNER),
+            path: RowPath::parse("apple").unwrap(),
+        };
+        let ops = chain
+            .apply(
+                &projection_ctx,
+                &id,
+                RowOp::Rename {
+                    title: "Renamed Through Hide".to_string(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            ops,
+            vec![okf::Op::ConceptSet {
+                id: "apple".to_string(),
+                title: Some("Renamed Through Hide".to_string()),
+                description: None,
+            }]
+        );
+    }
+
+    /// For every row of a chain outcome, for every capability that row
+    /// declares, construct the corresponding `RowOp` and assert `apply`
+    /// does not refuse it with `Unsupported`. The converse -- a row that
+    /// under-declares yet still accepts an op -- is explicitly allowed and
+    /// not asserted here. Scoped to the per-row caps (`rename`, `move_out`)
+    /// that this fixture can exercise uniformly at the root directory;
+    /// `delete` is destructive (would remove the row mid-sweep) and is
+    /// covered by its own dedicated test, and the container-level
+    /// `child_caps` (`reorder`, `insert`) require descending into each
+    /// folder row's own, possibly-empty directory to find a member to
+    /// address -- also covered by dedicated tests
+    /// (`apply_reorder_moves_the_row_before_the_named_sibling`,
+    /// `apply_insert_concept_creates_and_orders_the_new_row`) rather than a
+    /// blind sweep that would spuriously fail on an empty folder.
+    pub(crate) fn assert_every_declared_capability_is_accepted_by_apply(
+        chain: &Chain,
+        ctx: &ProjectionCtx<'_>,
+    ) {
+        let outcome = chain.run(ctx, ChainLimits::default());
+        for row in &outcome.rows {
+            if row.caps.rename {
+                let result = chain.apply(
+                    ctx,
+                    &row.id,
+                    RowOp::Rename {
+                        title: "Whatever".to_string(),
+                    },
+                );
+                assert!(
+                    result.is_ok(),
+                    "row `{}` declares rename but apply refused it",
+                    row.id.path
+                );
+            }
+            if row.caps.move_out {
+                let result = chain.apply(ctx, &row.id, RowOp::MoveOut);
+                assert!(
+                    result.is_ok(),
+                    "row `{}` declares move_out but apply refused it",
+                    row.id.path
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_declared_capability_is_accepted_by_apply() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let registry = MiddlewareRegistry::new();
+        let chain = Chain::root_only(&registry);
+        assert_every_declared_capability_is_accepted_by_apply(&chain, &projection_ctx);
+    }
+
+    #[test]
+    fn every_declared_capability_is_accepted_by_apply_through_a_hide_chain() {
+        let bundle = hide_fixture();
+        let directory = bundle.directory("/").unwrap().clone();
+        let params = bundle.index("/").unwrap().extra.clone();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let registry = MiddlewareRegistry::from_extensions(&[&crate::extension::CoreExt]).unwrap();
+        let (chain, build_diags) = bundle.resolved_view("/", &registry);
+        assert!(build_diags.is_empty());
+        assert_every_declared_capability_is_accepted_by_apply(&chain, &projection_ctx);
     }
 }

@@ -260,6 +260,12 @@ pub enum OpDto {
         #[serde(default)]
         desc: Option<String>,
     },
+    #[serde(rename = "concept.delete")]
+    ConceptDelete {
+        #[serde(default = "one")]
+        v: u32,
+        id: String,
+    },
     #[serde(rename = "diagram.set")]
     DiagramSet {
         #[serde(default = "one")]
@@ -670,6 +676,10 @@ impl OpDto {
                     description: desc.clone(),
                 })
             }
+            OpDto::ConceptDelete { v, id } => {
+                check_v(*v, "concept.delete")?;
+                Step::Okf(okf::Op::ConceptDelete { id: id.clone() })
+            }
             OpDto::PlaceSet {
                 v,
                 diagram,
@@ -816,6 +826,10 @@ impl OpDto {
                     id: id.clone(),
                     title: title.clone(),
                     desc: description.clone(),
+                },
+                okf::Op::ConceptDelete { id } => OpDto::ConceptDelete {
+                    v: 1,
+                    id: id.clone(),
                 },
             },
             Step::Uml(op) => match op {

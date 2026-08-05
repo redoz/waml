@@ -55,6 +55,14 @@ pub enum Op {
         title: Option<String>,
         description: Option<String>,
     },
+    /// Remove a single concept document. Unlike `DirectoryDelete`, this never
+    /// touches a directory or its `index.md` member listing -- mirrors
+    /// `DirectoryDelete`'s cascade branch, which likewise leaves a parent
+    /// index's stale member entry for a later `pkg.reorder`/`pkg.sort` to
+    /// clean up rather than rewriting it inline.
+    ConceptDelete {
+        id: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -146,6 +154,7 @@ pub(crate) fn lower_one_with_state(
             title,
             description,
         } => super::lower::op_concept_set(work, id, title, description),
+        Op::ConceptDelete { id } => super::lower::op_concept_delete(work, id),
     }
 }
 

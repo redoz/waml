@@ -525,6 +525,12 @@ impl Chain {
         }
     }
 
+    /// Dispatch mirrors `resolve`: a declared stage's `ViewId` routes to
+    /// that stage (with the rest of the chain as its `next`); the root
+    /// view's reserved owner -- unregistered in `self.ids`, since it owns
+    /// no `stages` slot -- routes to [`super::root::RootView`] directly,
+    /// terminal `next`. Any other unmatched owner (a stale `RowId` from a
+    /// chain that has since changed shape) is `Unsupported`, not a panic.
     pub fn apply(
         &self,
         ctx: &ProjectionCtx<'_>,
@@ -534,6 +540,9 @@ impl Chain {
         let index = self.ids.iter().position(|owned| owned == &id.owner);
         match index {
             Some(index) => self.stages[index].apply(ctx, &id.path, op, self.next_from(index + 1)),
+            None if id.owner.as_str() == super::root::ROOT_VIEW_OWNER => {
+                super::root::RootView.apply(ctx, &id.path, op, Next { remaining: &[] })
+            }
             None => Err(Unsupported),
         }
     }
