@@ -531,64 +531,7 @@ pub fn analyze(
                     .into(),
             },
         );
-        for diagnostic in tree.diagnostics() {
-            let start = diagnostic.range.start();
-            let end = diagnostic.range.end();
-            let start_line = document
-                .line_index()
-                .line_col(document.text(), start)
-                .map_err(|_| AnalysisError::CatalogInvariant {
-                    reason: "parser diagnostic start is not a document offset".into(),
-                })?;
-            let end_line = document
-                .line_index()
-                .line_col(document.text(), end)
-                .map_err(|_| AnalysisError::CatalogInvariant {
-                    reason: "parser diagnostic end is not a document offset".into(),
-                })?;
-            diagnostics.push(
-                Diagnostic::new(
-                    match diagnostic.code {
-                        syntax::UmlSyntaxDiagnosticCode::MalformedFlow
-                        | syntax::UmlSyntaxDiagnosticCode::MalformedIndentation => {
-                            crate::diagnostic::DiagCode::MalformedFlowBullet
-                        }
-                        syntax::UmlSyntaxDiagnosticCode::MalformedLifeline => {
-                            crate::diagnostic::DiagCode::MalformedLifeline
-                        }
-                        syntax::UmlSyntaxDiagnosticCode::MalformedMessage
-                        | syntax::UmlSyntaxDiagnosticCode::UnsupportedSequenceForm => {
-                            crate::diagnostic::DiagCode::MalformedMessage
-                        }
-                        syntax::UmlSyntaxDiagnosticCode::UnresolvedTarget => {
-                            crate::diagnostic::DiagCode::UnresolvedTarget
-                        }
-                        // Attribute-line parse errors (missing ':', missing type, an
-                        // unparsable multiplicity) and generic parser recovery all
-                        // surface on an attribute/member line, so they share
-                        // MalformedAttribute.
-                        syntax::UmlSyntaxDiagnosticCode::MissingColon
-                        | syntax::UmlSyntaxDiagnosticCode::MissingType
-                        | syntax::UmlSyntaxDiagnosticCode::InvalidMultiplicity
-                        | syntax::UmlSyntaxDiagnosticCode::UnexpectedToken => {
-                            crate::diagnostic::DiagCode::MalformedAttribute
-                        }
-                    },
-                    diagnostic.message.to_string(),
-                    document.path().as_str(),
-                    start_line.line as usize + 1,
-                )
-                .with_span((
-                    start_line.byte_column as usize,
-                    (if start_line.line == end_line.line {
-                        end_line.byte_column
-                    } else {
-                        start_line.byte_column
-                    }) as usize,
-                ))
-                .with_provenance(id, document.revision(), diagnostic.range),
-            );
-        }
+        translate_parser_diagnostics(&document, id, &tree, &mut diagnostics)?;
         let snapshot = previous
             .and_then(|analysis| analysis.syntax.document(id))
             .filter(|previous_snapshot| Arc::ptr_eq(previous_snapshot.document(), &document))
@@ -2526,6 +2469,73 @@ fn has_direct_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
         .any(|child| {
             child.kind() == syntax::UmlSyntaxKind::BehaviorRecovery && has_recovery(&child)
         })
+}
+
+fn translate_parser_diagnostics(
+    document: &crate::analysis::DocumentVersion,
+    id: DocumentId,
+    tree: &SyntaxTree<UmlLanguage>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), AnalysisError> {
+    for diagnostic in tree.diagnostics() {
+        let start = diagnostic.range.start();
+        let end = diagnostic.range.end();
+        let start_line = document
+            .line_index()
+            .line_col(document.text(), start)
+            .map_err(|_| AnalysisError::CatalogInvariant {
+                reason: "parser diagnostic start is not a document offset".into(),
+            })?;
+        let end_line = document
+            .line_index()
+            .line_col(document.text(), end)
+            .map_err(|_| AnalysisError::CatalogInvariant {
+                reason: "parser diagnostic end is not a document offset".into(),
+            })?;
+        diagnostics.push(
+            Diagnostic::new(
+                match diagnostic.code {
+                    syntax::UmlSyntaxDiagnosticCode::MalformedFlow
+                    | syntax::UmlSyntaxDiagnosticCode::MalformedIndentation => {
+                        crate::diagnostic::DiagCode::MalformedFlowBullet
+                    }
+                    syntax::UmlSyntaxDiagnosticCode::MalformedLifeline => {
+                        crate::diagnostic::DiagCode::MalformedLifeline
+                    }
+                    syntax::UmlSyntaxDiagnosticCode::MalformedMessage
+                    | syntax::UmlSyntaxDiagnosticCode::UnsupportedSequenceForm => {
+                        crate::diagnostic::DiagCode::MalformedMessage
+                    }
+                    syntax::UmlSyntaxDiagnosticCode::UnresolvedTarget => {
+                        crate::diagnostic::DiagCode::UnresolvedTarget
+                    }
+                    // Attribute-line parse errors (missing ':', missing type, an
+                    // unparsable multiplicity) and generic parser recovery all
+                    // surface on an attribute/member line, so they share
+                    // MalformedAttribute.
+                    syntax::UmlSyntaxDiagnosticCode::MissingColon
+                    | syntax::UmlSyntaxDiagnosticCode::MissingType
+                    | syntax::UmlSyntaxDiagnosticCode::InvalidMultiplicity
+                    | syntax::UmlSyntaxDiagnosticCode::UnexpectedToken => {
+                        crate::diagnostic::DiagCode::MalformedAttribute
+                    }
+                },
+                diagnostic.message.to_string(),
+                document.path().as_str(),
+                start_line.line as usize + 1,
+            )
+            .with_span((
+                start_line.byte_column as usize,
+                (if start_line.line == end_line.line {
+                    end_line.byte_column
+                } else {
+                    start_line.byte_column
+                }) as usize,
+            ))
+            .with_provenance(id, document.revision(), diagnostic.range),
+        );
+    }
+    Ok(())
 }
 
 fn declared_attribute(
