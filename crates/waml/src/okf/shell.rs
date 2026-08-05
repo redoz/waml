@@ -19,7 +19,7 @@ use crate::{
 
 use super::{
     resolve_href, Actor, Bundle, BundleError, Concept, Directory, DirectoryAddress, Generated,
-    Index, Link, Log, Source, UsageWindow, Verification,
+    Index, Link, Log, Source, Status, UsageWindow, Verification,
 };
 
 /// v0.1 vocabulary: keys whose promotion behaviour is unchanged by v0.2 and
@@ -374,6 +374,27 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
         None => Vec::new(),
     };
 
+    let status = match fm.get_str("status") {
+        None => Status::Stable,
+        Some("draft") => {
+            promoted.insert("status");
+            Status::Draft
+        }
+        Some("stable") => {
+            promoted.insert("status");
+            Status::Stable
+        }
+        Some("deprecated") => {
+            promoted.insert("status");
+            Status::Deprecated
+        }
+        Some(_) => Status::Stable,
+    };
+    let stale_after = fm.get_str("stale_after").map(|value| {
+        promoted.insert("stale_after");
+        value.to_owned()
+    });
+
     let extra = Frontmatter {
         entries: fm
             .entries
@@ -400,6 +421,8 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
         sources,
         generated,
         verified,
+        status,
+        stale_after,
         extra,
     }
 }

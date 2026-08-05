@@ -251,6 +251,19 @@ pub struct Verification {
     pub at: Option<String>,
 }
 
+/// A concept's lifecycle status (OKF §5.4). Defaults to `Stable` when the
+/// frontmatter `status` key is absent or unrecognized — an unrecognized
+/// value also survives in [`Concept::extra`] so it is never silently lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum Status {
+    Draft,
+    #[default]
+    Stable,
+    Deprecated,
+}
+
 /// The domain-agnostic projection of one markdown document. Round-trips every
 /// OKF field losslessly — nothing a producer wrote is dropped: known fields are
 /// promoted, the raw markdown body is retained verbatim, and any remaining
@@ -310,6 +323,13 @@ pub struct Concept {
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub verified: Vec<Verification>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub status: Status,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub stale_after: Option<String>,
     /// Producer-specific frontmatter keys with no dedicated field above.
     #[cfg_attr(
         feature = "serde",
@@ -1109,6 +1129,41 @@ mod tests {
                 id: "finance-nightly".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn status_promotes_three_tokens_and_defaults_to_stable() {
+        for (token, expected) in [
+            ("draft", Status::Draft),
+            ("stable", Status::Stable),
+            ("deprecated", Status::Deprecated),
+        ] {
+            let src = format!("---\ntype: Note\nstatus: {token}\n---\n# Note\n");
+            let c = project("note.md", &src).unwrap();
+            assert_eq!(c.status, expected, "{token}");
+            assert!(c.extra.get("status").is_none(), "{token}");
+        }
+
+        let absent = project("note.md", "---\ntype: Note\n---\n# Note\n").unwrap();
+        assert_eq!(absent.status, Status::Stable);
+    }
+
+    #[test]
+    fn unknown_status_falls_back_to_stable_and_survives_in_extra() {
+        let src = "---\ntype: Note\nstatus: experimental\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.status, Status::Stable);
+        assert_eq!(c.extra.get_str("status"), Some("experimental"));
+    }
+
+    #[test]
+    fn stale_after_promotes_as_raw_string() {
+        let src = "---\ntype: Note\nstale_after: 2026-12-31\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.stale_after.as_deref(), Some("2026-12-31"));
+        assert!(c.extra.get("stale_after").is_none());
     }
 
     #[test]
