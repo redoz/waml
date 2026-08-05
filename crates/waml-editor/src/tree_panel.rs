@@ -1619,8 +1619,12 @@ mod tests {
             is_directory,
             openable: !is_directory,
             concept_id: (!is_directory).then(|| key.to_owned()),
-            can_edit_classifier: is_classifier,
-            can_delete_classifier: is_classifier,
+            caps: waml::view::row::RowCaps {
+                rename: is_classifier,
+                delete: is_classifier,
+                move_out: false,
+            },
+            child_caps: waml::view::row::ChildCaps::default(),
             view_degraded: false,
             children,
         }

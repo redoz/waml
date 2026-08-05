@@ -23,8 +23,16 @@ pub struct TreeNode {
     pub is_directory: bool,
     pub openable: bool,
     pub concept_id: Option<String>,
-    pub can_edit_classifier: bool,
-    pub can_delete_classifier: bool,
+    /// What the row's OWNING chain stage declares it will accept for this row
+    /// (rename, delete, move out) and for the rows beneath it (reorder,
+    /// insert, accept a move in).
+    ///
+    /// Advisory, for affordances only -- `Chain::apply` remains the authority.
+    /// A middleware may under-declare and still accept an op; the invariant
+    /// that matters is the converse, that a declared capability must not
+    /// yield Unsupported.
+    pub caps: waml::view::row::RowCaps,
+    pub child_caps: waml::view::row::ChildCaps,
     /// Directory rows only: whether this folder's declared `view:` chain
     /// failed to build (an unknown middleware name, bad params) and fell
     /// back to the root view. Drives the tree's degraded-chain marker so a
@@ -117,7 +125,10 @@ pub fn build_tree(
             accent: crate::accent::tree_kind_color(NavCategory::Directory),
             category: NavCategory::Directory,
         };
-        let concept_node = |concept_id: &str, key: waml::view::row::RowId| {
+        let concept_node = |concept_id: &str,
+                            key: waml::view::row::RowId,
+                            caps: waml::view::row::RowCaps,
+                            child_caps: waml::view::row::ChildCaps| {
             let concept = bundle.concept(concept_id)?;
             let descriptor = crate::documents::describe(okf, uml_analysis, concept_id)?;
             let presentation = descriptor.presentation;
@@ -136,8 +147,8 @@ pub fn build_tree(
                 is_directory: false,
                 openable: true,
                 concept_id: Some(concept_id.to_owned()),
-                can_edit_classifier: descriptor.capabilities.can_edit_classifier,
-                can_delete_classifier: descriptor.capabilities.can_delete_classifier,
+                caps,
+                child_caps,
                 view_degraded: false,
                 children: Vec::new(),
             })
@@ -159,16 +170,21 @@ pub fn build_tree(
                     if let Some(mut node) =
                         directory_node(okf, uml_analysis, &child, root_fallback, mode, limits)
                     {
-                        // The chain owns the label and the identity; a
-                        // middleware may relabel a folder row, and the tree
-                        // must show and key on what it said.
+                        // The chain owns the label, the identity, and the
+                        // declared capabilities; a middleware may relabel a
+                        // folder row, and the tree must show and key on what
+                        // it said.
                         node.title = row.label.clone();
                         node.key = row.id.clone();
+                        node.caps = row.caps;
+                        node.child_caps = row.child_caps;
                         children.push(node);
                     }
                 }
                 waml::view::row::RowTarget::Concept(concept_id) => {
-                    if let Some(mut node) = concept_node(concept_id, row.id.clone()) {
+                    if let Some(mut node) =
+                        concept_node(concept_id, row.id.clone(), row.caps, row.child_caps)
+                    {
                         node.title = row.label.clone();
                         children.push(node);
                     }
@@ -190,8 +206,8 @@ pub fn build_tree(
                         is_directory: false,
                         openable: false,
                         concept_id: None,
-                        can_edit_classifier: false,
-                        can_delete_classifier: false,
+                        caps: row.caps,
+                        child_caps: row.child_caps,
                         view_degraded: false,
                         children: Vec::new(),
                     });
@@ -222,8 +238,8 @@ pub fn build_tree(
             is_directory: true,
             openable: false,
             concept_id: None,
-            can_edit_classifier: false,
-            can_delete_classifier: false,
+            caps: waml::view::row::RowCaps::default(),
+            child_caps: waml::view::row::ChildCaps::default(),
             view_degraded: !diagnostics.is_empty(),
             children,
         })
@@ -401,7 +417,7 @@ mod tests {
             .find(|row| row.concept_id.as_deref() == Some("sales/order"))
             .unwrap();
         assert_eq!(order.kind, NavCategory::Class);
-        assert!(order.openable && order.can_edit_classifier);
+        assert!(order.openable && order.caps.rename && order.caps.delete);
         assert_eq!(order.concept_id.as_deref(), Some("sales/order"));
         let runbook = rows
             .iter()
@@ -409,7 +425,50 @@ mod tests {
             .unwrap();
         assert_eq!(runbook.kind, NavCategory::OkfDocument);
         assert!(runbook.openable);
-        assert!(!runbook.can_edit_classifier && !runbook.can_delete_classifier);
+        // A concept row's rename/delete are declared by its owning chain
+        // stage, not derived from the document's classifier type -- the
+        // guess this field replaced.
+        assert!(runbook.caps.rename && runbook.caps.delete);
+    }
+
+    /// `mixed()` returns the analyses split apart; `project_rows` needs the
+    /// `PreparedCandidate` itself.
+    fn mixed_prepared() -> waml::analysis::PreparedCandidate {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "# Sales\n\n* [Order](./order.md)\n* [Archive](archive/)\n* [Runbook](./runbook.md)\n",
+            ),
+            ("sales/archive/index.md", "# Archive\n"),
+            ("sales/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
+            ("sales/runbook.md", "---\ntype: Runbook\ntitle: Runbook\n---\n# Runbook\n"),
+            ("sales/log.md", "# Log\n"),
+        ])
+        .unwrap();
+        waml::analysis::prepare_candidate(source, None, 1).unwrap()
+    }
+
+    /// Capabilities are advisory and `apply` remains the authority, but the
+    /// invariant the chain spec states is that a DECLARED capability must not
+    /// yield Unsupported. Carrying the row's own declaration is what lets the
+    /// tree gate an affordance on something apply will honour, instead of on
+    /// a guess made from the document type.
+    #[test]
+    fn tree_rows_carry_the_projected_rows_declared_capabilities() {
+        let prepared = mixed_prepared();
+        let limits = waml::view::chain::ChainLimits::default();
+        let mode = crate::folder_projection::ViewMode::Projected;
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
+        let sales = &tree.roots[0].children[0];
+        let (_, rows, _) =
+            crate::folder_projection::project_rows(prepared.okf(), "/sales", mode, limits).unwrap();
+
+        assert_eq!(sales.children.len(), rows.len());
+        for (node, row) in sales.children.iter().zip(rows.iter()) {
+            assert_eq!(node.caps, row.caps);
+            assert_eq!(node.child_caps, row.child_caps);
+        }
     }
 
     #[test]
