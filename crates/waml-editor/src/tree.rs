@@ -3,7 +3,7 @@
 
 use crate::document::{DocumentPresentation, NavCategory};
 use crate::icons::Icon;
-use waml::model::{BehaviorKind, ElementType, UmlMetaclass};
+use waml::model::ElementType;
 
 pub type TreeKind = NavCategory;
 
@@ -112,24 +112,7 @@ pub struct ProjectTree {
 /// `Sequence` behaviors get their own glyph while other behavior kinds share
 /// the generic `Behavior` one.
 pub fn kind_of(ty: &ElementType) -> TreeKind {
-    match ty {
-        ElementType::Uml(UmlMetaclass::Package) => TreeKind::Directory,
-        ElementType::Uml(UmlMetaclass::Note) => TreeKind::Note,
-        ElementType::Uml(UmlMetaclass::Interface) => TreeKind::Interface,
-        ElementType::Uml(UmlMetaclass::Enum) => TreeKind::Enum,
-        ElementType::Uml(UmlMetaclass::DataType) => TreeKind::DataType,
-        ElementType::Uml(
-            UmlMetaclass::Class
-            | UmlMetaclass::Association
-            | UmlMetaclass::Actor
-            | UmlMetaclass::UseCase
-            | UmlMetaclass::InstanceSpecification,
-        ) => TreeKind::Class,
-        ElementType::Behavior(BehaviorKind::Sequence) => TreeKind::Sequence,
-        ElementType::Behavior(_) => TreeKind::Behavior,
-        ElementType::Diagram => TreeKind::Diagram,
-        ElementType::Unknown(_) => TreeKind::OkfDocument,
-    }
+    TreeKind::from(waml::view::kind::kind_of(ty))
 }
 
 pub fn build_tree(

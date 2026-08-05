@@ -30,6 +30,24 @@ pub enum NavCategory {
     Note,
 }
 
+impl From<waml::view::kind::RowKind> for NavCategory {
+    fn from(kind: waml::view::kind::RowKind) -> Self {
+        use waml::view::kind::RowKind;
+        match kind {
+            RowKind::Directory => NavCategory::Directory,
+            RowKind::OkfDocument => NavCategory::OkfDocument,
+            RowKind::Class => NavCategory::Class,
+            RowKind::Interface => NavCategory::Interface,
+            RowKind::Enum => NavCategory::Enum,
+            RowKind::DataType => NavCategory::DataType,
+            RowKind::Diagram => NavCategory::Diagram,
+            RowKind::Behavior => NavCategory::Behavior,
+            RowKind::Sequence => NavCategory::Sequence,
+            RowKind::Note => NavCategory::Note,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DocumentPresentation {
     pub icon: Icon,
