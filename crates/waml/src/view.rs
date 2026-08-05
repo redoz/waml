@@ -2,5 +2,7 @@
 //! editor dependency, no makepad, no window. See
 //! `docs/superpowers/specs/2026-08-05-folder-view-middleware-design.md`.
 
+pub mod chain;
 pub mod decl;
 pub mod row;
+pub mod surface;

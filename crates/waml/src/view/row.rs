@@ -6,6 +6,9 @@
 
 use std::fmt;
 
+use super::chain::Chain;
+use super::surface::SurfaceId;
+
 /// Error constructing a [`RowPath`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowPathError {
@@ -131,6 +134,89 @@ pub struct RowId {
     pub path: RowPath,
 }
 
+/// What a row points at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowTarget {
+    /// A real concept document, by href.
+    Concept(String),
+    /// A real child directory, by address string.
+    Folder(String),
+    /// No file behind it. The owner interprets the RowPath.
+    Virtual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RowCaps {
+    pub rename: bool,
+    pub delete: bool,
+    pub move_out: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChildCaps {
+    pub reorder: bool,
+    pub insert: bool,
+    pub accept_move_in: bool,
+}
+
+/// Error constructing a [`Row`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowConstructError {
+    /// A `Virtual` target was given without a `surface` — there is no
+    /// document to infer a default surface from.
+    VirtualWithoutSurface,
+}
+
+impl fmt::Display for RowConstructError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RowConstructError::VirtualWithoutSurface => {
+                write!(f, "a virtual row must declare an explicit surface")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RowConstructError {}
+
+pub struct Row {
+    pub id: RowId,
+    pub label: String,
+    pub blurb: Option<String>,
+    pub target: RowTarget,
+    /// None ⇒ default resolution by document type. Middleware may override.
+    pub surface: Option<SurfaceId>,
+    /// Folder rows only: the chain used when this row expands. Lazy.
+    pub expand: Option<Chain>,
+    pub caps: RowCaps,
+    pub child_caps: ChildCaps,
+}
+
+impl Row {
+    /// The only constructor. Enforces: a Virtual target MUST name a surface —
+    /// there is no document to infer one from.
+    pub fn new(
+        id: RowId,
+        label: String,
+        target: RowTarget,
+        surface: Option<SurfaceId>,
+    ) -> Result<Row, RowConstructError> {
+        if matches!(target, RowTarget::Virtual) && surface.is_none() {
+            return Err(RowConstructError::VirtualWithoutSurface);
+        }
+        Ok(Row {
+            id,
+            label,
+            blurb: None,
+            target,
+            surface,
+            expand: None,
+            caps: RowCaps::default(),
+            child_caps: ChildCaps::default(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +261,46 @@ mod tests {
         // Stable across two runs.
         let ids_again = ViewId::disambiguate(names);
         assert_eq!(ids, ids_again);
+    }
+
+    fn row_id(name: &str) -> RowId {
+        RowId {
+            owner: ViewId::new("owner"),
+            path: RowPath::parse(name).unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_virtual_row_without_a_surface_is_rejected_at_construction() {
+        let result = Row::new(row_id("a"), "A".to_string(), RowTarget::Virtual, None);
+        assert_eq!(result.err(), Some(RowConstructError::VirtualWithoutSurface));
+    }
+
+    #[test]
+    fn a_real_target_with_surface_none_constructs() {
+        let result = Row::new(
+            row_id("a"),
+            "A".to_string(),
+            RowTarget::Concept("a.waml".to_string()),
+            None,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn caps_default_to_nothing() {
+        let row = Row::new(
+            row_id("a"),
+            "A".to_string(),
+            RowTarget::Concept("a.waml".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(row.caps, RowCaps::default());
+        assert_eq!(row.child_caps, ChildCaps::default());
+        assert!(!row.caps.rename && !row.caps.delete && !row.caps.move_out);
+        assert!(
+            !row.child_caps.reorder && !row.child_caps.insert && !row.child_caps.accept_move_in
+        );
     }
 }
