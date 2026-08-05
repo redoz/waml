@@ -782,18 +782,14 @@ pub(crate) fn lower(
         let is_graph_link = use_graph
             .get(&concept.concept_id)
             .is_some_and(|links| links.contains(&(declared_use_index, target.clone())));
-        // The graph is built from the same shared derivations as the checks
-        // above (`admitted_lifelines`, `resolved_binding_entries`,
-        // `validate_use_bindings`), so a use that survived every diagnostic is
-        // an edge in the graph. The guard is defensive only: the cycle check
-        // below traverses the graph, so a use with no edge in it cannot be
-        // admitted. It reports nothing — there is no defect in the document to
-        // name.
-        debug_assert!(
-            !valid_use || is_graph_link,
-            "interaction use '{}' passed every binding diagnostic but has no edge in the use graph",
-            alias
-        );
+        // The graph is built by `interaction_use_graph`, which walks concepts
+        // under their own resolved paths and skips any concept it cannot find a
+        // path for; this lowering runs under the caller's path, which may be
+        // empty. The two derivations can therefore disagree for a concept
+        // without a path entry, so the missing edge is not an invariant
+        // violation — it simply means the cycle check below (which traverses
+        // the graph) cannot vouch for this use, and it stays unadmitted. This
+        // reports nothing: there is no defect in the document to name.
         valid_use = valid_use && is_graph_link;
         if valid_use
             && graph_reaches(

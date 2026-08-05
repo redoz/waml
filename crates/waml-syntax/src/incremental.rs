@@ -287,10 +287,9 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
         )
         .map_err(|_| ParseError::WidthOverflow)?;
         let base = (node.kind(), range, false);
-        let ordinal = *occurrences.entry(base).or_insert(0);
-        *occurrences
-            .get_mut(&base)
-            .ok_or(ParseError::WidthOverflow)? += 1;
+        let slot = occurrences.entry(base).or_insert(0);
+        let ordinal = *slot;
+        *slot += 1;
         let node_annotations = merge(
             node.annotations(),
             copied.get(&OccurrenceKey {
@@ -321,10 +320,9 @@ pub fn transfer_mapped_annotations<L: SyntaxLanguage>(
                     )
                     .map_err(|_| ParseError::WidthOverflow)?;
                     let base = (token.kind(), range, true);
-                    let ordinal = *occurrences.entry(base).or_insert(0);
-                    *occurrences
-                        .get_mut(&base)
-                        .ok_or(ParseError::WidthOverflow)? += 1;
+                    let slot = occurrences.entry(base).or_insert(0);
+                    let ordinal = *slot;
+                    *slot += 1;
                     let annotations = merge(
                         token.syntax_annotations(),
                         copied.get(&OccurrenceKey {
@@ -973,7 +971,13 @@ pub(crate) fn reparse_okf_markdown_with_structure(
     }
     let candidate = SyntaxTree::new(root, diagnostics.into(), dialect);
     let root = if has_syntax_annotations(previous.root_green()) {
-        transfer_mapped_annotations(previous, &candidate, &map)?
+        // Width arithmetic that does not fit means the spliced tree is not a
+        // sound base to carry annotations onto; degrade to a full parse rather
+        // than ending the document's reparse in an error.
+        match transfer_mapped_annotations(previous, &candidate, &map) {
+            Ok(root) => root,
+            Err(_) => return full(FullReparseReason::UnsafeSynchronization),
+        }
     } else {
         candidate.root_green().clone()
     };
