@@ -132,6 +132,35 @@ fn build_tree_with_registry(
     limits: waml::view::chain::ChainLimits,
     registry: &waml::view::chain::MiddlewareRegistry,
 ) -> ProjectTree {
+    /// A directory node with no chain run and no children, used for a
+    /// directory the build has already descended into once. The caller
+    /// overwrites `key`, `title`, and the caps from the row that produced it,
+    /// so the only thing this decides is "folder, nothing beneath it here".
+    fn shallow_directory_node(address: &waml::okf::DirectoryAddress) -> Option<TreeNode> {
+        Some(TreeNode {
+            key: waml::view::row::RowId {
+                owner: waml::view::row::ViewId::new(waml::view::ROOT_VIEW_OWNER),
+                path: waml::view::row::RowPath::parse(ROOT_ROW_SEGMENT)
+                    .expect("literal non-empty single segment parses"),
+            },
+            address: Some(address.as_str().to_string()),
+            title: String::new(),
+            kind: NavCategory::Directory,
+            presentation: DocumentPresentation {
+                icon: Icon::Folder,
+                accent: crate::accent::tree_kind_color(NavCategory::Directory),
+                category: NavCategory::Directory,
+            },
+            is_directory: true,
+            openable: false,
+            concept_id: None,
+            caps: waml::view::row::RowCaps::default(),
+            child_caps: waml::view::row::ChildCaps::default(),
+            view_degraded: false,
+            children: Vec::new(),
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn directory_node(
         okf: &waml::analysis::OkfAnalysis,
@@ -207,10 +236,15 @@ fn build_tree_with_registry(
         // addressing a directory another branch already listed (a DAG, whose
         // full expansion is exponential in the bundle's depth). `ChainLimits`
         // bounds one directory's run and nothing bounds this descent, so the
-        // guard is global: a directory is expanded at most ONCE per build, and
-        // the total cost stays proportional to the bundle. A repeat row still
-        // gets a node -- dropping it would make the tree disagree with the
-        // folder view about what is listed -- it simply has no children.
+        // guard is global, and it bounds the DESCENT, not the listing: a
+        // directory is descended into at most ONCE per build, so the total
+        // cost stays proportional to the bundle. A repeat occurrence still
+        // runs its own chain and lists its own rows -- the tree must agree
+        // with the folder view about what a directory contains, and a node
+        // that draws empty but opens full is exactly the disagreement this
+        // module exists to prevent. What a repeat does NOT do is recurse:
+        // its directory children are listed as childless nodes, which
+        // terminates a cycle after one honest level instead of never.
         let repeat = !expanded.insert(address.as_str().to_string());
         let mut children = Vec::new();
         // Children ARE the chain's rows for this directory, in the chain's
@@ -219,17 +253,8 @@ fn build_tree_with_registry(
         // directory contains. `project_rows` returning None means the
         // directory left the bundle underneath us; an empty child list is the
         // honest answer, not a panic.
-        let projected = (!repeat)
-            .then(|| {
-                crate::folder_projection::project_rows(
-                    okf,
-                    address.as_str(),
-                    mode,
-                    limits,
-                    registry,
-                )
-            })
-            .flatten();
+        let projected =
+            crate::folder_projection::project_rows(okf, address.as_str(), mode, limits, registry);
         // The marker reads the diagnostics of the run that produced the
         // children above -- the folder tab runs the same chain in the same
         // mode and shows the same list, so a second `resolved_view` here would
@@ -244,16 +269,24 @@ fn build_tree_with_registry(
                     let Ok(child) = waml::okf::DirectoryAddress::parse(child_address) else {
                         continue;
                     };
-                    let child_node = directory_node(
-                        okf,
-                        uml_analysis,
-                        &child,
-                        root_fallback,
-                        mode,
-                        limits,
-                        registry,
-                        expanded,
-                    );
+                    // A repeat occurrence lists but never descends (see the
+                    // guard above), so its directory children are built
+                    // shallow: same identity, same label, no chain run and
+                    // no recursion.
+                    let child_node = if repeat {
+                        shallow_directory_node(&child)
+                    } else {
+                        directory_node(
+                            okf,
+                            uml_analysis,
+                            &child,
+                            root_fallback,
+                            mode,
+                            limits,
+                            registry,
+                            expanded,
+                        )
+                    };
                     if let Some(mut node) = child_node {
                         // The chain owns the label, the identity, and the
                         // declared capabilities; a middleware may relabel a
@@ -673,9 +706,22 @@ mod tests {
             up.title, "Up",
             "the row stays listed -- the tree must not disagree with the folder view",
         );
+        // The row that closed the cycle addresses the root, and the root is
+        // not empty: it lists Sales. Drawing it childless would be the
+        // disagreement this module exists to prevent -- opening that row
+        // shows a listing the tree claimed was not there. So it lists, and
+        // the level below it is where the cycle stops.
+        assert_eq!(
+            up.children
+                .iter()
+                .map(|node| node.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Sales"],
+            "the closing row lists what its directory actually contains",
+        );
         assert!(
-            up.children.is_empty(),
-            "the cycle stops at the row that closed it",
+            up.children.iter().all(|node| node.children.is_empty()),
+            "and nothing below it descends -- one honest level, then stop",
         );
     }
 
@@ -818,11 +864,37 @@ mod tests {
             2,
             "the repeat row is listed by both branches",
         );
+        // Both occurrences of the shared directory list their own rows, so
+        // neither draws as an empty folder that opens full. What the guard
+        // bounds is the DESCENT: the second occurrence's children are
+        // childless, so the shared subtree is walked once however many
+        // branches reach it.
         assert_eq!(
             count_titled(root, "Deep"),
-            1,
-            "the shared subtree must be expanded once, not once per branch",
+            2,
+            "each occurrence lists its own rows -- the tree agrees with the folder view at both",
         );
+        let shared: Vec<&TreeNode> = root
+            .children
+            .iter()
+            .flat_map(|branch| branch.children.iter())
+            .filter(|node| node.title == "Shared")
+            .collect();
+        assert_eq!(shared.len(), 2, "one Shared row under each branch");
+        for node in &shared {
+            assert_eq!(
+                node.children
+                    .iter()
+                    .map(|child| child.title.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["Deep"],
+                "every occurrence lists the same rows the folder view would",
+            );
+        }
+        // What the guard bounds is the level BELOW: the repeat occurrence's
+        // children are built shallow and never recurse. `Fanout` bottoms out
+        // at `/shared/deep`, so the stop is asserted by the ancestor test
+        // above, where the closing row's child would otherwise keep going.
     }
 
     #[test]

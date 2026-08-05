@@ -1019,6 +1019,13 @@ impl Widget for ProjectTree {
             fw.height = Size::Fixed(0.0);
             fw.margin = Inset::default();
             self.view.view(cx, ids!(tree_scroll)).set_visible(cx, false);
+            // The control strip hides on the same verdict as the body it
+            // belongs to. Hit-testing and drawing must agree: a button left
+            // visible here stays clickable over the canvas the collapsed
+            // panel no longer covers.
+            self.view
+                .view(cx, ids!(control_strip))
+                .set_visible(cx, false);
             // `View::draw_walk` is a multi-step `DrawStep` machine: it opens the
             // view's turtle on the first call and only closes it once the loop
             // runs it to `done`. Calling it once and dropping the result leaves
@@ -1031,6 +1038,9 @@ impl Widget for ProjectTree {
         }
         // Presentation-visible: restore the body.
         self.view.view(cx, ids!(tree_scroll)).set_visible(cx, true);
+        self.view
+            .view(cx, ids!(control_strip))
+            .set_visible(cx, true);
 
         // Seed the toggle's glyph from the mode this panel is displaying, the
         // same way `tool_dock` seeds its buttons. `IconButton::icon` is

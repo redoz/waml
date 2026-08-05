@@ -62,17 +62,10 @@ pub fn open_row_with_asset_host(
     row: &Row,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
     limits: waml::view::chain::ChainLimits,
+    mode: crate::folder_projection::ViewMode,
 ) -> (Option<OpenDocument>, Option<waml::diagnostic::Diagnostic>) {
     match &row.target {
-        RowTarget::Folder(directory) => (
-            open_folder(
-                okf,
-                directory,
-                limits,
-                crate::folder_projection::ViewMode::Projected,
-            ),
-            None,
-        ),
+        RowTarget::Folder(directory) => (open_folder(okf, directory, limits, mode), None),
         // No file behind a Virtual row; the owning middleware would need to
         // interpret the path itself. No middleware does yet -- degrades to
         // "nothing to open" rather than guessing.
@@ -322,6 +315,7 @@ mod tests {
             &row,
             &assets(),
             waml::view::chain::ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
         );
         assert!(diagnostic.is_none());
         assert_eq!(
@@ -344,6 +338,7 @@ mod tests {
             &row,
             &assets(),
             waml::view::chain::ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
         );
         assert!(diagnostic.is_none());
         assert_eq!(
@@ -369,6 +364,7 @@ mod tests {
             &row,
             &assets(),
             waml::view::chain::ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
         );
         assert!(diagnostic.is_some());
         // Degrades to the type default -- uml.Class -> canvas -> the same
@@ -395,6 +391,7 @@ mod tests {
             &row,
             &assets(),
             waml::view::chain::ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
         );
         assert!(diagnostic.is_none());
         assert!(doc.is_some());
@@ -412,6 +409,7 @@ mod tests {
             &row,
             &assets(),
             waml::view::chain::ChainLimits::default(),
+            crate::folder_projection::ViewMode::Projected,
         );
         assert!(diagnostic.is_none());
         assert!(doc.is_none());
