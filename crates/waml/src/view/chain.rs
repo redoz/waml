@@ -202,6 +202,21 @@ impl Chain {
                     }
                     continue;
                 }
+                // `hide`'s params live in the folder's index frontmatter
+                // (`ctx.params` at project time, `index.extra` here at
+                // declaration time -- the same data, see
+                // `Chain::resolve_member_surface`'s own `index.extra`
+                // read). Checked at declaration time, not deferred to
+                // `project`, so a missing/malformed `hide:` degrades the
+                // whole chain up front with a diagnostic that names the
+                // `view:` entry, exactly like an unknown middleware name.
+                "hide" => {
+                    if let Err(message) = super::hide::parse_hide_globs(&index.extra) {
+                        let diagnostic =
+                            super::hide::invalid_params_diagnostic(message, &file, entry.line);
+                        return (Chain::root_only(registry), vec![diagnostic]);
+                    }
+                }
                 _ => {}
             }
             match registry.build(name) {
@@ -724,7 +739,6 @@ mod tests {
         registry.register("adding", || Box::new(AddingDouble));
         registry.register("failing", || Box::new(FailingDouble));
         registry.register("pass-through", || Box::new(PassThrough));
-        registry.register("hide", || Box::new(PassThrough));
         registry
     }
 
@@ -872,16 +886,22 @@ mod tests {
 
     #[test]
     fn repeated_names_in_one_chain_get_stable_disambiguated_view_ids() {
+        // Uses "pass-through", not "hide" -- since Task F1, "hide" is a
+        // reserved name `Chain::build` declaration-checks for a real
+        // `hide:` param before ever reaching a registry lookup, so it no
+        // longer works as a generic disambiguation-only test double.
         let registry = registry_with_doubles();
         let idx = index();
-        let (chain, build_diags) = Chain::build(&decl(&["hide", "hide"]), &registry, &idx);
+        let (chain, build_diags) =
+            Chain::build(&decl(&["pass-through", "pass-through"]), &registry, &idx);
         assert!(build_diags.is_empty());
         assert_eq!(
             chain.ids.iter().map(ViewId::as_str).collect::<Vec<_>>(),
-            vec!["hide", "hide#2"]
+            vec!["pass-through", "pass-through#2"]
         );
 
-        let (chain_again, _) = Chain::build(&decl(&["hide", "hide"]), &registry, &idx);
+        let (chain_again, _) =
+            Chain::build(&decl(&["pass-through", "pass-through"]), &registry, &idx);
         assert_eq!(chain.ids, chain_again.ids);
     }
 
@@ -1433,6 +1453,286 @@ mod tests {
             let (_, surface, diagnostics) = run_root(&bundle, &registry);
             assert!(diagnostics.is_empty());
             assert_eq!(surface.as_str(), "folder");
+        }
+    }
+
+    // Task F1: `hide` -- the first non-identity chain, end to end.
+    mod hide_middleware {
+        use super::*;
+        use crate::extension::CoreExt;
+        use crate::okf::Bundle;
+        use crate::source::SourceBundle;
+
+        fn descend_for<'a>(bundle: &'a okf::Bundle) -> impl Fn(&okf::Directory) -> Chain + 'a {
+            move |dir: &okf::Directory| {
+                let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+                bundle.resolved_view(dir.address.as_str(), &registry).0
+            }
+        }
+
+        fn run_root(
+            bundle: &okf::Bundle,
+            registry: &MiddlewareRegistry,
+        ) -> (Vec<Row>, SurfaceId, Vec<Diagnostic>) {
+            let (chain, mut build_diags) = bundle.resolved_view("/", registry);
+            let directory = bundle.directory("/").unwrap().clone();
+            let params = bundle
+                .index("/")
+                .map(|i| i.extra.clone())
+                .unwrap_or_default();
+            let descend = descend_for(bundle);
+            let projection_ctx = ctx(&directory, bundle, &params, &descend);
+            let outcome = chain.run(&projection_ctx, ChainLimits::default());
+            build_diags.extend(outcome.diagnostics);
+            (outcome.rows, outcome.surface, build_diags)
+        }
+
+        fn hidden_fixture() -> Bundle {
+            Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: hide\nhide: [\"references/**\"]\n---\n# Root\n\n\
+                         * [Orders](orders.md)\n* [References](references/)\n",
+                    ),
+                    ("orders.md", "# Orders\n"),
+                    ("references/index.md", "# References\n"),
+                    ("references/appendix.md", "# Appendix\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap()
+        }
+
+        fn identity_fixture() -> Bundle {
+            Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "# Root\n\n* [Orders](orders.md)\n* [References](references/)\n",
+                    ),
+                    ("orders.md", "# Orders\n"),
+                    ("references/index.md", "# References\n"),
+                    ("references/appendix.md", "# Appendix\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap()
+        }
+
+        #[test]
+        fn hide_drops_exactly_the_matching_rows_and_nothing_else() {
+            let bundle = hidden_fixture();
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+            let (rows, _surface, diagnostics) = run_root(&bundle, &registry);
+            assert!(diagnostics.is_empty());
+
+            let identity = identity_fixture();
+            let (identity_rows, _, identity_diags) = run_root(&identity, &registry);
+            assert!(identity_diags.is_empty());
+
+            let ids: Vec<&str> = rows.iter().map(|r| r.id.path.as_str()).collect();
+            assert_eq!(ids, vec!["orders"]);
+
+            let identity_ids: Vec<&str> =
+                identity_rows.iter().map(|r| r.id.path.as_str()).collect();
+            assert_eq!(identity_ids, vec!["orders", "references"]);
+        }
+
+        #[test]
+        fn hide_declines_surface_resolution() {
+            let bundle = hidden_fixture();
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+            let (_, surface, diagnostics) = run_root(&bundle, &registry);
+            assert!(diagnostics.is_empty());
+
+            let identity = identity_fixture();
+            let (_, identity_surface, identity_diags) = run_root(&identity, &registry);
+            assert!(identity_diags.is_empty());
+
+            assert_eq!(
+                surface, identity_surface,
+                "hide declines -- next.surface(ctx)"
+            );
+        }
+
+        #[test]
+        fn hide_with_no_hide_param_is_a_declaration_failure() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: hide\n---\n# Root\n\n* [Orders](orders.md)\n",
+                    ),
+                    ("orders.md", "# Orders\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+            let (rows, _surface, diagnostics) = run_root(&bundle, &registry);
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(diagnostics[0].code, DiagCode::InvalidViewParams);
+            assert_eq!(
+                rows.len(),
+                1,
+                "declaration failure falls all the way back to the root view"
+            );
+        }
+
+        #[test]
+        fn hide_with_a_malformed_hide_param_is_a_declaration_failure() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([(
+                    "index.md",
+                    "---\nview: hide\nhide: not-a-list\n---\n# Root\n\n* [Orders](orders.md)\n",
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+            let (_, _surface, diagnostics) = run_root(&bundle, &registry);
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(diagnostics[0].code, DiagCode::InvalidViewParams);
+        }
+
+        #[test]
+        fn hide_forwards_every_op_unchanged() {
+            let params = Frontmatter {
+                entries: vec![(
+                    "hide".to_string(),
+                    crate::frontmatter::FmValue::List(vec![crate::frontmatter::FmValue::Str(
+                        "nothing/**".to_string(),
+                    )]),
+                )],
+            };
+            let directory = dir();
+            let bundle = okf::Bundle::default();
+            let descend = |_: &okf::Directory| Chain::default();
+            let inner_ctx = ctx(&directory, &bundle, &params, &descend);
+
+            let stage = super::super::super::hide::Hide;
+            let ops = [
+                RowOp::Rename {
+                    title: "New title".to_string(),
+                },
+                RowOp::Delete,
+                RowOp::Reorder { before: None },
+                RowOp::InsertConcept {
+                    after: None,
+                    title: "New".to_string(),
+                },
+                RowOp::MoveOut,
+            ];
+            for op in ops {
+                let path = RowPath::parse("orders").unwrap();
+                // No inner stage is registered -- forwarding to `next` on an
+                // empty remaining chain always yields `Unsupported`. What
+                // this asserts is that `Hide::apply` itself adds no
+                // transformation: the result matches calling `next.apply`
+                // directly with the same op, for every `RowOp` variant.
+                let via_hide = stage.apply(&inner_ctx, &path, op.clone(), Next { remaining: &[] });
+                let direct = Next { remaining: &[] }.apply(&inner_ctx, &path, op);
+                assert_eq!(via_hide, direct);
+            }
+        }
+
+        #[test]
+        fn a_hidden_path_does_not_resolve_through_the_chain() {
+            let bundle = hidden_fixture();
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+            let (chain, build_diags) = bundle.resolved_view("/", &registry);
+            assert!(build_diags.is_empty());
+
+            let directory = bundle.directory("/").unwrap().clone();
+            let params = bundle.index("/").unwrap().extra.clone();
+            let descend = descend_for(&bundle);
+            let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+            // `hide`'s own `resolve` never forwards a hidden path -- it
+            // always answers `Unresolved`. The runner's parent-prefix loop
+            // then falls back to the folder's own listing (still under the
+            // same, hide-filtered chain): the hidden row itself is never
+            // resolved back, only the containing folder.
+            let hidden_id = RowId {
+                owner: ViewId::new("hide"),
+                path: RowPath::parse("references").unwrap(),
+            };
+            let resolved = chain
+                .resolve(&projection_ctx, &hidden_id)
+                .expect("falls back to the folder's own (hide-filtered) listing");
+            assert!(
+                resolved
+                    .iter()
+                    .all(|row| row.target != RowTarget::Folder("/references".to_string())),
+                "the hidden row itself must never come back out of resolve"
+            );
+        }
+
+        #[test]
+        fn the_raw_okf_layer_resolves_a_hidden_path() {
+            let bundle = hidden_fixture();
+            let raw = Chain::raw();
+
+            let directory = bundle.directory("/").unwrap().clone();
+            let params = bundle.index("/").unwrap().extra.clone();
+            let descend = descend_for(&bundle);
+            let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+            let hidden_id = RowId {
+                owner: ViewId::new(super::super::super::root::ROOT_VIEW_OWNER),
+                path: RowPath::parse("references").unwrap(),
+            };
+            let resolved = raw
+                .resolve(&projection_ctx, &hidden_id)
+                .expect("the raw OKF layer bypasses the declared hide chain");
+            assert_eq!(resolved.len(), 1);
+            assert_eq!(
+                resolved[0].target,
+                RowTarget::Folder("/references".to_string())
+            );
+        }
+
+        /// B8's mint/resolve invariant (`assert_mint_resolve_roundtrip`),
+        /// scoped to *surviving* rows: every path `hide`'s own declared
+        /// chain mints must still resolve through that same declared chain
+        /// on a later, freshly-parsed run.
+        #[test]
+        fn every_surviving_row_resolves_through_the_declared_chain_on_a_fresh_run() {
+            let pairs = [
+                (
+                    "index.md",
+                    "---\nview: hide\nhide: [\"references/**\"]\n---\n# Root\n\n\
+                     * [Orders](orders.md)\n* [References](references/)\n",
+                ),
+                ("orders.md", "# Orders\n"),
+                ("references/index.md", "# References\n"),
+                ("references/appendix.md", "# Appendix\n"),
+            ];
+            let minted_from = Bundle::parse(&SourceBundle::try_from_pairs(pairs).unwrap()).unwrap();
+            let fresh = Bundle::parse(&SourceBundle::try_from_pairs(pairs).unwrap()).unwrap();
+            let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
+
+            let (rows, _, diagnostics) = run_root(&minted_from, &registry);
+            assert!(diagnostics.is_empty());
+            assert_eq!(
+                rows.len(),
+                1,
+                "references/** is hidden -- only orders survives"
+            );
+
+            let (chain, _) = fresh.resolved_view("/", &registry);
+            let directory = fresh.directory("/").unwrap().clone();
+            let params = fresh.index("/").unwrap().extra.clone();
+            let descend = descend_for(&fresh);
+            let fresh_ctx = ctx(&directory, &fresh, &params, &descend);
+
+            for row in &rows {
+                let resolved = chain
+                    .resolve(&fresh_ctx, &row.id)
+                    .unwrap_or_else(|_| panic!("surviving row `{}` must resolve", row.id.path));
+                assert_eq!(resolved[0].target, row.target);
+            }
         }
     }
 }

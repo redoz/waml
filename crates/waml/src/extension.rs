@@ -33,10 +33,16 @@ impl CoreExtension for CoreExt {
     }
 
     fn middleware(&self) -> Vec<(&'static str, MiddlewareFactory)> {
-        vec![(
-            "index",
-            Arc::new(|| Box::new(RootView) as Box<dyn Projection>),
-        )]
+        vec![
+            (
+                "index",
+                Arc::new(|| Box::new(RootView) as Box<dyn Projection>),
+            ),
+            (
+                "hide",
+                Arc::new(|| Box::new(crate::view::hide::Hide) as Box<dyn Projection>),
+            ),
+        ]
     }
 
     fn profiles(&self) -> Vec<ProfileDef> {
