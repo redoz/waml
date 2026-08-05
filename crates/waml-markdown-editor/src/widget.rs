@@ -988,10 +988,6 @@ impl MarkdownEditor {
             .clone();
         let (base_commands, plan) = self.cached_draw_commands(session, &installed, &layout)?;
         let content_origin = viewport.pos + dvec2(gutter, 0.0) - self.scroll_bars.get_scroll_pos();
-        let commands = base_commands
-            .iter()
-            .map(|command| command.translated(content_origin))
-            .collect::<Arc<[_]>>();
         self.scroll_bars.begin(cx, walk, Layout::default());
         self.last_draw = DrawRecorder::default();
         self.paint_evidence.begin_frame();
@@ -1002,7 +998,9 @@ impl MarkdownEditor {
             // Visit only the commands the plan says contribute to this layer
             // (the loop used to rescan the whole list once per layer).
             for &index in plan[layer_slot(layer)].iter() {
-                let command = &commands[index];
+                // Translate a single command on the stack instead of
+                // collecting a whole translated `Arc<[_]>` every frame (P-1).
+                let command = &base_commands[index].translated(content_origin);
                 if command.layer() == layer {
                     self.paint_evidence.record_command(command);
                 }
