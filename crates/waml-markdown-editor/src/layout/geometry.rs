@@ -544,33 +544,100 @@ impl LayoutSnapshot {
     }
 
     pub fn point_to_source(&self, point: DVec2) -> TextPosition {
-        let row = self.row_index_at_y(point.y).or_else(|| {
-            self.rows
+        self.nearest_stop_to(point).map_or(
+            TextPosition::new(TextSize::new(0), Affinity::Before),
+            |stop| stop.position,
+        )
+    }
+
+    /// The caret stop nearest `point`, searching rows outward from the one the
+    /// pointer is over.
+    ///
+    /// A row can own no caret stop at all — a blank line between two blocks, or
+    /// a decoration-only row. Resolving the point against the document's first
+    /// stop in that case snapped a drag to the top of the file the moment its
+    /// endpoint left the text, so the neighbouring rows are consulted instead,
+    /// nearest in `y` first. `selection_rects` and `move_vertical` already take
+    /// this posture; this makes the three agree.
+    fn nearest_stop_to(&self, point: DVec2) -> Option<CaretStop> {
+        let last = self.rows.len().checked_sub(1)?;
+        let start = self
+            .rows
+            .partition_point(|row| row.rect.pos.y + row.rect.size.y <= point.y)
+            .min(last);
+        let mut below = Some(start);
+        let mut above = start.checked_sub(1);
+        loop {
+            let row = match (below, above) {
+                (Some(down), Some(up))
+                    if distance_to_y(self.rows[down].rect, point.y)
+                        <= distance_to_y(self.rows[up].rect, point.y) =>
+                {
+                    below = (down < last).then_some(down + 1);
+                    down
+                }
+                (_, Some(up)) => {
+                    above = up.checked_sub(1);
+                    up
+                }
+                (Some(down), None) => {
+                    below = (down < last).then_some(down + 1);
+                    down
+                }
+                (None, None) => return None,
+            };
+            // A row the point is not inside is entered from one end: the
+            // pointer sits past the end of a row above it, or before the start
+            // of a row below it. Resolving the raw `x` there would land
+            // mid-row and shrink a drag that only moved further away, so the
+            // row's own extreme stop is taken instead.
+            let rect = self.rows[row].rect;
+            let entry = if point.y > rect.pos.y + rect.size.y {
+                RowEntry::PastEnd
+            } else if point.y < rect.pos.y {
+                RowEntry::BeforeStart
+            } else {
+                RowEntry::Inside(point.x)
+            };
+            if let Some(stop) = self.stop_in_row(row, entry) {
+                return Some(stop);
+            }
+        }
+    }
+
+    /// The stop of `row` that `entry` selects. A point inside the row takes the
+    /// stop nearest its `x`, preferring the lane that owns it and falling back
+    /// to every lane of the row when that lane owns no stop; a point past
+    /// either end takes that end's stop.
+    fn stop_in_row(&self, row: usize, entry: RowEntry) -> Option<CaretStop> {
+        let lane_stops = match entry {
+            RowEntry::Inside(x) => self
+                .lane_at(row, x)
+                .map_or_else(Vec::new, |lane| self.stops_for_lane(&self.lanes[lane])),
+            _ => Vec::new(),
+        };
+        let stops = if lane_stops.is_empty() {
+            let lanes = self.rows.get(row)?.lanes.clone();
+            self.lanes
+                .get(lanes)?
                 .iter()
-                .enumerate()
-                .min_by(|(_, left), (_, right)| {
-                    distance_to_y(left.rect, point.y)
-                        .partial_cmp(&distance_to_y(right.rect, point.y))
-                        .unwrap_or(Ordering::Equal)
-                })
-                .map(|(index, _)| index)
-        });
-        let stops = row
-            .and_then(|row| self.lane_at(row, point.x))
-            .map_or_else(Vec::new, |lane| self.stops_for_lane(&self.lanes[lane]));
-        stops
-            .into_iter()
-            .min_by(|left, right| {
-                (left.point.x - point.x)
+                .flat_map(|lane| self.stops_for_lane(lane))
+                .collect()
+        } else {
+            lane_stops
+        };
+        // `stops_for_lane` orders by x, and lanes are ordered by x within a row,
+        // so the ends of `stops` are the ends of the row.
+        match entry {
+            RowEntry::BeforeStart => stops.into_iter().next(),
+            RowEntry::PastEnd => stops.into_iter().next_back(),
+            RowEntry::Inside(x) => stops.into_iter().min_by(|left, right| {
+                (left.point.x - x)
                     .abs()
-                    .partial_cmp(&(right.point.x - point.x).abs())
+                    .partial_cmp(&(right.point.x - x).abs())
                     .unwrap_or(Ordering::Equal)
-            })
-            .or_else(|| self.all_stops().into_iter().next())
-            .map_or(
-                TextPosition::new(TextSize::new(0), Affinity::Before),
-                |stop| stop.position,
-            )
+            }),
+        }
     }
 
     pub fn selection_rects(&self, selection: Selection) -> Option<Vec<Rect>> {
@@ -1057,6 +1124,15 @@ fn distance_to_x(rect: Rect, x: f64) -> f64 {
     } else {
         0.0
     }
+}
+
+/// How a point reaches the row being resolved against: from inside it, or past
+/// one of its ends.
+#[derive(Clone, Copy)]
+enum RowEntry {
+    BeforeStart,
+    Inside(f64),
+    PastEnd,
 }
 
 fn distance_to_y(rect: Rect, y: f64) -> f64 {

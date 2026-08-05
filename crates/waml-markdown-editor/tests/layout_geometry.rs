@@ -180,6 +180,33 @@ fn selection_spanning_a_blank_line_still_paints_the_lines_it_covers() {
 }
 
 #[test]
+fn a_point_on_a_blank_line_resolves_to_the_nearest_line_not_the_document_start() {
+    let snapshot = LayoutSnapshot::blank_line_fixture_for_test();
+    // The blank line spans y 20..40 and owns no caret stop. A point on it must
+    // resolve to the nearer neighbouring line, not snap back to offset 0, and
+    // it is entered from one end: past the end of the line above, or before the
+    // start of the line below. Resolving the raw x in the neighbour would land
+    // mid-line and shrink a drag that only moved further away.
+    assert_eq!(
+        snapshot.point_to_source(dvec2(30.0, 25.0)),
+        TextPosition::new(t(4), Affinity::Before),
+    );
+    assert_eq!(
+        snapshot.point_to_source(dvec2(30.0, 35.0)),
+        TextPosition::new(t(5), Affinity::Before),
+    );
+    // The same rule carries past both ends of the document.
+    assert_eq!(
+        snapshot.point_to_source(dvec2(30.0, -50.0)),
+        TextPosition::new(t(0), Affinity::Before),
+    );
+    assert_eq!(
+        snapshot.point_to_source(dvec2(30.0, 500.0)),
+        TextPosition::new(t(9), Affinity::Before),
+    );
+}
+
+#[test]
 fn selection_rects_split_across_wrapped_mixed_height_lines() {
     let snapshot = LayoutSnapshot::wrapped_fixture_for_test();
     let selection = Selection::new(
@@ -3416,3 +3443,4 @@ fn a_line_of_only_hidden_markers_collapses_while_a_mixed_line_keeps_its_height()
         "a line of nothing but hidden markers - a code fence, a frontmatter          line - collapses instead of leaving a blank row          (visible {visible_height}, hidden {hidden_height})"
     );
 }
+
