@@ -26,6 +26,7 @@ use crate::icons::IconSet;
 use crate::nav::NavView;
 use crate::navigation::{NavigationIntent, NavigationTarget, OpenDisposition};
 use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
+use crate::tree_layout::TreeLayout;
 use makepad_widgets::*;
 use std::collections::{HashMap, HashSet};
 
@@ -115,6 +116,23 @@ script_mod! {
         draw_reveal: mod.draw.DrawColor{
             color: atlas.accent
         }
+        // Row label ink. The fork FileTree drew labels with its own text style;
+        // this reproduces it (fonts.text_menu, atlas.text) so rows read the same.
+        draw_row_text +: {
+            color: atlas.text
+            text_style: fonts.text_menu
+        }
+        // Hover tint, painted BENEATH the selection fill so a hovered-and-
+        // selected row still reads as selected.
+        draw_hover: mod.draw.DrawColor{
+            color: atlas.hover
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.5, 0.5, self.rect_size.x - 1.0, self.rect_size.y - 1.0, 4.0)
+                sdf.fill(self.color)
+                return sdf.result
+            }
+        }
         // Small degraded-chain marker, drawn at the row's right edge for a
         // folder whose declared `view:` chain failed and fell back to the
         // root view (see `draw_row_diag_marker`). Distinct from `draw_reveal`
@@ -192,24 +210,13 @@ script_mod! {
         // height even when hidden), so the collapsed Flag state -- which draws
         // the panel into a zero-size walk -- must hide THIS View instead (a real
         // View yields its space) or the FileTree keeps claiming height inside it.
+        // We draw rows ourselves; this view exists to clip them and to own
+        // the scrollbars. Same tinted bar the FileTree carried, so an
+        // overflowing tree still visibly says "there's more".
         tree_scroll := View {
             width: Fill
             height: Fill
             flow: Down
-        file_tree := FileTree {
-            // Roomier rows + larger humanist type, and flat (no zebra striping)
-            // so the panel reads as a calm modern sidebar, not a 90s list box.
-            // Left padding leaves room for the two immediate-mode marks drawn at
-            // the start of each row: the fold chevron (CHEVRON_LEFT_MARGIN 4 +
-            // CHEVRON_SIZE 10 = 14px) then the 14px glyph icon (ICON_LEFT_MARGIN
-            // 20 + ICON_SIZE = 34px), so padding.left 38 sits the label 4px past
-            // the glyph.
-            node_height: 27.0
-            auto_toggle_folders: false
-
-            // Scrollbar handle is invisible in the shipped theme (color_outset
-            // ~= our field_bg). Tint it so an overflowing tree visibly says
-            // "there's more": dim ink idle, accent on hover/drag.
             scroll_bars: ScrollBars {
                 scroll_bar_y: ScrollBar {
                     draw_bg +: {
@@ -219,66 +226,6 @@ script_mod! {
                     }
                 }
             }
-
-            file_node +: {
-                padding: Inset{left: 38.0}
-                indent_width: 10.0
-                // We render no git-status dots, but draw_file() still reserves
-                // the 6px dot slot (+3px margin) before every label -- a phantom
-                // gap between our glyph and the text. Zero it.
-                status_dot_walk: Walk{ width: 0.0, height: 6.0, margin: Inset{} }
-                draw_text +: {
-                    color: atlas.text
-                    // Selection is a translucent accent tint over white, so keep
-                    // selected-row text the same dark ink instead of the
-                    // FileTree default (white), which is unreadable on it.
-                    color_active: atlas.text
-                    text_style: fonts.text_menu
-                }
-                draw_bg +: {
-                    // Transparent so the panel's translucent glass fill (and the
-                    // canvas beneath it) shows through the rows. Selection is
-                    // app-driven (draw_selection overlay), so the built-in
-                    // click-only highlight stays disabled.
-                    color_1: #x00000000
-                    color_2: #x00000000
-                    color_active: #x00000000
-                }
-            }
-
-            folder_node +: {
-                padding: Inset{left: 38.0}
-                indent_width: 10.0
-                // Same phantom-gap zeroing as file_node; folders also reserve a
-                // ~16px slot for the (transparent) built-in folder box via
-                // icon_walk -- our Package glyph overlay replaces it, so zero it.
-                status_dot_walk: Walk{ width: 0.0, height: 6.0, margin: Inset{} }
-                icon_walk: Walk{ width: 0.0, height: 0.0, margin: Inset{} }
-                draw_text +: {
-                    color: atlas.text
-                    color_active: atlas.text
-                    text_style: fonts.text_menu
-                }
-                draw_bg +: {
-                    // Transparent (see file_node): the glass fill shows through.
-                    color_1: #x00000000
-                    color_2: #x00000000
-                    color_active: #x00000000
-                }
-                // The built-in folder box icon is redundant with our own
-                // package.svg overlay; make it fully transparent.
-                draw_icon +: {
-                    color: #x00000000
-                    color_active: #x00000000
-                }
-            }
-
-            filler +: {
-                // Transparent: the empty area below the last row shows the
-                // panel's glass fill (and canvas) rather than opaque field_bg.
-                pixel: fn() { return #x00000000 }
-            }
-        }
         }
     }
 }
@@ -329,10 +276,6 @@ impl IconSet {
         })
     }
 }
-
-/// Row height in the `FileTree` DSL (`node_height: 27.0`); used to vertically
-/// center the icon within each row.
-const ROW_HEIGHT: f64 = 27.0;
 
 /// Inset (px) of the hand-drawn empty-state message from the panel edge.
 const PAD: f64 = 10.0;
@@ -418,7 +361,7 @@ pub struct ProjectTree {
     #[deref]
     view: View,
     #[rust]
-    tree: ProjectTreeData,
+    layout: TreeLayout,
     #[rust]
     nav_tag: NavStateTag,
     #[rust]
@@ -463,6 +406,10 @@ pub struct ProjectTree {
     // Translucent accent fill painted over the active row (see the DSL).
     #[live]
     draw_selection: DrawColor,
+    #[live]
+    draw_hover: DrawColor,
+    #[live]
+    draw_row_text: DrawText,
     #[live]
     draw_reveal: DrawColor,
     #[live]
@@ -648,170 +595,6 @@ fn reconcile_open_directories(
     open
 }
 
-/// Emit `begin_folder`/`end_folder` for packages and `file` for leaves, overlay
-/// a HUD glyph icon at the left of every row, and paint the active-row highlight
-/// on the row whose key matches `selected`. A collapsed folder returns `Err`
-/// from `begin_folder`; skip its children then (its own row is still drawn
-/// either way, so the icon is drawn unconditionally).
-///
-/// `scale` is the fold amount these rows are drawn at -- the product of every
-/// ancestor folder's animated `folder_opened`, which is exactly the factor the
-/// fork shrinks the row height and font by. Every hand-drawn mark below takes
-/// it too, so the overlay dissolves with the rows instead of standing at full
-/// size and full ink over a folder mid-collapse.
-#[allow(clippy::too_many_arguments)]
-fn draw_nodes(
-    cx: &mut Cx2d,
-    ft: &mut FileTree,
-    nodes: &[TreeNode],
-    icons: &mut IconSet,
-    draw_selection: &mut DrawColor,
-    draw_chevron: &mut DrawChevron,
-    depth: usize,
-    color: Vec4,
-    diagram_color: Vec4,
-    selected: Option<&str>,
-    draw_reveal: &mut DrawColor,
-    reveal_color: Vec4,
-    reveal_key: Option<&str>,
-    reveal_strength: f32,
-    scale: f64,
-    draw_diag: &mut DrawColor,
-    chevron_rects: &mut HashMap<String, Rect>,
-) -> bool {
-    let mut reveal_was_drawn = false;
-    for node in nodes {
-        let key = crate::tree::key_string(&node.key);
-        let id = LiveId::from_str(&key);
-        // Diagram rows carry the theme accent, tinted toward the label ink the
-        // other kinds use -- the same treatment the active doc tab gives the
-        // same glyph, so one document reads alike in both surfaces.
-        let icon_color = if node.kind == TreeKind::Diagram {
-            crate::accent::icon_tint(diagram_color, color)
-        } else {
-            color
-        };
-        let row_top = cx.turtle().pos();
-        let row_rect = Rect {
-            pos: row_top,
-            size: dvec2(cx.turtle().rect().size.x, ROW_HEIGHT * scale),
-        };
-        let is_selected = selected == Some(key.as_str());
-        let is_reveal = reveal_key == Some(key.as_str());
-        if node.is_directory {
-            let opened = ft.begin_folder(cx, id, &node.title).is_ok();
-            // A row scrolled out of the viewport is culled by the fork -- it
-            // draws no bg, no label, and forgets its node. Skip its marks too,
-            // or the overlay is the only thing painted there.
-            let drawn = ft.last_node_drawn();
-            if is_reveal {
-                // Set even for a culled row: this flags that the reveal target
-                // was reached in this draw, which is exactly what arms the
-                // scroll-into-view below -- and a reveal target is usually
-                // off-screen, which is why it needs scrolling to at all.
-                reveal_was_drawn = true;
-            }
-            if drawn {
-                if is_selected {
-                    crate::tree_row_draw::row_fill(cx, draw_selection, row_rect, scale);
-                }
-                if is_reveal {
-                    draw_reveal.color = vec4(
-                        reveal_color.x,
-                        reveal_color.y,
-                        reveal_color.z,
-                        0.24 * reveal_strength,
-                    );
-                    crate::tree_row_draw::row_fill(cx, draw_reveal, row_rect, scale);
-                }
-                crate::tree_row_draw::row_icon(
-                    cx,
-                    icons,
-                    node.presentation.icon,
-                    row_rect,
-                    depth,
-                    icon_color,
-                    scale,
-                );
-                // Rotation comes from the fork's own animated fold amount, so
-                // the chevron swings exactly with the rows rather than on a
-                // second timer. Only read inside `drawn`: a culled folder's node
-                // is forgotten, so `folder_opened` would report it closed.
-                let child_open = ft.folder_opened(id);
-                let chevron_rect = crate::tree_row_draw::row_chevron(
-                    cx,
-                    draw_chevron,
-                    row_rect,
-                    depth,
-                    child_open,
-                    scale,
-                );
-                chevron_rects.insert(key.clone(), chevron_rect);
-                if node.view_degraded {
-                    crate::tree_row_draw::row_diag_marker(cx, draw_diag, row_rect, scale);
-                }
-            }
-            if opened {
-                reveal_was_drawn |= draw_nodes(
-                    cx,
-                    ft,
-                    &node.children,
-                    icons,
-                    draw_selection,
-                    draw_chevron,
-                    depth + 1,
-                    color,
-                    diagram_color,
-                    selected,
-                    draw_reveal,
-                    reveal_color,
-                    reveal_key,
-                    reveal_strength,
-                    // The child scale comes straight off the fork's own fold
-                    // stack rather than `scale * folder_opened(id)`: a culled
-                    // ancestor is forgotten and reports 0, which would fade every
-                    // descendant's marks away while their labels drew at full
-                    // size (the scrolled-tree "icons vanish" bug).
-                    ft.current_scale(),
-                    draw_diag,
-                    chevron_rects,
-                );
-                ft.end_folder();
-            }
-        } else {
-            ft.file(cx, id, &node.title);
-            let drawn = ft.last_node_drawn();
-            if is_reveal {
-                reveal_was_drawn = true;
-            }
-            if drawn {
-                if is_selected {
-                    crate::tree_row_draw::row_fill(cx, draw_selection, row_rect, scale);
-                }
-                if is_reveal {
-                    draw_reveal.color = vec4(
-                        reveal_color.x,
-                        reveal_color.y,
-                        reveal_color.z,
-                        0.24 * reveal_strength,
-                    );
-                    crate::tree_row_draw::row_fill(cx, draw_reveal, row_rect, scale);
-                }
-                crate::tree_row_draw::row_icon(
-                    cx,
-                    icons,
-                    node.presentation.icon,
-                    row_rect,
-                    depth,
-                    icon_color,
-                    scale,
-                );
-            }
-        }
-    }
-    reveal_was_drawn
-}
-
 impl Widget for ProjectTree {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         if let Some(frame) = self.reveal_next_frame.is_event(event) {
@@ -953,42 +736,88 @@ impl Widget for ProjectTree {
         walk.margin.top = 0.0;
         walk.margin.bottom = 0.0;
 
+        // Draw the body, then paint our rows into the area it claimed.
+        while self.view.draw_walk(cx, scope, walk).step().is_some() {}
+
+        let body = self.view.view(cx, ids!(tree_scroll)).area().rect(cx);
+        self.layout.set_viewport(body.pos, body.size);
+
         let mut reveal_was_drawn = false;
-        self.chevron_rects.clear();
-        while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
-            if let Some(mut file_tree) = step.as_file_tree().borrow_mut() {
-                reveal_was_drawn |= draw_nodes(
-                    cx,
-                    &mut file_tree,
-                    &self.tree.roots,
-                    &mut self.icons,
-                    &mut self.draw_selection,
-                    &mut self.draw_chevron,
-                    0,
-                    self.icon_color,
-                    self.diagram_icon_color,
-                    self.selected_key.as_deref(),
-                    &mut self.draw_reveal,
-                    self.reveal_color,
-                    self.reveal_key.as_deref(),
-                    self.reveal_strength,
-                    1.0,
-                    &mut self.draw_diag,
-                    &mut self.chevron_rects,
-                );
+        for (index, row) in self.layout.rows().iter().enumerate() {
+            let rect = self.layout.row_rect(index);
+            // A row outside the clipped body draws nothing -- same cull the
+            // fork applied, and it keeps the cost proportional to what's seen.
+            if rect.pos.y + rect.size.y < body.pos.y || rect.pos.y > body.pos.y + body.size.y {
+                if self.reveal_key.as_deref() == Some(row.key.as_str()) {
+                    // Still flag it: a reveal target is usually off-screen,
+                    // which is exactly why it needs scrolling to.
+                    reveal_was_drawn = true;
+                }
+                continue;
             }
-        }
-        let pending_scroll = self.pending_scroll_key.take();
-        if reveal_was_drawn && pending_scroll.is_some() {
-            let file_tree_area = self.view.file_tree(cx, ids!(file_tree)).area();
-            cx.send_trigger(
-                file_tree_area,
-                Trigger {
-                    id: live_id!(scroll_focus_nav),
-                    from: self.draw_selection.area(),
-                },
+
+            if self.layout.hover() == Some(row.key.as_str()) {
+                crate::tree_row_draw::row_fill(cx, &mut self.draw_hover, rect, row.scale);
+            }
+            if self.layout.selected() == Some(row.key.as_str()) {
+                crate::tree_row_draw::row_fill(cx, &mut self.draw_selection, rect, row.scale);
+            }
+            if self.reveal_key.as_deref() == Some(row.key.as_str()) {
+                reveal_was_drawn = true;
+                self.draw_reveal.color = vec4(
+                    self.reveal_color.x,
+                    self.reveal_color.y,
+                    self.reveal_color.z,
+                    0.24 * self.reveal_strength,
+                );
+                crate::tree_row_draw::row_fill(cx, &mut self.draw_reveal, rect, row.scale);
+            }
+
+            let icon_color = if row.kind == TreeKind::Diagram {
+                crate::accent::icon_tint(self.diagram_icon_color, self.icon_color)
+            } else {
+                self.icon_color
+            };
+            crate::tree_row_draw::row_icon(
+                cx,
+                &mut self.icons,
+                row.icon,
+                rect,
+                row.depth,
+                icon_color,
+                row.scale,
+            );
+            if row.is_directory {
+                crate::tree_row_draw::row_chevron(
+                    cx,
+                    &mut self.draw_chevron,
+                    self.layout.chevron_rect(index),
+                    row.depth,
+                    row.fold,
+                    row.scale,
+                );
+                if row.view_degraded {
+                    crate::tree_row_draw::row_diag_marker(cx, &mut self.draw_diag, rect, row.scale);
+                }
+            }
+            crate::tree_row_draw::row_label(
+                cx,
+                &mut self.draw_row_text,
+                rect,
+                row.depth,
+                &row.title,
+                row.scale,
             );
         }
+
+        // Scroll-into-view is now a scroll offset, not a trigger sent at the
+        // fork's area: the core owns the offset, so ask it directly.
+        if let Some(key) = self.pending_scroll_key.take() {
+            if self.layout.scroll_key_into_view(&key) {
+                self.view.redraw(cx);
+            }
+        }
+        let _ = reveal_was_drawn;
 
         // Empty state, hand-drawn over the (empty) body area. `Browse` draws
         // nothing here -- the rows speak for themselves. An expanded panel always
@@ -1017,6 +846,12 @@ impl Widget for ProjectTree {
 }
 
 impl ProjectTree {
+    /// The current roots. `node_for_key` and `reveal_path` still walk the real
+    /// `TreeNode` graph; only row layout moved into the core.
+    fn roots(&self) -> &[TreeNode] {
+        self.layout.roots()
+    }
+
     /// Apply a dock event: transition, then redraw. No-op if the state is
     /// unchanged.
     ///
@@ -1127,7 +962,7 @@ impl ProjectTree {
         self.openable_ids = openable_ids;
         self.directory_addresses = directory_addresses;
         self.open_directories = open_directories;
-        self.tree = tree;
+        self.layout.set_roots(tree.roots);
         self.nav_tag = tag;
         self.view.redraw(cx);
     }
@@ -1153,8 +988,8 @@ impl ProjectTree {
             let directory = NavigationTarget::Directory {
                 address: id.to_owned(),
             };
-            reveal_path(&self.tree.roots, &document, &mut Vec::new())
-                .or_else(|| reveal_path(&self.tree.roots, &directory, &mut Vec::new()))
+            reveal_path(self.roots(), &document, &mut Vec::new())
+                .or_else(|| reveal_path(self.roots(), &directory, &mut Vec::new()))
                 .map(|(key, _)| key)
         });
         self.set_selected_key(cx, key);
@@ -1193,7 +1028,7 @@ impl ProjectTree {
     }
 
     pub fn reveal_target(&mut self, cx: &mut Cx, target: &NavigationTarget) -> bool {
-        let Some((key, ancestors)) = reveal_path(&self.tree.roots, target, &mut Vec::new()) else {
+        let Some((key, ancestors)) = reveal_path(self.roots(), target, &mut Vec::new()) else {
             return false;
         };
         let file_tree = self.view.file_tree(cx, ids!(file_tree));
@@ -1227,7 +1062,7 @@ impl ProjectTree {
             }
             None
         }
-        find(&self.tree.roots, key)
+        find(self.roots(), key)
     }
 
     /// The subject `App` dispatches the node context menu against: a *concept
@@ -1743,26 +1578,6 @@ mod tests {
         })];
 
         assert_eq!(panel.navigation(&actions), Some(intent));
-    }
-
-    #[test]
-    fn scripted_project_tree_disables_file_tree_folder_auto_toggle() {
-        let mut vm = crate::script_gate::boot_test_vm();
-        crate::theme_atlas::script_mod(&mut vm);
-        crate::fonts::script_mod(&mut vm);
-        crate::icons::script_mod(&mut vm);
-        crate::tree_panel::script_mod(&mut vm);
-
-        let file_tree = script_eval!(vm, {
-            (mod.widgets.ProjectTree {}).tree_scroll.file_tree
-        });
-        let file_tree = file_tree.as_object().expect("scripted FileTree object");
-        let auto_toggle = vm.map_mut_with(file_tree, |_vm, map| {
-            map.get(&live_id!(auto_toggle_folders).into())
-                .map(|entry| entry.value)
-        });
-
-        assert_eq!(auto_toggle.and_then(|value| value.as_bool()), Some(false));
     }
 
     #[test]

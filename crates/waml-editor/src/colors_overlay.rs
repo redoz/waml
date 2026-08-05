@@ -19,6 +19,7 @@ pub enum Swatch {
     Accent,
     AccentSoft,
     Selection,
+    Hover,
     FrameHi,
     FrameLo,
     Scrim,
@@ -82,6 +83,7 @@ pub const COLOR_GROUPS: &[(&str, &[ColorRow])] = &[
             cr!("accent", Accent, "Brand / interaction accent"),
             cr!("accent_soft", AccentSoft, "Faint accent wash / separators"),
             cr!("selection", Selection, "Active / selected row fill"),
+            cr!("hover", Hover, "Hovered row fill, beneath the selection"),
             cr!("frame_hi", FrameHi, "Source-bright frame stop"),
             cr!("frame_lo", FrameLo, "Source-dim frame stop"),
         ],
@@ -176,6 +178,7 @@ script_mod! {
         draw_swatch_accent         +: { color: atlas.accent }
         draw_swatch_accent_soft    +: { color: atlas.accent_soft }
         draw_swatch_selection      +: { color: atlas.selection }
+        draw_swatch_hover          +: { color: atlas.hover }
         draw_swatch_frame_hi       +: { color: atlas.frame_hi }
         draw_swatch_frame_lo       +: { color: atlas.frame_lo }
         draw_swatch_scrim          +: { color: atlas.scrim }
@@ -267,6 +270,9 @@ pub struct ColorsOverlay {
     #[redraw]
     #[live]
     draw_swatch_selection: DrawColor,
+    #[redraw]
+    #[live]
+    draw_swatch_hover: DrawColor,
     #[redraw]
     #[live]
     draw_swatch_frame_hi: DrawColor,
@@ -384,6 +390,7 @@ impl ColorsOverlay {
             Swatch::Accent => &mut self.draw_swatch_accent,
             Swatch::AccentSoft => &mut self.draw_swatch_accent_soft,
             Swatch::Selection => &mut self.draw_swatch_selection,
+            Swatch::Hover => &mut self.draw_swatch_hover,
             Swatch::FrameHi => &mut self.draw_swatch_frame_hi,
             Swatch::FrameLo => &mut self.draw_swatch_frame_lo,
             Swatch::Scrim => &mut self.draw_swatch_scrim,
@@ -476,8 +483,8 @@ mod tests {
 
         assert_eq!(
             expected.len(),
-            28,
-            "expected 28 swatch tokens, got {}",
+            29,
+            "expected 29 swatch tokens, got {}",
             expected.len()
         );
         assert_eq!(

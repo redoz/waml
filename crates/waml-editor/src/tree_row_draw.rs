@@ -141,9 +141,6 @@ pub fn row_fill(cx: &mut Cx2d, draw: &mut DrawColor, rect: Rect, scale: f64) {
 /// Vertically centred in the row's SCALED band and faded with it, so a label
 /// dissolves with its row mid-collapse instead of standing at full ink.
 ///
-/// Not yet consumed -- `tree_panel.rs` still draws its labels through the
-/// fork `FileTree` widget until Task 6 replaces it.
-#[allow(dead_code)]
 pub fn row_label(
     cx: &mut Cx2d,
     draw: &mut DrawText,

@@ -48,6 +48,9 @@ script_mod! {
         accent: #x1496dc
         accent_soft: #x1496dc24
         selection: #x1496dc22
+        // Hover tint for a tree row, roughly half `selection`'s alpha so a
+        // hovered-and-selected row still reads as selected on top of it.
+        hover: #x1496dc11
         frame_hi: #x1496dcf2
         frame_lo: #x1496dc80
 
@@ -127,6 +130,8 @@ script_mod! {
         accent: #x347a88
         accent_soft: #x347a8824
         selection: #x347a8833
+        // Hover tint, half `selection`'s alpha (see light theme).
+        hover: #x347a881a
         frame_hi: #x347a88f2
         frame_lo: #x347a8880
 
