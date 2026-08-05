@@ -572,6 +572,79 @@ fn interaction_use_cycles_and_binding_errors_are_diagnosed() {
 }
 
 #[test]
+fn every_binding_issue_drops_the_use_and_reports_it() {
+    // One fixture per `UseBindingIssue` variant. Each asserts BOTH halves of
+    // the shared verdict: the offending use is dropped from the projection
+    // (the graph copy) and the exact message lands on the exact span (the
+    // diagnosed copy). A drop-vs-report divergence fails one half or the other.
+    macro_rules! uses_source {
+        ($binds:literal) => {
+            concat!(
+                "---\ntype: uml.Sequence\n---\n# Uses\n\n## Lifelines\n",
+                "- [A](./a.md) as pa\n- [A](./a.md) as pb\n- [A](./a.md) as pc\n\n",
+                "## Messages\n- ref [Target](./target.md) as bad\n",
+                $binds,
+                "- ref [Target](./target.md) as ok\n  - bind pa to ta\n  - bind pb to tb\n",
+            )
+        };
+    }
+    for (source, message, binding_index) in [
+        (
+            uses_source!("  - bind pa to ta\n  - bind pa to tb\n"),
+            "interaction use 'bad' has duplicate bindings",
+            Some(1),
+        ),
+        (
+            uses_source!("  - bind pa to ta\n  - bind pb to tb\n  - bind nope to tc\n"),
+            "interaction use 'bad' has an unknown binding endpoint",
+            Some(2),
+        ),
+        (
+            uses_source!("  - bind pa to ta\n  - bind pb to tb\n  - bind pc to tc\n"),
+            "interaction use 'bad' binds different classifiers",
+            Some(2),
+        ),
+        (
+            uses_source!("  - bind pa to ta\n"),
+            "interaction use 'bad' is missing a participating lifeline binding",
+            None,
+        ),
+    ] {
+        let analysis = analyze([
+            ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+            ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
+            (
+                "target.md",
+                "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [A](./a.md) as ta\n- [A](./a.md) as tb\n- [B](./b.md) as tc\n\n## Messages\n- ta calls tb `work()`\n",
+            ),
+            ("uses.md", source),
+        ]);
+
+        // The graph drop: only the well-bound use survives into the model.
+        let aliases = interaction(&analysis, "uses")
+            .interaction_uses
+            .iter()
+            .map(|use_| use_.alias.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(aliases, ["ok"], "for {message}");
+
+        // The diagnostic: exact message, exact span.
+        let declared = analysis.declared.concept("uses").unwrap();
+        let expected = match binding_index {
+            Some(index) => declared.interaction_uses[0].bindings[index]
+                .syntax
+                .syntax()
+                .range(),
+            // The whole-use issue is pinned to the `bad` use's own ref link,
+            // which is the first `./target.md` in the fixture.
+            None => range_of(source, "./target.md"),
+        };
+        let found = diagnostic(&analysis, DiagCode::InvalidInteractionUse, message);
+        assert_eq!(found.range, Some(expected), "for {message}");
+    }
+}
+
+#[test]
 fn binding_diagnostics_pin_the_exact_bind_or_ref() {
     let source = "---\ntype: uml.Sequence\n---\n# Bindings\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- ref [Target](./target.md) as duplicate\n  - bind a to ta\n  - bind a to tb\n- ref [Target](./target.md) as unknown\n  - bind missing to ta\n  - bind b to tb\n- ref [Target](./target.md) as mismatch\n  - bind a to tb\n  - bind b to ta\n- ref [Target](./target.md) as missing\n  - bind a to ta\n";
     let analysis = analyze([
