@@ -312,10 +312,6 @@ mod drift {
         // Catalogued ahead of a call site, same as FileCodeCorner / Plus above.
         Icon::Book,
         Icon::Box,
-        // Removed from this list by the tree-panel projected/raw toggle, which is
-        // their call site. Temporary: they are catalogued a commit ahead of it.
-        Icon::SquareCode,
-        Icon::SquareLibrary,
     ];
 
     fn table_icons() -> Vec<Icon> {

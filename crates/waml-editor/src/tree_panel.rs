@@ -10,14 +10,17 @@
 //!
 //! There is no header band: the search field and the type-filter chip that used
 //! to be hand-drawn over one are gone, and the rows start at the top of the
-//! panel. The caption bar's tree toggle is the sole collapse/expand affordance,
-//! so the panel owns no controls at all.
+//! panel. The caption bar's tree toggle is the sole collapse/expand
+//! affordance for the panel itself; the panel owns exactly one control of its
+//! own, the projected/raw toggle (see `control_strip` below).
 //!
 //! The panel's dock state is binary -- `Pinned` (a flush column) or `Flag`
 //! (zero pixels, nothing drawn). Like the inspector it never enters `Peek`,
 //! so it carries no flag spine and no auto-collapse timer.
 
 use crate::dock::{DockEvent, DockState};
+use crate::folder_projection::ViewMode;
+use crate::icon_button::IconButtonWidgetExt;
 use crate::icons::Icon;
 use crate::icons::IconSet;
 use crate::nav::NavView;
@@ -33,6 +36,7 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.atlas
     use mod.widgets.*
+    use mod.widgets.IconButton
     use mod.fonts
 
     mod.widgets.ProjectTreeBase = #(ProjectTree::register_widget(vm))
@@ -166,6 +170,18 @@ script_mod! {
             text_style: fonts.text_label
         }
 
+        // The panel's only control. It owns no other IconButton children --
+        // collapse and expand both arrive from the caption bar -- so this
+        // strip exists solely to seat it.
+        control_strip := View {
+            width: Fill
+            height: Fit
+            flow: Right
+            align: Align{x: 1.0}
+            padding: Inset{left: 6.0, right: 6.0, top: 6.0, bottom: 2.0}
+            view_mode_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
+        }
+
         // Plain-View wrapper around the fork `FileTree`. The fork widget's
         // `Widget::set_visible` is a layout no-op (it keeps Fill-claiming its
         // height even when hidden), so the collapsed Flag state -- which draws
@@ -273,6 +289,11 @@ pub enum ProjectTreeAction {
         key: String,
         anchor: DVec2,
     },
+    /// The projected/raw toggle was clicked. The panel does not flip its own
+    /// mode: `App` owns the session-wide switch and pushes the new mode back
+    /// via `set_view_mode`, so the tree and every open folder tab move
+    /// together or not at all.
+    ToggleViewMode,
 }
 
 /// Which projection the panel is showing, for the empty state. The rendered
@@ -430,6 +451,15 @@ pub struct ProjectTree {
     /// coordinate space, same rect) rather than recomputing independently.
     #[rust]
     chevron_rects: HashMap<String, Rect>,
+    /// The mode this panel is currently DISPLAYING, pushed by the app. The
+    /// panel never decides it -- it reports a click and redraws what it is
+    /// told, so the tree and the folder tabs can never disagree.
+    ///
+    /// Unread outside this widget until Task 10 wires `App` to push it via
+    /// `set_view_mode`; the `#[allow]` below is removed in that commit.
+    #[allow(dead_code)]
+    #[rust]
+    view_mode: ViewMode,
     #[live]
     icons: IconSet,
     // Tint for the row glyphs. Without this the glyphs render at DrawColor's dim
@@ -914,9 +944,16 @@ impl Widget for ProjectTree {
         }
 
         if let Event::Actions(actions) = event {
-            // The panel owns no `IconButton` children any more -- collapse and
-            // expand both arrive from the caption bar's tree toggle -- so the
-            // only actions read here are the `FileTree`'s row clicks.
+            // Collapse and expand still arrive from the caption bar's tree
+            // toggle; this panel owns exactly one control of its own, the
+            // projected/raw toggle, read first below.
+            if self
+                .view
+                .icon_button(cx, ids!(view_mode_btn))
+                .clicked(actions)
+            {
+                cx.widget_action(uid, ProjectTreeAction::ToggleViewMode);
+            }
             //
             // A folder row splits in two: a hit inside the chevron rect
             // cached at draw time folds/unfolds locally (same as before this
@@ -1096,6 +1133,31 @@ impl ProjectTree {
 
     pub fn close_dock(&mut self, cx: &mut Cx) {
         self.apply_dock(cx, DockEvent::Close);
+    }
+
+    /// The glyph for the CURRENT state -- `SquareLibrary` when the declared
+    /// chain is running, `SquareCode` when it is bypassed. Not the action the
+    /// button would perform: a reader must be able to read the panel and know
+    /// what they are looking at.
+    ///
+    /// Unread outside tests until Task 10 wires `App` to call `set_view_mode`;
+    /// the `#[allow]`s here are removed in that commit.
+    #[allow(dead_code)]
+    pub fn view_mode_icon(&self) -> Icon {
+        match self.view_mode {
+            crate::folder_projection::ViewMode::Projected => Icon::SquareLibrary,
+            crate::folder_projection::ViewMode::Raw => Icon::SquareCode,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn set_view_mode(&mut self, cx: &mut Cx, mode: crate::folder_projection::ViewMode) {
+        self.view_mode = mode;
+        let icon = self.view_mode_icon();
+        let button = self.view.icon_button(cx, ids!(view_mode_btn));
+        button.set_icon(cx, icon);
+        // Raw is the deliberate, non-default state, so it reads lit.
+        button.set_active(cx, matches!(mode, crate::folder_projection::ViewMode::Raw));
     }
 
     pub fn set_presentation_visible(&mut self, cx: &mut Cx, visible: bool) {
@@ -1351,8 +1413,13 @@ mod tests {
         let mut panel = cx.with_vm(ProjectTree::script_new_with_default);
         let file_tree =
             WidgetRef::new_with_inner(Box::new(cx.with_vm(FileTree::script_new_with_default)));
+        let view_mode_btn = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::icon_button::IconButton::script_new_with_default),
+        ));
         let mut view = cx.with_vm(View::script_new_with_default);
         view.children.push((live_id!(file_tree), file_tree.clone()));
+        view.children
+            .push((live_id!(view_mode_btn), view_mode_btn.clone()));
         panel.view = view;
         let file_tree = panel.view.file_tree(&cx, ids!(file_tree));
         (cx, panel, file_tree)
@@ -1513,6 +1580,42 @@ mod tests {
             },
         ));
         assert_eq!(reveal_state(&panel), before);
+    }
+
+    /// The glyph shows the CURRENT state, not the action the button would
+    /// perform: a reader looking at the panel must be able to tell whether
+    /// what they see is the author's declared view or the raw listing.
+    #[test]
+    fn the_toggle_glyph_reports_the_current_mode() {
+        let (mut cx, mut panel, _) = mounted_project_tree_test_context();
+
+        panel.set_view_mode(&mut cx, crate::folder_projection::ViewMode::Projected);
+        assert_eq!(
+            panel.view_mode,
+            crate::folder_projection::ViewMode::Projected
+        );
+        assert_eq!(panel.view_mode_icon(), crate::icons::Icon::SquareLibrary);
+
+        panel.set_view_mode(&mut cx, crate::folder_projection::ViewMode::Raw);
+        assert_eq!(panel.view_mode, crate::folder_projection::ViewMode::Raw);
+        assert_eq!(panel.view_mode_icon(), crate::icons::Icon::SquareCode);
+    }
+
+    /// The button must actually be mounted and queryable. An unregistered or
+    /// misnamed child instantiates a dead, unqueryable node -- invisible
+    /// glyph, no-op set_icon, green gate -- so assert the query resolves.
+    #[test]
+    fn the_toggle_button_is_a_live_mounted_child() {
+        let (mut cx, mut panel, _) = mounted_project_tree_test_context();
+        panel.set_view_mode(&mut cx, crate::folder_projection::ViewMode::Raw);
+        assert!(
+            panel
+                .view
+                .icon_button(&cx, ids!(view_mode_btn))
+                .borrow()
+                .is_some(),
+            "view_mode_btn did not resolve; check script_mod registration order",
+        );
     }
 
     #[test]
