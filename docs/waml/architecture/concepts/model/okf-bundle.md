@@ -22,3 +22,4 @@ stereotype: document
 - A document that the diagram grammar does not describe stays in the bundle. The system keeps it.
 - The bundle is the unit of validation, of exchange, and of the derived model. The open document is not that unit.
 - The structural role of a document comes from its shape, not from a declaration. An index gives navigation, a document with a member list is a view, and each other document gives one model element.
+- The reader implements OKF v0.2: frontmatter `sources` (the legacy `# Citations` body heading is read only when `sources` is absent), `generated`/`verified` with derived trust tiers, `status`, and `stale_after`; `timestamp` is retained for v0.1 documents. Attested Computation (§10) and per-claim footnotes remain untyped in `extra`.

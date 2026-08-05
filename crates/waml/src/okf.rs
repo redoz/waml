@@ -1214,6 +1214,76 @@ mod tests {
     }
 
     #[test]
+    fn v02_doc_round_trips_every_field_onto_concept() {
+        // Headline test: a full v0.2 document — `sources` with every
+        // credibility signal plus a sibling `usage_window`, `generated`, a
+        // multi-entry `verified` (including a human actor), `status`, and
+        // `stale_after` — promotes every field and leaves `extra` empty.
+        let src = "---\n\
+            type: Playbook\n\
+            title: Dataplex Playbook\n\
+            sources:\n\
+            \x20 - id: src-1\n\
+            \x20   resource: https://example.test/a\n\
+            \x20   title: A\n\
+            \x20   author: human:ahormati\n\
+            \x20   usage_count: 3\n\
+            \x20   last_modified: 2026-01-01\n\
+            usage_window:\n\
+            \x20 from: 2025-01-01\n\
+            \x20 to: 2025-06-01\n\
+            generated:\n\
+            \x20 by: process:finance-nightly\n\
+            \x20 at: 2026-05-22\n\
+            verified:\n\
+            \x20 - by: human:ahormati\n\
+            \x20   at: 2026-05-23\n\
+            \x20 - by: process:finance-nightly\n\
+            status: stable\n\
+            stale_after: 2026-12-31\n\
+            ---\n\
+            # Dataplex Playbook\n";
+        let c = project("playbooks/dataplex.md", src).unwrap();
+
+        assert_eq!(c.sources.len(), 1);
+        let source = &c.sources[0];
+        assert_eq!(source.id.as_deref(), Some("src-1"));
+        assert_eq!(source.resource, "https://example.test/a");
+        assert_eq!(source.title.as_deref(), Some("A"));
+        assert_eq!(
+            source.author,
+            Some(Actor {
+                kind: Some("human".to_owned()),
+                id: "ahormati".to_owned(),
+            })
+        );
+        assert_eq!(source.usage_count, Some(3.0));
+        assert_eq!(source.last_modified.as_deref(), Some("2026-01-01"));
+        assert_eq!(
+            source.usage_window,
+            Some(UsageWindow {
+                from: Some("2025-01-01".to_owned()),
+                to: Some("2025-06-01".to_owned()),
+            })
+        );
+
+        let generated = c.generated.as_ref().unwrap();
+        assert_eq!(generated.by.kind.as_deref(), Some("process"));
+        assert_eq!(generated.by.id, "finance-nightly");
+        assert_eq!(generated.at.as_deref(), Some("2026-05-22"));
+
+        assert_eq!(c.verified.len(), 2);
+        assert_eq!(c.verified[0].by.id, "ahormati");
+        assert_eq!(c.verified[1].by.id, "finance-nightly");
+        assert_eq!(c.trust_tier(), TrustTier::HumanReviewed);
+
+        assert_eq!(c.status, Status::Stable);
+        assert_eq!(c.stale_after.as_deref(), Some("2026-12-31"));
+
+        assert!(c.extra.entries.is_empty());
+    }
+
+    #[test]
     fn frontmatter_sources_take_precedence_over_citations_heading() {
         let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/fm\n---\n# Note\n\n# Citations\n\n[legacy](https://example.test/legacy)\n";
         let c = project("note.md", src).unwrap();
