@@ -18,8 +18,8 @@ use crate::{
 };
 
 use super::{
-    resolve_href, Bundle, BundleError, Concept, Directory, DirectoryAddress, Index, Link, Log,
-    Source, UsageWindow,
+    resolve_href, Actor, Bundle, BundleError, Concept, Directory, DirectoryAddress, Generated,
+    Index, Link, Log, Source, UsageWindow, Verification,
 };
 
 /// v0.1 vocabulary: keys whose promotion behaviour is unchanged by v0.2 and
@@ -362,6 +362,18 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
         None => extract_legacy_sources(shell, citation_range),
     };
 
+    let generated = promote_generated(fm);
+    if generated.is_some() {
+        promoted.insert("generated");
+    }
+    let verified = match promote_verified(fm) {
+        Some(verified) => {
+            promoted.insert("verified");
+            verified
+        }
+        None => Vec::new(),
+    };
+
     let extra = Frontmatter {
         entries: fm
             .entries
@@ -386,6 +398,8 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
         body: shell.body.clone(),
         links: extract_links(shell, prose_range),
         sources,
+        generated,
+        verified,
         extra,
     }
 }
@@ -427,15 +441,72 @@ fn promote_source_entry(entry: &FmValue) -> Option<Source> {
         .iter()
         .find(|(key, _)| key == "usage_window")
         .and_then(|(_, value)| promote_usage_window(value));
+    let author = map_str_field(fields, "author").map(parse_actor);
     Some(Source {
         id,
         resource,
         title,
-        author: None,
+        author,
         usage_count,
         last_modified,
         usage_window,
     })
+}
+
+/// Parses an actor reference (`kind:id`, e.g. `human:ahormati`). Infallible:
+/// splits on the first `:` only; a bare id (no `:`) carries no `kind`. The
+/// `kind:` prefix is a convention, not a validation gate (OKF §7).
+fn parse_actor(value: &str) -> Actor {
+    match value.split_once(':') {
+        Some((kind, id)) => Actor {
+            kind: Some(kind.to_owned()),
+            id: id.to_owned(),
+        },
+        None => Actor {
+            kind: None,
+            id: value.to_owned(),
+        },
+    }
+}
+
+/// Promotes the frontmatter `generated` key: requires an `FmValue::Map` with
+/// a string `by`; `at` is optional. Missing/`by`-less ⇒ `None`, raw value
+/// stays in `extra`.
+fn promote_generated(fm: &Frontmatter) -> Option<Generated> {
+    let FmValue::Map(fields) = fm.get("generated")? else {
+        return None;
+    };
+    let by = parse_actor(map_str_field(fields, "by")?);
+    let at = map_str_field(fields, "at").map(str::to_owned);
+    Some(Generated { by, at })
+}
+
+/// Promotes one `verified` entry. `None` fails the whole key (see
+/// `promote_verified`) — a missing/non-string `by` fails the entry.
+fn promote_verification_entry(entry: &FmValue) -> Option<Verification> {
+    let FmValue::Map(fields) = entry else {
+        return None;
+    };
+    let by = parse_actor(map_str_field(fields, "by")?);
+    let at = map_str_field(fields, "at").map(str::to_owned);
+    Some(Verification { by, at })
+}
+
+/// Promotes the frontmatter `verified` key: an `FmValue::List` of maps, or
+/// one bare `FmValue::Map` normalized to a one-element list (OKF §5.2 MUST).
+/// All-or-nothing: one entry without a parseable `by` fails the whole key.
+fn promote_verified(fm: &Frontmatter) -> Option<Vec<Verification>> {
+    match fm.get("verified")? {
+        FmValue::List(items) => {
+            let mut verified = Vec::with_capacity(items.len());
+            for item in items {
+                verified.push(promote_verification_entry(item)?);
+            }
+            Some(verified)
+        }
+        map @ FmValue::Map(_) => promote_verification_entry(map).map(|v| vec![v]),
+        _ => None,
+    }
 }
 
 /// Promotes a frontmatter map into a `UsageWindow`: succeeds only when the

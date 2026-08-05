@@ -224,6 +224,33 @@ pub struct Source {
     pub usage_window: Option<UsageWindow>,
 }
 
+/// Records who generated a concept and when (OKF §7). `by` is REQUIRED, so
+/// unlike `Concept::timestamp` this can never be synthesized for a v0.1
+/// document — see `Concept::generated_at`.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Generated {
+    pub by: Actor,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub at: Option<String>,
+}
+
+/// One verification record: an actor attesting to a concept at a point in
+/// time (OKF §7). `Concept::verified` may hold several.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Verification {
+    pub by: Actor,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub at: Option<String>,
+}
+
 /// The domain-agnostic projection of one markdown document. Round-trips every
 /// OKF field losslessly — nothing a producer wrote is dropped: known fields are
 /// promoted, the raw markdown body is retained verbatim, and any remaining
@@ -273,12 +300,36 @@ pub struct Concept {
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub sources: Vec<Source>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub generated: Option<Generated>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub verified: Vec<Verification>,
     /// Producer-specific frontmatter keys with no dedicated field above.
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "frontmatter_is_empty")
     )]
     pub extra: Frontmatter,
+}
+
+impl Concept {
+    /// The best-known generation timestamp: `generated.at` when a v0.2
+    /// `generated` block promoted, else the v0.1 `timestamp` field. A pure
+    /// v0.1 document names no actor, so `Concept::generated` itself stays
+    /// `None` rather than being fabricated — this accessor is the fallback
+    /// (OKF §13.1).
+    pub fn generated_at(&self) -> Option<&str> {
+        self.generated
+            .as_ref()
+            .and_then(|generated| generated.at.as_deref())
+            .or(self.timestamp.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -970,6 +1021,94 @@ mod tests {
         );
         assert!(c.extra.get("sources").is_none());
         assert!(c.extra.get("usage_window").is_none());
+    }
+
+    #[test]
+    fn frontmatter_sources_promote_author_through_actor_parser() {
+        let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/a\n    author: human:ahormati\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(
+            c.sources[0].author,
+            Some(Actor {
+                kind: Some("human".to_owned()),
+                id: "ahormati".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn generated_promotes_by_and_at() {
+        let src = "---\ntype: Note\ngenerated:\n  by: process:finance-nightly\n  at: 2026-05-22\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        let generated = c.generated.as_ref().unwrap();
+        assert_eq!(generated.by.kind.as_deref(), Some("process"));
+        assert_eq!(generated.by.id, "finance-nightly");
+        assert_eq!(generated.at.as_deref(), Some("2026-05-22"));
+        assert!(c.extra.get("generated").is_none());
+    }
+
+    #[test]
+    fn generated_without_by_stays_none_and_survives_in_extra() {
+        let src = "---\ntype: Note\ngenerated:\n  at: 2026-05-22\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.generated, None);
+        assert!(c.extra.get("generated").is_some());
+    }
+
+    #[test]
+    fn generated_at_falls_back_to_timestamp_for_v01() {
+        let v01 = project(
+            "note.md",
+            "---\ntype: Note\ntimestamp: 2026-01-01\n---\n# Note\n",
+        )
+        .unwrap();
+        assert_eq!(v01.generated, None);
+        assert_eq!(v01.timestamp.as_deref(), Some("2026-01-01"));
+        assert_eq!(v01.generated_at(), Some("2026-01-01"));
+
+        let v02 = project(
+            "note.md",
+            "---\ntype: Note\ntimestamp: 2026-01-01\ngenerated:\n  by: human:a\n  at: 2026-05-22\n---\n# Note\n",
+        )
+        .unwrap();
+        assert_eq!(v02.generated_at(), Some("2026-05-22"));
+    }
+
+    #[test]
+    fn bare_verified_mapping_normalizes_to_one_element() {
+        let src = "---\ntype: Note\nverified:\n  by: human:reviewer\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.verified.len(), 1);
+        assert_eq!(c.verified[0].by.id, "reviewer");
+        assert!(c.extra.get("verified").is_none());
+    }
+
+    #[test]
+    fn verified_entry_without_by_fails_the_whole_key() {
+        let src =
+            "---\ntype: Note\nverified:\n  - by: human:reviewer\n  - at: 2026-05-22\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert!(c.verified.is_empty());
+        assert!(c.extra.get("verified").is_some());
+    }
+
+    #[test]
+    fn bare_actor_id_has_no_kind() {
+        let src = "---\ntype: Note\nverified:\n  by: finance-nightly\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(
+            c.verified[0].by,
+            Actor {
+                kind: None,
+                id: "finance-nightly".to_owned(),
+            }
+        );
     }
 
     #[test]
