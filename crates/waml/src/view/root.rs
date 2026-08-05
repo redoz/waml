@@ -70,6 +70,31 @@ impl RootView {
         Some(row)
     }
 
+    /// Rebuild the row for `path`, matched against the directory alone --
+    /// same fields `project` would have minted for it. Mirrors
+    /// `row_for_member`'s two branches, but keyed on the trimmed address /
+    /// concept id that `project` actually encodes into the `RowPath`,
+    /// rather than the raw `index.members` href text.
+    fn resolve_member(ctx: &ProjectionCtx<'_>, path: &RowPath) -> Option<Row> {
+        if let Some(child) = ctx
+            .dir
+            .child_directories
+            .iter()
+            .find(|child| child.as_str().trim_start_matches('/') == path.as_str())
+        {
+            return Some(Self::folder_row(ctx, child));
+        }
+        if ctx
+            .dir
+            .concepts
+            .iter()
+            .any(|concept| concept == path.as_str())
+        {
+            return Self::concept_row(ctx, path.as_str());
+        }
+        None
+    }
+
     fn folder_row(ctx: &ProjectionCtx<'_>, address: &okf::DirectoryAddress) -> Row {
         let child_index = ctx.bundle.index(address.as_str());
         let label = child_index
@@ -134,9 +159,15 @@ impl Projection for RootView {
         Ok(rows)
     }
 
-    /// Stub until Task B8 wires the mint/resolve invariant.
-    fn resolve(&self, _ctx: &ProjectionCtx<'_>, _path: &RowPath) -> Result<Vec<Row>, Unresolved> {
-        Err(Unresolved)
+    /// `path` is a member href minted by `project` (a trimmed child address
+    /// or a concept id) -- return the row for it, rebuilt from the
+    /// directory alone. No `index.members` lookup: a later run may have
+    /// reordered or dropped the authored member list entirely, and the
+    /// entity still resolves as long as it's still in the directory.
+    fn resolve(&self, ctx: &ProjectionCtx<'_>, path: &RowPath) -> Result<Vec<Row>, Unresolved> {
+        Self::resolve_member(ctx, path)
+            .map(|row| vec![row])
+            .ok_or(Unresolved)
     }
 
     /// Stub until Task G2 lowers `RowOp`s to OKF ops.
@@ -153,6 +184,80 @@ impl Projection for RootView {
     fn surface(&self, _ctx: &ProjectionCtx<'_>, _next: Next<'_>) -> SurfaceId {
         folder_surface()
     }
+}
+
+/// The standing mint/resolve invariant: for every directory in a bundle
+/// built from `pairs`, `project` a root-only chain, tear the bundle down,
+/// re-parse `pairs` fresh, then `resolve` every minted `RowId` against the
+/// fresh bundle -- the resolved row's label and target must equal the
+/// projected row's. Written once here (Task B8) so later synthesizing
+/// middleware (Task F1) can call it against their own fixtures too: paths
+/// must be keyed on something stable in the model, never positional.
+#[cfg(test)]
+pub(crate) fn assert_mint_resolve_roundtrip(pairs: Vec<(&str, &str)>) {
+    use crate::analysis::prepare_candidate;
+    use crate::source::SourceBundle;
+    use crate::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
+
+    fn build(pairs: &[(&str, &str)]) -> okf::Bundle {
+        let source = SourceBundle::try_from_pairs(pairs.iter().copied()).unwrap();
+        let prepared = prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, _uml, _) = prepared.into_parts();
+        okf.bundle
+    }
+
+    fn walk(minted_from: &okf::Bundle, fresh: &okf::Bundle, address: &okf::DirectoryAddress) {
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let registry = MiddlewareRegistry::new();
+        let chain = Chain::root_only(&registry);
+
+        let dir = minted_from.directory(address.as_str()).unwrap().clone();
+        let minted_ctx = ProjectionCtx {
+            dir: &dir,
+            bundle: minted_from,
+            params: &params,
+            descend: &descend,
+        };
+        let outcome = chain.run(&minted_ctx, ChainLimits::default());
+
+        let fresh_dir = fresh.directory(address.as_str()).unwrap().clone();
+        let fresh_ctx = ProjectionCtx {
+            dir: &fresh_dir,
+            bundle: fresh,
+            params: &params,
+            descend: &descend,
+        };
+        for row in &outcome.rows {
+            let resolved = chain
+                .resolve(&fresh_ctx, &row.id)
+                .unwrap_or_else(|_| panic!("row `{}` minted by project must resolve", row.id.path));
+            let found = resolved
+                .iter()
+                .find(|candidate| candidate.id == row.id)
+                .or_else(|| resolved.first())
+                .expect("resolve on a minted id returns at least one row");
+            assert_eq!(
+                found.label, row.label,
+                "row `{}` label roundtrip",
+                row.id.path
+            );
+            assert_eq!(
+                found.target, row.target,
+                "row `{}` target roundtrip",
+                row.id.path
+            );
+        }
+
+        for child in &dir.child_directories {
+            walk(minted_from, fresh, child);
+        }
+    }
+
+    let minted_from = build(&pairs);
+    let fresh = build(&pairs);
+    let root = okf::DirectoryAddress::parse("/").unwrap();
+    walk(&minted_from, &fresh, &root);
 }
 
 #[cfg(test)]
@@ -324,5 +429,76 @@ mod tests {
 
         let outcome = Chain::default().run(&projection_ctx, ChainLimits::default());
         assert_eq!(outcome.surface, folder_surface());
+    }
+
+    // --- Task B8: root-view resolve with nearest-prefix fallback ---------
+
+    fn fixture_pairs() -> Vec<(&'static str, &'static str)> {
+        vec![
+            (
+                "index.md",
+                "# Root\n\n* [Zebra](./zebra.md)\n* [Archive](archive/)\n* [Apple](./apple.md)\n",
+            ),
+            (
+                "apple.md",
+                "---\ntype: uml.Class\ntitle: Apple\ndescription: A fruit\n---\n# Apple\n",
+            ),
+            (
+                "zebra.md",
+                "---\ntype: uml.Class\ntitle: Zebra\n---\n# Zebra\n",
+            ),
+            ("archive/index.md", "---\ntitle: Archive\n---\n# Archive\n"),
+            (
+                "zzz-unlisted.md",
+                "---\ntype: uml.Class\ntitle: Unlisted\n---\n# Unlisted\n",
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_path_minted_by_project_resolves_through_resolve_on_a_later_run() {
+        super::assert_mint_resolve_roundtrip(fixture_pairs());
+    }
+
+    #[test]
+    fn resolve_rebuilds_the_same_row_project_minted_for_a_concept() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let path = RowPath::parse("apple").unwrap();
+        let rows = RootView.resolve(&projection_ctx, &path).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Apple");
+        assert_eq!(rows[0].target, RowTarget::Concept("apple".to_string()));
+    }
+
+    #[test]
+    fn resolve_rebuilds_the_same_row_project_minted_for_a_child_folder() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let path = RowPath::parse("archive").unwrap();
+        let rows = RootView.resolve(&projection_ctx, &path).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Archive");
+        assert_eq!(rows[0].target, RowTarget::Folder("/archive".to_string()));
+    }
+
+    #[test]
+    fn an_unresolvable_path_yields_unresolved_not_a_panic() {
+        let (bundle, root_address) = fixture();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let path = RowPath::parse("nonexistent").unwrap();
+        assert!(RootView.resolve(&projection_ctx, &path).is_err());
     }
 }

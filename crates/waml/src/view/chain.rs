@@ -257,18 +257,40 @@ impl Chain {
         }
     }
 
-    /// Dispatch to the stage whose `ViewId` matches `id.owner`; `Unresolved`
-    /// from the owner falls back to the nearest resolvable prefix
-    /// (`path.parent()` loop), at worst the folder itself.
+    /// Dispatch to the stage whose `ViewId` matches `id.owner` (the root
+    /// view's reserved owner included -- it owns no `stages` slot, see
+    /// [`super::projection::Next`]'s terminal fallback). `Unresolved` from
+    /// the owner falls back to the nearest resolvable prefix (`path.parent()`
+    /// loop, re-tried against the SAME owner), at worst the folder's own
+    /// listing -- `Unresolved` is not a chain failure and never produces a
+    /// diagnostic.
     pub fn resolve(&self, ctx: &ProjectionCtx<'_>, id: &RowId) -> Result<Vec<Row>, Unresolved> {
-        let stage = self
-            .ids
-            .iter()
-            .position(|owned| owned == &id.owner)
-            .map(|index| &self.stages[index]);
-        match stage {
-            Some(stage) => stage.resolve(ctx, &id.path),
-            None => Err(Unresolved),
+        let try_owner = |path: &RowPath| -> Result<Vec<Row>, Unresolved> {
+            match self.ids.iter().position(|owned| owned == &id.owner) {
+                Some(index) => self.stages[index].resolve(ctx, path),
+                None if id.owner.as_str() == super::root::ROOT_VIEW_OWNER => {
+                    super::root::RootView.resolve(ctx, path)
+                }
+                None => Err(Unresolved),
+            }
+        };
+
+        if let Ok(rows) = try_owner(&id.path) {
+            return Ok(rows);
+        }
+        let mut candidate = id.path.parent();
+        while let Some(path) = candidate {
+            if let Ok(rows) = try_owner(&path) {
+                return Ok(rows);
+            }
+            candidate = path.parent();
+        }
+
+        // Worst case: no prefix of the path resolves at all -- fall back to
+        // the folder's own listing rather than surfacing a chain failure.
+        match self.next().project(ctx) {
+            Ok(rows) => Ok(rows),
+            Err(_) => Err(Unresolved),
         }
     }
 
@@ -854,6 +876,106 @@ mod tests {
 
         assert_eq!(outcome.rows.len(), 1);
         assert_eq!(outcome.diagnostics[0].code, DiagCode::ViewDepthExceeded);
+    }
+
+    // --- Task B8: resolve nearest-prefix fallback -------------------------
+
+    /// Resolves only the exact path `"a"`; anything longer is `Unresolved`.
+    /// Stands in for a folder row whose child no longer exists at the
+    /// exact minted path, letting the fallback walk shorten it.
+    struct PrefixDouble;
+    impl Projection for PrefixDouble {
+        fn project(
+            &self,
+            _ctx: &ProjectionCtx<'_>,
+            _next: Next<'_>,
+        ) -> Result<Vec<Row>, ProjectionError> {
+            Ok(Vec::new())
+        }
+        fn resolve(
+            &self,
+            _ctx: &ProjectionCtx<'_>,
+            path: &RowPath,
+        ) -> Result<Vec<Row>, Unresolved> {
+            if path.as_str() == "a" {
+                Ok(vec![Row::new(
+                    RowId {
+                        owner: ViewId::new("prefix"),
+                        path: RowPath::parse("a").unwrap(),
+                    },
+                    "A".to_string(),
+                    RowTarget::Concept("a.waml".to_string()),
+                    None,
+                )
+                .unwrap()])
+            } else {
+                Err(Unresolved)
+            }
+        }
+        fn apply(
+            &self,
+            ctx: &ProjectionCtx<'_>,
+            path: &RowPath,
+            op: RowOp,
+            next: Next<'_>,
+        ) -> Result<Vec<okf::Op>, Unsupported> {
+            next.apply(ctx, path, op)
+        }
+        fn surface(&self, ctx: &ProjectionCtx<'_>, next: Next<'_>) -> SurfaceId {
+            next.surface(ctx)
+        }
+    }
+
+    fn prefix_chain() -> Chain {
+        Chain {
+            ids: vec![ViewId::new("prefix")].into(),
+            stages: vec![Box::new(PrefixDouble) as Box<dyn Projection>].into(),
+            tripped: None,
+            descent: None,
+        }
+    }
+
+    #[test]
+    fn an_unresolvable_path_falls_back_to_its_nearest_resolvable_prefix() {
+        let chain = prefix_chain();
+        let directory = dir();
+        let bundle = okf::Bundle::default();
+        let params = Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let id = RowId {
+            owner: ViewId::new("prefix"),
+            path: RowPath::parse("a/b/c").unwrap(),
+        };
+        let rows = chain
+            .resolve(&projection_ctx, &id)
+            .expect("the parent prefix `a` resolves even though `a/b/c` doesn't");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "A");
+    }
+
+    #[test]
+    fn a_deleted_everything_path_falls_back_to_the_folder_itself() {
+        let chain = prefix_chain();
+        let directory = dir();
+        let bundle = okf::Bundle::default();
+        let params = Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let id = RowId {
+            owner: ViewId::new("prefix"),
+            path: RowPath::parse("z/y/x").unwrap(),
+        };
+        let rows = chain
+            .resolve(&projection_ctx, &id)
+            .expect("no prefix resolves -- falls back to the folder's own listing, not an error");
+        assert!(
+            rows.is_empty(),
+            "the folder's own listing in this fixture has no rows -- \
+             empty is a valid worst-case fallback, not a failure"
+        );
     }
 
     #[test]
