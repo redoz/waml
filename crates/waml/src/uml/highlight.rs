@@ -20,24 +20,53 @@ pub(crate) struct WamlCodeSyntaxSnapshot {
     pub(crate) document: DocumentId,
     pub(crate) revision: DocumentRevision,
     pub(crate) fenced: bool,
-    pub(crate) source_range: TextRange,
     pub(crate) content_range: TextRange,
-    pub(crate) syntax: Arc<SyntaxTree<super::syntax::UmlLanguage>>,
+    /// Walked/sorted/deduped once at construction so `code_spans()` is a
+    /// clone rather than a tree walk on every call (issue 34, Task 4). The
+    /// source `syntax` tree and `source_range` used to compute this are not
+    /// retained beyond construction — nothing else in this type reads them.
+    spans: Option<Arc<[WamlCodeSpan]>>,
 }
 
 impl WamlCodeSyntaxSnapshot {
-    pub(crate) fn code_spans(&self) -> Option<Arc<[WamlCodeSpan]>> {
-        let mut spans = Vec::new();
-        collect_waml_code_spans(
-            self.syntax.root(),
-            self.source_range.start(),
-            self.content_range,
-            &mut spans,
-        )?;
-        spans.sort_by_key(|span| (span.range.start(), span.range.end()));
-        spans.dedup_by_key(|span| span.range);
-        Some(Arc::from(spans))
+    fn new(
+        document: DocumentId,
+        revision: DocumentRevision,
+        fenced: bool,
+        source_range: TextRange,
+        content_range: TextRange,
+        syntax: Arc<SyntaxTree<super::syntax::UmlLanguage>>,
+    ) -> Self {
+        let spans = compute_waml_code_spans(&syntax, source_range, content_range);
+        Self {
+            document,
+            revision,
+            fenced,
+            content_range,
+            spans,
+        }
     }
+
+    pub(crate) fn code_spans(&self) -> Option<Arc<[WamlCodeSpan]>> {
+        self.spans.clone()
+    }
+}
+
+fn compute_waml_code_spans(
+    syntax: &SyntaxTree<super::syntax::UmlLanguage>,
+    source_range: TextRange,
+    content_range: TextRange,
+) -> Option<Arc<[WamlCodeSpan]>> {
+    let mut spans = Vec::new();
+    collect_waml_code_spans(
+        syntax.root(),
+        source_range.start(),
+        content_range,
+        &mut spans,
+    )?;
+    spans.sort_by_key(|span| (span.range.start(), span.range.end()));
+    spans.dedup_by_key(|span| span.range);
+    Some(Arc::from(spans))
 }
 
 /// Walks each document's markdown structure (WAML islands plus fenced
@@ -58,14 +87,14 @@ pub(crate) fn build_code_syntax(
             }
             snapshots.insert(
                 island.owner,
-                WamlCodeSyntaxSnapshot {
-                    document: *document,
-                    revision: markdown.revision(),
-                    fenced: false,
-                    source_range: snapshot.source_range(),
-                    content_range: snapshot.content_range(),
-                    syntax: snapshot.syntax().clone(),
-                },
+                WamlCodeSyntaxSnapshot::new(
+                    *document,
+                    markdown.revision(),
+                    false,
+                    snapshot.source_range(),
+                    snapshot.content_range(),
+                    snapshot.syntax().clone(),
+                ),
             );
         }
 
@@ -95,14 +124,14 @@ pub(crate) fn build_code_syntax(
             };
             snapshots.insert(
                 fence.owner,
-                WamlCodeSyntaxSnapshot {
-                    document: *document,
-                    revision: markdown.revision(),
-                    fenced: true,
-                    source_range: fence.content_range,
-                    content_range: fence.content_range,
+                WamlCodeSyntaxSnapshot::new(
+                    *document,
+                    markdown.revision(),
+                    true,
+                    fence.content_range,
+                    fence.content_range,
                     syntax,
-                },
+                ),
             );
         }
     }

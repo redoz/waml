@@ -143,22 +143,32 @@ impl OkfAnalysis {
         owner: SyntaxIdentity,
         content_range: TextRange,
     ) -> Option<Arc<[WamlCodeSpan]>> {
-        let markdown = self.markdown.documents().values().find(|snapshot| {
-            snapshot.queries().island(owner).map_or_else(
-                || {
-                    snapshot.queries().fenced_code(owner).is_some_and(|fence| {
-                        fence.content_range == content_range
-                            && fence
-                                .language
-                                .as_deref()
-                                .is_some_and(|language| language.eq_ignore_ascii_case("waml"))
-                    })
-                },
-                |island| island.content_range == content_range,
-            )
-        })?;
+        // Resolve the owning snapshot directly instead of scanning every
+        // markdown document to find the one that recognizes `owner`
+        // (issue 34, Task 4).
         let syntax = self.code_syntax.get(&owner)?;
-        if syntax.content_range != content_range || syntax.revision != markdown.revision() {
+        if syntax.content_range != content_range {
+            return None;
+        }
+        let markdown = self.markdown.document(syntax.document)?;
+        if syntax.revision != markdown.revision() {
+            return None;
+        }
+        let valid = if syntax.fenced {
+            markdown.queries().fenced_code(owner).is_some_and(|fence| {
+                fence.content_range == content_range
+                    && fence
+                        .language
+                        .as_deref()
+                        .is_some_and(|language| language.eq_ignore_ascii_case("waml"))
+            })
+        } else {
+            markdown
+                .queries()
+                .island(owner)
+                .is_some_and(|island| island.content_range == content_range)
+        };
+        if !valid {
             return None;
         }
         syntax.code_spans()
