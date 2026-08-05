@@ -599,36 +599,18 @@ pub struct FlowDoc {
 /// A message's position in `SequenceDoc.edges` / document/time order. Carries
 /// the index directly rather than a `format!("m{index}")` string that would
 /// need re-parsing to use as an index (see `report_message`); `Display`
-/// renders the `m{index}` form wherever a display/label string is needed. The
-/// JSON wire form (consumed by the vscode extension's TypeScript side) is the
-/// `m{index}` string, not the raw index, so serde gets a hand-written impl
-/// instead of `#[derive]` + `transparent`.
+/// renders the `m{index}` form wherever a display/label string is needed
+/// (diagnostics, labels, solver size keys). The JSON wire form is the bare
+/// index — the `m{index}` spelling is a presentation concern, and no consumer
+/// of the serialized `Model` reads message ids as strings.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct MessageId(pub usize);
 
 impl std::fmt::Display for MessageId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "m{}", self.0)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for MessageId {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for MessageId {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = <std::borrow::Cow<'de, str> as serde::Deserialize>::deserialize(deserializer)?;
-        s.strip_prefix('m')
-            .and_then(|index| index.parse().ok())
-            .map(MessageId)
-            .ok_or_else(|| {
-                serde::de::Error::custom(format!("invalid MessageId {s:?}, expected 'm<index>'"))
-            })
     }
 }
 

@@ -326,7 +326,7 @@ fn sequence_doc_json_matches_ts_field_names() {
     assert_eq!(s["nodes"][0]["id"], "buyer");
     assert_eq!(s["nodes"][0]["ref"], "s/buyer");
     assert_eq!(s["nodes"][0]["alias"], "buyer");
-    assert_eq!(s["edges"][0]["id"], "m0");
+    assert_eq!(s["edges"][0]["id"], serde_json::json!(0));
     assert_eq!(s["edges"][0]["kind"], "syncCall");
     assert_eq!(
         s["edges"][0]["from"],
@@ -334,7 +334,7 @@ fn sequence_doc_json_matches_ts_field_names() {
     );
     assert_eq!(s["edges"][0]["callId"], "submission");
     assert_eq!(s["edges"][1]["kind"], "reply");
-    assert_eq!(s["edges"][1]["returnsCall"], "m0");
+    assert_eq!(s["edges"][1]["returnsCall"], serde_json::json!(0));
     assert_eq!(s["gates"], serde_json::json!(["request"]));
     assert_eq!(s["interactionUses"][0]["alias"], "auth");
 
@@ -445,6 +445,30 @@ fn sequence_doc_json_matches_ts_field_names() {
         serde_json::from_value::<SequenceDoc>(serde_json::to_value(&direct).unwrap()).unwrap(),
         direct
     );
+}
+
+#[test]
+fn message_id_wire_form_is_the_bare_index() {
+    // The `m{index}` spelling is presentation only (`Display`); the wire form
+    // is the transparent index, so a raw number must serialize and parse.
+    assert_eq!(serde_json::to_string(&MessageId(7)).unwrap(), "7");
+    assert_eq!(
+        serde_json::from_str::<MessageId>("7").unwrap(),
+        MessageId(7)
+    );
+    assert_eq!(MessageId(7).to_string(), "m7");
+    let edge = SeqEdge {
+        id: MessageId(0),
+        from: EndpointRef::Outside,
+        kind: MessageKind::AsyncSignal,
+        to: None,
+        value: None,
+        call_id: None,
+        returns_call: Some(MessageId(3)),
+    };
+    let v = serde_json::to_value(&edge).unwrap();
+    assert_eq!(v["id"], serde_json::json!(0));
+    assert_eq!(v["returnsCall"], serde_json::json!(3));
 }
 
 #[test]
