@@ -1316,6 +1316,32 @@ mod tests {
     }
 
     #[test]
+    fn sibling_usage_window_fills_legacy_citations() {
+        let src = "---\ntype: Note\nusage_window:\n  from: 2025-01-01\n  to: 2025-06-01\n---\n# Note\n\n# Citations\n\n- [A](https://example.test/a)\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.sources.len(), 1);
+        assert_eq!(
+            c.sources[0].usage_window,
+            Some(UsageWindow {
+                from: Some("2025-01-01".to_owned()),
+                to: Some("2025-06-01".to_owned()),
+            })
+        );
+        assert!(c.extra.get("usage_window").is_none());
+    }
+
+    #[test]
+    fn sibling_usage_window_survives_in_extra_without_sources() {
+        let src =
+            "---\ntype: Note\nusage_window:\n  from: 2025-01-01\n  to: 2025-06-01\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert!(c.sources.is_empty());
+        assert!(c.extra.get("usage_window").is_some());
+    }
+
+    #[test]
     fn sources_entry_without_resource_fails_the_whole_key() {
         let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/a\n  - title: no resource here\n---\n# Note\n";
         let c = project("note.md", src).unwrap();

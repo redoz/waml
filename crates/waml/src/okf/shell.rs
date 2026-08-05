@@ -332,9 +332,6 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
     let mut promoted: BTreeSet<&str> = KNOWN_KEYS.iter().copied().collect();
 
     let sibling_usage_window = fm.get("usage_window").and_then(promote_usage_window);
-    if sibling_usage_window.is_some() {
-        promoted.insert("usage_window");
-    }
 
     let citation_start = citation_start(shell).unwrap_or(shell.body_range.end());
     let prose_range = TextRange::new(shell.body_range.start(), citation_start)
@@ -347,20 +344,29 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
     // or its promotion failed wholesale (treated as absent for precedence —
     // the raw value still stays out of `promoted`, so it survives in
     // `extra`).
-    let sources = match promote_sources(fm) {
-        Some(mut sources) => {
+    let mut sources = match promote_sources(fm) {
+        Some(sources) => {
             promoted.insert("sources");
-            if let Some(window) = &sibling_usage_window {
-                for source in &mut sources {
-                    if source.usage_window.is_none() {
-                        source.usage_window = Some(window.clone());
-                    }
-                }
-            }
             sources
         }
         None => extract_legacy_sources(shell, citation_range),
     };
+
+    // The document-level `usage_window` fills every entry that does not carry
+    // its own, whichever list we ended up with — a v0.1 `# Citations` document
+    // inherits it just like a v0.2 `sources` list does. It counts as promoted
+    // only once it has somewhere to land; with no sources at all the raw value
+    // stays in `extra` rather than being read and dropped.
+    if let Some(window) = &sibling_usage_window {
+        if !sources.is_empty() {
+            promoted.insert("usage_window");
+            for source in &mut sources {
+                if source.usage_window.is_none() {
+                    source.usage_window = Some(window.clone());
+                }
+            }
+        }
+    }
 
     let generated = promote_generated(fm);
     if generated.is_some() {
@@ -622,7 +628,9 @@ fn extract_links(shell: &ShellDocument<'_>, range: TextRange) -> Vec<Link> {
 /// Maps a v0.1 `# Citations` body list to `Source` entries: `resource` is the
 /// link destination, `title` is the link text, and every credibility signal
 /// (`id`, `author`, `usage_count`, `last_modified`, `usage_window`) is absent
-/// — the legacy heading names nothing about them.
+/// — the legacy heading names nothing about them. A document-level
+/// `usage_window` is filled in by the caller, which applies to both source
+/// lists alike.
 fn extract_legacy_sources(shell: &ShellDocument<'_>, range: TextRange) -> Vec<Source> {
     shell
         .snapshot
