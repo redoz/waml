@@ -88,6 +88,25 @@ fn dash_at_a_mapping_indent_is_rejected_rather_than_silently_dropped() {
 }
 
 #[test]
+fn block_sequence_at_its_keys_own_indent_parses_clean_and_lossless() {
+    for source in [
+        "---\ntags:\n- a\n- b\ntitle: T\n---\n",
+        "---\nmeta:\n  tags:\n  - a\n  owner: ana\n---\n",
+        "---\nauthors:\n- name: Ana\n  team: platform\n---\n",
+    ] {
+        let shell = parse(source);
+        assert_eq!(shell.tree.write_to_string(), source);
+        let codes: Vec<_> = shell
+            .tree
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect();
+        assert!(codes.is_empty(), "{source:?} -> {codes:?}");
+    }
+}
+
+#[test]
 fn preserves_bom_crlf_unicode_frontmatter_and_top_level_headings() {
     let source = "\u{feff}---\r\ntype: arbitrary.\u{1d11e}\r\n---\r\n# Title  \r\n## Section\r\n";
     let text = SourceText::from_shared(Arc::new(source.into())).unwrap();

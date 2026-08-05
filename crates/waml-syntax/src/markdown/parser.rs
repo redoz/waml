@@ -1480,7 +1480,51 @@ fn build_frontmatter_mapping(
             }
             finalize_pending_with_null(factory, &mut stack)?;
         } else {
-            finalize_pending_with_null(factory, &mut stack)?;
+            let top = stack.last().expect("stack is never empty");
+            let dash = is_dash_at(source, indent_end, line.significant_end);
+            if top.kind == FmContainerKind::Mapping && dash && top.pending.is_some() {
+                // YAML lets a block sequence sit at its own key's indentation:
+                //
+                //     tags:
+                //     - a
+                //
+                // The key's value slot is still open, so the dash opens a
+                // sequence at THIS indent rather than being a dash with no
+                // container. Capped like the indent-increase branch.
+                if stack.len() >= super::FRONTMATTER_MAX_NESTING_DEPTH {
+                    clean = false;
+                    diagnostics.push(diagnostic(
+                        OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                        line.start,
+                        indent_end,
+                        "frontmatter nesting is too deep",
+                    ));
+                    finalize_pending_with_null(factory, &mut stack)?;
+                    let entry = bad_line_entry(
+                        factory,
+                        text,
+                        source,
+                        line,
+                        indent_end,
+                        OkfSyntaxDiagnosticCode::InvalidFrontmatterIndent,
+                    )?;
+                    stack
+                        .last_mut()
+                        .expect("stack is never empty")
+                        .children
+                        .push(GreenElement::Node(entry));
+                    continue;
+                }
+                stack.push(FmFrame::new(FmContainerKind::Sequence, indent));
+            } else if top.kind == FmContainerKind::Sequence && !dash {
+                // A non-dash line at the sequence's own indent ends it — the
+                // sequence was opened at its key's indent, so the enclosing
+                // mapping continues on this very line.
+                pop_frame(factory, &mut stack)?;
+                finalize_pending_with_null(factory, &mut stack)?;
+            } else {
+                finalize_pending_with_null(factory, &mut stack)?;
+            }
         }
 
         // A dash only opens a sequence item when the block it lands in IS a

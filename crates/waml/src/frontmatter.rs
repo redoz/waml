@@ -1606,6 +1606,81 @@ mod tests {
         assert_eq!(parse_frontmatter_for_test(&source), fm);
     }
 
+    /// YAML lets a block sequence sit at its key's own indentation, and that
+    /// is the form most authored frontmatter uses. Reading it as `Null` made
+    /// every such list invisible to the model.
+    #[test]
+    fn block_sequence_at_the_keys_own_indent_reads_as_a_list() {
+        let parsed = parse_frontmatter_for_test("---\ntags:\n- a\n- b\ntitle: T\n---\n");
+        assert_eq!(
+            parsed,
+            Frontmatter {
+                entries: vec![
+                    (
+                        "tags".into(),
+                        FmValue::List(vec![FmValue::Str("a".into()), FmValue::Str("b".into()),]),
+                    ),
+                    ("title".into(), FmValue::Str("T".into())),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn nested_block_sequence_at_its_keys_indent_reads_as_a_list() {
+        let parsed =
+            parse_frontmatter_for_test("---\nmeta:\n  tags:\n  - a\n  - b\n  owner: ana\n---\n");
+        assert_eq!(
+            parsed,
+            Frontmatter {
+                entries: vec![(
+                    "meta".into(),
+                    FmValue::Map(vec![
+                        (
+                            "tags".into(),
+                            FmValue::List(
+                                vec![FmValue::Str("a".into()), FmValue::Str("b".into()),]
+                            ),
+                        ),
+                        ("owner".into(), FmValue::Str("ana".into())),
+                    ]),
+                )],
+            }
+        );
+    }
+
+    /// A sequence of maps at the key's own indent: the item's deeper keys must
+    /// still land inside the item, not in the enclosing mapping.
+    #[test]
+    fn block_sequence_of_maps_at_the_keys_own_indent_reads_as_a_list() {
+        let parsed =
+            parse_frontmatter_for_test("---\nauthors:\n- name: Ana\n  team: platform\n---\n");
+        assert_eq!(
+            parsed,
+            Frontmatter {
+                entries: vec![(
+                    "authors".into(),
+                    FmValue::List(vec![FmValue::Map(vec![
+                        ("name".into(), FmValue::Str("Ana".into())),
+                        ("team".into(), FmValue::Str("platform".into())),
+                    ])]),
+                )],
+            }
+        );
+    }
+
+    /// A dash with no key waiting on a value is still not a sequence: it has
+    /// no reading, and the model would drop it silently.
+    #[test]
+    fn dash_with_no_open_key_is_still_malformed() {
+        assert_eq!(
+            parse_frontmatter_for_test("---\ntitle: T\n- a\n---\n"),
+            Frontmatter {
+                entries: vec![("title".into(), FmValue::Str("T".into()))],
+            }
+        );
+    }
+
     #[test]
     fn existing_documents_render_byte_identical() {
         // Compatibility pin: scalar-only lists stay flow, not block.
