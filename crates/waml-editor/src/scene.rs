@@ -2,14 +2,14 @@
 //! Nothing below this module touches makepad; nothing here touches a GPU.
 
 use waml::diagnostic::Diagnostic;
-use waml::layout::Shape;
+use waml::layout::{Margin, Shape};
 use waml::model::{
     CardinalityVisibility, Diagram, DiagramGroup, ElementType, Model, RelEnd, RelationshipKind,
 };
 use waml::multiplicity::Multiplicity;
 use waml::solve::{
-    route, solve_diagram, stress, BoxId, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup,
-    SolvedRouting,
+    route, solve_diagram, stress, BoxId, BoxKind, FlagSet, Rect, Size, SizeMap, SolveConfig,
+    Solved, SolvedGroup, SolvedRouting,
 };
 
 use crate::diagram_display::ResolvedDiagramDisplay;
@@ -516,7 +516,14 @@ fn stress_default(
     };
 
     // Rects keyed by BoxId for the router (obstacles derive from these rects).
-    let rect_map: BTreeMap<BoxId, Rect> = ids.iter().cloned().zip(rects.iter().copied()).collect();
+    // Group hulls go in too, under `BoxId::Group(i)`, so containment-aware
+    // routing (below) can mask/avoid them exactly like `geometry::solve_box`
+    // does for the constraint path.
+    let mut rect_map: BTreeMap<BoxId, Rect> =
+        ids.iter().cloned().zip(rects.iter().copied()).collect();
+    for (i, hull) in hulls.iter().enumerate() {
+        rect_map.insert(BoxId::Group(i as u32), *hull);
+    }
 
     // Directed (BoxId, BoxId) edge list from the caller's shared
     // `drawable_edges` list (P-5: computed once in build_scene, not again
@@ -527,10 +534,31 @@ fn stress_default(
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
 
-    // Empty boxes slice: containment-aware routing (feeding the group hulls in
-    // as `BoxId::Group` obstacles) is separate follow-up work, so routing still
-    // degrades to pure leaf-obstacle avoidance here even though hulls exist.
-    let routes = route::route(&[], &rect_map, &route_edges, &SolveConfig::default());
+    // One `Box` per group (flat: `GroupSpec::members` already includes every
+    // descendant member, so `build_membership`'s leaf-child walk needs no
+    // nested Group children to recurse through). This is the only input the
+    // router derives group membership from — never rect overlap.
+    let boxes: Vec<waml::solve::Box> = group_specs
+        .iter()
+        .enumerate()
+        .map(|(i, spec)| waml::solve::Box {
+            id: BoxId::Group(i as u32),
+            kind: BoxKind::Group,
+            children: spec
+                .members
+                .iter()
+                .map(|&m| BoxId::Node(keys[m].clone()))
+                .collect(),
+            axis: None,
+            shape: Shape::Shrink,
+            margin: Margin::Medium,
+            flags: FlagSet::default(),
+            title: None,
+            depth: group_meta[i].1,
+        })
+        .collect();
+
+    let routes = route::route(&boxes, &rect_map, &route_edges, &SolveConfig::default());
 
     let groups: Vec<SolvedGroup> = hulls
         .into_iter()
