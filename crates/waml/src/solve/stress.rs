@@ -189,8 +189,126 @@ pub fn layout_grouped(
         cursor_x += l.w + cfg.gap;
         shelf_h = shelf_h.max(l.h);
     }
+    separate_hulls(&mut out, groups, cfg);
+
+    // Normalize the min corner to the origin, matching `layout`'s convention;
+    // the separation pass can push rects negative.
+    let (min_x, min_y) = out
+        .iter()
+        .fold((f64::INFINITY, f64::INFINITY), |(mx, my), r| {
+            (mx.min(r.x), my.min(r.y))
+        });
+    if min_x.is_finite() {
+        for r in &mut out {
+            r.x -= min_x;
+            r.y -= min_y;
+        }
+    }
+
     let hulls = group_hulls(&out, groups, cfg);
     (out, hulls)
+}
+
+/// Bounded separation pass: sibling group hulls that overlap are pushed apart
+/// by translating every member of the deeper/later group, and any non-member
+/// node that lands inside a hull is pushed out through its nearest edge.
+/// Nested (ancestor/descendant) hull pairs are left alone — containment is
+/// expected there. Deterministic: groups are always visited deepest-first
+/// then by index, and the loop is capped at 4 passes, exiting early once a
+/// pass makes no translation.
+fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) {
+    if groups.is_empty() {
+        return;
+    }
+    let mut order: Vec<usize> = (0..groups.len()).collect();
+    order.sort_by(|&a, &b| groups[b].depth.cmp(&groups[a].depth).then(a.cmp(&b)));
+
+    let member_sets: Vec<std::collections::BTreeSet<usize>> = groups
+        .iter()
+        .map(|g| g.members.iter().copied().collect())
+        .collect();
+    let is_nested = |i: usize, j: usize| -> bool {
+        member_sets[i].is_subset(&member_sets[j]) || member_sets[j].is_subset(&member_sets[i])
+    };
+
+    for _ in 0..4 {
+        let mut moved = false;
+
+        let hulls = group_hulls(rects, groups, cfg);
+        for (oi, &gi) in order.iter().enumerate() {
+            for &gj in &order[oi + 1..] {
+                if is_nested(gi, gj) {
+                    continue;
+                }
+                let a = &hulls[gi];
+                let b = &hulls[gj];
+                let ox = (a.x + a.w).min(b.x + b.w) - a.x.max(b.x);
+                let oy = (a.y + a.h).min(b.y + b.h) - a.y.max(b.y);
+                if ox <= 0.0 || oy <= 0.0 {
+                    continue;
+                }
+                moved = true;
+                let a_cx = a.x + a.w / 2.0;
+                let a_cy = a.y + a.h / 2.0;
+                let b_cx = b.x + b.w / 2.0;
+                let b_cy = b.y + b.h / 2.0;
+                if ox < oy {
+                    let dir = if b_cx >= a_cx { 1.0 } else { -1.0 };
+                    let delta = dir * (ox + cfg.gap);
+                    for &m in &groups[gj].members {
+                        if let Some(r) = rects.get_mut(m) {
+                            r.x += delta;
+                        }
+                    }
+                } else {
+                    let dir = if b_cy >= a_cy { 1.0 } else { -1.0 };
+                    let delta = dir * (oy + cfg.gap);
+                    for &m in &groups[gj].members {
+                        if let Some(r) = rects.get_mut(m) {
+                            r.y += delta;
+                        }
+                    }
+                }
+            }
+        }
+
+        let hulls = group_hulls(rects, groups, cfg);
+        for (idx, r) in rects.iter_mut().enumerate() {
+            for (gi, g) in groups.iter().enumerate() {
+                if g.members.contains(&idx) {
+                    continue;
+                }
+                let h = &hulls[gi];
+                let ox = (r.x + r.w).min(h.x + h.w) - r.x.max(h.x);
+                let oy = (r.y + r.h).min(h.y + h.h) - r.y.max(h.y);
+                if ox <= 0.0 || oy <= 0.0 {
+                    continue;
+                }
+                moved = true;
+                if ox < oy {
+                    let dir = if r.x + r.w / 2.0 >= h.x + h.w / 2.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    r.x += dir * (ox + cfg.gap);
+                } else {
+                    let dir = if r.y + r.h / 2.0 >= h.y + h.h / 2.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    r.y += dir * (oy + cfg.gap);
+                }
+            }
+        }
+
+        remove_overlaps(rects, cfg.gap);
+
+        if !moved {
+            break;
+        }
+    }
 }
 
 /// For every pair of co-members across `groups`, the depth of the *deepest*
@@ -985,6 +1103,107 @@ mod tests {
         // c's real edge to x still shapes the result: c is not glued to b.
         assert!(dist(c, x) > 0.0);
         assert!(dist(b, c) > 0.0);
+    }
+
+    fn rects_overlap(a: &Rect, b: &Rect) -> bool {
+        let ox = (a.x + a.w).min(b.x + b.w) - a.x.max(b.x);
+        let oy = (a.y + a.h).min(b.y + b.h) - a.y.max(b.y);
+        ox > 0.0 && oy > 0.0
+    }
+
+    #[test]
+    fn sibling_hulls_never_overlap() {
+        // Two groups with a single cross-group edge pulling them together —
+        // without separation their hulls would collide.
+        let cfg = StressConfig::default();
+        let g = ids(&["a1", "a2", "a3", "b1", "b2", "b3"]);
+        let szs = sizes(6, 100.0, 50.0);
+        let edges = [(2, 3)]; // a3 -- b1, the only cross-group pull
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1, 2],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![3, 4, 5],
+                depth: 0,
+            },
+        ];
+        let (rects, hulls) = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        assert_eq!(hulls.len(), 2);
+        assert!(
+            !rects_overlap(&hulls[0], &hulls[1]),
+            "sibling hulls overlap: {:?} vs {:?}",
+            hulls[0],
+            hulls[1]
+        );
+        // Members still sit inside their own hull.
+        for (gi, group) in groups.iter().enumerate() {
+            let hull = hulls[gi];
+            for &m in &group.members {
+                let r = &rects[m];
+                assert!(
+                    r.x >= hull.x - 1e-6
+                        && r.y >= hull.y - 1e-6
+                        && r.x + r.w <= hull.x + hull.w + 1e-6
+                        && r.y + r.h <= hull.y + hull.h + 1e-6,
+                    "member {m} rect not inside its own hull"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nested_group_hull_stays_inside_parent_hull() {
+        let cfg = StressConfig::default();
+        let g = ids(&["a", "b", "c"]);
+        let szs = sizes(3, 100.0, 50.0);
+        let edges: [(usize, usize); 0] = [];
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1, 2],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![0, 1],
+                depth: 1,
+            },
+        ];
+        let (_rects, hulls) = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        let outer = hulls[0];
+        let inner = hulls[1];
+        assert!(
+            inner.x >= outer.x - 1e-6
+                && inner.y >= outer.y - 1e-6
+                && inner.x + inner.w <= outer.x + outer.w + 1e-6
+                && inner.y + inner.h <= outer.y + outer.h + 1e-6,
+            "inner hull {inner:?} not inside outer hull {outer:?}"
+        );
+    }
+
+    #[test]
+    fn separate_hulls_is_deterministic_with_multiple_groups() {
+        let cfg = StressConfig::default();
+        let g = ids(&["a1", "a2", "b1", "b2", "c1", "c2"]);
+        let szs = sizes(6, 90.0, 45.0);
+        let edges = [(1, 2), (3, 4)];
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![2, 3],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![4, 5],
+                depth: 0,
+            },
+        ];
+        let one = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        let two = layout_grouped(&g, &szs, &edges, &groups, &cfg);
+        assert_eq!(one, two);
     }
 
     #[test]
