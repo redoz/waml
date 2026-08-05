@@ -58,8 +58,29 @@ special-cased alongside it.
 | take over | never call `next`; the folder is opaque |
 
 "Take over" is the encapsulation case. A custom view that emits no rows for its
-internals makes them invisible in the tree panel; they remain reachable by path
-and by search, but not by browsing.
+internals makes them invisible in the tree panel.
+
+### The raw OKF layer
+
+Hidden means hidden *through the chain*, without exception. A middleware does not
+leak a row it declined to emit, and `resolve` does not forward a path the chain
+excludes. A deep link minted while a row was visible, and later hidden, is
+`Unresolved` and falls back to the nearest resolvable prefix like any other.
+
+Reachability comes from a separate route instead: the **raw OKF layer** — the
+root view opened directly, with the chain pinned to `[index]`. It is not a
+middleware and not a fallback, but an explicit escape hatch, the same object the
+terminal stage already is.
+
+Two consequences:
+
+- Search may index hidden files, but a hit whose path does not resolve through
+  the chain must open in raw mode. Otherwise clicking a search result silently
+  does nothing.
+- **Hiding is presentational, never a permission boundary.** Any reader can open
+  the raw layer. `hide` must not be reached for to conceal anything sensitive in
+  a bundle that will be shared; nothing in waml treats a hidden file as
+  protected.
 
 ## The chain resolves surfaces too
 
@@ -301,7 +322,9 @@ something stable in the model instead.
 
 `Unresolved` is not a failure of the chain. A path that no longer resolves — the
 underlying file was deleted, a filter now excludes it — falls back to the nearest
-resolvable prefix, which is at worst the folder itself.
+resolvable prefix, which is at worst the folder itself. When the cause is
+exclusion rather than deletion, the file is still reachable through the raw OKF
+layer; the chain simply does not route to it.
 
 ### Capabilities
 
@@ -548,7 +571,11 @@ Headless, in `waml`:
   spanned diagnostic.
 - A bundle-frontmatter `max_view_depth` is ignored.
 - `RowId` is stable across a re-projection with unchanged inputs.
-- Every path minted by `project` resolves through `resolve` on a later run.
+- Every path minted by `project` resolves through `resolve` on a later run,
+  unless a later stage excludes it.
+- `hide` does not forward `resolve` for a hidden path; the result is
+  `Unresolved`, and the nearest resolvable prefix is returned.
+- The raw OKF layer resolves a hidden path that the chain does not.
 - An unresolvable path falls back to its nearest resolvable prefix.
 - Every declared capability is accepted by `apply` — property test over all rows
   of every fixture chain.
