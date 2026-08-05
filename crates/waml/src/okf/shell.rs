@@ -13,15 +13,20 @@ use waml_syntax::{
 
 use crate::{
     analysis::{AnalysisError, AnalysisStage, DocumentCatalog, DocumentVersion, MarkdownSyntaxSet},
-    frontmatter::{parse_closed_syntax, Frontmatter},
+    frontmatter::{parse_closed_syntax, FmValue, Frontmatter},
     source::SourceSlice,
 };
 
 use super::{
     resolve_href, Bundle, BundleError, Concept, Directory, DirectoryAddress, Index, Link, Log,
-    Source,
+    Source, UsageWindow,
 };
 
+/// v0.1 vocabulary: keys whose promotion behaviour is unchanged by v0.2 and
+/// unconditionally seeded into the `promoted` set. v0.2 keys (`sources`,
+/// `usage_window`, …) are NOT listed here — their membership in `promoted`
+/// depends on whether their promotion actually succeeded (see
+/// `project_concept` and the plan's promotion-success rule).
 const KNOWN_KEYS: &[&str] = &[
     "type",
     "title",
@@ -319,19 +324,52 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
     let timestamp = fm.get_str("timestamp").map(String::from);
     let tags = fm.get_string_list("tags");
     let ty = fm.get_str("type").unwrap_or("").to_string();
-    let extra = Frontmatter {
-        entries: fm
-            .entries
-            .iter()
-            .filter(|(key, _)| !KNOWN_KEYS.contains(&key.as_str()))
-            .cloned()
-            .collect(),
-    };
+
+    // v0.1 keys behave exactly as before (Concerns #2); v0.2 keys join this
+    // set only when their own promotion actually succeeded, per the plan's
+    // promotion-success rule — `extra` then holds exactly the keys we did
+    // not read.
+    let mut promoted: BTreeSet<&str> = KNOWN_KEYS.iter().copied().collect();
+
+    let sibling_usage_window = fm.get("usage_window").and_then(promote_usage_window);
+    if sibling_usage_window.is_some() {
+        promoted.insert("usage_window");
+    }
+
     let citation_start = citation_start(shell).unwrap_or(shell.body_range.end());
     let prose_range = TextRange::new(shell.body_range.start(), citation_start)
         .expect("citation heading follows the document body start");
     let citation_range = TextRange::new(citation_start, shell.body_range.end())
         .expect("citation heading is inside the document body");
+
+    // Precedence: frontmatter `sources` wins outright when it promotes; the
+    // legacy `# Citations` body list is read only when `sources` is absent
+    // or its promotion failed wholesale (treated as absent for precedence —
+    // the raw value still stays out of `promoted`, so it survives in
+    // `extra`).
+    let sources = match promote_sources(fm) {
+        Some(mut sources) => {
+            promoted.insert("sources");
+            if let Some(window) = &sibling_usage_window {
+                for source in &mut sources {
+                    if source.usage_window.is_none() {
+                        source.usage_window = Some(window.clone());
+                    }
+                }
+            }
+            sources
+        }
+        None => extract_legacy_sources(shell, citation_range),
+    };
+
+    let extra = Frontmatter {
+        entries: fm
+            .entries
+            .iter()
+            .filter(|(key, _)| !promoted.contains(key.as_str()))
+            .cloned()
+            .collect(),
+    };
     Concept {
         id: shell
             .document
@@ -347,9 +385,79 @@ fn project_concept(shell: &ShellDocument<'_>) -> Concept {
         timestamp,
         body: shell.body.clone(),
         links: extract_links(shell, prose_range),
-        sources: extract_legacy_sources(shell, citation_range),
+        sources,
         extra,
     }
+}
+
+/// Promotes the frontmatter `sources` key into `Source` entries. All-or-
+/// nothing: `None` means the key is absent, is not a list, or contains an
+/// entry that failed to promote — the caller falls back to the legacy body
+/// list and leaves the raw value in `extra`.
+fn promote_sources(fm: &Frontmatter) -> Option<Vec<Source>> {
+    let FmValue::List(items) = fm.get("sources")? else {
+        return None;
+    };
+    let mut sources = Vec::with_capacity(items.len());
+    for item in items {
+        sources.push(promote_source_entry(item)?);
+    }
+    Some(sources)
+}
+
+/// Promotes one `sources` list entry. `None` fails the whole key (see
+/// `promote_sources`) — only a missing/non-string `resource` fails an entry;
+/// a non-numeric `usage_count` is a merely-absent optional signal, not an
+/// entry failure (per the plan's malformed table).
+fn promote_source_entry(entry: &FmValue) -> Option<Source> {
+    let FmValue::Map(fields) = entry else {
+        return None;
+    };
+    let resource = map_str_field(fields, "resource")?.to_owned();
+    let id = map_str_field(fields, "id").map(str::to_owned);
+    let title = map_str_field(fields, "title").map(str::to_owned);
+    let last_modified = map_str_field(fields, "last_modified").map(str::to_owned);
+    let usage_count = fields
+        .iter()
+        .find_map(|(key, value)| match (key.as_str(), value) {
+            ("usage_count", FmValue::Num(n)) => Some(*n),
+            _ => None,
+        });
+    let usage_window = fields
+        .iter()
+        .find(|(key, _)| key == "usage_window")
+        .and_then(|(_, value)| promote_usage_window(value));
+    Some(Source {
+        id,
+        resource,
+        title,
+        author: None,
+        usage_count,
+        last_modified,
+        usage_window,
+    })
+}
+
+/// Promotes a frontmatter map into a `UsageWindow`: succeeds only when the
+/// value is a map and at least one of `from`/`to` is a recognizable string,
+/// per the plan's malformed table.
+fn promote_usage_window(value: &FmValue) -> Option<UsageWindow> {
+    let FmValue::Map(fields) = value else {
+        return None;
+    };
+    let from = map_str_field(fields, "from").map(str::to_owned);
+    let to = map_str_field(fields, "to").map(str::to_owned);
+    if from.is_none() && to.is_none() {
+        return None;
+    }
+    Some(UsageWindow { from, to })
+}
+
+fn map_str_field<'a>(fields: &'a [(String, FmValue)], key: &str) -> Option<&'a str> {
+    fields.iter().find_map(|(k, v)| match v {
+        FmValue::Str(s) if k == key => Some(s.as_str()),
+        _ => None,
+    })
 }
 
 fn first_h1(shell: &ShellDocument<'_>) -> Option<String> {

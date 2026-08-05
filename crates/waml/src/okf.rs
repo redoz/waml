@@ -950,6 +950,89 @@ mod tests {
     }
 
     #[test]
+    fn frontmatter_sources_promote_with_all_signals() {
+        let src = "---\ntype: Note\nsources:\n  - id: src-1\n    resource: https://example.test/a\n    title: A\n    usage_count: 3\n    last_modified: 2026-01-01\n    usage_window:\n      from: 2025-01-01\n      to: 2025-06-01\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.sources.len(), 1);
+        let source = &c.sources[0];
+        assert_eq!(source.id.as_deref(), Some("src-1"));
+        assert_eq!(source.resource, "https://example.test/a");
+        assert_eq!(source.title.as_deref(), Some("A"));
+        assert_eq!(source.usage_count, Some(3.0));
+        assert_eq!(source.last_modified.as_deref(), Some("2026-01-01"));
+        assert_eq!(
+            source.usage_window,
+            Some(UsageWindow {
+                from: Some("2025-01-01".to_owned()),
+                to: Some("2025-06-01".to_owned()),
+            })
+        );
+        assert!(c.extra.get("sources").is_none());
+        assert!(c.extra.get("usage_window").is_none());
+    }
+
+    #[test]
+    fn frontmatter_sources_take_precedence_over_citations_heading() {
+        let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/fm\n---\n# Note\n\n# Citations\n\n[legacy](https://example.test/legacy)\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.sources.len(), 1);
+        assert_eq!(c.sources[0].resource, "https://example.test/fm");
+        assert!(c.body.contains("# Citations"));
+    }
+
+    #[test]
+    fn sibling_usage_window_fills_entries_and_entry_window_overrides() {
+        let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/a\n  - resource: https://example.test/b\n    usage_window:\n      from: 2020-01-01\n      to: 2020-02-01\nusage_window:\n  from: 2025-01-01\n  to: 2025-06-01\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.sources.len(), 2);
+        assert_eq!(
+            c.sources[0].usage_window,
+            Some(UsageWindow {
+                from: Some("2025-01-01".to_owned()),
+                to: Some("2025-06-01".to_owned()),
+            })
+        );
+        assert_eq!(
+            c.sources[1].usage_window,
+            Some(UsageWindow {
+                from: Some("2020-01-01".to_owned()),
+                to: Some("2020-02-01".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn sources_entry_without_resource_fails_the_whole_key() {
+        let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/a\n  - title: no resource here\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert!(c.sources.is_empty());
+        assert!(c.extra.get("sources").is_some());
+    }
+
+    #[test]
+    fn sources_that_is_not_a_list_promotes_nothing_and_survives_in_extra() {
+        let src = "---\ntype: Note\nsources: oops\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert!(c.sources.is_empty());
+        assert_eq!(c.extra.get_str("sources"), Some("oops"));
+    }
+
+    #[test]
+    fn usage_count_that_is_not_a_number_stays_none_and_key_still_promotes() {
+        let src = "---\ntype: Note\nsources:\n  - resource: https://example.test/a\n    usage_count: many\n---\n# Note\n";
+        let c = project("note.md", src).unwrap();
+
+        assert_eq!(c.sources.len(), 1);
+        assert_eq!(c.sources[0].usage_count, None);
+        assert!(c.extra.get("sources").is_none());
+    }
+
+    #[test]
     fn authored_index_order_uses_only_real_list_links() {
         let source = SourceBundle::try_from_pairs([
             (
