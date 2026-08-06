@@ -379,7 +379,32 @@ fn build_tree_with_registry(
                         // An UNSTAMPED row keeps the descriptor's per-kind
                         // glyph (class, note, diagram, ...), which is what
                         // every shipped listing produces today.
-                        if row.icon.is_some() {
+                        //
+                        // A stamp EQUAL to the root view's baseline is not a
+                        // decision, it is the baseline: `RootView` stamps
+                        // every concept row from `concept.ty` alone, while
+                        // the descriptor derives its category from the UML
+                        // PROJECTION (claims, diagrams, packages, ...) and
+                        // falls back to `concept.ty` last. Honouring the
+                        // baseline would silently repaint every row where the
+                        // two disagree -- an unclaimed `type: uml.Class` doc
+                        // draws the descriptor's `FileText` today -- and it
+                        // would repaint the ICON ONLY, leaving
+                        // `presentation.category` (accent bucket, classifier
+                        // menus) on the old value, so the row's glyph and its
+                        // colour would contradict each other. Only a stamp a
+                        // LATER stage changed is a decision, and only that is
+                        // honoured here.
+                        let baseline = bundle.concept(concept_id).map(|concept| {
+                            waml::view::kind::kind_of(&waml::model::ElementType::parse(&concept.ty))
+                                .as_icon_name()
+                        });
+                        let stamped_by_middleware = match (row.icon.as_ref(), baseline) {
+                            (Some(icon), Some(baseline)) => icon.as_str() != baseline,
+                            (Some(_), None) => true,
+                            (None, _) => false,
+                        };
+                        if stamped_by_middleware {
                             let (icon, diagnostic) = crate::extension_editor::resolve_icon(
                                 row.icon.as_ref(),
                                 &row.target,
@@ -1395,6 +1420,61 @@ mod tests {
 
         assert_eq!(doc.presentation.icon, Icon::Box, "the stamp is honoured");
         assert_eq!(doc.presentation.icon, folder_icon);
+    }
+
+    /// The other half of the same rule: `RootView` stamps EVERY concept row
+    /// from `concept.ty`, so a bare stamp is not a decision and must not
+    /// repaint a row whose descriptor disagrees. A `type: uml.Class` document
+    /// that the UML analysis does not claim is an OKF document as far as the
+    /// descriptor is concerned -- it draws `FileText`, and its accent bucket
+    /// and classifier menus agree with that. Honouring the baseline stamp
+    /// would move the GLYPH to the class icon and leave the category behind,
+    /// so the row would contradict itself.
+    #[test]
+    fn the_root_views_baseline_stamp_does_not_repaint_an_unclaimed_document() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            ("sales/index.md", "# Sales\n\n* [Doc](./doc.md)\n"),
+            (
+                "sales/doc.md",
+                "---\ntitle: Doc\ntype: uml.Class\n---\n# Doc\n",
+            ),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let registry =
+            waml::view::chain::MiddlewareRegistry::from_extensions(&[&waml::extension::CoreExt])
+                .unwrap();
+        let tree = build_tree_with_registry(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+            &registry,
+        );
+        let doc = tree.roots[0].children[0]
+            .children
+            .iter()
+            .find(|node| node.title == "Doc")
+            .expect("the document lists");
+
+        let descriptor = crate::documents::describe(
+            prepared.okf(),
+            prepared.uml(),
+            doc.concept_id
+                .as_deref()
+                .expect("a concept row carries its id"),
+        )
+        .expect("the document has a descriptor");
+        assert_eq!(
+            doc.presentation.icon, descriptor.presentation.icon,
+            "the descriptor still owns the glyph"
+        );
+        assert_eq!(
+            doc.presentation.category, descriptor.presentation.category,
+            "and the glyph and the category still come from the same place"
+        );
     }
 
     /// A stage that stamps an icon name nothing resolves. The core extension
