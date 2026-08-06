@@ -104,39 +104,7 @@ pub fn breadcrumb_for(
         .iter()
         .find(|directory| directory.concepts.iter().any(|id| id == concept_id))?;
 
-    // Root-last, then reversed: `Directory::parent` walks upward, and the
-    // bundle's parent links are acyclic by construction (lowering builds them
-    // from the address hierarchy).
-    let mut upward = vec![owner];
-    while let Some(parent) = upward
-        .last()
-        .and_then(|directory| directory.parent.as_ref())
-        .and_then(|parent| bundle.directory(parent.as_str()))
-    {
-        upward.push(parent);
-    }
-    let mut path = upward
-        .iter()
-        .rev()
-        .map(|directory| {
-            let address = directory.address.as_str();
-            BreadcrumbSegment {
-                title: bundle
-                    .index(address)
-                    .and_then(|index| index.title.clone())
-                    .unwrap_or_else(|| {
-                        if address == "/" {
-                            "Untitled".to_string()
-                        } else {
-                            last_segment(address).to_string()
-                        }
-                    }),
-                target: NavigationTarget::Directory {
-                    address: address.to_string(),
-                },
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut path = directory_chain(bundle, owner.address.as_str())?;
     path.push(BreadcrumbSegment {
         title: concept
             .title
@@ -148,6 +116,62 @@ pub fn breadcrumb_for(
         },
     });
     Some(path)
+}
+
+/// The breadcrumb for a FOLDER tab, whose subject is a directory address
+/// rather than a concept id.
+///
+/// A folder tab is opened by `NavigationTarget::Directory`, and its address is
+/// not a concept the bundle can resolve -- so `breadcrumb_for` returns `None`
+/// for one and the header came up empty. A folder has an authored location
+/// exactly as a document does; the trail simply ENDS at the folder instead of
+/// passing through it, which is why the last segment is not dropped here.
+pub fn breadcrumb_for_directory(
+    okf: &waml::analysis::OkfAnalysis,
+    address: &str,
+) -> Option<Vec<BreadcrumbSegment>> {
+    directory_chain(&okf.bundle, address)
+}
+
+/// Root-first list of segments for `address` and every directory above it.
+/// `None` if the bundle has no such directory.
+///
+/// Root-last, then reversed: `Directory::parent` walks upward, and the
+/// bundle's parent links are acyclic by construction (lowering builds them
+/// from the address hierarchy).
+fn directory_chain(bundle: &waml::okf::Bundle, address: &str) -> Option<Vec<BreadcrumbSegment>> {
+    let mut upward = vec![bundle.directory(address)?];
+    while let Some(parent) = upward
+        .last()
+        .and_then(|directory| directory.parent.as_ref())
+        .and_then(|parent| bundle.directory(parent.as_str()))
+    {
+        upward.push(parent);
+    }
+    Some(
+        upward
+            .iter()
+            .rev()
+            .map(|directory| {
+                let address = directory.address.as_str();
+                BreadcrumbSegment {
+                    title: bundle
+                        .index(address)
+                        .and_then(|index| index.title.clone())
+                        .unwrap_or_else(|| {
+                            if address == "/" {
+                                "Untitled".to_string()
+                            } else {
+                                last_segment(address).to_string()
+                            }
+                        }),
+                    target: NavigationTarget::Directory {
+                        address: address.to_string(),
+                    },
+                }
+            })
+            .collect(),
+    )
 }
 
 pub fn resolve_link(
@@ -476,6 +500,49 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["Root", "Sales", "Order"],
         );
+    }
+
+    /// Regression: a folder tab's subject is a directory ADDRESS, which
+    /// `breadcrumb_for` cannot resolve as a concept -- so every index page
+    /// opened with an empty header.
+    #[test]
+    fn a_folder_tab_gets_the_trail_down_to_the_folder() {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            ("index.md", "# Root
+
+* [Sales](sales/)
+"),
+            ("sales/index.md", "# Sales
+
+* [Archive](archive/)
+"),
+            ("sales/archive/index.md", "# Archive
+"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+
+        let segments = breadcrumb_for_directory(prepared.okf(), "/sales/archive")
+            .expect("a folder has a place it lives");
+        assert_eq!(
+            segments
+                .iter()
+                .map(|segment| segment.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Root", "Sales", "Archive"],
+            "the trail ENDS at the folder rather than passing through it"
+        );
+        // Every segment is a directory, including the last.
+        assert!(segments.iter().all(|segment| matches!(
+            segment.target,
+            NavigationTarget::Directory { .. }
+        )));
+
+        // The root is its own single-segment trail, not an empty one.
+        let root = breadcrumb_for_directory(prepared.okf(), "/").expect("the root is a folder too");
+        assert_eq!(root.len(), 1);
+
+        assert_eq!(breadcrumb_for_directory(prepared.okf(), "/nope"), None);
     }
 
     #[test]

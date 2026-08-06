@@ -849,8 +849,14 @@ impl App {
             .map(|tab| tab.concept_id.clone());
         let chrome = self.documents.active_chrome().document_header;
         let breadcrumb = if chrome.breadcrumb {
-            active_concept.as_deref().and_then(|concept_id| {
-                crate::navigation::breadcrumb_for(self.session.okf_analysis(), concept_id)
+            active_concept.as_deref().and_then(|subject| {
+                let okf = self.session.okf_analysis();
+                // A folder tab's subject is a directory ADDRESS, not a concept
+                // id, so the concept lookup finds nothing and the header used
+                // to come up blank on every index page. Fall back to the
+                // directory trail, which is the same walk minus the leaf.
+                crate::navigation::breadcrumb_for(okf, subject)
+                    .or_else(|| crate::navigation::breadcrumb_for_directory(okf, subject))
             })
         } else {
             None
