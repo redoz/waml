@@ -26,15 +26,6 @@ profile: uml-domain
 - [Layout Constraint](./../concepts/model/layout-constraint.md)
 - [View Geometry](./../concepts/model/view-geometry.md)
 
-## Layout
-- Kinds as column with frame
-- Presentation as column with frame
-- Arrangement as column with frame
-- Kinds left of Presentation
-- Presentation left of Arrangement
-- top of Kinds aligned with top of Presentation
-- top of Presentation aligned with top of Arrangement
-
 ## Reading guide
 
 This view separates three questions that are easy to mix.

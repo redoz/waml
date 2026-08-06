@@ -30,16 +30,7 @@ profile: uml-domain
 ### Reported
 - [Diagnostic](./../concepts/model/diagnostic.md)
 
-## Layout
-- Authored as column with frame
-- Resolved as column with frame
-- Views as column with frame
-- Authored left of Resolved
-- Resolved left of Views
-- top of Authored aligned with top of Resolved
-- top of Resolved aligned with top of Views
-- Reported below Authored
-- [Model Element](./../concepts/model/model-element.md) with emphasized
+
 
 ## Reading guide
 

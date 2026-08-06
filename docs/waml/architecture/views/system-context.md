@@ -27,15 +27,6 @@ profile: uml-domain
 - [Editor](./../concepts/workflows/editor.md)
 - [Validation and Diagnostics](./../concepts/workflows/validation-and-diagnostics.md)
 
-## Layout
-- Content as column with frame
-- Surfaces as column with frame
-- Behavior as column with frame
-- People left of Content
-- Content left of Surfaces
-- Surfaces left of Behavior
-- center of People aligned with center of Content
-
 ## Reading guide
 
 The author is at the left. The content is in the middle. The four surfaces are
