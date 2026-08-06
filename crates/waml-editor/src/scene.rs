@@ -428,7 +428,8 @@ pub fn conflict_participants(c: &SceneConflict) -> Vec<String> {
 /// into `index`, resolved recursively so a nested group's members are also
 /// listed in every ancestor) plus a parallel `(title, depth)` list for
 /// emission, in the same pre-order the input tree is walked. Member keys
-/// absent from `index` (not part of this diagram's sized set) are skipped.
+/// absent from `index` (not part of this diagram's sized set) are skipped, as
+/// is the parser's trivial (unnamed, childless) member group.
 fn flatten_groups(
     groups: &[DiagramGroup],
     index: &std::collections::BTreeMap<&str, usize>,
@@ -452,6 +453,14 @@ fn flatten_groups(
     }
 
     for g in groups {
+        // The parser wraps a diagram's flat `## Members` list in a trivial
+        // (unnamed, childless) member group. That is not an authored cluster —
+        // treating it as one would give every group-less diagram whole-diagram
+        // cohesion plus a phantom whole-canvas hull. Skip it; a *named* group
+        // (or an unnamed one that carries real `###` children) is real.
+        if g.name.is_empty() && g.children.is_empty() {
+            continue;
+        }
         let mut members = Vec::new();
         collect_members(g, index, &mut members);
         // A group whose members are all unresolved/unsized has no geometry: its
@@ -469,6 +478,69 @@ fn flatten_groups(
         }
         flatten_groups(&g.children, index, depth + 1, specs, meta);
     }
+}
+
+/// Route `route_edges` over solved stress geometry, containment-aware.
+///
+/// The rect map the router works from carries the node rects **and** each
+/// group's hull under `BoxId::Group(i)`, so a hull is an obstacle exactly like
+/// `geometry::solve_box` makes it for the constraint path; the box forest gives
+/// the router the membership it must never infer from rect overlap. Returns the
+/// routes plus both router inputs, so the caller can hand them to
+/// `place_labels_with_reroute` and reroute under the same containment rules.
+///
+/// Split out of `stress_default` so containment-aware routing is testable
+/// against hand-placed geometry (the stress solve's own placement is not
+/// controllable enough to stage a crossing).
+#[allow(clippy::type_complexity)]
+fn route_with_groups(
+    keys: &[String],
+    rects: &[Rect],
+    hulls: &[Rect],
+    group_specs: &[stress::GroupSpec],
+    group_depths: &[u8],
+    route_edges: &[(BoxId, BoxId)],
+) -> (
+    Vec<waml::solve::Route>,
+    std::collections::BTreeMap<BoxId, Rect>,
+    Vec<waml::solve::Box>,
+) {
+    let mut rect_map: std::collections::BTreeMap<BoxId, Rect> = keys
+        .iter()
+        .cloned()
+        .map(BoxId::Node)
+        .zip(rects.iter().copied())
+        .collect();
+    for (i, hull) in hulls.iter().enumerate() {
+        rect_map.insert(BoxId::Group(i as u32), *hull);
+    }
+
+    // One `Box` per group (flat: `GroupSpec::members` already includes every
+    // descendant member, so `build_membership`'s leaf-child walk needs no
+    // nested Group children to recurse through). This is the only input the
+    // router derives group membership from — never rect overlap.
+    let boxes: Vec<waml::solve::Box> = group_specs
+        .iter()
+        .enumerate()
+        .map(|(i, spec)| waml::solve::Box {
+            id: BoxId::Group(i as u32),
+            kind: BoxKind::Group,
+            children: spec
+                .members
+                .iter()
+                .map(|&m| BoxId::Node(keys[m].clone()))
+                .collect(),
+            axis: None,
+            shape: Shape::Shrink,
+            margin: Margin::Medium,
+            flags: FlagSet::default(),
+            title: None,
+            depth: group_depths.get(i).copied().unwrap_or(0),
+        })
+        .collect();
+
+    let routes = route::route(&boxes, &rect_map, route_edges, &SolveConfig::default());
+    (routes, rect_map, boxes)
 }
 
 /// Native-only stress/grid default layout. Kept at this call seam (not inside
@@ -521,16 +593,6 @@ fn stress_default(
         stress::layout_grouped(&ids, &dims, &pairs, &group_specs, &cfg)
     };
 
-    // Rects keyed by BoxId for the router (obstacles derive from these rects).
-    // Group hulls go in too, under `BoxId::Group(i)`, so containment-aware
-    // routing (below) can mask/avoid them exactly like `geometry::solve_box`
-    // does for the constraint path.
-    let mut rect_map: BTreeMap<BoxId, Rect> =
-        ids.iter().cloned().zip(rects.iter().copied()).collect();
-    for (i, hull) in hulls.iter().enumerate() {
-        rect_map.insert(BoxId::Group(i as u32), *hull);
-    }
-
     // Directed (BoxId, BoxId) edge list from the caller's shared
     // `drawable_edges` list (P-5: computed once in build_scene, not again
     // here), so routes come out in the exact order build_scene consumes them.
@@ -540,31 +602,9 @@ fn stress_default(
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
 
-    // One `Box` per group (flat: `GroupSpec::members` already includes every
-    // descendant member, so `build_membership`'s leaf-child walk needs no
-    // nested Group children to recurse through). This is the only input the
-    // router derives group membership from — never rect overlap.
-    let boxes: Vec<waml::solve::Box> = group_specs
-        .iter()
-        .enumerate()
-        .map(|(i, spec)| waml::solve::Box {
-            id: BoxId::Group(i as u32),
-            kind: BoxKind::Group,
-            children: spec
-                .members
-                .iter()
-                .map(|&m| BoxId::Node(keys[m].clone()))
-                .collect(),
-            axis: None,
-            shape: Shape::Shrink,
-            margin: Margin::Medium,
-            flags: FlagSet::default(),
-            title: None,
-            depth: group_meta[i].1,
-        })
-        .collect();
-
-    let routes = route::route(&boxes, &rect_map, &route_edges, &SolveConfig::default());
+    let depths: Vec<u8> = group_meta.iter().map(|(_, d)| *d).collect();
+    let (routes, rect_map, boxes) =
+        route_with_groups(&keys, &rects, &hulls, &group_specs, &depths, &route_edges);
 
     let groups: Vec<SolvedGroup> = hulls
         .into_iter()
@@ -586,8 +626,11 @@ fn stress_default(
         label_reroutes: 0,
         label_leaders: 0,
     };
+    // Hand the router's own inputs back: a label reroute must see the same
+    // group boxes/hulls the first pass routed against, or it can reroute an
+    // edge straight through a cluster the initial route went around.
     let routing = SolvedRouting {
-        boxes: Vec::new(),
+        boxes,
         rects: rect_map,
         edges: route_edges.into_iter().map(|(s, t)| (s, t, None)).collect(),
     };
@@ -618,6 +661,50 @@ fn fallback_route(source: Rect, target: Rect) -> Vec<(f64, f64)> {
     } else {
         vec![sc, elbow, tc]
     }
+}
+
+/// Group pairs that merely *intersect*: they list a shared element but neither
+/// contains the other (nesting is expected and fine). `stress::layout_grouped`
+/// cannot pull such a pair apart — translating one set drags the shared members
+/// out of the other — so their hulls stay tangled in the rendered output. The
+/// pairs are reported as warnings rather than silently accepted.
+///
+/// Yields `(name-a, name-b)` over the whole flattened forest, pre-order.
+fn entangled_group_pairs(groups: &[DiagramGroup]) -> Vec<(String, String)> {
+    fn flatten<'a>(
+        groups: &'a [DiagramGroup],
+        out: &mut Vec<(&'a str, std::collections::BTreeSet<&'a str>)>,
+    ) {
+        for g in groups {
+            if g.name.is_empty() && g.children.is_empty() {
+                continue; // the parser's trivial member group — not a cluster.
+            }
+            let mut members: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+            fn collect<'a>(g: &'a DiagramGroup, acc: &mut std::collections::BTreeSet<&'a str>) {
+                acc.extend(g.members.iter().map(String::as_str));
+                for c in &g.children {
+                    collect(c, acc);
+                }
+            }
+            collect(g, &mut members);
+            out.push((g.name.as_str(), members));
+            flatten(&g.children, out);
+        }
+    }
+
+    let mut flat = Vec::new();
+    flatten(groups, &mut flat);
+    let mut pairs = Vec::new();
+    for (i, (a_name, a)) in flat.iter().enumerate() {
+        for (b_name, b) in flat.iter().skip(i + 1) {
+            let shared = a.intersection(b).count();
+            if shared == 0 || shared == a.len() || shared == b.len() {
+                continue; // disjoint, or one nests the other
+            }
+            pairs.push((a_name.to_string(), b_name.to_string()));
+        }
+    }
+    pairs
 }
 
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
@@ -655,7 +742,22 @@ pub fn build_scene(
     let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
     let (mut solved, diags, dropped, routing) = if use_stress_default(diagram) {
         let (solved, routing) = stress_default(&model_edges, &sizes, &diagram.groups);
-        (solved, Vec::new(), Vec::new(), routing)
+        // Groups that share an element without nesting cannot be separated by
+        // the stress solve; say so instead of shipping tangled hulls silently.
+        let diags: Vec<Diagnostic> = entangled_group_pairs(&diagram.groups)
+            .into_iter()
+            .map(|(a, b)| {
+                Diagnostic::warn(
+                    waml::diagnostic::DiagCode::EntangledGroups,
+                    format!(
+                        "groups `{a}` and `{b}` share members without nesting; their clusters cannot be separated and will overlap"
+                    ),
+                    diagram.key.clone(),
+                    0,
+                )
+            })
+            .collect();
+        (solved, diags, Vec::new(), routing)
     } else {
         waml::solve::solve_diagram_routed(
             diagram,
@@ -1744,6 +1846,95 @@ mod tests {
     }
 
     #[test]
+    fn stress_routing_avoids_a_foreign_group_hull() {
+        // Task 5's containment-aware routing: each group's hull is handed to
+        // the router as an obstacle (plus a `Box` per group for membership), so
+        // an edge between two nodes that belong to NO group is deflected around
+        // a cluster instead of cutting straight through it.
+        //
+        // Geometry is hand-placed: `left` and `right` straddle a two-member
+        // cluster whose hull sits squarely on the straight line between them.
+        let keys: Vec<String> = ["left", "right", "c1", "c2"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let rects = vec![
+            Rect {
+                x: 0.0,
+                y: 200.0,
+                w: 80.0,
+                h: 50.0,
+            },
+            Rect {
+                x: 700.0,
+                y: 200.0,
+                w: 80.0,
+                h: 50.0,
+            },
+            Rect {
+                x: 300.0,
+                y: 0.0,
+                w: 120.0,
+                h: 80.0,
+            },
+            Rect {
+                x: 300.0,
+                y: 400.0,
+                w: 120.0,
+                h: 80.0,
+            },
+        ];
+        // The members leave a wide vertical gap the router would happily thread
+        // straight through; only the hull closes it.
+        let hull = Rect {
+            x: 284.0,
+            y: -16.0,
+            w: 152.0,
+            h: 512.0,
+        };
+        let specs = vec![stress::GroupSpec {
+            members: vec![2, 3],
+            depth: 0,
+        }];
+        let route_edges = vec![(
+            BoxId::Node("left".to_string()),
+            BoxId::Node("right".to_string()),
+        )];
+
+        let (routes, rect_map, boxes) = route_with_groups(
+            &keys,
+            &rects,
+            std::slice::from_ref(&hull),
+            &specs,
+            &[0],
+            &route_edges,
+        );
+
+        assert!(
+            rect_map.contains_key(&BoxId::Group(0)),
+            "the hull must reach the router as an obstacle"
+        );
+        assert_eq!(boxes.len(), 1, "one Box per group for membership");
+        let route = routes.first().expect("left -> right must be routed");
+
+        // No segment may cross the cluster hull's interior.
+        fn crosses(a: (f64, f64), b: (f64, f64), r: Rect) -> bool {
+            let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+            let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+            x1 > r.x + 1e-6 && r.x + r.w > x0 + 1e-6 && y1 > r.y + 1e-6 && r.y + r.h > y0 + 1e-6
+        }
+        for pair in route.points.windows(2) {
+            assert!(
+                !crosses(pair[0], pair[1], hull),
+                "segment {:?}->{:?} cuts through the cluster hull {hull:?} (route {:?})",
+                pair[0],
+                pair[1],
+                route.points
+            );
+        }
+    }
+
+    #[test]
     fn routed_edge_points_anchor_near_node_borders() {
         // A point is "at" a rect when it lies within `tol` of the rect's bounds;
         // router endpoints attach to box-perimeter ports, so both ends land on
@@ -1864,6 +2055,57 @@ mod tests {
     }
 
     #[test]
+    fn stress_default_ignores_the_implicit_unnamed_member_group() {
+        // A diagram with a flat `## Members` list still parses into ONE
+        // unnamed, childless `DiagramGroup` holding every member. It is not an
+        // authored cluster: an ungrouped diagram must keep the plain stress
+        // layout — no whole-diagram cohesion, no whole-canvas hull.
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        diagram.layout = Vec::new();
+        assert!(use_stress_default(&diagram), "expected stress path");
+        assert!(
+            diagram.groups.iter().any(|g| g.name.is_empty()),
+            "fixture must carry the implicit unnamed group, or this test is vacuous"
+        );
+
+        let (scene, _) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        assert!(
+            scene.groups.is_empty(),
+            "ungrouped diagram grew a phantom hull: {:?}",
+            scene.groups
+        );
+
+        // ...and the rects are exactly the ones the group-free solve produces.
+        // (`diagram.groups` also carries the member list, so it cannot simply
+        // be cleared: the sizes come out of the real diagram, the groups do
+        // not.) Sizing mirrors `build_scene`'s own pre-pass.
+        let expanded = std::collections::HashSet::new();
+        let mut sizes = crate::sizing::size_map(&model, &diagram, &expanded);
+        for (key, size) in &mut sizes {
+            if let Some(node) = model.nodes.iter().find(|n| &n.key == key) {
+                let projected = project_scene_node_with_display(&model, node, &test_display());
+                let (w, h) = crate::card::card_size(&projected, &crate::card::mono_sheet());
+                *size = Size { w, h };
+            }
+        }
+        let (expected, _) = stress_default(&drawable_edges(&model), &sizes, &[]);
+        for node in &scene.nodes {
+            assert_eq!(
+                Some(&node.rect),
+                expected.nodes.get(&node.key),
+                "{} moved vs. the group-free layout",
+                node.key
+            );
+        }
+    }
+
+    #[test]
     fn stress_default_emits_group_hull_from_diagram_groups() {
         let model = mini();
         // Clearing `layout` routes build_scene through stress_default, and a
@@ -1901,6 +2143,72 @@ mod tests {
                 "{key} rect not inside the emitted hull"
             );
         }
+    }
+
+    #[test]
+    fn stress_default_warns_about_entangled_groups() {
+        // The same element under two `###` headings: WAML permits it, but the
+        // separation pass has to skip such a pair (translating one drags the
+        // shared member out of the other), so their hulls stay tangled. That
+        // must surface as a warning, not silently ship overlapping clusters.
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        diagram.layout = Vec::new();
+        diagram.groups = vec![
+            DiagramGroup {
+                name: "Ordering".into(),
+                members: vec!["order".into(), "customer".into()],
+                children: Vec::new(),
+            },
+            DiagramGroup {
+                name: "Payments".into(),
+                members: vec!["customer".into(), "payment-gateway".into()],
+                children: Vec::new(),
+            },
+        ];
+        assert!(use_stress_default(&diagram), "expected stress path");
+
+        let (_scene, diags) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        let warning = diags
+            .iter()
+            .find(|d| d.code == waml::diagnostic::DiagCode::EntangledGroups)
+            .expect("entangled sibling groups must be reported");
+        assert_eq!(warning.severity, waml::diagnostic::Severity::Warning);
+        assert!(
+            warning.message.contains("Ordering") && warning.message.contains("Payments"),
+            "message must name both groups: {}",
+            warning.message
+        );
+
+        // A nested pair (one group inside the other) is expected containment,
+        // not entanglement: no warning.
+        let mut nested = diagram.clone();
+        nested.groups = vec![DiagramGroup {
+            name: "Ordering".into(),
+            members: vec!["order".into(), "customer".into()],
+            children: vec![DiagramGroup {
+                name: "Inner".into(),
+                members: vec!["customer".into()],
+                children: Vec::new(),
+            }],
+        }];
+        let (_scene, diags) = build_scene(
+            &model,
+            &nested,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.code == waml::diagnostic::DiagCode::EntangledGroups),
+            "nesting must not be reported as entanglement: {diags:?}"
+        );
     }
 
     #[test]

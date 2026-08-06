@@ -64,6 +64,9 @@ pub enum DiagCode {
     ViewCycle,
     UnknownSurface,
     UnknownIcon,
+    /// Two groups list the same element without one nesting the other, so
+    /// their clusters cannot be pulled apart in the default layout.
+    EntangledGroups,
 }
 
 impl DiagCode {
@@ -119,6 +122,7 @@ impl DiagCode {
             DiagCode::ViewCycle => "view-cycle",
             DiagCode::UnknownSurface => "unknown-surface",
             DiagCode::UnknownIcon => "unknown-icon",
+            DiagCode::EntangledGroups => "entangled-groups",
         }
     }
     /// Default severity for this code (a specific site may downgrade to a warning).
@@ -136,7 +140,8 @@ impl DiagCode {
             | DiagCode::EmptyOperandStream
             | DiagCode::FragmentNestingTooDeep
             | DiagCode::UnknownSurface
-            | DiagCode::UnknownIcon => Severity::Warning,
+            | DiagCode::UnknownIcon
+            | DiagCode::EntangledGroups => Severity::Warning,
             _ => Severity::Error,
         }
     }

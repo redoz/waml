@@ -236,6 +236,10 @@ fn normalize_to_origin(rects: &mut [Rect]) {
 /// Node-node overlap removal runs at the *start* of each pass, before the
 /// checks, so a pass that reports "nothing moved" leaves the rects both
 /// overlap-free and hull-separated — the post-condition the callers assert.
+/// Exhausting the pass cap is best-effort: the last batch of translations never
+/// gets its start-of-pass cleanup, so a final `remove_overlaps` runs after the
+/// loop when (and only when) it left node rects overlapping. Hull separation is
+/// therefore only guaranteed on the converged exit.
 /// Only nodes that belong to no group at all are pushed out of foreign hulls:
 /// translating a member of some other group in isolation would skew that
 /// group's own hull and undo its just-established separation.
@@ -255,7 +259,9 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
     // too, so the pair can never separate and the passes just fight until the
     // cap. Nested (ancestor/descendant) pairs share by definition and are
     // expected to overlap; merely-intersecting siblings (the same element under
-    // two `###` headings) are the same story geometrically.
+    // two `###` headings) are the same story geometrically — the frontend
+    // reports those as an `entangled-groups` warning rather than pretending
+    // the hulls came out separated.
     let is_entangled =
         |i: usize, j: usize| -> bool { !member_sets[i].is_disjoint(&member_sets[j]) };
 
@@ -264,6 +270,7 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
         .map(|i| !member_sets.iter().any(|s| s.contains(&i)))
         .collect();
 
+    let mut capped = true;
     for _ in 0..6 {
         let mut moved = false;
         remove_overlaps(rects, cfg.gap);
@@ -348,9 +355,34 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
         }
 
         if !moved {
+            capped = false;
             break;
         }
     }
+
+    // Exhausting the cap means the loop stopped right after a batch of
+    // translations that never got the start-of-pass cleanup. Node rects must be
+    // overlap-free regardless, so clean up once more here. (Only on the capped
+    // path: a converged run is already overlap-free AND hull-separated, and
+    // `remove_overlaps` is free to nudge a node back across a hull boundary,
+    // and it also enforces `gap` on rects that merely sit close.)
+    if capped && any_overlap(rects) {
+        remove_overlaps(rects, cfg.gap);
+    }
+}
+
+/// True when any two rects have positive intersection area.
+fn any_overlap(rects: &[Rect]) -> bool {
+    for i in 0..rects.len() {
+        for j in i + 1..rects.len() {
+            let a = &rects[i];
+            let b = &rects[j];
+            if a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// For every pair of co-members across `groups`, the depth of the *deepest*
@@ -826,6 +858,92 @@ mod tests {
                 pair[0],
                 pair[1]
             );
+        }
+    }
+
+    #[test]
+    fn separation_leaves_no_node_overlap_even_at_the_cap() {
+        // This pile of overlapping sibling groups never converges: all 6
+        // passes translate, so the loop exits by exhausting its cap right
+        // after a batch of moves that never got the start-of-pass
+        // `remove_overlaps`. Node rects must still come out overlap-free.
+        let cfg = StressConfig::default();
+        let mut rects = vec![
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 70.0,
+            },
+            Rect {
+                x: 70.0,
+                y: 40.0,
+                w: 40.0,
+                h: 190.0,
+            },
+            Rect {
+                x: 140.0,
+                y: 80.0,
+                w: 70.0,
+                h: 110.0,
+            },
+            Rect {
+                x: 49.0,
+                y: 25.0,
+                w: 100.0,
+                h: 30.0,
+            },
+            Rect {
+                x: 119.0,
+                y: 65.0,
+                w: 130.0,
+                h: 150.0,
+            },
+            Rect {
+                x: 28.0,
+                y: 10.0,
+                w: 160.0,
+                h: 70.0,
+            },
+            Rect {
+                x: 98.0,
+                y: 50.0,
+                w: 190.0,
+                h: 190.0,
+            },
+        ];
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 5],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![1, 6],
+                depth: 1,
+            },
+            GroupSpec {
+                members: vec![2],
+                depth: 2,
+            },
+            GroupSpec {
+                members: vec![3],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![4],
+                depth: 1,
+            },
+        ];
+        separate_hulls(&mut rects, &groups, &cfg);
+        for i in 0..rects.len() {
+            for j in i + 1..rects.len() {
+                assert!(
+                    !overlaps(&rects[i], &rects[j]),
+                    "rects {i} and {j} overlap after separation: {:?} vs {:?}",
+                    rects[i],
+                    rects[j]
+                );
+            }
         }
     }
 
