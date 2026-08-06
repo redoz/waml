@@ -275,7 +275,12 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
         let mut moved = false;
         remove_overlaps(rects, cfg.gap);
 
-        let hulls = group_hulls(rects, groups, cfg);
+        // Recomputed after every translation below, not once per pass: moving
+        // `gj` invalidates its own hull and every ancestor's, so a snapshot taken
+        // before the loop would have each pair after the first comparing stale
+        // geometry — which is how a pass could report itself settled while hulls
+        // it had already shifted still overlapped.
+        let mut hulls = group_hulls(rects, groups, cfg);
         for (oi, &gi) in order.iter().enumerate() {
             for &gj in &order[oi + 1..] {
                 if is_entangled(gi, gj) {
@@ -310,6 +315,7 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
                         }
                     }
                 }
+                hulls = group_hulls(rects, groups, cfg);
             }
         }
 

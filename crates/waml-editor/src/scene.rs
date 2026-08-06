@@ -430,12 +430,34 @@ pub fn conflict_participants(c: &SceneConflict) -> Vec<String> {
 /// emission, in the same pre-order the input tree is walked. Member keys
 /// absent from `index` (not part of this diagram's sized set) are skipped, as
 /// is the parser's trivial (unnamed, childless) member group.
+/// Per-kept-group bookkeeping alongside `stress::GroupSpec`: what the hull is
+/// labelled, how deep it sits, and which kept group encloses it. `parent` is the
+/// nearest *kept* ancestor — a dropped one contributed no resolved members, so it
+/// can share none and skipping it changes no answer.
+struct GroupMeta {
+    title: Option<String>,
+    depth: u8,
+    parent: Option<usize>,
+}
+
+impl GroupMeta {
+    /// Name for a diagnostic. Unnamed groups exist (an untitled `###` block that
+    /// carries children), so fall back to a positional label rather than an
+    /// empty pair of backticks.
+    fn label(&self, i: usize) -> String {
+        self.title
+            .clone()
+            .unwrap_or_else(|| format!("<unnamed group {i}>"))
+    }
+}
+
 fn flatten_groups(
     groups: &[DiagramGroup],
     index: &std::collections::BTreeMap<&str, usize>,
     depth: u8,
+    parent: Option<usize>,
     specs: &mut Vec<stress::GroupSpec>,
-    meta: &mut Vec<(Option<String>, u8)>,
+    meta: &mut Vec<GroupMeta>,
 ) {
     fn collect_members(
         g: &DiagramGroup,
@@ -467,6 +489,7 @@ fn flatten_groups(
         // hull would be a degenerate `Rect{0,0,0,0}` at the origin, which would
         // become a phantom route obstacle and a zero-size dashed overlay. Drop
         // it (children are still walked — a child may resolve).
+        let mut child_parent = parent;
         if !members.is_empty() {
             specs.push(stress::GroupSpec { members, depth });
             let title = if g.name.is_empty() {
@@ -474,10 +497,56 @@ fn flatten_groups(
             } else {
                 Some(g.name.clone())
             };
-            meta.push((title, depth));
+            child_parent = Some(meta.len());
+            meta.push(GroupMeta {
+                title,
+                depth,
+                parent,
+            });
         }
-        flatten_groups(&g.children, index, depth + 1, specs, meta);
+        flatten_groups(&g.children, index, depth + 1, child_parent, specs, meta);
     }
+}
+
+/// Group pairs whose hulls will ship tangled: they share at least one resolved
+/// member and neither encloses the other.
+///
+/// This predicate MUST stay the mirror of `stress::separate_hulls`'s own
+/// `is_entangled`, which refuses to translate *any* pair with a shared member —
+/// moving one set drags the shared node out of the other, so the passes would
+/// just fight until the cap. Genuine nesting is the one case that shares members
+/// and is still fine (an inner hull is *supposed* to sit inside its outer), so
+/// it alone is excluded here.
+///
+/// Runs on the same resolved indices `flatten_groups` produced, not on member
+/// names: a shared key that resolves to nothing has no geometry, so it cannot
+/// tangle anything and must not raise a warning.
+fn entangled_group_pairs(specs: &[stress::GroupSpec], meta: &[GroupMeta]) -> Vec<(String, String)> {
+    let sets: Vec<std::collections::BTreeSet<usize>> = specs
+        .iter()
+        .map(|s| s.members.iter().copied().collect())
+        .collect();
+
+    let encloses = |anc: usize, mut node: usize| -> bool {
+        while let Some(p) = meta[node].parent {
+            if p == anc {
+                return true;
+            }
+            node = p;
+        }
+        false
+    };
+
+    let mut pairs = Vec::new();
+    for i in 0..sets.len() {
+        for j in (i + 1)..sets.len() {
+            if sets[i].is_disjoint(&sets[j]) || encloses(i, j) || encloses(j, i) {
+                continue;
+            }
+            pairs.push((meta[i].label(i), meta[j].label(j)));
+        }
+    }
+    pairs
 }
 
 /// Route `route_edges` over solved stress geometry, containment-aware.
@@ -554,7 +623,7 @@ fn stress_default(
     model_edges: &[&waml::model::Edge],
     sizes: &SizeMap,
     diagram_groups: &[DiagramGroup],
-) -> (Solved, SolvedRouting) {
+) -> (Solved, SolvedRouting, Vec<(String, String)>) {
     use std::collections::{BTreeMap, BTreeSet};
 
     let keys: Vec<String> = sizes.keys().cloned().collect();
@@ -583,8 +652,9 @@ fn stress_default(
     }
 
     let mut group_specs: Vec<stress::GroupSpec> = Vec::new();
-    let mut group_meta: Vec<(Option<String>, u8)> = Vec::new();
-    flatten_groups(diagram_groups, &index, 0, &mut group_specs, &mut group_meta);
+    let mut group_meta: Vec<GroupMeta> = Vec::new();
+    flatten_groups(diagram_groups, &index, 0, None, &mut group_specs, &mut group_meta);
+    let entangled = entangled_group_pairs(&group_specs, &group_meta);
 
     let cfg = stress::StressConfig::default();
     let (rects, hulls) = if pairs.is_empty() && group_specs.is_empty() {
@@ -602,18 +672,18 @@ fn stress_default(
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
 
-    let depths: Vec<u8> = group_meta.iter().map(|(_, d)| *d).collect();
+    let depths: Vec<u8> = group_meta.iter().map(|m| m.depth).collect();
     let (routes, rect_map, boxes) =
         route_with_groups(&keys, &rects, &hulls, &group_specs, &depths, &route_edges);
 
     let groups: Vec<SolvedGroup> = hulls
         .into_iter()
         .zip(group_meta)
-        .map(|(rect, (title, depth))| SolvedGroup {
+        .map(|(rect, m)| SolvedGroup {
             rect,
             shape: Shape::Shrink,
-            title,
-            depth,
+            title: m.title,
+            depth: m.depth,
         })
         .collect();
 
@@ -634,7 +704,7 @@ fn stress_default(
         rects: rect_map,
         edges: route_edges.into_iter().map(|(s, t)| (s, t, None)).collect(),
     };
-    (solved, routing)
+    (solved, routing, entangled)
 }
 
 /// Straight-line fallback route between two node centers, emitted as an
@@ -663,49 +733,6 @@ fn fallback_route(source: Rect, target: Rect) -> Vec<(f64, f64)> {
     }
 }
 
-/// Group pairs that merely *intersect*: they list a shared element but neither
-/// contains the other (nesting is expected and fine). `stress::layout_grouped`
-/// cannot pull such a pair apart — translating one set drags the shared members
-/// out of the other — so their hulls stay tangled in the rendered output. The
-/// pairs are reported as warnings rather than silently accepted.
-///
-/// Yields `(name-a, name-b)` over the whole flattened forest, pre-order.
-fn entangled_group_pairs(groups: &[DiagramGroup]) -> Vec<(String, String)> {
-    fn flatten<'a>(
-        groups: &'a [DiagramGroup],
-        out: &mut Vec<(&'a str, std::collections::BTreeSet<&'a str>)>,
-    ) {
-        for g in groups {
-            if g.name.is_empty() && g.children.is_empty() {
-                continue; // the parser's trivial member group — not a cluster.
-            }
-            let mut members: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-            fn collect<'a>(g: &'a DiagramGroup, acc: &mut std::collections::BTreeSet<&'a str>) {
-                acc.extend(g.members.iter().map(String::as_str));
-                for c in &g.children {
-                    collect(c, acc);
-                }
-            }
-            collect(g, &mut members);
-            out.push((g.name.as_str(), members));
-            flatten(&g.children, out);
-        }
-    }
-
-    let mut flat = Vec::new();
-    flatten(groups, &mut flat);
-    let mut pairs = Vec::new();
-    for (i, (a_name, a)) in flat.iter().enumerate() {
-        for (b_name, b) in flat.iter().skip(i + 1) {
-            let shared = a.intersection(b).count();
-            if shared == 0 || shared == a.len() || shared == b.len() {
-                continue; // disjoint, or one nests the other
-            }
-            pairs.push((a_name.to_string(), b_name.to_string()));
-        }
-    }
-    pairs
-}
 
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
 pub fn build_scene(
@@ -741,10 +768,14 @@ pub fn build_scene(
     // `model_edges`, which is the same list (same order) as `edges`.
     let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
     let (mut solved, diags, dropped, routing) = if use_stress_default(diagram) {
-        let (solved, routing) = stress_default(&model_edges, &sizes, &diagram.groups);
+        let (solved, routing, entangled) =
+            stress_default(&model_edges, &sizes, &diagram.groups);
         // Groups that share an element without nesting cannot be separated by
         // the stress solve; say so instead of shipping tangled hulls silently.
-        let diags: Vec<Diagnostic> = entangled_group_pairs(&diagram.groups)
+        // `entangled` comes back from the solve itself, off the same resolved
+        // member indices the solver refused to separate — so the warning can
+        // never disagree with what actually shipped.
+        let diags: Vec<Diagnostic> = entangled
             .into_iter()
             .map(|(a, b)| {
                 Diagnostic::warn(
@@ -1831,7 +1862,7 @@ mod tests {
             &model.diagrams[0],
             &std::collections::HashSet::new(),
         );
-        let (solved, _routing) = stress_default(&drawable_edges(&model), &sizes, &[]);
+        let (solved, _routing, _entangled) = stress_default(&drawable_edges(&model), &sizes, &[]);
         // mini declares one associates edge order -> customer.
         assert_eq!(solved.routes.len(), 1);
         assert!(!solved.routes[0].points.is_empty());
@@ -2094,7 +2125,7 @@ mod tests {
                 *size = Size { w, h };
             }
         }
-        let (expected, _) = stress_default(&drawable_edges(&model), &sizes, &[]);
+        let (expected, _, _) = stress_default(&drawable_edges(&model), &sizes, &[]);
         for node in &scene.nodes {
             assert_eq!(
                 Some(&node.rect),
@@ -2208,6 +2239,81 @@ mod tests {
                 .iter()
                 .any(|d| d.code == waml::diagnostic::DiagCode::EntangledGroups),
             "nesting must not be reported as entanglement: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_subset_sibling_pair_is_entangled_not_nested() {
+        // `Small`'s members are a strict SUBSET of `Big`'s, but the two are
+        // SIBLINGS — neither is declared inside the other. The separation pass
+        // skips any pair sharing a member, so these hulls ship tangled; only
+        // real structural nesting is exempt. Treating "one set contains the
+        // other" as nesting is what let this case ship silently.
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        diagram.layout = Vec::new();
+        diagram.groups = vec![
+            DiagramGroup {
+                name: "Big".into(),
+                members: vec!["order".into(), "customer".into()],
+                children: Vec::new(),
+            },
+            DiagramGroup {
+                name: "Small".into(),
+                members: vec!["customer".into()],
+                children: Vec::new(),
+            },
+        ];
+
+        let (_scene, diags) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        let warning = diags
+            .iter()
+            .find(|d| d.code == waml::diagnostic::DiagCode::EntangledGroups)
+            .expect("a subset sibling pair is still entangled");
+        assert!(
+            warning.message.contains("Big") && warning.message.contains("Small"),
+            "message must name both groups: {}",
+            warning.message
+        );
+    }
+
+    #[test]
+    fn an_unresolved_shared_member_is_not_entanglement() {
+        // The only key the two groups share resolves to no sized node, so it has
+        // no geometry and cannot tangle anything. The warning must run on
+        // resolved indices, not on member names, or this is a false positive.
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        diagram.layout = Vec::new();
+        diagram.groups = vec![
+            DiagramGroup {
+                name: "Left".into(),
+                members: vec!["order".into(), "ghost".into()],
+                children: Vec::new(),
+            },
+            DiagramGroup {
+                name: "Right".into(),
+                members: vec!["customer".into(), "ghost".into()],
+                children: Vec::new(),
+            },
+        ];
+
+        let (_scene, diags) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.code == waml::diagnostic::DiagCode::EntangledGroups),
+            "an unresolved shared key must not raise entanglement: {diags:?}"
         );
     }
 
