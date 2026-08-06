@@ -89,6 +89,12 @@ script_mod! {
         width: Fill
         height: Fill
         flow: Down
+        // Colour-only holder (never drawn): the immediate-mode warning glyph in
+        // `diag_strip` copies `color` from this per draw, the `FolderRow`
+        // pattern -- no RGBA crosses Rust. Declared HERE, on the widget that
+        // owns the Rust field: nested inside `diag_strip` it binds nothing and
+        // the glyph draws at zero alpha, i.e. invisibly.
+        draw_diag_icon +: { color: atlas.danger }
         // Chain-diagnostics strip: hidden when the chain built and ran
         // clean, shown above the rows when it degraded (whole-chain fallback
         // to the root view). Named the stage and the reason -- written for
@@ -99,19 +105,34 @@ script_mod! {
             width: Fill
             height: Fit
             visible: false
+            flow: Right
+            spacing: 10.0
+            align: Align{y: 0.5}
             padding: Inset{left: 24.0, right: 24.0, top: 10.0, bottom: 10.0}
             show_bg: true
+            // Premultiplied: the render pass blends premultiplied alpha, so a
+            // straight `vec4(rgb, a)` here came out as good as invisible --
+            // which is why the strip read as unstyled body text on white.
             draw_bg +: {
                 color: atlas.danger
                 pixel: fn() {
-                    return vec4(self.color.x, self.color.y, self.color.z, 0.12)
+                    let a = 0.18
+                    return vec4(self.color.x * a, self.color.y * a, self.color.z * a, a)
                 }
+            }
+            // Seat for the warning glyph, drawn immediate-mode over this rect
+            // in `draw_walk` -- the same anchor pattern the rows use. The tree
+            // marks the degraded folder with this SAME glyph, so the row badge
+            // and the reason opening it reveals read as one claim.
+            diag_icon_anchor := View {
+                width: 16.0
+                height: 16.0
             }
             diag_label := Label {
                 width: Fill
                 text: ""
                 draw_text +: {
-                    color: atlas.text
+                    color: atlas.danger
                     text_style: fonts.text_label
                 }
             }
@@ -331,6 +352,23 @@ pub struct FolderListView {
     /// mid-drag (a row inserted/removed underneath) never reads a stale rect.
     #[rust]
     row_rects: Vec<Rect>,
+    /// SDF glyph set for the diagnostics strip's leading warning icon, drawn
+    /// immediate-mode over `diag_icon_rect` (the `FolderRow` pattern).
+    #[live]
+    icons: IconSet,
+    /// Colour-only holder for that glyph's tint, so it tracks the theme's
+    /// danger colour without an RGBA literal in Rust.
+    #[live]
+    draw_diag_icon: DrawColor,
+    /// The strip's icon anchor rect, captured during `draw_walk`. Zero-sized
+    /// while the strip is hidden, which is exactly when nothing draws over it.
+    #[rust]
+    diag_icon_rect: Rect,
+    /// Whether the diagnostics strip is showing. The glyph is drawn only then:
+    /// a hidden `View`'s area still reports a stale rect, and painting over it
+    /// would leave the icon floating on a clean folder.
+    #[rust]
+    diag_visible: bool,
     /// The row index a reorder drag armed on (Task G4), if a drag is live.
     /// Cleared on EVERY `FingerUp`, including a drop with no rect recorded
     /// for its landing position (`row_rects` empty or stale) -- an armed
@@ -493,6 +531,19 @@ impl Widget for FolderListView {
                 }
             }
         }
+        if self.diag_visible {
+            self.diag_icon_rect = self
+                .view
+                .view(cx, ids!(diag_strip.diag_icon_anchor))
+                .area()
+                .rect(cx);
+            self.icons.draw(
+                cx,
+                Icon::MessageSquareWarning,
+                self.diag_icon_rect,
+                self.draw_diag_icon.color,
+            );
+        }
         DrawStep::done()
     }
 }
@@ -577,6 +628,7 @@ impl FolderListView {
     /// every message joins into one line naming what degraded.
     pub fn set_diagnostics(&mut self, cx: &mut Cx, diagnostics: &[waml::diagnostic::Diagnostic]) {
         let degraded = !diagnostics.is_empty();
+        self.diag_visible = degraded;
         self.view
             .view(cx, ids!(diag_strip))
             .set_visible(cx, degraded);
