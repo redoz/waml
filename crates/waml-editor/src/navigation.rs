@@ -508,16 +508,25 @@ mod tests {
     #[test]
     fn a_folder_tab_gets_the_trail_down_to_the_folder() {
         let source = waml::source::SourceBundle::try_from_pairs([
-            ("index.md", "# Root
+            (
+                "index.md",
+                "# Root
 
 * [Sales](sales/)
-"),
-            ("sales/index.md", "# Sales
+",
+            ),
+            (
+                "sales/index.md",
+                "# Sales
 
 * [Archive](archive/)
-"),
-            ("sales/archive/index.md", "# Archive
-"),
+",
+            ),
+            (
+                "sales/archive/index.md",
+                "# Archive
+",
+            ),
         ])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
@@ -533,10 +542,9 @@ mod tests {
             "the trail ENDS at the folder rather than passing through it"
         );
         // Every segment is a directory, including the last.
-        assert!(segments.iter().all(|segment| matches!(
-            segment.target,
-            NavigationTarget::Directory { .. }
-        )));
+        assert!(segments
+            .iter()
+            .all(|segment| matches!(segment.target, NavigationTarget::Directory { .. })));
 
         // The root is its own single-segment trail, not an empty one.
         let root = breadcrumb_for_directory(prepared.okf(), "/").expect("the root is a folder too");

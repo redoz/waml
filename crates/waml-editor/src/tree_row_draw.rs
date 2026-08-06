@@ -107,13 +107,7 @@ const DIAG_MARKER_RIGHT_INSET: f64 = 8.0;
 /// "something", the warning glyph says WHAT, and the folder view's diagnostic
 /// strip leads with the same one so the tree marker and the reason a click
 /// reveals are visibly the same claim.
-pub fn row_diag_marker(
-    cx: &mut Cx2d,
-    icons: &mut IconSet,
-    rect: Rect,
-    color: Vec4,
-    scale: f64,
-) {
+pub fn row_diag_marker(cx: &mut Cx2d, icons: &mut IconSet, rect: Rect, color: Vec4, scale: f64) {
     let width = rect.size.x;
     if !width.is_finite() {
         return;
