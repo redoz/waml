@@ -42,8 +42,20 @@ impl Default for StressConfig {
             max_iter: 300,
             epsilon: 1e-4,
             gap: SolveConfig::default().min_sep,
-            group_len: 120.0 * 0.75,
-            group_weight: 4.0,
+            // Tuned against the WAML Domain Model view (13 nodes, 4 groups) by
+            // rendering weight = 4 / 12 / 30 side by side. 4 and 12 both left
+            // the `Views` group split — Behavioral View drifted away from
+            // Diagram and Profile — and only at 30 did all three tiers read as
+            // distinct blocks.
+            //
+            // PROVISIONAL. That comparison judged cluster separation ALONE.
+            // The router does not minimize edge crossings (see
+            // docs/superpowers/specs/2026-08-06-edge-crossing-reduction-design.md),
+            // and tighter clusters bundle more edges into the same corridors,
+            // so crossing behavior is the next thing to change and these two
+            // numbers should be re-judged when it does.
+            group_len: 120.0 * 0.625,
+            group_weight: 30.0,
             hull_pad: SolveConfig::default().margin(Margin::Medium),
         }
     }
