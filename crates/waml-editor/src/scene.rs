@@ -653,7 +653,14 @@ fn stress_default(
 
     let mut group_specs: Vec<stress::GroupSpec> = Vec::new();
     let mut group_meta: Vec<GroupMeta> = Vec::new();
-    flatten_groups(diagram_groups, &index, 0, None, &mut group_specs, &mut group_meta);
+    flatten_groups(
+        diagram_groups,
+        &index,
+        0,
+        None,
+        &mut group_specs,
+        &mut group_meta,
+    );
     let entangled = entangled_group_pairs(&group_specs, &group_meta);
 
     let cfg = stress::StressConfig::default();
@@ -733,7 +740,6 @@ fn fallback_route(source: Rect, target: Rect) -> Vec<(f64, f64)> {
     }
 }
 
-
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
 pub fn build_scene(
     model: &Model,
@@ -768,8 +774,7 @@ pub fn build_scene(
     // `model_edges`, which is the same list (same order) as `edges`.
     let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
     let (mut solved, diags, dropped, routing) = if use_stress_default(diagram) {
-        let (solved, routing, entangled) =
-            stress_default(&model_edges, &sizes, &diagram.groups);
+        let (solved, routing, entangled) = stress_default(&model_edges, &sizes, &diagram.groups);
         // Groups that share an element without nesting cannot be separated by
         // the stress solve; say so instead of shipping tangled hulls silently.
         // `entangled` comes back from the solve itself, off the same resolved
