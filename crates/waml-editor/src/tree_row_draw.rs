@@ -91,24 +91,44 @@ pub fn row_chevron(cx: &mut Cx2d, draw: &mut DrawChevron, rect: Rect, open: f32,
     draw.draw_abs(cx, chevron_rect);
 }
 
-/// Draw the degraded-chain marker: a small solid dot at the row's right edge,
-/// for a directory row whose declared `view:` chain fell back to the root
-/// view. Purely additive to `row_icon`/`row_chevron` -- no hit test reads this
-/// rect, it is presentation only.
-pub fn row_diag_marker(cx: &mut Cx2d, draw: &mut DrawColor, rect: Rect, scale: f64) {
+/// Size of the degraded-chain marker glyph, and its inset from the row's right
+/// edge. Smaller than a row glyph (`ICON_SIZE`): it annotates the row, it is
+/// not the row's own identity.
+const DIAG_MARKER_SIZE: f64 = 13.0;
+const DIAG_MARKER_RIGHT_INSET: f64 = 8.0;
+
+/// Draw the degraded-chain marker at the row's right edge: the
+/// `message-square-warning` glyph, for a directory row whose declared `view:`
+/// chain failed and fell back to the root view. Purely additive to
+/// `row_icon`/`row_chevron` -- no hit test reads this rect, it is presentation
+/// only.
+///
+/// A glyph rather than the plain square it used to be: a bare dot says
+/// "something", the warning glyph says WHAT, and the folder view's diagnostic
+/// strip leads with the same one so the tree marker and the reason a click
+/// reveals are visibly the same claim.
+pub fn row_diag_marker(
+    cx: &mut Cx2d,
+    icons: &mut IconSet,
+    rect: Rect,
+    color: Vec4,
+    scale: f64,
+) {
     let width = rect.size.x;
     if !width.is_finite() {
         return;
     }
-    let size = 6.0 * scale;
-    let x = (rect.pos.x + width - size - 10.0).round();
+    let size = DIAG_MARKER_SIZE * scale;
+    let x = (rect.pos.x + width - size - DIAG_MARKER_RIGHT_INSET * scale).round();
     let y = (rect.pos.y + (ROW_HEIGHT * scale - size) / 2.0).round();
-    draw.draw_abs(
+    icons.draw(
         cx,
+        Icon::MessageSquareWarning,
         Rect {
             pos: dvec2(x, y),
             size: dvec2(size, size),
         },
+        fade(color, scale),
     );
 }
 

@@ -148,14 +148,12 @@ script_mod! {
                 return sdf.result
             }
         }
-        // Small degraded-chain marker, drawn at the row's right edge for a
-        // folder whose declared `view:` chain failed and fell back to the
-        // root view (see `draw_row_diag_marker`). Distinct from `draw_reveal`
-        // (a translucent full-row wash) -- this is a solid dot, always ink,
-        // never faded by selection.
-        draw_diag: mod.draw.DrawColor{
-            color: atlas.danger
-        }
+        // Colour-only holder (never drawn) for the degraded-chain marker at a
+        // row's right edge, for a folder whose declared `view:` chain failed
+        // and fell back to the root view. The glyph comes from the shared
+        // `IconSet`; this carries only its tint, so the marker tracks the
+        // theme's danger colour without an RGBA literal in Rust.
+        draw_diag: mod.draw.DrawColor{ color: atlas.danger }
         // Fold affordance, drawn at the head of every EXPANDABLE row (packages /
         // bundles). Leaf rows leave the slot empty but keep the indent, so the
         // glyph column stays aligned down the whole tree.
@@ -797,7 +795,13 @@ impl Widget for ProjectTree {
                     row.scale,
                 );
                 if row.view_degraded {
-                    crate::tree_row_draw::row_diag_marker(cx, &mut self.draw_diag, rect, row.scale);
+                    crate::tree_row_draw::row_diag_marker(
+                        cx,
+                        &mut self.icons,
+                        rect,
+                        self.draw_diag.color,
+                        row.scale,
+                    );
                 }
             }
             crate::tree_row_draw::row_label(
