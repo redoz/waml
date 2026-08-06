@@ -372,6 +372,24 @@ fn build_tree_with_registry(
                         concept_node(concept_id, row.id.clone(), row.caps, row.child_caps)
                     {
                         node.title = row.label.clone();
+                        // A stage-stamped `IconId` wins over the document
+                        // kind's default glyph, resolved against the SAME
+                        // table the folder view resolves against -- a stamp
+                        // the folder tab honours must not be dropped here.
+                        // An UNSTAMPED row keeps the descriptor's per-kind
+                        // glyph (class, note, diagram, ...), which is what
+                        // every shipped listing produces today.
+                        if row.icon.is_some() {
+                            let (icon, diagnostic) = crate::extension_editor::resolve_icon(
+                                row.icon.as_ref(),
+                                &row.target,
+                                table,
+                                address.as_str(),
+                                0,
+                            );
+                            node.presentation.icon = icon;
+                            view_degraded |= diagnostic.is_some();
+                        }
                         children.push(node);
                     }
                 }
@@ -1255,6 +1273,130 @@ mod tests {
         );
     }
 
+    /// A stage that stamps the `box` glyph on every row, concept rows
+    /// included -- the shipped `uml` stage only stamps folders, but nothing
+    /// in the row model restricts a stamp to one target kind.
+    struct StampBox;
+
+    impl waml::view::projection::Projection for StampBox {
+        fn project(
+            &self,
+            ctx: &waml::view::projection::ProjectionCtx<'_>,
+            next: waml::view::projection::Next<'_>,
+        ) -> Result<Vec<waml::view::row::Row>, waml::view::projection::ProjectionError> {
+            let mut rows = next.project(ctx)?;
+            for row in &mut rows {
+                row.icon = Some(waml::view::row::IconId::new("box"));
+            }
+            Ok(rows)
+        }
+
+        fn resolve(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _path: &waml::view::row::RowPath,
+        ) -> Result<Vec<waml::view::row::Row>, waml::view::projection::Unresolved> {
+            Err(waml::view::projection::Unresolved)
+        }
+
+        fn apply(
+            &self,
+            _ctx: &waml::view::projection::ProjectionCtx<'_>,
+            _path: &waml::view::row::RowPath,
+            _op: waml::view::projection::RowOp,
+            _next: waml::view::projection::Next<'_>,
+        ) -> Result<Vec<waml::okf::Op>, waml::view::projection::Unsupported> {
+            Err(waml::view::projection::Unsupported)
+        }
+
+        fn surface(
+            &self,
+            ctx: &waml::view::projection::ProjectionCtx<'_>,
+            next: waml::view::projection::Next<'_>,
+        ) -> waml::view::surface::SurfaceId {
+            next.surface(ctx)
+        }
+    }
+
+    struct StampBoxExt;
+
+    impl waml::extension::CoreExtension for StampBoxExt {
+        fn name(&self) -> &str {
+            "stamp-box-test"
+        }
+
+        fn middleware(&self) -> Vec<(&'static str, waml::extension::MiddlewareFactory)> {
+            vec![(
+                "stamp-box",
+                std::sync::Arc::new(|| {
+                    Box::new(StampBox) as Box<dyn waml::view::projection::Projection>
+                }),
+            )]
+        }
+
+        fn profiles(&self) -> Vec<waml::profile::ProfileDef> {
+            Vec::new()
+        }
+    }
+
+    /// Task 11 applies to CONCEPT rows too: a stamped icon the folder tab
+    /// honours must not be dropped by the tree, or the two surfaces disagree
+    /// about the same row -- exactly what the icon table exists to prevent.
+    #[test]
+    fn a_stamped_concept_icon_is_honoured_in_the_tree_and_matches_the_folder_row() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "---\nview: stamp-box\n---\n# Sales\n\n* [Doc](./doc.md)\n",
+            ),
+            ("sales/doc.md", "---\ntitle: Doc\n---\n# Doc\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let registry = waml::view::chain::MiddlewareRegistry::from_extensions(&[
+            &waml::extension::CoreExt,
+            &StampBoxExt,
+        ])
+        .unwrap();
+        let limits = waml::view::chain::ChainLimits::default();
+        let mode = crate::folder_projection::ViewMode::Projected;
+
+        let tree = build_tree_with_registry(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            mode,
+            limits,
+            &registry,
+        );
+        let sales = &tree.roots[0].children[0];
+        let doc = sales
+            .children
+            .iter()
+            .find(|node| node.title == "Doc")
+            .expect("the stamped concept row lists");
+
+        let (_, rows, _) = crate::folder_projection::project_rows(
+            prepared.okf(),
+            "/sales",
+            mode,
+            limits,
+            &registry,
+        )
+        .expect("the directory is in the bundle");
+        let (folder_rows, _) =
+            crate::folder_view::row_views(&rows, &crate::folder_projection::icon_table(), "/sales");
+        let folder_icon = folder_rows
+            .iter()
+            .find(|row| row.label == "Doc")
+            .expect("the same row lists in the folder view")
+            .icon;
+
+        assert_eq!(doc.presentation.icon, Icon::Box, "the stamp is honoured");
+        assert_eq!(doc.presentation.icon, folder_icon);
+    }
+
     /// A stage that stamps an icon name nothing resolves. The core extension
     /// ships no such stage -- the gate (`script_gate.rs`) asserts every
     /// mintable name has a registered `Icon` -- but a third-party stage can,
@@ -1369,6 +1511,46 @@ view: unknown-icon
         assert!(
             root.view_degraded,
             "an unresolvable icon name must be visible as a degraded listing",
+        );
+    }
+
+    /// The same warning must reach a reader when the unresolvable stamp landed
+    /// on a CONCEPT row -- dropping `row.icon` there would swallow both the
+    /// glyph and the warning.
+    #[test]
+    fn an_unknown_icon_name_on_a_concept_row_marks_the_directory_degraded() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            (
+                "sales/index.md",
+                "---\nview: unknown-icon\n---\n# Sales\n\n* [Doc](./doc.md)\n",
+            ),
+            ("sales/doc.md", "---\ntitle: Doc\n---\n# Doc\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let registry = waml::view::chain::MiddlewareRegistry::from_extensions(&[
+            &waml::extension::CoreExt,
+            &UnknownIconExt,
+        ])
+        .unwrap();
+
+        let tree = build_tree_with_registry(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+            &registry,
+        );
+        let sales = &tree.roots[0].children[0];
+        assert!(
+            sales.children.iter().any(|node| node.title == "Doc"),
+            "the concept row still lists",
+        );
+        assert!(
+            sales.view_degraded,
+            "an unresolvable icon name on a concept row must degrade the listing",
         );
     }
 }
