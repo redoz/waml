@@ -102,20 +102,12 @@ script_mod! {
         // through -- so the tree row tracks the active doc tab, not just tree
         // clicks. `atlas.selection` is a translucent accent tint, so painting
         // it over the drawn row keeps the label readable.
+        // Flat, square, full-bleed band -- no corner radius, no left accent bar.
+        // The rows butt to the column's edges, so a rounded card only carved the
+        // highlight out of the column it belongs to. Same shape as the reveal
+        // pulse below, so the two read as one family.
         draw_selection: mod.draw.DrawColor{
             color: atlas.selection
-            accent: uniform(atlas.accent)
-            pixel: fn() {
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.box(0.5, 0.5, self.rect_size.x - 1.0, self.rect_size.y - 1.0, 4.0)
-                sdf.fill(self.color)
-                // Left accent bar -- the translucent fill alone reads too faint
-                // at the selection token's low alpha, so a solid 3px edge makes
-                // the active row unmistakable.
-                sdf.rect(0.0, 3.0, 3.0, self.rect_size.y - 6.0)
-                sdf.fill(self.accent)
-                return sdf.result
-            }
         }
         draw_reveal: mod.draw.DrawColor{
             color: atlas.accent
@@ -139,14 +131,10 @@ script_mod! {
         }
         // Hover tint, painted BENEATH the selection fill so a hovered-and-
         // selected row still reads as selected.
+        // Square and full-bleed, like the selection band it sits under: a
+        // rounded hover behind a square selection shows its corners.
         draw_hover: mod.draw.DrawColor{
             color: atlas.hover
-            pixel: fn() {
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.box(0.5, 0.5, self.rect_size.x - 1.0, self.rect_size.y - 1.0, 4.0)
-                sdf.fill(self.color)
-                return sdf.result
-            }
         }
         // Colour-only holder (never drawn) for the degraded-chain marker at a
         // row's right edge, for a folder whose declared `view:` chain failed
@@ -1060,7 +1048,10 @@ impl ProjectTree {
         for ancestor in ancestors {
             self.layout.set_folder_open(&ancestor, true, false);
         }
-        self.layout.set_selected(Some(key.clone()));
+        // Deliberately NOT `set_selected`: selection tracks the ACTIVE tab, and
+        // a breadcrumb reveal opens nothing. It scrolls the row into view and
+        // pulses it; stealing the selection made the tree lie about what is
+        // open.
         self.reveal_key = Some(key.clone());
         self.pending_scroll_key = Some(key);
         self.reveal_strength = 1.0;
@@ -1267,7 +1258,7 @@ mod tests {
     }
 
     #[test]
-    fn reveal_document_opens_ancestors_selects_target_and_queues_scroll() {
+    fn reveal_document_opens_ancestors_pulses_target_and_queues_scroll() {
         let (mut cx, mut panel) = mounted_project_tree_test_context();
         panel.set_view(&mut cx, NavView::Browse(nested_search_tree()));
         panel.layout.set_open_keys(HashSet::new());
@@ -1283,8 +1274,11 @@ mod tests {
             panel.layout.open_keys(),
             HashSet::from([k("/"), k("/sales"), k("/sales/archive")])
         );
+        // Reveal pulses the row, it does not select it: selection belongs to
+        // the active tab, and a breadcrumb click opens nothing.
+        assert_eq!(panel.layout.selected(), None);
         assert_eq!(
-            panel.layout.selected(),
+            panel.reveal_key.as_deref(),
             Some(k("/sales/archive/order").as_str())
         );
         assert_eq!(

@@ -1053,6 +1053,7 @@ fn breadcrumb_reveal_pins_tree_without_navigation() {
     let active = app.documents.active_id();
     let history_len = app.view_history.len();
     let uid = app.ui.widget(&cx, ids!(document_header)).widget_uid();
+    let selected = project_tree_selected_key(&cx, &app);
 
     app.handle_action_batch(
         &mut cx,
@@ -1069,10 +1070,8 @@ fn breadcrumb_reveal_pins_tree_without_navigation() {
     assert_eq!(app.documents.active_id(), active);
     assert_eq!(app.view_history.len(), history_len);
     assert_eq!(mounted_project_tree_state(&cx, &app), DockState::Pinned);
-    assert_eq!(
-        project_tree_selected_key(&cx, &app).as_deref(),
-        Some(tree_key("/sales").as_str())
-    );
+    // A reveal pulses and scrolls; the selection keeps tracking the active tab.
+    assert_eq!(project_tree_selected_key(&cx, &app), selected);
     assert_eq!(
         app.dock_states(&mut cx),
         (DockState::Pinned, DockState::Pinned)
