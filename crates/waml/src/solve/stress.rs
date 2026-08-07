@@ -1789,4 +1789,199 @@ mod tests {
         let two = layout_grouped(&g, &szs, &edges, &groups, &cfg);
         assert_eq!(one, two);
     }
+
+    /// Task 4: a hand-built layout with one obviously avoidable crossing --
+    /// two 2-member groups, side by side, whose cross edges are inverted
+    /// (0-2 and 1-3 form an X). Swapping the two members *within* group A is
+    /// cohesion-preserving by construction and untangles it. `reduce_crossings`
+    /// is private, so this calls it directly rather than going through the
+    /// full `layout_grouped` pipeline (whose overlap/hull passes would be
+    /// incidental to what this test is checking).
+    #[test]
+    fn reduce_crossings_untangles_a_hand_built_inverted_x() {
+        let mut rects = vec![
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            }, // node 0, group A, top
+            Rect {
+                x: 0.0,
+                y: 100.0,
+                w: 20.0,
+                h: 20.0,
+            }, // node 1, group A, bottom
+            Rect {
+                x: 200.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            }, // node 2, group B, top
+            Rect {
+                x: 200.0,
+                y: 100.0,
+                w: 20.0,
+                h: 20.0,
+            }, // node 3, group B, bottom
+        ];
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![2, 3],
+                depth: 0,
+            },
+        ];
+        // 0 (top-left) -- 2 (bottom-right... no, top-right) and 1 (bottom-left)
+        // -- 3 (top-right) is the inversion: 0-2 and 1-3 form an X.
+        let edges = [(0, 3), (1, 2)];
+        let cfg = StressConfig::default();
+
+        let centers = |rs: &[Rect]| -> Vec<(f64, f64)> {
+            rs.iter()
+                .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
+                .collect()
+        };
+        let before = segment_crossings(&centers(&rects), &edges);
+        assert_eq!(before, 1, "fixture must start with exactly one crossing");
+
+        reduce_crossings(&mut rects, &groups, &edges, &cfg);
+
+        let after = segment_crossings(&centers(&rects), &edges);
+        assert_eq!(
+            after, 0,
+            "the hill-climb should untangle the one avoidable crossing"
+        );
+
+        // Cohesion preservation: each group's member set is still exactly the
+        // same two node indices (the pass permutes positions, never
+        // membership), and they are still each other's nearest groupmate --
+        // i.e. still closer to each other than to either member of the other
+        // group, so the swap did not smuggle a node across group lines.
+        for g in &groups {
+            let (m0, m1) = (g.members[0], g.members[1]);
+            let d_within = dist(centers(&rects)[m0], centers(&rects)[m1]);
+            for g2 in &groups {
+                if g2.members == g.members {
+                    continue;
+                }
+                for &other in &g2.members {
+                    let d_across = dist(centers(&rects)[m0], centers(&rects)[other]);
+                    assert!(
+                        d_within < d_across,
+                        "group member {m0} ended up closer to a member of another group"
+                    );
+                }
+            }
+        }
+    }
+
+    fn dist(a: (f64, f64), b: (f64, f64)) -> f64 {
+        ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
+    }
+
+    /// Determinism: identical input run through `reduce_crossings` twice
+    /// yields byte-identical rects, matching the golden `layout_grouped`
+    /// determinism guard above.
+    #[test]
+    fn reduce_crossings_is_deterministic() {
+        let base = vec![
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 100.0,
+                w: 20.0,
+                h: 20.0,
+            },
+            Rect {
+                x: 200.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            },
+            Rect {
+                x: 200.0,
+                y: 100.0,
+                w: 20.0,
+                h: 20.0,
+            },
+        ];
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![2, 3],
+                depth: 0,
+            },
+        ];
+        let edges = [(0, 3), (1, 2)];
+        let cfg = StressConfig::default();
+
+        let mut one = base.clone();
+        reduce_crossings(&mut one, &groups, &edges, &cfg);
+        let mut two = base.clone();
+        reduce_crossings(&mut two, &groups, &edges, &cfg);
+        assert_eq!(one, two);
+    }
+
+    /// Regression guard: `crossing_passes: 0` is a provable no-op -- the
+    /// pass's opt-out escape hatch reproduces the exact pre-pass rects.
+    #[test]
+    fn crossing_passes_zero_leaves_rects_untouched() {
+        let base = vec![
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 100.0,
+                w: 20.0,
+                h: 20.0,
+            },
+            Rect {
+                x: 200.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            },
+            Rect {
+                x: 200.0,
+                y: 100.0,
+                w: 20.0,
+                h: 20.0,
+            },
+        ];
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![2, 3],
+                depth: 0,
+            },
+        ];
+        let edges = [(0, 3), (1, 2)];
+        let cfg = StressConfig {
+            crossing_passes: 0,
+            ..StressConfig::default()
+        };
+
+        let mut rects = base.clone();
+        reduce_crossings(&mut rects, &groups, &edges, &cfg);
+        assert_eq!(rects, base, "crossing_passes: 0 must be a provable no-op");
+    }
 }
