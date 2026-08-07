@@ -490,12 +490,17 @@ fn reduce_crossings(
     // for the intra-pool swap move. Nodes in no group map to `None`, the
     // virtual "no group" pool.
     let n = rects.len();
+    // Every path below indexes per-node arrays (`centers`, `dims`, `moved`) by
+    // group member, so out-of-range members are filtered ONCE here rather than
+    // guarded per use -- a `GroupSpec` carrying a stale index must be ignored
+    // everywhere consistently, not panic in whichever path forgot the check.
+    let members: Vec<Vec<usize>> = groups
+        .iter()
+        .map(|g| g.members.iter().copied().filter(|&m| m < n).collect())
+        .collect();
     let mut leaf_group: Vec<Option<usize>> = vec![None; n];
-    for (gi, g) in groups.iter().enumerate() {
-        for &m in &g.members {
-            if m >= n {
-                continue;
-            }
+    for (gi, g) in members.iter().enumerate() {
+        for &m in g {
             match leaf_group[m] {
                 None => leaf_group[m] = Some(gi),
                 Some(cur)
@@ -532,8 +537,10 @@ fn reduce_crossings(
     let mut pool_keys: Vec<(Option<usize>, usize)> = pools.keys().copied().collect();
     pool_keys.sort_unstable_by_key(|(g, c)| (g.map(|g| g as isize).unwrap_or(-1), *c));
 
+    // Group-level moves need at least one in-range member to have a hull
+    // center at all (an empty member list yields a NaN center), so drop those.
     let top_level: Vec<usize> = (0..groups.len())
-        .filter(|&g| groups[g].depth == 0)
+        .filter(|&g| groups[g].depth == 0 && !members[g].is_empty())
         .collect();
 
     // Evaluation budget for the *whole* pass -- all sweeps, not one -- in
@@ -548,7 +555,7 @@ fn reduce_crossings(
     // order, so a capped run stays reproducible.
     const PASS_BUDGET: usize = 20_000_000;
     let avg_deg = (2 * edges.len() / n.max(1)).max(1);
-    let hull_members: usize = top_level.iter().map(|&g| groups[g].members.len()).sum();
+    let hull_members: usize = top_level.iter().map(|&g| members[g].len()).sum();
     let per_candidate =
         (2 * avg_deg * edges.len() + hull_members + top_level.len() * top_level.len()).max(1);
     let swap_cap = (PASS_BUDGET / (per_candidate * cfg.crossing_passes.max(1) as usize)).max(1);
@@ -591,25 +598,25 @@ fn reduce_crossings(
         ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0)
     }
 
-    fn apply(centers: &mut [(f64, f64)], groups: &[GroupSpec], mv: Move) {
+    fn apply(centers: &mut [(f64, f64)], members: &[Vec<usize>], mv: Move) {
         match mv {
             Move::SwapMembers(a, b) => centers.swap(a, b),
             Move::SwapGroups(g1, g2) => {
-                let c1 = hull_center(centers, &groups[g1].members);
-                let c2 = hull_center(centers, &groups[g2].members);
+                let c1 = hull_center(centers, &members[g1]);
+                let c2 = hull_center(centers, &members[g2]);
                 let (dx, dy) = (c2.0 - c1.0, c2.1 - c1.1);
-                for &m in &groups[g1].members {
+                for &m in &members[g1] {
                     centers[m].0 += dx;
                     centers[m].1 += dy;
                 }
-                for &m in &groups[g2].members {
+                for &m in &members[g2] {
                     centers[m].0 -= dx;
                     centers[m].1 -= dy;
                 }
             }
             Move::ReflectGroup(g, horizontal) => {
-                let c = hull_center(centers, &groups[g].members);
-                for &m in &groups[g].members {
+                let c = hull_center(centers, &members[g]);
+                for &m in &members[g] {
                     if horizontal {
                         centers[m].0 = 2.0 * c.0 - centers[m].0;
                     } else {
@@ -636,7 +643,7 @@ fn reduce_crossings(
     fn top_level_hull_overlap(
         centers: &[(f64, f64)],
         dims: &[(f64, f64)],
-        groups: &[GroupSpec],
+        members: &[Vec<usize>],
         top_level: &[usize],
         hull_pad: f64,
     ) -> f64 {
@@ -647,7 +654,7 @@ fn reduce_crossings(
         let bbox = |g: usize| -> (f64, f64, f64, f64) {
             let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
             let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
-            for &m in &groups[g].members {
+            for &m in &members[g] {
                 let (x, y) = centers[m];
                 let (w, h) = dims[m];
                 min_x = min_x.min(x - w / 2.0);
@@ -688,26 +695,21 @@ fn reduce_crossings(
         .collect();
     // Which nodes a move displaces -- the delta objective only has to re-test
     // edges incident to these.
-    fn moved_nodes(n: usize, groups: &[GroupSpec], mv: Move) -> Vec<bool> {
+    fn moved_nodes(n: usize, members: &[Vec<usize>], mv: Move) -> Vec<bool> {
         let mut moved = vec![false; n];
-        let mut mark = |m: usize| {
-            if m < n {
-                moved[m] = true;
-            }
-        };
         match mv {
             Move::SwapMembers(a, b) => {
-                mark(a);
-                mark(b);
+                moved[a] = true;
+                moved[b] = true;
             }
             Move::SwapGroups(g1, g2) => {
-                for &m in groups[g1].members.iter().chain(groups[g2].members.iter()) {
-                    mark(m);
+                for &m in members[g1].iter().chain(members[g2].iter()) {
+                    moved[m] = true;
                 }
             }
             Move::ReflectGroup(g, _) => {
-                for &m in &groups[g].members {
-                    mark(m);
+                for &m in &members[g] {
+                    moved[m] = true;
                 }
             }
         }
@@ -719,7 +721,7 @@ fn reduce_crossings(
     const OVERLAP_EPS: f64 = 1e-6;
 
     let mut current_overlap =
-        top_level_hull_overlap(&centers, &dims, groups, &top_level, cfg.hull_pad);
+        top_level_hull_overlap(&centers, &dims, &members, &top_level, cfg.hull_pad);
     let mut improved_any = false;
     let mut trial = centers.clone();
     // Each sweep applies *every* improving move it finds rather than
@@ -729,12 +731,12 @@ fn reduce_crossings(
         let mut improved = false;
         for &mv in &candidates {
             trial.copy_from_slice(&centers);
-            apply(&mut trial, groups, mv);
-            let overlap = top_level_hull_overlap(&trial, &dims, groups, &top_level, cfg.hull_pad);
+            apply(&mut trial, &members, mv);
+            let overlap = top_level_hull_overlap(&trial, &dims, &members, &top_level, cfg.hull_pad);
             if overlap > current_overlap + OVERLAP_EPS {
                 continue;
             }
-            let moved = moved_nodes(n, groups, mv);
+            let moved = moved_nodes(n, &members, mv);
             let before = segment_crossings_touching(&centers, edges, &moved);
             let after = segment_crossings_touching(&trial, edges, &moved);
             if after < before {
@@ -2239,6 +2241,61 @@ mod tests {
                     "rects {i} and {j} overlap after the pass: {a:?} {b:?}"
                 );
             }
+        }
+    }
+
+    /// Review fix: a `GroupSpec` naming a node index past the end of `rects`
+    /// used to be skipped by the `leaf_group`/`moved_nodes` paths but indexed
+    /// unchecked by `hull_center`/the hull-overlap guard, so it panicked
+    /// instead of being ignored. Members are now filtered once up front, so the
+    /// stale index is inert and the real crossing is still untangled.
+    #[test]
+    fn reduce_crossings_ignores_out_of_range_group_members() {
+        let mut rects = vec![
+            rect(-10.0, -10.0, 20.0, 20.0),
+            rect(-10.0, 90.0, 20.0, 20.0),
+            rect(190.0, -10.0, 20.0, 20.0),
+            rect(190.0, 90.0, 20.0, 20.0),
+        ];
+        let groups = vec![
+            GroupSpec {
+                // 99 does not exist.
+                members: vec![0, 1, 99],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![2, 3],
+                depth: 0,
+            },
+            // A group whose every member is out of range must not produce a
+            // NaN hull center either.
+            GroupSpec {
+                members: vec![42],
+                depth: 0,
+            },
+        ];
+        let edges = [(0, 3), (1, 2)];
+        let cfg = StressConfig::default();
+
+        let centers = |rs: &[Rect]| -> Vec<(f64, f64)> {
+            rs.iter()
+                .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
+                .collect()
+        };
+        assert_eq!(segment_crossings(&centers(&rects), &edges), 1);
+
+        reduce_crossings(&mut rects, &groups, &edges, &cfg);
+
+        assert_eq!(
+            segment_crossings(&centers(&rects), &edges),
+            0,
+            "the stale member must not stop the pass from untangling the X"
+        );
+        for (i, r) in rects.iter().enumerate() {
+            assert!(
+                r.x.is_finite() && r.y.is_finite(),
+                "rect {i} went non-finite"
+            );
         }
     }
 

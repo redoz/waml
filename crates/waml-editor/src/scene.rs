@@ -2477,6 +2477,27 @@ mod tests {
     /// Runs each fixture at `group_weight` 4 and 30 (`d56da727` raised the
     /// shipped default from 4 to 30) so the report also answers whether that
     /// raise made crossings worse.
+    ///
+    /// Task 3 re-measurement, `crossing_passes` 0 -> 8 (route_crossings /
+    /// segment_crossings). NOTE: the sweep first recorded in `458478cc` read
+    /// "zero delta everywhere" -- but it was taken while an *absolute* hull
+    /// guard rejected every candidate and made the pass a silent no-op.
+    /// `d8ec2767` fixed that guard (absolute -> relative) and did not re-record.
+    /// These are the numbers on the fixed pass:
+    ///
+    ///   mini / groups / groups-linked / sixkind : no change at either weight
+    ///     (these fixtures have 0 segment_crossings to begin with, so the
+    ///     hill-climb's objective is already at its floor and it never moves).
+    ///   docs/waml domain-model @ group_weight=4 : 8/2 -> 8/1
+    ///   docs/waml domain-model @ group_weight=30: 12/4 -> 8/1  <-- the shipped
+    ///     default; the pass cancels d56da727's whole cohesion-raise regression
+    ///     (route_crossings back to the group_weight=4 level) and beats it on
+    ///     the proxy.
+    ///
+    /// So the pass is NOT a null result: at the shipped default it removes a
+    /// third of the route-level crossings on the only corpus view that has
+    /// non-trivial ones. Re-run this harness and update these numbers whenever
+    /// the pass or the layout defaults change.
     #[test]
     #[ignore = "measurement harness, run by hand and record the numbers"]
     fn crossing_baseline_report() {

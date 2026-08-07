@@ -68,6 +68,9 @@ pub fn route_crossings(routes: &[Route]) -> usize {
 /// crossings. This is what `stress::reduce_crossings` hill-climbs on -- it is
 /// only a legitimate objective insofar as it tracks [`route_crossings`]; the
 /// two are compared and the correlation reported by the Task 1 harness.
+///
+/// Edges naming a node index outside `centers` have no geometry to test and
+/// are ignored (never counted, never a panic).
 pub fn segment_crossings(centers: &[(f64, f64)], edges: &[(usize, usize)]) -> usize {
     segment_crossings_inner(centers, edges, None)
 }
@@ -80,6 +83,9 @@ pub fn segment_crossings(centers: &[(f64, f64)], edges: &[(usize, usize)]) -> us
 /// predicate evaluations instead of `O(E^2/2)`. That is what makes the
 /// `stress::reduce_crossings` hill-climb affordable on a hot path. With every
 /// node flagged this is exactly [`segment_crossings`].
+///
+/// Out-of-range node indices are ignored the same way [`segment_crossings`]
+/// ignores them; a node missing from `moved` counts as not moved.
 pub fn segment_crossings_touching(
     centers: &[(f64, f64)],
     edges: &[(usize, usize)],
@@ -115,7 +121,19 @@ fn segment_crossings_inner(
             if a0 == b0 || a0 == b1 || a1 == b0 || a1 == b1 {
                 continue;
             }
-            if segments_cross(centers[a0], centers[a1], centers[b0], centers[b1]) {
+            // An edge naming a node outside `centers` has no segment to test.
+            // Ignore it rather than panic: callers build these index pairs from
+            // model data, and a stale/out-of-range index is a modelling defect,
+            // not a reason to bring the layout down.
+            let (Some(&pa0), Some(&pa1), Some(&pb0), Some(&pb1)) = (
+                centers.get(a0),
+                centers.get(a1),
+                centers.get(b0),
+                centers.get(b1),
+            ) else {
+                continue;
+            };
+            if segments_cross(pa0, pa1, pb0, pb1) {
                 count += 1;
             }
         }
@@ -238,6 +256,19 @@ mod tests {
         let centers = [(0.0, 0.0), (10.0, 5.0), (10.0, -5.0)];
         let edges = [(0, 1), (0, 2)];
         assert_eq!(segment_crossings(&centers, &edges), 0);
+    }
+
+    /// An edge index outside `centers` must be ignored, not panic: these are
+    /// `pub` entry points fed indices derived from model data.
+    #[test]
+    fn out_of_range_edge_indices_are_ignored() {
+        let centers = [(0.0, 0.0), (10.0, 10.0), (0.0, 10.0), (10.0, 0.0)];
+        // The real crossing (0-1 x 2-3) still counts; the dangling edge does not.
+        let edges = [(0, 1), (2, 3), (4, 9)];
+        assert_eq!(segment_crossings(&centers, &edges), 1);
+
+        let all = vec![true; centers.len()];
+        assert_eq!(segment_crossings_touching(&centers, &edges, &all), 1);
     }
 
     #[test]
