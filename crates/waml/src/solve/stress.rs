@@ -9,6 +9,7 @@
 //! See docs/superpowers/specs/2026-07-21-default-layout-stress-majorization-design.md.
 //! Not yet wired into `solve_diagram`; that is Phase 3, gated on screenshot review.
 
+use super::crossing::segment_crossings;
 use super::{BoxId, Rect, Size, SolveConfig};
 use crate::layout::Margin;
 use std::collections::{HashMap, VecDeque};
@@ -33,6 +34,10 @@ pub struct StressConfig {
     pub group_weight: f64,
     /// Padding from a group's member bounding box out to its hull.
     pub hull_pad: f64,
+    /// Cap on `reduce_crossings` hill-climb passes (accepted moves). `0`
+    /// disables the pass entirely -- the escape hatch and the A/B mechanism
+    /// for judging it (see `docs/superpowers/plans/2026-08-07-crossing-aware-placement.md`).
+    pub crossing_passes: u32,
 }
 
 impl Default for StressConfig {
@@ -57,6 +62,8 @@ impl Default for StressConfig {
             group_len: 120.0 * 0.625,
             group_weight: 30.0,
             hull_pad: SolveConfig::default().margin(Margin::Medium),
+            // The pass ships enabled; see the field doc for the opt-out.
+            crossing_passes: 8,
         }
     }
 }
@@ -209,6 +216,14 @@ pub fn layout_grouped(
         cursor_x += l.w + cfg.gap;
         shelf_h = shelf_h.max(l.h);
     }
+    // Crossings are a whole-diagram property (an edge can span components), so
+    // this runs here on the fully assembled `out` rather than per-component --
+    // the only point in this function with both global rects and global
+    // `edges` in scope. `remove_overlaps`/`separate_hulls` still run
+    // afterwards to clean up any overlap a move reintroduces (see
+    // `reduce_crossings` docs); the pass measures against the eventual output,
+    // not this mid-pipeline snapshot.
+    reduce_crossings(&mut out, groups, &clean, cfg);
     separate_hulls(&mut out, groups, cfg);
 
     // Normalize the min corner to the origin, matching `layout`'s convention;
@@ -401,6 +416,229 @@ fn any_overlap(rects: &[Rect]) -> bool {
         }
     }
     false
+}
+
+/// Deterministic hill-climb that lowers `segment_crossings` over `rects`
+/// without disturbing any group's cohesion. Every candidate move is
+/// cohesion-preserving *by construction*:
+///
+/// 1. Swap two members' centers within the same leaf group (or the virtual
+///    "no group" pool of ungrouped nodes) -- neither node changes which
+///    group(s) contain it.
+/// 2. Swap two whole top-level groups by translating every member of each so
+///    their hull centers exchange -- a rigid translation, so every nested
+///    group inside moves as one block and keeps its internal shape exactly.
+/// 3. Reflect one top-level group's members horizontally or vertically about
+///    their hull center -- again rigid, so nested structure is untouched.
+///
+/// Group-level moves (2)/(3) are restricted to top-level (`depth == 0`)
+/// groups: a nested group's members are a subset of its top-level ancestor's,
+/// so moving the ancestor already moves it, and moving a nested group in
+/// isolation would *not* be cohesion-preserving for the ancestor.
+///
+/// Candidates are enumerated in a fixed order every sweep; the first move
+/// that strictly decreases `segment_crossings` is applied immediately and the
+/// sweep restarts from the top. On a tie the existing arrangement is kept
+/// (never churn). Stops when a full sweep finds no improving move, or after
+/// `cfg.crossing_passes` accepted moves, whichever comes first.
+///
+/// `edges` should be real diagram edges only (not the group-clique edges used
+/// internally for the stress solve) -- crossings are measured over what is
+/// actually drawn.
+fn reduce_crossings(
+    rects: &mut [Rect],
+    groups: &[GroupSpec],
+    edges: &[(usize, usize)],
+    cfg: &StressConfig,
+) {
+    if cfg.crossing_passes == 0 || rects.len() < 2 || edges.len() < 2 {
+        return;
+    }
+
+    #[derive(Clone, Copy)]
+    enum Move {
+        SwapMembers(usize, usize),
+        SwapGroups(usize, usize),
+        ReflectGroup(usize, bool), // true = horizontal (flip x), false = vertical (flip y)
+    }
+
+    // Deepest group each node belongs to (ties broken by smaller group index),
+    // for the intra-pool swap move. Nodes in no group map to `None`, the
+    // virtual "no group" pool.
+    let n = rects.len();
+    let mut leaf_group: Vec<Option<usize>> = vec![None; n];
+    for (gi, g) in groups.iter().enumerate() {
+        for &m in &g.members {
+            if m >= n {
+                continue;
+            }
+            match leaf_group[m] {
+                None => leaf_group[m] = Some(gi),
+                Some(cur)
+                    if groups[gi].depth > groups[cur].depth
+                        || (groups[gi].depth == groups[cur].depth && gi < cur) =>
+                {
+                    leaf_group[m] = Some(gi);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut pools: HashMap<Option<usize>, Vec<usize>> = HashMap::new();
+    for (node, key) in leaf_group.iter().enumerate() {
+        pools.entry(*key).or_default().push(node);
+    }
+    let mut pool_keys: Vec<Option<usize>> = pools.keys().copied().collect();
+    pool_keys.sort_unstable_by_key(|k| k.map(|g| g as isize).unwrap_or(-1));
+
+    let top_level: Vec<usize> = (0..groups.len())
+        .filter(|&g| groups[g].depth == 0)
+        .collect();
+
+    let mut candidates: Vec<Move> = Vec::new();
+    for key in &pool_keys {
+        let members = &pools[key];
+        for i in 0..members.len() {
+            for j in (i + 1)..members.len() {
+                candidates.push(Move::SwapMembers(members[i], members[j]));
+            }
+        }
+    }
+    for i in 0..top_level.len() {
+        for j in (i + 1)..top_level.len() {
+            candidates.push(Move::SwapGroups(top_level[i], top_level[j]));
+        }
+    }
+    for &g in &top_level {
+        candidates.push(Move::ReflectGroup(g, true));
+        candidates.push(Move::ReflectGroup(g, false));
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    fn hull_center(centers: &[(f64, f64)], members: &[usize]) -> (f64, f64) {
+        let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+        let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for &m in members {
+            let (x, y) = centers[m];
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+        ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0)
+    }
+
+    fn apply(centers: &mut [(f64, f64)], groups: &[GroupSpec], mv: Move) {
+        match mv {
+            Move::SwapMembers(a, b) => centers.swap(a, b),
+            Move::SwapGroups(g1, g2) => {
+                let c1 = hull_center(centers, &groups[g1].members);
+                let c2 = hull_center(centers, &groups[g2].members);
+                let (dx, dy) = (c2.0 - c1.0, c2.1 - c1.1);
+                for &m in &groups[g1].members {
+                    centers[m].0 += dx;
+                    centers[m].1 += dy;
+                }
+                for &m in &groups[g2].members {
+                    centers[m].0 -= dx;
+                    centers[m].1 -= dy;
+                }
+            }
+            Move::ReflectGroup(g, horizontal) => {
+                let c = hull_center(centers, &groups[g].members);
+                for &m in &groups[g].members {
+                    if horizontal {
+                        centers[m].0 = 2.0 * c.0 - centers[m].0;
+                    } else {
+                        centers[m].1 = 2.0 * c.1 - centers[m].1;
+                    }
+                }
+            }
+        }
+    }
+
+    // `separate_hulls` afterwards is only a best-effort, capped-pass separator
+    // that assumes a reasonably-converged starting layout; reject any move
+    // that would leave two top-level hulls overlapping rather than lean on it
+    // to undo the damage. Every move type needs this check: group-level moves
+    // obviously reposition a hull, but even an intra-group `SwapMembers` can
+    // change *that* group's own bbox when the swapped members have different
+    // sizes (a large member's half-extent now reaches further at the
+    // position a small member used to occupy).
+    fn top_level_hulls_overlap(
+        centers: &[(f64, f64)],
+        dims: &[(f64, f64)],
+        groups: &[GroupSpec],
+        top_level: &[usize],
+        hull_pad: f64,
+    ) -> bool {
+        // Mirror `group_hulls`' construction exactly (rect extents, not bare
+        // centers, then padded): a center-only bbox check would pass two
+        // groups that are close but not touching, whose *padded, rect-extent*
+        // hulls (what `separate_hulls`/rendering actually use) do overlap.
+        let bbox = |g: usize| -> (f64, f64, f64, f64) {
+            let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+            let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+            for &m in &groups[g].members {
+                let (x, y) = centers[m];
+                let (w, h) = dims[m];
+                min_x = min_x.min(x - w / 2.0);
+                min_y = min_y.min(y - h / 2.0);
+                max_x = max_x.max(x + w / 2.0);
+                max_y = max_y.max(y + h / 2.0);
+            }
+            (
+                min_x - hull_pad,
+                min_y - hull_pad,
+                max_x + hull_pad,
+                max_y + hull_pad,
+            )
+        };
+        for i in 0..top_level.len() {
+            let (a_min_x, a_min_y, a_max_x, a_max_y) = bbox(top_level[i]);
+            for &gj in &top_level[i + 1..] {
+                let (b_min_x, b_min_y, b_max_x, b_max_y) = bbox(gj);
+                if a_min_x < b_max_x && b_min_x < a_max_x && a_min_y < b_max_y && b_min_y < a_max_y
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    let dims: Vec<(f64, f64)> = rects.iter().map(|r| (r.w, r.h)).collect();
+    let mut centers: Vec<(f64, f64)> = rects
+        .iter()
+        .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
+        .collect();
+    let mut current = segment_crossings(&centers, edges);
+    let mut accepted = 0u32;
+    'passes: while accepted < cfg.crossing_passes {
+        for &mv in &candidates {
+            let mut trial = centers.clone();
+            apply(&mut trial, groups, mv);
+            if top_level_hulls_overlap(&trial, &dims, groups, &top_level, cfg.hull_pad) {
+                continue;
+            }
+            let cost = segment_crossings(&trial, edges);
+            if cost < current {
+                centers = trial;
+                current = cost;
+                accepted += 1;
+                continue 'passes;
+            }
+        }
+        // A full sweep found no improving move.
+        break;
+    }
+
+    for (i, r) in rects.iter_mut().enumerate() {
+        r.x = centers[i].0 - r.w / 2.0;
+        r.y = centers[i].1 - r.h / 2.0;
+    }
 }
 
 /// For every pair of co-members across `groups`, the depth of the *deepest*
