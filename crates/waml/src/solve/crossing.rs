@@ -69,9 +69,43 @@ pub fn route_crossings(routes: &[Route]) -> usize {
 /// only a legitimate objective insofar as it tracks [`route_crossings`]; the
 /// two are compared and the correlation reported by the Task 1 harness.
 pub fn segment_crossings(centers: &[(f64, f64)], edges: &[(usize, usize)]) -> usize {
+    segment_crossings_inner(centers, edges, None)
+}
+
+/// Partial [`segment_crossings`]: counts only pairs where at least one edge is
+/// incident to a node flagged in `moved`. Crossings between two edges with no
+/// moved endpoint are invariant under a move that displaces only those nodes,
+/// so the *difference* of this count before and after a candidate move equals
+/// the difference of the full count -- at `O(moved_edges * E)` geometric
+/// predicate evaluations instead of `O(E^2/2)`. That is what makes the
+/// `stress::reduce_crossings` hill-climb affordable on a hot path. With every
+/// node flagged this is exactly [`segment_crossings`].
+pub fn segment_crossings_touching(
+    centers: &[(f64, f64)],
+    edges: &[(usize, usize)],
+    moved: &[bool],
+) -> usize {
+    let touch: Vec<bool> = edges
+        .iter()
+        .map(|&(a, b)| {
+            moved.get(a).copied().unwrap_or(false) || moved.get(b).copied().unwrap_or(false)
+        })
+        .collect();
+    segment_crossings_inner(centers, edges, Some(&touch))
+}
+
+fn segment_crossings_inner(
+    centers: &[(f64, f64)],
+    edges: &[(usize, usize)],
+    touch: Option<&[bool]>,
+) -> usize {
     let mut count = 0;
     for i in 0..edges.len() {
+        let ti = touch.map(|t| t[i]).unwrap_or(true);
         for j in (i + 1)..edges.len() {
+            if !ti && !touch.map(|t| t[j]).unwrap_or(true) {
+                continue;
+            }
             let (a0, a1) = edges[i];
             let (b0, b1) = edges[j];
             // Edges sharing a node touch at that node's (identical) center
@@ -100,6 +134,42 @@ mod tests {
             target: target.into(),
             key: None,
         }
+    }
+
+    /// The hill-climb's delta objective is only valid if the partial count
+    /// agrees with the full one on the flagged subset: with every node flagged
+    /// it must equal `segment_crossings`, and the crossings it *omits* must be
+    /// exactly those between two unflagged edges (which a move displacing only
+    /// flagged nodes cannot change).
+    #[test]
+    fn touching_count_partitions_the_full_count() {
+        // Two crossing pairs: (0-3 x 1-2) around x=0..100 and (4-7 x 5-6).
+        let centers = [
+            (0.0, 0.0),
+            (0.0, 100.0),
+            (100.0, 0.0),
+            (100.0, 100.0),
+            (300.0, 0.0),
+            (300.0, 100.0),
+            (400.0, 0.0),
+            (400.0, 100.0),
+        ];
+        let edges = [(0, 3), (1, 2), (4, 7), (5, 6)];
+        assert_eq!(segment_crossings(&centers, &edges), 2);
+
+        let all = vec![true; centers.len()];
+        assert_eq!(
+            segment_crossings_touching(&centers, &edges, &all),
+            segment_crossings(&centers, &edges)
+        );
+
+        let none = vec![false; centers.len()];
+        assert_eq!(segment_crossings_touching(&centers, &edges, &none), 0);
+
+        // Flag only the first quad: its crossing is counted, the other is not.
+        let mut first = vec![false; centers.len()];
+        first[0] = true;
+        assert_eq!(segment_crossings_touching(&centers, &edges, &first), 1);
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! See docs/superpowers/specs/2026-07-21-default-layout-stress-majorization-design.md.
 //! Not yet wired into `solve_diagram`; that is Phase 3, gated on screenshot review.
 
-use super::crossing::segment_crossings;
+use super::crossing::segment_crossings_touching;
 use super::{BoxId, Rect, Size, SolveConfig};
 use crate::layout::Margin;
 use std::collections::{HashMap, VecDeque};
@@ -34,7 +34,10 @@ pub struct StressConfig {
     pub group_weight: f64,
     /// Padding from a group's member bounding box out to its hull.
     pub hull_pad: f64,
-    /// Cap on `reduce_crossings` hill-climb passes (accepted moves). `0`
+    /// Cap on `reduce_crossings` hill-climb *sweeps* over the candidate move
+    /// set -- not on accepted moves: one sweep applies every improving move it
+    /// finds, and the climb stops early as soon as a whole sweep improves
+    /// nothing, so this only bounds the worst case on a large graph. `0`
     /// disables the pass entirely -- the escape hatch and the A/B mechanism
     /// for judging it (see `docs/superpowers/plans/2026-08-07-crossing-aware-placement.md`).
     pub crossing_passes: u32,
@@ -220,7 +223,7 @@ pub fn layout_grouped(
     // this runs here on the fully assembled `out` rather than per-component --
     // the only point in this function with both global rects and global
     // `edges` in scope. The pass cleans up after itself: with groups present a
-    // move is rejected outright if it would overlap two top-level hulls and
+    // move is rejected outright if it would worsen top-level hull overlap and
     // `separate_hulls` below re-runs `remove_overlaps`; with *no* groups that
     // hull guard is vacuous, so `reduce_crossings` runs `remove_overlaps`
     // itself before returning (see its docs). Nothing else here does. The pass
@@ -441,25 +444,29 @@ fn any_overlap(rects: &[Rect]) -> bool {
 /// so moving the ancestor already moves it, and moving a nested group in
 /// isolation would *not* be cohesion-preserving for the ancestor.
 ///
-/// Candidates are enumerated in a fixed order every sweep; the first move
-/// that strictly decreases `segment_crossings` is applied immediately and the
-/// sweep restarts from the top. On a tie the existing arrangement is kept
-/// (never churn). Stops when a full sweep finds no improving move, or after
-/// `cfg.crossing_passes` accepted moves, whichever comes first.
+/// Candidates are enumerated in a fixed order every sweep; every move that
+/// strictly decreases the crossing count is applied immediately and the sweep
+/// carries on down the list (it does not restart). On a tie the existing
+/// arrangement is kept (never churn). Stops when a full sweep finds no
+/// improving move, or after `cfg.crossing_passes` sweeps, whichever comes
+/// first.
 ///
 /// `edges` should be real diagram edges only (not the group-clique edges used
 /// internally for the stress solve) -- crossings are measured over what is
 /// actually drawn.
 ///
-/// Overlap: with top-level groups present, a move that would leave two hulls
-/// overlapping is rejected, and the caller's `separate_hulls` re-runs
-/// `remove_overlaps`. With *no* groups that guard is vacuous and no cleanup
-/// follows, so this function runs `remove_overlaps` itself -- but only when it
-/// actually accepted a move, keeping the no-op path byte-identical.
+/// Overlap: with top-level groups present, a move that would *increase* the
+/// total pairwise top-level hull overlap is rejected (relative, not absolute
+/// -- this pass runs before `separate_hulls`, where hulls commonly still
+/// overlap), and the caller's `separate_hulls` re-runs `remove_overlaps`. With
+/// *no* groups that guard is vacuous and no cleanup follows, so this function
+/// runs `remove_overlaps` itself -- but only when it actually accepted a move,
+/// keeping the no-op path byte-identical.
 ///
-/// Cost: each candidate costs one O(E^2) `segment_crossings`, and the pool
-/// swaps alone are O(n^2) candidates, so the candidate list is capped to a
-/// fixed evaluation budget (see `SWEEP_BUDGET`) -- the pass degrades to
+/// Cost: each candidate is delta-evaluated -- only edges incident to the nodes
+/// the move displaces are re-tested (`segment_crossings_touching`) -- and the
+/// pool swaps alone are O(n^2) candidates, so the candidate list is capped to
+/// a fixed whole-pass evaluation budget (see `PASS_BUDGET`) -- the pass degrades to
 /// "improve what fits in the budget" on large diagrams rather than stalling a
 /// layout that reruns on every edit.
 fn reduce_crossings(
@@ -529,14 +536,22 @@ fn reduce_crossings(
         .filter(|&g| groups[g].depth == 0)
         .collect();
 
-    // Evaluation budget for one sweep, in segment-pair tests: each candidate
-    // costs one `segment_crossings`, which is ~E^2/2 pair tests. Only the
-    // O(n^2) pool swaps are capped (group moves are O(g^2) and few), and the
-    // truncation is a prefix of the same deterministic enumeration order, so a
-    // capped run stays reproducible.
-    const SWEEP_BUDGET: usize = 20_000_000;
-    let per_candidate = (edges.len() * edges.len() / 2).max(1);
-    let swap_cap = (SWEEP_BUDGET / per_candidate).max(1);
+    // Evaluation budget for the *whole* pass -- all sweeps, not one -- in
+    // elementary tests. Each candidate costs one delta objective evaluation
+    // (`segment_crossings_touching`: `O(affected_edges * E)` geometric
+    // predicates, with `affected_edges` bounded by ~twice the average degree
+    // for a node swap) plus the hull guard, which rescans every top-level
+    // member and tests every top-level hull pair. The same candidate list is
+    // re-swept up to `crossing_passes` times, so the cap divides by that too.
+    // Only the O(n^2) pool swaps are capped (group moves are O(g^2) and few),
+    // and the truncation is a prefix of the same deterministic enumeration
+    // order, so a capped run stays reproducible.
+    const PASS_BUDGET: usize = 20_000_000;
+    let avg_deg = (2 * edges.len() / n.max(1)).max(1);
+    let hull_members: usize = top_level.iter().map(|&g| groups[g].members.len()).sum();
+    let per_candidate =
+        (2 * avg_deg * edges.len() + hull_members + top_level.len() * top_level.len()).max(1);
+    let swap_cap = (PASS_BUDGET / (per_candidate * cfg.crossing_passes.max(1) as usize)).max(1);
 
     let mut candidates: Vec<Move> = Vec::new();
     'pools: for key in &pool_keys {
@@ -606,20 +621,25 @@ fn reduce_crossings(
     }
 
     // `separate_hulls` afterwards is only a best-effort, capped-pass separator
-    // that assumes a reasonably-converged starting layout; reject any move
-    // that would leave two top-level hulls overlapping rather than lean on it
-    // to undo the damage. Every move type needs this check: group-level moves
+    // that assumes a reasonably-converged starting layout, so don't lean on it
+    // to undo damage this pass does: score a candidate's total top-level hull
+    // overlap and reject any move that makes it *worse*. The comparison must
+    // be relative, not absolute -- this pass runs BEFORE `separate_hulls`,
+    // precisely where hulls routinely still overlap (that is why
+    // `separate_hulls` exists), so an absolute "no hulls may overlap" guard
+    // rejected every candidate on every such diagram and made the whole pass a
+    // silent no-op. Every move type needs the check: group-level moves
     // obviously reposition a hull, but even an intra-group `SwapMembers` can
     // change *that* group's own bbox when the swapped members have different
     // sizes (a large member's half-extent now reaches further at the
     // position a small member used to occupy).
-    fn top_level_hulls_overlap(
+    fn top_level_hull_overlap(
         centers: &[(f64, f64)],
         dims: &[(f64, f64)],
         groups: &[GroupSpec],
         top_level: &[usize],
         hull_pad: f64,
-    ) -> bool {
+    ) -> f64 {
         // Mirror `group_hulls`' construction exactly (rect extents, not bare
         // centers, then padded): a center-only bbox check would pass two
         // groups that are close but not touching, whose *padded, rect-extent*
@@ -642,17 +662,23 @@ fn reduce_crossings(
                 max_y + hull_pad,
             )
         };
+        // Summed pairwise intersection area: a scalar that is 0 iff no two
+        // top-level hulls touch, and that shrinks monotonically as they pull
+        // apart, so "did this move worsen hull overlap?" has an answer even
+        // when the starting layout is already tangled.
+        let mut area = 0.0;
         for i in 0..top_level.len() {
             let (a_min_x, a_min_y, a_max_x, a_max_y) = bbox(top_level[i]);
             for &gj in &top_level[i + 1..] {
                 let (b_min_x, b_min_y, b_max_x, b_max_y) = bbox(gj);
-                if a_min_x < b_max_x && b_min_x < a_max_x && a_min_y < b_max_y && b_min_y < a_max_y
-                {
-                    return true;
+                let w = a_max_x.min(b_max_x) - a_min_x.max(b_min_x);
+                let h = a_max_y.min(b_max_y) - a_min_y.max(b_min_y);
+                if w > 0.0 && h > 0.0 {
+                    area += w * h;
                 }
             }
         }
-        false
+        area
     }
 
     let dims: Vec<(f64, f64)> = rects.iter().map(|r| (r.w, r.h)).collect();
@@ -660,28 +686,70 @@ fn reduce_crossings(
         .iter()
         .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
         .collect();
-    let mut current = segment_crossings(&centers, edges);
-    let mut accepted = 0u32;
-    'passes: while accepted < cfg.crossing_passes {
-        for &mv in &candidates {
-            let mut trial = centers.clone();
-            apply(&mut trial, groups, mv);
-            if top_level_hulls_overlap(&trial, &dims, groups, &top_level, cfg.hull_pad) {
-                continue;
+    // Which nodes a move displaces -- the delta objective only has to re-test
+    // edges incident to these.
+    fn moved_nodes(n: usize, groups: &[GroupSpec], mv: Move) -> Vec<bool> {
+        let mut moved = vec![false; n];
+        let mut mark = |m: usize| {
+            if m < n {
+                moved[m] = true;
             }
-            let cost = segment_crossings(&trial, edges);
-            if cost < current {
-                centers = trial;
-                current = cost;
-                accepted += 1;
-                continue 'passes;
+        };
+        match mv {
+            Move::SwapMembers(a, b) => {
+                mark(a);
+                mark(b);
+            }
+            Move::SwapGroups(g1, g2) => {
+                for &m in groups[g1].members.iter().chain(groups[g2].members.iter()) {
+                    mark(m);
+                }
+            }
+            Move::ReflectGroup(g, _) => {
+                for &m in &groups[g].members {
+                    mark(m);
+                }
             }
         }
-        // A full sweep found no improving move.
-        break;
+        moved
     }
 
-    if accepted == 0 {
+    // Hull-overlap areas are px^2 on layouts hundreds of px across; this only
+    // has to absorb float noise from re-deriving an unchanged bbox.
+    const OVERLAP_EPS: f64 = 1e-6;
+
+    let mut current_overlap =
+        top_level_hull_overlap(&centers, &dims, groups, &top_level, cfg.hull_pad);
+    let mut improved_any = false;
+    let mut trial = centers.clone();
+    // Each sweep applies *every* improving move it finds rather than
+    // restarting on the first one, and stops the climb as soon as a whole
+    // sweep improves nothing.
+    for _ in 0..cfg.crossing_passes {
+        let mut improved = false;
+        for &mv in &candidates {
+            trial.copy_from_slice(&centers);
+            apply(&mut trial, groups, mv);
+            let overlap = top_level_hull_overlap(&trial, &dims, groups, &top_level, cfg.hull_pad);
+            if overlap > current_overlap + OVERLAP_EPS {
+                continue;
+            }
+            let moved = moved_nodes(n, groups, mv);
+            let before = segment_crossings_touching(&centers, edges, &moved);
+            let after = segment_crossings_touching(&trial, edges, &moved);
+            if after < before {
+                centers.copy_from_slice(&trial);
+                current_overlap = overlap;
+                improved = true;
+                improved_any = true;
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+
+    if !improved_any {
         return;
     }
     for (i, r) in rects.iter_mut().enumerate() {
@@ -1077,6 +1145,7 @@ pub fn pretty(ids: &[BoxId], rects: &[Rect]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::crossing::segment_crossings;
     use super::*;
 
     fn node(k: &str) -> BoxId {
@@ -1939,6 +2008,90 @@ mod tests {
         }
     }
 
+    /// Review fix (high): every other `reduce_crossings` test calls the
+    /// private fn directly on a hand-built, already-separated fixture, so the
+    /// pass being a no-op in *production* was invisible. This drives the real
+    /// `layout_grouped` pipeline, where the pass runs before `separate_hulls`
+    /// and top-level hulls therefore routinely still overlap -- the exact
+    /// situation in which the old absolute hull guard rejected every candidate
+    /// and the pass changed nothing. Fails on that guard; passes on the
+    /// relative one.
+    #[test]
+    fn reduce_crossings_changes_the_real_pipeline_output() {
+        let g = ids(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"]);
+        let szs = sizes(12, 120.0, 40.0);
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1, 2],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![3, 4, 5],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![6, 7, 8],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![9, 10, 11],
+                depth: 0,
+            },
+        ];
+        // Interleaved inter-group edges: every group reaches into every other,
+        // so no arrangement is crossing-free and there is room to improve.
+        let edges = [
+            (0, 1),
+            (1, 2),
+            (3, 4),
+            (4, 5),
+            (6, 7),
+            (7, 8),
+            (9, 10),
+            (10, 11),
+            (0, 4),
+            (1, 5),
+            (2, 3),
+            (3, 7),
+            (4, 8),
+            (5, 6),
+            (6, 10),
+            (7, 11),
+            (8, 9),
+            (0, 11),
+            (1, 9),
+            (2, 10),
+        ];
+
+        let off = StressConfig {
+            crossing_passes: 0,
+            ..StressConfig::default()
+        };
+        let on = StressConfig::default();
+        assert!(on.crossing_passes > 0);
+
+        let (rects_off, _) = layout_grouped(&g, &szs, &edges, &groups, &off);
+        let (rects_on, _) = layout_grouped(&g, &szs, &edges, &groups, &on);
+
+        assert_ne!(
+            rects_off, rects_on,
+            "the crossing pass must actually reach the layout through the real \
+             pipeline -- if these match, it is a silent no-op in production"
+        );
+
+        let centers = |rs: &[Rect]| -> Vec<(f64, f64)> {
+            rs.iter()
+                .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
+                .collect()
+        };
+        let before = segment_crossings(&centers(&rects_off), &edges);
+        let after = segment_crossings(&centers(&rects_on), &edges);
+        assert!(
+            after < before,
+            "the pass must lower the crossing count end to end ({before} -> {after})"
+        );
+    }
+
     fn dist(a: (f64, f64), b: (f64, f64)) -> f64 {
         ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
     }
@@ -2049,7 +2202,7 @@ mod tests {
         Rect { x, y, w, h }
     }
 
-    /// Review fix: with no groups the `top_level_hulls_overlap` guard is
+    /// Review fix: with no groups the `top_level_hull_overlap` guard is
     /// vacuous and `separate_hulls` returns immediately, so a `SwapMembers` of
     /// two differently-sized rects used to leave node rects overlapping with
     /// nothing to clean up. Node 1 is far wider than node 0; swapping their
