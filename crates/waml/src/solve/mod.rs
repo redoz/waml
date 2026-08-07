@@ -5,6 +5,7 @@ use crate::diagnostic::Diagnostic;
 use crate::layout::{Axis, Direction, Edge, Margin, Shape};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod crossing;
 pub mod flow;
 pub mod geometry;
 pub mod interaction;

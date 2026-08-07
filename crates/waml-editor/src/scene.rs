@@ -2466,4 +2466,134 @@ mod tests {
         p.dedup();
         assert_eq!(p, vec!["customer".to_string(), "order".to_string()]);
     }
+
+    /// Task 1 baseline: report node/edge count and both crossing counters,
+    /// per fixture, for the stress-default layout. `#[ignore]`d -- this is a
+    /// measurement harness run by hand (`cargo test -p waml-editor --
+    /// --ignored crossing_baseline_report --nocapture`), not a pass/fail
+    /// gate; the numbers it prints belong in the landing commit message, not
+    /// in an assertion (there is no "correct" crossing count to pin here).
+    ///
+    /// Runs each fixture at `group_weight` 4 and 30 (`d56da727` raised the
+    /// shipped default from 4 to 30) so the report also answers whether that
+    /// raise made crossings worse.
+    #[test]
+    #[ignore = "measurement harness, run by hand and record the numbers"]
+    fn crossing_baseline_report() {
+        use waml::solve::crossing::{route_crossings, segment_crossings};
+        use waml::solve::stress::StressConfig;
+
+        fn report_for(name: &str, model: &Model, group_weight: f64) {
+            for diagram in &model.diagrams {
+                // Force the stress-default path regardless of any authored
+                // `## Layout` block: this plan is about that path specifically.
+                let mut diagram = diagram.clone();
+                diagram.layout = Vec::new();
+
+                let sizes =
+                    crate::sizing::size_map(model, &diagram, &std::collections::HashSet::new());
+                if sizes.is_empty() {
+                    continue;
+                }
+                let model_edges = drawable_edges(model);
+
+                let cfg = StressConfig {
+                    group_weight,
+                    ..StressConfig::default()
+                };
+                let keys: Vec<String> = sizes.keys().cloned().collect();
+                let index: std::collections::BTreeMap<&str, usize> = keys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| (k.as_str(), i))
+                    .collect();
+                let ids: Vec<BoxId> = keys.iter().cloned().map(BoxId::Node).collect();
+                let dims: Vec<Size> = keys.iter().map(|k| sizes[k]).collect();
+
+                let mut seen = std::collections::BTreeSet::new();
+                let mut pairs: Vec<(usize, usize)> = Vec::new();
+                for e in &model_edges {
+                    let (Some(&a), Some(&b)) =
+                        (index.get(e.source.as_str()), index.get(e.target.as_str()))
+                    else {
+                        continue;
+                    };
+                    if a != b && seen.insert((a.min(b), a.max(b))) {
+                        pairs.push((a, b));
+                    }
+                }
+
+                let mut group_specs: Vec<stress::GroupSpec> = Vec::new();
+                let mut group_meta: Vec<GroupMeta> = Vec::new();
+                flatten_groups(
+                    &diagram.groups,
+                    &index,
+                    0,
+                    None,
+                    &mut group_specs,
+                    &mut group_meta,
+                );
+
+                let (rects, hulls) = if pairs.is_empty() && group_specs.is_empty() {
+                    (stress::grid_pack(&ids, &dims, &cfg), Vec::new())
+                } else {
+                    stress::layout_grouped(&ids, &dims, &pairs, &group_specs, &cfg)
+                };
+
+                let route_edges: Vec<(BoxId, BoxId)> = model_edges
+                    .iter()
+                    .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
+                    .collect();
+                let depths: Vec<u8> = group_meta.iter().map(|m| m.depth).collect();
+                let (routes, _rect_map, _boxes) =
+                    route_with_groups(&keys, &rects, &hulls, &group_specs, &depths, &route_edges);
+
+                let centers: Vec<(f64, f64)> = rects
+                    .iter()
+                    .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
+                    .collect();
+                let rc = route_crossings(&routes);
+                let sc = segment_crossings(&centers, &pairs);
+                println!(
+                    "{name} / {} (group_weight={group_weight}): nodes={} edges={} route_crossings={rc} segment_crossings={sc}",
+                    diagram.key,
+                    keys.len(),
+                    pairs.len(),
+                );
+            }
+        }
+
+        for name in ["mini", "groups", "groups-linked", "sixkind"] {
+            let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name);
+            let model = load::load_model(&dir).expect("fixture loads");
+            for group_weight in [4.0, 30.0] {
+                report_for(name, &model, group_weight);
+            }
+        }
+
+        // The domain-model architecture view, loaded from its own docs/waml
+        // corpus (a whole directory, not a standalone fixture).
+        let docs_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/waml")
+            .canonicalize()
+            .expect("docs/waml exists");
+        let model = load::load_model(&docs_dir).expect("docs/waml loads");
+        let domain_model: Vec<Diagram> = model
+            .diagrams
+            .iter()
+            .filter(|d| d.key.ends_with("domain-model"))
+            .cloned()
+            .collect();
+        assert!(
+            !domain_model.is_empty(),
+            "docs/waml must define a domain-model diagram"
+        );
+        let mut narrowed = model.clone();
+        narrowed.diagrams = domain_model;
+        for group_weight in [4.0, 30.0] {
+            report_for("docs/waml", &narrowed, group_weight);
+        }
+    }
 }
