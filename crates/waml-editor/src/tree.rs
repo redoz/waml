@@ -1260,6 +1260,72 @@ mod tests {
         assert_eq!(tree_icons["Docs"], folder_icons["Docs"]);
     }
 
+    /// The `uml` stage stamps the package glyph while projecting a LISTING, so
+    /// the stage has to be in the PARENT directory's resolved chain. A folder
+    /// that declares `profile: uml-domain` under a parent that resolves no
+    /// `uml` stage is still a package -- `resolved_profile` says so -- but
+    /// nothing is running that would stamp its row, so it draws the plain
+    /// folder glyph. Declaring the profile on the child is necessary and NOT
+    /// sufficient; this is the failure a bundle author hits first.
+    #[test]
+    fn a_declared_package_under_a_chainless_parent_draws_the_plain_folder_glyph() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Pkg](pkg/)\n"),
+            ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let tree = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
+
+        assert_eq!(
+            prepared.okf().bundle.resolved_profile("/pkg"),
+            Some("uml-domain"),
+            "the declaration itself resolves",
+        );
+        assert_eq!(
+            tree.roots[0].children[0].presentation.icon,
+            Icon::Book,
+            "but the root listing ran no uml stage, so nothing stamped the row",
+        );
+    }
+
+    /// The same thing again, but against a fixture on disk rather than a
+    /// hand-built bundle: `tests/fixtures/packages` is the one shipped bundle
+    /// with real nested directories, one declaring `profile: uml-domain` and
+    /// one declaring nothing, so the package glyph has a fixture a human can
+    /// open in the editor and see.
+    #[test]
+    fn the_packages_fixture_draws_a_box_for_its_declared_package() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/packages");
+        let source = crate::load::read_bundle(&dir).expect("the packages fixture loads");
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let tree = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            crate::folder_projection::ViewMode::Projected,
+            waml::view::chain::ChainLimits::default(),
+        );
+        let icons: std::collections::HashMap<String, Icon> = tree.roots[0]
+            .children
+            .iter()
+            .map(|node| (node.title.clone(), node.presentation.icon))
+            .collect();
+
+        assert_eq!(icons["Billing"], Icon::Box, "a declared uml-domain package");
+        assert_eq!(
+            icons["Notes"],
+            Icon::Book,
+            "a plain folder declaring nothing"
+        );
+    }
+
     /// The ROOT node is the one directory in the tree that no listing
     /// produced, so nothing hands it a row icon. It must still draw the glyph
     /// a directory row draws -- a root drawing the folder glyph while every

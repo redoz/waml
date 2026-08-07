@@ -8,7 +8,15 @@ unknown frontmatter to it.
 
 ## `index.md` frontmatter
 
-A non-root `index.md` may open with a frontmatter block declaring:
+Any `index.md` may open with a frontmatter block declaring the keys below —
+the bundle root included. The OKF substrate permits only `okf_version` in a
+root `index.md` (`OKF_SPEC.md` §12) and no frontmatter at all elsewhere; these
+keys are the WAML extension to that, and a strict OKF consumer sees ordinary
+unknown keys either way (see *Strict-consumer degradation*). The root is not
+an incidental case: it is where a bundle declares the profile or view chain
+every directory under it inherits.
+
+The keys:
 
 - `title` — overrides the H1 as the folder's title (existing OKF behavior,
   documented here for completeness).
@@ -22,6 +30,35 @@ A non-root `index.md` may open with a frontmatter block declaring:
   The first entry is outermost. What is in effect is
   `Bundle::resolved_view`, a `Chain` — see
   `docs/superpowers/specs/2026-08-05-folder-view-middleware-design.md`.
+
+## Packages: `profile: uml-domain`
+
+A folder declaring `profile: uml-domain` is a **UML package**, and a surface
+that lists it draws the package glyph (`box`) rather than the plain folder
+glyph — the tree panel and the folder tab both, since both resolve the same
+`IconId` against the same icon table.
+
+Two declarations are needed, and getting only one of them is the mistake a
+bundle author makes first:
+
+1. **The parent** must resolve the `uml` view stage — by declaring
+   `view: uml`, or by declaring `profile: uml-domain` itself and inheriting
+   the profile's `["uml"]` default chain. The stage stamps rows while
+   projecting a *listing*, so it is the listing's own chain that matters.
+2. **The folder itself** must declare `profile: uml-domain`. The check is on
+   the folder's *locally declared* profile, not `resolved_profile`: a folder
+   that merely inherits `uml-domain` from an ancestor is not marked a package.
+   Marking a package is an author's decision, not a consequence of where the
+   folder happens to sit.
+
+A folder with (2) but not (1) is still a package by `resolved_profile` — but
+no stage is running that would stamp its row, so it draws the folder glyph.
+`tests/fixtures/packages` is the worked example; the two rules above are
+pinned by tests in `crates/waml-editor/src/tree.rs`.
+
+One thing this cannot reach: the tree's ROOT row takes a fixed presentation
+rather than a projected row's icon, so a bundle root declaring
+`profile: uml-domain` boxes in the folder view but not as the tree's root row.
 
 Any other key is preserved verbatim (`Index::extra`) and survives a
 parse → edit → re-render round-trip unchanged, even keys this version of
