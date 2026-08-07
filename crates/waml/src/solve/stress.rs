@@ -219,10 +219,12 @@ pub fn layout_grouped(
     // Crossings are a whole-diagram property (an edge can span components), so
     // this runs here on the fully assembled `out` rather than per-component --
     // the only point in this function with both global rects and global
-    // `edges` in scope. `remove_overlaps`/`separate_hulls` still run
-    // afterwards to clean up any overlap a move reintroduces (see
-    // `reduce_crossings` docs); the pass measures against the eventual output,
-    // not this mid-pipeline snapshot.
+    // `edges` in scope. The pass cleans up after itself: with groups present a
+    // move is rejected outright if it would overlap two top-level hulls and
+    // `separate_hulls` below re-runs `remove_overlaps`; with *no* groups that
+    // hull guard is vacuous, so `reduce_crossings` runs `remove_overlaps`
+    // itself before returning (see its docs). Nothing else here does. The pass
+    // measures against the eventual output, not this mid-pipeline snapshot.
     reduce_crossings(&mut out, groups, &clean, cfg);
     separate_hulls(&mut out, groups, cfg);
 
@@ -424,7 +426,10 @@ fn any_overlap(rects: &[Rect]) -> bool {
 ///
 /// 1. Swap two members' centers within the same leaf group (or the virtual
 ///    "no group" pool of ungrouped nodes) -- neither node changes which
-///    group(s) contain it.
+///    group(s) contain it. Pools are additionally split by connected
+///    component, so an ungrouped node can never be teleported out of its
+///    component's packed region (which would break the disjoint-regions
+///    invariant the shelf packing establishes).
 /// 2. Swap two whole top-level groups by translating every member of each so
 ///    their hull centers exchange -- a rigid translation, so every nested
 ///    group inside moves as one block and keeps its internal shape exactly.
@@ -445,6 +450,18 @@ fn any_overlap(rects: &[Rect]) -> bool {
 /// `edges` should be real diagram edges only (not the group-clique edges used
 /// internally for the stress solve) -- crossings are measured over what is
 /// actually drawn.
+///
+/// Overlap: with top-level groups present, a move that would leave two hulls
+/// overlapping is rejected, and the caller's `separate_hulls` re-runs
+/// `remove_overlaps`. With *no* groups that guard is vacuous and no cleanup
+/// follows, so this function runs `remove_overlaps` itself -- but only when it
+/// actually accepted a move, keeping the no-op path byte-identical.
+///
+/// Cost: each candidate costs one O(E^2) `segment_crossings`, and the pool
+/// swaps alone are O(n^2) candidates, so the candidate list is capped to a
+/// fixed evaluation budget (see `SWEEP_BUDGET`) -- the pass degrades to
+/// "improve what fits in the budget" on large diagrams rather than stalling a
+/// layout that reruns on every edit.
 fn reduce_crossings(
     rects: &mut [Rect],
     groups: &[GroupSpec],
@@ -484,22 +501,51 @@ fn reduce_crossings(
             }
         }
     }
-    let mut pools: HashMap<Option<usize>, Vec<usize>> = HashMap::new();
+    // Connected component of each node under the same merged adjacency the
+    // packing used (real edges plus a clique per group), so component ids line
+    // up with the shelf-packed regions. Swapping two nodes in different
+    // components would move one into the other's region.
+    let comp_of: Vec<usize> = {
+        let mut merged: Vec<(usize, usize)> = edges.to_vec();
+        merged.extend(comembership_depths(groups).keys().copied());
+        let adj = adjacency(n, &dedup_edges(n, &merged));
+        let mut of = vec![0usize; n];
+        for (ci, comp) in components(n, &adj).into_iter().enumerate() {
+            for m in comp {
+                of[m] = ci;
+            }
+        }
+        of
+    };
+
+    let mut pools: HashMap<(Option<usize>, usize), Vec<usize>> = HashMap::new();
     for (node, key) in leaf_group.iter().enumerate() {
-        pools.entry(*key).or_default().push(node);
+        pools.entry((*key, comp_of[node])).or_default().push(node);
     }
-    let mut pool_keys: Vec<Option<usize>> = pools.keys().copied().collect();
-    pool_keys.sort_unstable_by_key(|k| k.map(|g| g as isize).unwrap_or(-1));
+    let mut pool_keys: Vec<(Option<usize>, usize)> = pools.keys().copied().collect();
+    pool_keys.sort_unstable_by_key(|(g, c)| (g.map(|g| g as isize).unwrap_or(-1), *c));
 
     let top_level: Vec<usize> = (0..groups.len())
         .filter(|&g| groups[g].depth == 0)
         .collect();
 
+    // Evaluation budget for one sweep, in segment-pair tests: each candidate
+    // costs one `segment_crossings`, which is ~E^2/2 pair tests. Only the
+    // O(n^2) pool swaps are capped (group moves are O(g^2) and few), and the
+    // truncation is a prefix of the same deterministic enumeration order, so a
+    // capped run stays reproducible.
+    const SWEEP_BUDGET: usize = 20_000_000;
+    let per_candidate = (edges.len() * edges.len() / 2).max(1);
+    let swap_cap = (SWEEP_BUDGET / per_candidate).max(1);
+
     let mut candidates: Vec<Move> = Vec::new();
-    for key in &pool_keys {
+    'pools: for key in &pool_keys {
         let members = &pools[key];
         for i in 0..members.len() {
             for j in (i + 1)..members.len() {
+                if candidates.len() >= swap_cap {
+                    break 'pools;
+                }
                 candidates.push(Move::SwapMembers(members[i], members[j]));
             }
         }
@@ -635,9 +681,19 @@ fn reduce_crossings(
         break;
     }
 
+    if accepted == 0 {
+        return;
+    }
     for (i, r) in rects.iter_mut().enumerate() {
         r.x = centers[i].0 - r.w / 2.0;
         r.y = centers[i].1 - r.h / 2.0;
+    }
+    // With no groups the hull guard above is vacuous and no later pass cleans
+    // up: `separate_hulls` returns immediately on an empty `groups`. A
+    // `SwapMembers` of two differently-sized rects can leave node rects
+    // overlapping, so clear that here.
+    if groups.is_empty() {
+        remove_overlaps(rects, cfg.gap);
     }
 }
 
@@ -1368,6 +1424,10 @@ mod tests {
         );
     }
 
+    /// The equivalence is structural, not incidental: `layout` is literally
+    /// `layout_grouped(.., &[], ..).0`, so every pass -- `reduce_crossings`
+    /// included -- runs identically on both paths by construction. This guards
+    /// against that delegation being replaced by a divergent copy.
     #[test]
     fn layout_grouped_with_no_groups_matches_layout() {
         let cfg = StressConfig::default();
@@ -1983,5 +2043,82 @@ mod tests {
         let mut rects = base.clone();
         reduce_crossings(&mut rects, &groups, &edges, &cfg);
         assert_eq!(rects, base, "crossing_passes: 0 must be a provable no-op");
+    }
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
+        Rect { x, y, w, h }
+    }
+
+    /// Review fix: with no groups the `top_level_hulls_overlap` guard is
+    /// vacuous and `separate_hulls` returns immediately, so a `SwapMembers` of
+    /// two differently-sized rects used to leave node rects overlapping with
+    /// nothing to clean up. Node 1 is far wider than node 0; swapping their
+    /// centers untangles the X but parks node 1 on top of node 2.
+    #[test]
+    fn reduce_crossings_leaves_ungrouped_rects_overlap_free() {
+        // Centers: 0 (0,0), 1 (0,100), 2 (300,0), 3 (300,100).
+        let mut rects = vec![
+            rect(-10.0, -10.0, 20.0, 20.0),
+            rect(-300.0, 90.0, 600.0, 20.0),
+            rect(290.0, -10.0, 20.0, 20.0),
+            rect(290.0, 90.0, 20.0, 20.0),
+        ];
+        // (2,3) keeps all four in one connected component; (0,3)/(1,2) cross.
+        let edges = [(0, 3), (1, 2), (2, 3)];
+        let cfg = StressConfig::default();
+
+        let centers = |rs: &[Rect]| -> Vec<(f64, f64)> {
+            rs.iter()
+                .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
+                .collect()
+        };
+        assert_eq!(segment_crossings(&centers(&rects), &edges), 1);
+
+        reduce_crossings(&mut rects, &[], &edges, &cfg);
+
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                let (a, b) = (&rects[i], &rects[j]);
+                let overlap =
+                    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+                assert!(
+                    !overlap,
+                    "rects {i} and {j} overlap after the pass: {a:?} {b:?}"
+                );
+            }
+        }
+    }
+
+    /// Review fix: the virtual "no group" pool used to be global, so a swap
+    /// could exchange two ungrouped nodes from *different* connected
+    /// components, teleporting one out of its shelf-packed region. Here the
+    /// only crossing-reducing swap (0 <-> 2) is cross-component; the only
+    /// same-component swaps (0<->1, 2<->3) merely reverse a segment and change
+    /// nothing, so the pass must leave the layout alone.
+    #[test]
+    fn reduce_crossings_never_swaps_across_components() {
+        let base = vec![
+            rect(-10.0, -10.0, 20.0, 20.0), // 0, center (0,0)
+            rect(90.0, 90.0, 20.0, 20.0),   // 1, center (100,100)
+            rect(-10.0, 90.0, 20.0, 20.0),  // 2, center (0,100)
+            rect(90.0, -10.0, 20.0, 20.0),  // 3, center (100,0)
+        ];
+        // Two disjoint components whose segments cross geometrically.
+        let edges = [(0, 1), (2, 3)];
+        let cfg = StressConfig::default();
+
+        let centers = |rs: &[Rect]| -> Vec<(f64, f64)> {
+            rs.iter()
+                .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
+                .collect()
+        };
+        assert_eq!(segment_crossings(&centers(&base), &edges), 1);
+
+        let mut rects = base.clone();
+        reduce_crossings(&mut rects, &[], &edges, &cfg);
+        assert_eq!(
+            rects, base,
+            "the only improving swap crosses component lines and must be rejected"
+        );
     }
 }
