@@ -42,8 +42,9 @@ const PROJECT = {
   rust: true, // repo is a cargo workspace (crates/*)
   pnpm: true, // repo carries one standalone Node project (editors/vscode), not a pnpm workspace
   gate: {
-    // Rust half: fmt + clippy + tests. fmt/clippy were historically missing and slipped violations onto main.
-    rust: 'cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace',
+    // Rust half: fmt (write, then verify) + clippy + tests. fmt/clippy were historically missing and slipped
+    // violations onto main; the write pass means formatting never fails a unit, the fmt diff lands in the unit commit.
+    rust: 'cargo fmt --all && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace',
     // Node half: the VS Code extension's vitest suite, eslint, then the build (which type-checks via tsc). Only run
     // for plans that touch editors/** — a pure-Rust plan has no reason to install Node deps.
     pnpm: 'pnpm -C editors/vscode test && pnpm -C editors/vscode lint && pnpm -C editors/vscode build',
