@@ -12,7 +12,7 @@
 use super::crossing::segment_crossings_touching;
 use super::{BoxId, Rect, Size, SolveConfig};
 use crate::layout::Margin;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::f64::consts::PI;
 
 /// Tunables for the stress solve. Defaults are a first pass; the spec calls for
@@ -479,13 +479,6 @@ fn reduce_crossings(
         return;
     }
 
-    #[derive(Clone, Copy)]
-    enum Move {
-        SwapMembers(usize, usize),
-        SwapGroups(usize, usize),
-        ReflectGroup(usize, bool), // true = horizontal (flip x), false = vertical (flip y)
-    }
-
     // Deepest group each node belongs to (ties broken by smaller group index),
     // for the intra-pool swap move. Nodes in no group map to `None`, the
     // virtual "no group" pool.
@@ -572,15 +565,7 @@ fn reduce_crossings(
             }
         }
     }
-    for i in 0..top_level.len() {
-        for j in (i + 1)..top_level.len() {
-            candidates.push(Move::SwapGroups(top_level[i], top_level[j]));
-        }
-    }
-    for &g in &top_level {
-        candidates.push(Move::ReflectGroup(g, true));
-        candidates.push(Move::ReflectGroup(g, false));
-    }
+    candidates.extend(group_level_moves(&members, &top_level, &comp_of));
     if candidates.is_empty() {
         return;
     }
@@ -765,6 +750,65 @@ fn reduce_crossings(
     if groups.is_empty() {
         remove_overlaps(rects, cfg.gap);
     }
+}
+
+/// One candidate rearrangement in `reduce_crossings`' hill-climb. Every
+/// variant is cohesion-preserving by construction: it permutes positions
+/// inside one pool, or moves a whole group rigidly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Move {
+    SwapMembers(usize, usize),
+    SwapGroups(usize, usize),
+    ReflectGroup(usize, bool), // true = horizontal (flip x), false = vertical (flip y)
+}
+
+/// The group-level half of `reduce_crossings`' candidate list: swap any two
+/// top-level groups, or mirror one about its own hull center.
+///
+/// Both move EVERY member of a group at once, which is cohesion-preserving
+/// only under two conditions, enforced here:
+///
+/// * **Disjoint membership.** On entangled siblings (the same element under
+///   two headings -- the case `separate_hulls` handles explicitly) a shared
+///   member would take group A's offset and then group B's opposite one and
+///   stay put while both hulls translate around it, or be mirrored out of the
+///   sibling it also belongs to. Either way both hulls scramble, so an
+///   entangled group gets no group-level moves at all; its members still move
+///   via the intra-pool swaps.
+/// * **Same connected component.** A group's members are one component by
+///   construction (the packing merges a clique per group into the adjacency),
+///   so a group has a single component id. Swapping across components would
+///   teleport each group into the other's shelf-packed region -- the same
+///   invariant the pool swaps guard.
+fn group_level_moves(members: &[Vec<usize>], top_level: &[usize], comp_of: &[usize]) -> Vec<Move> {
+    let member_sets: Vec<HashSet<usize>> = top_level
+        .iter()
+        .map(|&g| members[g].iter().copied().collect())
+        .collect();
+    let entangled: Vec<bool> = (0..top_level.len())
+        .map(|i| {
+            (0..top_level.len()).any(|j| j != i && !member_sets[i].is_disjoint(&member_sets[j]))
+        })
+        .collect();
+    let group_comp: Vec<usize> = top_level.iter().map(|&g| comp_of[members[g][0]]).collect();
+
+    let mut moves = Vec::new();
+    for i in 0..top_level.len() {
+        for j in (i + 1)..top_level.len() {
+            if entangled[i] || entangled[j] || group_comp[i] != group_comp[j] {
+                continue;
+            }
+            moves.push(Move::SwapGroups(top_level[i], top_level[j]));
+        }
+    }
+    for (i, &g) in top_level.iter().enumerate() {
+        if entangled[i] {
+            continue;
+        }
+        moves.push(Move::ReflectGroup(g, true));
+        moves.push(Move::ReflectGroup(g, false));
+    }
+    moves
 }
 
 /// For every pair of co-members across `groups`, the depth of the *deepest*
@@ -2008,6 +2052,61 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Review fix (high): the group-level moves are cohesion-preserving only
+    /// while group membership is disjoint and both groups sit in the same
+    /// shelf-packed component. Two top-level groups that SHARE a member (the
+    /// same element under two headings -- the case `separate_hulls` handles
+    /// explicitly) must get NO group-level moves: the shared member would take
+    /// group A's offset and then group B's opposite one and stay put while
+    /// both hulls translate around it, or be mirrored out of the sibling it
+    /// also belongs to. Asserted on the candidate generator directly -- the
+    /// intra-pool swaps can reach many of the same arrangements, so a
+    /// whole-pass behavioural test does not reliably exercise this branch.
+    #[test]
+    fn group_level_moves_skip_entangled_groups() {
+        // Groups 0 and 1 share member 2; group 2 is disjoint. All one component.
+        let members = vec![vec![0, 1, 2], vec![2, 3, 4], vec![5, 6]];
+        let top_level = vec![0, 1, 2];
+        let comp_of = vec![0; 7];
+
+        let moves = group_level_moves(&members, &top_level, &comp_of);
+
+        assert_eq!(
+            moves,
+            vec![Move::ReflectGroup(2, true), Move::ReflectGroup(2, false)],
+            "only the disjoint group may move as a group; an entangled group              gets neither a swap nor a reflection"
+        );
+    }
+
+    /// Review fix (high): group-level swaps carry the same connected-component
+    /// restriction as the pool swaps -- components are shelf-packed into
+    /// disjoint regions, so swapping two groups across components teleports
+    /// each into the other's region. Reflections stay legal (a group is
+    /// mirrored inside its own hull, never leaving its region).
+    #[test]
+    fn group_level_moves_do_not_swap_across_components() {
+        let members = vec![vec![0, 1], vec![2, 3]];
+        let top_level = vec![0, 1];
+        let comp_of = vec![0, 0, 1, 1];
+
+        let moves = group_level_moves(&members, &top_level, &comp_of);
+
+        assert_eq!(
+            moves,
+            vec![
+                Move::ReflectGroup(0, true),
+                Move::ReflectGroup(0, false),
+                Move::ReflectGroup(1, true),
+                Move::ReflectGroup(1, false),
+            ],
+            "groups in different components must not be swapped"
+        );
+
+        // Same component: the swap comes back.
+        let same = group_level_moves(&members, &top_level, &[0, 0, 0, 0]);
+        assert!(same.contains(&Move::SwapGroups(0, 1)));
     }
 
     /// Review fix (high): every other `reduce_crossings` test calls the
