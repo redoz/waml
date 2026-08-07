@@ -2483,7 +2483,7 @@ mod tests {
         use waml::solve::crossing::{route_crossings, segment_crossings};
         use waml::solve::stress::StressConfig;
 
-        fn report_for(name: &str, model: &Model, group_weight: f64) {
+        fn report_for(name: &str, model: &Model, group_weight: f64, crossing_passes: u32) {
             for diagram in &model.diagrams {
                 // Force the stress-default path regardless of any authored
                 // `## Layout` block: this plan is about that path specifically.
@@ -2499,6 +2499,7 @@ mod tests {
 
                 let cfg = StressConfig {
                     group_weight,
+                    crossing_passes,
                     ..StressConfig::default()
                 };
                 let keys: Vec<String> = sizes.keys().cloned().collect();
@@ -2555,7 +2556,7 @@ mod tests {
                 let rc = route_crossings(&routes);
                 let sc = segment_crossings(&centers, &pairs);
                 println!(
-                    "{name} / {} (group_weight={group_weight}): nodes={} edges={} route_crossings={rc} segment_crossings={sc}",
+                    "{name} / {} (group_weight={group_weight}, crossing_passes={crossing_passes}): nodes={} edges={} route_crossings={rc} segment_crossings={sc}",
                     diagram.key,
                     keys.len(),
                     pairs.len(),
@@ -2569,7 +2570,9 @@ mod tests {
                 .join(name);
             let model = load::load_model(&dir).expect("fixture loads");
             for group_weight in [4.0, 30.0] {
-                report_for(name, &model, group_weight);
+                for crossing_passes in [0, 8] {
+                    report_for(name, &model, group_weight, crossing_passes);
+                }
             }
         }
 
@@ -2593,7 +2596,9 @@ mod tests {
         let mut narrowed = model.clone();
         narrowed.diagrams = domain_model;
         for group_weight in [4.0, 30.0] {
-            report_for("docs/waml", &narrowed, group_weight);
+            for crossing_passes in [0, 8] {
+                report_for("docs/waml", &narrowed, group_weight, crossing_passes);
+            }
         }
     }
 }
