@@ -1,26 +1,20 @@
 # Edit the Model
 
-**Goal:** An author changes typed structure with the inspector and the diagram.
-The typed structure includes elements, members, relationships, and properties.
-The author does not edit text to make these changes.
+**Goal:** An author changes typed structure with the inspector or the diagram.
 
-**Why:** Typed structure is the difference between WAML and a Markdown viewer.
-An author who must write frontmatter and relationship lines by hand uses the
-parser, not the editor.
+**Why:** Typed structure is a main product function. The author must not edit
+frontmatter and relationship lines for each model change.
 
-**Done when:** The author can make, retype, rename, connect, and delete each
-element kind and each relationship kind from the inspector or from the diagram.
-Each such edit writes canonical Markdown in one transaction.
+**Done when:** The author can add, retype, rename, connect, and delete each
+supported element and relationship kind. Each edit writes canonical Markdown
+as one transaction.
 
-**Status:** partial — unverified
+**Status:** partial
 **MVP:** yes
 
 ## Notes
 
-- The edit path operates. It has typed operations, transactions in memory, undo
-  with prepare and commit steps, and a save path.
-- The coverage for each element kind is not known. The feature cuts in
-  [UML](../uml/) have the status of each row. This goal is complete when those
-  rows are complete.
-- Drag to place with constraints, a context menu on a node, and a list of
-  conflicts operate for changes to structure on the canvas.
+- The UML feature-cut documents own language and model coverage.
+- Diagram-specific selection, tools, and direct manipulation are owned by the
+  interaction goal for that diagram kind.
+- [Save and Undo](./save-and-undo.md) owns transaction history and persistence.

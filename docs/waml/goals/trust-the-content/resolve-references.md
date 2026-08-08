@@ -1,23 +1,24 @@
 # Resolve References
 
-**Goal:** A link to a document or to an element resolves, or the tool reports
-it.
+**Goal:** A reference resolves, or the tool reports it at its source position.
 
-**Why:** The value of a bundle is its graph. A broken edge that the tool does
-not report gives incorrect information to the reader.
+**Why:** A silent broken edge gives the reader incorrect bundle information.
 
-**Done when:** Each relationship target, each `describes` target, each slot
-reference, and each link in text in this bundle resolves. Each reference that
-does not resolve causes a diagnostic at its position.
+**Done when:** Relationship targets, `describes` targets, slot references, and
+text links resolve or produce a positioned diagnostic.
 
-**Status:** partial — unverified
+**Status:** partial
 **MVP:** yes
 
 ## Notes
 
-- The model layer resolves relationship targets and `describes` targets.
-  Verify whether the tool examines links in text.
-- A link to a heading in another document is a different condition from a link
-  to the document. The tool probably does not examine it.
-- [Report Every Problem](./report-every-problem.md) delivers the report. This
-  goal finds the problem.
+- `crates/waml/src/uml.rs::relationships_and_diagram_members_resolve_only_claimed_concepts`
+  checks relationship and diagram-member resolution.
+- `crates/waml/tests/sequence_semantics.rs::sequence_describes_resolves_through_the_shared_link_ref_parser`
+  checks a sequence `describes` reference through the shared parser.
+- `crates/waml/tests/semantic_diagnostics.rs::unresolved_diagram_member_is_a_precise_warning`
+  checks a positioned diagnostic for an unresolved diagram member.
+- The evidence does not cover every Markdown text-link target. The goal stays
+  partial.
+- [Report Every Problem](./report-every-problem.md) owns delivery of a detected
+  problem to a user surface.

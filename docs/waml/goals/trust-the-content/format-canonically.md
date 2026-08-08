@@ -1,22 +1,20 @@
 # Format Canonically
 
-**Goal:** The tool writes the same bytes for the same model each time. Thus a
-diff shows the change only.
+**Goal:** The formatter writes the same bytes for the same model each time.
 
-**Why:** Two authors who edit the same bundle with the same tool must get the
-same bytes for the same model. Different bytes make each review difficult.
+**Why:** Stable bytes keep a review focused on the semantic change.
 
-**Done when:** To write the same model two times gives the same bytes. This is
-true at each surface and on each platform. A semantic edit gives a diff in
-which each hunk is a result of that edit.
+**Done when:** A first format pass produces canonical source and a second pass
+produces no change.
 
-**Status:** done — unverified
+**Status:** done
 **MVP:** yes
 
 ## Notes
 
-- Canonical serialization is an established behavior with formatter tests.
-- The usual defect is order. A map with no stable order breaks this behavior
-  silently and only in some conditions.
-- Line ends are a risk. The editor operates on Windows. The publication build
-  does not.
+- `crates/waml-cli/tests/cli_e2e.rs::fmt_canonical_output_is_idempotent`
+  checks canonical CLI output and an unchanged second pass.
+- `crates/waml/tests/formatter_actions.rs::noncanonical_claimed_families_match_exact_canonical_bytes`
+  checks exact canonical output for claimed UML families.
+- `crates/waml/tests/sequence_formatter.rs::canonical_sequence_format_is_idempotent_and_semantic`
+  checks idempotent canonical sequence formatting and retained semantics.

@@ -1,27 +1,26 @@
 # Arrange a Diagram
 
-**Goal:** An author overrides the solver where the solver gives an incorrect
-result. The override stays after a reload.
+**Goal:** An author overrides a solver result and keeps the override after a
+reload.
 
-**Why:** No solver is correct in all conditions. Without an override, an author
-must accept a bad diagram.
+**Why:** A solver cannot select the intended result in all documents.
 
-**Done when:** The author can hold a position, an order, or a side. The tool
-writes the constraint into the document as text that a reviewer can diff. The
-solver obeys the constraint after a reload. If a constraint becomes impossible,
-the tool reports it. The tool does not remove it silently.
+**Done when:** The author can hold a position, order, or side. The document
+stores the constraint as reviewable text, the solver applies it after reload,
+and the editor reports an impossible constraint.
 
-**Status:** partial — unverified
+**Status:** partial
 **MVP:** no
+
+## Planned behavior
+
+Complete author controls for persistent layout constraints have no passing
+acceptance scenario in the frozen inventory.
 
 ## Notes
 
-- Layout constraints exist in the model and the solver reads them. Verify
-  whether the author can make them from the canvas.
-- `MVP: no` is a judgement. The bar needs `docs/waml` to be readable. The
-  default output of the solver can be sufficient for this bundle. Change the
-  flag to `yes` when a diagram here is not acceptable without an override.
-- A badge and a list of conflicts show constraint conflicts.
-- [Keep the Map Stable](../uml/shared/keep-the-map-stable.md) is different from
-  this goal. A constraint is a hard override from the author. Stability is a
-  soft rule for the solver. The product needs both.
+- Diagram interaction goals own diagram-specific controls.
+- [Keep the Map Stable](../uml/shared/keep-the-map-stable.md) owns the soft
+  stability rule. An authored constraint is a hard override.
+- [Solve the Layout](../uml/shared/solve-the-layout.md) owns solver results and
+  conflict feedback.
