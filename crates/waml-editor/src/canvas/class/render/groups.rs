@@ -1,5 +1,5 @@
 use super::{primitives::ClassDrawResources, RenderSnapshot};
-use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
+use crate::canvas::primitives::{font_raster_size, snap_rect, world_rect_to_screen};
 use makepad_widgets::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -83,9 +83,13 @@ pub(super) fn draw_groups(
     let title_ink = draws.text.color;
     let dim_ink = draws.group_title_dim.color;
     for (screen, label, mode) in group_draws {
+        // The frame edge is an SDF stroke at a constant screen-space width, so
+        // its rect has to sit on the device grid or the hairline splits over two
+        // rows -- the "fatter and blurrier when zoomed out" tell.
+        let framed = snap_rect(cx, screen);
         match mode {
             GroupDraw::Chrome => {
-                draws.group.draw_abs(cx, screen);
+                draws.group.draw_abs(cx, framed);
                 // Fill alone is nearly invisible against the canvas ground, so
                 // every frame gets a hairline edge over its fill.
                 draws.group_border.set_uniform(
@@ -93,7 +97,7 @@ pub(super) fn draw_groups(
                     live_id!(stroke_w),
                     &[snapshot.linework.group_stroke_width],
                 );
-                draws.group_border.draw_abs(cx, screen);
+                draws.group_border.draw_abs(cx, framed);
             }
             GroupDraw::Dashed => {
                 draws.group_dashed.set_uniform(
@@ -106,7 +110,7 @@ pub(super) fn draw_groups(
                     live_id!(stroke_w),
                     &[snapshot.linework.group_stroke_width],
                 );
-                draws.group_dashed.draw_abs(cx, screen);
+                draws.group_dashed.draw_abs(cx, framed);
             }
             GroupDraw::Skip => {}
         }

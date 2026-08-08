@@ -11,7 +11,7 @@ use super::{placement::PlacementSnapshot, selection::SelectionSnapshot};
 use crate::{canvas::viewport::ViewportSnapshot, scene::Scene};
 use makepad_widgets::Cx2d;
 
-pub(super) use metrics::{LineworkMetrics, DEFAULT_LINEWORK_MODE};
+pub(super) use metrics::LineworkMetrics;
 pub(super) use primitives::ClassDrawResources;
 
 /// Cached per-node card measurements. `card::measure` runs a full taffy tree
