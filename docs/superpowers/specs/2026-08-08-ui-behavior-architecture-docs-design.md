@@ -5,8 +5,9 @@
 Update `docs/waml` so that it is the current, testable product contract. The
 goal tree shall describe all user-visible behavior. The architecture tree
 shall describe the current implementation boundaries and data flows. The
-content shall use OKF v0.2 and WAML diagrams where a model explains the subject
-better than prose.
+product-use-case tree shall show which external roles participate in each
+workflow. The content shall use OKF v0.2 and WAML diagrams where a model
+explains the subject better than prose.
 
 ## Scope
 
@@ -41,7 +42,7 @@ shall be removed.
 
 ## Delivery approach
 
-Work has two phases.
+Work has three phases.
 
 ### Phase 1: traceability inventory
 
@@ -68,6 +69,14 @@ owner instead of copying scenarios.
 
 Separate work streams update the implementation architecture, OKF v0.2
 metadata conventions, documentation gates, and the WAML feature-gap ledger.
+
+### Phase 3: semantic product-use-case model
+
+After the inventory and documentation contract are frozen and the goal leaves
+contain their GWT scenarios, create a permanent model under
+`docs/waml/use-cases`. This model shall show external roles, product workflows,
+and system boundaries. It shall link to the goal tree and shall not become a
+second copy of the behavior contract.
 
 ## Scenario design
 
@@ -107,6 +116,52 @@ The first inventory shall cover at least these behavior areas:
 - activity and sequence rendering, hit testing, selection, and camera behavior;
 - browser boot, download, URL, share, site, and API-specific behavior; and
 - user-visible CLI, LSP, and editor-integration workflows.
+
+## Product use-case design
+
+The permanent product-use-case layer shall use this structure:
+
+```text
+docs/waml/use-cases/
+  actors/
+  workflows/
+  views/
+```
+
+Create one `uml.Actor` document for each distinct user role or external system
+role that interacts across a product boundary. Do not create separate actors
+for two names that describe the same role. Use `specializes` from a narrower
+actor to a broader actor only when the narrower actor can do all interactions
+of the broader actor.
+
+Create one `uml.UseCase` document for each distinct shipped product workflow.
+One use-case document shall have one owning goal document. Its `## Owning goal`
+section shall link to that goal. Its `## Scenarios` section shall link to every
+shipped GWT scenario that the workflow owns. The link target shall be the
+scenario heading in the owning goal document. A use-case document shall not
+contain `Given`, `When`, or `Then` lines. Planned-only behavior remains in its
+goal document until it has a shipped scenario.
+
+Use these relationship meanings:
+
+- `associates` connects an external actor to a use case in which the actor
+  participates;
+- `includes` points from a use case to another use case that always runs as a
+  required part of it;
+- `extends` points from an optional or conditional use case to the base use
+  case that it extends; and
+- `specializes` points from a narrower actor or use case to its broader parent.
+
+Do not add a relationship only because two documents link to the same goal or
+because two actions occur in sequence. Author each actor-to-use-case
+association once. All relationship targets shall resolve.
+
+Create WAML `Diagram` documents under `docs/waml/use-cases/views`. Each view
+shall group external actors separately from the use cases inside its named
+system boundary. Use `## Members` groups to express this semantic boundary.
+Do not add a `## Layout` section, coordinates, sizes, edge routes, shape names,
+or ordering constraints. The model shall not constrain the specialized
+use-case view that is under separate implementation.
 
 ## Architecture design
 
@@ -188,7 +243,11 @@ Seed the ledger with the audit findings:
 - traceable links from scenario IDs to tests and evidence.
 
 The ledger records opportunities. This documentation task shall not expand the
-WAML language.
+WAML language. Specialized stick-figure actor rendering, ellipse use-case
+rendering, and system-boundary rendering are under separate implementation by
+the user. Do not record them as requirements of this documentation task or as
+new language gaps. Scenario-to-use-case-to-test traceability remains a WAML
+tooling opportunity.
 
 ## Automation and validation
 
@@ -213,7 +272,12 @@ Content verification shall include:
 - planned scenarios cannot be mistaken for passing contracts;
 - shared scenarios map to native verification;
 - browser scenarios describe browser-only behavior or a parity seam; and
-- architecture diagrams resolve their referenced concepts.
+- architecture diagrams resolve their referenced concepts;
+- every product use case links to one owning goal and all of its shipped GWT
+  scenarios;
+- use-case documents contain no copied GWT bodies; and
+- product-use-case diagrams contain semantic system-boundary groups and no
+  renderer-specific geometry.
 
 ## Delegation and integration
 
@@ -221,7 +285,8 @@ After the traceability inventory is complete, parallel agents may own separate
 goal subtrees. Agents shall not edit outside their assigned files. One agent
 shall own cross-cutting scenario identifiers and deduplication. Separate agents
 shall own architecture diagrams, OKF conventions, automation, and feature-gap
-documentation.
+documentation. A separate agent shall own the permanent product-use-case model
+and shall not edit goal scenario bodies.
 
 Each work stream shall report changed files, scenario identifiers, evidence,
 open discrepancies, and feature gaps. A final integration review shall check
@@ -240,6 +305,9 @@ The work is complete when:
 - diagrams replace structural prose where they communicate more clearly;
 - OKF v0.2 provenance and freshness conventions are consistent;
 - the WAML feature-gap ledger links to the documented problems;
+- the product-use-case layer links each external role and shipped workflow to
+  its system boundary, owning goal, and GWT scenarios without copying scenario
+  bodies;
 - the documentation gates pass locally and in CI; and
 - a final reviewer finds no unowned behaviors, duplicate contracts, stale
   architecture claims, or unresolved validation errors.

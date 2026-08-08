@@ -4,9 +4,9 @@
 
 **Goal:** Make `docs/waml` the current, testable product contract for all user-visible workflows, and make its architecture views match the six-crate implementation and revisioned data flows on `origin/main`.
 
-**Architecture:** Build one temporary traceability inventory first. Use that inventory to give each behavior and each document one owner. Keep shipped Given-When-Then contracts, planned behavior, runtime architecture, OKF trust metadata, and WAML language gaps separate. Reuse the existing WAML parser, formatter, and `waml::index_md::reindex_source` generator for all repository gates.
+**Architecture:** Build one temporary traceability inventory first. Use that inventory to give each behavior and each document one owner. Keep shipped Given-When-Then contracts, the permanent semantic product-use-case model, planned behavior, runtime architecture, OKF trust metadata, and WAML language gaps separate. Reuse the existing WAML parser, formatter, and `waml::index_md::reindex_source` generator for all repository gates.
 
-**Tech Stack:** Rust 2021, Clap, `waml` and `waml-cli`, OKF v0.2 Markdown frontmatter, WAML class/sequence/activity diagrams, Node.js 22 built-in test runner, GitHub Actions, VS Code/Vitest tests, Makepad native and WebAssembly editor tests.
+**Tech Stack:** Rust 2021, Clap, `waml` and `waml-cli`, OKF v0.2 Markdown frontmatter, WAML actor/use-case/class/sequence/activity documents and diagrams, Node.js 22 built-in test runner, GitHub Actions, VS Code/Vitest tests, Makepad native and WebAssembly editor tests.
 
 ## Global Constraints
 
@@ -25,6 +25,8 @@
 - Preserve a legacy `timestamp` when an existing v0.1 document requires it. For a new v0.2 document, use `generated.at` and do not add `timestamp`.
 - Do not add a second Markdown/WAML parser or formatter. A contract checker can scan canonical Markdown headings and fields only after `waml check` succeeds.
 - Do not expand the WAML language in this work. Record notation gaps in the feature-gap ledger.
+- Keep all GWT scenario bodies in `docs/waml/goals/**`. Product use-case documents link to scenario headings and never copy GWT lines.
+- Do not add product-use-case layout geometry or renderer requirements. Specialized actor, use-case, and system-boundary rendering is separate user work.
 - Every editor launch must use `run.ps1 -Title` with a short kebab-case value. Add a six-digit `-Color` value if two task windows are open at the same time.
 - Use `rtk` before shell commands. Run all commands from the worktree root unless a step gives another directory.
 - Each task ends with a focused commit. Do not combine unrelated work streams in one commit.
@@ -34,9 +36,9 @@
 Run Tasks 1 and 2 in order. After Task 2 freezes the inventory, start the automation and architecture lanes:
 
 - Automation lane: Tasks 3 and 4 in order.
-- Architecture lane: Tasks 12 and 13 in order.
+- Architecture lane: Tasks 13 and 14 in order.
 
-Task 14 waits for Tasks 2 and 3 because both can edit `crates/waml-cli/tests/cli_e2e.rs`; execute Task 14 before authoring goal scenarios so the inventory distinguishes verified tests from gaps. Task 5 waits for Task 4. Tasks 6, 7, 8, 9, and 10 wait for Tasks 4, 5, and 14, then run in parallel. Task 11 waits for Tasks 6 through 10. Task 15 waits for Tasks 3, 4, 11, and 13. Tasks 16, 17, and 18 run in order after every lane is complete.
+Task 15 waits for Tasks 2 and 3 because both can edit `crates/waml-cli/tests/cli_e2e.rs`; execute Task 15 before authoring goal scenarios so the inventory distinguishes verified tests from gaps. Task 5 waits for Task 4. Tasks 6, 7, 8, 9, and 10 wait for Tasks 4, 5, and 15, then run in parallel. Task 11 waits for Tasks 2, 5, 6, 7, 8, 9, and 10. Task 12 waits for Tasks 6 through 11. Task 16 waits for Tasks 3, 4, 12, and 14. Tasks 17, 18, and 19 run in order after every lane is complete.
 
 Concurrent agents must use these boundaries:
 
@@ -51,13 +53,14 @@ Concurrent agents must use these boundaries:
 | Class/shared goals | `docs/waml/goals/uml/class/**`, `docs/waml/goals/uml/shared/**`, `docs/superpowers/audits/reports/class-shared.md` |
 | Behavior goals | `docs/waml/goals/uml/activity/**`, `docs/waml/goals/uml/sequence/**`, `docs/waml/goals/uml/state-machine/**`, `docs/waml/goals/uml/use-case/**`, `docs/superpowers/audits/reports/behavior-diagrams.md` |
 | Browser/tool goals | `docs/waml/goals/share-and-publish/**`, `docs/waml/goals/tooling-around-the-repo/**`, `docs/superpowers/audits/reports/browser-tooling.md` |
+| Product use-case model | `docs/waml/use-cases/**`, `docs/waml/waml-feature-gaps.md` after Task 5 stops, and `docs/superpowers/audits/reports/use-cases.md` |
 | Goal integrator | `docs/waml/goals/index.md`, `docs/waml/goals/root-goal.md`, `docs/waml/goals/mvp.md`, `docs/waml/goals/beyond-uml.md`, plus all goal `index.md` files after the five goal agents stop |
 | Architecture | `docs/waml/architecture/**`, `docs/superpowers/audits/reports/architecture.md` |
-| Evidence coordinator | Only the test files listed in Task 14 and `docs/superpowers/audits/reports/evidence.md` |
+| Evidence coordinator | Only the test files listed in Task 15 and `docs/superpowers/audits/reports/evidence.md` |
 | CI/documentation gate | `.github/workflows/ci.yml`, `README.md` |
-| Final integrator | `docs/waml/index.md` and every generated `index.md` after all other agents stop; it also deletes the exact temporary audit files in Task 18 |
+| Final integrator | `docs/waml/index.md` and every generated `index.md` after all other agents stop; it also deletes the exact temporary audit files in Task 19 |
 
-No goal agent edits test files. No evidence agent changes scenario prose. No agent runs the writing form of `waml index` until Task 16.
+No goal agent edits test files. No evidence agent changes scenario prose. The product-use-case agent does not edit goal files or tests. No agent runs the writing form of `waml index` until Task 17.
 
 ## Audit Inventory Contract
 
@@ -1038,9 +1041,9 @@ Each entry must have these headings: `Problem`, `Minimal desired notation`, `Cur
 | `FG-007` | semantic canvas targets and coordinate-space-aware drag paths | syntax | `interact-with-a-class-diagram.md`, `draw-on-the-canvas.md` |
 | `FG-008` | hit target, tolerance, and z-order assertions | semantics | the four diagram-interaction goal documents |
 | `FG-009` | component ports plus explicit asynchronous and compare-and-swap notation | syntax | `crate-ownership.md`, `editor-ownership.md`, `revisioned-edit-transaction.md` |
-| `FG-010` | traceable links from scenario identifiers to tests and evidence | tooling | `documentation-contract.md` and every goal document with scenarios |
+| `FG-010` | traceable links from scenario identifiers through product use cases to tests and evidence | tooling | `documentation-contract.md` and every goal document with scenarios; Task 11 adds the product-use-case links after those documents exist |
 
-Use WAML links to each affected document. State that the ledger records opportunities and does not authorize language changes.
+Use WAML links to each affected document. State that the ledger records opportunities and does not authorize language changes. Do not add stick-figure actors, ellipse use cases, system-boundary rendering, or specialized use-case layout as ledger entries. The user implements that view separately. Keep `FG-010` because WAML does not yet enforce complete scenario-to-use-case-to-test traceability.
 
 - [ ] **Step 4: Write the contract report and validate**
 
@@ -1265,15 +1268,15 @@ git commit -m "docs: specify class diagram behavior"
 
 **Interfaces:**
 - Consumes: `ACT` and `SEQ` rows plus any shipped state-machine/use-case rows.
-- Produces: rendering, hit-test, selection, and camera contracts for each behavior-diagram kind; retained stable sequence-language scenarios.
+- Produces: rendering, hit-test, selection, and camera contracts for each behavior-diagram kind; retained stable sequence-language scenarios. It does not produce the product-use-case model from Task 11.
 
 - [ ] **Step 1: Normalize existing sequence scenarios**
 
-Add `**Applies to:** shared` and exact evidence to every stable `SEQ-MSG-*`, `SEQ-ORD-*`, and `SEQ-FRAG-*` scenario. Keep identifiers such as `SEQ-MSG-1`, `SEQ-ORD-1`, and `SEQ-FRAG-10` byte-for-byte stable. They match the compatible canonical grammar and are not renumbered to three digits. Add `Scenario:` markers in Task 14, not here.
+Add `**Applies to:** shared` and exact evidence to every stable `SEQ-MSG-*`, `SEQ-ORD-*`, and `SEQ-FRAG-*` scenario. Keep identifiers such as `SEQ-MSG-1`, `SEQ-ORD-1`, and `SEQ-FRAG-10` byte-for-byte stable. They match the compatible canonical grammar and are not renumbered to three digits. Add `Scenario:` markers in Task 15, not here.
 
 - [ ] **Step 2: Create one interaction leaf per kind**
 
-Each interaction leaf owns only user-visible rendering, hit testing, selection, camera retention, and refresh behavior. The feature-cut leaf continues to own language/model coverage.
+Each interaction leaf owns only user-visible rendering, hit testing, selection, camera retention, and refresh behavior. The feature-cut leaf continues to own language/model coverage. `goals/uml/use-case/**` describes the use-case editor and renderer as a product feature. It does not contain the permanent actor and workflow documents under `docs/waml/use-cases/**`.
 
 - [ ] **Step 3: Write shipped and non-shipped records**
 
@@ -1281,7 +1284,7 @@ Use `ACT-*` and `SEQ-*` identifiers from the inventory. For state machine and us
 
 - [ ] **Step 4: Link WAML expression gaps**
 
-Use `FG-003` for eventual draw-cycle results and `FG-008` for hit tolerance or z-order. Do not add test syntax to WAML in this task.
+Use `FG-003` for eventual draw-cycle results and `FG-008` for hit tolerance or z-order. Do not add test syntax to WAML in this task. Do not add a feature-gap entry for stick-figure actors, ellipse use cases, system-boundary rendering, or specialized use-case layout. The user implements that view separately, and this plan does not constrain its geometry.
 
 - [ ] **Step 5: Update indexes, statuses, report, and validate**
 
@@ -1350,7 +1353,99 @@ git add docs/waml/goals/share-and-publish docs/waml/goals/tooling-around-the-rep
 git commit -m "docs: specify browser and tooling workflows"
 ```
 
-### Task 11: Integrate the goal tree and deduplicate cross-cutting scenarios
+### Task 11: Create the permanent semantic product-use-case model
+
+**Files:**
+- Create: `docs/waml/use-cases/index.md`
+- Create: `docs/waml/use-cases/actors/index.md`
+- Create: `docs/waml/use-cases/actors/*.md` actor leaves, one kebab-case file for each distinct external role in the frozen workflows
+- Create: `docs/waml/use-cases/workflows/index.md`
+- Create: `docs/waml/use-cases/workflows/*.md` use-case leaves, one kebab-case file for each distinct shipped workflow
+- Create: `docs/waml/use-cases/views/index.md`
+- Create: `docs/waml/use-cases/views/editor-workflows.md`
+- Create: `docs/waml/use-cases/views/browser-and-publishing-workflows.md`
+- Create: `docs/waml/use-cases/views/tooling-workflows.md`
+- Modify: `docs/waml/waml-feature-gaps.md`
+- Create: `docs/superpowers/audits/reports/use-cases.md`
+
+**Interfaces:**
+- Consumes: the frozen inventory, `documentation-contract.md`, the completed goal leaves from Tasks 6 through 10, and exact scenario headings in those leaves.
+- Produces: typed actor and use-case documents, three semantic system-boundary diagrams, and a report that maps each use case to one goal and its shipped scenario identifiers.
+
+- [ ] **Step 1: Derive the actor and workflow sets from the frozen contract**
+
+Group rows by `workflow` and `goal_document`. Merge two rows into one use case only when they describe the same user intention and have the same goal owner. Create use cases only for groups that contain at least one shipped GWT scenario. Derive actors from users and external roles that cross the editor, browser/publishing, or tooling boundary. Do not make a platform, screen, widget, crate, or internal service an actor. Use lower-case kebab-case filenames. Record the actor-to-workflow mapping under `# Evidence` in `reports/use-cases.md` before authoring documents.
+
+- [ ] **Step 2: Create typed actor documents**
+
+Each actor leaf uses `type: uml.Actor`, one H1 that matches `title`, and a short responsibility statement. Use `## Relationships` only for a semantically valid specialization. The narrower actor declares the relationship to its broader parent:
+
+```markdown
+## Relationships
+
+- specializes [Product user](./product-user.md)
+```
+
+Do not use `specializes` for job-title similarity. A child actor must be able to participate in every use case of its parent.
+
+- [ ] **Step 3: Create typed use-case documents and traceability links**
+
+Each workflow leaf uses `type: uml.UseCase`, one H1 that matches `title`, and these sections in this order: `## Owning goal`, `## Scenarios`, and `## Relationships`. The owning-goal section has exactly one document link. The scenario section links each frozen shipped scenario identifier to its heading in that same goal document. Use the exact heading anchor; do not copy the heading text as a new scenario body.
+
+Use this structure for the open-bundle workflow, with the exact frozen identifier and title in place of the example identifier when they differ:
+
+```markdown
+---
+type: uml.UseCase
+title: Open a bundle
+description: A reader opens a WAML bundle in the product.
+---
+# Open a bundle
+
+## Owning goal
+
+- [Open a bundle](../../goals/read-a-bundle/open-a-bundle.md)
+
+## Scenarios
+
+- [BUNDLE-001](../../goals/read-a-bundle/open-a-bundle.md#bundle-001--open-a-bundle)
+
+## Relationships
+
+- associates [Reader](../actors/reader.md)
+```
+
+Put each actor association in the use-case document and author it once. Use `includes` only when the target workflow always runs as a required part of the source workflow. Use `extends` from an optional or conditional workflow to its base workflow. Use `specializes` from a narrower use case to a broader use case only when it inherits the complete parent intention and result. Do not infer a relationship from shared evidence, a shared goal, or execution order alone.
+
+- [ ] **Step 4: Create semantic system-boundary diagrams**
+
+Each view uses `type: Diagram` and `profile: uml-domain`. Use only `## Members` groups. Put actors under `### External actors`. Put use cases under one named product boundary: `### WAML editor boundary`, `### WAML browser and publishing boundary`, or `### WAML tooling boundary`. A use case can occur in more than one view when it crosses boundaries, but it still has one leaf document and one owning goal.
+
+Do not add a `## Layout` section. Do not specify rows, columns, frames, positions, sizes, routes, shape names, or actor placement. Specialized stick-figure, ellipse, and system-boundary rendering is separate user work and is not a dependency of this task.
+
+- [ ] **Step 5: Validate semantic links and absence of copied contracts**
+
+Run:
+
+```powershell
+rtk cargo run -p waml-cli -- check docs/waml/use-cases
+rtk cargo run -p waml-cli -- fmt --check docs/waml/use-cases
+rtk rg -n "^type: uml\.(Actor|UseCase)$|^- (associates|includes|extends|specializes) \[" docs/waml/use-cases
+rtk rg -n "^\*\*(Given|When|Then|And)\*\*" docs/waml/use-cases
+rtk rg -n "^## Layout|with frame| as (row|column)| left of | right of |stick figure|ellipse" docs/waml/use-cases
+rtk node scripts/check-waml-doc-contract.mjs docs/waml
+```
+
+Expected: both WAML commands pass. The contract checker reports no error for `docs/waml/use-cases/**` or `waml-feature-gaps.md`; errors from an architecture lane that is still running are allowed. The type-and-relationship search lists every authored semantic element. The copied-GWT and geometry searches return no matches. Review `reports/use-cases.md` against the frozen inventory and confirm that every listed scenario link resolves to its one owning goal. Add `use-cases/index.md` and the workflow documents to the affected-document links for `FG-010` because automatic scenario-to-use-case-to-test completeness checking remains a WAML tooling opportunity.
+
+- [ ] **Step 6: Commit the product-use-case model**
+
+```bash
+git add docs/waml/use-cases docs/waml/waml-feature-gaps.md docs/superpowers/audits/reports/use-cases.md
+git commit -m "docs: model product use cases"
+```
+
+### Task 12: Integrate the goal tree and deduplicate cross-cutting scenarios
 
 **Files:**
 - Modify: `docs/waml/goals/index.md`
@@ -1362,12 +1457,14 @@ git commit -m "docs: specify browser and tooling workflows"
 - Modify: `docs/superpowers/audits/2026-08-08-ui-behavior-inventory.jsonl`
 
 **Interfaces:**
-- Consumes: all five goal reports and every frozen inventory row.
-- Produces: one scenario owner per shipped behavior; explicit verification-gap records; evidence-derived aggregate statuses; final planned/unsupported/discrepant destinations.
+- Consumes: all five goal reports, `reports/use-cases.md`, every frozen inventory row, and the completed product-use-case model from Task 11.
+- Produces: one scenario owner per shipped behavior; explicit verification-gap records; evidence-derived aggregate statuses; final planned/unsupported/discrepant destinations; confirmed goal and scenario targets for every product use case.
 
 - [ ] **Step 1: Reconcile every report against the inventory**
 
-For each JSONL row, confirm that `goal_document` contains its shipped scenario or non-shipped record. For each shipped `verification_state: "gap"` row, also require the exact scenario identifier in that document's `## Verification gaps` section with the same target and reason. Task 14 has already set marker flags only for real tests; do not weaken or fabricate them during integration. Correct only ownership mistakes and duplicate prose. Do not renumber identifiers.
+For each JSONL row, confirm that `goal_document` contains its shipped scenario or non-shipped record. For each shipped `verification_state: "gap"` row, also require the exact scenario identifier in that document's `## Verification gaps` section with the same target and reason. Task 15 has already set marker flags only for real tests; do not weaken or fabricate them during integration. Correct only ownership mistakes and duplicate prose. Do not renumber identifiers.
+
+For each use case in `reports/use-cases.md`, confirm that its one owning-goal link resolves and that each linked scenario occurs once in that goal. Confirm that the use-case document contains no GWT body line. If a product-use-case link is wrong, return it to the Task 11 owner; the goal integrator does not edit `docs/waml/use-cases/**`.
 
 - [ ] **Step 2: Remove duplicate contracts**
 
@@ -1406,7 +1503,7 @@ git add docs/waml/goals docs/superpowers/audits/2026-08-08-ui-behavior-inventory
 git commit -m "docs: integrate evidence-based goal tree"
 ```
 
-### Task 12: Document six-crate and editor ownership
+### Task 13: Document six-crate and editor ownership
 
 **Files:**
 - Create: `docs/waml/architecture/concepts/implementation/index.md`
@@ -1488,7 +1585,7 @@ git add docs/waml/architecture/concepts/implementation docs/waml/architecture/vi
 git commit -m "docs: map crate and editor ownership"
 ```
 
-### Task 13: Document preparation, incremental updates, and deployment surfaces
+### Task 14: Document preparation, incremental updates, and deployment surfaces
 
 **Files:**
 - Create: `docs/waml/architecture/views/preparation-pipeline.md`
@@ -1573,7 +1670,7 @@ git add docs/waml/architecture docs/superpowers/audits/reports/architecture.md
 git commit -m "docs: model revisioned runtime architecture"
 ```
 
-### Task 14: Put scenario identifiers in their evidence tests
+### Task 15: Put scenario identifiers in their evidence tests
 
 **Files:**
 - Modify as cited: `crates/waml-editor/src/start_screen.rs`
@@ -1676,7 +1773,7 @@ git add crates editors/vscode/src/serverPath.test.ts scripts/export-site-browser
 git commit -m "test: link scenarios to evidence"
 ```
 
-### Task 15: Add CI documentation gates and matching contributor commands
+### Task 16: Add CI documentation gates and matching contributor commands
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`
@@ -1718,7 +1815,7 @@ git add .github/workflows/ci.yml README.md
 git commit -m "ci: gate WAML documentation contract"
 ```
 
-### Task 16: Reconcile generated indexes and perform cross-tree integration
+### Task 17: Reconcile generated indexes and perform cross-tree integration
 
 **Files:**
 - Modify: `docs/waml/index.md`
@@ -1728,12 +1825,12 @@ git commit -m "ci: gate WAML documentation contract"
 - Modify: `docs/superpowers/audits/2026-08-08-ui-behavior-inventory.jsonl`
 
 **Interfaces:**
-- Consumes: all stream reports, complete scenario markers, and the existing `reindex_source`-backed CLI.
-- Produces: deterministic indexes, one cross-tree source of truth, no duplicate scenario or stale architecture claim, and durable verification-gap records for every source-evidenced scenario without target-boundary automation.
+- Consumes: all stream reports, complete scenario markers, the permanent product-use-case model, and the existing `reindex_source`-backed CLI.
+- Produces: deterministic indexes, one cross-tree source of truth, no duplicate scenario or stale architecture claim, complete product-use-case links, and durable verification-gap records for every source-evidenced scenario without target-boundary automation.
 
 - [ ] **Step 1: Link the contract, gaps, goals, and architecture from the root**
 
-Ensure `docs/waml/index.md` lists `documentation-contract.md`, `waml-feature-gaps.md`, `goals/`, `architecture/`, and `user.md` through the generated model. Keep all explanatory prose in leaf documents.
+Ensure `docs/waml/index.md` lists `documentation-contract.md`, `waml-feature-gaps.md`, `goals/`, `use-cases/`, `architecture/`, and `user.md` through the generated model. Keep all explanatory prose in leaf documents.
 
 - [ ] **Step 2: Run the generator in write mode once**
 
@@ -1758,6 +1855,9 @@ Confirm:
 - Every report scenario occurs in its declared changed file.
 - Every report discrepancy occurs in the inventory and goal tree.
 - Every report feature gap occurs in the ledger and links back to an affected document.
+- Every `uml.UseCase` document has one owning-goal link and links every shipped scenario assigned to that workflow in `reports/use-cases.md`.
+- Every linked scenario occurs exactly once in its owning goal, and no GWT body line occurs under `docs/waml/use-cases/**`.
+- Every actor association occurs once, every semantic relationship target resolves, and each use-case view has external actors plus one named product-boundary member group.
 
 - [ ] **Step 4: Check stale architecture claims and concept resolution**
 
@@ -1777,7 +1877,7 @@ git add docs/waml docs/superpowers/audits
 git commit -m "docs: reconcile WAML contract indexes"
 ```
 
-### Task 17: Verify native and browser boundaries
+### Task 18: Verify native and browser boundaries
 
 **Files:**
 - Modify only when a check finds a real mismatch: the owning goal document, its exact evidence test, the inventory row, and its stream report
@@ -1852,7 +1952,7 @@ If no mismatch exists, do not make an empty commit. If a mismatch exists, stage 
 git commit -m "docs: reconcile verification evidence"
 ```
 
-### Task 18: Run final validation and remove temporary coordination files
+### Task 19: Run final validation and remove temporary coordination files
 
 **Files:**
 - Delete: `docs/superpowers/audits/2026-08-08-ui-behavior-inventory.schema.json`
@@ -1863,6 +1963,7 @@ git commit -m "docs: reconcile verification evidence"
 - Delete: `docs/superpowers/audits/reports/class-shared.md`
 - Delete: `docs/superpowers/audits/reports/behavior-diagrams.md`
 - Delete: `docs/superpowers/audits/reports/browser-tooling.md`
+- Delete: `docs/superpowers/audits/reports/use-cases.md`
 - Delete: `docs/superpowers/audits/reports/architecture.md`
 - Delete: `docs/superpowers/audits/reports/evidence.md`
 
@@ -1917,10 +2018,12 @@ Run:
 ```powershell
 rtk rg -n "\*\*Status:\*\* (implemented|.*unverified)" docs/waml
 rtk rg -n "^#### [A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-[0-9]+ — " docs/waml/goals
+rtk rg -n "^\*\*(Given|When|Then|And)\*\*" docs/waml/use-cases
+rtk rg -n "^## Layout|with frame| as (row|column)| left of | right of |stick figure|ellipse" docs/waml/use-cases
 rtk git diff --check
 ```
 
-Expected: the forbidden-status search returns no matches. The scenario list contains unique identifiers already accepted by the checker. `git diff --check` returns no error.
+Expected: the forbidden-status, copied-GWT, and renderer-geometry searches return no matches. The scenario list contains unique identifiers already accepted by the checker. `git diff --check` returns no error.
 
 - [ ] **Step 5: Delete the temporary inventory and reports**
 
@@ -1948,4 +2051,4 @@ git commit -m "docs: remove behavior audit scaffolding"
 
 - [ ] **Step 8: Record the final review result**
 
-The final reviewer must state all four results explicitly: no unowned behavior, no duplicate contract, no stale architecture claim, and no unresolved validation error. If any result is false, do not merge until the owning task corrects it.
+The final reviewer must state all five results explicitly: no unowned behavior, no duplicate contract, no stale architecture claim, no orphan or copied product-use-case contract, and no unresolved validation error. If any result is false, do not merge until the owning task corrects it.
