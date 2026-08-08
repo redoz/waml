@@ -24,6 +24,7 @@ use crate::{
     },
     selection::TextPosition,
     session::MarkdownDocumentSession,
+    squiggle::DrawSquiggle,
 };
 
 script_mod! {
@@ -74,7 +75,9 @@ pub fn live_design(cx: &mut Cx) {
 
 pub(crate) fn register_script_mod(vm: &mut ScriptVm) -> ScriptValue {
     // A child widget is dead and invisible unless its script_mod registers
-    // BEFORE its consumer's, so the bullet and the viewer go first.
+    // BEFORE its consumer's, so the bullet, the squiggle pen, and the viewer
+    // go first.
+    crate::squiggle::script_mod(vm);
     crate::reading::script_mod(vm);
     script_mod(vm)
 }
@@ -676,6 +679,8 @@ pub struct MarkdownEditor {
     draw_selection: DrawColor,
     #[live]
     draw_decoration: DrawColor,
+    #[live]
+    draw_squiggle: DrawSquiggle,
     #[live]
     draw_embedded: DrawColor,
     #[live]
@@ -1320,15 +1325,22 @@ impl MarkdownEditor {
             // Painted for real once the severity colours and mono-run painting
             // land (see the diagnostic-squiggle plan, Task 7).
             DrawCommand::DiagnosticMessage { .. } => {}
-            DrawCommand::Decoration { rects, role, .. } => {
-                self.draw_decoration.color = match role {
-                    DecorationRole::LinkUnderline => self.link_color,
-                    DecorationRole::DiagnosticUnderline(severity) => self.severity_color(*severity),
-                };
-                for rect in rects.iter() {
-                    self.draw_decoration.draw_abs(cx, underline_rect(*rect));
+            DrawCommand::Decoration { rects, role, .. } => match role {
+                DecorationRole::LinkUnderline => {
+                    self.draw_decoration.color = self.link_color;
+                    for rect in rects.iter() {
+                        self.draw_decoration.draw_abs(cx, underline_rect(*rect));
+                    }
                 }
-            }
+                DecorationRole::DiagnosticUnderline(severity) => {
+                    self.draw_squiggle.color = self.severity_color(*severity);
+                    for rect in rects.iter() {
+                        let band = squiggle_rect(*rect);
+                        self.draw_squiggle.phase_x = band.pos.x as f32;
+                        self.draw_squiggle.draw_abs(cx, band);
+                    }
+                }
+            },
             DrawCommand::EmbeddedBlock { rect, state, .. } => match state {
                 EmbeddedState::Ready { source } => {
                     self.paint_evidence
@@ -1798,6 +1810,16 @@ fn underline_rect(rect: Rect) -> Rect {
     }
 }
 
+/// The band the squiggle strokes inside: 4px hugging the text bottom, where
+/// the flat underline gets 2px -- the wave needs amplitude plus antialiasing.
+fn squiggle_rect(rect: Rect) -> Rect {
+    let height = rect.size.y.min(4.0);
+    Rect {
+        pos: dvec2(rect.pos.x, rect.pos.y + (rect.size.y - height).max(0.0)),
+        size: dvec2(rect.size.x, height),
+    }
+}
+
 fn strikethrough_rect(rect: Rect) -> Rect {
     Rect {
         pos: dvec2(
@@ -1894,6 +1916,33 @@ mod text_face_index_tests {
             }
         }
         assert!(seen.iter().all(|&hit| hit), "not every index was reached");
+    }
+}
+
+#[cfg(test)]
+mod squiggle_rect_tests {
+    use super::*;
+
+    #[test]
+    fn squiggle_band_hugs_the_bottom_with_four_pixels_of_room() {
+        let rect = Rect {
+            pos: dvec2(10.0, 20.0),
+            size: dvec2(80.0, 18.0),
+        };
+        let band = squiggle_rect(rect);
+        assert_eq!(band.pos, dvec2(10.0, 20.0 + 18.0 - 4.0));
+        assert_eq!(band.size, dvec2(80.0, 4.0));
+    }
+
+    #[test]
+    fn a_short_rect_never_yields_a_band_taller_than_itself() {
+        let rect = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(40.0, 3.0),
+        };
+        let band = squiggle_rect(rect);
+        assert_eq!(band.pos, dvec2(0.0, 0.0));
+        assert_eq!(band.size, dvec2(40.0, 3.0));
     }
 }
 

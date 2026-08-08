@@ -11,6 +11,7 @@ pub use presentation::EditorEmphasis;
 pub mod reading;
 pub mod selection;
 pub mod session;
+pub mod squiggle;
 pub mod syntax {
     pub use waml_syntax::{
         parse_markdown, reparse_markdown, ChangeMap, DocumentRevision, FullReparseReason,
