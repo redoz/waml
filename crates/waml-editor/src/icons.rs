@@ -1783,6 +1783,54 @@ script_mod! {
         }
     }
 
+    // BroomSparkles: catalogued ahead of a call site. Faithful port of
+    // resources/icons/broom-sparkles.svg via scripts/gen-icon.py.
+    mod.draw.IconBroomSparkles = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.4583, s * 0.0833)
+            sdf.line_to(s * 0.4583, s * 0.1667)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.1250)
+            sdf.line_to(s * 0.4167, s * 0.1250)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5625, s * 0.4375)
+            sdf.line_to(s * 0.9167, s * 0.0833)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6139, s * 0.5767)
+            sdf.arc_to(s * 0.5419, s * 0.5348, s * 0.0833, 0.5271, -0.7852)
+            sdf.line_to(s * 0.5242, s * 0.3992)
+            sdf.arc_to(s * 0.4652, s * 0.4581, s * 0.0833, -0.7854, -2.0983)
+            sdf.line_to(s * 0.1043, s * 0.5720)
+            sdf.arc_to(s * 0.1252, s * 0.6080, s * 0.0417, -2.0982, -3.9295)
+            sdf.line_to(s * 0.3626, s * 0.9043)
+            sdf.arc_to(s * 0.3921, s * 0.8748, s * 0.0417, 2.3559, 0.5274)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8333, s * 0.6250)
+            sdf.line_to(s * 0.8333, s * 0.7917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.9167, s * 0.7083)
+            sdf.line_to(s * 0.7500, s * 0.7083)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1667, s * 0.1667)
+            sdf.line_to(s * 0.1667, s * 0.3333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2083, s * 0.7500)
+            sdf.line_to(s * 0.2917, s * 0.6667)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2500, s * 0.2500)
+            sdf.line_to(s * 0.0833, s * 0.2500)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3208, s * 0.4458)
+            sdf.line_to(s * 0.5542, s * 0.6792)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     // Faithful port of resources/icons/code.svg via scripts/gen-icon.py.
     mod.draw.IconCode = mod.draw.DrawColor{
         pixel: fn() {
@@ -4224,6 +4272,7 @@ script_mod! {
         square_code: mod.draw.IconSquareCode{ color: atlas.accent }
         square_library: mod.draw.IconSquareLibrary{ color: atlas.accent }
         code: mod.draw.IconCode{ color: atlas.accent }
+        broom_sparkles: mod.draw.IconBroomSparkles{ color: atlas.accent }
     }
 }
 
@@ -4486,6 +4535,8 @@ pub struct IconSet {
     pub square_library: DrawColor,
     #[live]
     pub code: DrawColor,
+    #[live]
+    pub broom_sparkles: DrawColor,
 }
 
 impl IconSet {
@@ -4619,6 +4670,7 @@ impl IconSet {
             Icon::SquareCode => &mut self.square_code,
             Icon::SquareLibrary => &mut self.square_library,
             Icon::Code => &mut self.code,
+            Icon::BroomSparkles => &mut self.broom_sparkles,
         }
     }
 
@@ -4766,12 +4818,13 @@ pub enum Icon {
     SquareCode,
     SquareLibrary,
     Code,
+    BroomSparkles,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 126] = [
+    pub const ALL: [Icon; 127] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4898,6 +4951,7 @@ impl Icon {
         Icon::SquareCode,
         Icon::SquareLibrary,
         Icon::Code,
+        Icon::BroomSparkles,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5030,6 +5084,7 @@ impl Icon {
             Icon::SquareCode => "square-code",
             Icon::SquareLibrary => "square-library",
             Icon::Code => "code",
+            Icon::BroomSparkles => "broom-sparkles",
         }
     }
 }
@@ -5040,7 +5095,7 @@ mod tests {
 
     #[test]
     fn icon_all_has_121_entries() {
-        assert_eq!(Icon::ALL.len(), 126);
+        assert_eq!(Icon::ALL.len(), 127);
     }
 
     // ------------------------------------------------------------------
@@ -5262,7 +5317,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 126);
+        assert_eq!(seen.len(), 127);
     }
 
     #[test]

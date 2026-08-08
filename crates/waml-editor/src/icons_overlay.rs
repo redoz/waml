@@ -141,6 +141,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(FileBraces, "Retired source-document glyph"),
             ie!(Book, "Catalogued ahead of a call site"),
             ie!(Box, "Catalogued ahead of a call site"),
+            ie!(BroomSparkles, "Catalogued ahead of a call site"),
         ],
     ),
 ];
@@ -313,6 +314,7 @@ mod drift {
         // Catalogued ahead of a call site, same as FileCodeCorner / Plus above.
         Icon::Book,
         Icon::Box,
+        Icon::BroomSparkles,
     ];
 
     fn table_icons() -> Vec<Icon> {
