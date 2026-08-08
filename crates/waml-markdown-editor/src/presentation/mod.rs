@@ -25,7 +25,7 @@ pub use highlight::{
     CodeHighlightSpan, CodeTokenRole, HighlightOutcome, HighlighterRegistry,
 };
 pub use layout::{build_layout_document, EmbeddedMeasurements};
-pub use style::PresentationStyles;
+pub use style::{EditorEmphasis, PresentationStyles};
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 

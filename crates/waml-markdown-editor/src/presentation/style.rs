@@ -18,9 +18,23 @@ pub const FONT_MONO: FontKey = FontKey(2);
 pub const WEIGHT_REGULAR: FontWeight = FontWeight(400);
 pub const WEIGHT_SEMIBOLD: FontWeight = FontWeight(600);
 
+/// The base presentation profile for editor text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EditorEmphasis {
+    Code,
+    Layout,
+}
+
+impl Default for EditorEmphasis {
+    fn default() -> Self {
+        Self::Code
+    }
+}
+
 /// Logical-pixel spacing of the balanced document style.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PresentationSpacing {
+    emphasis: EditorEmphasis,
     pub paragraph_after: f64,
     pub quote_inset: f64,
     pub quote_rule: f64,
@@ -36,6 +50,9 @@ pub struct PresentationSpacing {
 impl PresentationSpacing {
     /// `(before, after)` margins of one heading level.
     pub fn heading_margins(&self, level: u8) -> (f64, f64) {
+        if self.emphasis == EditorEmphasis::Code {
+            return (0.0, 0.0);
+        }
         match level {
             1 => (12.0, 5.0),
             2 => (10.0, 4.0),
@@ -47,19 +64,31 @@ impl PresentationSpacing {
 }
 
 /// Resolves a presentation text role into its style roles.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct PresentationStyles;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PresentationStyles {
+    emphasis: EditorEmphasis,
+}
+
+impl Default for PresentationStyles {
+    fn default() -> Self {
+        Self::for_emphasis(EditorEmphasis::default())
+    }
+}
 
 impl PresentationStyles {
-    /// The balanced document style. Metrics are fixed logical values and do not
-    /// depend on device pixel ratio.
-    ///
-    /// There is exactly one style table. Whether markdown punctuation is drawn
-    /// is a property of the SURFACE, not of the plan: the editor styles raw
-    /// markdown, the reading view renders it. A `hide_syntax` flag here would
-    /// be a second answer to that question.
+    /// Creates styles for one base presentation profile.
+    pub fn for_emphasis(emphasis: EditorEmphasis) -> Self {
+        Self { emphasis }
+    }
+
+    /// Returns the base presentation profile.
+    pub fn emphasis(&self) -> EditorEmphasis {
+        self.emphasis
+    }
+
+    /// Creates the explicit layout profile.
     pub fn balanced() -> Self {
-        Self
+        Self::for_emphasis(EditorEmphasis::Layout)
     }
 
     /// Always 24 logical pixels on all four sides.
@@ -74,7 +103,11 @@ impl PresentationStyles {
 
     pub fn spacing(&self) -> PresentationSpacing {
         PresentationSpacing {
-            paragraph_after: 6.0,
+            emphasis: self.emphasis,
+            paragraph_after: match self.emphasis {
+                EditorEmphasis::Code => 0.0,
+                EditorEmphasis::Layout => 6.0,
+            },
             quote_inset: 12.0,
             quote_rule: 3.0,
             quote_gap: 8.0,
@@ -104,9 +137,12 @@ impl PresentationStyles {
     /// Layout metrics of one text role. Color roles never enter metrics, so a
     /// color-only change cannot alter cached geometry.
     pub fn metrics(&self, role: TextRole) -> TextMetrics {
-        let sans =
+        let text =
             |font_size: f32, line_spacing: f32, weight: FontWeight, italic: bool| TextMetrics {
-                font: FONT_SANS,
+                font: match self.emphasis {
+                    EditorEmphasis::Code => FONT_MONO,
+                    EditorEmphasis::Layout => FONT_SANS,
+                },
                 font_size,
                 line_spacing,
                 weight,
@@ -122,11 +158,11 @@ impl PresentationStyles {
                     5 => 14.5,
                     _ => 13.5,
                 };
-                sans(size, 1.05, WEIGHT_SEMIBOLD, false)
+                text(size, 1.05, WEIGHT_SEMIBOLD, false)
             }
-            TextRole::Emphasis => sans(13.5, 1.12, WEIGHT_REGULAR, true),
-            TextRole::Strong => sans(13.5, 1.12, WEIGHT_SEMIBOLD, false),
-            TextRole::StrongEmphasis => sans(13.5, 1.12, WEIGHT_SEMIBOLD, true),
+            TextRole::Emphasis => text(13.5, 1.12, WEIGHT_REGULAR, true),
+            TextRole::Strong => text(13.5, 1.12, WEIGHT_SEMIBOLD, false),
+            TextRole::StrongEmphasis => text(13.5, 1.12, WEIGHT_SEMIBOLD, true),
             TextRole::InlineCode
             | TextRole::CodeContent
             | TextRole::CodeToken(_)
@@ -142,7 +178,7 @@ impl PresentationStyles {
             },
             // Every other role, including roles added later, keeps body metrics
             // so its source range stays visible.
-            _ => sans(13.5, 1.12, WEIGHT_REGULAR, false),
+            _ => text(13.5, 1.12, WEIGHT_REGULAR, false),
         }
     }
 

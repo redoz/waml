@@ -2,7 +2,7 @@ use waml_markdown_editor::{
     layout::{EdgeInsets, FontKey, FontWeight, TextMetrics},
     presentation::{
         style::{FONT_MONO, FONT_SANS, WEIGHT_REGULAR, WEIGHT_SEMIBOLD},
-        PresentationStyles, TextRole,
+        EditorEmphasis, PresentationStyles, TextRole,
     },
 };
 
@@ -20,6 +20,36 @@ fn metrics(
         weight,
         italic,
     }
+}
+
+#[test]
+fn code_is_the_default_emphasis_with_monospace_body_metrics() {
+    let styles = PresentationStyles::default();
+
+    assert_eq!(styles.emphasis(), EditorEmphasis::Code);
+    for role in [TextRole::Body, TextRole::Strong, TextRole::Emphasis] {
+        assert_eq!(styles.metrics(role).font, FONT_MONO, "{role:?}");
+    }
+}
+
+#[test]
+fn layout_uses_sans_body_metrics_and_paragraph_spacing() {
+    let styles = PresentationStyles::for_emphasis(EditorEmphasis::Layout);
+
+    assert_eq!(styles.emphasis(), EditorEmphasis::Layout);
+    assert_eq!(styles.metrics(TextRole::Body).font, FONT_SANS);
+    assert_eq!(styles.spacing().paragraph_after, 6.0);
+}
+
+#[test]
+fn code_keeps_heading_size_and_strong_weight() {
+    let styles = PresentationStyles::for_emphasis(EditorEmphasis::Code);
+
+    assert!(
+        styles.metrics(TextRole::Heading(1)).font_size > styles.metrics(TextRole::Body).font_size
+    );
+    assert_eq!(styles.metrics(TextRole::Strong).weight, WEIGHT_SEMIBOLD);
+    assert_eq!(styles.spacing().heading_margins(1), (0.0, 0.0));
 }
 
 #[test]

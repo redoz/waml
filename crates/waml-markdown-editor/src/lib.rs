@@ -7,6 +7,7 @@ pub mod input;
 pub mod layout;
 pub mod motion;
 pub mod presentation;
+pub use presentation::EditorEmphasis;
 pub mod reading;
 pub mod selection;
 pub mod session;

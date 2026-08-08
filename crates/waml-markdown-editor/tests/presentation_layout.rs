@@ -3,8 +3,9 @@ use std::sync::Arc;
 use waml_markdown_editor::{
     layout::{BlockFlow, ColumnAlignment, LayoutDocument},
     presentation::{
-        build_layout_document, compile_presentation, EmbeddedMeasurements, HighlighterRegistry,
-        PresentationBlockKind, PresentationPlan, PresentationStyles,
+        build_layout_document, compile_presentation, style::WEIGHT_SEMIBOLD, EditorEmphasis,
+        EmbeddedMeasurements, HighlighterRegistry, PresentationBlockKind, PresentationPlan,
+        PresentationStyles,
     },
 };
 use waml_syntax::{
@@ -25,6 +26,87 @@ fn document_for(source: &str) -> (Arc<MarkdownSyntaxSnapshot>, LayoutDocument) {
     let document = build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
         .expect("the layout document builds");
     (snapshot, document)
+}
+
+fn document_with_emphasis(source: &str, emphasis: EditorEmphasis) -> LayoutDocument {
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source.to_owned()).expect("valid source"),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("the source parses");
+    let styles = PresentationStyles::for_emphasis(emphasis);
+    let plan = compile_presentation(&snapshot, &styles, &HighlighterRegistry::default())
+        .expect("the plan compiles");
+    build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
+        .expect("the layout document builds")
+}
+
+#[test]
+fn emphasis_profiles_change_base_spacing_without_changing_document_insets() {
+    let code = document_with_emphasis("Body\n", EditorEmphasis::Code);
+    let layout = document_with_emphasis("Body\n", EditorEmphasis::Layout);
+    let paragraph_after = |document: &LayoutDocument| {
+        document
+            .blocks
+            .iter()
+            .find(|block| block.parent.is_some() && matches!(block.spec.flow, BlockFlow::Paragraph))
+            .expect("one paragraph block")
+            .spec
+            .space_after
+    };
+
+    assert_eq!(paragraph_after(&code), 0.0);
+    assert_eq!(paragraph_after(&layout), 6.0);
+    assert_eq!(code.content_insets.left, layout.content_insets.left);
+    assert_eq!(code.content_insets.right, layout.content_insets.right);
+}
+
+#[test]
+fn emphasis_profiles_keep_construct_insets() {
+    let code = document_with_emphasis(
+        "> quote\n\n```text\ncode\n```\n\n| left | right |\n| --- | --- |\n| a | b |\n",
+        EditorEmphasis::Code,
+    );
+    let layout = document_with_emphasis(
+        "> quote\n\n```text\ncode\n```\n\n| left | right |\n| --- | --- |\n| a | b |\n",
+        EditorEmphasis::Layout,
+    );
+    let geometry = |document: &LayoutDocument| {
+        document
+            .blocks
+            .iter()
+            .filter(|block| {
+                matches!(
+                    block.spec.flow,
+                    BlockFlow::Quote | BlockFlow::Code | BlockFlow::TableCell { .. }
+                )
+            })
+            .map(|block| (block.spec.flow.clone(), block.spec.insets))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(geometry(&code), geometry(&layout));
+}
+
+#[test]
+fn code_profile_keeps_heading_size_and_strong_run_weight() {
+    let source = "# Heading **strong**\n";
+    let document = document_with_emphasis(source, EditorEmphasis::Code);
+    let run_at = |offset: usize| {
+        document
+            .text_runs
+            .iter()
+            .find(|run| {
+                run.range.start().to_usize() <= offset && offset < run.range.end().to_usize()
+            })
+            .expect("text offset has a layout run")
+    };
+
+    let heading = run_at(source.find("Heading").expect("heading text"));
+    let strong = run_at(source.find("strong").expect("strong text"));
+    assert!(heading.metrics.font_size > strong.metrics.font_size);
+    assert_eq!(strong.metrics.weight, WEIGHT_SEMIBOLD);
 }
 
 fn document_from_snapshot(snapshot: &MarkdownSyntaxSnapshot) -> LayoutDocument {
