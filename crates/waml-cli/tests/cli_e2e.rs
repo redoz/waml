@@ -677,6 +677,35 @@ fn index_replaces_stale_indexes_and_preserves_non_index_bytes() {
         "# Wrong\n"
     );
     assert_eq!(std::fs::read_to_string(dir.join("order.md")).unwrap(), leaf);
+    assert!(bin()
+        .args(["index"])
+        .arg(&dir)
+        .arg("--check")
+        .status()
+        .unwrap()
+        .success());
+}
+
+#[test]
+fn index_mixed_case_index_is_a_fixpoint_after_one_write() {
+    let dir = tmp();
+    std::fs::create_dir(dir.join("nested")).unwrap();
+    let leaf = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n";
+    std::fs::write(dir.join("nested/Index.md"), "# Wrong\n").unwrap();
+    std::fs::write(dir.join("nested/order.md"), leaf).unwrap();
+
+    assert!(bin().args(["index"]).arg(&dir).status().unwrap().success());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("nested/order.md")).unwrap(),
+        leaf
+    );
+    assert!(bin()
+        .args(["index"])
+        .arg(&dir)
+        .arg("--check")
+        .status()
+        .unwrap()
+        .success());
 }
 
 #[test]

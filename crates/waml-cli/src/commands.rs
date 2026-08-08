@@ -186,7 +186,31 @@ pub fn prepare(files: &[(String, String)]) -> Result<PreparedCandidate, String> 
 }
 
 pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, String> {
-    let prepared = prepare(files)?;
+    let mut original_index_paths = std::collections::BTreeMap::new();
+    let mut planning_files = Vec::with_capacity(files.len());
+    for (path, text) in files {
+        let (directory, basename) = path.rsplit_once('/').unwrap_or(("", path));
+        let planning_path = if basename.eq_ignore_ascii_case("index.md") {
+            if directory.is_empty() {
+                "index.md".to_string()
+            } else {
+                format!("{directory}/index.md")
+            }
+        } else {
+            path.clone()
+        };
+        if basename.eq_ignore_ascii_case("index.md") {
+            if let Some(existing) = original_index_paths.insert(planning_path.clone(), path.clone())
+            {
+                if existing != *path {
+                    return Err(format!("index basename collision: {existing} and {path}"));
+                }
+            }
+        }
+        planning_files.push((planning_path, text.clone()));
+    }
+
+    let prepared = prepare(&planning_files)?;
     let before: std::collections::BTreeMap<String, String> =
         prepared.source().to_pairs().into_iter().collect();
     let mut after: std::collections::BTreeMap<String, String> = reindex_source(prepared.source())
@@ -225,10 +249,18 @@ pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, Stri
         }
         match after.get(path) {
             Some(rendered) => changes.push(IndexChange::Upsert {
-                path: path.clone(),
+                path: original_index_paths
+                    .get(path)
+                    .cloned()
+                    .unwrap_or_else(|| path.clone()),
                 rendered: rendered.clone(),
             }),
-            None => changes.push(IndexChange::Remove { path: path.clone() }),
+            None => changes.push(IndexChange::Remove {
+                path: original_index_paths
+                    .get(path)
+                    .cloned()
+                    .unwrap_or_else(|| path.clone()),
+            }),
         }
     }
 
@@ -407,6 +439,19 @@ mod tests {
                 ("remove", "orphan/Index.md"),
             ]
         );
+    }
+
+    #[test]
+    fn plan_indexes_rejects_case_colliding_index_paths() {
+        let files = vec![
+            ("nested/index.md".to_string(), "# Lower\n".to_string()),
+            ("nested/Index.md".to_string(), "# Mixed\n".to_string()),
+        ];
+
+        let error = plan_indexes(&files).unwrap_err();
+
+        assert!(error.contains("nested/index.md"), "{error}");
+        assert!(error.contains("nested/Index.md"), "{error}");
     }
 
     #[test]

@@ -1504,7 +1504,8 @@ mod tests {
     #[test]
     fn write_indexes_rejects_an_absolute_target_before_removal() {
         let temp = TempDir::new();
-        let outside = temp.0.parent().unwrap().join("absolute-index.md");
+        let outside_dir = TempDir::new();
+        let outside = outside_dir.0.join("index.md");
         fs::write(&outside, "keep").unwrap();
         let error = write_indexes(
             &temp.0,
@@ -1515,7 +1516,7 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-        assert_eq!(fs::read_to_string(outside).unwrap(), "keep");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "keep");
     }
 
     #[test]
