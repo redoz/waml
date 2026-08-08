@@ -73,6 +73,45 @@ pub fn default_surface_for(
 /// asserts the other side of the same set.
 pub(crate) const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
 
+/// The editor's ONE surface resolution: same shape as
+/// `waml::view::surface::resolve_surface` (a `None` request or a registered id
+/// resolves silently; an unknown id degrades with an `UnknownSurface` warning),
+/// but the default/degrade target is `default_surface_for` -- the claims-based
+/// definition the editor's own open paths use -- rather than the core's
+/// `ElementType::parse`-based `default_surface`, which has no UML analysis to
+/// consult and so can disagree on an invalid-but-claimed document. Every
+/// editor-side resolution goes through here so a stale or unknown stored
+/// surface can never degrade to a different surface than `primary_locator`
+/// would have chosen for the same target.
+pub(crate) fn resolve_surface_for(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    requested: Option<&str>,
+    target: &RowTarget,
+    file: &str,
+    line: usize,
+) -> (
+    waml::view::surface::SurfaceId,
+    Option<waml::diagnostic::Diagnostic>,
+) {
+    match requested {
+        None => (default_surface_for(okf, uml, target), None),
+        Some(id) if KNOWN_SURFACES.contains(&id) => {
+            (waml::view::surface::SurfaceId(id.to_string()), None)
+        }
+        Some(id) => {
+            let default = default_surface_for(okf, uml, target);
+            let diagnostic = waml::diagnostic::Diagnostic::new(
+                waml::diagnostic::DiagCode::UnknownSurface,
+                format!("unknown surface `{id}`, falling back to `{}`", default.0),
+                file,
+                line,
+            );
+            (default, Some(diagnostic))
+        }
+    }
+}
+
 /// Opens a projected chain `Row` (Task E2's "open rows through the surface
 /// table"), honoring an explicit `row.surface` override (a future
 /// middleware's `surface:` declaration -- unreachable today, since neither
@@ -105,11 +144,11 @@ pub fn open_row_with_asset_host(
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> (Option<OpenDocument>, Option<waml::diagnostic::Diagnostic>) {
-    let (surface, diagnostic) = waml::view::surface::resolve_surface(
+    let (surface, diagnostic) = resolve_surface_for(
+        okf,
+        uml,
         row.surface.as_ref().map(|s| s.0.as_str()),
         &row.target,
-        &okf.bundle,
-        KNOWN_SURFACES,
         "index.md",
         0,
     );
@@ -182,8 +221,10 @@ pub fn reopen_with_asset_host(
 /// `RowTarget`, never on row/tab identity -- a `hide`-hidden concept has no
 /// `RowId` in Projected mode, so this is the only open path that can reach
 /// it in both view modes (see `a_hidden_concept_still_opens_through_the_surface_path_in_both_modes`).
-/// An unknown surface id degrades via `resolve_surface`'s type-based default
-/// rather than returning `None` -- never a blank tab.
+/// An unknown surface id degrades via `resolve_surface_for`'s claims-based
+/// default -- the same one `App::primary_locator` uses -- rather than
+/// returning `None`: never a blank tab, and never a different surface than a
+/// fresh click on the same target would have opened.
 pub fn open_locator_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -192,11 +233,11 @@ pub fn open_locator_with_asset_host(
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
-    let (surface, _diagnostic) = waml::view::surface::resolve_surface(
+    let (surface, _diagnostic) = resolve_surface_for(
+        okf,
+        uml,
         Some(locator.surface.as_str()),
         &locator.target,
-        &okf.bundle,
-        KNOWN_SURFACES,
         "index.md",
         0,
     );
@@ -418,6 +459,52 @@ mod tests {
             ),
             waml::view::surface::SurfaceId::folder()
         );
+    }
+
+    /// The degrade arm must use the SAME "default surface" definition as
+    /// `App::primary_locator` (claims-based `default_surface_for`), not the
+    /// core's `ElementType::parse`-based `default_surface`. The two disagree
+    /// exactly on a document the UML analysis claims but whose bundle entry
+    /// does not parse as a UML/diagram type -- and an unknown or stale stored
+    /// surface must not land on a different surface than a fresh click would.
+    #[test]
+    fn an_unknown_surface_degrades_to_the_same_default_as_a_fresh_click() {
+        let claimed =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let claimed = waml::analysis::prepare_candidate(claimed, None, 51).unwrap();
+        // A bundle where `order` is NOT a diagram-like type: the core's
+        // parse-based default says `markdown` for this okf, while the UML
+        // analysis above still claims the concept.
+        let plain =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: Runbook\n---\n# Order\n")])
+                .unwrap();
+        let plain = waml::analysis::prepare_candidate(plain, None, 53).unwrap();
+
+        let target = RowTarget::Concept("order".to_string());
+        assert_eq!(
+            waml::view::surface::default_surface(&target, &plain.okf().bundle),
+            waml::view::surface::SurfaceId::markdown(),
+            "fixture must actually make the two definitions disagree"
+        );
+        let fresh = default_surface_for(plain.okf(), claimed.uml(), &target);
+        assert_eq!(fresh, waml::view::surface::SurfaceId::canvas());
+
+        let (degraded, diagnostic) = resolve_surface_for(
+            plain.okf(),
+            claimed.uml(),
+            Some("no-such-surface"),
+            &target,
+            "index.md",
+            0,
+        );
+        assert!(diagnostic.is_some());
+        assert_eq!(degraded, fresh);
+
+        let (defaulted, diagnostic) =
+            resolve_surface_for(plain.okf(), claimed.uml(), None, &target, "index.md", 0);
+        assert!(diagnostic.is_none());
+        assert_eq!(defaulted, fresh);
     }
 
     fn test_row(target: waml::view::row::RowTarget, surface: Option<&str>) -> Row {

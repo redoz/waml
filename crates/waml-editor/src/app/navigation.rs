@@ -269,11 +269,11 @@ impl App {
                 let locator = match surface {
                     Some(surface) => {
                         let target = waml::view::row::RowTarget::Concept(concept_id.clone());
-                        let (resolved, _diagnostic) = waml::view::surface::resolve_surface(
+                        let (resolved, _diagnostic) = crate::documents::resolve_surface_for(
+                            self.session.okf_analysis(),
+                            self.session.uml_analysis(),
                             Some(surface.as_str()),
                             &target,
-                            &self.session.okf_analysis().bundle,
-                            crate::documents::KNOWN_SURFACES,
                             "index.md",
                             0,
                         );
