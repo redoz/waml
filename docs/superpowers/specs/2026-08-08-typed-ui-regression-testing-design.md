@@ -163,7 +163,7 @@ preserve the contract or update its single owning adapter.
 snapshots, input injection, polling, screenshots, and base failure artifacts.
 WAML does not copy those facilities.
 
-The pinned Makepad revision already contains `makepad-test`. The initial
+The pinned Makepad revision already contains `makepad-test`. The first
 framework gap is launch arguments: `TestConfig` currently sends an empty
 argument list to the Studio `Run` request. WAML needs a staged workspace path
 and a required window title.
@@ -171,6 +171,16 @@ and a required window title.
 The Makepad change adds an application argument list to `TestConfig` and sends
 it unchanged in headless and visible modes. Framework tests must prove both
 paths before WAML updates its Makepad pin.
+
+The second framework gap is semantic children for a custom-drawn widget.
+`ProjectTree` draws all rows inside one widget, so the current widget snapshot
+contains the panel but not its actionable rows. Makepad adds a generic
+`WidgetSemanticItem` value and a default-empty `Widget::semantic_items` hook.
+The widget-tree snapshot collector converts those items into normal
+`WidgetSnapshot` records with the owning window context. WAML implements the
+hook for `ProjectTree`; scenario code and `makepad-test` locators then treat a
+row like any other semantic control. The hook does not add a WAML-specific
+case to Makepad.
 
 ## Package boundaries
 
@@ -299,6 +309,17 @@ The first slice has two merge boundaries.
 - Forward the same `args` in visible Studio mode.
 - Add framework tests for default-empty, headless forwarding, and visible
   forwarding behavior.
+- Land the Makepad change as a focused commit.
+
+### Makepad custom-widget semantics
+
+- Add `WidgetSemanticItem` to `makepad-widgets` with semantic identity, role,
+  bounds, visibility, enabled state, text, value, checked state, and selected
+  state.
+- Add a default-empty `Widget::semantic_items` method.
+- Merge emitted items into the normal widget snapshot with inherited window
+  identity and coordinate conversion.
+- Add widget-tree tests for a custom widget that exposes one semantic child.
 - Land the Makepad change as a focused commit.
 
 ### WAML harness and navigation journey
