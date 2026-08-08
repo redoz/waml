@@ -162,13 +162,9 @@ fn open_markdown(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> 
     crate::okf_documents::open_with_asset_host(ctx.analysis, id, &ctx.assets)
 }
 
-// `open_source` becomes folder-capable in Task 3 (a folder's index document).
 #[allow(dead_code)]
 fn open_source(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
-    let RowTarget::Concept(id) = target else {
-        return None;
-    };
-    crate::okf_documents::open_source_with_asset_host(ctx.analysis, id, &ctx.assets)
+    crate::okf_documents::open_source_for_target(ctx.analysis, target, &ctx.assets)
 }
 
 #[allow(dead_code)]
@@ -341,5 +337,23 @@ mod tests {
             doc.tab_id,
             crate::uml_documents::uml_document_tab_id("order")
         );
+    }
+
+    #[test]
+    fn open_source_resolves_a_folder_with_an_index_and_degrades_without_one() {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root\n\n* [Sales](sales/)\n* [Loose](loose/)\n",
+            ),
+            ("sales/index.md", "# Sales\n"),
+            ("loose/thing.md", "---\ntype: Runbook\n---\n# Thing\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (_, analysis, uml, _) = prepared.into_parts();
+        let ctx = ctx_for(&analysis, &uml);
+        assert!(open_source(&ctx, &RowTarget::Folder("/sales".to_string())).is_some());
+        assert!(open_source(&ctx, &RowTarget::Folder("/loose".to_string())).is_none());
     }
 }
