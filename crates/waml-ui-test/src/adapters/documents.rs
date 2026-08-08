@@ -111,17 +111,24 @@ fn observe_active_diagram(
     }
 
     let state = observed_view_state(widgets)?;
-    if !matches!(
-        state,
-        ObservedViewState::Diagram | ObservedViewState::BothVisible
-    ) {
-        return Err(OperationFailure {
-            observed: format!(
-                "{} row is checked but its canvas is hidden",
-                diagram.display
-            ),
-            detail: format!("observed {}", state.description()),
-        });
+    match state {
+        ObservedViewState::Diagram => {}
+        ObservedViewState::BothVisible => {
+            return Err(OperationFailure {
+                observed: state.description(),
+                detail: "an active diagram requires only the canvas surface to be visible"
+                    .to_string(),
+            });
+        }
+        ObservedViewState::Source | ObservedViewState::BothHidden => {
+            return Err(OperationFailure {
+                observed: format!(
+                    "{} row is checked but its canvas is hidden",
+                    diagram.display
+                ),
+                detail: format!("observed {}", state.description()),
+            });
+        }
     }
 
     Ok(format!(
@@ -295,7 +302,13 @@ fn surface_visibility(
 ) -> Result<bool, OperationFailure> {
     let surfaces: Vec<_> = widgets.iter().filter(|widget| widget.id == id).collect();
     match surfaces.as_slice() {
-        [] => Ok(false),
+        [] => Err(OperationFailure {
+            observed: format!(
+                "invalid document surface state: {} surface is missing",
+                semantic_name
+            ),
+            detail: "expected exactly one document surface snapshot".to_string(),
+        }),
         [surface] => Ok(surface.visible),
         surfaces => Err(OperationFailure {
             observed: format!(
@@ -477,6 +490,19 @@ mod tests {
     }
 
     #[test]
+    fn checked_orders_row_with_two_visible_surfaces_is_not_active() {
+        let mut widgets = vec![orders_row(true)];
+        widgets.extend(surfaces(true, true));
+
+        let error = observe_active_diagram(&widgets, DiagramName::ORDERS).unwrap_err();
+
+        assert_eq!(
+            error.observed,
+            "invalid document surface state: Diagram and Source are visible"
+        );
+    }
+
+    #[test]
     fn diagram_view_has_only_the_canvas_visible() {
         let observed = observe_active_view(&surfaces(true, false), ViewKind::Diagram).unwrap();
 
@@ -488,6 +514,56 @@ mod tests {
         let observed = observe_active_view(&surfaces(false, true), ViewKind::Source).unwrap();
 
         assert_eq!(observed, "Source view is active");
+    }
+
+    #[test]
+    fn missing_canvas_surface_is_invalid() {
+        let widgets = vec![snapshot("markdown_surface", "View", true)];
+
+        let error = observe_active_view(&widgets, ViewKind::Source).unwrap_err();
+
+        assert_eq!(
+            error.observed,
+            "invalid document surface state: Diagram surface is missing"
+        );
+    }
+
+    #[test]
+    fn missing_source_surface_is_invalid() {
+        let widgets = vec![snapshot("canvas_wrap", "View", true)];
+
+        let error = observe_active_view(&widgets, ViewKind::Diagram).unwrap_err();
+
+        assert_eq!(
+            error.observed,
+            "invalid document surface state: Source surface is missing"
+        );
+    }
+
+    #[test]
+    fn duplicate_canvas_surfaces_are_invalid() {
+        let mut widgets = surfaces(true, false);
+        widgets.push(snapshot("canvas_wrap", "View", false));
+
+        let error = observe_active_view(&widgets, ViewKind::Diagram).unwrap_err();
+
+        assert_eq!(
+            error.observed,
+            "invalid document surface state: 2 Diagram surfaces exist"
+        );
+    }
+
+    #[test]
+    fn duplicate_source_surfaces_are_invalid() {
+        let mut widgets = surfaces(true, false);
+        widgets.push(snapshot("markdown_surface", "View", false));
+
+        let error = observe_active_view(&widgets, ViewKind::Diagram).unwrap_err();
+
+        assert_eq!(
+            error.observed,
+            "invalid document surface state: 2 Source surfaces exist"
+        );
     }
 
     #[test]
