@@ -30,13 +30,19 @@ The ownership plan moves these frozen rows without changing the inventory:
 - `NATIVE-017` through `NATIVE-021` move from `read-a-document.md` to
   `work-with-tabs.md`.
 
+`NATIVE-021` has no distinct user-visible result beyond `NATIVE-017`. Its test
+also checks that one preview remains for the new document. Task 12 should merge
+the duplicate product row with `NATIVE-017` and move old live-view release to an
+architecture invariant. This report keeps the smallest observable contract
+required by the current frozen row.
+
 # Evidence
 
 - `NATIVE-001` — implementation: `crates/waml-editor/src/start_screen.rs::StartScreen`; test: none.
 - `NATIVE-002` — implementation: `crates/waml-editor/src/config.rs::sort_recents`; test: none.
 - `NATIVE-003` — implementation: `crates/waml-editor/src/config.rs::set_pinned`; test: none.
-- `NATIVE-004` — implementation: `crates/waml-editor/src/load.rs::read_bundle`; test: none.
-- `NATIVE-005` — implementation: `crates/waml-editor/src/app/workspace.rs::prepare_open_documents`; test: none.
+- `NATIVE-004` — implementation: `crates/waml-editor/src/app/workspace.rs:493` (`App::open_dir`) and `crates/waml-editor/src/app/workspace.rs:595` (`App::open_bundle`); test: none.
+- `NATIVE-005` — implementation: `crates/waml-editor/src/app/workspace.rs:493` (`App::open_dir`); test: none.
 - `NATIVE-006` — implementation: `crates/waml-editor/src/app/shell.rs::next_narrow`; tests: `crates/waml-editor/src/app/tests/menus.rs::breakpoint_enters_below_640_and_leaves_above_680` and `crates/waml-editor/src/app/tests/menus.rs::breakpoint_preserves_mode_through_the_hysteresis_band`.
 - `NATIVE-007` — implementation: `crates/waml-editor/src/app/shell.rs::tree_toggle_layout`; test: `crates/waml-editor/src/app/tests/shell.rs::the_toggle_rides_the_column_edge_and_falls_back_to_the_row_head`.
 - `NATIVE-008` — implementation: `crates/waml-editor/src/app/shell.rs::apply_dock_states` and `crates/waml-editor/src/app/shell.rs::sync_dock_slots`; test: `crates/waml-editor/src/app/tests/shell.rs::mounted_dock_close_keeps_presented_geometry_until_motion_completes`.

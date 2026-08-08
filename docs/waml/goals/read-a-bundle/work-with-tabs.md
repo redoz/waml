@@ -8,7 +8,7 @@ documents available.
 
 **Done when:** A new preview replaces the old preview, promotion keeps a tab,
 reopening a permanent tab does not duplicate it, close selects the specified
-fallback, and preview replacement releases the old live view.
+fallback, and preview replacement leaves only the new preview open.
 
 **Status:** done
 **MVP:** yes
@@ -56,13 +56,13 @@ fallback, and preview replacement releases the old live view.
 
 **Evidence:** `crates/waml-editor/src/doc_tabs.rs::close_activates_right_adjacent_then_left_then_first_tab`
 
-#### NATIVE-021 — preview replacement releases the old live view
+#### NATIVE-021 — preview replacement leaves only the new preview open
 
 **Applies to:** native
 
-**Given** a document has an open preview and live view
+**Given** one document is open in preview
 **When** the reader opens a different document in preview
-**Then** the editor replaces the preview in place and releases the old live view
+**Then** only one preview remains open and it shows the new document
 
 **Evidence:** `crates/waml-editor/src/document_host.rs::prepared_preview_replacement_drops_the_old_live_view`
 

@@ -53,7 +53,7 @@ after a failed open, and opens an in-bundle document link in a preview.
 **When** the reader opens a valid bundle
 **Then** the editor replaces the active workspace with the loaded bundle
 
-**Evidence:** `crates/waml-editor/src/load.rs::read_bundle`
+**Evidence:** `crates/waml-editor/src/app/workspace.rs:493` `crates/waml-editor/src/app/workspace.rs:595`
 
 #### NATIVE-005 — a failed open keeps the prior workspace
 
@@ -63,7 +63,7 @@ after a failed open, and opens an in-bundle document link in a preview.
 **When** the reader tries to open a bundle that the editor cannot load
 **Then** the prior workspace remains active
 
-**Evidence:** `crates/waml-editor/src/app/workspace.rs::prepare_open_documents`
+**Evidence:** `crates/waml-editor/src/app/workspace.rs:493`
 
 #### NATIVE-014 — an in-bundle document link opens in the preview
 

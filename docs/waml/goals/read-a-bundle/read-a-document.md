@@ -4,9 +4,10 @@
 
 **Why:** Formatted content is easier to read than Markdown source.
 
-**Done when:** A document opens in read-only Markdown presentation, the reading
-surface draws from the current session, and an external replacement maps the
-selection and scroll anchor without retained motion.
+**Done when:** A document opens in read-only Markdown presentation, the visible
+content shows the current document at the reader's current position, and an
+external replacement maps the selection and scroll anchor without retained
+motion.
 
 **Status:** done
 **MVP:** yes
@@ -19,7 +20,8 @@ selection and scroll anchor without retained motion.
 
 **Given** the open bundle contains a Markdown document
 **When** the reader opens that document
-**Then** the editor presents the document through the shared Markdown widget in read-only mode
+**Then** the editor shows the document as formatted Markdown
+**And** text input does not change the document source
 
 **Evidence:** `crates/waml-editor/src/generic_okf_view.rs:34` `crates/waml-editor/src/source_view.rs:236`
 
@@ -34,13 +36,13 @@ selection and scroll anchor without retained motion.
 
 **Evidence:** `crates/waml-editor/tests/markdown_integration.rs::external_replacement_maps_selection_and_scroll_and_cuts_motion`
 
-#### NATIVE-061 — the reading surface draws the current session
+#### NATIVE-061 — the reading surface shows the current document and position
 
 **Applies to:** shared
 
-**Given** a read-only Markdown session is current
-**When** the editor draws the reading surface
-**Then** the visible reading surface uses that session
+**Given** a Markdown document is open in reading presentation
+**When** the reader views the document
+**Then** the reading surface shows the current document at the reader's current position
 
 **Evidence:** `crates/waml-markdown-editor/src/widget.rs::draw_walk_with_session`
 
