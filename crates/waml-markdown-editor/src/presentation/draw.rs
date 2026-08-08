@@ -130,6 +130,15 @@ pub enum DrawCommand {
         caret: Rect,
         composition: Arc<[Rect]>,
     },
+    /// A diagnostic's message drawn at the end of the visual row it ends on.
+    /// Pure decoration: never document text, never selectable, invisible to
+    /// caret motion and hit-testing.
+    DiagnosticMessage {
+        line: TextRange,
+        rect: Rect,
+        text: Arc<str>,
+        severity: PresentedDiagnosticSeverity,
+    },
 }
 
 impl DrawCommand {
@@ -141,6 +150,7 @@ impl DrawCommand {
             Self::Decoration { .. } => DrawLayer::Decoration,
             Self::EmbeddedBlock { .. } => DrawLayer::EmbeddedBlock,
             Self::CaretAndIme { .. } => DrawLayer::CaretAndIme,
+            Self::DiagnosticMessage { .. } => DrawLayer::Decoration,
         }
     }
 
@@ -182,6 +192,17 @@ impl DrawCommand {
             Self::CaretAndIme { caret, composition } => Self::CaretAndIme {
                 caret: translate(*caret),
                 composition: composition.iter().copied().map(translate).collect(),
+            },
+            Self::DiagnosticMessage {
+                line,
+                rect,
+                text,
+                severity,
+            } => Self::DiagnosticMessage {
+                line: *line,
+                rect: translate(*rect),
+                text: text.clone(),
+                severity: *severity,
             },
         }
     }

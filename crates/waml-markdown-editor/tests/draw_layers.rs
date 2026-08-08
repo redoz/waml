@@ -51,6 +51,7 @@ fn command_rect_positions(command: &DrawCommand) -> Vec<makepad_widgets::DVec2> 
         DrawCommand::CaretAndIme { caret, composition } => std::iter::once(caret.pos)
             .chain(composition.iter().map(|rect| rect.pos))
             .collect(),
+        DrawCommand::DiagnosticMessage { rect, .. } => vec![rect.pos],
     }
 }
 
@@ -925,4 +926,33 @@ fn the_editor_never_draws_the_list_bullet_decoration() {
         "the editor shows the raw `-` marker; the ListBullet decoration is \
          plan metadata for the reading view, never an editor draw command"
     );
+}
+
+#[test]
+fn a_diagnostic_message_command_sits_on_the_decoration_layer_and_translates() {
+    let command = DrawCommand::DiagnosticMessage {
+        line: range(0, 4),
+        rect: Rect {
+            pos: dvec2(100.0, 20.0),
+            size: dvec2(60.0, 18.0),
+        },
+        text: Arc::from("unexpected token"),
+        severity: PresentedDiagnosticSeverity::Error,
+    };
+    assert_eq!(command.layer(), DrawLayer::Decoration);
+    let moved = command.translated(dvec2(10.0, 5.0));
+    let DrawCommand::DiagnosticMessage {
+        rect,
+        text,
+        severity,
+        line,
+    } = moved
+    else {
+        panic!("translation must preserve the variant");
+    };
+    assert_eq!(rect.pos, dvec2(110.0, 25.0));
+    assert_eq!(rect.size, dvec2(60.0, 18.0));
+    assert_eq!(text.as_ref(), "unexpected token");
+    assert_eq!(severity, PresentedDiagnosticSeverity::Error);
+    assert_eq!(line, range(0, 4));
 }

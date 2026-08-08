@@ -1281,6 +1281,9 @@ impl MarkdownEditor {
                 self.draw_selection.draw_abs(cx, *rect);
             }
             DrawCommand::Text { .. } => {}
+            // Painted for real once the severity colours and mono-run painting
+            // land (see the diagnostic-squiggle plan, Task 7).
+            DrawCommand::DiagnosticMessage { .. } => {}
             DrawCommand::Decoration { rects, role, .. } => {
                 self.draw_decoration.color = match role {
                     DecorationRole::LinkUnderline => self.link_color,
