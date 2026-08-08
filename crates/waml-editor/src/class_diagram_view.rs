@@ -809,6 +809,7 @@ impl DocView for ClassDiagramView {
                             // hue is redundant here.
                             danger: false,
                             enabled: !red.contains(&z),
+                            checked: None,
                         })
                         .collect();
                     out.popup = Some(PopupRequest::PlaceDial { center, items });

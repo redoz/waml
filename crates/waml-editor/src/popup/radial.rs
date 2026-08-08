@@ -868,6 +868,7 @@ mod tests {
             icon: Some(Icon::PackageOpen),
             danger: false,
             enabled,
+            checked: None,
         }
     }
 

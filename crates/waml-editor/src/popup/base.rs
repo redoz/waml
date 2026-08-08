@@ -19,6 +19,11 @@ pub struct PopupItem {
     pub danger: bool,
     /// `false` = greyed, holds its slot, cannot arm or commit.
     pub enabled: bool,
+    /// `None` = a plain command row: invoking it commits and closes, which is
+    /// every pre-existing popup row. `Some(_)` = a checkable row in a sticky
+    /// popup: it reports its state and invoking it toggles without closing
+    /// (see `MenuPopup::open_sticky`).
+    pub checked: Option<bool>,
 }
 
 /// What a closed popup reports. `Invoked` carries the chosen item's id; any
@@ -90,6 +95,40 @@ pub fn swallows_underlay(event: &Event) -> bool {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn a_plain_item_has_no_checked_state() {
+        let item = PopupItem {
+            id: live_id!(plain),
+            label: "Plain".to_string(),
+            icon: None,
+            danger: false,
+            enabled: true,
+            checked: None,
+        };
+        assert_eq!(
+            item.checked, None,
+            "None keeps every pre-existing popup row behaving identically",
+        );
+    }
+
+    #[test]
+    fn a_checkable_item_reports_both_states() {
+        let on = PopupItem {
+            id: live_id!(hide),
+            label: "hide".to_string(),
+            icon: None,
+            danger: false,
+            enabled: true,
+            checked: Some(true),
+        };
+        let off = PopupItem {
+            checked: Some(false),
+            ..on.clone()
+        };
+        assert_eq!(on.checked, Some(true));
+        assert_eq!(off.checked, Some(false));
+    }
 
     #[test]
     fn escape_keydown_is_light_dismiss() {

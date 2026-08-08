@@ -270,6 +270,7 @@ impl SelectFlyout {
                 icon: Some(Icon::Spline),
                 danger: false,
                 enabled: it.enabled,
+                checked: None,
             })
             .collect();
         self.geom = LinearGeom::new(anchor, items.len());

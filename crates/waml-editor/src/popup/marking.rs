@@ -180,6 +180,7 @@ mod tests {
             icon: Some(Icon::PackageOpen),
             danger: false,
             enabled,
+            checked: None,
         }
     }
     // menu: slot 0 enabled, 1 disabled, 2 enabled (matches both old `menu()` fixtures).

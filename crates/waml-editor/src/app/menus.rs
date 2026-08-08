@@ -13,6 +13,7 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
             icon: Some(Icon::SlidersHorizontal),
             danger: false,
             enabled: true,
+            checked: None,
         },
         PopupItem {
             id: live_id!(about),
@@ -20,6 +21,7 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
             icon: Some(Icon::Info),
             danger: false,
             enabled: true,
+            checked: None,
         },
         PopupItem {
             id: live_id!(fonts),
@@ -27,6 +29,7 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
             icon: Some(Icon::Paintbrush),
             danger: false,
             enabled: true,
+            checked: None,
         },
         PopupItem {
             id: live_id!(icons),
@@ -34,6 +37,7 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
             icon: Some(Icon::SquareMenu),
             danger: false,
             enabled: true,
+            checked: None,
         },
         PopupItem {
             id: live_id!(colors),
@@ -41,6 +45,7 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
             icon: Some(Icon::Squircle),
             danger: false,
             enabled: true,
+            checked: None,
         },
         PopupItem {
             id: live_id!(exit),
@@ -48,6 +53,7 @@ pub fn logo_menu_items() -> Vec<crate::popup::base::PopupItem> {
             icon: Some(Icon::CircleX),
             danger: true,
             enabled: true,
+            checked: None,
         },
     ]
 }
@@ -71,6 +77,7 @@ pub fn burger_menu_items(has_model: bool) -> Vec<crate::popup::base::PopupItem> 
             icon: Some(Icon::SquarePlus),
             danger: false,
             enabled: true,
+            checked: None,
         },
         PopupItem {
             id: live_id!(open_model),
@@ -79,6 +86,7 @@ pub fn burger_menu_items(has_model: bool) -> Vec<crate::popup::base::PopupItem> 
             icon: Some(Icon::DoorOpen),
             danger: false,
             enabled: true,
+            checked: None,
         },
         PopupItem {
             id: live_id!(export_waml),
@@ -88,6 +96,7 @@ pub fn burger_menu_items(has_model: bool) -> Vec<crate::popup::base::PopupItem> 
             icon: Some(Icon::FolderDown),
             danger: false,
             enabled: has_model,
+            checked: None,
         },
         PopupItem {
             id: live_id!(close_model),
@@ -96,6 +105,7 @@ pub fn burger_menu_items(has_model: bool) -> Vec<crate::popup::base::PopupItem> 
             icon: Some(Icon::DoorClosed),
             danger: false,
             enabled: has_model,
+            checked: None,
         },
     ]
 }
@@ -112,6 +122,7 @@ pub(super) fn doc_switcher_items(
             icon: Some(tab.presentation.icon),
             danger: false,
             enabled: true,
+            checked: None,
         })
         .collect()
 }

@@ -28,6 +28,7 @@ pub fn base_items() -> Vec<PopupItem> {
             icon: Some(Icon::FileCode),
             danger: false,
             enabled: true,
+            checked: None,
         },
         PopupItem {
             id: live_id!(find_in_diagrams),
@@ -35,6 +36,7 @@ pub fn base_items() -> Vec<PopupItem> {
             icon: Some(Icon::Search),
             danger: false,
             enabled: true,
+            checked: None,
         },
     ]
 }
@@ -93,6 +95,7 @@ mod tests {
             icon: Some(Icon::Search),
             danger: false,
             enabled: true,
+            checked: None,
         }];
         let out = compose(ctx, base_items());
         assert_eq!(out.len(), 3);
