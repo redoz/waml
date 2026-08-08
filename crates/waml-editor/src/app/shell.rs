@@ -40,7 +40,7 @@ pub(super) fn dock_toggle_icon(
 /// faded a second, panel-docked button in at the end of the collapse and added
 /// its 32px in a single frame.
 ///
-/// `lead_w` is what the logo and burger cost before the row's turtle starts; the
+/// `lead_w` is what the logo costs before the row's turtle starts; the
 /// slot only makes up the difference to the column's edge. Lerped off the
 /// RESERVATION rather than the animating body, which keeps the run monotonic (a
 /// body-derived target dips below the button's own width while the column is
@@ -71,9 +71,10 @@ pub(super) fn tree_toggle_layout(
     } else {
         0.0
     };
-    // The button's own footprint comes off the target: the slot leads it, so it
-    // is `lead_w + slot + TREE_BTN_W` that has to land on the column's edge.
-    let open_w = (tree_w - lead_w - TREE_BTN_W).max(0.0);
+    // The slot ENDS on the column's edge: `lead_w + slot == tree_w`. What the
+    // slot carries (the burger, then the toggle) therefore starts just past the
+    // split rather than sitting over the column's top-right corner.
+    let open_w = (tree_w - lead_w).max(0.0);
     (true, open_w * progress)
 }
 
@@ -111,16 +112,19 @@ pub(super) fn project_document_header(
     (segments, chrome.right_dock, chrome.view_toggle)
 }
 
-/// Footprint of the tab row's tree-column toggle: the `tree_btn` DSL `width`
-/// (30, the caption burger's size) plus its 2px margin. `tree_btn_slot` is sized
-/// against this, so the twin's seat and the width it costs the row are one
-/// number (see `tree_toggle_layout`).
+/// Footprint of one slot-carried caption control: the DSL `width` (30) plus its
+/// 2px margin. The burger and the tree toggle are both this wide and ride the
+/// slot in that order. The layout maths no longer subtracts it -- the slot now
+/// ends ON the split -- so it survives as what the tests measure the pair's
+/// travel against.
+#[cfg(test)]
 pub(super) const TREE_BTN_W: f64 = 32.0;
 
 /// `tab_row`'s x within the caption, as the DSL declares it: `title_row`'s 2px
-/// left padding, the 44px logo, and the 30px burger with its 2px right margin.
-/// Only used before the row has a drawn rect to measure (see `sync_dock_slots`).
-pub(super) const DEFAULT_TAB_ROW_LEAD_W: f64 = 78.0;
+/// left padding and the 44px logo. The burger is NOT part of the lead any more
+/// -- it moved into the row, onto the slot. Only used before the row has a drawn
+/// rect to measure (see `sync_dock_slots`).
+pub(super) const DEFAULT_TAB_ROW_LEAD_W: f64 = 46.0;
 
 pub(super) const NARROW_ENTER_W: f64 = 640.0;
 pub(super) const NARROW_EXIT_W: f64 = 680.0;
@@ -493,12 +497,11 @@ impl App {
         // Both toggles carry the same glyph and active state -- they are one
         // control that changes seat, not two controls -- so only visibility
         // distinguishes them.
-        // What the logo and burger cost before `tab_row`'s turtle starts, taken
-        // off the row's own drawn rect: the tree column and the caption share
-        // the window's left edge, so the row's x IS the offset the slot has to
-        // make up to reach the column's right edge. Falls back to the DSL sum
-        // (2px padding + 44 logo + 30 burger + 2 margin) on the first frame,
-        // before the row has a rect.
+        // What the logo costs before `tab_row`'s turtle starts, taken off the
+        // row's own drawn rect: the tree column and the caption share the
+        // window's left edge, so the row's x IS the offset the slot has to make
+        // up to reach the column's right edge. Falls back to the DSL sum
+        // (2px padding + 44 logo) on the first frame, before the row has a rect.
         let lead_w = {
             let rect = self.ui.widget(cx, ids!(tab_row)).area().rect(cx);
             if rect.size.x > 0.0 {

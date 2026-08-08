@@ -77,8 +77,9 @@ script_mod! {
                 caption_bar: SolidView{
                     visible: false
                     // Single-row caption, and the document tab strip is ON that
-                    // row: logo, burger, then `[T]`, the history pair and the tab
-                    // cards, with the window buttons at the far end. The strip
+                    // row: logo, then the slot-carried burger and `[T]`, the
+                    // history pair and the tab cards, with the window buttons at
+                    // the far end. The strip
                     // spent one iteration in the body so the tree column could
                     // reach up alongside it; it is a non-client band again, so the
                     // tree starts at the body's top edge instead and the whole
@@ -122,14 +123,6 @@ script_mod! {
                             // Interactive app mark. Its menu drops from this upper
                             // row and its rectangle is excluded from window dragging.
                             logo := LogoMark{ width: 44.0 height: 25.0 }
-                            // Burger on the title line, scaled up (30px button, 20px
-                            // glyph) so it reads as a peer of the heading and sits on
-                            // its centreline. 30 in a 34px row leaves 2px slack top
-                            // and bottom, clearing the window top edge. Hidden until
-                            // a model opens (`show_editor`/`show_start_screen`); its
-                            // drop-down anchors off the caption bottom (see the
-                            // burger-menu handler), so its row placement is free.
-                            menu_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{left: 0.0, right: 2.0, top: 4.0} visible: false }
                             // Tab row: the tree-column toggle, the view-history
                             // pair, then the doc-tab strip -- all on the TITLE
                             // line, sharing it with the logo and burger. It
@@ -204,6 +197,18 @@ script_mod! {
                                     width: 0.0
                                     height: Fill
                                 }
+                                // Burger, 30px button / 18px glyph, matching the
+                                // toggle beside it. It rides the SLOT with that
+                                // toggle rather than leading the caption: the slot
+                                // ends on the tree column's RIGHT edge, so the
+                                // burger sits just past the split, never over the
+                                // column, and is still there -- leading the row --
+                                // once the column collapses. First of the pair, so
+                                // the toggle's arrow trails it. Hidden until a model
+                                // opens (`show_editor`/`show_start_screen`); its
+                                // drop-down anchors off the caption bottom (see the
+                                // burger-menu handler), so its row placement is free.
+                                menu_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
                                 tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
                                 // View history, on the ROW rather than inside the
                                 // document header: one pair for the whole shell,
