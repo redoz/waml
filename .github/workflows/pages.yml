@@ -201,7 +201,7 @@ jobs:
         run: cargo build -p waml-cli --release --features embed-web
 
       - name: Export the site
-        run: ./target/release/waml export site docs/waml --out target/pages
+        run: ./target/release/waml export site docs/waml --out target/pages --force
 
       # The exported tree is what actually ships, so it -- not the artifact it
       # was assembled from -- is what gets the completeness check.

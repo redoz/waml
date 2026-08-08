@@ -186,7 +186,7 @@ enum ExportCommand {
         /// Where to write the site.
         #[arg(long, default_value = "./site")]
         out: PathBuf,
-        /// Overwrite the site's own files in a non-empty output directory.
+        /// Delete everything in a non-empty output directory, then write the site.
         #[arg(long)]
         force: bool,
     },

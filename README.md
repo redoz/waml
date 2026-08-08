@@ -57,7 +57,7 @@ lost: the first one moves the whole model into the page's `#w1.` share URL, so
 a refresh or a copied link reopens the edited version, and **Export WAML
 bundle…** in the burger menu downloads the edited source as one `.waml` file.
 `--out` defaults to `./site` and refuses a non-empty directory unless you pass
-`--force`.
+`--force`, which deletes everything in it first.
 
 ## License
 

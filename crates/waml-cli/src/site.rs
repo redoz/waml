@@ -129,22 +129,25 @@ pub(crate) fn assemble_site(
 /// Write an assembled site into `out`.
 ///
 /// Without `force` the directory must be missing or empty, so an export can
-/// never quietly mix into someone's unrelated files. With `force` only the
-/// paths the site itself owns are replaced: the alternative -- deleting the
-/// output tree -- would make a mistyped `--out` destructive.
+/// never quietly mix into someone's unrelated files. `force` empties the
+/// directory first: a site is a whole tree, and leaving a previous export's
+/// renamed or deleted files behind ships them alongside the new ones.
 pub(crate) fn write_site(
     out: &Path,
     files: &BTreeMap<String, Vec<u8>>,
     force: bool,
 ) -> std::io::Result<()> {
-    if !force && !is_missing_or_empty(out)? {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            format!(
-                "{} is not empty. Pass --force to overwrite the site files in it.",
-                out.display()
-            ),
-        ));
+    if !is_missing_or_empty(out)? {
+        if !force {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} is not empty. Pass --force to replace its contents.",
+                    out.display()
+                ),
+            ));
+        }
+        fs::remove_dir_all(out)?;
     }
     for (path, bytes) in files {
         let target = out.join(path);
@@ -339,9 +342,10 @@ mod tests {
     }
 
     #[test]
-    fn force_replaces_site_files_and_leaves_the_rest_alone() {
+    fn force_replaces_the_whole_output_directory() {
         let out = temp_dir("forced");
-        fs::create_dir_all(&out).unwrap();
+        fs::create_dir_all(out.join("stale-dir")).unwrap();
+        fs::write(out.join("stale-dir/old.js"), b"gone").unwrap();
         fs::write(out.join("notes.txt"), b"mine").unwrap();
         fs::write(out.join("index.html"), b"stale").unwrap();
 
@@ -351,7 +355,10 @@ mod tests {
             fs::read(out.join("index.html")).unwrap(),
             b"<!doctype html>"
         );
-        assert_eq!(fs::read(out.join("notes.txt")).unwrap(), b"mine");
+        // A site is a whole tree: what the new export does not write is gone,
+        // so a renamed asset can never ship next to its replacement.
+        assert!(!out.join("notes.txt").exists());
+        assert!(!out.join("stale-dir").exists());
         fs::remove_dir_all(&out).unwrap();
     }
 
