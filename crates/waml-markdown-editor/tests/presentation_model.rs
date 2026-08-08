@@ -195,3 +195,145 @@ fn active_owners_report_every_owner_touching_the_caret() {
     assert_eq!(plan.active_owners(t(2)).as_ref(), &[owner(1), owner(7)]);
     assert_eq!(plan.active_owners(t(6)).as_ref(), &[owner(2)]);
 }
+
+mod diagnostic_message_emission {
+    use std::sync::Arc;
+
+    use makepad_widgets::{dvec2, Rect};
+    use waml_markdown_editor::{
+        layout::{CaretStop, GlyphCluster, LayoutSnapshot, VisualLine},
+        presentation::{
+            draw::{
+                build_draw_commands, DrawCommand, PresentationFrame, PresentedDiagnostic,
+                PresentedDiagnosticSeverity, MESSAGE_GAP,
+            },
+            EmbeddedAssetFrame, PresentationPlan, PresentationStyles, TextRole,
+        },
+        selection::{Affinity, Selection, SelectionSet, TextPosition},
+    };
+    use waml_syntax::{DocumentRevision, SourceText};
+
+    use super::{owner, range, t};
+
+    fn snapshot(viewport_width: f64, cluster_x: f64, cluster_width: f64) -> Arc<LayoutSnapshot> {
+        let source_range = range(0..4);
+        let cluster = GlyphCluster::for_test(
+            source_range,
+            Rect {
+                pos: dvec2(cluster_x, 20.0),
+                size: dvec2(cluster_width, 18.0),
+            },
+            vec![
+                CaretStop::new(
+                    TextPosition::new(t(0), Affinity::Before),
+                    dvec2(cluster_x, 20.0),
+                ),
+                CaretStop::new(
+                    TextPosition::new(t(4), Affinity::Before),
+                    dvec2(cluster_x + cluster_width, 20.0),
+                ),
+            ],
+        );
+        Arc::new(LayoutSnapshot::from_parts_for_test(
+            DocumentRevision::INITIAL,
+            dvec2(viewport_width, 60.0),
+            vec![VisualLine::for_test(source_range, 20.0, 18.0)],
+            vec![cluster],
+            Vec::new(),
+        ))
+    }
+
+    fn messages(layout: Arc<LayoutSnapshot>, message: &str) -> Vec<DrawCommand> {
+        let source = "abcd";
+        let plan = PresentationPlan {
+            revision: DocumentRevision::INITIAL,
+            source_len: t(source.len()),
+            items: Arc::from([super::run(0..source.len(), TextRole::Body, owner(1), 0)]),
+            links: Arc::from([]),
+            blocks: Arc::from([]),
+            diagnostics: Arc::from([]),
+        };
+        let frame = PresentationFrame {
+            revision: DocumentRevision::INITIAL,
+            layout,
+            active_owners: Arc::from([]),
+            diagnostics: Arc::from([PresentedDiagnostic {
+                revision: DocumentRevision::INITIAL,
+                range: range(1..3),
+                severity: PresentedDiagnosticSeverity::Error,
+                message: Arc::from(message),
+            }]),
+            assets: Arc::new(EmbeddedAssetFrame {
+                revision: DocumentRevision::INITIAL,
+                items: Arc::from([]),
+            }),
+        };
+        let selections = SelectionSet::from_source(
+            DocumentRevision::INITIAL,
+            &SourceText::new(source.to_owned()).unwrap(),
+            vec![Selection::new(
+                TextPosition::new(t(0), Affinity::Before),
+                TextPosition::new(t(0), Affinity::Before),
+            )],
+            0,
+        )
+        .unwrap();
+        build_draw_commands(
+            &frame,
+            &plan,
+            &PresentationStyles::balanced(),
+            &selections,
+            None,
+        )
+        .unwrap()
+        .iter()
+        .filter(|command| matches!(command, DrawCommand::DiagnosticMessage { .. }))
+        .cloned()
+        .collect()
+    }
+
+    #[test]
+    fn placement_sits_message_gap_past_the_last_cluster_right_edge() {
+        let commands = messages(snapshot(600.0, 10.0, 40.0), "boom");
+        let DrawCommand::DiagnosticMessage { rect, text, .. } = &commands[0] else {
+            unreachable!()
+        };
+        assert_eq!(rect.pos.x, 10.0 + 40.0 + MESSAGE_GAP);
+        assert_eq!(text.as_ref(), "boom");
+        let advance = PresentationStyles::balanced().diagnostic_message_advance();
+        assert_eq!(rect.size.x, 4.0 * advance);
+    }
+
+    #[test]
+    fn ellipsize_fires_exactly_at_the_viewport_width_boundary() {
+        let advance = PresentationStyles::balanced().diagnostic_message_advance();
+        let x = 10.0 + 40.0 + MESSAGE_GAP;
+        // Budget for exactly 10 characters past the row text.
+        let viewport = x + 10.0 * advance;
+        // 10 chars fit untouched.
+        let fits = messages(snapshot(viewport, 10.0, 40.0), "0123456789");
+        let DrawCommand::DiagnosticMessage { text, .. } = &fits[0] else {
+            unreachable!()
+        };
+        assert_eq!(text.as_ref(), "0123456789");
+        // 11 chars ellipsize to 9 + '…' (10 glyphs total).
+        let clipped = messages(snapshot(viewport, 10.0, 40.0), "0123456789A");
+        let DrawCommand::DiagnosticMessage { text, .. } = &clipped[0] else {
+            unreachable!()
+        };
+        assert_eq!(text.as_ref(), "012345678…");
+    }
+
+    #[test]
+    fn a_row_with_no_room_left_emits_no_message_at_all() {
+        // Viewport ends before even one character fits past the gap.
+        let commands = messages(
+            snapshot(10.0 + 40.0 + MESSAGE_GAP + 0.5, 10.0, 40.0),
+            "boom",
+        );
+        assert!(
+            commands.is_empty(),
+            "no wrapping, no row growth, no hard clip"
+        );
+    }
+}

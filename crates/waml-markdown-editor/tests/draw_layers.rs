@@ -956,3 +956,150 @@ fn a_diagnostic_message_command_sits_on_the_decoration_layer_and_translates() {
     assert_eq!(severity, PresentedDiagnosticSeverity::Error);
     assert_eq!(line, range(0, 4));
 }
+
+/// Two visual lines with real clusters, for the emission-rule tests.
+/// Line 0 covers 0..6 (clusters end at x=10+6*10=70), line 1 covers 6..12.
+fn two_line_snapshot(source_len: usize) -> Arc<LayoutSnapshot> {
+    Arc::new(LayoutSnapshot::from_parts_for_test(
+        DocumentRevision::INITIAL,
+        dvec2(600.0, 200.0),
+        vec![
+            VisualLine::for_test(range(0, 6), 20.0, 18.0),
+            VisualLine::for_test(range(6, source_len), 40.0, 18.0),
+        ],
+        vec![
+            cluster(1, 0, 0..6, 10.0, TextRole::Body),
+            cluster(1, 1, 6..source_len, 10.0, TextRole::Body),
+        ],
+        Vec::new(),
+    ))
+}
+
+fn diagnostic(
+    bounds: std::ops::Range<usize>,
+    severity: PresentedDiagnosticSeverity,
+    message: &str,
+) -> PresentedDiagnostic {
+    PresentedDiagnostic {
+        revision: DocumentRevision::INITIAL,
+        range: range(bounds.start, bounds.end),
+        severity,
+        message: Arc::from(message),
+    }
+}
+
+fn message_commands(
+    source: &str,
+    layout: Arc<LayoutSnapshot>,
+    diagnostics: Vec<PresentedDiagnostic>,
+) -> Vec<DrawCommand> {
+    let plan = PresentationPlan {
+        revision: DocumentRevision::INITIAL,
+        source_len: t(source.len()),
+        items: Arc::from([text_item(1, 0, 0..source.len(), TextRole::Body)]),
+        links: Arc::from([]),
+        blocks: Arc::from([]),
+        diagnostics: Arc::from([]),
+    };
+    let frame = PresentationFrame {
+        revision: DocumentRevision::INITIAL,
+        layout,
+        active_owners: Arc::from([]),
+        diagnostics: diagnostics.into(),
+        assets: Arc::new(EmbeddedAssetFrame {
+            revision: DocumentRevision::INITIAL,
+            items: Arc::from([]),
+        }),
+    };
+    build_draw_commands(
+        &frame,
+        &plan,
+        &PresentationStyles::balanced(),
+        &selection(source, 0, 0),
+        None,
+    )
+    .unwrap()
+    .iter()
+    .filter(|command| matches!(command, DrawCommand::DiagnosticMessage { .. }))
+    .cloned()
+    .collect()
+}
+
+#[test]
+fn diagnostics_bucket_onto_the_visual_line_holding_their_end_offset() {
+    let source = "abcdefghijkl";
+    let commands = message_commands(
+        source,
+        two_line_snapshot(source.len()),
+        vec![
+            // Starts on line 0 but ENDS on line 1 -> the message rides line 1.
+            diagnostic(2..9, PresentedDiagnosticSeverity::Warning, "spans"),
+        ],
+    );
+    assert_eq!(commands.len(), 1);
+    let DrawCommand::DiagnosticMessage { line, rect, .. } = &commands[0] else {
+        unreachable!()
+    };
+    assert_eq!(*line, range(6, 12));
+    assert_eq!(rect.pos.y, 40.0);
+    assert_eq!(rect.size.y, 18.0);
+}
+
+#[test]
+fn worst_severity_wins_a_contested_line_and_counts_the_losers() {
+    let source = "abcdefghijkl";
+    let commands = message_commands(
+        source,
+        two_line_snapshot(source.len()),
+        vec![
+            diagnostic(0..2, PresentedDiagnosticSeverity::Information, "info"),
+            diagnostic(3..5, PresentedDiagnosticSeverity::Error, "the error"),
+            diagnostic(1..4, PresentedDiagnosticSeverity::Warning, "warn"),
+        ],
+    );
+    assert_eq!(commands.len(), 1, "one message per line");
+    let DrawCommand::DiagnosticMessage { text, severity, .. } = &commands[0] else {
+        unreachable!()
+    };
+    assert_eq!(text.as_ref(), "the error +2");
+    assert_eq!(*severity, PresentedDiagnosticSeverity::Error);
+}
+
+#[test]
+fn severity_ties_break_on_the_earliest_start() {
+    let source = "abcdefghijkl";
+    let commands = message_commands(
+        source,
+        two_line_snapshot(source.len()),
+        vec![
+            diagnostic(3..5, PresentedDiagnosticSeverity::Error, "later"),
+            diagnostic(1..4, PresentedDiagnosticSeverity::Error, "earlier"),
+        ],
+    );
+    let DrawCommand::DiagnosticMessage { text, .. } = &commands[0] else {
+        unreachable!()
+    };
+    assert_eq!(text.as_ref(), "earlier +1");
+}
+
+#[test]
+fn contested_lines_stay_independent_and_commands_come_in_line_order() {
+    let source = "abcdefghijkl";
+    let commands = message_commands(
+        source,
+        two_line_snapshot(source.len()),
+        vec![
+            diagnostic(7..9, PresentedDiagnosticSeverity::Warning, "second line"),
+            diagnostic(0..2, PresentedDiagnosticSeverity::Information, "first line"),
+        ],
+    );
+    assert_eq!(commands.len(), 2);
+    let DrawCommand::DiagnosticMessage { text: first, .. } = &commands[0] else {
+        unreachable!()
+    };
+    let DrawCommand::DiagnosticMessage { text: second, .. } = &commands[1] else {
+        unreachable!()
+    };
+    assert_eq!(first.as_ref(), "first line");
+    assert_eq!(second.as_ref(), "second line");
+}

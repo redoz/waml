@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use makepad_widgets::{DVec2, Rect};
+use makepad_widgets::{dvec2, DVec2, Rect};
 use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange};
 
 use crate::{
@@ -22,6 +22,18 @@ pub enum PresentedDiagnosticSeverity {
     Error,
     Warning,
     Information,
+}
+
+/// Gap between a row's last glyph and its diagnostic message.
+pub const MESSAGE_GAP: f64 = 12.0;
+
+/// Error > Warning > Information.
+fn severity_rank(severity: PresentedDiagnosticSeverity) -> u8 {
+    match severity {
+        PresentedDiagnosticSeverity::Error => 2,
+        PresentedDiagnosticSeverity::Warning => 1,
+        PresentedDiagnosticSeverity::Information => 0,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -333,6 +345,85 @@ pub fn build_draw_commands(
                 role: DecorationRole::DiagnosticUnderline(diagnostic.severity),
             });
         }
+    }
+
+    // End-of-row diagnostic messages: one per visual line, computed here so
+    // placement lives in the pure, unit-tested draw-command layer.
+    let mut message_lines: Vec<(usize, Vec<&PresentedDiagnostic>)> = Vec::new();
+    for diagnostic in frame.diagnostics.iter() {
+        let end = diagnostic.range.end();
+        // The first visual line whose source range contains the END offset;
+        // an offset on a line boundary belongs to the earlier line.
+        let Some(index) =
+            frame.layout.visual_lines().iter().position(|line| {
+                line.source_range.start() <= end && end <= line.source_range.end()
+            })
+        else {
+            continue; // off-viewport; nothing to say
+        };
+        match message_lines.iter_mut().find(|(line, _)| *line == index) {
+            Some((_, bucket)) => bucket.push(diagnostic),
+            None => message_lines.push((index, vec![diagnostic])),
+        }
+    }
+    message_lines.sort_by_key(|(index, _)| *index);
+    for (index, bucket) in message_lines {
+        // Worst severity wins; ties break on the earliest start, which makes
+        // the order total: two diagnostics never contend for the same slot.
+        let winner = bucket
+            .iter()
+            .copied()
+            .min_by_key(|diagnostic| {
+                (
+                    std::cmp::Reverse(severity_rank(diagnostic.severity)),
+                    diagnostic.range.start(),
+                )
+            })
+            .expect("a bucket is created non-empty");
+        let line = &frame.layout.visual_lines()[index];
+        // The maximum right edge of the line's glyph clusters; a line with no
+        // clusters (blank line) anchors at its own left edge.
+        let text_right = frame
+            .layout
+            .glyph_clusters()
+            .iter()
+            .filter(|cluster| {
+                cluster.source_range.start() < line.source_range.end()
+                    && line.source_range.start() < cluster.source_range.end()
+            })
+            .map(|cluster| cluster.rect.pos.x + cluster.rect.size.x)
+            .fold(None::<f64>, |best, right| {
+                Some(best.map_or(right, |best| best.max(right)))
+            });
+        let x = text_right.unwrap_or(line.rect.pos.x) + MESSAGE_GAP;
+        let mut text = winner.message.to_string();
+        let others = bucket.len() - 1;
+        if others > 0 {
+            text.push_str(&format!(" +{others}"));
+        }
+        // Ellipsize against the viewport: the message renders in the mono
+        // face, so width is chars * advance (wide characters overrun
+        // slightly; accepted -- diagnostic messages are ASCII parser text).
+        let advance = styles.diagnostic_message_advance();
+        let budget = ((frame.layout.viewport_width() - x) / advance).floor();
+        if budget < 1.0 {
+            continue; // no wrapping, no row growth, no hard clip
+        }
+        let max_chars = budget as usize;
+        if text.chars().count() > max_chars {
+            text = text.chars().take(max_chars.saturating_sub(1)).collect();
+            text.push('…');
+        }
+        let width = text.chars().count() as f64 * advance;
+        commands.push(DrawCommand::DiagnosticMessage {
+            line: line.source_range,
+            rect: Rect {
+                pos: dvec2(x, line.rect.pos.y),
+                size: dvec2(width, line.rect.size.y),
+            },
+            text: text.into(),
+            severity: winner.severity,
+        });
     }
 
     for item in plan.items.iter() {
