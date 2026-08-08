@@ -611,3 +611,84 @@ fn index_never_changes_non_index_documents() {
 
     assert_eq!(std::fs::read_to_string(dir.join("order.md")).unwrap(), leaf);
 }
+
+#[test]
+fn index_rejects_a_file_argument_without_creating_a_sibling_index() {
+    let dir = tmp();
+    let order = dir.join("order.md");
+    std::fs::write(&order, "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n").unwrap();
+
+    let output = bin().args(["index"]).arg(&order).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("directory"), "{stderr}");
+    assert!(!dir.join("index.md").exists());
+}
+
+#[test]
+fn index_check_reports_stale_indexes_in_path_order() {
+    let dir = tmp();
+    std::fs::create_dir(dir.join("nested")).unwrap();
+    std::fs::write(dir.join("index.md"), "# Wrong root\n").unwrap();
+    std::fs::write(dir.join("nested/index.md"), "# Wrong nested\n").unwrap();
+    std::fs::write(
+        dir.join("order.md"),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("nested/line.md"),
+        "---\ntype: uml.Class\ntitle: Line\n---\n# Line\n",
+    )
+    .unwrap();
+
+    let output = bin()
+        .args(["index"])
+        .arg(&dir)
+        .arg("--check")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let root = format!(
+        "waml: {}: generated index is stale",
+        dir.join("index.md").display()
+    );
+    let nested = format!(
+        "waml: {}: generated index is stale",
+        dir.join("nested").join("index.md").display()
+    );
+    assert_eq!(stderr.lines().collect::<Vec<_>>(), [root, nested]);
+}
+
+#[test]
+fn index_replaces_stale_indexes_and_preserves_non_index_bytes() {
+    let dir = tmp();
+    let leaf = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n";
+    std::fs::write(dir.join("index.md"), "# Wrong\n").unwrap();
+    std::fs::write(dir.join("order.md"), leaf).unwrap();
+
+    assert!(bin().args(["index"]).arg(&dir).status().unwrap().success());
+
+    assert_ne!(
+        std::fs::read_to_string(dir.join("index.md")).unwrap(),
+        "# Wrong\n"
+    );
+    assert_eq!(std::fs::read_to_string(dir.join("order.md")).unwrap(), leaf);
+}
+
+#[test]
+fn index_removes_an_obsolete_generated_index_without_changing_other_files() {
+    let dir = tmp();
+    std::fs::create_dir(dir.join("obsolete")).unwrap();
+    let leaf = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n";
+    std::fs::write(dir.join("obsolete/index.md"), "# Obsolete\n").unwrap();
+    std::fs::write(dir.join("order.md"), leaf).unwrap();
+
+    assert!(bin().args(["index"]).arg(&dir).status().unwrap().success());
+
+    assert!(!dir.join("obsolete/index.md").exists());
+    assert_eq!(std::fs::read_to_string(dir.join("order.md")).unwrap(), leaf);
+}

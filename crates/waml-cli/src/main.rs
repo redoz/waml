@@ -523,6 +523,17 @@ fn main() {
 }
 
 fn run_index(path: &Path, check: bool) -> i32 {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            eprintln!("waml: index path must be a directory: {}", path.display());
+            return 2;
+        }
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    }
     let bundle = match io::read_physical_bundle(std::slice::from_ref(&path.to_path_buf())) {
         Ok(bundle) => bundle,
         Err(error) => {

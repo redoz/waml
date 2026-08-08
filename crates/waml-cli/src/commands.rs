@@ -189,10 +189,26 @@ pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, Stri
     let prepared = prepare(files)?;
     let before: std::collections::BTreeMap<String, String> =
         prepared.source().to_pairs().into_iter().collect();
-    let after: std::collections::BTreeMap<String, String> = reindex_source(prepared.source())
+    let mut after: std::collections::BTreeMap<String, String> = reindex_source(prepared.source())
         .to_pairs()
         .into_iter()
         .collect();
+    let mut desired_index_directories = std::collections::BTreeSet::from([String::new()]);
+    for path in before.keys() {
+        let basename = path.rsplit('/').next().unwrap_or(path);
+        if basename.eq_ignore_ascii_case("index.md") {
+            continue;
+        }
+        let mut parent = path.rsplit_once('/').map(|(parent, _)| parent);
+        while let Some(directory) = parent {
+            desired_index_directories.insert(directory.to_string());
+            parent = directory.rsplit_once('/').map(|(parent, _)| parent);
+        }
+    }
+    after.retain(|path, _| {
+        let (directory, basename) = path.rsplit_once('/').unwrap_or(("", path));
+        !basename.eq_ignore_ascii_case("index.md") || desired_index_directories.contains(directory)
+    });
     let paths: std::collections::BTreeSet<_> = before.keys().chain(after.keys()).collect();
     let mut changes = Vec::new();
 
@@ -362,6 +378,36 @@ pub fn plan_fmt(files: &[(String, String)]) -> Result<Vec<FmtResult>, String> {
 mod tests {
     use super::*;
     use waml::diagnostic::DiagCode;
+
+    #[test]
+    fn plan_indexes_keeps_deep_ancestors_and_removes_an_orphan_index() {
+        let files = vec![
+            (
+                "alpha/beta/order.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string(),
+            ),
+            ("orphan/Index.md".to_string(), "# Orphan\n".to_string()),
+        ];
+
+        let changes = plan_indexes(&files).unwrap();
+        let changes = changes
+            .iter()
+            .map(|change| match change {
+                IndexChange::Upsert { path, .. } => ("upsert", path.as_str()),
+                IndexChange::Remove { path } => ("remove", path.as_str()),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            changes,
+            [
+                ("upsert", "alpha/beta/index.md"),
+                ("upsert", "alpha/index.md"),
+                ("upsert", "index.md"),
+                ("remove", "orphan/Index.md"),
+            ]
+        );
+    }
 
     #[test]
     fn plan_fmt_leaves_index_docs_untouched() {
