@@ -74,7 +74,9 @@ script_mod! {
             marker_color: atlas.text_dim
             marker_active_color: atlas.accent
             link_color: atlas.accent
-            diagnostic_color: atlas.accent
+            diagnostic_error_color: #d64545
+            diagnostic_warning_color: #c98a2d
+            diagnostic_info_color: #3f73d8
             quote_fill: atlas.surface
             code_fill: atlas.surface
             table_fill: atlas.surface

@@ -20,6 +20,7 @@ use crate::{
         build_draw_commands, build_layout_document, ApprovedImageSource, ColorRole, DecorationRole,
         DrawCommand, EditorEmphasis, EmbeddedMeasurements, EmbeddedState, ImageMediaType,
         InstalledPresentation, PresentationError, PresentationFrame, PresentationStyles,
+        PresentedDiagnosticSeverity,
     },
     selection::TextPosition,
     session::MarkdownDocumentSession,
@@ -53,7 +54,9 @@ script_mod! {
         marker_color: #7a7f87
         marker_active_color: #3f73d8
         link_color: #2869c7
-        diagnostic_color: #d64545
+        diagnostic_error_color: #d64545
+        diagnostic_warning_color: #c98a2d
+        diagnostic_info_color: #3f73d8
         quote_fill: #f5f6f7
         code_fill: #f2f3f5
         table_fill: #f7f8f9
@@ -690,7 +693,11 @@ pub struct MarkdownEditor {
     #[live]
     link_color: Vec4,
     #[live]
-    diagnostic_color: Vec4,
+    diagnostic_error_color: Vec4,
+    #[live]
+    diagnostic_warning_color: Vec4,
+    #[live]
+    diagnostic_info_color: Vec4,
     #[live]
     quote_fill: Vec4,
     #[live]
@@ -1316,7 +1323,7 @@ impl MarkdownEditor {
             DrawCommand::Decoration { rects, role, .. } => {
                 self.draw_decoration.color = match role {
                     DecorationRole::LinkUnderline => self.link_color,
-                    DecorationRole::DiagnosticUnderline(_) => self.diagnostic_color,
+                    DecorationRole::DiagnosticUnderline(severity) => self.severity_color(*severity),
                 };
                 for rect in rects.iter() {
                     self.draw_decoration.draw_abs(cx, underline_rect(*rect));
@@ -1355,7 +1362,7 @@ impl MarkdownEditor {
                         .record_embedded_state(EmbeddedState::Failed {
                             message: message.clone(),
                         });
-                    self.draw_embedded.color = self.diagnostic_color;
+                    self.draw_embedded.color = self.diagnostic_error_color;
                     self.draw_embedded.draw_abs(cx, *rect);
                     self.draw_text_sans.color = self.body_color;
                     self.draw_text_sans
@@ -1482,9 +1489,17 @@ impl MarkdownEditor {
             ColorRole::Marker | ColorRole::Muted | ColorRole::TableRule => self.marker_color,
             ColorRole::ActiveMarker => self.marker_active_color,
             ColorRole::Link => self.link_color,
-            ColorRole::Recovery => self.diagnostic_color,
+            ColorRole::Recovery => self.diagnostic_error_color,
             ColorRole::CodeSurface => self.code_fill,
             ColorRole::Quote => self.quote_fill,
+        }
+    }
+
+    fn severity_color(&self, severity: PresentedDiagnosticSeverity) -> Vec4 {
+        match severity {
+            PresentedDiagnosticSeverity::Error => self.diagnostic_error_color,
+            PresentedDiagnosticSeverity::Warning => self.diagnostic_warning_color,
+            PresentedDiagnosticSeverity::Information => self.diagnostic_info_color,
         }
     }
 
