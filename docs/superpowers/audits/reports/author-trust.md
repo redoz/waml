@@ -34,8 +34,9 @@ The ownership plan moves these frozen rows without changing the inventory:
 
 Task 12 must reconcile these eight `goal_document` values. This stream does
 not copy the five class-interaction scenarios. `NATIVE-035` also remains a
-Task 8 class-interaction gap; its partial property-state tests do not verify
-visible property controls.
+Task 8 class-interaction gap. The property-state tests assert emitted values,
+but no native test observes the visible cardinality and attribute-limit
+controls.
 
 # Evidence
 
