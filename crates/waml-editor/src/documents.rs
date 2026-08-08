@@ -28,15 +28,11 @@ pub fn describe(
         .or_else(|| crate::okf_documents::describe(okf, concept_id))
 }
 
-/// The combined uml-then-generic open, kept as a directly callable unit so
-/// the behavior-preservation tests (`uml_provider_precedes_generic_okf_provider`
-/// et al.) can pin its tab identity independent of the surface table's own
-/// wiring in `open_locator_with_asset_host`/`open_row_with_asset_host` --
-/// both of which now route through `extension_editor::surface_table`'s
-/// `open_canvas` (which folds in the same uml-then-generic degrade) rather
-/// than calling this function. Not dead: exercised directly by this
-/// module's tests as the behavior baseline the table must match.
-#[cfg(test)]
+/// THE combined uml-then-generic open: the canvas surface factory
+/// (`extension_editor::open_canvas`) calls this exact function, and the
+/// behavior-preservation tests (`uml_provider_precedes_generic_okf_provider`
+/// et al.) pin this exact function -- one definition, so the live open path
+/// and its pinned baseline cannot drift.
 pub fn open_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -73,13 +69,12 @@ pub fn default_surface_for(
 /// asserts the other side of the same set.
 pub(crate) const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
 
-/// The editor's ONE surface resolution: same shape as
-/// `waml::view::surface::resolve_surface` (a `None` request or a registered id
-/// resolves silently; an unknown id degrades with an `UnknownSurface` warning),
-/// but the default/degrade target is `default_surface_for` -- the claims-based
-/// definition the editor's own open paths use -- rather than the core's
-/// `ElementType::parse`-based `default_surface`, which has no UML analysis to
-/// consult and so can disagree on an invalid-but-claimed document. Every
+/// The editor's ONE surface resolution: `waml::view::surface::resolve_surface`
+/// itself (a `None` request or a registered id resolves silently; an unknown id
+/// degrades with an `UnknownSurface` warning), given the editor's claims-based
+/// `default_surface_for` as the default/degrade target rather than the core's
+/// `ElementType::parse`-based `default_surface` -- the core has no UML analysis
+/// to consult and so can disagree on an invalid-but-claimed document. Every
 /// editor-side resolution goes through here so a stale or unknown stored
 /// surface can never degrade to a different surface than `primary_locator`
 /// would have chosen for the same target.
@@ -94,21 +89,48 @@ pub(crate) fn resolve_surface_for(
     waml::view::surface::SurfaceId,
     Option<waml::diagnostic::Diagnostic>,
 ) {
-    match requested {
-        None => (default_surface_for(okf, uml, target), None),
-        Some(id) if KNOWN_SURFACES.contains(&id) => {
-            (waml::view::surface::SurfaceId(id.to_string()), None)
-        }
-        Some(id) => {
-            let default = default_surface_for(okf, uml, target);
-            let diagnostic = waml::diagnostic::Diagnostic::new(
-                waml::diagnostic::DiagCode::UnknownSurface,
-                format!("unknown surface `{id}`, falling back to `{}`", default.0),
-                file,
-                line,
-            );
-            (default, Some(diagnostic))
-        }
+    waml::view::surface::resolve_surface(
+        requested,
+        default_surface_for(okf, uml, target),
+        KNOWN_SURFACES,
+        file,
+        line,
+    )
+}
+
+/// Cheap existence probe: would `open_locator_with_asset_host` produce a
+/// document for this locator? Answers the same question WITHOUT resolving a
+/// chain, projecting rows, or allocating a view -- the history controls ask it
+/// twice per sync (and a sync runs on every shell/workspace refresh), where
+/// building and dropping a `FolderView` per stored location is pure waste.
+///
+/// The arms mirror the surface table's factories exactly; the parity is
+/// pinned by `the_open_probe_agrees_with_the_open_path_on_every_surface`, so
+/// the two cannot drift.
+pub fn locator_opens(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    locator: &DocumentLocator,
+) -> bool {
+    let (surface, _diagnostic) = resolve_surface_for(
+        okf,
+        uml,
+        Some(locator.surface.as_str()),
+        &locator.target,
+        "index.md",
+        0,
+    );
+    match (surface.as_str(), &locator.target) {
+        // `open_markdown`/`open_canvas` both bottom out in a bundle concept
+        // lookup (the uml provider's own gate is the same lookup, and its
+        // generic fallback covers every concept it declines).
+        ("markdown" | "canvas", RowTarget::Concept(id)) => okf.bundle.concept(id).is_some(),
+        // `open_folder` -> `folder_documents::open`, whose only `None` is a
+        // directory that is not in the bundle (`FolderView::build` fails on
+        // exactly the same missing directory).
+        ("folder", RowTarget::Folder(directory)) => okf.bundle.directory(directory).is_some(),
+        ("source", target) => crate::okf_documents::source_opens_for_target(okf, target),
+        _ => false,
     }
 }
 
@@ -505,6 +527,94 @@ mod tests {
             resolve_surface_for(plain.okf(), claimed.uml(), None, &target, "index.md", 0);
         assert!(diagnostic.is_none());
         assert_eq!(defaulted, fresh);
+    }
+
+    /// The history controls probe with `locator_opens` instead of opening;
+    /// the two must answer identically for every (target, surface) pair,
+    /// including the degrade arms.
+    #[test]
+    fn the_open_probe_agrees_with_the_open_path_on_every_surface() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Shop](shop/)\n* [Loose](loose/)\n"),
+            ("shop/index.md", "# Shop\n"),
+            ("loose/thing.md", "---\ntype: Runbook\n---\n# Thing\n"),
+            ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 61).unwrap();
+
+        let targets = [
+            RowTarget::Concept("order".to_string()),
+            RowTarget::Concept("runbook".to_string()),
+            RowTarget::Concept("loose/thing".to_string()),
+            RowTarget::Concept("no-such-concept".to_string()),
+            RowTarget::Folder("/".to_string()),
+            RowTarget::Folder("/shop".to_string()),
+            RowTarget::Folder("/loose".to_string()),
+            RowTarget::Folder("/nowhere".to_string()),
+            RowTarget::Virtual,
+        ];
+        for target in targets {
+            for surface in ["markdown", "source", "canvas", "folder", "no-such-surface"] {
+                let locator = DocumentLocator::new(
+                    target.clone(),
+                    waml::view::surface::SurfaceId(surface.to_string()),
+                );
+                let opened = open_locator_with_asset_host(
+                    prepared.okf(),
+                    prepared.uml(),
+                    &locator,
+                    &assets(),
+                    waml::view::chain::ChainLimits::default(),
+                    &waml::view::mask::ProjectionMask::default(),
+                )
+                .is_some();
+                assert_eq!(
+                    locator_opens(prepared.okf(), prepared.uml(), &locator),
+                    opened,
+                    "probe disagrees with the open path for {target:?} on `{surface}`"
+                );
+            }
+        }
+    }
+
+    /// `waml::view::chain` stamps surfaces with the core's parse-based
+    /// `default_surface` (it has no UML analysis); the editor resolves with
+    /// the claims-based `default_surface_for`. For any ONE analysis pair the
+    /// two definitions must agree, or a projected row would carry a surface
+    /// the editor's own resolution disowns (the disagreement the degrade test
+    /// above stages is only reachable by crossing two different bundles).
+    #[test]
+    fn the_row_stamped_surface_agrees_with_the_editors_default_for_one_analysis() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Shop](shop/)\n"),
+            ("shop/index.md", "# Shop\n"),
+            ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("flow.md", "---\ntype: uml.Activity\n---\n# Flow\n"),
+            ("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n"),
+            ("plain.md", "# Plain\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 63).unwrap();
+
+        let mut targets: Vec<RowTarget> = prepared
+            .okf()
+            .bundle
+            .concepts()
+            .iter()
+            .map(|concept| RowTarget::Concept(concept.id.clone()))
+            .collect();
+        targets.push(RowTarget::Folder("/".to_string()));
+        targets.push(RowTarget::Folder("/shop".to_string()));
+        assert!(targets.len() > 2);
+        for target in targets {
+            assert_eq!(
+                default_surface_for(prepared.okf(), prepared.uml(), &target),
+                waml::view::surface::default_surface(&target, &prepared.okf().bundle),
+                "{target:?} is stamped with a surface the editor would not choose"
+            );
+        }
     }
 
     fn test_row(target: waml::view::row::RowTarget, surface: Option<&str>) -> Row {

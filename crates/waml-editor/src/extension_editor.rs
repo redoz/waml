@@ -173,9 +173,10 @@ fn open_canvas(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
     // A stored canvas locator can go stale when a concept's type is edited
     // away from uml.*; today's Primary arm fell through to the generic
     // provider, so the canvas surface keeps that degrade path (research
-    // finding 5).
-    crate::uml_documents::open_with_asset_host(ctx.analysis, ctx.uml, id, &ctx.assets)
-        .or_else(|| crate::okf_documents::open_with_asset_host(ctx.analysis, id, &ctx.assets))
+    // finding 5) by calling THE uml-then-generic chain itself rather than
+    // re-implementing it -- the behavior-preservation tests pin that one
+    // function, so the live factory and the pinned baseline cannot drift.
+    crate::documents::open_with_asset_host(ctx.analysis, ctx.uml, id, &ctx.assets)
 }
 
 fn open_folder(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {

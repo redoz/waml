@@ -66,22 +66,24 @@ pub fn default_surface(target: &RowTarget, bundle: &Bundle) -> SurfaceId {
 
 /// Resolves a requested surface against the set an editor build actually
 /// registered. A `None` request (no explicit `surface:` override) or a known
-/// id resolves silently. An unknown id **degrades to the type default and
-/// emits an `UnknownSurface` warning diagnostic** — never a blank tab, never a
-/// panic.
+/// id resolves silently. An unknown id **degrades to `default` and emits an
+/// `UnknownSurface` warning diagnostic** — never a blank tab, never a panic.
+///
+/// `default` is supplied by the caller rather than derived here: the editor
+/// resolves a target's default from the UML analysis' claim set
+/// (`waml_editor::documents::default_surface_for`), which this crate cannot
+/// consult; a caller with only a `Bundle` passes [`default_surface`].
 pub fn resolve_surface(
     requested: Option<&str>,
-    target: &RowTarget,
-    bundle: &Bundle,
+    default: SurfaceId,
     known: &[&str],
     file: &str,
     line: usize,
 ) -> (SurfaceId, Option<Diagnostic>) {
     match requested {
-        None => (default_surface(target, bundle), None),
+        None => (default, None),
         Some(id) if known.contains(&id) => (SurfaceId(id.to_string()), None),
         Some(id) => {
-            let default = default_surface(target, bundle);
             let diagnostic = Diagnostic::new(
                 DiagCode::UnknownSurface,
                 format!("unknown surface `{id}`, falling back to `{}`", default.0),
@@ -135,8 +137,7 @@ mod tests {
         let bundle = bundle_with("order", "uml.Class");
         let (surface, diagnostic) = resolve_surface(
             Some("no-such-surface"),
-            &RowTarget::Concept("order".to_string()),
-            &bundle,
+            default_surface(&RowTarget::Concept("order".to_string()), &bundle),
             &["markdown", "canvas", "source", "folder"],
             "index.waml",
             3,
@@ -152,8 +153,7 @@ mod tests {
         let bundle = bundle_with("notes", "note");
         let (surface, diagnostic) = resolve_surface(
             Some("source"),
-            &RowTarget::Concept("notes".to_string()),
-            &bundle,
+            default_surface(&RowTarget::Concept("notes".to_string()), &bundle),
             &["markdown", "canvas", "source", "folder"],
             "index.waml",
             1,

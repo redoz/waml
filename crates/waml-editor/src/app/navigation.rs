@@ -77,34 +77,32 @@ impl App {
 
     pub(super) fn sync_history_controls(&mut self, cx: &mut Cx) {
         let has_active_document = self.documents.active_tab().is_some();
-        let can_back = self.markdown_assets.as_ref().is_some_and(|assets| {
-            self.view_history
+        // An existence probe, not an open: `locator_opens` answers exactly
+        // what `open_locator_with_asset_host(..).is_some()` would, without
+        // building the surface table, resolving a chain, or allocating a view
+        // per stored location -- this sync runs on every shell/workspace
+        // refresh.
+        let openable = self.markdown_assets.is_some();
+        let can_back = openable
+            && self
+                .view_history
                 .can_traverse(HistoryDirection::Back, |location| {
-                    crate::documents::open_locator_with_asset_host(
+                    crate::documents::locator_opens(
                         self.session.okf_analysis(),
                         self.session.uml_analysis(),
                         &location.document,
-                        assets,
-                        self.chain_limits,
-                        &self.projection_mask,
                     )
-                    .is_some()
-                })
-        });
-        let can_forward = self.markdown_assets.as_ref().is_some_and(|assets| {
-            self.view_history
+                });
+        let can_forward = openable
+            && self
+                .view_history
                 .can_traverse(HistoryDirection::Forward, |location| {
-                    crate::documents::open_locator_with_asset_host(
+                    crate::documents::locator_opens(
                         self.session.okf_analysis(),
                         self.session.uml_analysis(),
                         &location.document,
-                        assets,
-                        self.chain_limits,
-                        &self.projection_mask,
                     )
-                    .is_some()
-                })
-        });
+                });
         if let Some(mut header) = self
             .ui
             .widget(cx, ids!(document_header))

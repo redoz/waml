@@ -148,21 +148,43 @@ pub fn source_document_exists(analysis: &waml::analysis::OkfAnalysis, key: &str)
     analysis.markdown_snapshot(document).is_some()
 }
 
-/// Target-resolving source open (spec §5). Concept targets behave exactly
-/// as open_source_with_asset_host; Folder targets open the index document.
+/// Does this target have a source surface to open? The cheap half of
+/// `open_source_for_target` -- same arms, same gates, no document built.
+/// Kept beside it so the two cannot drift (pinned by
+/// `the_source_probe_agrees_with_open_source_for_target`).
+pub fn source_opens_for_target(
+    analysis: &waml::analysis::OkfAnalysis,
+    target: &waml::view::row::RowTarget,
+) -> bool {
+    use waml::view::row::RowTarget;
+    match target {
+        RowTarget::Concept(concept_id) => analysis.bundle.concept(concept_id).is_some(),
+        RowTarget::Folder(_) => {
+            source_key_for(target).is_some_and(|key| source_document_exists(analysis, &key))
+        }
+        RowTarget::Virtual => false,
+    }
+}
+
+/// Target-resolving source open (spec §5). Concept targets delegate to
+/// `open_source_with_asset_host` unchanged -- its own concept gate and title
+/// stand, so a concept whose markdown snapshot is missing keeps opening its
+/// source view exactly as it did before folder targets existed. Only Folder
+/// targets consult `source_document_exists`, the render predicate for a
+/// folder's index document.
 pub fn open_source_for_target(
     analysis: &waml::analysis::OkfAnalysis,
     target: &waml::view::row::RowTarget,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
 ) -> Option<OpenDocument> {
     use waml::view::row::RowTarget;
-    let key = source_key_for(target)?;
-    if !source_document_exists(analysis, &key) {
-        return None;
-    }
     match target {
         RowTarget::Concept(concept_id) => open_source_with_asset_host(analysis, concept_id, assets),
         RowTarget::Folder(address) => {
+            let key = source_key_for(target)?;
+            if !source_document_exists(analysis, &key) {
+                return None;
+            }
             let title = analysis
                 .bundle
                 .index(address)
@@ -343,5 +365,49 @@ mod tests {
             &assets()
         )
         .is_none());
+    }
+
+    /// The index-document gate is the FOLDER arm's gate only: a Concept
+    /// target must delegate to `open_source_with_asset_host` unchanged, so
+    /// View Source on a concept keeps opening exactly what it opened before
+    /// folder targets existed.
+    #[test]
+    fn a_concept_source_delegates_unchanged_and_the_probe_agrees_everywhere() {
+        use waml::view::row::RowTarget;
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Shop](shop/)\n* [Loose](loose/)\n"),
+            ("shop/index.md", "# Shop\n"),
+            ("loose/thing.md", "---\ntype: Runbook\n---\n# Thing\n"),
+            ("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 35).unwrap();
+
+        for concept_id in ["runbook", "loose/thing", "no-such-concept"] {
+            let target = RowTarget::Concept(concept_id.to_string());
+            assert_eq!(
+                open_source_for_target(prepared.okf(), &target, &assets()).map(|doc| doc.tab_id),
+                open_source_with_asset_host(prepared.okf(), concept_id, &assets())
+                    .map(|doc| doc.tab_id),
+                "concept `{concept_id}` must delegate unchanged"
+            );
+        }
+
+        for target in [
+            RowTarget::Concept("runbook".into()),
+            RowTarget::Concept("loose/thing".into()),
+            RowTarget::Concept("no-such-concept".into()),
+            RowTarget::Folder("/".into()),
+            RowTarget::Folder("/shop".into()),
+            RowTarget::Folder("/loose".into()),
+            RowTarget::Folder("/nowhere".into()),
+            RowTarget::Virtual,
+        ] {
+            assert_eq!(
+                source_opens_for_target(prepared.okf(), &target),
+                open_source_for_target(prepared.okf(), &target, &assets()).is_some(),
+                "probe disagrees with the open for {target:?}"
+            );
+        }
     }
 }
