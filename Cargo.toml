@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/waml", "crates/waml-cli", "crates/waml-ops-dto", "crates/waml-editor", "crates/waml-syntax", "crates/waml-markdown-editor"]
+members = ["crates/waml", "crates/waml-cli", "crates/waml-ops-dto", "crates/waml-editor", "crates/waml-syntax", "crates/waml-markdown-editor", "crates/waml-ui-test", "crates/waml-ui-test-macros"]
 exclude = ["fuzz"]
 
 [workspace.package]
@@ -21,7 +21,7 @@ tower-lsp-server = "0.23"
 url = "2.5"
 proptest = "=1.8.0"
 unicode-segmentation = "1.12"
-unicode-bidi = { git = "https://github.com/redoz/makepad.git", rev = "c4937742d0925412f7bf631f56ec06813ca5821d" }
+unicode-bidi = { git = "https://github.com/redoz/makepad.git", rev = "9e428ab8b77fc3d5beaa78296646aff88b82bd9b" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 brotli = "8"
 rand = "0.9"
@@ -32,4 +32,3 @@ tracing = "0.1"
 # Baseline is registry-only so the wasm build stays lean; waml-editor's native
 # target adds `fmt` + `env-filter` on top (features are additive per-target).
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
-

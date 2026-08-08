@@ -8,6 +8,6 @@ description = "WAML-owned variable-metric Markdown editing foundation."
 
 [dependencies]
 waml-syntax = { path = "../waml-syntax" }
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "c4937742d0925412f7bf631f56ec06813ca5821d" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "9e428ab8b77fc3d5beaa78296646aff88b82bd9b" }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }
