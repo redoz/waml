@@ -143,6 +143,7 @@ mod tests {
     use std::collections::HashSet;
     use std::fs;
     use std::sync::atomic::AtomicU64;
+    use std::sync::Barrier;
     use std::thread;
 
     #[test]
@@ -192,7 +193,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let counter = AtomicU64::new(0);
         let ownership_root = temp.path().join("target").join("waml-ui-test");
-        let preserved = ownership_root.join("4242-1").join("ui-opens-orders");
+        let preserved = ownership_root.join("4242-1").join("another-test");
         fs::create_dir_all(&preserved).unwrap();
         fs::write(preserved.join("failure.txt"), "preserved failure").unwrap();
 
@@ -212,14 +213,18 @@ mod tests {
     }
 
     #[test]
-    fn parallel_allocations_reserve_unique_run_roots() {
+    fn parallel_allocations_contend_on_the_parent_and_retry_to_unique_identities() {
+        const WORKERS: usize = 8;
+
         let temp = tempfile::tempdir().unwrap();
-        let counter = AtomicU64::new(0);
+        let start = Barrier::new(WORKERS);
 
         let identities = thread::scope(|scope| {
-            let handles: Vec<_> = (0..8)
+            let handles: Vec<_> = (0..WORKERS)
                 .map(|_| {
                     scope.spawn(|| {
+                        let counter = AtomicU64::new(0);
+                        start.wait();
                         RunIdentity::allocate_with_counter(
                             temp.path(),
                             "ui::opens orders",
@@ -236,12 +241,26 @@ mod tests {
                 .collect::<Vec<_>>()
         });
 
+        let run_ids: HashSet<_> = identities
+            .iter()
+            .map(|identity| identity.run_id.as_str())
+            .collect();
+        let allocation_roots: HashSet<_> = identities
+            .iter()
+            .map(|identity| identity.allocation_root.as_path())
+            .collect();
         let run_roots: HashSet<_> = identities
             .iter()
-            .map(|identity| identity.run_root.clone())
+            .map(|identity| identity.run_root.as_path())
             .collect();
-        assert_eq!(run_roots.len(), 8);
+        assert_eq!(run_ids.len(), WORKERS);
+        assert_eq!(allocation_roots.len(), WORKERS);
+        assert_eq!(run_roots.len(), WORKERS);
         assert!(run_roots.iter().all(|run_root| run_root.is_dir()));
+        assert!(identities.iter().all(|identity| {
+            identity.run_root.parent() == Some(identity.allocation_root.as_path())
+                && identity.allocation_root.is_dir()
+        }));
     }
 
     #[test]

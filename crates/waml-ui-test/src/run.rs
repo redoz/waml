@@ -84,6 +84,25 @@ fn finalize_run(
 ) -> Result<(), String> {
     let succeeded = run_result.is_ok() && promotion_result.is_ok();
     let cleanup_result = cleanup_run(ownership_root, allocation_root, succeeded);
+    finalize_run_with_cleanup_result(run_root, run_result, promotion_result, cleanup_result)
+}
+
+fn finalize_run_with_cleanup_result(
+    run_root: &Path,
+    run_result: Result<(), String>,
+    promotion_result: io::Result<()>,
+    cleanup_result: io::Result<()>,
+) -> Result<(), String> {
+    let cleanup_attempted = run_result.is_ok() && promotion_result.is_ok();
+    if cleanup_attempted {
+        return cleanup_result.map_err(|error| {
+            format!(
+                "cleanup failed; evidence may be partial: {}\nDetail: {error}",
+                run_root.display()
+            )
+        });
+    }
+
     let mut failures = Vec::new();
 
     if let Err(error) = run_result {
@@ -93,20 +112,11 @@ fn finalize_run(
         failures.push(format!("driver evidence promotion also failed: {error}"));
     }
     if let Err(error) = cleanup_result {
-        let label = if failures.is_empty() {
-            "cleanup failed"
-        } else {
-            "cleanup validation also failed"
-        };
-        failures.push(format!("{label}: {error}"));
+        failures.push(format!("cleanup validation also failed: {error}"));
     }
 
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        failures.push(format!("Preserved run: {}", run_root.display()));
-        Err(failures.join("\n"))
-    }
+    failures.push(format!("Preserved run: {}", run_root.display()));
+    Err(failures.join("\n"))
 }
 
 fn build_driver_config(
@@ -163,7 +173,10 @@ fn promote_driver_evidence(run_root: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_driver_config, finalize_run, promote_driver_evidence};
+    use super::{
+        build_driver_config, finalize_run, finalize_run_with_cleanup_result,
+        promote_driver_evidence,
+    };
     use crate::config::{RunIdentity, ScenarioConfig, WorkspaceFixture};
     use std::fs;
     use std::io;
@@ -282,6 +295,28 @@ mod tests {
         finalize_run(&ownership_root, &allocation_root, &run_root, Ok(()), Ok(())).unwrap();
 
         assert!(!allocation_root.exists());
+    }
+
+    #[test]
+    fn successful_cleanup_failure_reports_that_evidence_may_be_partial() {
+        let run_root = Path::new("C:/workspace/target/waml-ui-test/4242-1/ui-opens-orders");
+
+        let error = finalize_run_with_cleanup_result(
+            run_root,
+            Ok(()),
+            Ok(()),
+            Err(io::Error::other("injected cleanup failure")),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            format!(
+                "cleanup failed; evidence may be partial: {}\nDetail: injected cleanup failure",
+                run_root.display()
+            )
+        );
+        assert!(!error.contains("Preserved run"));
     }
 
     #[test]
