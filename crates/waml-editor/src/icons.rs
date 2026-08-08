@@ -4164,6 +4164,34 @@ script_mod! {
         }
     }
 
+    // LibraryBig: the tree panel's partial-mask glyph. Faithful port of
+    // resources/icons/library-big.svg via scripts/gen-icon.py.
+    mod.draw.IconLibraryBig = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.1667, s * 0.1250)
+            sdf.line_to(s * 0.4167, s * 0.1250)
+            sdf.arc_to(s * 0.4167, s * 0.1667, s * 0.0417, -1.5708, 0.0000)
+            sdf.line_to(s * 0.4583, s * 0.8333)
+            sdf.arc_to(s * 0.4167, s * 0.8333, s * 0.0417, 0.0000, 1.5708)
+            sdf.line_to(s * 0.1667, s * 0.8750)
+            sdf.arc_to(s * 0.1667, s * 0.8333, s * 0.0417, 1.5708, 3.1416)
+            sdf.line_to(s * 0.1250, s * 0.1667)
+            sdf.arc_to(s * 0.1667, s * 0.1667, s * 0.0417, 3.1416, 4.7124)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.2500)
+            sdf.line_to(s * 0.5000, s * 0.8333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6667, s * 0.2500)
+            sdf.line_to(s * 0.8333, s * 0.8333)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -4297,6 +4325,7 @@ script_mod! {
         code: mod.draw.IconCode{ color: atlas.accent }
         broom_sparkles: mod.draw.IconBroomSparkles{ color: atlas.accent }
         library: mod.draw.IconLibrary{ color: atlas.accent }
+        library_big: mod.draw.IconLibraryBig{ color: atlas.accent }
     }
 }
 
@@ -4563,6 +4592,8 @@ pub struct IconSet {
     pub broom_sparkles: DrawColor,
     #[live]
     pub library: DrawColor,
+    #[live]
+    pub library_big: DrawColor,
 }
 
 impl IconSet {
@@ -4698,6 +4729,7 @@ impl IconSet {
             Icon::Code => &mut self.code,
             Icon::BroomSparkles => &mut self.broom_sparkles,
             Icon::Library => &mut self.library,
+            Icon::LibraryBig => &mut self.library_big,
         }
     }
 
@@ -4847,12 +4879,13 @@ pub enum Icon {
     Code,
     BroomSparkles,
     Library,
+    LibraryBig,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 128] = [
+    pub const ALL: [Icon; 129] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4981,6 +5014,7 @@ impl Icon {
         Icon::Code,
         Icon::BroomSparkles,
         Icon::Library,
+        Icon::LibraryBig,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5115,6 +5149,7 @@ impl Icon {
             Icon::Code => "code",
             Icon::BroomSparkles => "broom-sparkles",
             Icon::Library => "library",
+            Icon::LibraryBig => "library-big",
         }
     }
 }
@@ -5124,8 +5159,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_121_entries() {
-        assert_eq!(Icon::ALL.len(), 128);
+    fn icon_all_has_129_entries() {
+        assert_eq!(Icon::ALL.len(), 129);
     }
 
     // ------------------------------------------------------------------
@@ -5347,7 +5382,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 128);
+        assert_eq!(seen.len(), 129);
     }
 
     #[test]

@@ -90,6 +90,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(StickyNote, "Note kind"),
             ie!(ChevronsUpDown, "Scope / select dropdown"),
             ie!(Library, "Tree/folder view is projected (chain running)"),
+            ie!(LibraryBig, "Tree/folder view is partially masked"),
             ie!(
                 SquareLibrary,
                 "Retired projected glyph; superseded by Library"
@@ -320,6 +321,9 @@ mod drift {
         // kept catalogued (the catalog is pruned deliberately, not by drift).
         Icon::SquareLibrary,
         Icon::SquareCode,
+        // The tree panel's partial-mask glyph, catalogued ahead of its call
+        // site (wired in a follow-up task).
+        Icon::LibraryBig,
     ];
 
     fn table_icons() -> Vec<Icon> {
