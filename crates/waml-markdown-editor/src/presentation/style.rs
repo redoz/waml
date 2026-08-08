@@ -58,10 +58,21 @@ impl PresentationSpacing {
     }
 }
 
+/// Advance of one mono character at the diagnostic-message size when no
+/// measurement is available (pure tests, headless callers). Matches the
+/// widget's `GUTTER_DIGIT_WIDTH` fallback for the same face and size.
+pub const DIAGNOSTIC_MESSAGE_ADVANCE_FALLBACK: f64 = 6.6;
+
 /// Resolves a presentation text role into its style roles.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PresentationStyles {
     emphasis: EditorEmphasis,
+    /// Advance of one character of the mono face at the diagnostic-message
+    /// size. Measured by the widget through the gutter-metrics path and
+    /// installed via `with_diagnostic_message_advance`; the fallback serves
+    /// pure construction. Ellipsizing is `chars * advance` — wide (CJK)
+    /// characters overrun slightly, which is accepted.
+    diagnostic_message_advance: f64,
 }
 
 impl Default for PresentationStyles {
@@ -73,7 +84,10 @@ impl Default for PresentationStyles {
 impl PresentationStyles {
     /// Creates styles for one base presentation profile.
     pub fn for_emphasis(emphasis: EditorEmphasis) -> Self {
-        Self { emphasis }
+        Self {
+            emphasis,
+            diagnostic_message_advance: DIAGNOSTIC_MESSAGE_ADVANCE_FALLBACK,
+        }
     }
 
     /// Returns the base presentation profile.
@@ -84,6 +98,22 @@ impl PresentationStyles {
     /// Creates the explicit layout profile.
     pub fn balanced() -> Self {
         Self::for_emphasis(EditorEmphasis::Layout)
+    }
+
+    /// The same styles with a measured mono advance. Clamped to at least one
+    /// logical pixel so a degenerate measurement can never blow up the
+    /// ellipsize budget.
+    pub fn with_diagnostic_message_advance(mut self, advance: f64) -> Self {
+        self.diagnostic_message_advance = if advance.is_finite() {
+            advance.max(1.0)
+        } else {
+            DIAGNOSTIC_MESSAGE_ADVANCE_FALLBACK
+        };
+        self
+    }
+
+    pub fn diagnostic_message_advance(&self) -> f64 {
+        self.diagnostic_message_advance
     }
 
     /// Always 24 logical pixels on all four sides.

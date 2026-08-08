@@ -153,6 +153,21 @@ fn a_role_without_its_own_entry_stays_visible_with_body_metrics() {
 }
 
 #[test]
+fn balanced_styles_carry_the_fallback_message_advance_until_a_measurement_arrives() {
+    use waml_markdown_editor::presentation::style::DIAGNOSTIC_MESSAGE_ADVANCE_FALLBACK;
+    let styles = PresentationStyles::balanced();
+    assert_eq!(
+        styles.diagnostic_message_advance(),
+        DIAGNOSTIC_MESSAGE_ADVANCE_FALLBACK
+    );
+    let measured = styles.with_diagnostic_message_advance(7.25);
+    assert_eq!(measured.diagnostic_message_advance(), 7.25);
+    // A degenerate measurement can never divide the ellipsize budget by zero.
+    let degenerate = styles.with_diagnostic_message_advance(0.0);
+    assert!(degenerate.diagnostic_message_advance() >= 1.0);
+}
+
+#[test]
 fn color_roles_stay_out_of_layout_metrics() {
     let styles = PresentationStyles::balanced();
     let marker = styles.text_style(TextRole::SyntaxMarker);
