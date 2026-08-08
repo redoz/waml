@@ -484,22 +484,7 @@ impl App {
         let Some(target) = crate::app::menus::projection_toggle_target(id, &maskable) else {
             return ActionFlow::Consumed;
         };
-        let mut mask = self.projection_mask.clone();
-        match target {
-            // An extension row moves all of its names together: if any is
-            // still running, the row switches the whole extension off;
-            // otherwise it switches the whole extension back on.
-            crate::app::menus::ProjectionToggle::Extension(names) => {
-                let any_running = names.iter().any(|name| !mask.is_masked(name));
-                for name in &names {
-                    mask.set_masked(name, any_running);
-                }
-            }
-            crate::app::menus::ProjectionToggle::Stage(name) => {
-                let masked = mask.is_masked(&name);
-                mask.set_masked(&name, !masked);
-            }
-        }
+        let mask = crate::app::menus::apply_projection_toggle(&self.projection_mask, &target);
         self.set_projection_mask(cx, mask);
         let items = crate::app::menus::projection_menu_items(&maskable, &self.projection_mask);
         if let Some(mut popup) = self

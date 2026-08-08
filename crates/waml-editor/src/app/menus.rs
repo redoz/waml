@@ -196,7 +196,11 @@ pub fn projection_menu_items(
         items.push(PopupItem {
             id: extension_row_id(owner),
             label: (*owner).to_string(),
-            icon: None,
+            // A checkable row's on/off state is drawn as its leading icon's
+            // TINT (see `popup::menu::row_tint_role`), which is only drawn for
+            // a row that HAS an icon -- an iconless row would render its state
+            // nowhere.
+            icon: Some(crate::icons::Icon::Library),
             danger: false,
             enabled: true,
             checked: Some(!all_masked),
@@ -207,7 +211,9 @@ pub fn projection_menu_items(
                 // Two leading spaces read as nesting without a new indent
                 // mechanism in the menu's row layout.
                 label: format!("  {name}"),
-                icon: None,
+                // Same reason as the extension row above: no icon, no visible
+                // checked state.
+                icon: Some(crate::icons::Icon::Library),
                 danger: false,
                 enabled: true,
                 checked: Some(!mask.is_masked(name)),
@@ -236,6 +242,33 @@ pub fn projection_toggle_target(
         }
     }
     None
+}
+
+/// Apply one projection popup row's toggle to a mask, returning the new mask.
+///
+/// The whole decision the popup makes, with no widget tree in the way, so the
+/// seam between a committed row id and the session mask can be tested.
+pub fn apply_projection_toggle(
+    mask: &waml::view::mask::ProjectionMask,
+    target: &ProjectionToggle,
+) -> waml::view::mask::ProjectionMask {
+    let mut mask = mask.clone();
+    match target {
+        // An extension row moves all of its names together: if any is still
+        // running, the row switches the whole extension off; otherwise it
+        // switches the whole extension back on.
+        ProjectionToggle::Extension(names) => {
+            let any_running = names.iter().any(|name| !mask.is_masked(name));
+            for name in names {
+                mask.set_masked(name, any_running);
+            }
+        }
+        ProjectionToggle::Stage(name) => {
+            let masked = mask.is_masked(name);
+            mask.set_masked(name, !masked);
+        }
+    }
+    mask
 }
 
 #[cfg(test)]
@@ -283,6 +316,67 @@ mod projection_tests {
             "core's only maskable stage is off, so core reads off",
         );
         assert_eq!(uml.checked, Some(true), "another extension is untouched");
+    }
+
+    /// The checkable-row state is drawn as the leading icon's tint, and that
+    /// draw is gated on the row HAVING an icon: an iconless projection row
+    /// renders no on/off indication at all.
+    #[test]
+    fn every_projection_row_carries_an_icon_to_tint() {
+        let items = projection_menu_items(&maskable(), &ProjectionMask::from_names(["hide"]));
+        assert!(
+            items.iter().all(|item| item.icon.is_some()),
+            "a checkable row without an icon has nowhere to show its state",
+        );
+    }
+
+    /// The toggle seam end to end: the id a row was built with resolves to a
+    /// target, applying it flips the mask, and re-seeding from the new mask
+    /// flips exactly that row's checkmark.
+    #[test]
+    fn toggling_a_stage_row_flips_the_mask_and_the_reseeded_rows() {
+        let maskable = maskable();
+        let mask = ProjectionMask::default();
+        let row_id = projection_menu_items(&maskable, &mask)
+            .into_iter()
+            .find(|item| item.label.trim() == "hide")
+            .expect("the hide stage has a row")
+            .id;
+        let target = projection_toggle_target(row_id, &maskable).expect("the row resolves");
+        let mask = apply_projection_toggle(&mask, &target);
+        assert!(mask.is_masked("hide"), "the toggled stage is now masked");
+        assert!(!mask.is_masked("uml"), "no other stage moved");
+
+        let items = projection_menu_items(&maskable, &mask);
+        let checked = |label: &str| {
+            items
+                .iter()
+                .find(|item| item.label.trim() == label)
+                .unwrap()
+                .checked
+        };
+        assert_eq!(checked("hide"), Some(false), "re-seeded row reads off");
+        assert_eq!(checked("uml"), Some(true));
+
+        // Toggling the same row again restores it: the seam is symmetric.
+        let mask = apply_projection_toggle(&mask, &target);
+        assert!(!mask.is_masked("hide"));
+    }
+
+    #[test]
+    fn toggling_an_extension_row_moves_all_of_its_stages() {
+        let maskable = vec![("core", vec!["hide", "hide-others"])];
+        let target = projection_toggle_target(LiveId::from_str("ext:core"), &maskable)
+            .expect("the row resolves");
+        // Any stage still running switches the whole extension off.
+        let off = apply_projection_toggle(&ProjectionMask::from_names(["hide"]), &target);
+        assert!(off.is_masked("hide") && off.is_masked("hide-others"));
+        assert!(projection_menu_items(&maskable, &off)
+            .iter()
+            .all(|item| item.checked == Some(false)),);
+        // With nothing running, it switches the whole extension back on.
+        let on = apply_projection_toggle(&off, &target);
+        assert!(!on.is_masked("hide") && !on.is_masked("hide-others"));
     }
 
     #[test]

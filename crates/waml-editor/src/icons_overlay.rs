@@ -323,9 +323,6 @@ mod drift {
         // kept catalogued (the catalog is pruned deliberately, not by drift).
         Icon::SquareLibrary,
         Icon::SquareCode,
-        // The tree panel's partial-mask glyph, catalogued ahead of its call
-        // site (wired in a follow-up task).
-        Icon::LibraryBig,
     ];
 
     fn table_icons() -> Vec<Icon> {
