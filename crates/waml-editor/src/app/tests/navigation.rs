@@ -749,7 +749,8 @@ fn back_and_forward_stop_on_folder_tabs() {
         OpenDisposition::Preview,
         &mut browser,
     ));
-    let folder_tab_id = crate::folder_view::folder_document_tab_id("/sales");
+    let folder_tab_id =
+        crate::documents::tab_id_for(&crate::navigation::DocumentLocator::folder("/sales"));
     assert_eq!(app.documents.active_id(), folder_tab_id);
     let folder_tab_locator = crate::navigation::DocumentLocator::folder("/sales");
 
@@ -1415,8 +1416,8 @@ fn navigation_root_opens_the_folder_view_without_resetting_navigation_or_docks()
     // `Directory` navigation used to toggle the tree row's fold state; that
     // moved to the tree's own chevron hit-test (`tree_panel.rs`), and a
     // `Directory` target now always opens the folder's own view -- verified
-    // here by tab identity, matching the folder's dedicated
-    // `folder_document_tab_id` namespace (distinct from every concept tab).
+    // here by tab identity, matching the folder surface's tab namespace
+    // (distinct from every concept tab).
     let (mut cx, mut app) = navigation_app();
     let mut browser = FakeBrowser::default();
     app.narrow = true;
@@ -1440,7 +1441,7 @@ fn navigation_root_opens_the_folder_view_without_resetting_navigation_or_docks()
     // test closed explicitly and which the navigation never touches, stays
     // put.
     let expected_tree_dock = app.dock_states(&mut cx).0;
-    let folder_tab = crate::folder_view::folder_document_tab_id("/");
+    let folder_tab = crate::documents::tab_id_for(&crate::navigation::DocumentLocator::folder("/"));
 
     for _ in 0..2 {
         assert!(app.navigate_with(

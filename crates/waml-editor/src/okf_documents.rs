@@ -3,21 +3,13 @@ use crate::document::{
 };
 use crate::icons::Icon;
 use crate::view_history::DocumentLocator;
-use makepad_widgets::{LiveId, Vec4};
+use makepad_widgets::Vec4;
 use waml::view::surface::SurfaceId;
 
 pub fn generic_okf_accent() -> Option<Vec4> {
     Some(crate::accent::bucket_color(
         crate::node_style::AccentBucket::None,
     ))
-}
-
-pub fn okf_document_tab_id(concept_id: &str) -> LiveId {
-    LiveId::from_str(&format!("__doc_tab_okf__{concept_id}"))
-}
-
-pub fn source_document_tab_id(concept_id: &str) -> LiveId {
-    LiveId::from_str(&format!("__doc_tab_source__{concept_id}"))
 }
 
 pub fn presentation(
@@ -52,9 +44,10 @@ pub fn open_with_asset_host(
 ) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
     let presentation = presentation(analysis, concept_id)?;
+    let locator = DocumentLocator::concept(concept_id, SurfaceId::markdown());
     Some(OpenDocument {
-        tab_id: okf_document_tab_id(concept_id),
-        locator: DocumentLocator::concept(concept_id, SurfaceId::markdown()),
+        tab_id: crate::documents::tab_id_for(&locator),
+        locator,
         title: concept.title.clone().unwrap_or_else(|| {
             concept_id
                 .rsplit('/')
@@ -91,9 +84,10 @@ pub fn open_source_with_asset_host(
     let concept = analysis.bundle.concept(concept_id)?;
     let mut presentation = presentation(analysis, concept_id)?;
     presentation.icon = Icon::FileCode;
+    let locator = DocumentLocator::source(concept_id);
     Some(OpenDocument {
-        tab_id: source_document_tab_id(concept_id),
-        locator: DocumentLocator::source(concept_id),
+        tab_id: crate::documents::tab_id_for(&locator),
+        locator,
         title: concept.title.clone().unwrap_or_else(|| {
             concept_id
                 .rsplit('/')
@@ -181,12 +175,13 @@ pub fn open_source_for_target(
                         .unwrap_or(address)
                         .to_string()
                 });
+            let locator = DocumentLocator::new(
+                waml::view::row::RowTarget::Folder(address.clone()),
+                SurfaceId::source(),
+            );
             Some(OpenDocument {
-                tab_id: source_document_tab_id(&key),
-                locator: DocumentLocator::new(
-                    waml::view::row::RowTarget::Folder(address.clone()),
-                    SurfaceId::source(),
-                ),
+                tab_id: crate::documents::tab_id_for(&locator),
+                locator,
                 title,
                 presentation: DocumentPresentation {
                     icon: Icon::FileCode,
@@ -235,14 +230,40 @@ mod tests {
     }
 
     #[test]
-    fn generic_okf_identity_is_stable_and_distinct_from_uml_and_source() {
-        let generic = okf_document_tab_id("runbook");
-        assert_ne!(
-            generic,
-            crate::uml_documents::uml_document_tab_id("runbook")
+    fn tab_id_for_is_stable_and_distinct_across_targets_and_surfaces() {
+        use crate::documents::tab_id_for;
+        use waml::view::row::RowTarget;
+
+        let markdown = tab_id_for(&DocumentLocator::concept("order", SurfaceId::markdown()));
+        let source = tab_id_for(&DocumentLocator::concept("order", SurfaceId::source()));
+        let canvas = tab_id_for(&DocumentLocator::concept("order", SurfaceId::canvas()));
+        assert_ne!(markdown, source);
+        assert_ne!(markdown, canvas);
+        assert_ne!(source, canvas);
+        // Stable across two calls.
+        assert_eq!(
+            markdown,
+            tab_id_for(&DocumentLocator::concept("order", SurfaceId::markdown()))
         );
-        assert_ne!(generic, source_document_tab_id("runbook"));
-        assert_eq!(generic, okf_document_tab_id("runbook"));
+
+        // A folder tab never collides with a concept tab on the same surface.
+        let folder_order = tab_id_for(&DocumentLocator::new(
+            RowTarget::Folder("/order".into()),
+            SurfaceId::folder(),
+        ));
+        assert_ne!(folder_order, markdown);
+
+        // The folder's own source tab (its index document's key) is a
+        // different tab from a direct concept-open of that same index --
+        // they have different targets (Folder vs Concept), so the folder's
+        // source tab belongs to the folder's own history entry, not to the
+        // concept's.
+        let folder_shop_source = tab_id_for(&DocumentLocator::new(
+            RowTarget::Folder("/shop".into()),
+            SurfaceId::source(),
+        ));
+        let concept_shop_index_source = tab_id_for(&DocumentLocator::source("shop/index"));
+        assert_ne!(folder_shop_source, concept_shop_index_source);
     }
 
     #[test]
@@ -286,7 +307,13 @@ mod tests {
             &assets(),
         )
         .expect("a folder with an index.md resolves the source surface");
-        assert_eq!(doc.tab_id, source_document_tab_id("shop/index"));
+        assert_eq!(
+            doc.tab_id,
+            crate::documents::tab_id_for(&DocumentLocator::new(
+                RowTarget::Folder("/shop".into()),
+                SurfaceId::source(),
+            ))
+        );
         assert!(
             open_source_for_target(prepared.okf(), &RowTarget::Folder("/".into()), &assets())
                 .is_some()

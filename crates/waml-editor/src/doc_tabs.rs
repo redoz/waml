@@ -185,12 +185,13 @@ impl OpenTabs {
     pub fn diagram_preview(key: impl Into<String>, title: impl Into<String>) -> OpenTabs {
         let mut tabs = OpenTabs::default();
         let key = key.into();
+        let locator = crate::view_history::DocumentLocator::concept(
+            key,
+            waml::view::surface::SurfaceId::canvas(),
+        );
         tabs.open_preview(DocTab {
-            id: crate::uml_documents::uml_document_tab_id(&key),
-            locator: crate::view_history::DocumentLocator::concept(
-                key,
-                waml::view::surface::SurfaceId::canvas(),
-            ),
+            id: crate::documents::tab_id_for(&locator),
+            locator,
             title: title.into(),
             presentation: DocumentPresentation {
                 icon: crate::icons::Icon::Workflow,
@@ -994,12 +995,13 @@ mod tests {
     }
 
     fn tab(key: &str, title: &str, category: TreeKind) -> DocTab {
+        let locator = crate::view_history::DocumentLocator::concept(
+            key,
+            waml::view::surface::SurfaceId::canvas(),
+        );
         DocTab {
-            id: crate::uml_documents::uml_document_tab_id(key),
-            locator: crate::view_history::DocumentLocator::concept(
-                key,
-                waml::view::surface::SurfaceId::canvas(),
-            ),
+            id: crate::documents::tab_id_for(&locator),
+            locator,
             title: title.to_string(),
             presentation: DocumentPresentation {
                 icon: IconSet::icon_for(category).unwrap_or(Icon::StickyNote),
@@ -1013,15 +1015,19 @@ mod tests {
 
     fn source_tab(key: &str, title: &str) -> DocTab {
         let mut tab = tab(key, title, TreeKind::OkfDocument);
-        tab.id = crate::okf_documents::source_document_tab_id(key);
-        tab.presentation.icon = Icon::FileCode;
         tab.locator = crate::view_history::DocumentLocator::source(key);
+        tab.id = crate::documents::tab_id_for(&tab.locator);
+        tab.presentation.icon = Icon::FileCode;
         tab
     }
 
     fn generic_okf_tab(key: &str, title: &str) -> DocTab {
         let mut tab = tab(key, title, TreeKind::OkfDocument);
-        tab.id = crate::okf_documents::okf_document_tab_id(key);
+        tab.locator = crate::view_history::DocumentLocator::concept(
+            key,
+            waml::view::surface::SurfaceId::markdown(),
+        );
+        tab.id = crate::documents::tab_id_for(&tab.locator);
         tab
     }
     use super::*;
@@ -1242,8 +1248,13 @@ mod tests {
 
     #[test]
     fn classifier_and_source_tabs_for_one_subject_have_distinct_stable_ids() {
-        let classifier = crate::uml_documents::uml_document_tab_id("customer");
-        let source = crate::okf_documents::source_document_tab_id("customer");
+        let classifier =
+            crate::documents::tab_id_for(&crate::view_history::DocumentLocator::concept(
+                "customer",
+                waml::view::surface::SurfaceId::canvas(),
+            ));
+        let source =
+            crate::documents::tab_id_for(&crate::view_history::DocumentLocator::source("customer"));
         assert_ne!(classifier, source);
 
         let mut open = OpenTabs::default();

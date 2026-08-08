@@ -209,14 +209,6 @@ pub fn reorder_row_op(
     Some((row.id.clone(), RowOp::Reorder { before }))
 }
 
-/// The `__doc_tab_folder__`-namespaced tab identity for a directory address.
-/// Distinct from every concept-id tab namespace (`okf_documents`,
-/// `uml_documents`) -- opening a folder never collides with opening a
-/// concept of the same name.
-pub fn folder_document_tab_id(directory: &str) -> LiveId {
-    LiveId::from_str(&format!("__doc_tab_folder__{directory}"))
-}
-
 /// A folder's own view: the resolved chain's outcome, held for the row
 /// view-model and any diagnostics the chain produced (Task D2 surfaces
 /// these; this task only carries them).
@@ -850,14 +842,15 @@ mod tests {
 
     #[test]
     fn a_folder_target_gets_its_own_tab_identity() {
-        assert_ne!(
-            folder_document_tab_id("/sales"),
-            crate::okf_documents::okf_document_tab_id("/sales"),
-        );
-        assert_eq!(
-            folder_document_tab_id("/sales"),
-            folder_document_tab_id("/sales")
-        );
+        use crate::documents::tab_id_for;
+        use crate::navigation::DocumentLocator;
+        use waml::view::row::RowTarget;
+        use waml::view::surface::SurfaceId;
+
+        let folder = DocumentLocator::new(RowTarget::Folder("/sales".into()), SurfaceId::folder());
+        let concept = DocumentLocator::concept("/sales", SurfaceId::markdown());
+        assert_ne!(tab_id_for(&folder), tab_id_for(&concept));
+        assert_eq!(tab_id_for(&folder), tab_id_for(&folder));
     }
 
     /// `apply_gesture` is the piece `FolderView::handle` calls to turn an

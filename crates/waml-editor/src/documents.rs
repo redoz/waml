@@ -2,6 +2,21 @@ use crate::document::{DocumentDescriptor, OpenDocument};
 use crate::view_history::DocumentLocator;
 use waml::view::row::{Row, RowTarget};
 
+/// THE tab identity: one function over the locator (spec §3). The target
+/// discriminant is baked into the string so a folder "/x" and a concept
+/// "x" can never collide, and two surfaces of one target stay two tabs.
+pub fn tab_id_for(locator: &DocumentLocator) -> makepad_widgets::LiveId {
+    let target = match &locator.target {
+        RowTarget::Concept(id) => format!("c:{id}"),
+        RowTarget::Folder(address) => format!("f:{address}"),
+        RowTarget::Virtual => "v:".to_string(),
+    };
+    makepad_widgets::LiveId::from_str(&format!(
+        "__doc_tab__{}__{target}",
+        locator.surface.as_str()
+    ))
+}
+
 pub fn describe(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -243,14 +258,20 @@ mod tests {
             open_with_asset_host(prepared.okf(), prepared.uml(), "order", &assets())
                 .unwrap()
                 .tab_id,
-            crate::uml_documents::uml_document_tab_id("order")
+            crate::documents::tab_id_for(&DocumentLocator::concept(
+                "order",
+                waml::view::surface::SurfaceId::canvas()
+            ))
         );
         assert!(crate::uml_documents::open(prepared.okf(), prepared.uml(), "runbook").is_none());
         assert_eq!(
             open_with_asset_host(prepared.okf(), prepared.uml(), "runbook", &assets())
                 .unwrap()
                 .tab_id,
-            crate::okf_documents::okf_document_tab_id("runbook")
+            crate::documents::tab_id_for(&DocumentLocator::concept(
+                "runbook",
+                waml::view::surface::SurfaceId::markdown()
+            ))
         );
 
         let (generic_tab, _) =
@@ -321,7 +342,10 @@ mod tests {
             open_with_asset_host(prepared.okf(), prepared.uml(), "broken", &assets()).unwrap();
         assert_eq!(
             document.tab_id,
-            crate::uml_documents::uml_document_tab_id("broken")
+            crate::documents::tab_id_for(&DocumentLocator::concept(
+                "broken",
+                waml::view::surface::SurfaceId::canvas()
+            ))
         );
         let id = prepared
             .okf()
@@ -420,7 +444,10 @@ mod tests {
         assert!(diagnostic.is_none());
         assert_eq!(
             doc.unwrap().tab_id,
-            crate::uml_documents::uml_document_tab_id("order")
+            crate::documents::tab_id_for(&DocumentLocator::concept(
+                "order",
+                waml::view::surface::SurfaceId::canvas()
+            ))
         );
     }
 
@@ -443,7 +470,7 @@ mod tests {
         assert!(diagnostic.is_none());
         assert_eq!(
             doc.unwrap().tab_id,
-            crate::okf_documents::source_document_tab_id("order")
+            crate::documents::tab_id_for(&DocumentLocator::source("order"))
         );
     }
 
@@ -471,7 +498,10 @@ mod tests {
         // uml-aware open path as the unadorned case.
         assert_eq!(
             doc.unwrap().tab_id,
-            crate::uml_documents::uml_document_tab_id("order")
+            crate::documents::tab_id_for(&DocumentLocator::concept(
+                "order",
+                waml::view::surface::SurfaceId::canvas()
+            ))
         );
     }
 
@@ -573,7 +603,7 @@ mod tests {
         );
         assert_eq!(
             reopened.tab_id,
-            crate::okf_documents::source_document_tab_id("runbook")
+            crate::documents::tab_id_for(&DocumentLocator::source("runbook"))
         );
     }
 
@@ -649,7 +679,10 @@ mod tests {
         .expect("an unknown surface must degrade, never open nothing");
         assert_eq!(
             doc.tab_id,
-            crate::uml_documents::uml_document_tab_id("order")
+            crate::documents::tab_id_for(&DocumentLocator::concept(
+                "order",
+                waml::view::surface::SurfaceId::canvas()
+            ))
         );
     }
 }

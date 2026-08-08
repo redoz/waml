@@ -3,12 +3,6 @@ use crate::document::{
 };
 use crate::icons::{Icon, IconSet};
 use crate::view_history::DocumentLocator;
-use makepad_widgets::LiveId;
-
-pub fn uml_document_tab_id(concept_id: &str) -> LiveId {
-    LiveId::from_str(&format!("__doc_tab_uml__{concept_id}"))
-}
-
 fn category(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -125,9 +119,10 @@ pub fn open_with_asset_host(
             assets.clone(),
         )),
     };
+    let locator = DocumentLocator::concept(concept_id, waml::view::surface::SurfaceId::canvas());
     Some(OpenDocument {
-        tab_id: uml_document_tab_id(concept_id),
-        locator: DocumentLocator::concept(concept_id, waml::view::surface::SurfaceId::canvas()),
+        tab_id: crate::documents::tab_id_for(&locator),
+        locator,
         title,
         presentation,
         view,

@@ -746,7 +746,8 @@ mod tests {
             persistent: true,
         });
         let mut source = prepared("order", NavCategory::OkfDocument, Rc::new(Cell::new(0)));
-        source.tab_id = crate::okf_documents::source_document_tab_id("order");
+        source.tab_id =
+            crate::documents::tab_id_for(&crate::view_history::DocumentLocator::source("order"));
         source.locator = crate::view_history::DocumentLocator::source("order");
         let source_id = source.tab_id;
         host.apply_command(DocumentCommand::Open {
@@ -772,7 +773,8 @@ mod tests {
         let mut host = DocumentHost::default();
 
         let mut source = prepared("order", NavCategory::OkfDocument, Rc::new(Cell::new(0)));
-        source.tab_id = crate::okf_documents::source_document_tab_id("order");
+        source.tab_id =
+            crate::documents::tab_id_for(&crate::view_history::DocumentLocator::source("order"));
         source.locator = crate::view_history::DocumentLocator::source("order");
         host.apply_command(DocumentCommand::Open {
             document: source,

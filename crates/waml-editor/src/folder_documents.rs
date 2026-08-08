@@ -4,7 +4,7 @@
 use crate::document::{
     DocumentCapabilities, DocumentDescriptor, DocumentPresentation, NavCategory, OpenDocument,
 };
-use crate::folder_view::{folder_document_tab_id, FolderView};
+use crate::folder_view::FolderView;
 use crate::icons::Icon;
 use crate::navigation::DocumentLocator;
 
@@ -47,9 +47,10 @@ pub fn open(
     let presentation = describe(analysis, directory)?.presentation;
     let view = FolderView::build(analysis, directory, limits, mask)?;
     let title = title_for(analysis, directory);
+    let locator = DocumentLocator::folder(directory);
     Some(OpenDocument {
-        tab_id: folder_document_tab_id(directory),
-        locator: DocumentLocator::folder(directory),
+        tab_id: crate::documents::tab_id_for(&locator),
+        locator,
         title,
         presentation,
         view: Box::new(view),
@@ -79,7 +80,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(document.presentation.category, NavCategory::Directory);
-        assert_eq!(document.tab_id, folder_document_tab_id("/sales"));
+        assert_eq!(
+            document.tab_id,
+            crate::documents::tab_id_for(&DocumentLocator::folder("/sales"))
+        );
         assert_eq!(document.title, "Sales");
 
         assert!(open(

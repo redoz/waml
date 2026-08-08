@@ -337,7 +337,10 @@ mod tests {
         let doc = open_canvas(&ctx, &target).expect("a claimed uml.Class opens on canvas");
         assert_eq!(
             doc.tab_id,
-            crate::uml_documents::uml_document_tab_id("order")
+            crate::documents::tab_id_for(&crate::view_history::DocumentLocator::concept(
+                "order",
+                waml::view::surface::SurfaceId::canvas()
+            ))
         );
     }
 
