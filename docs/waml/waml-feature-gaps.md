@@ -15,6 +15,11 @@ This ledger records opportunities. It does not authorize a WAML language
 change. The workarounds remain normative until an approved language change
 replaces them.
 
+Specialized actor, use-case, and system-boundary rendering is separate user
+work. It is not a WAML language or documentation gap, and it is not a Task 5 or
+Task 11 responsibility. Task 11 creates semantic product-use-case documents
+and links only; it does not own specialized rendering.
+
 ## FG-001 — platform and capability predicates
 
 ### Problem

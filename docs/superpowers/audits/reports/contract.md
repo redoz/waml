@@ -55,17 +55,20 @@ known pre-migration findings outside these files:
 - `docs/waml/goals/uml/sequence/language.md` needs its planned scenario
   migration. At heading lines 94, 103, 111, 119, 126, 132, 140, 147, 155, 162,
   171, 178, 185, 192, 198, 205, 211, 217, 224, 230, 237, 246, 253, 259, 265,
-  271, 278, 286, 295, 305, and 315, the checker reports `evidence has no
-  source or valid marked test`, `expected an **Evidence:** line`, and `native
-  test is absent; add an item under Verification gaps`. At lines 96, 105, 113,
-  121, 128, 134, 142, 149, 157, 164, 173, 180, 187, 194, 200, 207, 213, 219,
-  226, 232, 239, 248, 255, 261, 267, 273, 280, 288, 297, 307, and 317, it
-  reports `expected **Applies to:** shared, native, or browser`.
+  271, 278, 286, 295, 305, 315, and 322, the checker reports `evidence has no
+  source or valid marked test` and `expected an **Evidence:** line`. At lines
+  96, 105, 113, 121, 128, 134, 142, 149, 157, 164, 173, 180, 187, 194, 200,
+  207, 213, 219, 226, 232, 239, 248, 255, 261, 267, 273, 280, 288, 297, 307,
+  317, and 324, it reports `expected **Applies to:** shared, native, or browser`.
 
 # Verification gaps
 
-None in the Task 5 documents. The sequence-language findings above are owned
-by the behavior-diagram goal stream.
+None in the Task 5 documents. In
+`docs/waml/goals/uml/sequence/language.md`, the checker reports `native test is
+absent; add an item under Verification gaps` at heading lines 94, 103, 111,
+119, 126, 132, 140, 147, 155, 162, 171, 178, 185, 192, 198, 205, 211, 217,
+224, 230, 237, 246, 253, 259, 265, 271, 278, 286, 295, 305, 315, and 322.
+These pre-migration findings are owned by the behavior-diagram goal stream.
 
 # Open discrepancies
 
@@ -75,5 +78,6 @@ None.
 
 - `FG-001` through `FG-010` are recorded in `docs/waml/waml-feature-gaps.md`.
 - `FG-010` records scenario-to-product-use-case-to-test-and-evidence
-  traceability. It does not record specialized actor, use-case, or
-  system-boundary rendering.
+  traceability. Task 11 owns the semantic product-use-case documents and links.
+- Specialized actor, use-case, and system-boundary rendering is separate user
+  work. It is not a gap and is not a Task 5 or Task 11 responsibility.

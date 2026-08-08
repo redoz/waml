@@ -57,9 +57,10 @@ following field form follows the heading:
 
 Use active voice, present tense, semantic targets, and observable results. Do
 not expose Rust operations or fixed coordinates unless a coordinate is the
-contract. A shared scenario has one normative native verification target. A
-browser scenario has a browser verification target. A browser test is for
-browser-only behavior or an explicit native/browser parity seam.
+contract. Shared and native scenarios target native verification. Browser
+scenarios target browser verification. A shared scenario has one normative
+native verification target. A browser test is for browser-only behavior or an
+explicit native/browser parity seam.
 
 The compatible identifier grammar is
 `^[A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-[0-9]+$`. Preserve every existing
