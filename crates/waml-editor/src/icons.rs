@@ -1783,6 +1783,24 @@ script_mod! {
         }
     }
 
+    // Faithful port of resources/icons/code.svg via scripts/gen-icon.py.
+    mod.draw.IconCode = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.6667, s * 0.7500)
+            sdf.line_to(s * 0.9167, s * 0.5000)
+            sdf.line_to(s * 0.6667, s * 0.2500)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.2500)
+            sdf.line_to(s * 0.0833, s * 0.5000)
+            sdf.line_to(s * 0.3333, s * 0.7500)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     // Faithful port of resources/icons/eye.svg via scripts/gen-icon.py.
     // Faithful port of resources/icons/eye.svg via scripts/gen-icon.py.
     mod.draw.IconEye = mod.draw.DrawColor{
@@ -4205,6 +4223,7 @@ script_mod! {
         box_: mod.draw.IconBox{ color: atlas.accent }
         square_code: mod.draw.IconSquareCode{ color: atlas.accent }
         square_library: mod.draw.IconSquareLibrary{ color: atlas.accent }
+        code: mod.draw.IconCode{ color: atlas.accent }
     }
 }
 
@@ -4465,6 +4484,8 @@ pub struct IconSet {
     pub square_code: DrawColor,
     #[live]
     pub square_library: DrawColor,
+    #[live]
+    pub code: DrawColor,
 }
 
 impl IconSet {
@@ -4597,6 +4618,7 @@ impl IconSet {
             Icon::Box => &mut self.box_,
             Icon::SquareCode => &mut self.square_code,
             Icon::SquareLibrary => &mut self.square_library,
+            Icon::Code => &mut self.code,
         }
     }
 
@@ -4743,12 +4765,13 @@ pub enum Icon {
     Box,
     SquareCode,
     SquareLibrary,
+    Code,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 125] = [
+    pub const ALL: [Icon; 126] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4874,6 +4897,7 @@ impl Icon {
         Icon::Box,
         Icon::SquareCode,
         Icon::SquareLibrary,
+        Icon::Code,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5005,6 +5029,7 @@ impl Icon {
             Icon::Box => "box",
             Icon::SquareCode => "square-code",
             Icon::SquareLibrary => "square-library",
+            Icon::Code => "code",
         }
     }
 }
@@ -5015,7 +5040,7 @@ mod tests {
 
     #[test]
     fn icon_all_has_121_entries() {
-        assert_eq!(Icon::ALL.len(), 125);
+        assert_eq!(Icon::ALL.len(), 126);
     }
 
     // ------------------------------------------------------------------
@@ -5237,7 +5262,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 125);
+        assert_eq!(seen.len(), 126);
     }
 
     #[test]

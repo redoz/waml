@@ -661,7 +661,7 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
-                    view_toggle: Some(Icon::FileCode),
+                    view_toggle: Some(Icon::Code),
                 },
             }
         );

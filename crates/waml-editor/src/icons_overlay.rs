@@ -53,6 +53,7 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
         "NODE MENU",
         &[
             ie!(FileCode, "View source"),
+            ie!(Code, "View source (header toggle)"),
             ie!(Eye, "View rendered (header toggle)"),
             ie!(FileCodeCorner, "View source -- open-edge variant, unwired"),
             ie!(Search, "Find in diagrams"),

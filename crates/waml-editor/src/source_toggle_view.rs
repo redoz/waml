@@ -203,7 +203,7 @@ impl<V: DocView> DocView for SourceToggleView<V> {
         chrome.document_header.view_toggle = Some(if self.showing_source {
             Icon::Eye
         } else {
-            Icon::FileCode
+            Icon::Code
         });
         chrome
     }
@@ -301,7 +301,7 @@ mod tests {
             DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
-                view_toggle: Some(Icon::FileCode),
+                view_toggle: Some(Icon::Code),
             }
         );
     }
@@ -323,10 +323,7 @@ mod tests {
             }
         );
         view.toggle_for_test();
-        assert_eq!(
-            view.chrome().document_header.view_toggle,
-            Some(Icon::FileCode)
-        );
+        assert_eq!(view.chrome().document_header.view_toggle, Some(Icon::Code));
     }
 
     #[test]

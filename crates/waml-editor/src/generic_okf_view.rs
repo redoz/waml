@@ -151,7 +151,7 @@ impl DocView for GenericOkfView {
                 view_toggle: Some(if self.reading.showing_source() {
                     Icon::Eye
                 } else {
-                    Icon::FileCode
+                    Icon::Code
                 }),
             },
         }
@@ -232,7 +232,7 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
-                    view_toggle: Some(Icon::FileCode),
+                    view_toggle: Some(Icon::Code),
                 },
             }
         );
