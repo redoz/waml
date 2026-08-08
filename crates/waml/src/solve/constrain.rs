@@ -161,12 +161,21 @@ pub fn compile(
         scene.boxes.iter().map(|b| (b.id.clone(), b)).collect();
 
     // Rule 1: leaf enumeration, scene order, dedup (first occurrence wins).
+    // A non-collapsed leaf with no measured size gets NO solve slot:
+    // `resolve::add_group` creates a leaf Box for EVERY declared member key
+    // (typo'd or not), and a slot here becomes a solved, rendered node in the
+    // editor — the old hintless path's keys were `sizes.keys()`, so such keys
+    // never rendered. Constraints naming one drop as unknown operands (Rule
+    // 7); collapsed leaves stay, they render at chip size regardless.
     let mut keys: Vec<String> = Vec::new();
     let mut leaf_index: BTreeMap<BoxId, usize> = BTreeMap::new();
     let mut flags: Vec<FlagSet> = Vec::new();
     for b in &scene.boxes {
         if let BoxId::Node(k) = &b.id {
             if leaf_index.contains_key(&b.id) {
+                continue;
+            }
+            if !b.flags.collapsed && !sizes.contains_key(k) {
                 continue;
             }
             leaf_index.insert(b.id.clone(), keys.len());
@@ -205,9 +214,11 @@ pub fn compile(
     //     with no measured size): its hull would be a degenerate `Rect` at
     //     the origin, a phantom route obstacle. A leaf box gets created for
     //     ANY declared member key regardless of whether it names a real sized
-    //     node (`resolve::add_group` doesn't check), so "resolved" here means
-    //     "has an entry in `leaf_sizes`", matching the old `flatten_groups`'
-    //     `collect_members` filtering against the sizes-derived `index`.
+    //     node (`resolve::add_group` doesn't check), but Rule 1 gives a
+    //     sizeless leaf no solve slot, so the descendant-leaf walk already
+    //     excludes it; the `leaf_sizes` filter below is belt-and-suspenders,
+    //     matching the old `flatten_groups`' `collect_members` filtering
+    //     against the sizes-derived `index`.
     let mut group_specs: Vec<GroupSpec> = Vec::new();
     let mut group_meta: Vec<(Option<String>, u8, Shape)> = Vec::new();
     let mut inline_specs: Vec<GroupSpec> = Vec::new();
@@ -274,7 +285,9 @@ pub fn compile(
         if let Some(&idx) = leaf_index.get(id) {
             return leaf_sizes[idx].map(|size| Endpoint::Leaf { idx, size });
         }
-        if boxes_by_id.contains_key(id) {
+        // Only true group boxes proxy through boundary vars; a leaf Box that
+        // got no solve slot (sizeless, see Rule 1) is an unknown operand.
+        if !matches!(id, BoxId::Node(_)) && boxes_by_id.contains_key(id) {
             return Some(Endpoint::Group(id.clone()));
         }
         None
@@ -868,6 +881,40 @@ mod tests {
         assert!(compiled.seps.x.is_empty());
         assert!(compiled.seps.y.is_empty());
         assert_eq!(compiled.seps.extra_vars, 0);
+    }
+
+    #[test]
+    fn sizeless_leaf_gets_no_solve_slot_and_its_constraints_drop() {
+        // `resolve::add_group` creates a leaf Box for EVERY declared member
+        // key, even a typo'd one that resolves to no sized node. Such a leaf
+        // has no geometry: it must not occupy a solve slot (the editor would
+        // solve it at chip size and render a phantom title-only node), and a
+        // constraint naming it must drop as an unknown operand — not compile
+        // against a group boundary-var proxy.
+        let scene = Scene {
+            boxes: vec![leaf("a"), leaf("ghost")],
+            constraints: vec![place("a", "ghost", Direction::LeftOf)],
+        };
+        let sz = sizes(&[("a", 100.0, 50.0)]);
+        let compiled = compile(
+            &scene,
+            &sz,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &SolveConfig::default(),
+        );
+        assert_eq!(
+            compiled.keys,
+            vec!["a".to_string()],
+            "a sizeless leaf must not occupy a solve slot"
+        );
+        assert!(compiled.seps.x.is_empty());
+        assert!(compiled.seps.y.is_empty());
+        assert_eq!(
+            compiled.seps.extra_vars, 0,
+            "a sizeless leaf is not a group; no boundary vars"
+        );
+        assert_eq!(compiled.dropped.len(), 1);
     }
 
     #[test]

@@ -2675,6 +2675,10 @@ mod tests {
             "the memberless group must be dropped"
         );
         assert_eq!(scene.groups[0].title.as_deref(), Some("Ordering"));
+        assert!(
+            !scene.nodes.iter().any(|n| n.key == "not-a-node"),
+            "an unresolvable member must not render a phantom chip-sized node"
+        );
     }
 
     #[test]
