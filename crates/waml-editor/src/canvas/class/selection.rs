@@ -349,6 +349,7 @@ mod tests {
         );
     }
 
+    // Scenario: NATIVE-034
     #[test]
     fn selecting_starts_a_lift_without_delaying_logical_selection() {
         let mut state = SelectionState::default();

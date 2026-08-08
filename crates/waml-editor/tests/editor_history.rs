@@ -50,6 +50,7 @@ fn record(history: &mut EditorHistory, index: usize, merge_key: Option<EditMerge
     );
 }
 
+// Scenario: NATIVE-028
 #[test]
 fn one_edit_produces_undo_and_undo_redo_swap_reciprocals() {
     let mut history = EditorHistory::default();
@@ -81,6 +82,7 @@ fn one_edit_produces_undo_and_undo_redo_swap_reciprocals() {
     assert!(history.can_undo());
 }
 
+// Scenario: NATIVE-048
 #[test]
 fn new_edit_after_undo_clears_redo() {
     let mut history = EditorHistory::default();
@@ -112,6 +114,7 @@ fn failed_undo_and_redo_leave_the_prepared_entry_unchanged() {
     assert_eq!(history.prepare_redo().unwrap().target_state(), redo_state);
 }
 
+// Scenario: NATIVE-029
 #[test]
 fn savepoint_identity_tracks_undo_back_to_saved_state() {
     let mut history = EditorHistory::default();

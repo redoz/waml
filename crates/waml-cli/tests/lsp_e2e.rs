@@ -112,6 +112,7 @@ fn framed_json(output: &str) -> Vec<serde_json::Value> {
     values
 }
 
+// Scenario: LSP-001
 #[test]
 fn publishes_diagnostics_for_unresolved_target_over_stdio() {
     let exe = env!("CARGO_BIN_EXE_waml");
@@ -313,6 +314,10 @@ fn parser_platform_baseline_maps_astral_unicode_span_to_exact_utf16_range() {
     );
 }
 
+// Scenario: LSP-002
+// Scenario: LSP-003
+// Scenario: LSP-004
+// Scenario: LSP-005
 #[test]
 fn snapshot_queries_are_advertised_unicode_exact_and_revision_current_over_stdio() {
     let exe = env!("CARGO_BIN_EXE_waml");

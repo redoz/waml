@@ -176,6 +176,7 @@ fn breakpoint_enters_below_640_and_leaves_above_680() {
     assert!(!next_narrow(true, 680.1));
 }
 
+// Scenario: NATIVE-006
 #[test]
 fn breakpoint_preserves_mode_through_the_hysteresis_band() {
     for width in [640.0, 650.0, 680.0] {

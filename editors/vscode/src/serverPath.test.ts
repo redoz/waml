@@ -203,6 +203,7 @@ describe("VS Code stdio transport isolation", () => {
 });
 
 describe("extension lifecycle", () => {
+  // Scenario: VSCODE-002
   it("starts the configured executable once with stdio, restart policy, and markdown initialization", async () => {
     process.env.WAML_SERVER_PATH = __filename;
 
@@ -227,6 +228,7 @@ describe("extension lifecycle", () => {
     });
   });
 
+  // Scenario: VSCODE-002
   it("pins the installed client's bounded default error and crash-restart behavior", () => {
     const dependencyPath = createRequire(__filename).resolve(
       "vscode-languageclient/lib/common/client.js",
@@ -271,6 +273,7 @@ describe("extension lifecycle", () => {
     expect(exhausted.message).toContain("crashed 5 times");
   });
 
+  // Scenario: VSCODE-003
   it("reports an unresolved executable without constructing a client", async () => {
     process.env.WAML_SERVER_PATH = join(__dirname, "missing-waml");
 
@@ -281,6 +284,7 @@ describe("extension lifecycle", () => {
     expect(vscodeHarness.errors[0]).toContain("WAML language server not started");
   });
 
+  // Scenario: VSCODE-004
   it("stops the previous client before a repeated activation starts another", async () => {
     process.env.WAML_SERVER_PATH = __filename;
     await activate(extensionContext());
@@ -293,6 +297,7 @@ describe("extension lifecycle", () => {
     expect(clientHarness.instances[1].starts).toBe(1);
   });
 
+  // Scenario: VSCODE-005
   it("cleans up and reports a launch failure", async () => {
     process.env.WAML_SERVER_PATH = __filename;
     clientHarness.nextStartError = new Error("spawn failed");
@@ -304,6 +309,7 @@ describe("extension lifecycle", () => {
     expect(vscodeHarness.errors[0]).toContain("spawn failed");
   });
 
+  // Scenario: VSCODE-006
   it("deactivate stops the active client once and clears it", async () => {
     process.env.WAML_SERVER_PATH = __filename;
     await activate(extensionContext());

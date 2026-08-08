@@ -72,6 +72,7 @@ fn mounted(text: &str) -> (Cx, MarkdownEditorRef, MarkdownDocumentSession) {
     (cx, editor, session)
 }
 
+// Scenario: NATIVE-023
 #[test]
 fn editable_mount_emits_an_exact_revisioned_source_proposal() {
     let (mut cx, editor, mut session) = mounted("# Order\n");
@@ -90,6 +91,7 @@ fn editable_mount_emits_an_exact_revisioned_source_proposal() {
     ));
 }
 
+// Scenario: NATIVE-022
 #[test]
 fn read_only_mount_never_emits_a_source_proposal() {
     let (mut cx, editor, mut session) = mounted("# Order\n");
@@ -104,6 +106,7 @@ fn read_only_mount_never_emits_a_source_proposal() {
     assert_eq!(session.snapshot().text().shared().as_str(), "# Order\n");
 }
 
+// Scenario: NATIVE-045
 #[test]
 fn external_replacement_maps_selection_and_scroll_and_cuts_motion() {
     let (_, _, mut session) = mounted("abcdef");

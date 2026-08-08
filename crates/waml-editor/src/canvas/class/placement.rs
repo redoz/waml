@@ -1200,6 +1200,7 @@ mod tests {
         assert!(placement.preview.is_none());
     }
 
+    // Scenario: NATIVE-060
     #[test]
     fn abrupt_cancel_restores_nodes_complete_edges_and_camera() {
         let mut placement = dragging("a");

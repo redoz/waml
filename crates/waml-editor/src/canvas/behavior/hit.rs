@@ -185,6 +185,7 @@ mod tests {
     use waml::model::FlowNodeKind;
     use waml::solve::Rect;
 
+    // Scenario: NATIVE-064
     #[test]
     fn empty_scene_hits_nothing() {
         let scene = BehaviorScene::Empty {
@@ -205,6 +206,7 @@ mod tests {
         }
     }
 
+    // Scenario: NATIVE-038
     #[test]
     fn flow_hit_prefers_node_over_edge_under_it() {
         let scene = BehaviorScene::Flow {
@@ -237,6 +239,7 @@ mod tests {
         );
     }
 
+    // Scenario: NATIVE-039
     #[test]
     fn flow_edge_hits_within_tolerance_band() {
         let scene = BehaviorScene::Flow {
@@ -289,6 +292,7 @@ mod tests {
         }
     }
 
+    // Scenario: NATIVE-041
     #[test]
     fn message_beats_enclosing_fragment() {
         let scene = BehaviorScene::Interaction {
@@ -322,6 +326,7 @@ mod tests {
         );
     }
 
+    // Scenario: NATIVE-042
     #[test]
     fn activation_bar_resolves_to_its_lifeline() {
         let scene = BehaviorScene::Interaction {
@@ -346,6 +351,7 @@ mod tests {
         );
     }
 
+    // Scenario: NATIVE-043
     #[test]
     fn fragment_border_hits_fragment_but_interior_empty_space_does_not() {
         let scene = BehaviorScene::Interaction {

@@ -47,6 +47,7 @@ fn deleted_target_is_skipped_retained_and_reached_after_model_restore() {
     assert_eq!(restored.location, b);
 }
 
+// Scenario: NATIVE-016
 #[test]
 fn back_and_forward_restore_view_anchors_without_tab_metadata() {
     let diagram = location(

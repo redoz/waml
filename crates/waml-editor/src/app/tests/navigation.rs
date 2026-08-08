@@ -348,6 +348,7 @@ fn source_range_navigation_activates_source_and_selects_the_current_range() {
     assert_eq!(selection.primary().range(), range);
 }
 
+// Scenario: NATIVE-050
 #[test]
 fn changed_source_range_navigation_preserves_selection_and_publishes_status() {
     let (mut cx, mut app) = mounted_source_app();
@@ -508,6 +509,7 @@ fn project_tree_selected_key(cx: &Cx, app: &App) -> Option<String> {
         .and_then(|tree| tree.test_selected_key().map(str::to_owned))
 }
 
+// Scenario: NATIVE-015
 #[test]
 fn navigation_external_target_invokes_only_the_browser_adapter_once() {
     let (mut cx, mut app) = navigation_app();
@@ -648,6 +650,7 @@ fn navigation_document_preview_persistence_and_repeat_activation_are_stable() {
     assert!(!app.documents.tabs()[0].preview);
 }
 
+// Scenario: NATIVE-014
 #[test]
 fn navigation_markdown_resolves_only_at_the_app_boundary() {
     let (mut cx, mut app) = navigation_app();
@@ -701,6 +704,7 @@ fn navigation_app_with_active_order() -> (Cx, App) {
     (cx, app)
 }
 
+// Scenario: NATIVE-016
 #[test]
 fn manual_and_preview_transitions_follow_back_and_forward_history() {
     let (mut cx, mut app) = navigation_app_with_active_order();

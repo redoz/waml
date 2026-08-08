@@ -1108,6 +1108,7 @@ mod tests {
         assert_eq!(open.tabs.len(), 2);
     }
 
+    // Scenario: NATIVE-017
     #[test]
     fn open_preview_twice_replaces_the_single_preview_slot() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
@@ -1123,6 +1124,7 @@ mod tests {
         assert_eq!(open.active, open.tabs[0].id);
     }
 
+    // Scenario: NATIVE-018
     #[test]
     fn promote_then_open_preview_keeps_the_promoted_tab_and_adds_a_fresh_preview() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
@@ -1137,6 +1139,7 @@ mod tests {
         assert!(open.tabs[1].preview);
     }
 
+    // Scenario: NATIVE-019
     #[test]
     fn reopening_a_promoted_tab_focuses_it_instead_of_duplicating() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");
@@ -1165,6 +1168,7 @@ mod tests {
         assert!(!open.tabs[0].preview);
     }
 
+    // Scenario: NATIVE-020
     #[test]
     fn close_activates_right_adjacent_then_left_then_first_tab() {
         let mut open = OpenTabs::diagram_preview("d", "Diagram");

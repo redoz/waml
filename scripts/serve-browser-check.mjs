@@ -105,6 +105,9 @@ async function waitForUrl() {
 
 let exitCode = 0;
 let browser = null;
+// Scenario: BROWSER-002
+// Scenario: BROWSER-007
+// Scenario: BROWSER-009
 try {
   const url = await waitForUrl();
   const apiBase = url.replace(/^(http:\/\/[^/]+).*$/, '$1/api');

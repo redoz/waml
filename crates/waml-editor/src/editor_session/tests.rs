@@ -105,6 +105,8 @@ fn local_insert(
         .unwrap()
 }
 
+// Scenario: NATIVE-027
+// Scenario: NATIVE-062
 #[test]
 fn accepted_source_edit_advances_once_and_promotes_the_same_syntax_arc() {
     let mut session = source_session("# Order\n");
@@ -157,6 +159,7 @@ fn accepted_source_edit_advances_once_and_promotes_the_same_syntax_arc() {
     ));
 }
 
+// Scenario: NATIVE-032
 #[test]
 fn pending_source_changes_map_only_unchanged_diagnostic_ranges() {
     let mut session = source_session("# Order\nBody\n");
@@ -256,6 +259,7 @@ fn semantic_completion_installs_affected_documents_and_diagrams() {
     );
 }
 
+// Scenario: NATIVE-049
 #[test]
 fn stale_or_invalid_source_proposals_do_not_mutate_snapshot_or_history() {
     let mut session = source_session("# Order\n");

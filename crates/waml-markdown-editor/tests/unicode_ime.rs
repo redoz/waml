@@ -124,6 +124,7 @@ fn triple_click_selects_one_logical_crlf_source_line() {
     );
 }
 
+// Scenario: NATIVE-026
 #[test]
 fn ime_preedit_is_visible_state_but_not_a_published_revision() {
     let mut session = session("ab");
@@ -146,6 +147,7 @@ fn ime_preedit_is_visible_state_but_not_a_published_revision() {
     assert!(session.ime().is_none());
 }
 
+// Scenario: NATIVE-026
 #[test]
 fn ime_cancel_restores_the_last_committed_snapshot_and_selection() {
     let mut session = session("a😀b");
@@ -264,6 +266,7 @@ fn combining_zwj_flags_and_non_latin_words_use_unicode_boundaries() {
     );
 }
 
+// Scenario: NATIVE-026
 #[test]
 fn ime_replaces_nonempty_selection_and_cancel_models_focus_loss() {
     let source = session("abc");

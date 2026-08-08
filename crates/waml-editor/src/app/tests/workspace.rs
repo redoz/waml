@@ -159,6 +159,7 @@ fn failed_final_save_retains_dirty_and_prevents_quit() {
     assert!(quit.handled.get());
 }
 
+// Scenario: NATIVE-031
 #[test]
 fn successful_bundle_open_clears_the_visible_save_error() {
     let mut state = SaveFeedback::default();
@@ -204,6 +205,7 @@ fn failed_save_blocks_replacement_load() {
     );
 }
 
+// Scenario: NATIVE-056
 #[test]
 fn failed_save_blocks_close_and_keeps_document_state() {
     let mut state = vec!["edited"];
@@ -216,6 +218,7 @@ fn failed_save_blocks_close_and_keeps_document_state() {
     assert_eq!(state, before);
 }
 
+// Scenario: NATIVE-057
 #[test]
 fn successful_save_allows_close_and_clears_document_state() {
     let mut state = vec!["edited"];

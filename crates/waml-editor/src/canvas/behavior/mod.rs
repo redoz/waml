@@ -871,6 +871,7 @@ mod tests {
         assert_eq!(surface.viewport.camera(), fitted);
     }
 
+    // Scenario: NATIVE-063
     #[test]
     fn affected_scene_update_preserves_camera_and_surviving_selection() {
         use makepad_widgets::ScriptNew;

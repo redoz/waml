@@ -1234,6 +1234,7 @@ mod tests {
         assert!(!ClassDiagramMode::Properties.accepts_canvas_actions());
     }
 
+    // Scenario: NATIVE-058
     #[test]
     fn diagram_properties_tool_toggles_the_view_instead_of_being_a_no_op() {
         let mut view = ClassDiagramView::new("orders".into());
@@ -1262,6 +1263,7 @@ mod tests {
         );
     }
 
+    // Scenario: NATIVE-059
     #[test]
     fn a_properties_change_returns_exactly_one_diagram_set() {
         let mut view = ClassDiagramView::new("orders".into());

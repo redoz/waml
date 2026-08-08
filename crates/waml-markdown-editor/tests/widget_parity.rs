@@ -47,6 +47,7 @@ fn retained_drag_extends_selection() {
     assert_eq!(fixture.selected_text(), "pha");
 }
 
+// Scenario: NATIVE-046
 #[test]
 fn retained_double_click_selects_word() {
     let mut fixture = Fixture::new("alpha beta\nsecond\n");
@@ -54,6 +55,7 @@ fn retained_double_click_selects_word() {
     assert_eq!(fixture.selected_text(), "beta");
 }
 
+// Scenario: NATIVE-046
 #[test]
 fn retained_triple_click_selects_source_line() {
     let mut fixture = Fixture::new("alpha beta\nsecond\n");
@@ -61,6 +63,7 @@ fn retained_triple_click_selects_source_line() {
     assert_eq!(fixture.selected_text(), "second\n");
 }
 
+// Scenario: NATIVE-025
 #[test]
 fn retained_platform_modifier_adds_selection() {
     let mut fixture = Fixture::new("one two");
@@ -71,6 +74,7 @@ fn retained_platform_modifier_adds_selection() {
     assert_eq!(fixture.selected_text(), "two");
 }
 
+// Scenario: NATIVE-024
 #[test]
 fn read_only_mode_allows_selection_and_copy_but_not_mutation() {
     let mut fixture = Fixture::new("raw *markdown*");
@@ -161,6 +165,7 @@ fn divergence_widget_emits_exact_changes_not_full_string() {
     assert_eq!(proposal.snapshot.text().shared().as_str(), "xab");
 }
 
+// Scenario: NATIVE-024
 #[test]
 fn retained_copy_cut_paste_use_source_text() {
     let mut fixture = Fixture::new("raw *markdown*");
@@ -347,6 +352,7 @@ fn mounted_read_only_widget_rejects_mutating_input() {
     assert_eq!(session.snapshot().text().shared().as_str(), "ab");
 }
 
+// Scenario: NATIVE-025
 #[test]
 fn mounted_widget_primary_modifier_adds_a_selection() {
     let (mut cx, widget, mut session) = mounted_editor("ab");

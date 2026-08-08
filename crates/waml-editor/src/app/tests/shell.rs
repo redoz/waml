@@ -27,6 +27,7 @@ fn unmounted_tree_toggle_is_absent() {
 /// toggle's right edge is the tree column's right edge, so the burger trailing
 /// it starts ON the split and the history pair follows. Collapsed, the slot
 /// closes and the two lead the row. Same buttons in both.
+// Scenario: NATIVE-007
 #[test]
 fn the_toggle_rides_the_column_edge_and_falls_back_to_the_row_head() {
     assert_eq!(
@@ -236,6 +237,7 @@ fn header_right_dock_icon(cx: &mut Cx, app: &App) -> Option<Icon> {
         .test_right_dock()
 }
 
+// Scenario: NATIVE-008
 #[test]
 fn mounted_dock_close_keeps_presented_geometry_until_motion_completes() {
     let size = dvec2(1_200.0, 700.0);
@@ -277,6 +279,7 @@ fn mounted_dock_close_keeps_presented_geometry_until_motion_completes() {
     assert_ne!(app.dock_next_frame, NextFrame::default());
 }
 
+// Scenario: NATIVE-009
 #[test]
 fn mounted_dock_areas_follow_wide_and_narrow_production_layout() {
     let wide_size = dvec2(1_200.0, 700.0);
@@ -385,6 +388,7 @@ fn draw_tab_row(cx: &mut Cx, app: &App, size: DVec2) {
 /// sits between the tree-column toggle and the tab strip. Drawn in the collapsed
 /// arrangement -- the toggle's tab-row seat, its slot opened to full width, as
 /// `tree_toggle_layout` sizes it once the column is gone.
+// Scenario: NATIVE-055
 #[test]
 fn mounted_history_buttons_lead_the_tab_strip_past_the_tree_column() {
     let size = dvec2(600.0, 32.0);

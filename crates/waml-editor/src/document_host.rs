@@ -678,6 +678,7 @@ mod tests {
         )
     }
 
+    // Scenario: NATIVE-021
     #[test]
     fn prepared_preview_replacement_drops_the_old_live_view() {
         let mut host = DocumentHost::default();

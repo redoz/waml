@@ -36,6 +36,7 @@ fn tmp() -> std::path::PathBuf {
     d
 }
 
+// Scenario: CLI-004
 #[test]
 fn attr_add_writes_the_file() {
     let d = tmp();
@@ -76,6 +77,7 @@ fn emit_prints_an_op_line_without_writing() {
         .contains("total"));
 }
 
+// Scenario: CLI-004
 #[test]
 fn duplicate_attr_exits_1() {
     let d = tmp();
@@ -212,6 +214,7 @@ fn check_accepts_generic_okf_without_uml_diagnostics() {
     assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "[]");
 }
 
+// Scenario: CLI-001
 #[test]
 fn check_reports_malformed_claimed_uml_from_parser_analysis() {
     let d = tmp();
@@ -262,6 +265,7 @@ fn fmt_stdout_preserves_generic_okf_exactly() {
     assert_eq!(std::fs::read_to_string(generic).unwrap(), authored);
 }
 
+// Scenario: CLI-002
 #[test]
 fn fmt_canonical_output_is_idempotent() {
     let d = tmp();
@@ -290,6 +294,7 @@ fn fmt_canonical_output_is_idempotent() {
     assert!(second.stdout.is_empty());
 }
 
+// Scenario: CLI-005
 #[test]
 fn apply_late_multi_file_failure_writes_nothing() {
     let d = tmp();
@@ -332,6 +337,8 @@ fn apply_late_multi_file_failure_writes_nothing() {
     );
 }
 
+// Scenario: CLI-006
+// Scenario: CLI-007
 #[test]
 fn show_json_and_refs_share_prepared_referrer_results() {
     let d = tmp();
