@@ -1966,6 +1966,112 @@ mod tests {
     }
 
     #[test]
+    fn a_diagram_with_hints_no_longer_strip_packs_unrelated_nodes() {
+        use waml::layout::{Direction, LayoutStatement, NameRef, Operand, OperandRef};
+        // The screenshot regression that motivated the unification: one hint
+        // between two nodes that a connected pair has nothing to do with. The
+        // old dispatch flipped the WHOLE diagram onto the rigid-offset strip
+        // packer: `car` and `driver` (edge-connected, unhinted) landed in
+        // separate rigid components and were packed a full strip apart. The
+        // unified path keeps the connected pair at stress distance while the
+        // hint itself still holds.
+        let model = sixkind();
+        let mut diagram = model.diagrams[0].clone();
+        let link = |slug: &str| Operand {
+            ref_: OperandRef::Name(NameRef::Link {
+                title: title_for(&model, slug),
+                slug: slug.to_string(),
+            }),
+            axis: None,
+            hints: Vec::new(),
+        };
+        diagram.layout = vec![LayoutStatement::Placement {
+            operands: vec![link("wheel"), link("engine")],
+            directions: vec![Direction::LeftOf],
+        }];
+        let (scene, diags) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        use waml::diagnostic::DiagCode;
+        assert!(
+            !diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
+            "a single hint is trivially satisfiable: {diags:?}"
+        );
+        let rect_of = |k: &str| scene.nodes.iter().find(|n| n.key == k).unwrap().rect;
+        let (wheel, engine) = (rect_of("wheel"), rect_of("engine"));
+        assert!(
+            wheel.x + wheel.w <= engine.x,
+            "the authored hint itself must hold: wheel {wheel:?} engine {engine:?}"
+        );
+        let center = |r: Rect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        let (car, driver) = (rect_of("car"), rect_of("driver"));
+        let (cx, cy) = center(car);
+        let (dx, dy) = center(driver);
+        let dist = (cx - dx).hypot(cy - dy);
+        // Stress targets one hop at edge_len inflated by the pair's half
+        // extents; twice that is comfortably "adjacent", while the old strip
+        // packer put four whole strips between them.
+        let half_extent = |r: Rect| (r.w + r.h) / 4.0;
+        let bound = 2.0
+            * (waml::solve::stress::StressConfig::default().edge_len
+                + half_extent(car)
+                + half_extent(driver));
+        assert!(
+            dist < bound,
+            "connected pair flung apart: |car-driver| = {dist}, bound {bound}"
+        );
+    }
+
+    #[test]
+    fn collapsed_flag_survives_the_unified_path() {
+        use waml::layout::{Direction, Flag, Hint, LayoutStatement, NameRef, Operand, OperandRef};
+        // stress_layout's flags/chip-size wiring at the editor level: a
+        // collapsed node on a hint-carrying diagram must come back with
+        // collapsed=true AND solve at chip size. This was silently dead on
+        // the old stress path (flags: BTreeMap::new()).
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        let link = |slug: &str, hints: Vec<Hint>| Operand {
+            ref_: OperandRef::Name(NameRef::Link {
+                title: title_for(&model, slug),
+                slug: slug.to_string(),
+            }),
+            axis: None,
+            hints,
+        };
+        diagram.layout = vec![LayoutStatement::Placement {
+            operands: vec![
+                link("order", vec![Hint::Flag(Flag::Collapsed)]),
+                link("customer", vec![]),
+            ],
+            directions: vec![Direction::LeftOf],
+        }];
+        let (scene, _) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        let order = scene.nodes.iter().find(|n| n.key == "order").unwrap();
+        let customer = scene.nodes.iter().find(|n| n.key == "customer").unwrap();
+        assert!(order.collapsed, "collapsed flag must survive the solve");
+        assert!(!customer.collapsed);
+        let chip = SolveConfig::default().chip;
+        assert_eq!(
+            (order.rect.w, order.rect.h),
+            (chip.w, chip.h),
+            "collapsed node must solve at chip size"
+        );
+        assert!(
+            customer.rect.w > chip.w,
+            "an uncollapsed card keeps its measured size"
+        );
+    }
+
+    #[test]
     fn bounding_box_covers_all_nodes() {
         let model = mini();
         let (scene, _) = build_scene(
