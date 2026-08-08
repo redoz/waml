@@ -294,7 +294,7 @@ async function inspectEvidence(scenario, repositoryRoot, target) {
     }
     hasEvidence = true;
     const nativeTest =
-      reference.path.startsWith("crates/") &&
+      (reference.path.startsWith("crates/") || reference.path.startsWith("editors/vscode/")) &&
       !isBrowserTest(reference.path) &&
       !isBrowserImplementation(reference.path);
     const browserTest = isBrowserTest(reference.path);

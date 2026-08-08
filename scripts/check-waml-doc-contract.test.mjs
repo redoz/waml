@@ -150,6 +150,45 @@ test("rejects a shared scenario whose evidence is browser-only", async () => {
   assert.equal(errors.some((error) => error.includes("native")), true);
 });
 
+test("accepts a marked VS Code test as native evidence", async () => {
+  const vscode = canonical.replace(
+    "crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview",
+    "editors/vscode/src/serverPath.test.ts::starts configured server",
+  );
+  const errors = await check({
+    "docs/waml/goals/vscode.md": vscode,
+    "editors/vscode/src/serverPath.test.ts":
+      '// Scenario: TAB-001\nit("starts configured server", () => {});\n',
+  });
+  assert.deepEqual(errors, []);
+});
+
+test("does not count a marked browser script as native evidence", async () => {
+  const browserOnly = canonical.replace(
+    "crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview",
+    "scripts/export-site-browser.test.mjs::opens exported site",
+  );
+  const errors = await check({
+    "docs/waml/goals/share.md": browserOnly,
+    "scripts/export-site-browser.test.mjs":
+      '// Scenario: TAB-001\ntest("opens exported site", () => {});\n',
+  });
+  assert.equal(errors.some((error) => error.includes("native test is absent")), true);
+});
+
+test("continues to count a marked crate test as native evidence", async () => {
+  const crateTest = canonical.replace(
+    "crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview",
+    "crates/waml-cli/tests/lsp_e2e.rs::publishes_diagnostics",
+  );
+  const errors = await check({
+    "docs/waml/goals/lsp.md": crateTest,
+    "crates/waml-cli/tests/lsp_e2e.rs":
+      "// Scenario: TAB-001\n#[test]\nfn publishes_diagnostics() {}\n",
+  });
+  assert.deepEqual(errors, []);
+});
+
 test("rejects a browser scenario whose evidence is not browser-specific or a parity seam", async () => {
   const errors = await check({
     "docs/waml/goals/web.md": canonical
