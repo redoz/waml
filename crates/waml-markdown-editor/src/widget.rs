@@ -17,8 +17,9 @@ use crate::{
     motion::{LayoutChangeCause, MotionConfig, MotionController},
     presentation::style::FONT_MONO,
     presentation::{
-        build_draw_commands, ApprovedImageSource, ColorRole, DecorationRole, DrawCommand,
-        EmbeddedState, ImageMediaType, InstalledPresentation, PresentationError, PresentationFrame,
+        build_draw_commands, build_layout_document, ApprovedImageSource, ColorRole, DecorationRole,
+        DrawCommand, EditorEmphasis, EmbeddedMeasurements, EmbeddedState, ImageMediaType,
+        InstalledPresentation, PresentationError, PresentationFrame, PresentationStyles,
     },
     selection::TextPosition,
     session::MarkdownDocumentSession,
@@ -627,6 +628,8 @@ pub struct MarkdownEditor {
     read_only: bool,
     #[rust]
     line_numbers: LineNumberMode,
+    #[rust]
+    emphasis: EditorEmphasis,
     #[rust]
     reduced_motion: bool,
     #[rust]
@@ -2092,6 +2095,60 @@ impl MarkdownEditorRef {
             .map_or(LineNumberMode::Off, |inner| inner.line_numbers)
     }
 
+    pub fn set_emphasis(&self, cx: &mut Cx, emphasis: EditorEmphasis) {
+        let Some(mut inner) = self.borrow_mut() else {
+            return;
+        };
+        if inner.emphasis == emphasis {
+            return;
+        }
+
+        if let Some(installed) = inner.pipeline.installed.clone() {
+            let styles = Arc::new(PresentationStyles::for_emphasis(emphasis));
+            let measurements = EmbeddedMeasurements {
+                revision: Some(installed.revision),
+                blocks: installed.layout_document.embedded_blocks.clone(),
+            };
+            let replacement = build_layout_document(&installed.plan, &styles, &measurements)
+                .and_then(|layout_document| {
+                    InstalledPresentation::new(
+                        installed.plan.clone(),
+                        styles,
+                        Arc::new(layout_document),
+                        installed.diagnostics.clone(),
+                        installed.assets.clone(),
+                    )
+                });
+            let replacement = match replacement {
+                Ok(replacement) => replacement,
+                Err(error) => {
+                    let message = format!(
+                        "set_emphasis rejected revision {}: {error}",
+                        installed.revision.get()
+                    );
+                    if inner.last_install_validation_error.as_deref() != Some(message.as_str()) {
+                        log!("{message}");
+                        inner.last_install_validation_error = Some(message);
+                    }
+                    return;
+                }
+            };
+            inner.pipeline.installed = Some(replacement);
+        }
+
+        inner.last_install_validation_error = None;
+        inner.emphasis = emphasis;
+        inner.pipeline.target_layout = None;
+        inner.pipeline.pending_cause = Some(LayoutChangeCause::ViewportResize);
+        inner.pipeline.pending_invalidation = Some(LayoutInvalidation::ViewportWidth);
+        inner.redraw(cx);
+    }
+
+    pub fn emphasis(&self) -> EditorEmphasis {
+        self.borrow()
+            .map_or(EditorEmphasis::Code, |inner| inner.emphasis)
+    }
+
     pub fn set_reduced_motion(&self, cx: &mut Cx, reduced_motion: bool) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.reduced_motion = reduced_motion;
@@ -2138,6 +2195,7 @@ impl MarkdownEditorRef {
         }
         if let Some(mut inner) = self.borrow_mut() {
             inner.last_install_validation_error = None;
+            inner.emphasis = presentation.styles.emphasis();
             inner.pipeline.installed = Some(presentation);
             // A pending clear belongs to the presentation that was cleared. This
             // install supersedes it, so the next frame must resync from whatever
@@ -2234,6 +2292,12 @@ impl MarkdownEditorRef {
             inner.pipeline.target_layout = Some(layout.clone());
             inner.pipeline.frame_layout = Some(layout);
         }
+    }
+
+    #[doc(hidden)]
+    pub fn test_installed_presentation(&self) -> Option<Arc<InstalledPresentation>> {
+        self.borrow()
+            .and_then(|inner| inner.pipeline.installed.clone())
     }
 
     #[doc(hidden)]

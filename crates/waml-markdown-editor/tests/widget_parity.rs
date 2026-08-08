@@ -11,11 +11,14 @@ use waml_markdown_editor::{
         ScrollState, SelectionModifier,
     },
     layout::{
-        Affinity, CaretStop, GlyphCluster, LayoutDocument, LayoutError, LayoutSnapshot, VisualLine,
+        Affinity, BlockFlow, CaretStop, GlyphCluster, LayoutDocument, LayoutError, LayoutSnapshot,
+        VisualLine,
     },
     motion::LayoutChangeCause,
     presentation::{
-        EmbeddedAssetFrame, InstalledPresentation, PresentationPlan, PresentationStyles,
+        build_layout_document, compile_presentation, style::FONT_MONO, EditorEmphasis,
+        EmbeddedAssetFrame, EmbeddedMeasurements, HighlighterRegistry, InstalledPresentation,
+        PresentationPlan, PresentationStyles,
     },
     selection::TextPosition,
     session::MarkdownDocumentSession,
@@ -658,6 +661,79 @@ fn install_presentation_cancels_a_pending_clear() {
         (120.0, 120.0),
         "the widget halves must resync to the newly installed session"
     );
+}
+
+#[test]
+fn emphasis_rebuilds_the_installed_layout_without_mutating_session_state() {
+    let source = "Body text\n";
+    let (mut cx, editor, session) = mounted_editor(source);
+    cx.init_cx_os();
+    let styles = Arc::new(PresentationStyles::for_emphasis(EditorEmphasis::Layout));
+    let plan = compile_presentation(
+        session.snapshot().syntax(),
+        &styles,
+        &HighlighterRegistry::default(),
+    )
+    .expect("the layout-emphasis plan compiles");
+    let layout_document = Arc::new(
+        build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
+            .expect("the layout-emphasis document builds"),
+    );
+    let presentation = InstalledPresentation::new(
+        plan,
+        styles,
+        layout_document,
+        Arc::from([]),
+        Arc::new(EmbeddedAssetFrame {
+            revision: session.snapshot().revision(),
+            items: Arc::from([]),
+        }),
+    )
+    .expect("the layout-emphasis presentation validates");
+    editor.install_presentation(
+        &mut cx,
+        presentation,
+        LayoutChangeCause::ExternalReplacement,
+    );
+    let revision_before = session.snapshot().revision();
+    let selections_before = session.selections().clone();
+
+    editor.set_emphasis(&mut cx, EditorEmphasis::Code);
+
+    assert_eq!(editor.emphasis(), EditorEmphasis::Code);
+    let installed = editor
+        .test_installed_presentation()
+        .expect("the presentation stays installed");
+    assert_eq!(installed.styles.emphasis(), EditorEmphasis::Code);
+    assert!(installed
+        .layout_document
+        .text_runs
+        .iter()
+        .any(|run| run.metrics.font == FONT_MONO));
+    assert_eq!(
+        installed
+            .layout_document
+            .blocks
+            .iter()
+            .find(|block| {
+                block.parent.is_some() && matches!(block.spec.flow, BlockFlow::Paragraph)
+            })
+            .expect("the document has a paragraph block")
+            .spec
+            .space_after,
+        0.0
+    );
+    assert_eq!(session.snapshot().revision(), revision_before);
+    assert_eq!(
+        session.selections().as_slice(),
+        selections_before.as_slice()
+    );
+
+    editor.set_emphasis(&mut cx, EditorEmphasis::Code);
+    let unchanged = editor
+        .test_installed_presentation()
+        .expect("the presentation stays installed");
+    assert!(Arc::ptr_eq(&installed, &unchanged));
 }
 
 fn installed_presentation() -> Arc<InstalledPresentation> {
