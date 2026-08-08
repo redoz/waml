@@ -89,11 +89,12 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(ArrowLeftRight, "Association kind"),
             ie!(StickyNote, "Note kind"),
             ie!(ChevronsUpDown, "Scope / select dropdown"),
+            ie!(Library, "Tree/folder view is projected (chain running)"),
             ie!(
                 SquareLibrary,
-                "Tree/folder view is projected (chain running)"
+                "Retired projected glyph; superseded by Library"
             ),
-            ie!(SquareCode, "Tree/folder view is raw (chain bypassed)"),
+            ie!(SquareCode, "Retired raw glyph; superseded by Code"),
         ],
     ),
     (
@@ -315,6 +316,10 @@ mod drift {
         Icon::Book,
         Icon::Box,
         Icon::BroomSparkles,
+        // Superseded as the tree panel's projected/raw pair by Library / Code,
+        // kept catalogued (the catalog is pruned deliberately, not by drift).
+        Icon::SquareLibrary,
+        Icon::SquareCode,
     ];
 
     fn table_icons() -> Vec<Icon> {

@@ -4141,6 +4141,29 @@ script_mod! {
         }
     }
 
+    // Library: the tree panel's "chain running" glyph. Faithful port of
+    // resources/icons/library.svg via scripts/gen-icon.py.
+    mod.draw.IconLibrary = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.6667, s * 0.2500)
+            sdf.line_to(s * 0.8333, s * 0.8333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5000, s * 0.2500)
+            sdf.line_to(s * 0.5000, s * 0.8333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3333, s * 0.3333)
+            sdf.line_to(s * 0.3333, s * 0.8333)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1667, s * 0.1667)
+            sdf.line_to(s * 0.1667, s * 0.8333)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     mod.widgets.IconSetBase = #(IconSet::script_component(vm))
 
     // Each field is a `DrawColor` pointing at its icon shader; the accent tint
@@ -4273,6 +4296,7 @@ script_mod! {
         square_library: mod.draw.IconSquareLibrary{ color: atlas.accent }
         code: mod.draw.IconCode{ color: atlas.accent }
         broom_sparkles: mod.draw.IconBroomSparkles{ color: atlas.accent }
+        library: mod.draw.IconLibrary{ color: atlas.accent }
     }
 }
 
@@ -4537,6 +4561,8 @@ pub struct IconSet {
     pub code: DrawColor,
     #[live]
     pub broom_sparkles: DrawColor,
+    #[live]
+    pub library: DrawColor,
 }
 
 impl IconSet {
@@ -4671,6 +4697,7 @@ impl IconSet {
             Icon::SquareLibrary => &mut self.square_library,
             Icon::Code => &mut self.code,
             Icon::BroomSparkles => &mut self.broom_sparkles,
+            Icon::Library => &mut self.library,
         }
     }
 
@@ -4819,12 +4846,13 @@ pub enum Icon {
     SquareLibrary,
     Code,
     BroomSparkles,
+    Library,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 127] = [
+    pub const ALL: [Icon; 128] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -4952,6 +4980,7 @@ impl Icon {
         Icon::SquareLibrary,
         Icon::Code,
         Icon::BroomSparkles,
+        Icon::Library,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5085,6 +5114,7 @@ impl Icon {
             Icon::SquareLibrary => "square-library",
             Icon::Code => "code",
             Icon::BroomSparkles => "broom-sparkles",
+            Icon::Library => "library",
         }
     }
 }
@@ -5095,7 +5125,7 @@ mod tests {
 
     #[test]
     fn icon_all_has_121_entries() {
-        assert_eq!(Icon::ALL.len(), 127);
+        assert_eq!(Icon::ALL.len(), 128);
     }
 
     // ------------------------------------------------------------------
@@ -5317,7 +5347,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 127);
+        assert_eq!(seen.len(), 128);
     }
 
     #[test]

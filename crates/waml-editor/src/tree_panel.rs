@@ -203,6 +203,7 @@ script_mod! {
             flow: Right
             align: Align{x: 1.0}
             padding: Inset{left: 6.0, right: 6.0, top: 6.0, bottom: 2.0}
+            tidy_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
             view_mode_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
         }
 
@@ -714,6 +715,13 @@ impl Widget for ProjectTree {
             matches!(self.view_mode, crate::folder_projection::ViewMode::Raw),
         );
 
+        // Same seeding rule as the toggle above: `IconButton::icon` is `#[rust]`
+        // and the DSL cannot supply it, so an unseeded button is a blank 28px
+        // hole. Inert by design -- it draws and hit-tests, nothing more.
+        self.view
+            .icon_button(cx, ids!(tidy_btn))
+            .set_icon(cx, Icon::BroomSparkles);
+
         // Expanded draws a flush column butted to the window edge: strip the
         // docked-edge (left) margin + the float top/bottom margins so no
         // window-bg frame shows. `Pinned` reserves an equal-width slot (see
@@ -895,14 +903,18 @@ impl ProjectTree {
         self.apply_dock(cx, DockEvent::Close);
     }
 
-    /// The glyph for the CURRENT state -- `SquareLibrary` when the declared
-    /// chain is running, `SquareCode` when it is bypassed. Not the action the
-    /// button would perform: a reader must be able to read the panel and know
-    /// what they are looking at.
+    /// The glyph for the CURRENT state -- `Library` when the declared chain is
+    /// running, `Code` when it is bypassed. Not the action the button would
+    /// perform: a reader must be able to read the panel and know what they are
+    /// looking at.
+    ///
+    /// `Code` is also the document header's source toggle. Deliberate: both
+    /// say "you are seeing the underlying thing", and they sit in different
+    /// panels.
     pub fn view_mode_icon(&self) -> Icon {
         match self.view_mode {
-            crate::folder_projection::ViewMode::Projected => Icon::SquareLibrary,
-            crate::folder_projection::ViewMode::Raw => Icon::SquareCode,
+            crate::folder_projection::ViewMode::Projected => Icon::Library,
+            crate::folder_projection::ViewMode::Raw => Icon::Code,
         }
     }
 
@@ -1349,11 +1361,11 @@ mod tests {
             panel.view_mode,
             crate::folder_projection::ViewMode::Projected
         );
-        assert_eq!(panel.view_mode_icon(), crate::icons::Icon::SquareLibrary);
+        assert_eq!(panel.view_mode_icon(), crate::icons::Icon::Library);
 
         panel.set_view_mode(&mut cx, crate::folder_projection::ViewMode::Raw);
         assert_eq!(panel.view_mode, crate::folder_projection::ViewMode::Raw);
-        assert_eq!(panel.view_mode_icon(), crate::icons::Icon::SquareCode);
+        assert_eq!(panel.view_mode_icon(), crate::icons::Icon::Code);
     }
 
     /// The button must actually be mounted and queryable. An unregistered or
