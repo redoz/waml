@@ -267,9 +267,45 @@ Spec §5 with the spike's Q3 correction baked in: the folder gate is the same pr
 - [ ] **Step 3: Wire the `"source"` factory** (`extension_editor.rs`) to `open_source_for_target(ctx.analysis, target, &ctx.assets)` and delete its `Concept`-only guard. Extend the factory test from Task 1 Step 2: the `"source"` factory returns `Some` for a Folder target with an index and `None` for one without.
 - [ ] **Step 4: Gate, commit** — `feat(editor): target-resolving source surface with the render-predicate folder gate`.
 
+### Task 3b: Move the call sites to surface vocabulary BEFORE the type changes
+
+Prep task, added 2026-08-08 to shrink Task 4's atomic surface. Verified against the worktree first: `DocumentLocator` has **zero** struct-literal construction sites outside its own definition (all ~41 sites already go through `::new`/`::primary`/`::source`) and only ~3 locator field reads. So the churn in Task 4 is not field access — it is the ~41 constructor calls and the 34 `DocumentKind` mentions. This task migrates the call sites onto the FINAL vocabulary while the underlying type is still today's `{concept_id, kind}`, so Task 4 reshapes internals against call sites that already read correctly. Everything here compiles and gates green on its own; no behavior changes.
+
+**Files:**
+- Modify: `crates/waml/src/view/row.rs:160` (add `Hash` to `RowTarget`'s derive)
+- Modify: `crates/waml/src/view/surface.rs` (named constructors)
+- Modify: `crates/waml-editor/src/view_history.rs` (transitional `concept` constructor)
+- Modify: `crates/waml-editor/src/documents.rs` (`default_surface_for`), `app/navigation.rs` (`primary_locator`)
+- Modify: every `DocumentLocator::primary(...)` call site, production and test
+
+**Interfaces:**
+- Produces the final `SurfaceId::{markdown,source,canvas,folder}()` constructors and `documents::default_surface_for` / `App::primary_locator` EXACTLY as Task 4's `Interfaces` block specifies them — copy those bodies verbatim; they do not depend on the widened locator.
+- Produces one TRANSITIONAL constructor on today's struct, deleted by Task 4 Step 1:
+  ```rust
+  // view_history.rs — surface vocabulary over today's kind. Task 4 replaces the
+  // body when the struct widens; the call sites it serves do not change again.
+  impl DocumentLocator {
+      pub fn concept(concept_id: impl Into<String>, surface: SurfaceId) -> Self {
+          let kind = if surface == SurfaceId::source() {
+              DocumentKind::Source
+          } else {
+              DocumentKind::Primary
+          };
+          Self::new(concept_id, kind)
+      }
+  }
+  ```
+  `markdown` and `canvas` both map to `Primary` — that IS today's behavior (the `.or_else` chain picks the provider), which is why this commit is behavior-identical.
+
+- [ ] **Step 1: Land the additive pieces.** `Hash` on `RowTarget`; `SurfaceId` named constructors; the transitional `concept` constructor. Gate — nothing else has changed yet.
+- [ ] **Step 2: Add the default-surface resolution.** `documents::default_surface_for` and `App::primary_locator` per Task 4's Interfaces block, with `primary_locator` returning `DocumentLocator::concept(concept_id, default_surface_for(...))`. Unit-test `default_surface_for` directly: a claimed `uml.Class` concept → `canvas()`, a generic concept → `markdown()`, a folder → `folder()`.
+- [ ] **Step 3: Migrate the call sites off `primary`.** Production sites per Task 4 Step 5's inventory — `app/navigation.rs:275,414` → `self.primary_locator(&concept_id)`; `class_diagram_view.rs:296` → `DocumentLocator::concept(self.key.clone(), SurfaceId::canvas())`. Test sites → `DocumentLocator::concept(x, SurfaceId::markdown())` for generic fixtures, `SurfaceId::canvas()` where the fixture is a claimed `uml.*` (`editor_session/tests.rs:1191,2233` use `"dia"` diagrams). Then **delete `DocumentLocator::primary`** — its absence is what proves the migration is complete. `DocumentLocator::source` keeps its name and body through Task 4; leave those sites alone.
+- [ ] **Step 4: Sweep and gate.** `rg "DocumentLocator::primary" crates/` → zero hits. Full gate. Every pre-existing test must PASS, not merely compile — a failure here is a real surface-classification mistake (most likely a fixture assigned `markdown()` that the UML analysis actually claims), so fix the mapping, not the test.
+- [ ] **Step 5: Commit** — `refactor(editor): express locators in surface vocabulary ahead of the widening`.
+
 ### Task 4: Widen `DocumentLocator` to `{ target, surface }` and delete `DocumentKind`
 
-The load-bearing recompile. Spike Q4: 36 `DocumentKind` mentions in 13 files, ~41 construction sites, exactly one dispatching match, zero persistence — wide, shallow, compiler-guided. This task changes SHAPE only: dispatch stays behavior-identical (the surface string routes to the same provider today's kind routed to, with the concept default still resolved by the `.or_else` chain — Task 5 replaces the mechanism). Tab-id functions are untouched (Task 7). No user-visible change is expected from this commit; the folder arm from Task 2 becomes typed.
+The load-bearing recompile. **Task 3b has already landed** the `Hash` derive, the `SurfaceId` constructors, `default_surface_for`, `primary_locator`, and the `::primary` → `::concept(id, surface)` call-site migration — do not redo them; this task deletes the transitional `concept` body and reshapes the struct beneath call sites that already read correctly. Task 4 Step 1 additionally deletes the transitional constructor's kind-mapping; Steps 2–8 stand as written, minus any work Task 3b already did. Spike Q4: 36 `DocumentKind` mentions in 13 files, ~41 construction sites, exactly one dispatching match, zero persistence — wide, shallow, compiler-guided. This task changes SHAPE only: dispatch stays behavior-identical (the surface string routes to the same provider today's kind routed to, with the concept default still resolved by the `.or_else` chain — Task 5 replaces the mechanism). Tab-id functions are untouched (Task 7). No user-visible change is expected from this commit; the folder arm from Task 2 becomes typed.
 
 This task is file-heavy by nature and cannot be split at a compiling boundary — a type change is atomic. It is kept tractable by being almost entirely mechanical (the compiler drives), by Tasks 1–3 having already landed every non-mechanical decision, and by the site inventory below. Budget accordingly; do not interleave any other refactor.
 
