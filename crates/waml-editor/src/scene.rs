@@ -8,8 +8,8 @@ use waml::model::{
 };
 use waml::multiplicity::Multiplicity;
 use waml::solve::{
-    constrain, resolve, route, solve_diagram, stress, BoxId, BoxKind, Constraint, DroppedPlacement,
-    FlagSet, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup, SolvedRouting,
+    constrain, resolve, route, stress, BoxId, BoxKind, Constraint, DroppedPlacement, FlagSet, Rect,
+    Size, SizeMap, SolveConfig, Solved, SolvedGroup, SolvedRouting,
 };
 
 use crate::diagram_display::ResolvedDiagramDisplay;
@@ -1261,14 +1261,30 @@ pub fn placement_preview(
     use waml::diagnostic::DiagCode;
     let scratch = placement_candidate(model, diagram, subject_slug, reference_slug, dir);
 
-    // The scratch always carries at least this one placement, so it never takes
-    // the stress-default path -- solve it through the constraint solver directly.
+    // Solve the candidate through the SAME unified path `build_scene` ships
+    // (resolve -> constrain::compile -> stress_layout), so the preview animates
+    // toward the layout a drop would actually produce and the compass reddens
+    // exactly the placements that path would drop. Label-width gap floors are
+    // skipped (no `display` here) -- a fidelity nit that can only pad gaps, it
+    // cannot change the conflict verdict.
     let sizes = crate::sizing::size_map(model, &scratch, expanded);
-    let edges: Vec<(BoxId, BoxId)> = drawable_edges(model)
-        .into_iter()
+    let model_edges = drawable_edges(model);
+    let edges: Vec<(BoxId, BoxId)> = model_edges
+        .iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
-    let (solved, diags) = solve_diagram(&scratch, &edges, &sizes, &SolveConfig::default());
+    let (scene, _resolve_diags) = resolve::resolve(&scratch);
+    let connected = connected_pairs(&edges);
+    let label_widths = waml::solve::connected_label_widths(&edges, &[]);
+    let compiled = constrain::compile(
+        &scene,
+        &sizes,
+        &label_widths,
+        &connected,
+        &SolveConfig::default(),
+    );
+    let (solved, _routing, _entangled, _dropped, diags) =
+        stress_layout(&scratch, &compiled, &sizes, &model_edges);
     let conflict = diags.iter().any(|d| d.code == DiagCode::LayoutConflict);
     (conflict, solved.nodes)
 }
