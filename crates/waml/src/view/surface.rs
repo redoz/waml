@@ -14,6 +14,22 @@ impl SurfaceId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn markdown() -> Self {
+        SurfaceId("markdown".into())
+    }
+
+    pub fn source() -> Self {
+        SurfaceId("source".into())
+    }
+
+    pub fn canvas() -> Self {
+        SurfaceId("canvas".into())
+    }
+
+    pub fn folder() -> Self {
+        SurfaceId("folder".into())
+    }
 }
 
 /// Document-type default surfaces, by convention with `crate::model::ElementType`:

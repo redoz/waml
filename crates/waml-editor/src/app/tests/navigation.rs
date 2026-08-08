@@ -297,7 +297,10 @@ fn source_range_navigation_activates_source_and_selects_the_current_range() {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("notes/order"),
+            document: crate::navigation::DocumentLocator::concept(
+                "notes/order",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -640,7 +643,10 @@ fn navigation_app_with_active_order() -> (Cx, App) {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/order"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/order",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -665,7 +671,10 @@ fn manual_and_preview_transitions_follow_back_and_forward_history() {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/customer"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/customer",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -706,12 +715,18 @@ fn back_and_forward_stop_on_folder_tabs() {
     ));
     let folder_tab_id = crate::folder_view::folder_document_tab_id("/sales");
     assert_eq!(app.documents.active_id(), folder_tab_id);
-    let folder_tab_locator = crate::navigation::DocumentLocator::primary("/sales");
+    let folder_tab_locator = crate::navigation::DocumentLocator::concept(
+        "/sales",
+        waml::view::surface::SurfaceId::folder(),
+    );
 
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/customer"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/customer",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -815,7 +830,10 @@ fn back_then_manual_navigation_clears_forward() {
         assert!(app.transition_to_location(
             &mut cx,
             ViewLocation {
-                document: crate::navigation::DocumentLocator::primary(concept_id),
+                document: crate::navigation::DocumentLocator::concept(
+                    concept_id,
+                    waml::view::surface::SurfaceId::markdown()
+                ),
                 anchor: ViewAnchor::None,
             },
             TransitionCause::UserNavigation,
@@ -830,7 +848,10 @@ fn back_then_manual_navigation_clears_forward() {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/order"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/order",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -856,7 +877,10 @@ fn repeat_current_user_navigation_preserves_the_active_anchor() {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/order"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/order",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -880,7 +904,10 @@ fn same_document_undo_reveal_records_the_departing_anchor_for_back() {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/order"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/order",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::Diagram {
                 selected_key: None,
                 camera: crate::view_history::DiagramCameraAnchor {
@@ -914,7 +941,10 @@ fn active_close_records_fallback_but_promote_and_inactive_close_do_not() {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/customer"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/customer",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -936,7 +966,10 @@ fn active_close_records_fallback_but_promote_and_inactive_close_do_not() {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/next"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/next",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -956,11 +989,17 @@ fn active_close_records_fallback_but_promote_and_inactive_close_do_not() {
 fn undo_reveals_the_document_where_the_edit_started_and_records_the_move() {
     let (mut cx, mut app) = navigation_app_with_active_order();
     let order = ViewLocation {
-        document: crate::navigation::DocumentLocator::primary("sales/order"),
+        document: crate::navigation::DocumentLocator::concept(
+            "sales/order",
+            waml::view::surface::SurfaceId::markdown(),
+        ),
         anchor: ViewAnchor::None,
     };
     let customer = ViewLocation {
-        document: crate::navigation::DocumentLocator::primary("sales/customer"),
+        document: crate::navigation::DocumentLocator::concept(
+            "sales/customer",
+            waml::view::surface::SurfaceId::markdown(),
+        ),
         anchor: ViewAnchor::None,
     };
     app.session
@@ -982,7 +1021,10 @@ fn undo_reveals_the_document_where_the_edit_started_and_records_the_move() {
     assert!(app.transition_to_location(
         &mut cx,
         ViewLocation {
-            document: crate::navigation::DocumentLocator::primary("sales/next"),
+            document: crate::navigation::DocumentLocator::concept(
+                "sales/next",
+                waml::view::surface::SurfaceId::markdown()
+            ),
             anchor: ViewAnchor::None,
         },
         TransitionCause::UserNavigation,
@@ -1019,7 +1061,10 @@ fn global_history_chord_dispatches_before_the_widget_tree_and_consumes_empty_sta
     app.session
         .apply_edit(crate::editor_session::EditRequest {
             before_location: ViewLocation {
-                document: crate::navigation::DocumentLocator::primary("sales/order"),
+                document: crate::navigation::DocumentLocator::concept(
+                    "sales/order",
+                    waml::view::surface::SurfaceId::markdown(),
+                ),
                 anchor: ViewAnchor::None,
             },
             intent: crate::document::EditIntent {
@@ -1972,7 +2017,10 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
         assert!(app.transition_to_location(
             &mut cx,
             ViewLocation {
-                document: crate::navigation::DocumentLocator::primary(concept_id),
+                document: crate::navigation::DocumentLocator::concept(
+                    concept_id,
+                    waml::view::surface::SurfaceId::markdown()
+                ),
                 anchor: ViewAnchor::None,
             },
             TransitionCause::UserNavigation,
@@ -2035,7 +2083,10 @@ fn pumping_a_draw_applies_the_latest_pending_restore_and_refreshes_its_entry() {
         assert!(app.transition_to_location(
             &mut cx,
             ViewLocation {
-                document: crate::navigation::DocumentLocator::primary(concept_id),
+                document: crate::navigation::DocumentLocator::concept(
+                    concept_id,
+                    waml::view::surface::SurfaceId::markdown()
+                ),
                 anchor: ViewAnchor::None,
             },
             TransitionCause::UserNavigation,

@@ -14,7 +14,7 @@ fn fake_edit() -> PendingEdit {
 
 fn location(document: &str, scroll_y: f64) -> ViewLocation {
     ViewLocation {
-        document: DocumentLocator::primary(document),
+        document: DocumentLocator::concept(document, waml::view::surface::SurfaceId::markdown()),
         anchor: ViewAnchor::markdown_start(
             DocumentRevision::INITIAL,
             None,
@@ -33,7 +33,7 @@ fn key(
     span: Option<Range<usize>>,
 ) -> EditMergeKey {
     EditMergeKey {
-        document: DocumentLocator::primary(document),
+        document: DocumentLocator::concept(document, waml::view::surface::SurfaceId::markdown()),
         control: control.into(),
         kind,
         span,

@@ -293,7 +293,10 @@ impl ClassDiagramView {
         if !ops.is_empty() {
             let merge_key =
                 (description_only && ops.len() == 1).then(|| crate::editor_history::EditMergeKey {
-                    document: crate::view_history::DocumentLocator::primary(self.key.clone()),
+                    document: crate::view_history::DocumentLocator::concept(
+                        self.key.clone(),
+                        waml::view::surface::SurfaceId::canvas(),
+                    ),
                     control: "diagram.description".into(),
                     kind: crate::editor_history::EditMergeKind::Continuous,
                     span: None,
@@ -1326,7 +1329,10 @@ mod tests {
     fn production_description_typing_coalesces_beyond_the_atomic_tail() {
         let mut view = ClassDiagramView::new("orders".into());
         let location = crate::view_history::ViewLocation {
-            document: crate::view_history::DocumentLocator::primary("orders"),
+            document: crate::view_history::DocumentLocator::concept(
+                "orders",
+                waml::view::surface::SurfaceId::canvas(),
+            ),
             anchor: ViewAnchor::None,
         };
         let mut history = crate::editor_history::EditorHistory::default();
@@ -1344,7 +1350,10 @@ mod tests {
             assert_eq!(
                 merge_key,
                 &crate::editor_history::EditMergeKey {
-                    document: crate::view_history::DocumentLocator::primary("orders"),
+                    document: crate::view_history::DocumentLocator::concept(
+                        "orders",
+                        waml::view::surface::SurfaceId::canvas()
+                    ),
                     control: "diagram.description".into(),
                     kind: crate::editor_history::EditMergeKind::Continuous,
                     span: None,
@@ -1381,7 +1390,10 @@ mod tests {
     fn properties_close_separates_aged_production_typing_sessions() {
         let mut view = ClassDiagramView::new("orders".into());
         let location = crate::view_history::ViewLocation {
-            document: crate::view_history::DocumentLocator::primary("orders"),
+            document: crate::view_history::DocumentLocator::concept(
+                "orders",
+                waml::view::surface::SurfaceId::canvas(),
+            ),
             anchor: ViewAnchor::None,
         };
         let mut history = crate::editor_history::EditorHistory::default();

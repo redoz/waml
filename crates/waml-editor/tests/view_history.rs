@@ -7,7 +7,7 @@ use waml_syntax::DocumentRevision;
 
 fn location(concept_id: &str, scroll_y: f64) -> ViewLocation {
     ViewLocation {
-        document: DocumentLocator::primary(concept_id),
+        document: DocumentLocator::concept(concept_id, waml::view::surface::SurfaceId::markdown()),
         anchor: ViewAnchor::markdown_start(
             DocumentRevision::INITIAL,
             None,
@@ -21,7 +21,8 @@ fn location(concept_id: &str, scroll_y: f64) -> ViewLocation {
 
 #[test]
 fn locator_distinguishes_primary_and_source_views_of_the_same_concept() {
-    let primary = DocumentLocator::primary("sales/order");
+    let primary =
+        DocumentLocator::concept("sales/order", waml::view::surface::SurfaceId::markdown());
     let source = DocumentLocator::source("sales/order");
 
     assert_eq!(primary.concept_id, source.concept_id);
@@ -33,7 +34,7 @@ fn locator_distinguishes_primary_and_source_views_of_the_same_concept() {
 #[test]
 fn anchors_are_value_only_and_preserve_markdown_and_diagram_state() {
     let markdown = ViewLocation {
-        document: DocumentLocator::primary("runbook"),
+        document: DocumentLocator::concept("runbook", waml::view::surface::SurfaceId::markdown()),
         anchor: ViewAnchor::markdown_start(
             DocumentRevision::INITIAL,
             Some("recovery".into()),

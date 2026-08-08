@@ -21,6 +21,25 @@ pub fn open_with_asset_host(
         .or_else(|| crate::okf_documents::open_with_asset_host(okf, concept_id, assets))
 }
 
+/// The surface a target opens on when nothing requests one. "canvas" iff
+/// the UML analysis claims the concept (the claim set is what decides
+/// provider ownership today -- NOT ElementType parsing, which can disagree
+/// on invalid-but-claimed documents); "markdown" otherwise; "folder" for a
+/// folder. Virtual has no default (Row::new enforces an explicit surface).
+pub fn default_surface_for(
+    _okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    target: &RowTarget,
+) -> waml::view::surface::SurfaceId {
+    match target {
+        RowTarget::Folder(_) => waml::view::surface::SurfaceId::folder(),
+        RowTarget::Concept(id) if uml.claims.contains(id) => {
+            waml::view::surface::SurfaceId::canvas()
+        }
+        RowTarget::Concept(_) | RowTarget::Virtual => waml::view::surface::SurfaceId::markdown(),
+    }
+}
+
 /// The four registered surface ids (Task E2), for `resolve_surface`'s
 /// `known` slice. Kept beside the call site so it cannot silently drift
 /// from `CoreEditorExtension::surfaces` -- `extension_editor`'s own gate
@@ -311,6 +330,41 @@ mod tests {
 
         assert!(open_with_asset_host(prepared.okf(), prepared.uml(), "index", &assets()).is_none());
         assert!(open_with_asset_host(prepared.okf(), prepared.uml(), "log", &assets()).is_none());
+    }
+
+    #[test]
+    fn default_surface_for_matches_claimed_uml_generic_and_folder_targets() {
+        let source = SourceBundle::try_from_pairs([
+            ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 15).unwrap();
+
+        assert_eq!(
+            default_surface_for(
+                prepared.okf(),
+                prepared.uml(),
+                &RowTarget::Concept("order".to_string())
+            ),
+            waml::view::surface::SurfaceId::canvas()
+        );
+        assert_eq!(
+            default_surface_for(
+                prepared.okf(),
+                prepared.uml(),
+                &RowTarget::Concept("runbook".to_string())
+            ),
+            waml::view::surface::SurfaceId::markdown()
+        );
+        assert_eq!(
+            default_surface_for(
+                prepared.okf(),
+                prepared.uml(),
+                &RowTarget::Folder("/".to_string())
+            ),
+            waml::view::surface::SurfaceId::folder()
+        );
     }
 
     fn test_row(target: waml::view::row::RowTarget, surface: Option<&str>) -> Row {

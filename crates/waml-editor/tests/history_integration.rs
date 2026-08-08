@@ -8,7 +8,7 @@ use waml_syntax::DocumentRevision;
 
 fn location(document: &str, anchor: ViewAnchor) -> ViewLocation {
     ViewLocation {
-        document: DocumentLocator::primary(document),
+        document: DocumentLocator::concept(document, waml::view::surface::SurfaceId::markdown()),
         anchor,
     }
 }

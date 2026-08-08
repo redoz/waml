@@ -1142,7 +1142,10 @@ mod tests {
         app.transition_to_location(
             &mut cx,
             ViewLocation {
-                document: DocumentLocator::primary("order"),
+                document: DocumentLocator::concept(
+                    "order",
+                    waml::view::surface::SurfaceId::markdown(),
+                ),
                 anchor: ViewAnchor::None,
             },
             TransitionCause::UserNavigation,

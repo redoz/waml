@@ -24,6 +24,17 @@ pub(super) enum TransitionCause {
 }
 
 impl App {
+    /// The "primary" resolution at click sites: the surface a concept opens
+    /// on when nothing requests one explicitly.
+    pub(super) fn primary_locator(&self, concept_id: &str) -> crate::navigation::DocumentLocator {
+        let surface = crate::documents::default_surface_for(
+            self.session.okf_analysis(),
+            self.session.uml_analysis(),
+            &waml::view::row::RowTarget::Concept(concept_id.to_string()),
+        );
+        crate::navigation::DocumentLocator::concept(concept_id.to_string(), surface)
+    }
+
     pub(super) fn set_navigation_message(&mut self, cx: &mut Cx, message: Option<&str>) {
         if let Some(mut statusbar) = self
             .ui
@@ -276,7 +287,7 @@ impl App {
                 let changed = self.transition_to_location(
                     cx,
                     ViewLocation {
-                        document: crate::navigation::DocumentLocator::primary(&concept_id),
+                        document: self.primary_locator(&concept_id),
                         anchor,
                     },
                     TransitionCause::UserNavigation,
@@ -319,7 +330,10 @@ impl App {
                 let changed = self.transition_to_location(
                     cx,
                     ViewLocation {
-                        document: crate::navigation::DocumentLocator::primary(&address),
+                        document: crate::navigation::DocumentLocator::concept(
+                            &address,
+                            waml::view::surface::SurfaceId::folder(),
+                        ),
                         anchor: ViewAnchor::None,
                     },
                     TransitionCause::UserNavigation,
@@ -415,7 +429,7 @@ impl App {
         let changed = self.transition_to_location(
             cx,
             ViewLocation {
-                document: crate::navigation::DocumentLocator::primary(concept_id),
+                document: self.primary_locator(concept_id),
                 anchor: ViewAnchor::None,
             },
             TransitionCause::UserNavigation,

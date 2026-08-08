@@ -35,7 +35,7 @@ fn diagram_bundle(layout: &str) -> SourceBundle {
 
 fn source_location(concept_id: &str) -> ViewLocation {
     ViewLocation {
-        document: DocumentLocator::primary(concept_id),
+        document: DocumentLocator::concept(concept_id, waml::view::surface::SurfaceId::markdown()),
         anchor: ViewAnchor::None,
     }
 }
@@ -1188,7 +1188,7 @@ fn place_rm() -> Op {
 
 fn location(scroll_y: f64) -> ViewLocation {
     ViewLocation {
-        document: DocumentLocator::primary("dia"),
+        document: DocumentLocator::concept("dia", waml::view::surface::SurfaceId::canvas()),
         anchor: ViewAnchor::markdown_start(
             DocumentRevision::INITIAL,
             None,
@@ -2230,7 +2230,7 @@ fn newest_typed_character_undo_keeps_the_rest_of_customerr() {
             }])),
             label: label.into(),
             merge_key: Some(crate::editor_history::EditMergeKey {
-                document: DocumentLocator::primary("dia"),
+                document: DocumentLocator::concept("dia", waml::view::surface::SurfaceId::canvas()),
                 control: "title".into(),
                 kind: crate::editor_history::EditMergeKind::Insert,
                 span: Some(span),

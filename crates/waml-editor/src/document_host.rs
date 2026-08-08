@@ -753,7 +753,10 @@ mod tests {
         });
 
         assert_eq!(
-            host.tab_id_for_locator(&DocumentLocator::primary("order")),
+            host.tab_id_for_locator(&DocumentLocator::concept(
+                "order",
+                waml::view::surface::SurfaceId::markdown()
+            )),
             Some(primary_id)
         );
         assert_eq!(
@@ -810,7 +813,10 @@ mod tests {
             &ui,
             &session,
             &ViewLocation {
-                document: DocumentLocator::primary("stale"),
+                document: DocumentLocator::concept(
+                    "stale",
+                    waml::view::surface::SurfaceId::markdown()
+                ),
                 anchor: ViewAnchor::None,
             },
         ));

@@ -157,7 +157,7 @@ impl fmt::Display for IconId {
 }
 
 /// What a row points at.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RowTarget {
     /// A real concept document, by href.
     Concept(String),

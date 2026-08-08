@@ -35,12 +35,19 @@ impl DocumentLocator {
         }
     }
 
-    pub fn primary(concept_id: impl Into<String>) -> Self {
-        Self::new(concept_id, DocumentKind::Primary)
-    }
-
     pub fn source(concept_id: impl Into<String>) -> Self {
         Self::new(concept_id, DocumentKind::Source)
+    }
+
+    /// Surface vocabulary over today's kind. Task 4 replaces the body when
+    /// the struct widens; the call sites it serves do not change again.
+    pub fn concept(concept_id: impl Into<String>, surface: waml::view::surface::SurfaceId) -> Self {
+        let kind = if surface == waml::view::surface::SurfaceId::source() {
+            DocumentKind::Source
+        } else {
+            DocumentKind::Primary
+        };
+        Self::new(concept_id, kind)
     }
 }
 

@@ -512,7 +512,10 @@ impl EditorSession {
         ) -> Result<PreparedCandidate, AnalysisError>,
     {
         let location = ViewLocation {
-            document: DocumentLocator::primary("__legacy_edit__"),
+            document: DocumentLocator::concept(
+                "__legacy_edit__",
+                waml::view::surface::SurfaceId::markdown(),
+            ),
             anchor: ViewAnchor::None,
         };
         self.apply_edit_with_preparer(
