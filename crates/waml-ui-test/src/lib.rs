@@ -38,16 +38,18 @@ pub mod __private {
 mod tests {
     use super::{__private::run_catalog_test, WorkspaceFixture};
 
+    type CatalogRunner = fn(
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        WorkspaceFixture,
+        fn(super::WamlApp),
+    );
+
     #[test]
     fn catalog_runner_is_available_to_macro_expansions() {
-        let _runner: fn(
-            &'static str,
-            &'static str,
-            &'static str,
-            &'static str,
-            WorkspaceFixture,
-            fn(super::WamlApp),
-        ) = run_catalog_test;
+        let _runner: CatalogRunner = run_catalog_test;
         let _fixture = WorkspaceFixture::Mini;
     }
 }

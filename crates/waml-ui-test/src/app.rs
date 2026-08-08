@@ -1,19 +1,11 @@
 use crate::adapters::{documents, workspace};
-use crate::config::WorkspaceFixture;
 use crate::domain::{DiagramName, ViewKind};
 use crate::error::{OperationFailure, WamlUiError};
 use crate::trace::SemanticTrace;
 use std::path::{Path, PathBuf};
 
-#[allow(dead_code)]
-pub(crate) struct WorkspaceBinding {
-    pub fixture: WorkspaceFixture,
-    pub staged_path: PathBuf,
-}
-
 pub struct WamlApp {
     driver: makepad_test::TestApp,
-    pub(crate) workspace: WorkspaceBinding,
     test_name: String,
     artifacts_dir: PathBuf,
     trace: SemanticTrace,
@@ -22,14 +14,12 @@ pub struct WamlApp {
 impl WamlApp {
     pub(crate) fn new(
         driver: makepad_test::TestApp,
-        workspace: WorkspaceBinding,
         test_name: String,
         artifacts_dir: PathBuf,
         trace: SemanticTrace,
     ) -> Self {
         Self {
             driver,
-            workspace,
             test_name,
             artifacts_dir,
             trace,

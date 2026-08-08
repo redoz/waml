@@ -1,4 +1,4 @@
-use crate::app::{WamlApp, WorkspaceBinding};
+use crate::app::WamlApp;
 use crate::config::{RunIdentity, ScenarioConfig};
 use crate::fixture::{cleanup_run, ownership_root, resolve_workspace_root, stage_fixture};
 use crate::trace::SemanticTrace;
@@ -53,18 +53,8 @@ pub(crate) fn run_scenario(config: ScenarioConfig, scenario: impl FnOnce(WamlApp
     let run_root = identity.run_root.clone();
     let app_test_name = test_name.clone();
     let app_run_root = run_root.clone();
-    let workspace = WorkspaceBinding {
-        fixture: config.workspace,
-        staged_path: staged_workspace,
-    };
     let result = makepad_test::run_with_config(driver_config, move |driver| {
-        scenario(WamlApp::new(
-            driver,
-            workspace,
-            app_test_name,
-            app_run_root,
-            trace,
-        ));
+        scenario(WamlApp::new(driver, app_test_name, app_run_root, trace));
     });
     let promotion = promote_driver_evidence(&run_root);
     let result = result.map_err(|error| error.message().to_string());

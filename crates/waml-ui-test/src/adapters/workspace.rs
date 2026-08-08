@@ -62,10 +62,10 @@ fn observe_workspace_open(
     ))
 }
 
-fn resolve_workspace_row<'a>(
-    widgets: &'a [WidgetSnapshot],
+fn resolve_workspace_row(
+    widgets: &[WidgetSnapshot],
     diagram: DiagramName,
-) -> Result<&'a WidgetSnapshot, OperationFailure> {
+) -> Result<&WidgetSnapshot, OperationFailure> {
     let rows = diagram_rows(widgets, diagram);
     let row = match rows.as_slice() {
         [] => {
@@ -105,10 +105,7 @@ fn resolve_workspace_row<'a>(
     Ok(row)
 }
 
-fn diagram_rows<'a>(
-    widgets: &'a [WidgetSnapshot],
-    diagram: DiagramName,
-) -> Vec<&'a WidgetSnapshot> {
+fn diagram_rows(widgets: &[WidgetSnapshot], diagram: DiagramName) -> Vec<&WidgetSnapshot> {
     widgets
         .iter()
         .filter(|widget| {

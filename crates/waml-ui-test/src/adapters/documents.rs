@@ -215,10 +215,10 @@ fn decide_view_switch(
     }
 }
 
-fn resolve_diagram_row<'a>(
-    widgets: &'a [WidgetSnapshot],
+fn resolve_diagram_row(
+    widgets: &[WidgetSnapshot],
     diagram: DiagramName,
-) -> Result<&'a WidgetSnapshot, OperationFailure> {
+) -> Result<&WidgetSnapshot, OperationFailure> {
     let rows: Vec<_> = widgets
         .iter()
         .filter(|widget| {
