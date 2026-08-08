@@ -15,6 +15,7 @@ pub mod resolve;
 pub mod route;
 pub mod sizing;
 pub mod stress;
+pub mod vpsc;
 
 // Wire (solver IO) types live in a nested module so that the `Tsify` derive's
 // generated `VectorIntoWasmAbi`/`VectorFromWasmAbi` impls — which reference the
