@@ -332,17 +332,12 @@ impl App {
                 // instead of skipping past it (spike Q5; the locator now
                 // resolves per Task 2's `open_locator_with_asset_host`
                 // folder arm).
-                if crate::documents::open_folder(
-                    self.session.okf_analysis(),
-                    &address,
-                    self.chain_limits,
-                    &self.projection_mask,
-                )
-                .is_none()
-                {
-                    self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
-                    return false;
-                }
+                //
+                // The transition is its own existence probe: a directory that
+                // is not in the bundle makes `open_locator_with_asset_host`
+                // return `None`, which surfaces here as `false`. Probing
+                // separately with `open_folder` would build the whole
+                // `FolderView` twice per navigation.
                 let changed = self.transition_to_location(
                     cx,
                     ViewLocation {
@@ -351,6 +346,10 @@ impl App {
                     },
                     TransitionCause::UserNavigation,
                 );
+                if !changed {
+                    self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
+                    return false;
+                }
                 if disposition == crate::navigation::OpenDisposition::Persistent {
                     let id = self.documents.active_id();
                     self.documents.transition(
@@ -753,16 +752,7 @@ impl App {
     /// view whenever the tab id is already open; that is exactly what made
     /// the old per-folder "View raw" build a view and throw it away.
     pub(super) fn refresh_folder_tabs(&mut self, cx: &mut Cx) {
-        let folders: Vec<String> = self
-            .documents
-            .tabs()
-            .iter()
-            .filter_map(|tab| match &tab.locator.target {
-                waml::view::row::RowTarget::Folder(address) => Some(address.clone()),
-                _ => None,
-            })
-            .collect();
-        for directory in folders {
+        for directory in self.open_folder_listing_addresses() {
             let Some(document) = crate::documents::open_folder(
                 self.session.okf_analysis(),
                 &directory,
@@ -781,5 +771,24 @@ impl App {
                 DocumentCommand::ReopenInPlace { document },
             );
         }
+    }
+
+    /// The addresses of the open tabs that show a folder LISTING -- both
+    /// halves of the locator matter. A folder's `source` tab shares the
+    /// folder target but is a different surface; rebuilding a listing for it
+    /// would refresh the listing tab twice and never refresh the source tab.
+    pub(super) fn open_folder_listing_addresses(&self) -> Vec<String> {
+        self.documents
+            .tabs()
+            .iter()
+            .filter_map(|tab| match &tab.locator.target {
+                waml::view::row::RowTarget::Folder(address)
+                    if tab.locator.surface == waml::view::surface::SurfaceId::folder() =>
+                {
+                    Some(address.clone())
+                }
+                _ => None,
+            })
+            .collect()
     }
 }

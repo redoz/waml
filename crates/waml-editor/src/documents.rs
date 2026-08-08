@@ -1,6 +1,8 @@
 use crate::document::{DocumentDescriptor, OpenDocument};
 use crate::view_history::DocumentLocator;
-use waml::view::row::{Row, RowTarget};
+#[cfg(test)]
+use waml::view::row::Row;
+use waml::view::row::RowTarget;
 
 /// THE tab identity: one function over the locator (spec §3). The target
 /// discriminant is baked into the string so a folder "/x" and a concept
@@ -34,7 +36,7 @@ pub fn describe(
 /// `open_canvas` (which folds in the same uml-then-generic degrade) rather
 /// than calling this function. Not dead: exercised directly by this
 /// module's tests as the behavior baseline the table must match.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn open_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -94,7 +96,7 @@ pub(crate) const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "fo
 /// row the editor can produce today has `surface: None` and is unaffected
 /// either way -- so this entry point still has no live (non-test) caller
 /// until Task 6 wires `folder_view.rs`'s click-through path to it.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn open_row_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -111,6 +113,23 @@ pub fn open_row_with_asset_host(
         "index.md",
         0,
     );
+    let doc = open_on_surface(okf, uml, &row.target, &surface, assets, limits, mask);
+    (doc, diagnostic)
+}
+
+/// The one surface dispatch both entry shapes share: look the resolved
+/// surface up in this build's registered table and hand the target to its
+/// factory. Kept private and single so the row path and the locator path
+/// cannot drift on what "open on surface S" means.
+fn open_on_surface(
+    okf: &waml::analysis::OkfAnalysis,
+    uml: &waml::uml::Analysis,
+    target: &RowTarget,
+    surface: &waml::view::surface::SurfaceId,
+    assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    limits: waml::view::chain::ChainLimits,
+    mask: &waml::view::mask::ProjectionMask,
+) -> Option<OpenDocument> {
     let ctx = crate::extension_editor::OpenCtx {
         analysis: okf,
         uml,
@@ -118,11 +137,10 @@ pub fn open_row_with_asset_host(
         limits,
         mask,
     };
-    let doc = crate::extension_editor::surface_table()
+    crate::extension_editor::surface_table()
         .into_iter()
         .find(|(name, _)| *name == surface.as_str())
-        .and_then(|(_, factory)| factory(&ctx, &row.target));
-    (doc, diagnostic)
+        .and_then(|(_, factory)| factory(&ctx, target))
 }
 
 /// The folder-view provider entry: keyed on a directory address, not a
@@ -182,17 +200,7 @@ pub fn open_locator_with_asset_host(
         "index.md",
         0,
     );
-    let ctx = crate::extension_editor::OpenCtx {
-        analysis: okf,
-        uml,
-        assets: assets.clone(),
-        limits,
-        mask,
-    };
-    crate::extension_editor::surface_table()
-        .into_iter()
-        .find(|(name, _)| *name == surface.as_str())
-        .and_then(|(_, factory)| factory(&ctx, &locator.target))
+    open_on_surface(okf, uml, &locator.target, &surface, assets, limits, mask)
 }
 
 #[cfg(test)]

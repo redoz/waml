@@ -2262,7 +2262,7 @@ fn navigation_app_with_folders() -> (Cx, App) {
             app.session.okf_analysis(),
             app.session.uml_analysis(),
             &NavState::default(),
-            app.view_mode,
+            &app.projection_mask,
             app.chain_limits,
         ),
     );
@@ -2450,5 +2450,94 @@ fn open_source_for_a_folder_without_an_index_md_changes_nothing() {
         app.view_history.len(),
         history_len_before,
         "no history entry must be recorded"
+    );
+}
+
+/// A mode flip must rebuild folder LISTING tabs only. A folder's `source`
+/// tab shares the folder target but not the surface; counting it would
+/// rebuild the listing twice and still never refresh the source tab.
+#[test]
+fn a_mode_flip_collects_folder_listing_tabs_only_not_their_source_tabs() {
+    let (mut cx, mut app) = navigation_app_with_folders();
+    let mut browser = FakeBrowser::default();
+
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/shop".into(),
+        },
+        OpenDisposition::Persistent,
+        &mut browser,
+    ));
+    app.open_source_for(&mut cx, waml::view::row::RowTarget::Folder("/shop".into()));
+    assert!(
+        app.documents
+            .tabs()
+            .iter()
+            .any(|tab| tab.locator.surface == waml::view::surface::SurfaceId::source()),
+        "the folder's source tab must be open for this test to mean anything"
+    );
+
+    assert_eq!(
+        app.open_folder_listing_addresses(),
+        vec!["/shop".to_string()],
+        "the source tab must not be collected as a folder listing"
+    );
+
+    let registry = crate::folder_projection::core_registry();
+    let full_mask = waml::view::mask::ProjectionMask::from_names(
+        crate::folder_projection::maskable_names(&registry)
+            .into_iter()
+            .flat_map(|(_owner, names)| names)
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>(),
+    );
+    app.set_projection_mask(&mut cx, full_mask);
+    assert!(!app.projection_mask.is_empty());
+}
+
+/// A folder navigation that fails must not pin the unrelated preview tab
+/// that happened to be active. The promote is a consequence of arriving.
+#[test]
+fn a_failed_folder_navigation_does_not_promote_the_active_preview_tab() {
+    let (mut cx, mut app) = navigation_app_with_folders();
+    let mut browser = FakeBrowser::default();
+
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/shop".into(),
+        },
+        OpenDisposition::Preview,
+        &mut browser,
+    ));
+    let active = app.documents.active_id();
+    assert!(
+        app.documents
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == active)
+            .expect("active tab")
+            .preview,
+        "the preview folder open must land in the preview slot"
+    );
+
+    assert!(!app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/does-not-exist".into(),
+        },
+        OpenDisposition::Persistent,
+        &mut browser,
+    ));
+
+    assert!(
+        app.documents
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == active)
+            .expect("active tab survives")
+            .preview,
+        "a failed folder navigation must not promote the preview tab"
     );
 }
