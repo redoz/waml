@@ -691,6 +691,63 @@ fn manual_and_preview_transitions_follow_back_and_forward_history() {
 }
 
 #[test]
+fn back_and_forward_stop_on_folder_tabs() {
+    let (mut cx, mut app) = navigation_app_with_active_order();
+    let mut browser = FakeBrowser::default();
+    // Persistent, so it survives the directory hop below.
+    assert!(app.transition_document(&mut cx, "sales/order", true));
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/sales".into(),
+        },
+        OpenDisposition::Preview,
+        &mut browser,
+    ));
+    let folder_tab_id = crate::folder_view::folder_document_tab_id("/sales");
+    assert_eq!(app.documents.active_id(), folder_tab_id);
+    let folder_tab_locator = crate::navigation::DocumentLocator::primary("/sales");
+
+    assert!(app.transition_to_location(
+        &mut cx,
+        ViewLocation {
+            document: crate::navigation::DocumentLocator::primary("sales/customer"),
+            anchor: ViewAnchor::None,
+        },
+        TransitionCause::UserNavigation,
+    ));
+    assert_eq!(
+        app.documents.active_tab().unwrap().concept_id,
+        "sales/customer"
+    );
+
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+    assert_eq!(
+        app.documents.active_id(),
+        folder_tab_id,
+        "Back must stop on the /sales folder tab, not skip past it"
+    );
+
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+    assert_eq!(
+        app.documents.active_tab().unwrap().concept_id,
+        "sales/order"
+    );
+
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Forward));
+    assert_eq!(
+        app.documents.active_id(),
+        folder_tab_id,
+        "Forward must stop on the /sales folder tab, not skip past it"
+    );
+
+    assert_eq!(
+        app.documents.tab_id_for_locator(&folder_tab_locator),
+        Some(folder_tab_id)
+    );
+}
+
+#[test]
 fn tab_row_history_actions_traverse_once_and_report_unavailable_targets() {
     let (mut cx, mut app) = navigation_app_with_active_order();
     assert!(app.transition_document(&mut cx, "sales/customer", false));

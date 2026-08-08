@@ -165,6 +165,8 @@ impl App {
                     self.session.uml_analysis(),
                     tab,
                     assets,
+                    self.chain_limits,
+                    &self.projection_mask,
                 )
             })
             .collect())

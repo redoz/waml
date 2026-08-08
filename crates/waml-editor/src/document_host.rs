@@ -200,6 +200,7 @@ impl DocumentHost {
             .is_some_and(|view| view.restore_anchor(cx, &body, snapshot.borrowed().into(), anchor))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn restore_location_with_asset_host(
         &mut self,
         cx: &mut Cx,
@@ -207,12 +208,16 @@ impl DocumentHost {
         session: &EditorSession,
         location: &ViewLocation,
         assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+        limits: waml::view::chain::ChainLimits,
+        mask: &waml::view::mask::ProjectionMask,
     ) -> bool {
         let Some(document) = crate::documents::open_locator_with_asset_host(
             session.okf_analysis(),
             session.uml_analysis(),
             &location.document,
             assets,
+            limits,
+            mask,
         ) else {
             return false;
         };
@@ -249,6 +254,8 @@ impl DocumentHost {
             &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
         )
     }
 

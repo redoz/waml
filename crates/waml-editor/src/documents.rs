@@ -123,8 +123,10 @@ pub fn reopen_with_asset_host(
     uml: &waml::uml::Analysis,
     tab: &crate::doc_tabs::DocTab,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    limits: waml::view::chain::ChainLimits,
+    mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
-    open_locator_with_asset_host(okf, uml, &tab.locator(), assets)
+    open_locator_with_asset_host(okf, uml, &tab.locator(), assets, limits, mask)
 }
 
 pub fn open_locator_with_asset_host(
@@ -132,8 +134,17 @@ pub fn open_locator_with_asset_host(
     uml: &waml::uml::Analysis,
     locator: &DocumentLocator,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    limits: waml::view::chain::ChainLimits,
+    mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
     match locator.kind {
+        // A directory address always begins with '/'; a concept id never
+        // does. Temporary discrimination on the stringly locator --
+        // replaced by the typed RowTarget::Folder arm when the locator
+        // widens (surface plan Task 4).
+        DocumentKind::Primary if locator.concept_id.starts_with('/') => {
+            open_folder(okf, &locator.concept_id, limits, mask)
+        }
         DocumentKind::Primary => open_with_asset_host(okf, uml, &locator.concept_id, assets),
         DocumentKind::Source => {
             crate::okf_documents::open_source_with_asset_host(okf, &locator.concept_id, assets)
@@ -207,9 +218,16 @@ mod tests {
                 .unwrap()
                 .into_tab(true);
         assert_eq!(
-            reopen_with_asset_host(prepared.okf(), prepared.uml(), &generic_tab, &assets())
-                .unwrap()
-                .tab_id,
+            reopen_with_asset_host(
+                prepared.okf(),
+                prepared.uml(),
+                &generic_tab,
+                &assets(),
+                waml::view::chain::ChainLimits::default(),
+                &waml::view::mask::ProjectionMask::default(),
+            )
+            .unwrap()
+            .tab_id,
             generic_tab.id
         );
 
@@ -218,9 +236,16 @@ mod tests {
                 .unwrap()
                 .into_tab(false);
         assert_eq!(
-            reopen_with_asset_host(prepared.okf(), prepared.uml(), &source_tab, &assets())
-                .unwrap()
-                .tab_id,
+            reopen_with_asset_host(
+                prepared.okf(),
+                prepared.uml(),
+                &source_tab,
+                &assets(),
+                waml::view::chain::ChainLimits::default(),
+                &waml::view::mask::ProjectionMask::default(),
+            )
+            .unwrap()
+            .tab_id,
             source_tab.id
         );
     }
@@ -416,6 +441,35 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_tabs_locator_reopens_the_folder_view() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Sales](sales/)\n"),
+            ("sales/index.md", "# Sales\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 21).unwrap();
+        let (folder_tab, _) = open_folder(
+            prepared.okf(),
+            "/sales",
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
+        )
+        .unwrap()
+        .into_tab(true);
+
+        let reopened = reopen_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &folder_tab,
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
+        )
+        .expect("a folder tab's locator must resolve (spike Q5: today it never does)");
+        assert_eq!(reopened.tab_id, folder_tab.id);
+    }
+
+    #[test]
     fn locator_reopens_the_correct_view_after_transient_tab_identity_is_gone() {
         let source =
             SourceBundle::try_from_pairs([("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n")])
@@ -427,9 +481,15 @@ mod tests {
                 .into_tab(false);
         old_source_tab.id = makepad_widgets::LiveId::from_str("closed-transient-tab");
 
-        let reopened =
-            reopen_with_asset_host(prepared.okf(), prepared.uml(), &old_source_tab, &assets())
-                .unwrap();
+        let reopened = reopen_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &old_source_tab,
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
+        )
+        .unwrap();
 
         assert_eq!(reopened.locator(), old_source_tab.locator());
         assert_eq!(reopened.kind, DocumentKind::Source);

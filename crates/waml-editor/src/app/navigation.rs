@@ -74,6 +74,8 @@ impl App {
                         self.session.uml_analysis(),
                         &location.document,
                         assets,
+                        self.chain_limits,
+                        &self.projection_mask,
                     )
                     .is_some()
                 })
@@ -86,6 +88,8 @@ impl App {
                         self.session.uml_analysis(),
                         &location.document,
                         assets,
+                        self.chain_limits,
+                        &self.projection_mask,
                     )
                     .is_some()
                 })
@@ -294,44 +298,44 @@ impl App {
                 // Opens the folder's own view -- the tree's fold/unfold
                 // affordance moved to the chevron (`tree_panel.rs`'s
                 // chevron-vs-row-body split); a `Directory` navigation
-                // target now always means "open", never "toggle".
-                let Some(document) = crate::documents::open_folder(
+                // target now always means "open", never "toggle". Routed
+                // through `transition_to_location` (like the `Document`
+                // arm above) so a folder tab participates in view history
+                // like any other tab -- Back/Forward now stops on it
+                // instead of skipping past it (spike Q5; the locator now
+                // resolves per Task 2's `open_locator_with_asset_host`
+                // folder arm).
+                if crate::documents::open_folder(
                     self.session.okf_analysis(),
                     &address,
                     self.chain_limits,
                     &self.projection_mask,
-                ) else {
+                )
+                .is_none()
+                {
                     self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
                     return false;
-                };
-                let tab_id = document.tab_id;
-                self.documents.transition(
-                    cx,
-                    &self.ui,
-                    &self.session,
-                    DocumentCommand::Open {
-                        document,
-                        persistent: disposition == crate::navigation::OpenDisposition::Persistent,
-                    },
-                );
-                // `transition`'s own return reports whether the tab STATE
-                // changed, which is false for re-navigating to an already
-                // active preview tab (matches the `Document` arm's own
-                // same-document short circuit in `transition_to_location`) --
-                // success here means "landed on the folder's tab", not "tabs
-                // changed".
-                let opened = self.documents.active_id() == tab_id;
-                if opened {
-                    // The `Document` arm reaches this through
-                    // `transition_to_location`; a folder open bypasses that
-                    // path entirely, so without this the shell projections --
-                    // including the tree panel's selected row -- keep pointing
-                    // at whatever document was active before the folder.
-                    self.sync_document_shell(cx);
-                    cx.redraw_all();
-                    self.set_navigation_message(cx, None);
                 }
-                opened
+                let changed = self.transition_to_location(
+                    cx,
+                    ViewLocation {
+                        document: crate::navigation::DocumentLocator::primary(&address),
+                        anchor: ViewAnchor::None,
+                    },
+                    TransitionCause::UserNavigation,
+                );
+                if disposition == crate::navigation::OpenDisposition::Persistent {
+                    let id = self.documents.active_id();
+                    self.documents.transition(
+                        cx,
+                        &self.ui,
+                        &self.session,
+                        DocumentCommand::Promote(id),
+                    );
+                }
+                cx.redraw_all();
+                self.set_navigation_message(cx, None);
+                changed
             }
             crate::navigation::NavigationTarget::ExternalUrl(url) => match browser.open(cx, &url) {
                 Ok(()) => {
@@ -484,6 +488,8 @@ impl App {
             &self.session,
             &location,
             &assets,
+            self.chain_limits,
+            &self.projection_mask,
         ) {
             return false;
         }
@@ -574,6 +580,8 @@ impl App {
                 self.session.uml_analysis(),
                 &location.document,
                 assets,
+                self.chain_limits,
+                &self.projection_mask,
             )
             .is_some()
         }) else {
