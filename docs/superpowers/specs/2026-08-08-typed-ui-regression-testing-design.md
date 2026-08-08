@@ -80,12 +80,12 @@ The initial authoring form is:
 
 ```rust,ignore
 use waml_ui_test::{
-    waml_ui_test, DiagramName, ViewKind, WamlApp, WorkspaceFixture,
+    waml_ui_test, DiagramName, ViewKind, WamlApp,
 };
 
 #[waml_ui_test(workspace = Mini)]
 fn open_and_switch_document_views(mut app: WamlApp) {
-    app.ensure_workspace_open(WorkspaceFixture::MINI)
+    app.expect_workspace_open()
         .ensure_diagram_open(DiagramName::ORDERS)
         .expect_active_diagram(DiagramName::ORDERS)
         .switch_active_document_to(ViewKind::Source)
@@ -95,11 +95,12 @@ fn open_and_switch_document_views(mut app: WamlApp) {
 }
 ```
 
-`WorkspaceFixture`, `DiagramName`, and similar values are typed newtypes with
-well-known constants for committed fixtures. A later test can create a new
-typed value when it creates data during the scenario. The DSL must not use a
-closed enum that makes every new fixture or document require a release of the
-test library.
+The attribute is the single authority for the scenario workspace. The runner
+stores that typed workspace binding in `WamlApp`; the scenario does not repeat
+it. `DiagramName` and similar values are typed newtypes with well-known
+constants for committed fixtures. A later test can create a new typed value
+when it creates data during the scenario. The DSL must not use a closed enum
+that makes every new document require a release of the test library.
 
 ### Semantic DSL layer
 
@@ -178,7 +179,7 @@ The intended WAML test-support packages are:
 - `waml-ui-test`: normal Rust library. It owns `WamlApp`, typed domain values,
   semantic errors, traces, fixture staging, UI adapters, and the launch runner.
 - `waml-ui-test-macros`: proc-macro library. It owns only expansion of
-  `#[waml_ui_test(workspace = Mini)]` into a serial Rust test that calls the
+  `#[waml_ui_test(workspace = Mini)]` into a normal Rust test that calls the
   `waml-ui-test` runner.
 
 `waml-ui-test` re-exports the attribute macro so scenario files need one test
@@ -186,9 +187,12 @@ support dependency. Both packages are private workspace support crates. They
 are not part of the public WAML product API.
 
 The macro accepts a workspace identifier from the compiled fixture catalog.
-It does not accept a free-form fixture path. A test that creates a workspace
-dynamically uses a separate typed runner API instead of weakening the common
-attribute syntax.
+It does not accept a free-form fixture path. Catalog fixtures and dynamically
+created fixtures both become a `WorkspaceSpec` and enter the same
+`run_scenario(ScenarioConfig, scenario)` lifecycle. The macro constructs a
+catalog-backed `ScenarioConfig`; a typed builder constructs a generated
+`ScenarioConfig`. Neither path can replace staging, launch, tracing, cleanup,
+or evidence handling.
 
 The `waml-editor` UI scenarios remain in its `tests/` directory. This keeps the
 test target attached to the application package that `makepad-test` launches.
@@ -198,38 +202,51 @@ test target attached to the application package that `makepad-test` launches.
 For each test, the WAML runner performs this sequence:
 
 1. Resolve the workspace identifier through the compiled fixture catalog.
-2. Create `target/waml-ui-test/<test-name>/workspace` from the committed
-   fixture.
-3. Remove an older staged workspace for the same test before the copy.
+2. Allocate a unique run identity for process, connection, workspace, and
+   artifact ownership.
+3. Create `target/waml-ui-test/<run-id>/<test-name>/workspace` from the
+   committed fixture.
 4. Preserve the committed fixture as a read-only input.
-5. Build launch arguments with the staged path and
-   `--title ui-<test-name>`.
-6. Start `waml-editor` through `makepad-test`.
-7. Wait for the semantic application-ready condition.
-8. Construct `WamlApp` and start the semantic trace.
-9. Run the scenario.
-10. Remove the staged workspace after success.
-11. Preserve the staged workspace and all evidence after failure.
+5. Build launch arguments with the staged path and a unique short title in the
+   form `--title ui-<run-id>-<test-slug>`.
+6. Allocate or request the Studio connection resources through the driver.
+7. Start `waml-editor` through `makepad-test`.
+8. Wait for the semantic application-ready condition.
+9. Construct `WamlApp` with the authoritative workspace binding and start the
+   semantic trace.
+10. Run the scenario.
+11. Remove the run-owned workspace after success.
+12. Preserve the run-owned workspace and all evidence after failure.
 
 The first application-ready condition is a visible workspace shell plus a
 project tree that identifies the expected fixture root. Window creation or a
 nonzero window handle alone is not sufficient.
 
-All UI scenarios run serially. The runner and CI command both enforce this
-rule. A test must not find, reuse, or stop an application process by name.
+The first CI job runs UI scenarios serially as an execution policy. The WAML
+runner does not impose global serialization and does not use shared test-name
+paths, fixed ports, or process-name ownership. This keeps later process-level
+sharding possible without changing the DSL or lifecycle. A driver limitation
+may request an exclusive session lease, but that lease stays below the WAML
+runner boundary. A test must not find, reuse, or stop an application process by
+name.
 
 ## Semantic step execution
 
-Every DSL operation uses the same internal algorithm:
+Every DSL operation uses the same execution envelope:
 
 1. Record the operation name and semantic input.
 2. Observe the current semantic state.
 3. For `ensure_*`, return success if the required state is present.
-4. Resolve exactly one actionable UI target through its adapter.
-5. Perform the minimum interaction.
-6. Poll for the semantic postcondition until the operation timeout.
-7. Record the observed result.
-8. On failure, capture all evidence before the application stops.
+4. Run the adapter's operation-specific interaction sequence. The sequence can
+   use zero, one, or more targets and zero, one, or more input events.
+5. Poll for the semantic postcondition until the operation timeout.
+6. Record the observed result.
+7. On failure, capture all evidence before the application stops.
+
+The envelope owns tracing, before and after observations, postcondition waits,
+and failure evidence. The adapter owns target count and interaction count.
+Targetless shortcuts, outside clicks, multi-target operations, and compound
+gesture sequences use this same envelope without sentinel targets or bypasses.
 
 The default timeout comes from `makepad-test`. A domain operation can use a
 different timeout only when it documents a real asynchronous boundary, such
@@ -254,7 +271,7 @@ Example:
 Step 4: switch active document to Source failed
 Expected: active view is Source for Orders
 Observed: active view remained Diagram; source control was disabled
-Artifacts: target/waml-ui-test/open_and_switch_document_views/
+Artifacts: target/waml-ui-test/<run-id>/open_and_switch_document_views/
 ```
 
 The artifact directory contains:
@@ -302,13 +319,16 @@ tree routing, document activation, view switching, and semantic readiness.
 
 ## CI strategy
 
-The initial command is a dedicated serial target:
+The initial command applies a serial CI policy:
 
 ```bash
 cargo test -p waml-editor --test ui -- --test-threads=1
 ```
 
 It runs on the Linux worker after normal Rust tests. It is a required check.
+Serial execution is not part of the DSL or WAML runner contract. CI can later
+split scenarios across processes because every run already owns its process,
+connection resources, workspace, and artifact path.
 The first implementation task must qualify `makepad-test` headless execution
 on the repository's current Linux CI image. If qualification exposes a generic
 Makepad defect, the fix belongs in the Makepad fork. WAML must not add a
