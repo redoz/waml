@@ -2681,6 +2681,46 @@ mod tests {
         );
     }
 
+    /// The plan's Task 5 regression pin the unification owed: a golden dump
+    /// of the unified no-hint editor output, so any future churn to the
+    /// hintless solve (node set, solve order, stress tuning, card sizing) is
+    /// caught instead of silently re-laying-out every hintless diagram. The
+    /// coordinates are the CURRENT unified output — the unification itself
+    /// already changed the hintless solve order from sorted-by-key (the old
+    /// `sizes.keys()` BTreeMap order) to scene/declaration order
+    /// (`compiled.keys`), which was accepted; this pins the result. If a
+    /// deliberate layout change trips this, re-pin the dump.
+    #[test]
+    fn hintless_unified_layout_geometry_is_pinned() {
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        diagram.layout = Vec::new();
+        let (scene, diags) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        assert!(
+            diags.is_empty(),
+            "hintless mini must solve clean: {diags:?}"
+        );
+        let mut dump = String::new();
+        for n in &scene.nodes {
+            dump.push_str(&format!(
+                "{} {:.1} {:.1} {:.1} {:.1}\n",
+                n.key, n.rect.x, n.rect.y, n.rect.w, n.rect.h
+            ));
+        }
+        let expected = "customer 0.0 9.7 190.8 98.4\n\
+                        order 298.9 0.0 190.8 117.7\n\
+                        payment-gateway 0.0 157.7 199.6 92.7\n";
+        assert_eq!(
+            dump, expected,
+            "hintless unified output drifted; if the change is deliberate, re-pin"
+        );
+    }
+
     #[test]
     fn groups_linked_fixture_clusters_and_never_overlaps() {
         // Groups + relationships + no `## Layout` section: the one combination
