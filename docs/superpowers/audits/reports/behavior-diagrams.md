@@ -1,7 +1,3 @@
-# Status
-
-DONE_WITH_CONCERNS
-
 # Changed files
 
 - `docs/waml/goals/uml/activity/feature-cut.md`
@@ -89,12 +85,3 @@ discrepancy record.
   for hit targets, tolerance, and priority.
 - No feature-gap entry or geometry constraint was added for specialized actor,
   use-case, system-boundary, or use-case-layout rendering.
-
-# Scope boundaries
-
-- Feature-cut and sequence-language documents own language and model coverage.
-- The four interaction leaves own editor and renderer product behavior only.
-- The use-case goal subtree does not create or copy the permanent actors,
-  workflows, or views that Task 11 owns under `docs/waml/use-cases/**`.
-- No product use-case model, test, inventory, feature-gap ledger, architecture,
-  script, or manifest file changed.

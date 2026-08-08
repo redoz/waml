@@ -14,8 +14,8 @@ dedicated use-case diagram view.
 
 ## Current product state
 
-- WAML parses `uml.Actor` and `uml.UseCase` documents and keeps them as
-  different model kinds.
+- [Use Case Feature Cut](./feature-cut.md) owns use-case language and model
+  support.
 - The editor assigns actors and use cases to different structural style
   buckets. It has no frozen row for a dedicated use-case diagram interaction.
 - This document does not invent a stable scenario identifier or a GWT
@@ -23,8 +23,6 @@ dedicated use-case diagram view.
 
 ## Evidence
 
-- Model support is covered by
-  `crates/waml/src/model.rs::actor_and_usecase_metaclasses_parse_and_round_trip`.
 - Current editor style classification is covered by
   `crates/waml-editor/src/node_style.rs::actor_and_usecase_are_distinct_buckets`.
 
