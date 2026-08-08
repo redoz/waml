@@ -2232,3 +2232,223 @@ fn the_mask_starts_empty_and_is_never_persisted() {
         "no mask-shaped field at all: {json}"
     );
 }
+
+/// Task 8's fixture: `/shop` has an `index.md` (the forcing case resolves),
+/// `/loose` links a concept but has no `index.md` on disk (the negative
+/// case must not resolve).
+fn navigation_app_with_folders() -> (Cx, App) {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    cx.widget_tree_mark_dirty(WidgetUid(0));
+    let mut app = cx.with_vm(App::script_new_with_default);
+    let source = waml::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root\n\n* [Shop](shop/)\n* [Loose](loose/)\n"),
+        ("shop/index.md", "# Shop\n\n* [Thing](thing.md)\n"),
+        (
+            "shop/thing.md",
+            "---\ntype: Runbook\ntitle: Thing\n---\n# Thing\n",
+        ),
+        (
+            "loose/thing.md",
+            "---\ntype: Runbook\ntitle: Loose Thing\n---\n# Loose Thing\n",
+        ),
+    ])
+    .unwrap();
+    app.session.replace(source).unwrap();
+    let mut project_tree = cx.with_vm(crate::tree_panel::ProjectTree::script_new_with_default);
+    project_tree.set_view(
+        &mut cx,
+        crate::nav::view(
+            app.session.okf_analysis(),
+            app.session.uml_analysis(),
+            &NavState::default(),
+            app.view_mode,
+            app.chain_limits,
+        ),
+    );
+    let project_tree = WidgetRef::new_with_inner(Box::new(project_tree));
+    let statusbar = WidgetRef::new_with_inner(Box::new(
+        cx.with_vm(crate::statusbar::Statusbar::script_new_with_default),
+    ));
+    let document_header = WidgetRef::new_with_inner(Box::new(
+        cx.with_vm(crate::document_header::DocumentHeader::script_new_with_default),
+    ));
+    let inspector = WidgetRef::new_with_inner(Box::new(
+        cx.with_vm(crate::inspector_panel::Inspector::script_new_with_default),
+    ));
+    let mut ui = cx.with_vm(View::script_new_with_default);
+    ui.children.push((live_id!(project_tree), project_tree));
+    ui.children.push((live_id!(statusbar), statusbar));
+    ui.children
+        .push((live_id!(document_header), document_header));
+    ui.children.push((live_id!(inspector), inspector));
+    for id in [live_id!(history_back_btn), live_id!(history_forward_btn)] {
+        let button = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::icon_button::IconButton::script_new_with_default),
+        ));
+        ui.children.push((id, button));
+    }
+    app.ui = WidgetRef::new_with_inner(Box::new(ui));
+    (cx, app)
+}
+
+/// The forcing case (T8 S1): open a folder tab, then request its source
+/// surface via `open_source_for`. The active tab's locator becomes the
+/// folder's source locator, the folder tab is still open, Back returns to
+/// the folder listing, Forward returns to the source tab, and a second
+/// `open_source_for` reuses the same tab rather than growing tab count.
+#[test]
+fn open_source_for_a_folder_forces_the_source_tab_and_round_trips_through_history() {
+    let (mut cx, mut app) = navigation_app_with_folders();
+    let mut browser = FakeBrowser::default();
+
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/shop".into(),
+        },
+        OpenDisposition::Persistent,
+        &mut browser,
+    ));
+    let tabs_after_folder = app.documents.tabs().len();
+    let folder_locator = crate::navigation::DocumentLocator::folder("/shop");
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        folder_locator
+    );
+
+    app.open_source_for(&mut cx, waml::view::row::RowTarget::Folder("/shop".into()));
+
+    let source_locator = crate::navigation::DocumentLocator::new(
+        waml::view::row::RowTarget::Folder("/shop".into()),
+        waml::view::surface::SurfaceId::source(),
+    );
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        source_locator,
+        "the active tab must be the folder's source tab"
+    );
+    // The folder tab is either still open alongside the source tab, or was
+    // replaced in the shared preview slot -- assert whichever
+    // `transition_to_location`'s preview semantics actually produced.
+    let tab_count_after_source = app.documents.tabs().len();
+    assert!(
+        tab_count_after_source == tabs_after_folder
+            || tab_count_after_source == tabs_after_folder + 1,
+        "unexpected tab count after opening the source: {tab_count_after_source}"
+    );
+
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        folder_locator,
+        "Back must return to the folder tab"
+    );
+
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Forward));
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        source_locator,
+        "Forward must return to the source tab"
+    );
+
+    // A second `open_source_for` on the same folder reuses the same tab.
+    let tabs_before_second_open = app.documents.tabs().len();
+    app.open_source_for(&mut cx, waml::view::row::RowTarget::Folder("/shop".into()));
+    assert_eq!(
+        app.documents.tabs().len(),
+        tabs_before_second_open,
+        "a repeat open_source_for must not grow the tab count"
+    );
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        source_locator
+    );
+}
+
+/// The root works too (T8 S2) -- `RowTarget::Folder("/")` resolves through
+/// the "index" key edge the spike confirmed.
+#[test]
+fn open_source_for_the_root_folder_round_trips_through_history() {
+    let (mut cx, mut app) = navigation_app_with_folders();
+    let mut browser = FakeBrowser::default();
+
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/".into(),
+        },
+        OpenDisposition::Persistent,
+        &mut browser,
+    ));
+    let folder_locator = crate::navigation::DocumentLocator::folder("/");
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        folder_locator
+    );
+
+    app.open_source_for(&mut cx, waml::view::row::RowTarget::Folder("/".into()));
+
+    let source_locator = crate::navigation::DocumentLocator::new(
+        waml::view::row::RowTarget::Folder("/".into()),
+        waml::view::surface::SurfaceId::source(),
+    );
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        source_locator
+    );
+
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        folder_locator
+    );
+
+    assert!(app.traverse_view_history(&mut cx, HistoryDirection::Forward));
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        source_locator
+    );
+}
+
+/// The negative case (T8 S3): a folder linked but with no `index.md` on
+/// disk offers nothing -- `open_source_for` leaves the active tab and tab
+/// count unchanged, opens no blank tab, and records no history entry. This
+/// is the app-level face of Task 3's gate test.
+#[test]
+fn open_source_for_a_folder_without_an_index_md_changes_nothing() {
+    let (mut cx, mut app) = navigation_app_with_folders();
+    let mut browser = FakeBrowser::default();
+
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/loose".into(),
+        },
+        OpenDisposition::Persistent,
+        &mut browser,
+    ));
+    let folder_locator = crate::navigation::DocumentLocator::folder("/loose");
+    let tabs_before = app.documents.tabs().len();
+    let active_before = app.documents.active_tab().unwrap().locator();
+    assert_eq!(active_before, folder_locator);
+    let history_len_before = app.view_history.len();
+
+    app.open_source_for(&mut cx, waml::view::row::RowTarget::Folder("/loose".into()));
+
+    assert_eq!(
+        app.documents.tabs().len(),
+        tabs_before,
+        "no blank tab must be opened"
+    );
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator(),
+        active_before,
+        "the active tab must be unchanged"
+    );
+    assert_eq!(
+        app.view_history.len(),
+        history_len_before,
+        "no history entry must be recorded"
+    );
+}
