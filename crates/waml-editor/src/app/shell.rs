@@ -71,10 +71,11 @@ pub(super) fn tree_toggle_layout(
     } else {
         0.0
     };
-    // The slot ENDS on the column's edge: `lead_w + slot == tree_w`. What the
-    // slot carries (the burger, then the toggle) therefore starts just past the
-    // split rather than sitting over the column's top-right corner.
-    let open_w = (tree_w - lead_w).max(0.0);
+    // The PAIR's footprint comes off the target: the slot leads the burger and
+    // the toggle, so it is `lead_w + slot + 2 * TREE_BTN_W` that has to land on
+    // the column's edge. The toggle keeps its seat flush with the split, with
+    // the burger tucked in immediately left of it.
+    let open_w = (tree_w - lead_w - 2.0 * TREE_BTN_W).max(0.0);
     (true, open_w * progress)
 }
 
@@ -114,10 +115,8 @@ pub(super) fn project_document_header(
 
 /// Footprint of one slot-carried caption control: the DSL `width` (30) plus its
 /// 2px margin. The burger and the tree toggle are both this wide and ride the
-/// slot in that order. The layout maths no longer subtracts it -- the slot now
-/// ends ON the split -- so it survives as what the tests measure the pair's
-/// travel against.
-#[cfg(test)]
+/// slot in that order, so the layout maths subtracts TWO of it (see
+/// `tree_toggle_layout`).
 pub(super) const TREE_BTN_W: f64 = 32.0;
 
 /// `tab_row`'s x within the caption, as the DSL declares it: `title_row`'s 2px

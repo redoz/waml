@@ -23,15 +23,15 @@ fn unmounted_tree_toggle_is_absent() {
     );
 }
 
-/// The two ends of the slot. Open, `LEAD + slot == TREE_W`: the slot ends on the
-/// tree column's right edge, so the pair it carries -- the burger, then the
-/// toggle -- starts just past the split. Collapsed, the slot closes and the pair
-/// leads the row. They are the same buttons in both.
+/// The two ends of the slot. Open, `LEAD + slot + 2 * TREE_BTN_W == TREE_W`: the
+/// toggle's right edge is the tree column's right edge and the burger sits
+/// immediately left of it, so the history pair after them starts on the split.
+/// Collapsed, the slot closes and the two lead the row. Same buttons in both.
 #[test]
 fn the_toggle_rides_the_column_edge_and_falls_back_to_the_row_head() {
     assert_eq!(
         tree_toggle_layout(true, false, TREE_W, TREE_W, LEAD),
-        (true, TREE_W - LEAD)
+        (true, TREE_W - LEAD - 2.0 * TREE_BTN_W)
     );
     assert_eq!(
         tree_toggle_layout(true, false, 0.0, TREE_W, LEAD),
@@ -42,15 +42,15 @@ fn the_toggle_rides_the_column_edge_and_falls_back_to_the_row_head() {
 /// The jerk this replaced: what follows the pair sits at
 /// `LEAD + row_slot_w + 2 * TREE_BTN_W` (the burger and the toggle), and that
 /// sum has to be continuous across the whole collapse. It runs from
-/// `TREE_W + 2 * TREE_BTN_W` (open, the pair seated just past the column's right
-/// edge) to `LEAD + 2 * TREE_BTN_W` (collapsed) with no step anywhere -- in
+/// `TREE_W` (open, the toggle flush with the column's right edge) to
+/// `LEAD + 2 * TREE_BTN_W` (collapsed) with no step anywhere -- in
 /// particular none at the handoff, where the old two-seat arrangement faded a
 /// second button in and added `TREE_BTN_W` in a single frame.
 #[test]
 fn tab_strip_offset_is_continuous_through_the_collapse() {
     let offset =
         |body: f64| LEAD + tree_toggle_layout(true, false, body, TREE_W, LEAD).1 + 2.0 * TREE_BTN_W;
-    assert_eq!(offset(TREE_W), TREE_W + 2.0 * TREE_BTN_W);
+    assert_eq!(offset(TREE_W), TREE_W);
     assert_eq!(offset(0.0), LEAD + 2.0 * TREE_BTN_W);
 
     let steps = 280;

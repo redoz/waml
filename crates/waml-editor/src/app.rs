@@ -200,11 +200,12 @@ script_mod! {
                                 // Burger, 30px button / 18px glyph, matching the
                                 // toggle beside it. It rides the SLOT with that
                                 // toggle rather than leading the caption: the slot
-                                // ends on the tree column's RIGHT edge, so the
-                                // burger sits just past the split, never over the
-                                // column, and is still there -- leading the row --
-                                // once the column collapses. First of the pair, so
-                                // the toggle's arrow trails it. Hidden until a model
+                                // carries the PAIR out until the toggle's right
+                                // edge is the tree column's, so the burger sits
+                                // immediately left of the toggle and left of the
+                                // split, and both fall back to leading the row once
+                                // the column collapses. First of the pair, so the
+                                // toggle's arrow trails it. Hidden until a model
                                 // opens (`show_editor`/`show_start_screen`); its
                                 // drop-down anchors off the caption bottom (see the
                                 // burger-menu handler), so its row placement is free.
