@@ -101,21 +101,33 @@ pub fn project(pos: &mut [f64], weight: &[f64], seps: &[Sep]) -> Vec<usize> {
             if bl == br {
                 let v = var_pos(&blocks, &block_of, s.left) + s.gap
                     - var_pos(&blocks, &block_of, s.right);
-                if v > EPS {
-                    // In-block violation = positive cycle through active seps.
-                    // Drop the highest-index live sep on the cycle: the cycle
-                    // consists of `ci` plus actives in this block; authored
-                    // order policy says the latest statement loses.
-                    let worst_active = blocks[bl]
+                // An equality is violated in EITHER direction: `v < -EPS`
+                // means the block's rigid offsets already hold the pair
+                // further apart than this equality demands (e.g. two
+                // contradictory `align` gaps, the larger merged first).
+                // Without the negative check that contradiction sailed
+                // through silently -- dropped=[] with the earlier-authored
+                // equality broken in the output.
+                if v > EPS || (s.equality && v < -EPS) {
+                    // In-block violation = a cycle through active seps: `ci`
+                    // plus the unique active-tree path s.right -> s.left.
+                    // Victim candidates are restricted to exactly those seps
+                    // -- a satisfiable constraint that merely merged into the
+                    // same block (a spur off the cycle) must never be evicted
+                    // (it would go silently unenforced AND be falsely
+                    // reported as conflicting). Authored-order policy: the
+                    // latest (max index) constraint on the cycle loses.
+                    let actives: Vec<usize> = blocks[bl]
                         .active
                         .iter()
                         .copied()
-                        .filter(|&a| live[a] && !seps[a].equality)
-                        .max();
-                    let victim = match worst_active {
-                        Some(a) if a > ci => a,
-                        _ => ci,
-                    };
+                        .filter(|&a| live[a])
+                        .collect();
+                    let victim = tree_path(seps, &actives, n, s.right, s.left)
+                        .into_iter()
+                        .chain(std::iter::once(ci))
+                        .max()
+                        .unwrap();
                     live[victim] = false;
                     dropped.push(victim);
                     continue 'restart;
@@ -333,6 +345,48 @@ pub fn project(pos: &mut [f64], weight: &[f64], seps: &[Sep]) -> Vec<usize> {
     }
 }
 
+/// Sep indices on the unique path between vars `from` and `to` through the
+/// undirected edges `actives` (indices into `seps`). One block's active seps
+/// form a spanning tree over its members -- each merge adds exactly one
+/// active edge joining two previously-disjoint variable sets -- so when
+/// `from` and `to` share a block the path exists and is unique, and the
+/// traversal order cannot affect the result (determinism). `n` bounds the
+/// variable index space.
+fn tree_path(seps: &[Sep], actives: &[usize], n: usize, from: usize, to: usize) -> Vec<usize> {
+    // prev[v] = (previous var, sep index used to reach v).
+    let mut prev: Vec<Option<(usize, usize)>> = vec![None; n];
+    let mut visited = vec![false; n];
+    visited[from] = true;
+    let mut stack = vec![from];
+    while let Some(v) = stack.pop() {
+        if v == to {
+            break;
+        }
+        for &ai in actives {
+            let s = seps[ai];
+            let next = if s.left == v {
+                s.right
+            } else if s.right == v {
+                s.left
+            } else {
+                continue;
+            };
+            if !visited[next] {
+                visited[next] = true;
+                prev[next] = Some((v, ai));
+                stack.push(next);
+            }
+        }
+    }
+    let mut path = Vec::new();
+    let mut cur = to;
+    while let Some((p, ai)) = prev[cur] {
+        path.push(ai);
+        cur = p;
+    }
+    path
+}
+
 fn satisfied(pos: &[f64], seps: &[Sep], live: &[bool]) -> bool {
     seps.iter().enumerate().all(|(i, s)| {
         !live[i] || {
@@ -451,6 +505,49 @@ mod tests {
         assert_eq!(dropped, vec![1]);
         // The surviving sep still holds.
         assert!(pos[0] + 10.0 <= pos[1] + 1e-9);
+    }
+
+    #[test]
+    fn cycle_victim_is_on_the_cycle_not_an_innocent_spur() {
+        // a+10<=b and b+10<=a are the contradiction; c+40<=a is a satisfiable
+        // spur that merges into the same block before the cycle is detected.
+        // Only the cycle's latest sep (index 1) may be evicted -- the spur
+        // (index 2) must stay enforced and unreported.
+        let mut pos = vec![0.0, 0.0, 0.0];
+        let dropped = project(
+            &mut pos,
+            &[1.0; 3],
+            &[sep(0, 1, 10.0), sep(1, 0, 10.0), sep(2, 0, 40.0)],
+        );
+        assert_eq!(dropped, vec![1]);
+        assert!(pos[0] + 10.0 <= pos[1] + 1e-9, "surviving sep 0 holds");
+        assert!(
+            pos[2] + 40.0 <= pos[0] + 1e-9,
+            "innocent spur sep 2 must stay enforced: {pos:?}"
+        );
+    }
+
+    #[test]
+    fn contradictory_equalities_drop_the_later_and_enforce_the_earlier() {
+        // Two contradictory equalities on the same pair (gaps 5 and 10): the
+        // LATER-authored one (index 1) loses and is reported; the earlier one
+        // is enforced exactly. Regression: the in-block violation check only
+        // caught `v > EPS`, so an equality violated in the NEGATIVE direction
+        // sailed through -- dropped=[] with the earlier equality silently
+        // broken in the output.
+        let eq = |gap: f64| Sep {
+            left: 0,
+            right: 1,
+            gap,
+            equality: true,
+        };
+        let mut pos = vec![0.0, 0.0];
+        let dropped = project(&mut pos, &[1.0, 1.0], &[eq(5.0), eq(10.0)]);
+        assert_eq!(dropped, vec![1]);
+        assert!(
+            (pos[1] - pos[0] - 5.0).abs() < 1e-9,
+            "earlier equality enforced exactly: {pos:?}"
+        );
     }
 
     #[test]
