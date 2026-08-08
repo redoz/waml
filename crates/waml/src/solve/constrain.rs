@@ -11,7 +11,7 @@ use super::geometry::{axis_constraints, edge_axes, off_x, off_y, pair_gap, Dropp
 use super::stress::{GroupSpec, SepSpecs, StressConfig};
 use super::vpsc::Sep;
 use super::{Box, BoxId, Constraint, FlagSet, Scene, Size, SolveConfig};
-use crate::layout::{Direction, Margin, Shape};
+use crate::layout::{Direction, Edge, Margin, Shape};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Everything the unified stress path needs from a resolved `Scene`.
@@ -372,14 +372,7 @@ pub fn compile(
                 b,
                 b_edge,
             } => {
-                let leaf_endpoints = match (resolve_endpoint(a), resolve_endpoint(b)) {
-                    (
-                        Some(Endpoint::Leaf { idx: ia, size: sa }),
-                        Some(Endpoint::Leaf { idx: ib, size: sb }),
-                    ) => Some((ia, sa, ib, sb)),
-                    _ => None,
-                };
-                let Some((ia, sa, ib, sb)) = leaf_endpoints else {
+                let (Some(ea), Some(eb)) = (resolve_endpoint(a), resolve_endpoint(b)) else {
                     dropped.push(DroppedPlacement {
                         relation: c.clone(),
                         conflicts_with: Vec::new(),
@@ -388,25 +381,74 @@ pub fn compile(
                 };
                 let (ax, ay) = edge_axes(*a_edge);
                 let (bx, by) = edge_axes(*b_edge);
+                // Per-axis (var, offset) for one endpoint: a leaf aligns at
+                // `min corner + off(edge)`; a group aligns at its boundary-var
+                // proxy (Rule 6: Lg/Rg on x, Tg/Bg on y). A group CENTER has
+                // no proxy -- (Lg+Rg)/2 is not a single VPSC variable -- so
+                // it returns None and the constraint stays a recorded
+                // compile-time drop. Checked BEFORE `boundary_pair` so a
+                // dropped align never leaks half-allocated boundary vars.
+                let representable = |ep: &Endpoint, edge: Edge| -> bool {
+                    matches!(ep, Endpoint::Leaf { .. })
+                        || matches!(edge, Edge::Left | Edge::Top | Edge::Right | Edge::Bottom)
+                };
                 let mut shared = false;
-                if ax && bx {
-                    seps.x.push(Sep {
-                        left: ia,
-                        right: ib,
-                        gap: off_x(*a_edge, sa.w) - off_x(*b_edge, sb.w),
+                for axis_x in [true, false] {
+                    let covered = if axis_x { ax && bx } else { ay && by };
+                    if !covered || !representable(&ea, *a_edge) || !representable(&eb, *b_edge) {
+                        continue;
+                    }
+                    let mut var_of = |ep: &Endpoint, edge: Edge| -> Option<(usize, f64)> {
+                        match ep {
+                            Endpoint::Leaf { idx, size } => {
+                                let off = if axis_x {
+                                    off_x(edge, size.w)
+                                } else {
+                                    off_y(edge, size.h)
+                                };
+                                Some((*idx, off))
+                            }
+                            Endpoint::Group(gid) => {
+                                let want_min = matches!(edge, Edge::Left | Edge::Top);
+                                let want_max = matches!(edge, Edge::Right | Edge::Bottom);
+                                if !want_min && !want_max {
+                                    return None;
+                                }
+                                let (l, r) = boundary_pair(
+                                    gid,
+                                    axis_x,
+                                    &mut boundary_vars,
+                                    &mut next_extra,
+                                    &group_members_by_id,
+                                    &leaf_sizes,
+                                    hull_pad,
+                                    &mut seps,
+                                    &mut provenance_x,
+                                    &mut provenance_y,
+                                    c,
+                                );
+                                Some((if want_min { l } else { r }, 0.0))
+                            }
+                        }
+                    };
+                    let (Some((va, off_a)), Some((vb, off_b))) =
+                        (var_of(&ea, *a_edge), var_of(&eb, *b_edge))
+                    else {
+                        continue;
+                    };
+                    let sep = Sep {
+                        left: va,
+                        right: vb,
+                        gap: off_a - off_b,
                         equality: true,
-                    });
-                    provenance_x.push(Some(c.clone()));
-                    shared = true;
-                }
-                if ay && by {
-                    seps.y.push(Sep {
-                        left: ia,
-                        right: ib,
-                        gap: off_y(*a_edge, sa.h) - off_y(*b_edge, sb.h),
-                        equality: true,
-                    });
-                    provenance_y.push(Some(c.clone()));
+                    };
+                    if axis_x {
+                        seps.x.push(sep);
+                        provenance_x.push(Some(c.clone()));
+                    } else {
+                        seps.y.push(sep);
+                        provenance_y.push(Some(c.clone()));
+                    }
                     shared = true;
                 }
                 if !shared {
@@ -729,6 +771,103 @@ mod tests {
                 "every emitted x-sep traces to the Place"
             );
         }
+    }
+
+    #[test]
+    fn align_group_edge_to_node_compiles_via_boundary_vars() {
+        // Task 4 Rule 6: a group operand in an `Align` compiles against its
+        // boundary-var proxies (Lg/Rg on x, Tg/Bg on y) instead of dropping
+        // -- the old authored path honored group-vs-sibling alignment.
+        let scene = Scene {
+            boxes: vec![
+                leaf("m1"),
+                leaf("m2"),
+                leaf("n"),
+                group(
+                    1,
+                    vec![BoxId::Node("m1".into()), BoxId::Node("m2".into())],
+                    None,
+                    "g",
+                ),
+            ],
+            constraints: vec![Constraint::Align {
+                a: BoxId::Group(1),
+                a_edge: Edge::Left,
+                b: BoxId::Node("n".into()),
+                b_edge: Edge::Left,
+            }],
+        };
+        let sz = sizes(&[("m1", 100.0, 50.0), ("m2", 100.0, 50.0), ("n", 100.0, 50.0)]);
+        let compiled = compile(
+            &scene,
+            &sz,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &SolveConfig::default(),
+        );
+        assert!(
+            compiled.dropped.is_empty(),
+            "group-edge align must be honored, not dropped: {:?}",
+            compiled.dropped
+        );
+        assert_eq!(
+            compiled.seps.extra_vars, 2,
+            "x boundary pair only -- the constraint never touches y"
+        );
+        assert_eq!(
+            compiled.seps.x.len(),
+            5,
+            "2 containment seps per member + 1 alignment equality"
+        );
+        assert!(compiled.seps.y.is_empty());
+        let eq = compiled.seps.x[4];
+        assert!(eq.equality, "the relation sep is an equality");
+        assert_eq!(
+            (eq.left, eq.right),
+            (3, 2),
+            "Lg proxy (first extra var) aligns against the node"
+        );
+        assert!(eq.gap.abs() < 1e-9);
+        for p in &compiled.provenance_x {
+            assert_eq!(
+                p.as_ref(),
+                Some(&scene.constraints[0]),
+                "every emitted x-sep traces to the Align"
+            );
+        }
+    }
+
+    #[test]
+    fn align_group_center_is_recorded_as_dropped_without_allocating() {
+        // A group's center is (Lg+Rg)/2 -- not a single VPSC variable, so no
+        // boundary proxy exists for it (Rule 6 names only Lg/Rg/Tg/Bg). It
+        // stays a compile-time drop, recorded so the conflict list hears it,
+        // and must not leak half-allocated boundary vars.
+        let scene = Scene {
+            boxes: vec![
+                leaf("m1"),
+                leaf("n"),
+                group(1, vec![BoxId::Node("m1".into())], None, "g"),
+            ],
+            constraints: vec![Constraint::Align {
+                a: BoxId::Group(1),
+                a_edge: Edge::Center,
+                b: BoxId::Node("n".into()),
+                b_edge: Edge::Center,
+            }],
+        };
+        let sz = sizes(&[("m1", 100.0, 50.0), ("n", 100.0, 50.0)]);
+        let compiled = compile(
+            &scene,
+            &sz,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &SolveConfig::default(),
+        );
+        assert_eq!(compiled.dropped.len(), 1);
+        assert!(compiled.seps.x.is_empty());
+        assert!(compiled.seps.y.is_empty());
+        assert_eq!(compiled.seps.extra_vars, 0);
     }
 
     #[test]
