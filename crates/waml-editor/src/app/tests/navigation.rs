@@ -67,8 +67,10 @@ fn navigation_app_with_anchor_probe(anchor: ViewAnchor) -> (Cx, App, Rc<RefCell<
         DocumentCommand::Open {
             document: OpenDocument {
                 tab_id: LiveId::from_str("anchor-probe"),
-                concept_id: "sales/order".into(),
-                kind: crate::view_history::DocumentKind::Primary,
+                locator: crate::view_history::DocumentLocator::concept(
+                    "sales/order",
+                    waml::view::surface::SurfaceId::markdown(),
+                ),
                 title: "Order".into(),
                 presentation: DocumentPresentation {
                     icon: Icon::StickyNote,
@@ -333,8 +335,8 @@ fn source_range_navigation_activates_source_and_selects_the_current_range() {
     ));
 
     assert_eq!(
-        app.documents.active_tab().unwrap().kind,
-        crate::view_history::DocumentKind::Source
+        app.documents.active_tab().unwrap().locator.surface,
+        waml::view::surface::SurfaceId::source()
     );
     let location = app
         .documents
@@ -622,9 +624,7 @@ fn navigation_markdown_resolves_only_at_the_app_boundary() {
         },
     ));
     assert_eq!(
-        app.documents
-            .active_tab()
-            .map(|tab| tab.concept_id.as_str()),
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
         Some("sales/customer")
     );
     assert!(app.documents.tabs()[0].preview);
@@ -654,7 +654,7 @@ fn navigation_app_with_active_order() -> (Cx, App) {
     assert_eq!(
         app.documents
             .active_tab()
-            .map(|tab| (tab.concept_id.as_str(), tab.preview)),
+            .and_then(|tab| tab.concept_id().map(|id| (id, tab.preview))),
         Some(("sales/order", true))
     );
     assert!(app
@@ -685,7 +685,7 @@ fn manual_and_preview_transitions_follow_back_and_forward_history() {
 
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/order"
     );
     assert_eq!(app.documents.tabs().len(), 1);
@@ -693,7 +693,7 @@ fn manual_and_preview_transitions_follow_back_and_forward_history() {
 
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Forward));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/customer"
     );
     assert_eq!(app.view_history.len(), 2);
@@ -715,10 +715,7 @@ fn back_and_forward_stop_on_folder_tabs() {
     ));
     let folder_tab_id = crate::folder_view::folder_document_tab_id("/sales");
     assert_eq!(app.documents.active_id(), folder_tab_id);
-    let folder_tab_locator = crate::navigation::DocumentLocator::concept(
-        "/sales",
-        waml::view::surface::SurfaceId::folder(),
-    );
+    let folder_tab_locator = crate::navigation::DocumentLocator::folder("/sales");
 
     assert!(app.transition_to_location(
         &mut cx,
@@ -732,7 +729,7 @@ fn back_and_forward_stop_on_folder_tabs() {
         TransitionCause::UserNavigation,
     ));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/customer"
     );
 
@@ -745,7 +742,7 @@ fn back_and_forward_stop_on_folder_tabs() {
 
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/order"
     );
 
@@ -777,9 +774,7 @@ fn tab_row_history_actions_traverse_once_and_report_unavailable_targets() {
         )],
     );
     assert_eq!(
-        app.documents
-            .active_tab()
-            .map(|tab| tab.concept_id.as_str()),
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
         Some("sales/order")
     );
     assert_eq!(app.test_history_enabled(&mut cx), (false, true));
@@ -793,9 +788,7 @@ fn tab_row_history_actions_traverse_once_and_report_unavailable_targets() {
         )],
     );
     assert_eq!(
-        app.documents
-            .active_tab()
-            .map(|tab| tab.concept_id.as_str()),
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
         Some("sales/customer")
     );
 
@@ -841,7 +834,7 @@ fn back_then_manual_navigation_clears_forward() {
     }
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/customer"
     );
 
@@ -979,7 +972,7 @@ fn active_close_records_fallback_but_promote_and_inactive_close_do_not() {
     assert!(app.close_document(&mut cx, next_id));
     assert_eq!(app.view_history.len(), before_active_close + 1);
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/customer"
     );
     assert!(history_after_promote > 0);
@@ -1033,7 +1026,7 @@ fn undo_reveals_the_document_where_the_edit_started_and_records_the_move() {
     assert!(app.perform_undo(&mut cx));
 
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/order"
     );
     assert!(app
@@ -1041,7 +1034,7 @@ fn undo_reveals_the_document_where_the_edit_started_and_records_the_move() {
         .can_traverse(HistoryDirection::Back, |_| true));
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/next",
         "Back after an Undo reveal returns to the editor that was active"
     );
@@ -1290,9 +1283,7 @@ fn navigation_document_ingresses_from_tree_and_markdown_share_preview_command() 
         app.handle_action_batch(&mut cx, &[action]);
         assert_ne!(app.documents.active_id(), order_id);
         assert_eq!(
-            app.documents
-                .active_tab()
-                .map(|tab| tab.concept_id.as_str()),
+            app.documents.active_tab().and_then(|tab| tab.concept_id()),
             Some("sales/customer")
         );
         assert_eq!(app.documents.tabs().len(), 1);
@@ -1311,7 +1302,7 @@ fn navigation_document_ingresses_from_tree_and_markdown_share_preview_command() 
         assert_eq!(app.view_history.len(), 2);
         assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
         assert_eq!(
-            app.documents.active_tab().unwrap().concept_id,
+            app.documents.active_tab().unwrap().concept_id().unwrap(),
             "sales/order"
         );
     }
@@ -1682,8 +1673,10 @@ fn non_markdown_active_view_rejects_hidden_stale_fragment_once() {
         DocumentCommand::Open {
             document: OpenDocument {
                 tab_id,
-                concept_id: "diagram".into(),
-                kind: crate::view_history::DocumentKind::Primary,
+                locator: crate::view_history::DocumentLocator::concept(
+                    "diagram",
+                    waml::view::surface::SurfaceId::canvas(),
+                ),
                 title: "Diagram".into(),
                 presentation: DocumentPresentation {
                     icon: Icon::Workflow,
@@ -1787,9 +1780,7 @@ fn navigation_source_and_generic_views_activate_and_scroll_real_renderer() {
 
             assert!(app.handle_navigation_intent(&mut cx, intent));
             assert_eq!(
-                app.documents
-                    .active_tab()
-                    .map(|tab| tab.concept_id.as_str()),
+                app.documents.active_tab().and_then(|tab| tab.concept_id()),
                 Some("sales/next")
             );
             assert_eq!(
@@ -1812,9 +1803,7 @@ fn navigation_source_and_generic_views_activate_and_scroll_real_renderer() {
 
             assert_eq!(app.pending_fragment, None);
             assert_eq!(
-                app.documents
-                    .active_tab()
-                    .map(|tab| tab.concept_id.as_str()),
+                app.documents.active_tab().and_then(|tab| tab.concept_id()),
                 Some("sales/next"),
                 "missing anchors must preserve the newly activated target"
             );
@@ -2033,14 +2022,17 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
     // as-is.
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/customer"
     );
     let pending_after_first = app
         .pending_anchor_restore
         .clone()
         .expect("HistoryTraversal with a non-None anchor schedules a deferred restore");
-    assert_eq!(pending_after_first.document.concept_id, "sales/customer");
+    assert_eq!(
+        pending_after_first.document.concept_id(),
+        Some("sales/customer")
+    );
     let entry_after_first = app
         .view_history
         .entry_at(1)
@@ -2053,7 +2045,7 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
     // restore for sales/customer is still pending.
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/order"
     );
     assert_eq!(
@@ -2068,7 +2060,10 @@ fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry
         .pending_anchor_restore
         .clone()
         .expect("second HistoryTraversal schedules its own deferred restore");
-    assert_eq!(pending_after_second.document.concept_id, "sales/order");
+    assert_eq!(
+        pending_after_second.document.concept_id(),
+        Some("sales/order")
+    );
     assert!(pending_after_second.generation > pending_after_first.generation);
     assert_eq!(
         pending_after_second.generation,
@@ -2096,7 +2091,7 @@ fn pumping_a_draw_applies_the_latest_pending_restore_and_refreshes_its_entry() {
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
     assert!(app.traverse_view_history(&mut cx, HistoryDirection::Back));
     assert_eq!(
-        app.documents.active_tab().unwrap().concept_id,
+        app.documents.active_tab().unwrap().concept_id().unwrap(),
         "sales/order"
     );
     let scheduled_generation = app
@@ -2115,7 +2110,7 @@ fn pumping_a_draw_applies_the_latest_pending_restore_and_refreshes_its_entry() {
         .entry_at(0)
         .cloned()
         .expect("sales/order entry exists at index 0");
-    assert_eq!(refreshed.document.concept_id, "sales/order");
+    assert_eq!(refreshed.document.concept_id(), Some("sales/order"));
 }
 
 /// A flip re-runs every open folder tab IN PLACE -- same tab, view

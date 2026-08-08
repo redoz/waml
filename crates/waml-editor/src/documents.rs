@@ -1,5 +1,5 @@
 use crate::document::{DocumentDescriptor, OpenDocument};
-use crate::view_history::{DocumentKind, DocumentLocator};
+use crate::view_history::DocumentLocator;
 use waml::view::row::{Row, RowTarget};
 
 pub fn describe(
@@ -156,18 +156,19 @@ pub fn open_locator_with_asset_host(
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
-    match locator.kind {
-        // A directory address always begins with '/'; a concept id never
-        // does. Temporary discrimination on the stringly locator --
-        // replaced by the typed RowTarget::Folder arm when the locator
-        // widens (surface plan Task 4).
-        DocumentKind::Primary if locator.concept_id.starts_with('/') => {
-            open_folder(okf, &locator.concept_id, limits, mask)
+    match (locator.surface.as_str(), &locator.target) {
+        ("folder", RowTarget::Folder(directory)) => open_folder(okf, directory, limits, mask),
+        ("source", target) => crate::okf_documents::open_source_for_target(okf, target, assets),
+        ("canvas", RowTarget::Concept(id)) => {
+            // A stored canvas locator can go stale when a concept's type is
+            // edited away from uml.*; today's Primary arm fell through to
+            // the generic provider, so the canvas surface keeps that
+            // degrade path (research finding 5). Task 5 keeps this arm.
+            crate::uml_documents::open_with_asset_host(okf, uml, id, assets)
+                .or_else(|| crate::okf_documents::open_with_asset_host(okf, id, assets))
         }
-        DocumentKind::Primary => open_with_asset_host(okf, uml, &locator.concept_id, assets),
-        DocumentKind::Source => {
-            crate::okf_documents::open_source_with_asset_host(okf, &locator.concept_id, assets)
-        }
+        (_, RowTarget::Concept(id)) => crate::okf_documents::open_with_asset_host(okf, id, assets),
+        _ => None,
     }
 }
 
@@ -546,7 +547,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(reopened.locator(), old_source_tab.locator());
-        assert_eq!(reopened.kind, DocumentKind::Source);
+        assert_eq!(
+            reopened.locator.surface,
+            waml::view::surface::SurfaceId::source()
+        );
         assert_eq!(
             reopened.tab_id,
             crate::okf_documents::source_document_tab_id("runbook")

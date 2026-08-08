@@ -15,39 +15,41 @@ use waml_markdown_editor::{
 
 pub const VIEW_HISTORY_LIMIT: usize = 256;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum DocumentKind {
-    Primary,
-    Source,
-}
+use waml::view::row::RowTarget;
+use waml::view::surface::SurfaceId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DocumentLocator {
-    pub concept_id: String,
-    pub kind: DocumentKind,
+    pub target: RowTarget,
+    pub surface: SurfaceId,
 }
 
 impl DocumentLocator {
-    pub fn new(concept_id: impl Into<String>, kind: DocumentKind) -> Self {
-        Self {
-            concept_id: concept_id.into(),
-            kind,
-        }
+    pub fn new(target: RowTarget, surface: SurfaceId) -> Self {
+        Self { target, surface }
     }
 
+    /// A concept on an explicit surface.
+    pub fn concept(concept_id: impl Into<String>, surface: SurfaceId) -> Self {
+        Self::new(RowTarget::Concept(concept_id.into()), surface)
+    }
+
+    /// A folder's own listing surface.
+    pub fn folder(address: impl Into<String>) -> Self {
+        Self::new(RowTarget::Folder(address.into()), SurfaceId::folder())
+    }
+
+    /// A concept's raw-markdown surface.
     pub fn source(concept_id: impl Into<String>) -> Self {
-        Self::new(concept_id, DocumentKind::Source)
+        Self::concept(concept_id, SurfaceId::source())
     }
 
-    /// Surface vocabulary over today's kind. Task 4 replaces the body when
-    /// the struct widens; the call sites it serves do not change again.
-    pub fn concept(concept_id: impl Into<String>, surface: waml::view::surface::SurfaceId) -> Self {
-        let kind = if surface == waml::view::surface::SurfaceId::source() {
-            DocumentKind::Source
-        } else {
-            DocumentKind::Primary
-        };
-        Self::new(concept_id, kind)
+    /// The concept id, when this locator names a concept.
+    pub fn concept_id(&self) -> Option<&str> {
+        match &self.target {
+            RowTarget::Concept(id) => Some(id),
+            _ => None,
+        }
     }
 }
 

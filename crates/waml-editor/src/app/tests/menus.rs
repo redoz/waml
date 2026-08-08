@@ -4,8 +4,10 @@ use super::*;
 fn tab(id: LiveId, key: &str, title: &str, category: TreeKind, preview: bool) -> DocTab {
     DocTab {
         id,
-        concept_id: key.into(),
-        kind: crate::view_history::DocumentKind::Primary,
+        locator: crate::view_history::DocumentLocator::concept(
+            key,
+            waml::view::surface::SurfaceId::markdown(),
+        ),
         title: title.into(),
         presentation: DocumentPresentation {
             icon: IconSet::icon_for(category).unwrap(),

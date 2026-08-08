@@ -134,8 +134,7 @@ script_mod! {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DocTab {
     pub id: LiveId,
-    pub concept_id: String,
-    pub kind: crate::view_history::DocumentKind,
+    pub locator: crate::view_history::DocumentLocator,
     pub title: String,
     pub presentation: DocumentPresentation,
     /// A preview tab is replaced in place by the next document click; an
@@ -153,7 +152,11 @@ pub struct DocTab {
 
 impl DocTab {
     pub fn locator(&self) -> crate::view_history::DocumentLocator {
-        crate::view_history::DocumentLocator::new(self.concept_id.clone(), self.kind)
+        self.locator.clone()
+    }
+
+    pub fn concept_id(&self) -> Option<&str> {
+        self.locator.concept_id()
     }
 }
 
@@ -184,8 +187,10 @@ impl OpenTabs {
         let key = key.into();
         tabs.open_preview(DocTab {
             id: crate::uml_documents::uml_document_tab_id(&key),
-            concept_id: key,
-            kind: crate::view_history::DocumentKind::Primary,
+            locator: crate::view_history::DocumentLocator::concept(
+                key,
+                waml::view::surface::SurfaceId::canvas(),
+            ),
             title: title.into(),
             presentation: DocumentPresentation {
                 icon: crate::icons::Icon::Workflow,
@@ -991,8 +996,10 @@ mod tests {
     fn tab(key: &str, title: &str, category: TreeKind) -> DocTab {
         DocTab {
             id: crate::uml_documents::uml_document_tab_id(key),
-            concept_id: key.to_string(),
-            kind: crate::view_history::DocumentKind::Primary,
+            locator: crate::view_history::DocumentLocator::concept(
+                key,
+                waml::view::surface::SurfaceId::canvas(),
+            ),
             title: title.to_string(),
             presentation: DocumentPresentation {
                 icon: IconSet::icon_for(category).unwrap_or(Icon::StickyNote),
@@ -1008,7 +1015,7 @@ mod tests {
         let mut tab = tab(key, title, TreeKind::OkfDocument);
         tab.id = crate::okf_documents::source_document_tab_id(key);
         tab.presentation.icon = Icon::FileCode;
-        tab.kind = crate::view_history::DocumentKind::Source;
+        tab.locator = crate::view_history::DocumentLocator::source(key);
         tab
     }
 
@@ -1105,7 +1112,7 @@ mod tests {
 
         open.open_preview(tab("order", "Order", TreeKind::Class));
         assert_eq!(open.tabs.len(), 1);
-        assert_eq!(open.tabs[0].concept_id, "order");
+        assert_eq!(open.tabs[0].concept_id(), Some("order"));
         assert!(open.tabs[0].preview);
         assert_eq!(open.active, open.tabs[0].id);
     }
@@ -1118,9 +1125,9 @@ mod tests {
         open.open_preview(tab("order", "Order", TreeKind::Class));
 
         assert_eq!(open.tabs.len(), 2);
-        assert_eq!(open.tabs[0].concept_id, "customer");
+        assert_eq!(open.tabs[0].concept_id(), Some("customer"));
         assert!(!open.tabs[0].preview, "promoted tab stays persisted");
-        assert_eq!(open.tabs[1].concept_id, "order");
+        assert_eq!(open.tabs[1].concept_id(), Some("order"));
         assert!(open.tabs[1].preview);
     }
 

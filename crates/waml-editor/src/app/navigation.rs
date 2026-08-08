@@ -330,10 +330,7 @@ impl App {
                 let changed = self.transition_to_location(
                     cx,
                     ViewLocation {
-                        document: crate::navigation::DocumentLocator::concept(
-                            &address,
-                            waml::view::surface::SurfaceId::folder(),
-                        ),
+                        document: crate::navigation::DocumentLocator::folder(&address),
                         anchor: ViewAnchor::None,
                     },
                     TransitionCause::UserNavigation,
@@ -368,11 +365,9 @@ impl App {
         let Some(pending) = self.pending_fragment.as_ref() else {
             return;
         };
-        if self
-            .documents
-            .active_tab()
-            .map_or(true, |tab| tab.concept_id != pending.concept_id)
-        {
+        if self.documents.active_tab().map_or(true, |tab| {
+            tab.concept_id() != Some(pending.concept_id.as_str())
+        }) {
             return;
         }
         let fragment = pending.fragment.clone();
@@ -735,8 +730,10 @@ impl App {
             .documents
             .tabs()
             .iter()
-            .filter(|tab| tab.presentation.category == crate::document::NavCategory::Directory)
-            .map(|tab| tab.concept_id.clone())
+            .filter_map(|tab| match &tab.locator.target {
+                waml::view::row::RowTarget::Folder(address) => Some(address.clone()),
+                _ => None,
+            })
             .collect();
         for directory in folders {
             let Some(document) = crate::documents::open_folder(

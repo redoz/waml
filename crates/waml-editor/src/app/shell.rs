@@ -846,10 +846,14 @@ impl App {
     /// Synchronize shell projections after the document host has completed a
     /// transition. Document content and view-specific chrome stay host-owned.
     pub(super) fn sync_document_shell(&mut self, cx: &mut Cx) {
-        let active_concept = self
-            .documents
-            .active_tab()
-            .map(|tab| tab.concept_id.clone());
+        let active_concept =
+            self.documents
+                .active_tab()
+                .and_then(|tab| match &tab.locator.target {
+                    waml::view::row::RowTarget::Concept(id) => Some(id.clone()),
+                    waml::view::row::RowTarget::Folder(address) => Some(address.clone()),
+                    waml::view::row::RowTarget::Virtual => None,
+                });
         let chrome = self.documents.active_chrome().document_header;
         let breadcrumb = if chrome.breadcrumb {
             active_concept.as_deref().and_then(|subject| {

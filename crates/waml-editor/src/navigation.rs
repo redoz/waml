@@ -1,4 +1,4 @@
-pub use crate::view_history::{DocumentKind, DocumentLocator};
+pub use crate::view_history::DocumentLocator;
 use url::Url;
 use waml::analysis::DocumentId;
 use waml::okf::DirectoryAddress;

@@ -1,6 +1,6 @@
 use waml_editor::view_history::{
-    DiagramCameraAnchor, DocumentKind, DocumentLocator, HistoryDirection, ViewAnchor, ViewHistory,
-    ViewLocation, VIEW_HISTORY_LIMIT,
+    DiagramCameraAnchor, DocumentLocator, HistoryDirection, ViewAnchor, ViewHistory, ViewLocation,
+    VIEW_HISTORY_LIMIT,
 };
 use waml_markdown_editor::input::ScrollState;
 use waml_syntax::DocumentRevision;
@@ -25,9 +25,9 @@ fn locator_distinguishes_primary_and_source_views_of_the_same_concept() {
         DocumentLocator::concept("sales/order", waml::view::surface::SurfaceId::markdown());
     let source = DocumentLocator::source("sales/order");
 
-    assert_eq!(primary.concept_id, source.concept_id);
-    assert_eq!(primary.kind, DocumentKind::Primary);
-    assert_eq!(source.kind, DocumentKind::Source);
+    assert_eq!(primary.concept_id(), source.concept_id());
+    assert_eq!(primary.surface, waml::view::surface::SurfaceId::markdown());
+    assert_eq!(source.surface, waml::view::surface::SurfaceId::source());
     assert_ne!(primary, source);
 }
 
@@ -200,7 +200,7 @@ fn unresolved_targets_are_skipped_without_being_removed() {
 
     let target = history
         .target(HistoryDirection::Back, |candidate| {
-            candidate.document.concept_id != "b"
+            candidate.document.concept_id() != Some("b")
         })
         .unwrap();
     assert_eq!(target.location, a);
@@ -208,7 +208,7 @@ fn unresolved_targets_are_skipped_without_being_removed() {
 
     let restored = history
         .target(HistoryDirection::Forward, |candidate| {
-            candidate.document.concept_id == "b"
+            candidate.document.concept_id() == Some("b")
         })
         .unwrap();
     assert_eq!(restored.location, b);
@@ -234,8 +234,8 @@ fn view_history_evicts_the_oldest_entries_at_the_bound() {
         history.commit_traversal(target);
     }
     assert_eq!(
-        history.current().unwrap().document.concept_id,
-        "45",
+        history.current().unwrap().document.concept_id(),
+        Some("45"),
         "0 through 44 should have been evicted"
     );
     assert!(!history.can_traverse(HistoryDirection::Back, |_| true));

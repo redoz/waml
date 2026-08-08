@@ -649,8 +649,10 @@ mod tests {
     ) -> OpenDocument {
         OpenDocument {
             tab_id: LiveId::from_str(&format!("test-{key}")),
-            concept_id: key.into(),
-            kind: crate::view_history::DocumentKind::Primary,
+            locator: crate::view_history::DocumentLocator::concept(
+                key,
+                waml::view::surface::SurfaceId::markdown(),
+            ),
             title: key.into(),
             presentation: DocumentPresentation {
                 icon: Icon::StickyNote,
@@ -691,7 +693,7 @@ mod tests {
         });
         assert!(!host.views.contains_key(&first_id));
         assert_eq!(host.tabs.tabs.len(), 1);
-        assert_eq!(host.tabs.tabs[0].concept_id, "second");
+        assert_eq!(host.tabs.tabs[0].concept_id(), Some("second"));
     }
 
     /// The capability whose absence made the old per-folder "View raw" inert:
@@ -745,7 +747,7 @@ mod tests {
         });
         let mut source = prepared("order", NavCategory::OkfDocument, Rc::new(Cell::new(0)));
         source.tab_id = crate::okf_documents::source_document_tab_id("order");
-        source.kind = crate::view_history::DocumentKind::Source;
+        source.locator = crate::view_history::DocumentLocator::source("order");
         let source_id = source.tab_id;
         host.apply_command(DocumentCommand::Open {
             document: source,
@@ -771,7 +773,7 @@ mod tests {
 
         let mut source = prepared("order", NavCategory::OkfDocument, Rc::new(Cell::new(0)));
         source.tab_id = crate::okf_documents::source_document_tab_id("order");
-        source.kind = crate::view_history::DocumentKind::Source;
+        source.locator = crate::view_history::DocumentLocator::source("order");
         host.apply_command(DocumentCommand::Open {
             document: source,
             persistent: true,
@@ -821,7 +823,7 @@ mod tests {
             },
         ));
         assert_eq!(host.active_id(), current_id);
-        assert_eq!(host.active_tab().unwrap().concept_id, "current");
+        assert_eq!(host.active_tab().unwrap().concept_id(), Some("current"));
     }
 
     #[test]
@@ -852,7 +854,10 @@ mod tests {
             host.active_id(),
             LiveId::from_str("future-sibling-provider")
         );
-        assert_eq!(host.active_tab().unwrap().concept_id, "future-widget");
+        assert_eq!(
+            host.active_tab().unwrap().concept_id(),
+            Some("future-widget")
+        );
         assert!(host.active_chrome().tool_dock);
         assert_eq!(calls.get(), 1);
     }
@@ -1329,8 +1334,10 @@ mod tests {
     fn anchor_document(key: &str, state: Rc<RefCell<ViewAnchor>>) -> OpenDocument {
         OpenDocument {
             tab_id: LiveId::from_str(&format!("anchor-{key}")),
-            concept_id: key.into(),
-            kind: crate::view_history::DocumentKind::Primary,
+            locator: crate::view_history::DocumentLocator::concept(
+                key,
+                waml::view::surface::SurfaceId::markdown(),
+            ),
             title: key.into(),
             presentation: DocumentPresentation {
                 icon: Icon::StickyNote,

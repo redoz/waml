@@ -512,8 +512,12 @@ impl EditorSession {
         ) -> Result<PreparedCandidate, AnalysisError>,
     {
         let location = ViewLocation {
-            document: DocumentLocator::concept(
-                "__legacy_edit__",
+            // A test-helper edit with no document behind it: Virtual is the
+            // honest target (spec §1 -- a Virtual locator exists but nothing
+            // opens it), and equality is all EditMergeKey/history need from
+            // it.
+            document: DocumentLocator::new(
+                waml::view::row::RowTarget::Virtual,
                 waml::view::surface::SurfaceId::markdown(),
             ),
             anchor: ViewAnchor::None,

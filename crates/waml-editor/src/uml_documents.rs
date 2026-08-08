@@ -2,7 +2,7 @@ use crate::document::{
     DocumentCapabilities, DocumentDescriptor, DocumentPresentation, NavCategory, OpenDocument,
 };
 use crate::icons::{Icon, IconSet};
-use crate::view_history::DocumentKind;
+use crate::view_history::DocumentLocator;
 use makepad_widgets::LiveId;
 
 pub fn uml_document_tab_id(concept_id: &str) -> LiveId {
@@ -127,8 +127,7 @@ pub fn open_with_asset_host(
     };
     Some(OpenDocument {
         tab_id: uml_document_tab_id(concept_id),
-        concept_id: concept_id.to_string(),
-        kind: DocumentKind::Primary,
+        locator: DocumentLocator::concept(concept_id, waml::view::surface::SurfaceId::canvas()),
         title,
         presentation,
         view,

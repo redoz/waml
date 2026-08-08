@@ -26,7 +26,10 @@ fn deleted_target_is_skipped_retained_and_reached_after_model_restore() {
 
     let skipped = history
         .target(HistoryDirection::Back, |candidate| {
-            resolvable.contains(candidate.document.concept_id.as_str())
+            candidate
+                .document
+                .concept_id()
+                .is_some_and(|id| resolvable.contains(id))
         })
         .unwrap();
     assert_eq!(skipped.location, a);
@@ -35,7 +38,10 @@ fn deleted_target_is_skipped_retained_and_reached_after_model_restore() {
     resolvable.insert("b");
     let restored = history
         .target(HistoryDirection::Forward, |candidate| {
-            resolvable.contains(candidate.document.concept_id.as_str())
+            candidate
+                .document
+                .concept_id()
+                .is_some_and(|id| resolvable.contains(id))
         })
         .unwrap();
     assert_eq!(restored.location, b);

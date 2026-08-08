@@ -2,8 +2,9 @@ use crate::document::{
     DocumentCapabilities, DocumentDescriptor, DocumentPresentation, NavCategory, OpenDocument,
 };
 use crate::icons::Icon;
-use crate::view_history::DocumentKind;
+use crate::view_history::DocumentLocator;
 use makepad_widgets::{LiveId, Vec4};
+use waml::view::surface::SurfaceId;
 
 pub fn generic_okf_accent() -> Option<Vec4> {
     Some(crate::accent::bucket_color(
@@ -53,8 +54,7 @@ pub fn open_with_asset_host(
     let presentation = presentation(analysis, concept_id)?;
     Some(OpenDocument {
         tab_id: okf_document_tab_id(concept_id),
-        concept_id: concept_id.to_string(),
-        kind: DocumentKind::Primary,
+        locator: DocumentLocator::concept(concept_id, SurfaceId::markdown()),
         title: concept.title.clone().unwrap_or_else(|| {
             concept_id
                 .rsplit('/')
@@ -93,8 +93,7 @@ pub fn open_source_with_asset_host(
     presentation.icon = Icon::FileCode;
     Some(OpenDocument {
         tab_id: source_document_tab_id(concept_id),
-        concept_id: concept_id.to_string(),
-        kind: DocumentKind::Source,
+        locator: DocumentLocator::source(concept_id),
         title: concept.title.clone().unwrap_or_else(|| {
             concept_id
                 .rsplit('/')
@@ -184,8 +183,10 @@ pub fn open_source_for_target(
                 });
             Some(OpenDocument {
                 tab_id: source_document_tab_id(&key),
-                concept_id: key.clone(),
-                kind: DocumentKind::Source,
+                locator: DocumentLocator::new(
+                    waml::view::row::RowTarget::Folder(address.clone()),
+                    SurfaceId::source(),
+                ),
                 title,
                 presentation: DocumentPresentation {
                     icon: Icon::FileCode,

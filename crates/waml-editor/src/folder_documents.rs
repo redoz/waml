@@ -6,7 +6,7 @@ use crate::document::{
 };
 use crate::folder_view::{folder_document_tab_id, FolderView};
 use crate::icons::Icon;
-use crate::navigation::DocumentKind;
+use crate::navigation::DocumentLocator;
 
 pub fn describe(
     analysis: &waml::analysis::OkfAnalysis,
@@ -49,8 +49,7 @@ pub fn open(
     let title = title_for(analysis, directory);
     Some(OpenDocument {
         tab_id: folder_document_tab_id(directory),
-        concept_id: directory.to_string(),
-        kind: DocumentKind::Primary,
+        locator: DocumentLocator::folder(directory),
         title,
         presentation,
         view: Box::new(view),

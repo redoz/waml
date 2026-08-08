@@ -1,8 +1,6 @@
 use crate::doc_view::DocView;
 use crate::editor_history::EditMergeKey;
 use crate::icons::Icon;
-use crate::navigation::DocumentKind;
-#[cfg(test)]
 use crate::navigation::DocumentLocator;
 use crate::view_history::ViewLocation;
 use makepad_widgets::{LiveId, Vec4};
@@ -69,8 +67,7 @@ pub struct DocumentDescriptor {
 
 pub struct OpenDocument {
     pub tab_id: LiveId,
-    pub concept_id: String,
-    pub kind: DocumentKind,
+    pub locator: DocumentLocator,
     pub title: String,
     pub presentation: DocumentPresentation,
     pub view: Box<dyn DocView>,
@@ -79,15 +76,14 @@ pub struct OpenDocument {
 impl OpenDocument {
     #[cfg(test)]
     pub fn locator(&self) -> DocumentLocator {
-        DocumentLocator::new(self.concept_id.clone(), self.kind)
+        self.locator.clone()
     }
 
     pub fn into_tab(self, preview: bool) -> (crate::doc_tabs::DocTab, Box<dyn DocView>) {
         (
             crate::doc_tabs::DocTab {
                 id: self.tab_id,
-                concept_id: self.concept_id,
-                kind: self.kind,
+                locator: self.locator,
                 title: self.title,
                 presentation: self.presentation,
                 preview,

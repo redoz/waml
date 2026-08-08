@@ -341,7 +341,7 @@ impl App {
                 let diagram = self
                     .documents
                     .active_tab()
-                    .map(|tab| tab.concept_id.clone())
+                    .and_then(|tab| tab.concept_id().map(str::to_string))
                     .unwrap_or_default();
                 if let Some(op) = place_rm_for(&diagram, &action) {
                     if self
@@ -589,7 +589,7 @@ impl App {
                     .iter()
                     .find(|tab| tab.presentation.category == NavCategory::Diagram)
             })
-            .map(|tab| tab.concept_id.clone())
+            .and_then(|tab| tab.concept_id().map(str::to_string))
             .unwrap_or_default();
         if let Some(next) = crate::diagram_switcher::next_diagram_key(&keys, &current) {
             self.transition_document(cx, &next, false);
@@ -904,7 +904,7 @@ impl App {
                 cx,
                 Some(&format!(
                     "{verb}: {label}, but could not reveal {}",
-                    location.document.concept_id
+                    location.document.concept_id().unwrap_or("that location")
                 )),
             );
             false
