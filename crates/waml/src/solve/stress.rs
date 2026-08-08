@@ -1328,12 +1328,26 @@ struct OverlapAccum {
     /// covered[i][j] (i < j): this pair's axis has been decided and its Sep
     /// already lives in `xsep`/`ysep` — never re-examined while `true`.
     covered: Vec<Vec<bool>>,
+    /// banned_axes[i][j] (i < j): bitset (`AXIS_X`/`AXIS_Y`) of axes whose
+    /// generated Sep for this pair `vpsc::project` dropped as unsatisfiable.
+    /// Re-discovery must not re-decide a banned axis: with an authored
+    /// equality pinning the pair on its "cheaper" axis, re-deciding would
+    /// regenerate the same contradicted Sep every pass until the pass cap,
+    /// leaving the pair overlapping forever (see `remove_overlaps_with`).
+    /// Instead the OTHER axis is committed; with both axes banned the pair
+    /// is abandoned (marked covered with no Sep) so the loop terminates.
+    banned_axes: Vec<Vec<u8>>,
 }
+
+/// `OverlapAccum::banned_axes` bits.
+const AXIS_X: u8 = 1;
+const AXIS_Y: u8 = 2;
 
 impl OverlapAccum {
     fn new(m: usize) -> Self {
         OverlapAccum {
             covered: vec![vec![false; m]; m],
+            banned_axes: vec![vec![0; m]; m],
             ..Default::default()
         }
     }
@@ -1432,9 +1446,24 @@ fn overlap_discover(
                 continue; // clear (with gap) on at least one axis
             }
             st.covered[i][j] = true;
+            let banned = st.banned_axes[i][j];
+            if banned & AXIS_X != 0 && banned & AXIS_Y != 0 {
+                // Both axes already proved unsatisfiable for this pair (e.g.
+                // authored equalities pin it on both): abandon it — no Sep,
+                // no `added_any` — instead of livelocking on re-discovery.
+                continue;
+            }
             added_any = true;
-            // Resolve on the axis with the smaller required move.
-            if ox <= oy {
+            // Resolve on the axis with the smaller required move, unless that
+            // axis was already dropped as unsatisfiable for this pair.
+            let use_x = if banned & AXIS_X != 0 {
+                false
+            } else if banned & AXIS_Y != 0 {
+                true
+            } else {
+                ox <= oy
+            };
+            if use_x {
                 let (l, r) = if a.x + a.w / 2.0 <= b.x + b.w / 2.0 {
                     (i, j)
                 } else {
@@ -1527,6 +1556,10 @@ fn remove_overlaps_with(
                 let gi = di - extra_x_len;
                 let (i, j) = st.xsep_pairs[gi];
                 st.covered[i][j] = false;
+                // An authored sep (equality) contradicted this generated
+                // x-sep; re-discovery must take the y axis instead of
+                // re-committing the same doomed choice forever.
+                st.banned_axes[i][j] |= AXIS_X;
                 st.xsep.swap_remove(gi);
                 st.xsep_pairs.swap_remove(gi);
             }
@@ -1551,6 +1584,7 @@ fn remove_overlaps_with(
                 let gi = di - extra_y_len;
                 let (i, j) = st.ysep_pairs[gi];
                 st.covered[i][j] = false;
+                st.banned_axes[i][j] |= AXIS_Y;
                 st.ysep.swap_remove(gi);
                 st.ysep_pairs.swap_remove(gi);
             }
@@ -1706,6 +1740,48 @@ mod tests {
         // Overlap removal must have separated them on Y instead of breaking the
         // x-equality.
         assert!(!overlaps(&rects[0], &rects[1]));
+    }
+
+    #[test]
+    fn layout_constrained_x_equality_on_tall_nodes_separates_on_y() {
+        use crate::solve::vpsc::Sep;
+        // 50x120 cards are taller than wide, so overlap removal's "cheaper
+        // axis" for an overlapping pair is X — exactly the axis the authored
+        // equality pins. Re-discovery must flip the pair to Y instead of
+        // re-committing the same contradicted X sep every pass until the
+        // pass cap (the observed livelock: both rects returned at the
+        // identical position, nothing reported).
+        let idv = ids(&["a", "b"]);
+        let sz = sizes(2, 50.0, 120.0);
+        let seps = SepSpecs {
+            x: vec![Sep {
+                left: 0,
+                right: 1,
+                gap: 0.0,
+                equality: true,
+            }],
+            ..SepSpecs::default()
+        };
+        // Both the edgeless grid arm and the connected stress arm.
+        for edges in [vec![], vec![(0usize, 1usize)]] {
+            let (rects, _, dropped) =
+                layout_constrained(&idv, &sz, &edges, &[], &seps, &StressConfig::default());
+            assert!(
+                dropped.0.is_empty() && dropped.1.is_empty(),
+                "authored equality must not be reported dropped: {:?}",
+                dropped
+            );
+            assert!(
+                (rects[0].x - rects[1].x).abs() < 1e-6,
+                "x-equality must hold: {:?}",
+                rects
+            );
+            assert!(
+                !overlaps(&rects[0], &rects[1]),
+                "pair must be separated (on Y): {:?}",
+                rects
+            );
+        }
     }
 
     #[test]
