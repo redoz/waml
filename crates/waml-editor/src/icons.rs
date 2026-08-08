@@ -4616,6 +4616,7 @@ pub struct IconSet {
     pub library: DrawColor,
     #[live]
     pub library_big: DrawColor,
+    #[live]
     pub chart_no_axes_gantt: DrawColor,
 }
 

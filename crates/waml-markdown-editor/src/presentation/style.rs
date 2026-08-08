@@ -19,16 +19,11 @@ pub const WEIGHT_REGULAR: FontWeight = FontWeight(400);
 pub const WEIGHT_SEMIBOLD: FontWeight = FontWeight(600);
 
 /// The base presentation profile for editor text.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EditorEmphasis {
+    #[default]
     Code,
     Layout,
-}
-
-impl Default for EditorEmphasis {
-    fn default() -> Self {
-        Self::Code
-    }
 }
 
 /// Logical-pixel spacing of the balanced document style.
