@@ -48,12 +48,26 @@ struct DescentState {
 /// registered middleware -- reserved by the runner.
 const DEPTH_GUARD_OWNER: &str = "view-depth-guard";
 
-/// A name -> stage-factory map. Populated by the host (Task E1's
+/// A name -> (owner, stage-factory) map. Populated by the host (Task E1's
 /// `CoreExtension`, later others); the chain looks names up the same way
 /// regardless of who populated it.
+///
+/// The owner is kept so the editor can offer an extension-level projection
+/// toggle without hand-writing a second extension list beside this one -- two
+/// construction sites that disagree are invisible (see
+/// `folder_projection::editor_registry`'s own warning).
 #[derive(Default)]
 pub struct MiddlewareRegistry {
-    factories: HashMap<String, Arc<dyn Fn() -> Box<dyn Projection> + Send + Sync>>,
+    factories: HashMap<String, Registration>,
+}
+
+#[derive(Clone)]
+struct Registration {
+    /// The `CoreExtension::name()` that declared this middleware. Empty for a
+    /// direct `register` call (tests, hosts) -- ungrouped, never offered as an
+    /// extension-level toggle.
+    owner: String,
+    factory: Arc<dyn Fn() -> Box<dyn Projection> + Send + Sync>,
 }
 
 /// A middleware name registered by more than one extension. One flat name
@@ -75,14 +89,30 @@ impl MiddlewareRegistry {
         MiddlewareRegistry::default()
     }
 
-    /// Register a middleware under `name`. A later registration for the same
-    /// name replaces the earlier one.
+    /// Register a middleware under `name`, with no owning extension. A later
+    /// registration for the same name replaces the earlier one.
     pub fn register(
         &mut self,
         name: impl Into<String>,
         factory: impl Fn() -> Box<dyn Projection> + Send + Sync + 'static,
     ) {
-        self.factories.insert(name.into(), Arc::new(factory));
+        self.register_owned("", name, factory);
+    }
+
+    /// Register a middleware `name` owned by extension `owner`.
+    pub fn register_owned(
+        &mut self,
+        owner: impl Into<String>,
+        name: impl Into<String>,
+        factory: impl Fn() -> Box<dyn Projection> + Send + Sync + 'static,
+    ) {
+        self.factories.insert(
+            name.into(),
+            Registration {
+                owner: owner.into(),
+                factory: Arc::new(factory),
+            },
+        );
     }
 
     /// Build a registry from every `CoreExtension`'s declared middleware.
@@ -97,14 +127,53 @@ impl MiddlewareRegistry {
                 if registry.factories.contains_key(name) {
                     return Err(DuplicateMiddlewareName(name.to_string()));
                 }
-                registry.factories.insert(name.to_string(), factory);
+                registry.factories.insert(
+                    name.to_string(),
+                    Registration {
+                        owner: extension.name().to_string(),
+                        factory,
+                    },
+                );
             }
         }
         Ok(registry)
     }
 
+    /// Which extension declared `name`, if any. `None` for an unregistered
+    /// name AND for an ungrouped host registration.
+    pub fn owner(&self, name: &str) -> Option<&str> {
+        self.factories
+            .get(name)
+            .map(|r| r.owner.as_str())
+            .filter(|owner| !owner.is_empty())
+    }
+
+    /// Extension name -> its middleware names, both sorted. The ONE source the
+    /// editor's projection popup is built from. Ungrouped registrations are
+    /// omitted rather than pooled under a blank group.
+    pub fn owners(&self) -> Vec<(&str, Vec<&str>)> {
+        let mut grouped: std::collections::BTreeMap<&str, Vec<&str>> =
+            std::collections::BTreeMap::new();
+        for (name, registration) in &self.factories {
+            if registration.owner.is_empty() {
+                continue;
+            }
+            grouped
+                .entry(registration.owner.as_str())
+                .or_default()
+                .push(name.as_str());
+        }
+        grouped
+            .into_iter()
+            .map(|(owner, mut names)| {
+                names.sort_unstable();
+                (owner, names)
+            })
+            .collect()
+    }
+
     fn build(&self, name: &str) -> Option<Box<dyn Projection>> {
-        self.factories.get(name).map(|factory| factory())
+        self.factories.get(name).map(|r| (r.factory)())
     }
 }
 
@@ -1925,5 +1994,42 @@ mod tests {
                 assert_eq!(resolved[0].target, row.target);
             }
         }
+    }
+
+    #[test]
+    fn from_extensions_records_which_extension_owns_each_name() {
+        let extensions: Vec<&dyn crate::extension::CoreExtension> =
+            crate::extension::SHIPPED_EXTENSIONS
+                .iter()
+                .map(|ext| *ext as &dyn crate::extension::CoreExtension)
+                .collect();
+        let registry = MiddlewareRegistry::from_extensions(&extensions).unwrap();
+
+        assert_eq!(registry.owner("hide"), Some("core"));
+        assert_eq!(registry.owner("index"), Some("core"));
+        assert_eq!(registry.owner("uml"), Some("uml"));
+        assert_eq!(registry.owner("nonexistent"), None);
+
+        let owners = registry.owners();
+        let shape: Vec<(&str, Vec<&str>)> = owners
+            .iter()
+            .map(|(owner, names)| (*owner, names.clone()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![("core", vec!["hide", "index"]), ("uml", vec!["uml"])],
+            "owners() is the ONE source the editor's popup is built from",
+        );
+    }
+
+    #[test]
+    fn a_host_registration_has_no_owner_and_is_not_grouped() {
+        let mut registry = MiddlewareRegistry::new();
+        registry.register("pass-through", || Box::new(PassThrough));
+        assert_eq!(registry.owner("pass-through"), None);
+        assert!(
+            registry.owners().is_empty(),
+            "an ungrouped name must not invent an extension group",
+        );
     }
 }
