@@ -1789,7 +1789,10 @@ git commit -m "docs: model revisioned runtime architecture"
 - Modify as cited: `crates/waml-editor/src/browser_boot.rs`
 - Modify as cited: `crates/waml-editor/src/class_diagram_view.rs`
 - Modify as cited: `crates/waml-editor/src/behavior_doc_view.rs`
+- Modify as cited: `crates/waml-editor/src/canvas/behavior/hit.rs`
 - Modify as cited: `crates/waml-editor/src/canvas/behavior/mod.rs`
+- Modify as cited: `crates/waml-editor/src/canvas/class/placement.rs`
+- Modify as cited: `crates/waml-editor/src/canvas/class/selection.rs`
 - Modify as cited: `crates/waml-editor/src/editor_session/tests.rs`
 - Modify as cited: `crates/waml-editor/src/app/tests/menus.rs`
 - Modify as cited: `crates/waml-editor/src/app/tests/navigation.rs`
