@@ -71,11 +71,11 @@ pub(super) fn tree_toggle_layout(
     } else {
         0.0
     };
-    // The PAIR's footprint comes off the target: the slot leads the burger and
-    // the toggle, so it is `lead_w + slot + 2 * TREE_BTN_W` that has to land on
-    // the column's edge. The toggle keeps its seat flush with the split, with
-    // the burger tucked in immediately left of it.
-    let open_w = (tree_w - lead_w - 2.0 * TREE_BTN_W).max(0.0);
+    // The toggle's own footprint comes off the target: the slot leads it, so it
+    // is `lead_w + slot + TREE_BTN_W` that has to land on the column's edge --
+    // the toggle sits flush with the split, and the burger trailing it is the
+    // first thing right of the split.
+    let open_w = (tree_w - lead_w - TREE_BTN_W).max(0.0);
     (true, open_w * progress)
 }
 
@@ -115,7 +115,8 @@ pub(super) fn project_document_header(
 
 /// Footprint of one slot-carried caption control: the DSL `width` (30) plus its
 /// 2px margin. The burger and the tree toggle are both this wide and ride the
-/// slot in that order, so the layout maths subtracts TWO of it (see
+/// slot in that order -- the toggle ending on the split, the burger just past
+/// it -- so the slot is sized against the toggle's copy of it (see
 /// `tree_toggle_layout`).
 pub(super) const TREE_BTN_W: f64 = 32.0;
 

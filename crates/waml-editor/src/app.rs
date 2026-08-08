@@ -197,20 +197,19 @@ script_mod! {
                                     width: 0.0
                                     height: Fill
                                 }
+                                tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
                                 // Burger, 30px button / 18px glyph, matching the
-                                // toggle beside it. It rides the SLOT with that
-                                // toggle rather than leading the caption: the slot
-                                // carries the PAIR out until the toggle's right
-                                // edge is the tree column's, so the burger sits
-                                // immediately left of the toggle and left of the
-                                // split, and both fall back to leading the row once
-                                // the column collapses. First of the pair, so the
-                                // toggle's arrow trails it. Hidden until a model
-                                // opens (`show_editor`/`show_start_screen`); its
-                                // drop-down anchors off the caption bottom (see the
+                                // toggle before it. It TRAILS the slot rather than
+                                // leading the caption: the slot ends with the
+                                // toggle's right edge on the tree column's, so the
+                                // burger is the first thing right of the split and
+                                // the history pair follows it. Collapsed, the slot
+                                // closes and the two ride back to the head of the
+                                // row together. Hidden until a model opens
+                                // (`show_editor`/`show_start_screen`); its drop-down
+                                // anchors off the caption bottom (see the
                                 // burger-menu handler), so its row placement is free.
                                 menu_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
-                                tree_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
                                 // View history, on the ROW rather than inside the
                                 // document header: one pair for the whole shell,
                                 // so it does not blink in and out with the
