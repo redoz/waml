@@ -262,8 +262,13 @@ mod tests {
         );
     }
 
+    /// An unknown declared name is not in the maskable universe -- only names
+    /// the registry offers are -- so a FULL mask cannot bypass it: the chain
+    /// is still built and still diagnoses. This is the raw-mode behaviour the
+    /// binary `ViewMode` used to swallow, and the fence against re-silencing
+    /// it by widening what a full mask covers.
     #[test]
-    fn an_unknown_middleware_name_still_diagnoses_under_an_empty_mask() {
+    fn an_unknown_middleware_name_still_diagnoses_under_every_mask() {
         let prepared = analysis([
             (
                 "index.md",
@@ -271,15 +276,20 @@ mod tests {
             ),
             ("orders.md", "# Orders\n"),
         ]);
-        let (_, _, declared) = project_rows(
-            prepared.okf(),
-            "/",
-            &ProjectionMask::default(),
-            ChainLimits::default(),
-            &core_registry(),
-        )
-        .unwrap();
-        assert!(!declared.is_empty(), "an unknown middleware name diagnoses");
+        for mask in [ProjectionMask::default(), every_maskable_name()] {
+            let (_, _, diagnostics) = project_rows(
+                prepared.okf(),
+                "/",
+                &mask,
+                ChainLimits::default(),
+                &core_registry(),
+            )
+            .unwrap();
+            assert!(
+                !diagnostics.is_empty(),
+                "an unknown middleware name diagnoses under mask {mask:?}",
+            );
+        }
     }
 
     #[test]

@@ -1265,12 +1265,19 @@ mod tests {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         cx.widget_tree_mark_dirty(WidgetUid(0));
         let mut panel = cx.with_vm(ProjectTree::script_new_with_default);
-        let view_mode_btn = WidgetRef::new_with_inner(Box::new(
-            cx.with_vm(crate::icon_button::IconButton::script_new_with_default),
-        ));
         let mut view = cx.with_vm(View::script_new_with_default);
-        view.children
-            .push((live_id!(view_mode_btn), view_mode_btn.clone()));
+        // Every control the panel drives by id must be mounted here, or its
+        // wiring test passes against a dud ref.
+        for id in [
+            live_id!(view_mode_btn),
+            live_id!(collapse_all_btn),
+            live_id!(expand_all_btn),
+        ] {
+            let button = WidgetRef::new_with_inner(Box::new(
+                cx.with_vm(crate::icon_button::IconButton::script_new_with_default),
+            ));
+            view.children.push((id, button));
+        }
         panel.view = view;
         (cx, panel)
     }
@@ -1507,6 +1514,59 @@ mod tests {
                 .is_some(),
             "view_mode_btn did not resolve; check script_mod registration order",
         );
+    }
+
+    /// Same fence for the two fold buttons: an unregistered or misnamed child
+    /// draws nothing, swallows every click, and keeps the gate green.
+    #[test]
+    fn the_fold_buttons_are_live_mounted_children() {
+        let (cx, panel) = mounted_project_tree_test_context();
+        for (name, id) in [
+            ("collapse_all_btn", ids!(collapse_all_btn)),
+            ("expand_all_btn", ids!(expand_all_btn)),
+        ] {
+            assert!(
+                panel.view.icon_button(&cx, id).borrow().is_some(),
+                "{name} did not resolve; check script_mod registration order",
+            );
+        }
+    }
+
+    /// The click has to reach `collapse_all` / `expand_all`. Driving the folds
+    /// directly (as `collapse_all_closes_every_known_directory...` does) would
+    /// still pass with the buttons unwired.
+    #[test]
+    fn clicking_the_fold_buttons_folds_and_unfolds_every_directory() {
+        let (mut cx, mut panel) = mounted_project_tree_test_context();
+        panel.directory_keys.insert(k("/sales"));
+        panel.layout.set_folder_open(&k("/sales"), true, false);
+
+        click_icon_button(&mut cx, &mut panel, ids!(collapse_all_btn));
+        assert!(
+            !panel.layout.is_folder_open(&k("/sales")),
+            "collapse_all_btn is not wired to collapse_all",
+        );
+
+        click_icon_button(&mut cx, &mut panel, ids!(expand_all_btn));
+        assert!(
+            panel.layout.is_folder_open(&k("/sales")),
+            "expand_all_btn is not wired to expand_all",
+        );
+    }
+
+    /// Emit the click action the named button would emit, then hand it to the
+    /// panel exactly as makepad's `Event::Actions` pass does.
+    fn click_icon_button(cx: &mut Cx, panel: &mut ProjectTree, id: &[LiveId]) {
+        let uid = panel
+            .view
+            .icon_button(cx, id)
+            .borrow()
+            .expect("button must be mounted")
+            .widget_uid();
+        let actions = cx.capture_actions(|cx| {
+            cx.widget_action(uid, crate::icon_button::IconButtonAction::Clicked)
+        });
+        panel.handle_event(cx, &Event::Actions(actions), &mut Scope::empty());
     }
 
     #[test]

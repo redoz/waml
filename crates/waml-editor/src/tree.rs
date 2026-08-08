@@ -70,10 +70,16 @@ pub struct TreeNode {
     /// degraded-chain marker so a folder inside a collapsed subtree is not
     /// silently wrong.
     ///
-    /// Mask-dependent by construction: a fully-masked mask never builds the
-    /// declared chain, so it never diagnoses one, and the marker is absent
-    /// exactly where the folder tab would also show nothing. Always `false` for a non-directory
-    /// row.
+    /// Mask-dependent by construction, but NOT silenced by a full mask: only
+    /// names the registry offers are maskable, so an UNKNOWN declared name is
+    /// never in the mask, `Chain::build` still runs it, and
+    /// `UnknownViewMiddleware` is still diagnosed with every maskable stage
+    /// masked (see `folder_projection`'s
+    /// `an_unknown_middleware_name_still_diagnoses_under_every_mask`). Masking
+    /// the declared name itself is the case that bypasses the stage and its
+    /// diagnostics. Either way the marker matches what the folder tab shows
+    /// for the same folder under the same mask. Always `false` for a
+    /// non-directory row.
     pub view_degraded: bool,
     pub children: Vec<TreeNode>,
 }

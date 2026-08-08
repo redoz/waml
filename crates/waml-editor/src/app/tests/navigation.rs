@@ -2073,8 +2073,14 @@ fn the_mask_starts_empty_and_is_never_persisted() {
     // silently.
     let settings = crate::project_settings::ProjectSettings::default();
     let json = serde_json::to_string(&settings).unwrap();
+    // Assert on the names that EXIST today. `view_mode` is gone, so a fence
+    // spelled that way could never fire again.
     assert!(
-        !json.contains("view_mode"),
-        "the mode must not reach settings"
+        !json.contains("projection_mask"),
+        "the projection mask must not reach settings: {json}"
+    );
+    assert!(
+        !json.contains("mask"),
+        "no mask-shaped field at all: {json}"
     );
 }
