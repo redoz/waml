@@ -137,6 +137,50 @@ Use these scenario prefixes and owners for newly allocated identifiers. The coor
 
 Each work-stream report has these exact headings: `# Changed files`, `# Scenario identifiers`, `# Evidence`, `# Verification gaps`, `# Open discrepancies`, and `# Feature gaps`. A report lists `None.` under a heading with no entries. A shipped scenario with `verification_state: gap` stays under `# Scenario identifiers` and is also listed under `# Verification gaps`; it never moves to `# Open discrepancies` solely because a test is absent.
 
+## Product Use-Case Traceability Procedure
+
+Run this procedure after `waml check` succeeds. It is a focused audit check,
+not a second product parser or a new WAML feature.
+
+1. Enumerate actor leaves from `docs/waml/use-cases/actors/*.md` and use-case
+   leaves from `docs/waml/use-cases/workflows/*.md`. Exclude `index.md`.
+2. Read the semantic-intention table under `# Evidence` in
+   `docs/superpowers/audits/reports/use-cases.md`. Require one use-case leaf for
+   each intention. Require one owning goal for each intention. If an intention
+   has more than one owner, fail and reconcile the inventory owner before you
+   continue.
+3. For each use-case leaf, parse the `## Owning goal` and `## Scenarios`
+   sections. Require exactly one owning-goal document link. Require every
+   scenario link to target that same document and one exact `####` scenario
+   heading.
+4. Generate the fragment for each target heading with the repository
+   `heading_slug` rule from `crates/waml-cli/src/lsp/query.rs`: trim the heading,
+   remove its leading `#` characters, trim again, convert to lower case, split
+   on white space, and join the parts with `-`. Do not remove punctuation. For
+   example, `#### BUNDLE-001 — open a bundle` becomes
+   `#bundle-001-—-open-a-bundle`. Require the authored fragment to equal this
+   value. `waml check` removes fragments before path resolution, so its success
+   does not satisfy this check.
+5. Remove the frontmatter range from each actor and use-case leaf, then scan
+   body lines with
+   `(?i)^\s*(?:[-*>]\s*)?(?:\*\*|__)?(Given|When|Then|And)(?:\*\*|__)?(?:\s|$)`.
+   Fail on every match. This catches plain, emphasized, list, and block-quote
+   copies of a GWT body.
+6. Parse each view into its frontmatter, `##` sections, `###` member groups,
+   and member links. Require `type: Diagram`, `profile: uml-domain`, one
+   `### External actors` group, and one named product-boundary group. Reject a
+   parsed `## Layout` section. Because WAML layout records parse only in that
+   section, this rejects coordinates, sizes, routes, row/column rules, relative
+   ordering, frames, and all other layout statements without a keyword search.
+7. Resolve all member links. Compare the set of actor links under external
+   actor groups with the complete actor-leaf set. Compare the set of links
+   under product-boundary groups with the complete use-case-leaf set. Both set
+   differences must be empty. A leaf can occur in more than one view.
+8. Under the report's `# Evidence` heading, record for each actor and use-case
+   leaf its semantic intention or role, owning goal when applicable, scenario
+   identifiers when applicable, and every containing view. Compare this table
+   with the parsed sets above.
+
 ---
 
 ### Task 1: Create the audit schema and inventory native behavior
@@ -1374,7 +1418,7 @@ git commit -m "docs: specify browser and tooling workflows"
 
 - [ ] **Step 1: Derive the actor and workflow sets from the frozen contract**
 
-Group rows by `workflow` and `goal_document`. Merge two rows into one use case only when they describe the same user intention and have the same goal owner. Create use cases only for groups that contain at least one shipped GWT scenario. Derive actors from users and external roles that cross the editor, browser/publishing, or tooling boundary. Do not make a platform, screen, widget, crate, or internal service an actor. Use lower-case kebab-case filenames. Record the actor-to-workflow mapping under `# Evidence` in `reports/use-cases.md` before authoring documents.
+Group rows by semantic user intention first. Do not include `goal_document` in the grouping key. After the intention groups exist, collect their goal owners. If one intention has more than one owner, stop Task 11 and reconcile one inventory owner before you create any leaf for that intention. Do not create duplicate leaves to preserve conflicting ownership. Create use cases only for intention groups that contain at least one shipped GWT scenario. Derive actors from users and external roles that cross the editor, browser/publishing, or tooling boundary. Do not make a platform, screen, widget, crate, or internal service an actor. Use lower-case kebab-case filenames. Record the actor-to-workflow mapping, the semantic-intention key, and the reconciled owner under `# Evidence` in `reports/use-cases.md` before authoring documents.
 
 - [ ] **Step 2: Create typed actor documents**
 
@@ -1390,7 +1434,7 @@ Do not use `specializes` for job-title similarity. A child actor must be able to
 
 - [ ] **Step 3: Create typed use-case documents and traceability links**
 
-Each workflow leaf uses `type: uml.UseCase`, one H1 that matches `title`, and these sections in this order: `## Owning goal`, `## Scenarios`, and `## Relationships`. The owning-goal section has exactly one document link. The scenario section links each frozen shipped scenario identifier to its heading in that same goal document. Use the exact heading anchor; do not copy the heading text as a new scenario body.
+Each workflow leaf uses `type: uml.UseCase`, one H1 that matches `title`, and these sections in this order: `## Owning goal`, `## Scenarios`, and `## Relationships`. The owning-goal section has exactly one document link. The scenario section links each frozen shipped scenario identifier to its heading in that same goal document. Generate each fragment with the repository `heading_slug` rule in the Product Use-Case Traceability Procedure. Do not copy the heading text as a new scenario body.
 
 Use this structure for the open-bundle workflow, with the exact frozen identifier and title in place of the example identifier when they differ:
 
@@ -1408,7 +1452,7 @@ description: A reader opens a WAML bundle in the product.
 
 ## Scenarios
 
-- [BUNDLE-001](../../goals/read-a-bundle/open-a-bundle.md#bundle-001--open-a-bundle)
+- [BUNDLE-001](../../goals/read-a-bundle/open-a-bundle.md#bundle-001-—-open-a-bundle)
 
 ## Relationships
 
@@ -1419,7 +1463,7 @@ Put each actor association in the use-case document and author it once. Use `inc
 
 - [ ] **Step 4: Create semantic system-boundary diagrams**
 
-Each view uses `type: Diagram` and `profile: uml-domain`. Use only `## Members` groups. Put actors under `### External actors`. Put use cases under one named product boundary: `### WAML editor boundary`, `### WAML browser and publishing boundary`, or `### WAML tooling boundary`. A use case can occur in more than one view when it crosses boundaries, but it still has one leaf document and one owning goal.
+Each view uses `type: Diagram` and `profile: uml-domain`. Use only `## Members` groups. Put actors under `### External actors`. Put use cases under one named product boundary: `### WAML editor boundary`, `### WAML browser and publishing boundary`, or `### WAML tooling boundary`. A use case can occur in more than one view when it crosses boundaries, but it still has one leaf document and one owning goal. Record every actor-to-view and use-case-to-view membership under `# Evidence` in `reports/use-cases.md`.
 
 Do not add a `## Layout` section. Do not specify rows, columns, frames, positions, sizes, routes, shape names, or actor placement. Specialized stick-figure, ellipse, and system-boundary rendering is separate user work and is not a dependency of this task.
 
@@ -1431,12 +1475,10 @@ Run:
 rtk cargo run -p waml-cli -- check docs/waml/use-cases
 rtk cargo run -p waml-cli -- fmt --check docs/waml/use-cases
 rtk rg -n "^type: uml\.(Actor|UseCase)$|^- (associates|includes|extends|specializes) \[" docs/waml/use-cases
-rtk rg -n "^\*\*(Given|When|Then|And)\*\*" docs/waml/use-cases
-rtk rg -n "^## Layout|with frame| as (row|column)| left of | right of |stick figure|ellipse" docs/waml/use-cases
 rtk node scripts/check-waml-doc-contract.mjs docs/waml
 ```
 
-Expected: both WAML commands pass. The contract checker reports no error for `docs/waml/use-cases/**` or `waml-feature-gaps.md`; errors from an architecture lane that is still running are allowed. The type-and-relationship search lists every authored semantic element. The copied-GWT and geometry searches return no matches. Review `reports/use-cases.md` against the frozen inventory and confirm that every listed scenario link resolves to its one owning goal. Add `use-cases/index.md` and the workflow documents to the affected-document links for `FG-010` because automatic scenario-to-use-case-to-test completeness checking remains a WAML tooling opportunity.
+Then run the complete Product Use-Case Traceability Procedure. Expected: both WAML commands pass. The contract checker reports no error for `docs/waml/use-cases/**` or `waml-feature-gaps.md`; errors from an architecture lane that is still running are allowed. The type-and-relationship search lists every authored semantic element. The traceability procedure finds one owner per semantic intention, exact repository-compatible fragments, no GWT body copy, no parsed layout record, and no actor or use-case leaf outside the union of view members. Add `use-cases/index.md` and the workflow documents to the affected-document links for `FG-010` because automatic scenario-to-use-case-to-test completeness checking remains a WAML tooling opportunity.
 
 - [ ] **Step 6: Commit the product-use-case model**
 
@@ -1821,6 +1863,7 @@ git commit -m "ci: gate WAML documentation contract"
 - Modify: `docs/waml/index.md`
 - Modify: every generated `docs/waml/**/index.md`
 - Modify: goal or architecture leaf documents only when integration finds a broken owner link
+- Modify: exact `docs/waml/use-cases/actors/*.md`, `workflows/*.md`, or `views/*.md` leaves only when integration finds broken traceability or view membership
 - Modify: all `docs/superpowers/audits/reports/*.md`
 - Modify: `docs/superpowers/audits/2026-08-08-ui-behavior-inventory.jsonl`
 
@@ -1856,8 +1899,14 @@ Confirm:
 - Every report discrepancy occurs in the inventory and goal tree.
 - Every report feature gap occurs in the ledger and links back to an affected document.
 - Every `uml.UseCase` document has one owning-goal link and links every shipped scenario assigned to that workflow in `reports/use-cases.md`.
-- Every linked scenario occurs exactly once in its owning goal, and no GWT body line occurs under `docs/waml/use-cases/**`.
-- Every actor association occurs once, every semantic relationship target resolves, and each use-case view has external actors plus one named product-boundary member group.
+- Every linked scenario occurs exactly once in its owning goal, and its fragment equals the repository slug of that heading.
+- No plain, emphasized, list, or block-quote GWT body line occurs under `docs/waml/use-cases/**`.
+- Every actor association occurs once, and every semantic relationship target resolves.
+- The union of external-actor view members equals the complete actor-leaf set.
+- The union of product-boundary view members equals the complete shipped use-case-leaf set.
+- Parsed use-case views contain no `## Layout` section or layout record.
+
+Run the complete Product Use-Case Traceability Procedure after these checks. Do not rely on `waml check` for fragments, view coverage, or copied GWT bodies.
 
 - [ ] **Step 4: Check stale architecture claims and concept resolution**
 
@@ -1881,12 +1930,14 @@ git commit -m "docs: reconcile WAML contract indexes"
 
 **Files:**
 - Modify only when a check finds a real mismatch: the owning goal document, its exact evidence test, the inventory row, and its stream report
+- Modify with each goal or scenario correction: the corresponding `docs/waml/use-cases/workflows/*.md` leaf and `docs/superpowers/audits/reports/use-cases.md`
+- Modify when the corrected workflow changes a role or boundary: its exact `docs/waml/use-cases/actors/*.md` leaf and affected `docs/waml/use-cases/views/*.md` view
 - Do not commit: `target/docs-contract-start.png`
 - Do not commit: `target/docs-contract-native.png`
 
 **Interfaces:**
-- Consumes: final scenarios and their test boundaries.
-- Produces: passing available suites, target-boundary verification for verified scenarios, durable gap records for unautomated shipped scenarios, and screenshots for manual review of remaining native surfaces.
+- Consumes: final scenarios, their test boundaries, the integrated product-use-case links, and `reports/use-cases.md`.
+- Produces: passing available suites, target-boundary verification for verified scenarios, durable gap records for unautomated shipped scenarios, corrected product-use-case traceability, and screenshots for manual review of remaining native surfaces.
 
 - [ ] **Step 1: Run the normative native suites**
 
@@ -1944,9 +1995,13 @@ rtk node scripts/serve-browser-check.mjs target/release/waml.exe crates/waml-edi
 
 Expected: `serve-browser-check: PASS`. If the executable or Chromium prerequisite is absent, build or provide it when the repository supports that action. Otherwise retain affected source-evidenced scenarios as shipped gaps and name the missing prerequisite. Do not convert them to discrepancies.
 
-- [ ] **Step 6: Commit only evidence corrections**
+- [ ] **Step 6: Reconcile and revalidate product-use-case traceability**
 
-If no mismatch exists, do not make an empty commit. If a mismatch exists, stage only the owner document, exact test, inventory row, and report, then commit:
+After each correction to a goal, scenario identifier, scenario title, workflow owner, actor role, or system boundary, update the corresponding use-case leaf, fragment, view membership, and `reports/use-cases.md` row in the same change. Run the complete Product Use-Case Traceability Procedure after each correction. Expected: one owner per semantic intention, exact fragment-to-heading matches, no copied GWT body, no parsed layout record, and complete actor/use-case view membership.
+
+- [ ] **Step 7: Commit only evidence and traceability corrections**
+
+If no mismatch exists, do not make an empty commit. If a mismatch exists, stage only the owner document, exact test, inventory row, stream report, corresponding product-use-case files, and `reports/use-cases.md`, then commit:
 
 ```bash
 git commit -m "docs: reconcile verification evidence"
@@ -1980,6 +2035,8 @@ rtk proxy pwsh -NoProfile -Command '& { $rows = @(Get-Content "docs/superpowers/
 ```
 
 Expected: exit 0 with no output.
+
+Run the complete Product Use-Case Traceability Procedure before you delete the inventory or `reports/use-cases.md`. Expected: the report, semantic-intention owners, scenario fragments, GWT-body scan, parsed layout state, and complete view-member sets agree.
 
 - [ ] **Step 2: Run documentation gates exactly as CI runs them**
 
@@ -2018,12 +2075,11 @@ Run:
 ```powershell
 rtk rg -n "\*\*Status:\*\* (implemented|.*unverified)" docs/waml
 rtk rg -n "^#### [A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-[0-9]+ — " docs/waml/goals
-rtk rg -n "^\*\*(Given|When|Then|And)\*\*" docs/waml/use-cases
-rtk rg -n "^## Layout|with frame| as (row|column)| left of | right of |stick figure|ellipse" docs/waml/use-cases
+rtk rg -n "(?i)^\s*(?:[-*>]\s*)?(?:\*\*|__)?(Given|When|Then|And)(?:\*\*|__)?(?:\s|$)" docs/waml/use-cases
 rtk git diff --check
 ```
 
-Expected: the forbidden-status, copied-GWT, and renderer-geometry searches return no matches. The scenario list contains unique identifiers already accepted by the checker. `git diff --check` returns no error.
+Expected: the forbidden-status and complete copied-GWT searches return no matches. The scenario list contains unique identifiers already accepted by the checker. The Product Use-Case Traceability Procedure has already proved parsed layout absence and complete view coverage. `git diff --check` returns no error.
 
 - [ ] **Step 5: Delete the temporary inventory and reports**
 
@@ -2041,6 +2097,8 @@ rtk node scripts/check-waml-doc-contract.mjs docs/waml
 ```
 
 Expected: PASS. Nothing under `docs/waml` depended on the temporary audit paths.
+
+Repeat steps 1 and 3 through 7 of the Product Use-Case Traceability Procedure directly from `docs/waml/use-cases/**`. Skip only the report-input and report-comparison steps because Task 19 deleted the report. Expected: goal ownership, fragments, GWT-body absence, parsed layout absence, and complete actor/use-case view membership remain valid without audit scaffolding.
 
 - [ ] **Step 7: Commit cleanup and final state**
 

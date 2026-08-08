@@ -135,12 +135,25 @@ actor to a broader actor only when the narrower actor can do all interactions
 of the broader actor.
 
 Create one `uml.UseCase` document for each distinct shipped product workflow.
+Group inventory rows by semantic user intention before you inspect their goal
+owners. If one intention has more than one goal owner, stop and reconcile one
+owner before you create a use-case document. Do not create duplicate use cases
+to preserve conflicting goal ownership.
+
 One use-case document shall have one owning goal document. Its `## Owning goal`
 section shall link to that goal. Its `## Scenarios` section shall link to every
-shipped GWT scenario that the workflow owns. The link target shall be the
-scenario heading in the owning goal document. A use-case document shall not
-contain `Given`, `When`, or `Then` lines. Planned-only behavior remains in its
-goal document until it has a shipped scenario.
+shipped GWT scenario that the workflow owns. The link target shall be the exact
+scenario heading in the owning goal document. Generate its fragment with the
+repository heading-slug rule: trim the heading, remove its leading `#`
+characters, trim it again, convert it to lower case, split it on white space,
+and join the parts with `-`. This rule retains punctuation such as the Unicode
+em dash. Validate each fragment against the target heading because `waml check`
+validates the document path but not the fragment.
+
+A use-case document shall not contain a GWT body line. This prohibition covers
+plain, emphasized, list, and block-quote lines that start with `Given`, `When`,
+`Then`, or `And`. Planned-only behavior remains in its goal document until it
+has a shipped scenario.
 
 Use these relationship meanings:
 
@@ -159,9 +172,16 @@ association once. All relationship targets shall resolve.
 Create WAML `Diagram` documents under `docs/waml/use-cases/views`. Each view
 shall group external actors separately from the use cases inside its named
 system boundary. Use `## Members` groups to express this semantic boundary.
-Do not add a `## Layout` section, coordinates, sizes, edge routes, shape names,
-or ordering constraints. The model shall not constrain the specialized
-use-case view that is under separate implementation.
+Every actor leaf and every shipped use-case leaf shall occur in at least one
+appropriate view. The use-case report shall map each leaf to its view or views,
+and validation shall compare the complete leaf sets with the union of view
+members.
+
+Do not add a `## Layout` section, parsed layout statement, coordinate, size,
+edge route, shape name, or ordering constraint. Validation shall parse the
+canonical view sections and list items and shall reject all layout records. A
+text search alone is not sufficient. The model shall not constrain the
+specialized use-case view that is under separate implementation.
 
 ## Architecture design
 
@@ -275,9 +295,13 @@ Content verification shall include:
 - architecture diagrams resolve their referenced concepts;
 - every product use case links to one owning goal and all of its shipped GWT
   scenarios;
-- use-case documents contain no copied GWT bodies; and
-- product-use-case diagrams contain semantic system-boundary groups and no
-  renderer-specific geometry.
+- every use-case fragment equals the repository slug of its target scenario
+  heading;
+- use-case documents contain no copied GWT body lines in plain, emphasized,
+  list, or block-quote form;
+- the union of view members contains every actor and shipped use-case leaf; and
+- parsed product-use-case diagrams contain semantic system-boundary groups and
+  no layout record or renderer-specific geometry.
 
 ## Delegation and integration
 
@@ -291,6 +315,12 @@ and shall not edit goal scenario bodies.
 Each work stream shall report changed files, scenario identifiers, evidence,
 open discrepancies, and feature gaps. A final integration review shall check
 cross-tree consistency before the full validation commands run.
+
+If later native or browser verification changes a goal owner, scenario
+identifier, scenario heading, actor role, or product boundary, the same change
+shall correct the affected use-case leaf, view, and use-case report. It shall
+then rerun the complete product-use-case traceability check. Final validation
+shall repeat that check before it deletes the audit report.
 
 ## Completion criteria
 
