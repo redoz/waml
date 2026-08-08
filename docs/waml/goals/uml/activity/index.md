@@ -1,5 +1,6 @@
 # Activity
 
-Flow: actions, control nodes, and partitions.
+Activity diagrams express actions, control nodes, flows, and user interaction.
 
-* [Activity Feature Cut](./feature-cut.md) - Each feature of an activity diagram, with a status and an MVP flag.
+* [Activity Feature Cut](./feature-cut.md) - Activity language and model coverage.
+* [Interact with an Activity Diagram](./interact-with-an-activity-diagram.md) - Activity rendering, hit testing, selection, camera retention, and refresh.

@@ -1,86 +1,92 @@
 # Sequence Feature Cut
 
-**Goal:** A sequence diagram in WAML expresses everything an architecture
-document needs to say about an interaction over time.
+**Goal:** A sequence diagram in WAML expresses the language and model that an
+architecture document needs to describe an interaction over time.
 
-**Done when:** Every row below is `done` or `horizon`, and no `planned` row is
-`MVP: yes`.
+**Done when:** Every MVP language and model row below is `done`, and every
+other row is `done` or `horizon`.
 
-**Status:** partial — unverified
+**Status:** partial
 **MVP:** yes
 
-Every status in this table is a first reading of the code. `Evidence` shows
-`unverified` until an audit replaces it with a `file:line` reference or the
-name of a test.
+This document records language and model coverage. [Sequence
+Language](./language.md) defines the authored form. [Interact with a Sequence
+Diagram](./interact-with-a-sequence-diagram.md) owns sequence-diagram UI
+behavior.
 
 ## Participants
 
-| Feature | Status | MVP | Evidence |
-| --- | --- | --- | --- |
-| Lifeline | done | yes | unverified |
-| Lifeline typed by a classifier | partial | yes | unverified |
-| Actor as a participant | partial | no | unverified |
-| Lifeline ordering under author control | partial | no | unverified |
-| Activation bar | partial | yes | unverified |
-| Nested activation | planned | no | unverified |
-| Create message and delayed lifeline start | planned | no | unverified |
-| Destroy message and lifeline end | planned | no | unverified |
+| Feature | Status | MVP |
+| --- | --- | --- |
+| Lifeline | done | yes |
+| Lifeline typed by a classifier | done | yes |
+| Actor as a participant | done | no |
+| Lifeline ordering under author control | done | no |
+| Activation bar | done | yes |
+| Nested activation | done | no |
+| Create message and delayed lifeline start | done | no |
+| Destroy message and lifeline end | done | no |
 
 ## Messages
 
-| Feature | Status | MVP | Evidence |
-| --- | --- | --- | --- |
-| `calls` — synchronous message | done | yes | unverified |
-| `calls ... async` — asynchronous message | planned | yes | [language](./language.md) |
-| `returns` — reply message | partial | yes | [language](./language.md) |
-| `signals` — signal message | planned | yes | [language](./language.md) |
-| `creates` — create message | planned | no | [language](./language.md) |
-| `destroys` — destroy message | planned | no | [language](./language.md) |
-| Self message | partial | yes | unverified |
-| Message arguments | partial | no | unverified |
-| Message return value | partial | no | unverified |
-| Lost and found message | horizon | no | [excluded](./language.md) |
+| Feature | Status | MVP |
+| --- | --- | --- |
+| `calls` — synchronous message | done | yes |
+| `calls ... async` — asynchronous message | done | yes |
+| `returns` — reply message | done | yes |
+| `signals` — signal message | done | yes |
+| `creates` — create message | done | no |
+| `destroys` — destroy message | done | no |
+| Self message | done | yes |
+| Message arguments | done | no |
+| Message return value | done | no |
+| Lost and found message | horizon | no |
 
 ## Structure
 
-| Feature | Status | MVP | Evidence |
-| --- | --- | --- | --- |
-| `alt` fragment — one or more `when`, optional final `else` | planned | yes | [language](./language.md) |
-| `opt` fragment — exactly one `when` | planned | yes | [language](./language.md) |
-| `loop` fragment — exactly one `when` | planned | yes | [language](./language.md) |
-| `break` fragment — exactly one `when` | planned | no | [language](./language.md) |
-| `par` fragment — two or more `branch` | planned | no | [language](./language.md) |
-| `critical` fragment — exactly one `branch` | planned | no | [language](./language.md) |
-| `assert` fragment — exactly one `branch` | planned | no | [language](./language.md) |
-| `neg` fragment — exactly one `branch` | planned | no | [language](./language.md) |
-| Nested fragments | planned | no | [language](./language.md) |
-| Guard on a fragment operand | planned | yes | [language](./language.md) |
-| `ref` — interaction use of another interaction | planned | no | [language](./language.md) |
-| Gate at the interaction boundary, with bindings | planned | no | [language](./language.md) |
-| `outside` as a boundary endpoint | planned | no | [language](./language.md) |
-| Note anchored to a message | partial | no | unverified |
-| Time and duration constraint | horizon | no | [excluded](./language.md) |
-| Coregion, continuation, general ordering | horizon | no | [excluded](./language.md) |
-| `strict`, `seq`, `ignore`, `consider` fragments | horizon | no | [excluded](./language.md) |
-| Part decomposition, state invariant, execution specification | horizon | no | [excluded](./language.md) |
+| Feature | Status | MVP |
+| --- | --- | --- |
+| `alt` fragment — one or more `when`, optional final `else` | done | yes |
+| `opt` fragment — exactly one `when` | done | yes |
+| `loop` fragment — exactly one `when` | done | yes |
+| `break` fragment — exactly one `when` | done | no |
+| `par` fragment — two or more `branch` | done | no |
+| `critical` fragment — exactly one `branch` | done | no |
+| `assert` fragment — exactly one `branch` | done | no |
+| `neg` fragment — exactly one `branch` | done | no |
+| Nested fragments | done | no |
+| Guard on a fragment operand | done | yes |
+| `ref` — interaction use of another interaction | done | no |
+| Gate at the interaction boundary, with bindings | done | no |
+| `outside` as a boundary endpoint | done | no |
+| Note anchored to a message | partial | no |
+| Time and duration constraint | horizon | no |
+| Coregion, continuation, general ordering | horizon | no |
+| `strict`, `seq`, `ignore`, `consider` fragments | horizon | no |
+| Part decomposition, state invariant, execution specification | horizon | no |
+
+## Evidence
+
+- Canonical messages and their authored fields are covered by
+  `crates/waml/tests/sequence_language_syntax.rs::canonical_messages_have_fixed_lossless_slots`.
+- Return correlation and diagnostics are covered by
+  `crates/waml/tests/sequence_semantics.rs::returns_follow_the_locked_candidate_algorithm`.
+- Fragment kinds and operand rules are covered by
+  `crates/waml/tests/sequence_semantics.rs::fragment_operand_rules_are_exact`.
+- Nested fragments and authored order are covered by
+  `crates/waml/tests/sequence_semantics.rs::nested_fragments_keep_order_and_branch_boundaries`.
+- Create and destroy lifetimes are covered by
+  `crates/waml/tests/interaction_solver_golden.rs::creates_target_stem_starts_at_its_row_and_destroys_ends_it`.
+- Activation nesting is covered by
+  `crates/waml/tests/interaction_solver_golden.rs::activation_nesting_is_contained_and_depth_matches_stack`.
+- Interaction uses, gates, and bindings are covered by
+  `crates/waml/tests/sequence_semantics.rs::interaction_use_resolves_without_flattening`.
 
 ## Notes
 
-- The [Sequence Language](./language.md) states the meaning of each row above
-  in authored source. A row here shows whether the product obeys the language.
-  The language document shows what the product must do. Rows with the word
-  `excluded` are constructs that the language refuses. To add one, change that
-  document first.
-- Fragments are the largest defect. They are the reason that the product cannot
-  draw most real sequence diagrams. `alt`, `opt`, and `loop` are the three that
-  the bar needs.
-- A fragment is a layout problem and a model problem. A fragment is a box that
-  must hold a vertical range across a horizontal set of lifelines. Expect work
-  in [Shared](../shared/) and here.
-- The interaction substrate is separate from the flow substrate that Activity
-  and State Machine use. Work on those kinds gives no help here.
-- To read is not to author. A construct can have the status `done` here, thus
-  the parser, the model, and the renderer accept it, while an author cannot
-  make it on the canvas. [Draw on the
-  Canvas](../../author-in-the-editor/draw-on-the-canvas.md) controls canvas
-  authoring.
+- The [Sequence Language](./language.md) defines the accepted authored forms
+  and their stable language scenarios.
+- Excluded constructs are intentional language limits, not planned work.
+- [Interact with a Sequence
+  Diagram](./interact-with-a-sequence-diagram.md) owns rendering, hit testing,
+  selection, camera, refresh, and unavailable-document results.

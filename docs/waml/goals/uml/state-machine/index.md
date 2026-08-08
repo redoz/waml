@@ -1,5 +1,6 @@
 # State Machine
 
-Lifecycle: states, transitions, guards, and effects.
+State-machine diagrams express states, transitions, guards, effects, and user interaction.
 
-* [State Machine Feature Cut](./feature-cut.md) - Each feature of a state machine diagram, with a status and an MVP flag.
+* [State Machine Feature Cut](./feature-cut.md) - State-machine language and model coverage.
+* [Interact with a State Machine Diagram](./interact-with-a-state-machine-diagram.md) - Current flow-scene rendering, hit testing, selection, camera retention, and refresh evidence.

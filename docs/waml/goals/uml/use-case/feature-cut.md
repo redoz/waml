@@ -1,55 +1,50 @@
 # Use Case Feature Cut
 
-**Goal:** A use case diagram in WAML shows the users of the system and the
-boundary of the system.
+**Goal:** WAML expresses the actors, use cases, and semantic relationships in a
+use-case model.
 
-**Done when:** Every row below is `done` or `horizon`, and no `planned` row is
-`MVP: yes`.
+**Done when:** Every language and model row below is `done` or `horizon`.
 
-**Status:** partial — unverified
+**Status:** partial
 **MVP:** no
 
-Every status in this table is a first reading of the code. `Evidence` shows
-`unverified` until an audit replaces it with a `file:line` reference or the
-name of a test.
+This document records use-case language and model coverage. [Interact with a
+Use Case Diagram](./interact-with-a-use-case-diagram.md) owns editor and
+renderer behavior.
 
 ## Elements
 
-| Feature | Status | MVP | Evidence |
-| --- | --- | --- | --- |
-| Actor | done | no | unverified |
-| Actor drawn as a stick figure rather than a box | planned | no | unverified |
-| Use case | done | no | unverified |
-| Use case drawn as an ellipse | planned | no | unverified |
-| System boundary box | planned | no | unverified |
-| Note anchored to an element | partial | no | unverified |
+| Feature | Status | MVP |
+| --- | --- | --- |
+| Actor | done | no |
+| Use case | done | no |
+| Note anchored to an element | partial | no |
 
 ## Relationships
 
-| Feature | Status | MVP | Evidence |
-| --- | --- | --- | --- |
-| Actor associates use case | done | no | unverified |
-| `includes` between use cases | done | no | unverified |
-| `extends` between use cases | done | no | unverified |
-| Extension point on an extend | horizon | no | unverified |
-| Actor generalization via `specializes` | done | no | unverified |
-| Use case generalization via `specializes` | done | no | unverified |
+| Feature | Status | MVP |
+| --- | --- | --- |
+| Actor associates use case | done | no |
+| `includes` between use cases | done | no |
+| `extends` between use cases | done | no |
+| Extension point on an extend | horizon | no |
+| Actor generalization via `specializes` | done | no |
+| Use case generalization via `specializes` | done | no |
 
-## Presentation
+## Evidence
 
-| Feature | Status | MVP | Evidence |
-| --- | --- | --- | --- |
-| A document type that selects the use case view | planned | no | unverified |
-| Layout that puts actors outside the boundary | planned | no | unverified |
+- Actor and use-case metaclasses are covered by
+  `crates/waml/src/model.rs::actor_and_usecase_metaclasses_parse_and_round_trip`.
+- UML catalog claims for actors and use cases are covered by
+  `crates/waml/tests/uml_attribute_syntax.rs::catalog_claims_each_supported_uml_type_once_and_leaves_generic_types_unclaimed`.
+- The `associates`, `includes`, `extends`, and `specializes` relationship kinds
+  are defined by `crates/waml/src/model.rs::RelationshipKind`.
 
 ## Notes
 
-- The model part of this kind exists. `uml.Actor` and `uml.UseCase` are
-  metaclasses. `includes`, `extends`, `associates`, and `specializes` are
-  relationship kinds. The view does not exist. At this time these elements draw
-  through the structural view as boxes.
-- Thus this kind is separate from [Class](../class/feature-cut.md). The
-  remaining work is presentation and layout only. A reader must see that work
-  as one task.
-- Each row has the flag `MVP: no`. `docs/waml` describes its actors in text at
-  this time. The bar does not ask for more.
+- This feature cut owns only the use-case language and model.
+- It does not specify a specialized actor shape, use-case shape, system
+  boundary, layout, position, size, or route.
+- [Interact with a Use Case
+  Diagram](./interact-with-a-use-case-diagram.md) owns the editor and renderer
+  product feature.

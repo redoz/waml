@@ -93,6 +93,8 @@ Each scenario applies to a document with the type `uml.Sequence`.
 
 #### SEQ-MSG-1 — a call makes a synchronous message
 
+**Applies to:** shared
+
 **Given** a document with the lifelines `A` and `B`
 **And** the item `- A calls B `fetch``
 **When** the tool analyses the document
@@ -100,7 +102,11 @@ Each scenario applies to a document with the type `uml.Sequence`.
 **And** the message kind is `SyncCall`
 **And** the tool reports no diagnostic
 
+**Evidence:** `crates/waml/src/uml/syntax/parser.rs:482`
+
 #### SEQ-MSG-2 — a return matches an earlier call
+
+**Applies to:** shared
 
 **Given** a call from `A` to `B`
 **And** a return from `B` to `A`
@@ -108,7 +114,11 @@ Each scenario applies to a document with the type `uml.Sequence`.
 **Then** the return correlates to that call
 **And** the tool reports no diagnostic
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1268`
+
 #### SEQ-MSG-3 — a return without a call is an error
+
+**Applies to:** shared
 
 **Given** a return from `B` to `A`
 **And** no call from `A` to `B` before it
@@ -116,20 +126,32 @@ Each scenario applies to a document with the type `uml.Sequence`.
 **Then** the tool reports one diagnostic at the return
 **And** the model keeps the declared return
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1268`
+
 #### SEQ-MSG-4 — async is valid only after a call target
+
+**Applies to:** shared
 
 **Given** the item `- A calls B async `fetch``
 **When** the tool analyses the document
 **Then** the message is asynchronous
 **And** the tool reports no diagnostic
 
+**Evidence:** `crates/waml/src/uml/syntax/parser.rs:482`
+
 #### SEQ-MSG-5 — async on another verb is an error
+
+**Applies to:** shared
 
 **Given** the item `- A signals B async `ping``
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at the word `async`
 
+**Evidence:** `crates/waml/src/uml/syntax/parser.rs:482`
+
 #### SEQ-MSG-6 — an old verb is not a message
+
+**Applies to:** shared
 
 **Given** the item `- B replies A `result``
 **When** the tool analyses the document
@@ -137,153 +159,241 @@ Each scenario applies to a document with the type `uml.Sequence`.
 **And** the model contains no message for that item
 **And** the source round-trips without a change
 
+**Evidence:** `crates/waml/src/uml/syntax/parser.rs:482`
+
 #### SEQ-MSG-7 — a create message starts the lifeline
+
+**Applies to:** shared
 
 **Given** a create message from `A` to `C`
 **When** the solver solves the interaction
 **Then** the head of `C` is at the row of that message
 **And** no part of `C` is above that row
 
+**Evidence:** `crates/waml/src/solve/interaction.rs:787`
+
 #### SEQ-MSG-8 — a destroy message ends the lifeline
+
+**Applies to:** shared
 
 **Given** a destroy message from `A` to `C`
 **When** the solver solves the interaction
 **Then** the line of `C` stops at the row of that message
 
+**Evidence:** `crates/waml/src/solve/interaction.rs:787`
+
 ### Order
 
 #### SEQ-ORD-1 — source order is behavior order
+
+**Applies to:** shared
 
 **Given** three messages in the order `m1`, `m2`, `m3`
 **When** the solver solves the interaction
 **Then** the row of `m1` is above the row of `m2`
 **And** the row of `m2` is above the row of `m3`
 
+**Evidence:** `crates/waml/src/solve/interaction.rs:581`
+
 #### SEQ-ORD-2 — par removes the order between branches
+
+**Applies to:** shared
 
 **Given** a `par` fragment with two branches
 **When** the tool analyses the document
 **Then** the model gives no order between the two branches
 **And** the model keeps the order inside each branch
 
+**Evidence:** `crates/waml/src/solve/interaction.rs:581`
+
 ### Fragments
 
 #### SEQ-FRAG-1 — alt accepts one when
+
+**Applies to:** shared
 
 **Given** an `alt` fragment with one `when` operand
 **When** the tool analyses the document
 **Then** the model contains one fragment with one operand
 **And** the tool reports no diagnostic
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1378`
+
 #### SEQ-FRAG-2 — alt accepts a final else
+
+**Applies to:** shared
 
 **Given** an `alt` fragment with `when` and then `else`
 **When** the tool analyses the document
 **Then** the model contains two operands
 **And** the tool reports no diagnostic
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1378`
+
 #### SEQ-FRAG-3 — else must be last
+
+**Applies to:** shared
 
 **Given** an `alt` fragment with `when`, `else`, and then `when`
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at the `else`
 **And** the source round-trips without a change
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1378`
+
 #### SEQ-FRAG-4 — else occurs one time only
+
+**Applies to:** shared
 
 **Given** an `alt` fragment with `when`, `else`, and `else`
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at the second `else`
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1378`
+
 #### SEQ-FRAG-5 — opt, loop, and break accept one when
+
+**Applies to:** shared
 
 **Given** a fragment with the head `opt`, `loop`, or `break`
 **And** exactly one `when` operand
 **When** the tool analyses the document
 **Then** the tool reports no diagnostic
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1378`
+
 #### SEQ-FRAG-6 — a wrong operand count is an error
+
+**Applies to:** shared
 
 **Given** an `opt` fragment with two `when` operands
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at the second operand
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1378`
+
 #### SEQ-FRAG-7 — par needs two branches
+
+**Applies to:** shared
 
 **Given** a `par` fragment with one `branch` operand
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at the fragment head
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1378`
+
 #### SEQ-FRAG-8 — critical, assert, and neg accept one branch
+
+**Applies to:** shared
 
 **Given** a fragment with the head `critical`, `assert`, or `neg`
 **And** exactly one `branch` operand
 **When** the tool analyses the document
 **Then** the tool reports no diagnostic
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1378`
+
 #### SEQ-FRAG-9 — a fragment stays in its parent operand
+
+**Applies to:** shared
 
 **Given** a `par` fragment inside an operand of an `alt` fragment
 **When** the tool analyses the document
 **Then** the parent of the `par` fragment is that operand
 
+**Evidence:** `crates/waml/src/uml/analysis.rs:3108`
+
 #### SEQ-FRAG-10 — the item after a fragment is a sibling
+
+**Applies to:** shared
 
 **Given** a message below a `par` fragment at the same level
 **When** the tool analyses the document
 **Then** that message is a sibling of the fragment
 **And** that message is not a child of the last branch
 
+**Evidence:** `crates/waml/src/uml/analysis.rs:3108`
+
 #### SEQ-FRAG-11 — a fragment frame holds its content
+
+**Applies to:** shared
 
 **Given** a fragment that contains two messages
 **When** the solver solves the interaction
 **Then** the frame of the fragment holds both message rows
 **And** the frame holds each lifeline that those messages touch
 
+**Evidence:** `crates/waml/src/solve/interaction.rs:535`
+
 ### Boundaries
 
 #### SEQ-BND-1 — outside is a boundary endpoint
+
+**Applies to:** shared
 
 **Given** a message from `outside` to `A`
 **When** the tool analyses the document
 **Then** the source endpoint of the message is the boundary
 **And** the tool reports no diagnostic
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:166`
+
 #### SEQ-BND-2 — outside is a reserved name
+
+**Applies to:** shared
 
 **Given** a lifeline with the name `outside`
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at that lifeline
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:166`
+
 #### SEQ-BND-3 — an alias must not contain an at sign
+
+**Applies to:** shared
 
 **Given** a lifeline alias that contains `@`
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at that alias
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:166`
+
 #### SEQ-BND-4 — a gate is on the frame boundary
+
+**Applies to:** shared
 
 **Given** an interaction with one gate
 **When** the solver solves the interaction
 **Then** the position of the gate is on the frame boundary
 
+**Evidence:** `crates/waml/src/solve/interaction.rs:455`
+
 #### SEQ-BND-5 — a reference does not copy messages
+
+**Applies to:** shared
 
 **Given** a `ref` to an interaction that contains three messages
 **When** the solver solves the referring interaction
 **Then** the solver makes one frame for the reference
 **And** the referring interaction contains no copy of those three messages
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:440`
+
 #### SEQ-BND-6 — a reference binds its gates
+
+**Applies to:** shared
 
 **Given** a `ref` with two gates and two bindings
 **When** the solver solves the referring interaction
 **Then** each outer message connects to the position of its gate
 
+**Evidence:** `crates/waml/src/solve/interaction.rs:329`
+
 ### Activations
 
 #### SEQ-ACT-1 — a call starts an activation
+
+**Applies to:** shared
 
 **Given** a call from `A` to `B`
 **And** a return from `B` to `A`
@@ -292,7 +402,11 @@ Each scenario applies to a document with the type `uml.Sequence`.
 **And** the activation starts at the call row
 **And** the activation stops at the return row
 
+**Evidence:** `crates/waml/src/solve/interaction.rs:787`
+
 #### SEQ-ACT-2 — correlation uses message identity
+
+**Applies to:** shared
 
 **Given** two calls from `A` to `B`
 **And** two returns from `B` to `A`
@@ -300,9 +414,13 @@ Each scenario applies to a document with the type `uml.Sequence`.
 **Then** each return correlates to its own call
 **And** the correlation does not change when a message moves in the source
 
+**Evidence:** `crates/waml/src/uml/sequence.rs:1268`
+
 ### Excluded constructs
 
 #### SEQ-EXC-1 — an excluded fragment head is not accepted
+
+**Applies to:** shared
 
 **Given** a fragment with the head `strict`, `seq`, `ignore`, or `consider`
 **When** the tool analyses the document
@@ -310,20 +428,65 @@ Each scenario applies to a document with the type `uml.Sequence`.
 **And** the model contains no fragment for that item
 **And** the source round-trips without a change
 
+**Evidence:** `crates/waml/src/uml/syntax/parser.rs:1745`
+
 ### Recovery
 
 #### SEQ-REC-1 — a bad item does not stop the next item
+
+**Applies to:** shared
 
 **Given** a malformed item between two valid messages
 **When** the tool analyses the document
 **Then** the tool reports one diagnostic at the malformed item
 **And** the model contains both valid messages
 
+**Evidence:** `crates/waml/src/uml/syntax/parser.rs:482`
+
 #### SEQ-REC-2 — malformed source stays lossless
+
+**Applies to:** shared
 
 **Given** a document that contains a malformed item
 **When** the tool reads the document and then writes it
 **Then** the bytes do not change
+
+**Evidence:** `crates/waml/src/uml/syntax/parser.rs:482`
+
+## Verification gaps
+
+- SEQ-MSG-1 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-MSG-2 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-MSG-3 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-MSG-4 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-MSG-5 — target: native; No marked native test verifies this diagnostic result.
+- SEQ-MSG-6 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-MSG-7 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-MSG-8 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-ORD-1 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-ORD-2 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-1 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-2 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-3 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-4 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-5 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-6 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-7 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-8 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-9 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-10 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-FRAG-11 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-BND-1 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-BND-2 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-BND-3 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-BND-4 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-BND-5 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-BND-6 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-ACT-1 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-ACT-2 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-EXC-1 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-REC-1 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
+- SEQ-REC-2 — target: native; The existing test has no scenario marker; Task 15 owns marker insertion.
 
 ## Notes
 
