@@ -179,6 +179,13 @@ impl TreeLayout {
         self.scroll = self.scroll.clamp(0.0, self.max_scroll());
     }
 
+    pub fn viewport_rect(&self) -> Rect {
+        Rect {
+            pos: self.origin,
+            size: self.size,
+        }
+    }
+
     /// Total height of every visible row, honouring mid-collapse scale.
     pub fn content_height(&self) -> f64 {
         self.rows.iter().map(|row| ROW_HEIGHT * row.scale).sum()
@@ -486,6 +493,19 @@ mod tests {
         layout.set_folder_open(&key, true, false);
         layout.set_viewport(dvec2(0.0, 0.0), dvec2(280.0, ROW_HEIGHT * 2.0));
         layout
+    }
+
+    #[test]
+    fn viewport_rect_reports_drawn_tree_body() {
+        let mut layout = TreeLayout::new();
+        let viewport = Rect {
+            pos: dvec2(24.0, 48.0),
+            size: dvec2(280.0, 180.0),
+        };
+
+        layout.set_viewport(viewport.pos, viewport.size);
+
+        assert_eq!(layout.viewport_rect(), viewport);
     }
 
     #[test]

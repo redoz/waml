@@ -549,6 +549,10 @@ fn reconcile_open_directories(
 }
 
 impl Widget for ProjectTree {
+    fn semantic_items(&self, _cx: &Cx) -> Vec<WidgetSemanticItem> {
+        project_tree_semantic_items(&self.layout, self.presentation_visible)
+    }
+
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         if let Some(frame) = self.reveal_next_frame.is_event(event) {
             self.update_reveal_pulse(cx, frame.time);
@@ -1205,6 +1209,50 @@ impl ProjectTree {
     }
 }
 
+fn project_tree_semantic_items(
+    layout: &TreeLayout,
+    presentation_visible: bool,
+) -> Vec<WidgetSemanticItem> {
+    let viewport = layout.viewport_rect();
+    layout
+        .rows()
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let row_rect = layout.row_rect(index);
+            let clipped_rect = rect_intersection(row_rect, viewport);
+            let visible = presentation_visible && clipped_rect.is_some();
+            let checked = layout.selected() == Some(row.key.as_str());
+            WidgetSemanticItem {
+                id: format!("project-tree-row:{}", row.key),
+                widget_type: "WamlProjectTreeRow".into(),
+                rect: if visible {
+                    clipped_rect.expect("visible rows intersect the viewport")
+                } else {
+                    row_rect
+                },
+                visible,
+                enabled: row.openable,
+                text: Some(row.title.clone()),
+                value: row.concept_id.clone().or_else(|| row.address.clone()),
+                checked: Some(checked),
+                selected: checked.then(|| row.key.clone()),
+            }
+        })
+        .collect()
+}
+
+fn rect_intersection(a: Rect, b: Rect) -> Option<Rect> {
+    let left = a.pos.x.max(b.pos.x);
+    let top = a.pos.y.max(b.pos.y);
+    let right = (a.pos.x + a.size.x).min(b.pos.x + b.size.x);
+    let bottom = (a.pos.y + a.size.y).min(b.pos.y + b.size.y);
+    (left < right && top < bottom).then(|| Rect {
+        pos: dvec2(left, top),
+        size: dvec2(right - left, bottom - top),
+    })
+}
+
 fn tree_panel_hit(event: &Event, cx: &mut Cx, area: Area) -> Hit {
     event.hits_with_capture_overload(cx, area, true)
 }
@@ -1315,6 +1363,62 @@ mod tests {
                 )],
             )],
         }
+    }
+
+    #[test]
+    fn project_tree_semantic_items_identify_visible_openable_rows() {
+        let (mut cx, mut panel) = project_tree_test_context();
+        panel.set_view(
+            &mut cx,
+            NavView::Browse(ProjectTreeData {
+                roots: vec![node(
+                    "/",
+                    "Project",
+                    TreeKind::Directory,
+                    vec![
+                        node("orders", "Orders", TreeKind::Diagram, vec![]),
+                        node("customers", "Customers", TreeKind::Class, vec![]),
+                    ],
+                )],
+            }),
+        );
+        panel
+            .layout
+            .set_viewport(dvec2(24.0, 48.0), dvec2(280.0, 40.0));
+        panel.layout.set_selected(Some(k("orders")));
+
+        let items = project_tree_semantic_items(&panel.layout, panel.presentation_visible);
+        let orders_row_key = panel.layout.selected().expect("Orders row selected");
+        let orders = items
+            .iter()
+            .find(|item| item.id == format!("project-tree-row:{orders_row_key}"))
+            .expect("Orders semantic row");
+        assert_eq!(orders.widget_type, "WamlProjectTreeRow");
+        assert_eq!(orders.text.as_deref(), Some("Orders"));
+        assert_eq!(orders.value.as_deref(), Some("orders"));
+        assert_eq!(orders.checked, Some(true));
+        assert_eq!(orders.selected.as_deref(), Some(orders_row_key));
+        assert!(orders.enabled);
+        assert!(orders.visible);
+
+        let root = items
+            .iter()
+            .find(|item| item.text.as_deref() == Some("Project"))
+            .expect("Project semantic row");
+        assert!(!root.enabled);
+
+        let customers = items
+            .iter()
+            .find(|item| item.text.as_deref() == Some("Customers"))
+            .expect("Customers semantic row");
+        assert!(!customers.visible);
+        assert_eq!(customers.rect, panel.layout.row_rect(2));
+
+        let viewport = panel.layout.viewport_rect();
+        assert!(orders.rect.pos.x >= viewport.pos.x);
+        assert!(orders.rect.pos.y >= viewport.pos.y);
+        assert!(orders.rect.pos.x + orders.rect.size.x <= viewport.pos.x + viewport.size.x);
+        assert!(orders.rect.pos.y + orders.rect.size.y <= viewport.pos.y + viewport.size.y);
     }
 
     #[derive(Clone, Debug, PartialEq)]
