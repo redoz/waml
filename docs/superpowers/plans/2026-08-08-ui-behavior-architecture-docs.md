@@ -161,11 +161,73 @@ not a second product parser or a new WAML feature.
    `#bundle-001-—-open-a-bundle`. Require the authored fragment to equal this
    value. `waml check` removes fragments before path resolution, so its success
    does not satisfy this check.
-5. Remove the frontmatter range from each actor and use-case leaf, then scan
-   body lines with
-   `(?i)^\s*(?:[-*>]\s*)?(?:\*\*|__)?(Given|When|Then|And)(?:\*\*|__)?(?:\s|$)`.
-   Fail on every match. This catches plain, emphasized, list, and block-quote
-   copies of a GWT body.
+5. Run this exact PowerShell body checker. It removes the frontmatter range. It
+   then repeatedly removes block-quote, unordered-list, and ordered-list
+   prefixes before it tests the keyword and its boundary.
+
+   ```powershell
+   rtk proxy pwsh -NoProfile -Command '& {
+     function Remove-GwtPrefix([string] $Line) {
+       $value = $Line.TrimStart()
+       while ($value -match "^(?<prefix>>\s*|[-+*]\s+|[0-9]+[.)]\s+)") {
+         $value = $value.Substring($Matches.prefix.Length).TrimStart()
+       }
+       if ($value -match "^(\*\*|__)") {
+         $value = $value.Substring($Matches[1].Length)
+       }
+       return $value
+     }
+     function Test-GwtBodyLine([string] $Line) {
+       $value = Remove-GwtPrefix $Line
+       return $value -match "^(?i:Given|When|Then|And)(?:\*\*|__)?(?=$|[\s:;,.!?—-])"
+     }
+     $positive = @(
+       "+ Given a bundle is open",
+       "1. Given a bundle is open",
+       "> - **Given** a bundle is open",
+       "Given: a bundle is open",
+       "> > 2) __When__ the reader opens it"
+     )
+     $negative = @(
+       "Givenchy is a typeface.",
+       "Whenever the reader opens it, the product responds.",
+       "This use case is given one owner.",
+       "Android is an external platform."
+     )
+     foreach ($line in $positive) {
+       if (-not (Test-GwtBodyLine $line)) { throw ("missed copied GWT: " + $line) }
+     }
+     foreach ($line in $negative) {
+       if (Test-GwtBodyLine $line) { throw ("false copied GWT: " + $line) }
+     }
+     $files = @(
+       Get-ChildItem "docs/waml/use-cases/actors" -Filter "*.md" -File
+       Get-ChildItem "docs/waml/use-cases/workflows" -Filter "*.md" -File
+     ) | Where-Object Name -ne "index.md"
+     foreach ($file in $files) {
+       $lines = @(Get-Content $file.FullName)
+       $bodyStart = 0
+       if ($lines.Count -gt 0 -and $lines[0] -eq "---") {
+         $frontmatterEnd = -1
+         for ($i = 1; $i -lt $lines.Count; $i++) {
+           if ($lines[$i] -eq "---") { $frontmatterEnd = $i; break }
+         }
+         if ($frontmatterEnd -lt 0) { throw ($file.FullName + ": unterminated frontmatter") }
+         $bodyStart = $frontmatterEnd + 1
+       }
+       for ($i = $bodyStart; $i -lt $lines.Count; $i++) {
+         if (Test-GwtBodyLine $lines[$i]) {
+           throw ($file.FullName + ":" + ($i + 1) + ": copied GWT body")
+         }
+       }
+     }
+   }'
+   ```
+
+   Expected: exit 0 with no output. The positive cases prove `+ Given`,
+   `1. Given`, nested `> - **Given**`, `Given:`, and repeated mixed prefixes.
+   The negative cases prove that keyword stems and keywords later in prose do
+   not produce false findings.
 6. Parse each view into its frontmatter, `##` sections, `###` member groups,
    and member links. Require `type: Diagram`, `profile: uml-domain`, one
    `### External actors` group, and one named product-boundary group. Reject a
@@ -2075,11 +2137,10 @@ Run:
 ```powershell
 rtk rg -n "\*\*Status:\*\* (implemented|.*unverified)" docs/waml
 rtk rg -n "^#### [A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-[0-9]+ — " docs/waml/goals
-rtk rg -n "(?i)^\s*(?:[-*>]\s*)?(?:\*\*|__)?(Given|When|Then|And)(?:\*\*|__)?(?:\s|$)" docs/waml/use-cases
 rtk git diff --check
 ```
 
-Expected: the forbidden-status and complete copied-GWT searches return no matches. The scenario list contains unique identifiers already accepted by the checker. The Product Use-Case Traceability Procedure has already proved parsed layout absence and complete view coverage. `git diff --check` returns no error.
+Run the exact PowerShell body checker from step 5 of the Product Use-Case Traceability Procedure. Do not replace it with one regular-expression search. Expected: its five positive cases pass, its four negative cases pass, and no actor or use-case body contains a copied GWT line. The forbidden-status search returns no matches. The scenario list contains unique identifiers already accepted by the checker. The Product Use-Case Traceability Procedure has already proved parsed layout absence and complete view coverage. `git diff --check` returns no error.
 
 - [ ] **Step 5: Delete the temporary inventory and reports**
 

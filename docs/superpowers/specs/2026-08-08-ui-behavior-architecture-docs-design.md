@@ -150,10 +150,18 @@ and join the parts with `-`. This rule retains punctuation such as the Unicode
 em dash. Validate each fragment against the target heading because `waml check`
 validates the document path but not the fragment.
 
-A use-case document shall not contain a GWT body line. This prohibition covers
-plain, emphasized, list, and block-quote lines that start with `Given`, `When`,
-`Then`, or `And`. Planned-only behavior remains in its goal document until it
-has a shipped scenario.
+A use-case document shall not contain a GWT body line. For each body line,
+validation shall repeatedly remove leading block-quote markers, unordered-list
+markers (`-`, `+`, or `*`), and ordered-list markers such as `1.` or `1)`.
+Validation shall then remove an optional opening emphasis marker and test for
+`Given`, `When`, `Then`, or `And` followed by white space, end of line, closing
+emphasis, or punctuation such as `:`. This rule covers plain, emphasized,
+nested-list, and nested-block-quote forms. It does not match a keyword inside a
+word or later in prose. Validator self-tests shall accept `+ Given`, `1. Given`,
+`> - **Given**`, and `Given:` as copied GWT lines. They shall reject non-GWT
+prose such as `Givenchy`, `Whenever`, and a keyword later in a sentence.
+Planned-only behavior remains in its goal document until it has a shipped
+scenario.
 
 Use these relationship meanings:
 
@@ -297,8 +305,8 @@ Content verification shall include:
   scenarios;
 - every use-case fragment equals the repository slug of its target scenario
   heading;
-- use-case documents contain no copied GWT body lines in plain, emphasized,
-  list, or block-quote form;
+- use-case documents contain no copied GWT body lines after repeated
+  block-quote and unordered/ordered-list prefix normalization;
 - the union of view members contains every actor and shipped use-case leaf; and
 - parsed product-use-case diagrams contain semantic system-boundary groups and
   no layout record or renderer-specific geometry.
