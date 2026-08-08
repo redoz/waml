@@ -601,12 +601,10 @@ impl MenuPopup {
                 pos: dvec2(row.pos.x + 14.0, cy - 8.0),
                 size: dvec2(16.0, 16.0),
             };
-            let tint = if it.danger {
-                self.draw_icon_danger.color
-            } else if marked && it.enabled {
-                self.draw_icon_accent.color
-            } else {
-                self.draw_icon_idle.color
+            let tint = match row_tint_role(it, marked) {
+                RowTintRole::Danger => self.draw_icon_danger.color,
+                RowTintRole::Accent => self.draw_icon_accent.color,
+                RowTintRole::Idle => self.draw_icon_idle.color,
             };
             // A label-only item (only the placement dial builds those) simply
             // leaves the gutter empty; the linear card keeps its column.
@@ -621,6 +619,95 @@ impl MenuPopup {
         if let Some(thumb) = self.geom.thumb_rect() {
             self.draw_scrollbar.draw_abs(cx, thumb);
         }
+    }
+}
+
+/// Which tint role a row's leading icon reads in. `Icon::Check` (or any
+/// dedicated checkmark glyph) is not in the catalog (see `icons.rs`), so per
+/// the plan's fallback a checkable row's state is read from its icon's TINT
+/// instead of swapping the glyph: a switched-on stage always reads accent, a
+/// switched-off one always reads idle -- both independent of hover, so a
+/// reader can tell them apart without touching the popup. A plain row (no
+/// checked state) keeps today's hover/danger-driven role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RowTintRole {
+    Idle,
+    Accent,
+    Danger,
+}
+
+pub(crate) fn row_tint_role(item: &PopupItem, marked: bool) -> RowTintRole {
+    match item.checked {
+        Some(true) => RowTintRole::Accent,
+        Some(false) => RowTintRole::Idle,
+        None => {
+            if item.danger {
+                RowTintRole::Danger
+            } else if marked && item.enabled {
+                RowTintRole::Accent
+            } else {
+                RowTintRole::Idle
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod checked_row_tests {
+    use super::*;
+    use crate::icons::Icon;
+
+    fn checkable(id: LiveId, checked: bool) -> PopupItem {
+        PopupItem {
+            id,
+            label: "Hide".to_string(),
+            icon: Some(Icon::Library),
+            danger: false,
+            enabled: true,
+            checked: Some(checked),
+        }
+    }
+
+    #[test]
+    fn a_checked_row_resolves_a_different_tint_role_than_an_unchecked_one() {
+        assert_ne!(
+            row_tint_role(&checkable(live_id!(hide), true), false),
+            row_tint_role(&checkable(live_id!(hide), false), false),
+            "a reader must be able to tell a switched-on stage from a switched-off one",
+        );
+    }
+
+    #[test]
+    fn checked_state_wins_over_hover_for_the_tint_role() {
+        // Even unhovered, a checked-on row reads accent; even hovered, a
+        // checked-off row reads idle. Checked state is not a hover proxy.
+        assert_eq!(
+            row_tint_role(&checkable(live_id!(hide), true), false),
+            RowTintRole::Accent,
+        );
+        assert_eq!(
+            row_tint_role(&checkable(live_id!(hide), false), true),
+            RowTintRole::Idle,
+        );
+    }
+
+    #[test]
+    fn a_plain_row_keeps_the_pre_existing_hover_and_danger_driven_role() {
+        let plain = PopupItem {
+            id: live_id!(plain),
+            label: "Plain".to_string(),
+            icon: Some(Icon::Library),
+            danger: false,
+            enabled: true,
+            checked: None,
+        };
+        assert_eq!(row_tint_role(&plain, false), RowTintRole::Idle);
+        assert_eq!(row_tint_role(&plain, true), RowTintRole::Accent);
+        let danger = PopupItem {
+            danger: true,
+            ..plain
+        };
+        assert_eq!(row_tint_role(&danger, false), RowTintRole::Danger);
     }
 }
 
