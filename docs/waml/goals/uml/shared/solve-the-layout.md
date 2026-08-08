@@ -1,28 +1,37 @@
 # Solve the Layout
 
-**Goal:** The solver gives each node a position and a size that a reader
-accepts. The author places no node.
+**Goal:** The solver gives each node a position and size that a reader accepts.
 
-**Why:** Automatic layout is the reason that diagrams as text are usable. An
-author who must place each node draws a picture and does not write a document.
+**Why:** Automatic layout lets an author write a diagram as text without
+placing each node.
 
-**Done when:** Each diagram in this bundle solves with no overlap and no
-clipped content. The solver gives the same output for the same input. The
-author accepts the result and makes no override.
+**Done when:** Each supported diagram solves without overlap or clipped
+content, gives the same result for the same input, and reports each conflict in
+readable form.
 
-**Status:** partial — unverified
+**Status:** partial
 **MVP:** yes
+
+## Shipped behavior
+
+#### NATIVE-036 — solver conflicts identify their participants
+
+**Applies to:** native
+
+**Given** class-diagram constraints cannot all be satisfied
+**When** the editor solves the layout
+**Then** each visible conflict is a readable statement that identifies its participants
+
+**Evidence:** `crates/waml-editor/src/scene.rs::conflict_statement` `crates/waml-editor/src/scene.rs::conflict_participants`
+
+## Verification gaps
+
+- NATIVE-036 — target: native; Solver golden tests do not assert native conflict presentation.
 
 ## Notes
 
-- There are two substrates. A structural solver solves class diagrams. A flow
-  solver solves activity diagrams and state machine diagrams. Sequence diagrams
-  use a third substrate for interactions.
-- The tool measures sizes in Rust. Thus the native form and the web form agree.
-  A frontend that calculates its own sizes does not agree with the solver.
-- The floors for spacing and the titles of groups are adjustable. The solver
-  makes each connected gap sufficiently large for the labels at its ends.
-- Stability is as important as quality. If the solver changes the order of the
-  nodes between two runs, [Format
-  Canonically](../../trust-the-content/format-canonically.md) becomes
-  impossible.
+- Structural, flow, and interaction diagrams use different solver substrates.
+- The frozen inventory has no shipped shared scenario for overlap, clipping,
+  or deterministic layout. These missing contracts keep this goal `partial`.
+- [Keep the Map Stable](./keep-the-map-stable.md) owns movement between
+  successive solves.
