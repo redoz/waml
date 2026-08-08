@@ -64,7 +64,8 @@ precondition, an imperative operation performs one action, and an `expect_*`
 operation observes without mutation.
 
 A failed run prints and preserves its directory under
-`target/waml-ui-test/<run-id>/<test-slug>/`. The directory contains:
+`target/waml-ui-test/<run-id>/<test-slug>/`. A controlled semantic failure
+after launch and successful evidence capture is expected to contain:
 
 ```text
 semantic-trace.txt
@@ -77,8 +78,15 @@ failure-screenshot.png
 workspace/
 ```
 
-The `workspace/` directory is the staged, run-owned fixture. Successful runs
-remove their run directory.
+Capture failures can produce `failure-screenshot-error.txt`,
+`widget-tree-error.txt`, `widget-snapshot-error.txt`, or `logs-error.txt`
+with the evidence that explains the corresponding capture failure. A failure
+before application launch or before evidence capture completes can preserve
+only the artifacts that the run produced before it failed. The controlled-red
+set above is not unconditional for these earlier or capture-failure cases.
+
+When present, the `workspace/` directory is the staged, run-owned fixture.
+Successful runs remove their run directory.
 
 The automated journey is the verification of record for fixture readiness,
 Orders activation, and Diagram/Source switching. Manual verification remains
