@@ -302,10 +302,58 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
         .map(|i| !member_sets.iter().any(|s| s.contains(&i)))
         .collect();
 
+    // Node-pair overlap-removal state lives OUTSIDE the pass loop and is never
+    // reset: a fresh, amnesiac `remove_overlaps` call every pass is exactly
+    // the reactive-greedy scheme whose cross-call cycling caused unbounded
+    // hull growth (a group-hull translation nudges a formerly-clear pair back
+    // into violation; re-deciding that pair's axis from scratch can then
+    // nudge it right back, forever). Keeping the accumulator alive means a
+    // node-pair separation decided in an early pass is never re-opened by a
+    // later one.
+    //
+    // Excluded from the accumulator entirely (see `overlap_removal_pass`'s
+    // `skip_pair` docs): pairs separated by a DIFFERENT external mover than
+    // `overlap_removal_pass` itself. Covering such a pair would merge its two
+    // rects into the same rigid VPSC block for the life of this call; when
+    // the OTHER mover later repositions just one side (a bulk hull
+    // translation, or the ungrouped-node-vs-hull push below), the shared
+    // block drags the untouched side right along with it -- an unbounded
+    // tug-of-war, observed directly on this exact codepath for both movers:
+    //   - cross-group pairs (different, non-overlapping groups): separated by
+    //     the bulk group-hull translation loop.
+    //   - ungrouped-vs-grouped pairs: the ungrouped side is separated by the
+    //     "push clear of every hull" loop below.
+    // Same-group pairs and ungrouped-vs-ungrouped pairs have no such external
+    // mover (group translation moves a whole group RIGIDLY, preserving
+    // within-group relationships) and stay in the accumulator normally.
+    let m = rects.len();
+    let skip_pair = |i: usize, j: usize| -> bool {
+        let gi: Vec<usize> = (0..groups.len())
+            .filter(|&g| member_sets[g].contains(&i))
+            .collect();
+        let gj: Vec<usize> = (0..groups.len())
+            .filter(|&g| member_sets[g].contains(&j))
+            .collect();
+        match (gi.is_empty(), gj.is_empty()) {
+            (true, true) => false,                                // both ungrouped
+            (true, false) | (false, true) => true,                // ungrouped vs grouped
+            (false, false) => !gi.iter().any(|g| gj.contains(g)), // cross-group
+        }
+    };
+    let mut node_overlap = OverlapAccum::new(m);
+    let max_overlap_passes = (m * m.saturating_sub(1) / 2).max(4);
+    let mut run_overlap_removal = |rects: &mut [Rect]| {
+        for _ in 0..max_overlap_passes {
+            if !overlap_removal_pass(rects, cfg.gap, &mut node_overlap, skip_pair) {
+                break;
+            }
+        }
+    };
+
     let mut capped = true;
     for _ in 0..6 {
         let mut moved = false;
-        remove_overlaps(rects, cfg.gap);
+        run_overlap_removal(rects);
 
         // Recomputed after every translation below, not once per pass: moving
         // `gj` invalidates its own hull and every ancestor's, so a snapshot taken
@@ -355,41 +403,8 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
         // hull depends on them. Each node is re-tested against every hull until
         // it is clear of all of them (bounded), so being pushed out of one hull
         // and straight into another resolves within the same pass.
-        let hulls = group_hulls(rects, groups, cfg);
-        for (idx, r) in rects.iter_mut().enumerate() {
-            if !ungrouped[idx] {
-                continue;
-            }
-            for _ in 0..groups.len().max(1) {
-                let mut hit = false;
-                for h in &hulls {
-                    let ox = (r.x + r.w).min(h.x + h.w) - r.x.max(h.x);
-                    let oy = (r.y + r.h).min(h.y + h.h) - r.y.max(h.y);
-                    if ox <= 0.0 || oy <= 0.0 {
-                        continue;
-                    }
-                    hit = true;
-                    moved = true;
-                    if ox < oy {
-                        let dir = if r.x + r.w / 2.0 >= h.x + h.w / 2.0 {
-                            1.0
-                        } else {
-                            -1.0
-                        };
-                        r.x += dir * (ox + cfg.gap);
-                    } else {
-                        let dir = if r.y + r.h / 2.0 >= h.y + h.h / 2.0 {
-                            1.0
-                        } else {
-                            -1.0
-                        };
-                        r.y += dir * (oy + cfg.gap);
-                    }
-                }
-                if !hit {
-                    break;
-                }
-            }
+        if push_ungrouped_clear(rects, groups, cfg, &ungrouped) {
+            moved = true;
         }
 
         if !moved {
@@ -401,12 +416,84 @@ fn separate_hulls(rects: &mut [Rect], groups: &[GroupSpec], cfg: &StressConfig) 
     // Exhausting the cap means the loop stopped right after a batch of
     // translations that never got the start-of-pass cleanup. Node rects must be
     // overlap-free regardless, so clean up once more here. (Only on the capped
-    // path: a converged run is already overlap-free AND hull-separated, and
-    // `remove_overlaps` is free to nudge a node back across a hull boundary,
-    // and it also enforces `gap` on rects that merely sit close.)
+    // path: a converged run is already overlap-free AND hull-separated.)
+    // Both movers run, alternating: `run_overlap_removal` covers within-group
+    // and ungrouped-vs-ungrouped pairs (its own accumulator can shift a
+    // group's hull), `push_ungrouped_clear` covers ungrouped-vs-grouped —
+    // exactly the categories `overlap_removal_pass`'s `skip_pair` leaves for
+    // each OTHER mover to finish. Bounded: this is last-mile mop-up after the
+    // main loop above already did the real work.
     if capped && any_overlap(rects) {
-        remove_overlaps(rects, cfg.gap);
+        for _ in 0..3 {
+            run_overlap_removal(rects);
+            if !push_ungrouped_clear(rects, groups, cfg, &ungrouped) {
+                break;
+            }
+        }
     }
+}
+
+/// Push every ungrouped rect (per `ungrouped`, indexed like `rects`) clear of
+/// every group hull it currently overlaps, by `cfg.gap`. Grouped rects and
+/// hull positions are untouched — only ungrouped rects move. Each node is
+/// re-tested against every hull until clear (bounded by group count), so
+/// being pushed out of one hull and straight into another resolves within
+/// one call. Returns whether anything moved.
+fn push_ungrouped_clear(
+    rects: &mut [Rect],
+    groups: &[GroupSpec],
+    cfg: &StressConfig,
+    ungrouped: &[bool],
+) -> bool {
+    let mut moved = false;
+    let hulls = group_hulls(rects, groups, cfg);
+    // Generous and escalating, not just `groups.len()` retries at a constant
+    // push: clearing hull A can land squarely inside hull B, whose own
+    // clearance push can then land right back inside A -- an EXACT ping-pong
+    // when two hulls happen to sit `cfg.gap` apart (a real, observed case,
+    // not hypothetical). A constant push repeats the same two positions
+    // forever; growing the push every retry means no two retries can land on
+    // the same spot, so the node is eventually shoved clear of every hull it
+    // was caught between instead of oscillating in place until the budget
+    // runs out.
+    let max_retries = 2 * groups.len().max(1) + 4;
+    for (idx, r) in rects.iter_mut().enumerate() {
+        if !ungrouped[idx] {
+            continue;
+        }
+        for retry in 0..max_retries {
+            let mut hit = false;
+            let escalation = 1.0 + retry as f64;
+            for h in &hulls {
+                let ox = (r.x + r.w).min(h.x + h.w) - r.x.max(h.x);
+                let oy = (r.y + r.h).min(h.y + h.h) - r.y.max(h.y);
+                if ox <= 0.0 || oy <= 0.0 {
+                    continue;
+                }
+                hit = true;
+                moved = true;
+                if ox < oy {
+                    let dir = if r.x + r.w / 2.0 >= h.x + h.w / 2.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    r.x += dir * (ox + cfg.gap) * escalation;
+                } else {
+                    let dir = if r.y + r.h / 2.0 >= h.y + h.h / 2.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    r.y += dir * (oy + cfg.gap) * escalation;
+                }
+            }
+            if !hit {
+                break;
+            }
+        }
+    }
+    moved
 }
 
 /// True when any two rects have positive intersection area.
@@ -1091,39 +1178,175 @@ fn component_layout(
         .collect()
 }
 
-/// Deterministic scan-line push-apart guaranteeing no rectangle overlaps.
+/// Minimal-displacement overlap removal (Dwyer-Marriott-Stuckey GD 2005,
+/// simplified): each overlapping pair contributes one separation constraint
+/// on the axis that needs the smaller move; both axes then solve exactly via
+/// `vpsc::project`.
 ///
-/// Sweep boxes left-to-right by center-x. Each box is pushed right just enough
-/// to clear every earlier box it overlaps in y (within `gap`). After the pass
-/// every pair is separated by at least `gap` on at least one axis, so no pair
-/// overlaps. Earlier boxes never move, so a single deterministic sweep suffices.
+/// The per-pair axis choice is made ONCE, the first time a pair is found
+/// overlapping, and never revisited: a pair whose Sep has already been
+/// generated is never re-examined, so its constraint always stays in the set
+/// handed to `project`. This matters because re-deciding "cheapest axis"
+/// fresh every iteration can cycle forever on chained/contended triples (A
+/// pushed off B re-violates A-vs-C; fixing A-vs-C re-violates A-vs-B; ...),
+/// which is a real, observed non-termination, not merely a slow-convergence
+/// worry -- a purely reactive greedy scheme drifts the whole chain sideways
+/// indefinitely instead of settling. Accumulating every discovered Sep and
+/// re-projecting the FULL set each pass instead lets `vpsc::project`'s block
+/// merge resolve the whole chain simultaneously and correctly, and previously
+/// satisfied Seps are never un-satisfied by a later pass (`project`
+/// guarantees every live Sep it is given holds on return). Bounded: every
+/// pass that makes progress covers at least one previously-uncovered pair, so
+/// the loop cannot run longer than there are pairs (`m*(m-1)/2`); in practice
+/// 2-3 passes surface every violated pair and the cap only guards
+/// pathological input.
 fn remove_overlaps(rects: &mut [Rect], gap: f64) {
     let m = rects.len();
-    let mut order: Vec<usize> = (0..m).collect();
-    order.sort_by(|&a, &b| {
-        let ca = rects[a].x + rects[a].w / 2.0;
-        let cb = rects[b].x + rects[b].w / 2.0;
-        ca.partial_cmp(&cb)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.cmp(&b))
-    });
-    for pi in 0..m {
-        let i = order[pi];
-        let mut min_left = f64::NEG_INFINITY;
-        for &j in order.iter().take(pi) {
-            let i_top = rects[i].y;
-            let i_bot = rects[i].y + rects[i].h;
-            let j_top = rects[j].y;
-            let j_bot = rects[j].y + rects[j].h;
-            let y_overlap = i_top < j_bot + gap && j_top < i_bot + gap;
-            if y_overlap {
-                min_left = min_left.max(rects[j].x + rects[j].w + gap);
-            }
-        }
-        if min_left.is_finite() && rects[i].x < min_left {
-            rects[i].x = min_left;
+    if m < 2 {
+        return;
+    }
+    let mut st = OverlapAccum::new(m);
+    let max_passes = (m * m.saturating_sub(1) / 2).max(4);
+    for _ in 0..max_passes {
+        if !overlap_removal_pass(rects, gap, &mut st, |_, _| false) {
+            return;
         }
     }
+}
+
+/// Accumulator threaded through repeated `overlap_removal_pass` calls.
+/// Tracks, per accumulated Sep, which rect pair it came from (`xsep_pairs`/
+/// `ysep_pairs`, parallel to `xsep`/`ysep`), so a Sep that `vpsc::project`
+/// drops as unsatisfiable can be un-covered and retried against fresh
+/// geometry on a later pass instead of leaving that pair's gap permanently
+/// unenforced (a real, observed failure mode: an accumulated Sep can become
+/// contradictory once later Seps are layered on top of it).
+#[derive(Default)]
+struct OverlapAccum {
+    xsep: Vec<super::vpsc::Sep>,
+    xsep_pairs: Vec<(usize, usize)>,
+    ysep: Vec<super::vpsc::Sep>,
+    ysep_pairs: Vec<(usize, usize)>,
+    /// covered[i][j] (i < j): this pair's axis has been decided and its Sep
+    /// already lives in `xsep`/`ysep` — never re-examined while `true`.
+    covered: Vec<Vec<bool>>,
+}
+
+impl OverlapAccum {
+    fn new(m: usize) -> Self {
+        OverlapAccum {
+            covered: vec![vec![false; m]; m],
+            ..Default::default()
+        }
+    }
+}
+
+/// One discovery-then-project step of minimal-displacement overlap removal:
+/// scan every not-yet-covered, not-`skip_pair`-filtered pair, commit any
+/// newly-overlapping pair's Sep on its cheaper axis (marking it covered so
+/// it is never re-decided — re-deciding "cheapest axis" fresh every call is
+/// what cycles forever on chained/contended triples, see
+/// `remove_overlaps`), then UNCONDITIONALLY re-project both accumulated axis
+/// lists — even when no new pair was found this call. That unconditional
+/// re-projection matters for `separate_hulls`'s persistent accumulator: a
+/// group-hull translation between two calls can shove a rect that already
+/// has a covered, previously-satisfied Sep; since that pair is never
+/// re-examined, only re-running `project` on the existing set — not
+/// re-discovery — can restore it. Any Sep `project` drops as unsatisfiable
+/// is un-covered and removed from the accumulator so its pair gets a fresh
+/// look (and possibly a different axis) on a later pass.
+///
+/// `skip_pair(i, j)`: pairs this returns `true` for are left alone forever
+/// (never covered, never given a Sep) — `separate_hulls` uses this to keep
+/// cross-group pairs OUT of the accumulator entirely, because covering one
+/// merges the two rects into the same rigid VPSC block for the life of the
+/// call; a later bulk hull-translation moving one group then drags the
+/// OTHER group's member right along with it through that shared block,
+/// which is exactly the unbounded tug-of-war this accumulator exists to
+/// avoid. Cross-group separation is the hull-translation loop's job, not
+/// this one's. `remove_overlaps` (no group concept) passes `|_, _| false`.
+///
+/// Returns whether any NEW pair was found (callers use this only to decide
+/// whether another discovery pass is worthwhile, not whether projection
+/// ran).
+fn overlap_removal_pass(
+    rects: &mut [Rect],
+    gap: f64,
+    st: &mut OverlapAccum,
+    skip_pair: impl Fn(usize, usize) -> bool,
+) -> bool {
+    use super::vpsc::{project, Sep};
+    let m = rects.len();
+    let mut added_any = false;
+    for i in 0..m {
+        for j in (i + 1)..m {
+            if st.covered[i][j] || skip_pair(i, j) {
+                continue;
+            }
+            let (a, b) = (&rects[i], &rects[j]);
+            let ox = (a.x + a.w + gap).min(b.x + b.w + gap) - a.x.max(b.x);
+            let oy = (a.y + a.h + gap).min(b.y + b.h + gap) - a.y.max(b.y);
+            if ox <= 0.0 || oy <= 0.0 {
+                continue; // clear (with gap) on at least one axis
+            }
+            st.covered[i][j] = true;
+            added_any = true;
+            // Resolve on the axis with the smaller required move.
+            if ox <= oy {
+                let (l, r) = if a.x + a.w / 2.0 <= b.x + b.w / 2.0 {
+                    (i, j)
+                } else {
+                    (j, i)
+                };
+                st.xsep.push(Sep {
+                    left: l,
+                    right: r,
+                    gap: rects[l].w + gap,
+                    equality: false,
+                });
+                st.xsep_pairs.push((i, j));
+            } else {
+                let (t, u) = if a.y + a.h / 2.0 <= b.y + b.h / 2.0 {
+                    (i, j)
+                } else {
+                    (j, i)
+                };
+                st.ysep.push(Sep {
+                    left: t,
+                    right: u,
+                    gap: rects[t].h + gap,
+                    equality: false,
+                });
+                st.ysep_pairs.push((i, j));
+            }
+        }
+    }
+    let w = vec![1.0; m];
+    let mut xs: Vec<f64> = rects.iter().map(|r| r.x).collect();
+    let dropped_x = project(&mut xs, &w, &st.xsep);
+    for (r, x) in rects.iter_mut().zip(&xs) {
+        r.x = *x;
+    }
+    // Highest index first: swap_remove would otherwise invalidate later
+    // indices still pending removal.
+    for &di in dropped_x.iter().rev() {
+        let (i, j) = st.xsep_pairs[di];
+        st.covered[i][j] = false;
+        st.xsep.swap_remove(di);
+        st.xsep_pairs.swap_remove(di);
+    }
+    let mut ys: Vec<f64> = rects.iter().map(|r| r.y).collect();
+    let dropped_y = project(&mut ys, &w, &st.ysep);
+    for (r, y) in rects.iter_mut().zip(&ys) {
+        r.y = *y;
+    }
+    for &di in dropped_y.iter().rev() {
+        let (i, j) = st.ysep_pairs[di];
+        st.covered[i][j] = false;
+        st.ysep.swap_remove(di);
+        st.ysep_pairs.swap_remove(di);
+    }
+    added_any
 }
 
 /// Edgeless fallback: wrap the flat node list into a `ceil(sqrt(n))`-column
@@ -1205,6 +1428,101 @@ mod tests {
     }
     fn overlaps(a: &Rect, b: &Rect) -> bool {
         a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    #[test]
+    fn overlap_removal_prefers_the_cheap_axis() {
+        // Two boxes overlapping 10px in x but 60px in y: the old x-push moved
+        // one box 10+gap px right — correct. But two boxes overlapping 60px in
+        // x and 10px in y must separate VERTICALLY (10+gap), not horizontally
+        // (60+gap). Total displacement must be the smaller option.
+        let gap = 8.0;
+        let mut rects = vec![
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+            Rect {
+                x: 40.0,
+                y: 40.0,
+                w: 100.0,
+                h: 50.0,
+            }, // 60px x-overlap, 10px y-overlap
+        ];
+        remove_overlaps(&mut rects, gap);
+        assert!(!overlaps(&rects[0], &rects[1]));
+        // Vertical resolution: x positions unchanged.
+        assert_eq!(rects[0].x, 0.0);
+        assert_eq!(rects[1].x, 40.0);
+        let y_gap = rects[1].y - (rects[0].y + rects[0].h);
+        assert!(y_gap >= gap - 1e-9, "y gap {y_gap}");
+    }
+
+    #[test]
+    fn overlap_removal_distributes_displacement_across_both_boxes() {
+        // The old scanline moved only the RIGHT box; minimal displacement moves
+        // both toward each other's clear side (weighted equally).
+        let mut rects = vec![
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+            Rect {
+                x: 90.0,
+                y: 10.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        ];
+        let before = rects.clone();
+        remove_overlaps(&mut rects, 8.0);
+        assert!(!overlaps(&rects[0], &rects[1]));
+        assert!(rects[0].x < before[0].x, "left box shares the displacement");
+        assert!(rects[1].x > before[1].x);
+    }
+
+    #[test]
+    fn overlap_removal_two_axis_is_deterministic_and_idempotent() {
+        let mk = || {
+            vec![
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 40.0,
+                },
+                Rect {
+                    x: 30.0,
+                    y: 10.0,
+                    w: 80.0,
+                    h: 40.0,
+                },
+                Rect {
+                    x: 60.0,
+                    y: 20.0,
+                    w: 80.0,
+                    h: 40.0,
+                },
+                Rect {
+                    x: 10.0,
+                    y: 35.0,
+                    w: 80.0,
+                    h: 40.0,
+                },
+            ]
+        };
+        let mut a = mk();
+        let mut b = mk();
+        remove_overlaps(&mut a, 8.0);
+        remove_overlaps(&mut b, 8.0);
+        assert_eq!(a, b);
+        let once = a.clone();
+        remove_overlaps(&mut a, 8.0);
+        assert_eq!(a, once, "already-separated input must not move");
     }
 
     #[test]
