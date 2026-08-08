@@ -24,18 +24,18 @@ pub(crate) fn run_scenario(config: ScenarioConfig, scenario: impl FnOnce(WamlApp
     let workspace_root = resolve_workspace_root(editor_manifest_dir)
         .unwrap_or_else(|error| panic!("failed to resolve the WAML workspace: {error}"));
     let test_name = full_test_name(&config);
-    let identity = RunIdentity::new(&workspace_root, &test_name);
-    let staged_workspace = stage_fixture(
-        &workspace_root,
-        config.workspace.descriptor(),
-        &identity.run_root,
-    )
-    .unwrap_or_else(|error| {
-        panic!(
-            "failed to stage fixture for `{test_name}`: {error}; preserved run: {}",
-            identity.run_root.display()
-        )
+    let identity = RunIdentity::allocate(&workspace_root, &test_name).unwrap_or_else(|error| {
+        panic!("failed to allocate run identity for `{test_name}`: {error}")
     });
+    let descriptor = config.workspace.descriptor();
+    let workspace = descriptor.workspace;
+    let staged_workspace = stage_fixture(&workspace_root, descriptor, &identity.run_root)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to stage fixture for `{test_name}`: {error}; preserved run: {}",
+                identity.run_root.display()
+            )
+        });
     let trace = SemanticTrace::new(&identity.run_root).unwrap_or_else(|error| {
         panic!(
             "failed to create semantic trace for `{test_name}`: {error}; preserved run: {}",
@@ -54,12 +54,19 @@ pub(crate) fn run_scenario(config: ScenarioConfig, scenario: impl FnOnce(WamlApp
     let app_test_name = test_name.clone();
     let app_run_root = run_root.clone();
     let result = makepad_test::run_with_config(driver_config, move |driver| {
-        scenario(WamlApp::new(driver, app_test_name, app_run_root, trace));
+        scenario(WamlApp::new(
+            driver,
+            app_test_name,
+            app_run_root,
+            workspace,
+            trace,
+        ));
     });
     let promotion = promote_driver_evidence(&run_root);
     let result = result.map_err(|error| error.message().to_string());
     if let Err(error) = finalize_run(
         &ownership_root(&workspace_root),
+        &identity.allocation_root,
         &run_root,
         result,
         promotion,
@@ -70,12 +77,13 @@ pub(crate) fn run_scenario(config: ScenarioConfig, scenario: impl FnOnce(WamlApp
 
 fn finalize_run(
     ownership_root: &Path,
+    allocation_root: &Path,
     run_root: &Path,
     run_result: Result<(), String>,
     promotion_result: io::Result<()>,
 ) -> Result<(), String> {
     let succeeded = run_result.is_ok() && promotion_result.is_ok();
-    let cleanup_result = cleanup_run(ownership_root, run_root, succeeded);
+    let cleanup_result = cleanup_run(ownership_root, allocation_root, succeeded);
     let mut failures = Vec::new();
 
     if let Err(error) = run_result {
@@ -174,7 +182,7 @@ mod tests {
             test_name: "switch_view",
             workspace: WorkspaceFixture::Mini,
         };
-        let identity = RunIdentity::new(temp.path(), "ui::documents::switch_view");
+        let identity = RunIdentity::allocate(temp.path(), "ui::documents::switch_view").unwrap();
 
         let driver = build_driver_config(&scenario, &identity, &staged_workspace).unwrap();
 
@@ -251,6 +259,7 @@ mod tests {
         let error = finalize_run(
             &ownership_root,
             &linked_run,
+            &linked_run,
             Err("driver failed".to_string()),
             Ok(()),
         )
@@ -260,6 +269,45 @@ mod tests {
         assert!(error.contains("cleanup validation also failed"));
         assert!(fs::symlink_metadata(&linked_run).is_ok());
         assert!(actual_run.is_dir());
+    }
+
+    #[test]
+    fn successful_finalization_removes_the_reserved_identity_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let ownership_root = temp.path().join("target").join("waml-ui-test");
+        let allocation_root = ownership_root.join("4242-1");
+        let run_root = allocation_root.join("ui-opens-orders");
+        fs::create_dir_all(run_root.join("workspace")).unwrap();
+
+        finalize_run(&ownership_root, &allocation_root, &run_root, Ok(()), Ok(())).unwrap();
+
+        assert!(!allocation_root.exists());
+    }
+
+    #[test]
+    fn failed_finalization_preserves_the_reserved_identity_and_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let ownership_root = temp.path().join("target").join("waml-ui-test");
+        let allocation_root = ownership_root.join("4242-1");
+        let run_root = allocation_root.join("ui-opens-orders");
+        fs::create_dir_all(&run_root).unwrap();
+        fs::write(run_root.join("failure.txt"), "failure evidence").unwrap();
+
+        let error = finalize_run(
+            &ownership_root,
+            &allocation_root,
+            &run_root,
+            Err("driver failed".to_string()),
+            Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(allocation_root.is_dir());
+        assert_eq!(
+            fs::read_to_string(run_root.join("failure.txt")).unwrap(),
+            "failure evidence"
+        );
+        assert!(error.contains(&format!("Preserved run: {}", run_root.display())));
     }
 
     #[cfg(unix)]

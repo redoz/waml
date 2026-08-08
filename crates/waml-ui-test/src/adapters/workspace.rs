@@ -1,11 +1,13 @@
+use crate::config::WorkspaceBinding;
 use crate::error::OperationFailure;
 use crate::DiagramName;
 use makepad_test::{Selector, TestApp, TestError, WidgetSnapshot};
 
 pub(crate) fn expect_workspace_open(
     driver: &TestApp,
-    diagram: DiagramName,
+    workspace: WorkspaceBinding,
 ) -> Result<String, OperationFailure> {
+    let diagram = workspace.ready_diagram;
     let locator = driver.locator(diagram_row_selector(diagram));
     locator
         .try_wait_visible()
@@ -13,15 +15,15 @@ pub(crate) fn expect_workspace_open(
     let initial = driver
         .try_widget_snapshot()
         .map_err(|error| driver_failure(diagram, &error))?;
-    if decide_workspace_readiness(&initial, diagram)? == WorkspaceReadiness::WaitForEnabled {
+    if decide_workspace_readiness(&initial, workspace)? == WorkspaceReadiness::WaitForEnabled {
         locator
             .try_wait_enabled(true)
-            .map_err(|error| readiness_wait_failure(driver, diagram, &error))?;
+            .map_err(|error| readiness_wait_failure(driver, workspace, &error))?;
     }
     let widgets = driver
         .try_widget_snapshot()
         .map_err(|error| driver_failure(diagram, &error))?;
-    observe_workspace_open(&widgets, diagram)
+    observe_workspace_open(&widgets, workspace)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,9 +34,10 @@ enum WorkspaceReadiness {
 
 fn decide_workspace_readiness(
     widgets: &[WidgetSnapshot],
-    diagram: DiagramName,
+    workspace: WorkspaceBinding,
 ) -> Result<WorkspaceReadiness, OperationFailure> {
-    let row = resolve_workspace_row(widgets, diagram)?;
+    resolve_workspace_root(widgets, workspace)?;
+    let row = resolve_workspace_row(widgets, workspace.ready_diagram)?;
     if row.enabled {
         Ok(WorkspaceReadiness::Ready)
     } else {
@@ -44,8 +47,10 @@ fn decide_workspace_readiness(
 
 fn observe_workspace_open(
     widgets: &[WidgetSnapshot],
-    diagram: DiagramName,
+    workspace: WorkspaceBinding,
 ) -> Result<String, OperationFailure> {
+    resolve_workspace_root(widgets, workspace)?;
+    let diagram = workspace.ready_diagram;
     let row = resolve_workspace_row(widgets, diagram)?;
     if !row.enabled {
         return Err(OperationFailure {
@@ -57,9 +62,61 @@ fn observe_workspace_open(
         });
     }
     Ok(format!(
-        "workspace contains the available {} diagram",
-        diagram.display
+        "{} workspace contains the available {} diagram",
+        workspace.root.title, diagram.display
     ))
+}
+
+fn resolve_workspace_root(
+    widgets: &[WidgetSnapshot],
+    workspace: WorkspaceBinding,
+) -> Result<&WidgetSnapshot, OperationFailure> {
+    let roots: Vec<_> = widgets
+        .iter()
+        .filter(|widget| {
+            widget.visible
+                && widget.widget_type == "WamlProjectTreeRow"
+                && widget.value.as_deref() == Some(workspace.root.value)
+        })
+        .collect();
+    let root = match roots.as_slice() {
+        [] => {
+            return Err(OperationFailure {
+                observed: "workspace has no visible semantic root".to_string(),
+                detail: format!(
+                    "expected one visible WamlProjectTreeRow with title `{}` and semantic value `{}`",
+                    workspace.root.title, workspace.root.value
+                ),
+            });
+        }
+        [root] => *root,
+        roots => {
+            return Err(OperationFailure {
+                observed: format!("workspace has {} visible semantic roots", roots.len()),
+                detail: "the workspace root is ambiguous".to_string(),
+            });
+        }
+    };
+    if root.text.as_deref() != Some(workspace.root.title) {
+        return Err(OperationFailure {
+            observed: format!(
+                "workspace root is {}, not {}",
+                root.text.as_deref().unwrap_or("<none>"),
+                workspace.root.title
+            ),
+            detail: format!(
+                "expected root title `{}` with semantic value `{}`",
+                workspace.root.title, workspace.root.value
+            ),
+        });
+    }
+    if root.enabled {
+        return Err(OperationFailure {
+            observed: format!("{} workspace root is actionable", workspace.root.title),
+            detail: "the semantic root row must be disabled".to_string(),
+        });
+    }
+    Ok(root)
 }
 
 fn resolve_workspace_row(
@@ -132,13 +189,14 @@ fn driver_failure(diagram: DiagramName, error: &TestError) -> OperationFailure {
 
 fn readiness_wait_failure(
     driver: &TestApp,
-    diagram: DiagramName,
+    workspace: WorkspaceBinding,
     error: &TestError,
 ) -> OperationFailure {
+    let diagram = workspace.ready_diagram;
     let Some(mut failure) = driver
         .try_widget_snapshot()
         .ok()
-        .and_then(|widgets| observe_workspace_open(&widgets, diagram).err())
+        .and_then(|widgets| observe_workspace_open(&widgets, workspace).err())
     else {
         return driver_failure(diagram, error);
     };
@@ -149,8 +207,17 @@ fn readiness_wait_failure(
 #[cfg(test)]
 mod tests {
     use super::{decide_workspace_readiness, observe_workspace_open, WorkspaceReadiness};
+    use crate::config::{WorkspaceBinding, WorkspaceRootFingerprint};
     use crate::DiagramName;
     use makepad_test::WidgetSnapshot;
+
+    const MINI: WorkspaceBinding = WorkspaceBinding {
+        root: WorkspaceRootFingerprint {
+            title: "Mini",
+            value: "/",
+        },
+        ready_diagram: DiagramName::ORDERS,
+    };
 
     fn row(id: &str) -> WidgetSnapshot {
         WidgetSnapshot {
@@ -171,18 +238,106 @@ mod tests {
         }
     }
 
-    #[test]
-    fn workspace_is_ready_when_orders_row_is_visible_and_enabled() {
-        let observed = observe_workspace_open(&[row("row:orders")], DiagramName::ORDERS).unwrap();
+    fn root(title: &str) -> WidgetSnapshot {
+        WidgetSnapshot {
+            id: format!("project-tree-row:root:{title}"),
+            widget_type: "WamlProjectTreeRow".to_string(),
+            window_id: "main_window".to_string(),
+            window_index: 0,
+            visible: true,
+            enabled: false,
+            x: 10,
+            y: 0,
+            width: 120,
+            height: 24,
+            text: Some(title.to_string()),
+            value: Some("/".to_string()),
+            checked: Some(false),
+            selected: None,
+        }
+    }
 
-        assert_eq!(observed, "workspace contains the available Orders diagram");
+    #[test]
+    fn workspace_is_ready_when_the_bound_root_and_diagram_are_exact() {
+        let observed = observe_workspace_open(&[root("Mini"), row("row:orders")], MINI).unwrap();
+
+        assert_eq!(
+            observed,
+            "Mini workspace contains the available Orders diagram"
+        );
+    }
+
+    #[test]
+    fn another_orders_workspace_does_not_satisfy_the_mini_binding() {
+        let error =
+            observe_workspace_open(&[root("Mixed OKF"), row("row:orders")], MINI).unwrap_err();
+
+        assert_eq!(error.observed, "workspace root is Mixed OKF, not Mini");
+        assert!(error.detail.contains("expected root title `Mini`"));
+        assert!(error.detail.contains("semantic value `/`"));
+    }
+
+    #[test]
+    fn duplicate_semantic_roots_are_an_ambiguous_workspace() {
+        let error =
+            observe_workspace_open(&[root("Mini"), root("Mixed OKF"), row("row:orders")], MINI)
+                .unwrap_err();
+
+        assert_eq!(error.observed, "workspace has 2 visible semantic roots");
+        assert_eq!(error.detail, "the workspace root is ambiguous");
+    }
+
+    #[test]
+    fn actionable_semantic_root_does_not_satisfy_the_workspace_contract() {
+        let mut actionable = root("Mini");
+        actionable.enabled = true;
+
+        let error = observe_workspace_open(&[actionable, row("row:orders")], MINI).unwrap_err();
+
+        assert_eq!(error.observed, "Mini workspace root is actionable");
+        assert_eq!(error.detail, "the semantic root row must be disabled");
+    }
+
+    #[test]
+    fn root_with_another_semantic_value_does_not_satisfy_the_binding() {
+        let mut wrong_value = root("Mini");
+        wrong_value.value = Some("/other".to_string());
+
+        let error = observe_workspace_open(&[wrong_value, row("row:orders")], MINI).unwrap_err();
+
+        assert_eq!(error.observed, "workspace has no visible semantic root");
+        assert!(error.detail.contains("semantic value `/`"));
+    }
+
+    #[test]
+    fn invisible_root_does_not_satisfy_the_workspace_binding() {
+        let mut invisible = root("Mini");
+        invisible.visible = false;
+
+        let error = observe_workspace_open(&[invisible, row("row:orders")], MINI).unwrap_err();
+
+        assert_eq!(error.observed, "workspace has no visible semantic root");
+    }
+
+    #[test]
+    fn another_widget_type_does_not_satisfy_the_workspace_binding() {
+        let mut wrong_type = root("Mini");
+        wrong_type.widget_type = "Label".to_string();
+
+        let error = observe_workspace_open(&[wrong_type, row("row:orders")], MINI).unwrap_err();
+
+        assert_eq!(error.observed, "workspace has no visible semantic root");
     }
 
     #[test]
     fn duplicate_orders_rows_are_an_ambiguous_workspace() {
         let error = observe_workspace_open(
-            &[row("row:orders:first"), row("row:orders:second")],
-            DiagramName::ORDERS,
+            &[
+                root("Mini"),
+                row("row:orders:first"),
+                row("row:orders:second"),
+            ],
+            MINI,
         )
         .unwrap_err();
 
@@ -197,7 +352,7 @@ mod tests {
         let mut disabled = row("row:orders");
         disabled.enabled = false;
 
-        let error = observe_workspace_open(&[disabled], DiagramName::ORDERS).unwrap_err();
+        let error = observe_workspace_open(&[root("Mini"), disabled], MINI).unwrap_err();
 
         assert_eq!(
             error.observed,
@@ -210,7 +365,7 @@ mod tests {
         let mut disabled = row("row:orders");
         disabled.enabled = false;
 
-        let decision = decide_workspace_readiness(&[disabled], DiagramName::ORDERS).unwrap();
+        let decision = decide_workspace_readiness(&[root("Mini"), disabled], MINI).unwrap();
 
         assert_eq!(decision, WorkspaceReadiness::WaitForEnabled);
     }

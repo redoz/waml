@@ -1,3 +1,6 @@
+use crate::fixture::reserve_run_root;
+use crate::DiagramName;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -9,18 +12,31 @@ pub enum WorkspaceFixture {
     Mini,
 }
 
+#[doc(hidden)]
 pub struct ScenarioConfig {
-    pub package_name: &'static str,
-    pub manifest_dir: &'static str,
-    pub module_path: &'static str,
-    pub test_name: &'static str,
-    pub workspace: WorkspaceFixture,
+    pub(crate) package_name: &'static str,
+    pub(crate) manifest_dir: &'static str,
+    pub(crate) module_path: &'static str,
+    pub(crate) test_name: &'static str,
+    pub(crate) workspace: WorkspaceFixture,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FixtureDescriptor {
-    pub relative_path: &'static str,
-    pub ready_diagram: &'static str,
+    pub(crate) relative_path: &'static str,
+    pub(crate) workspace: WorkspaceBinding,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WorkspaceBinding {
+    pub(crate) root: WorkspaceRootFingerprint,
+    pub(crate) ready_diagram: DiagramName,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WorkspaceRootFingerprint {
+    pub(crate) title: &'static str,
+    pub(crate) value: &'static str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,34 +44,53 @@ pub(crate) struct RunIdentity {
     pub run_id: String,
     pub test_slug: String,
     pub title: String,
+    pub allocation_root: PathBuf,
     pub run_root: PathBuf,
 }
 
 impl RunIdentity {
-    pub(crate) fn new(workspace_root: &Path, test_name: &str) -> Self {
-        let counter = RUN_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
-        let run_id = format!("{}-{counter}", std::process::id());
-        let test_slug = sanitize_component(test_name);
-        let title_prefix = format!("ui-{run_id}-");
-        let title_slug_len = MAX_TITLE_BYTES.saturating_sub(title_prefix.len());
-        let mut title_slug = test_slug[..test_slug.len().min(title_slug_len)]
-            .trim_end_matches('-')
-            .to_string();
-        if title_slug.is_empty() {
-            title_slug.push_str("test");
-        }
-        let title = format!("{title_prefix}{title_slug}");
-        let run_root = workspace_root
-            .join("target")
-            .join("waml-ui-test")
-            .join(&run_id)
-            .join(&test_slug);
+    pub(crate) fn allocate(workspace_root: &Path, test_name: &str) -> io::Result<Self> {
+        Self::allocate_with_counter(workspace_root, test_name, std::process::id(), &RUN_COUNTER)
+    }
 
-        Self {
-            run_id,
-            test_slug,
-            title,
-            run_root,
+    fn allocate_with_counter(
+        workspace_root: &Path,
+        test_name: &str,
+        process_id: u32,
+        counter: &AtomicU64,
+    ) -> io::Result<Self> {
+        let test_slug = sanitize_component(test_name);
+        loop {
+            let sequence = counter
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                    value.checked_add(1)
+                })
+                .map(|previous| previous + 1)
+                .map_err(|_| io::Error::other("run identity counter is exhausted"))?;
+            let run_id = format!("{process_id}-{sequence}");
+            let (allocation_root, run_root) =
+                match reserve_run_root(workspace_root, &run_id, &test_slug) {
+                    Ok(paths) => paths,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(error),
+                };
+            let title_prefix = format!("ui-{run_id}-");
+            let title_slug_len = MAX_TITLE_BYTES.saturating_sub(title_prefix.len());
+            let mut title_slug = test_slug[..test_slug.len().min(title_slug_len)]
+                .trim_end_matches('-')
+                .to_string();
+            if title_slug.is_empty() {
+                title_slug.push_str("test");
+            }
+            let title = format!("{title_prefix}{title_slug}");
+
+            return Ok(Self {
+                run_id,
+                test_slug,
+                title,
+                allocation_root,
+                run_root,
+            });
         }
     }
 }
@@ -87,7 +122,13 @@ impl WorkspaceFixture {
         match self {
             Self::Mini => FixtureDescriptor {
                 relative_path: "tests/fixtures/mini",
-                ready_diagram: "Orders",
+                workspace: WorkspaceBinding {
+                    root: WorkspaceRootFingerprint {
+                        title: "Mini",
+                        value: "/",
+                    },
+                    ready_diagram: DiagramName::ORDERS,
+                },
             },
         }
     }
@@ -95,15 +136,30 @@ impl WorkspaceFixture {
 
 #[cfg(test)]
 mod tests {
-    use super::{RunIdentity, ScenarioConfig, WorkspaceFixture};
-    use std::path::Path;
+    use super::{
+        RunIdentity, ScenarioConfig, WorkspaceBinding, WorkspaceFixture, WorkspaceRootFingerprint,
+    };
+    use crate::DiagramName;
+    use std::collections::HashSet;
+    use std::fs;
+    use std::sync::atomic::AtomicU64;
+    use std::thread;
 
     #[test]
-    fn mini_fixture_has_its_catalog_metadata() {
+    fn mini_fixture_binds_its_semantic_root_and_typed_ready_diagram() {
         let descriptor = WorkspaceFixture::Mini.descriptor();
 
         assert_eq!(descriptor.relative_path, "tests/fixtures/mini");
-        assert_eq!(descriptor.ready_diagram, "Orders");
+        assert_eq!(
+            descriptor.workspace,
+            WorkspaceBinding {
+                root: WorkspaceRootFingerprint {
+                    title: "Mini",
+                    value: "/",
+                },
+                ready_diagram: DiagramName::ORDERS,
+            }
+        );
     }
 
     #[test]
@@ -122,8 +178,9 @@ mod tests {
 
     #[test]
     fn run_identity_is_unique_for_repeated_test_names() {
-        let first = RunIdentity::new(Path::new("C:/workspace"), "ui::opens orders");
-        let second = RunIdentity::new(Path::new("C:/workspace"), "ui::opens orders");
+        let temp = tempfile::tempdir().unwrap();
+        let first = RunIdentity::allocate(temp.path(), "ui::opens orders").unwrap();
+        let second = RunIdentity::allocate(temp.path(), "ui::opens orders").unwrap();
 
         assert_ne!(first.run_id, second.run_id);
         assert_ne!(first.run_root, second.run_root);
@@ -131,11 +188,70 @@ mod tests {
     }
 
     #[test]
-    fn run_title_is_short_safe_and_keeps_identity_and_slug() {
-        let identity = RunIdentity::new(
-            Path::new("C:/workspace"),
-            "ui::opens Orders source view with punctuation?! and a very long suffix",
+    fn allocation_retries_a_preserved_candidate_without_touching_its_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let counter = AtomicU64::new(0);
+        let ownership_root = temp.path().join("target").join("waml-ui-test");
+        let preserved = ownership_root.join("4242-1").join("ui-opens-orders");
+        fs::create_dir_all(&preserved).unwrap();
+        fs::write(preserved.join("failure.txt"), "preserved failure").unwrap();
+
+        let identity =
+            RunIdentity::allocate_with_counter(temp.path(), "ui::opens orders", 4242, &counter)
+                .unwrap();
+
+        assert_eq!(identity.run_id, "4242-2");
+        assert_eq!(
+            fs::read_to_string(preserved.join("failure.txt")).unwrap(),
+            "preserved failure"
         );
+        assert!(identity.allocation_root.is_dir());
+        assert!(identity.run_root.is_dir());
+        assert!(identity.title.contains("4242-2"));
+        assert!(identity.title.len() <= 48);
+    }
+
+    #[test]
+    fn parallel_allocations_reserve_unique_run_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let counter = AtomicU64::new(0);
+
+        let identities = thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        RunIdentity::allocate_with_counter(
+                            temp.path(),
+                            "ui::opens orders",
+                            4242,
+                            &counter,
+                        )
+                        .unwrap()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+
+        let run_roots: HashSet<_> = identities
+            .iter()
+            .map(|identity| identity.run_root.clone())
+            .collect();
+        assert_eq!(run_roots.len(), 8);
+        assert!(run_roots.iter().all(|run_root| run_root.is_dir()));
+    }
+
+    #[test]
+    fn run_title_is_short_safe_and_keeps_identity_and_slug() {
+        let temp = tempfile::tempdir().unwrap();
+        let identity = RunIdentity::allocate(
+            temp.path(),
+            "ui::opens Orders source view with punctuation?! and a very long suffix",
+        )
+        .unwrap();
 
         assert!(identity.title.starts_with("ui-"));
         assert!(identity.title.len() <= 48);
@@ -149,15 +265,14 @@ mod tests {
 
     #[test]
     fn test_names_cannot_add_path_components() {
-        let identity = RunIdentity::new(
-            Path::new("C:/workspace"),
-            "module::..\\outside/also-outside?!",
-        );
+        let temp = tempfile::tempdir().unwrap();
+        let identity =
+            RunIdentity::allocate(temp.path(), "module::..\\outside/also-outside?!").unwrap();
 
         assert_eq!(identity.test_slug, "module-outside-also-outside");
         assert_eq!(
             identity.run_root,
-            Path::new("C:/workspace")
+            temp.path()
                 .join("target")
                 .join("waml-ui-test")
                 .join(&identity.run_id)

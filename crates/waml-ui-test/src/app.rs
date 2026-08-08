@@ -1,4 +1,5 @@
 use crate::adapters::{documents, workspace};
+use crate::config::WorkspaceBinding;
 use crate::domain::{DiagramName, ViewKind};
 use crate::error::{OperationFailure, WamlUiError};
 use crate::trace::SemanticTrace;
@@ -8,6 +9,7 @@ pub struct WamlApp {
     driver: makepad_test::TestApp,
     test_name: String,
     artifacts_dir: PathBuf,
+    workspace: WorkspaceBinding,
     trace: SemanticTrace,
 }
 
@@ -16,12 +18,14 @@ impl WamlApp {
         driver: makepad_test::TestApp,
         test_name: String,
         artifacts_dir: PathBuf,
+        workspace: WorkspaceBinding,
         trace: SemanticTrace,
     ) -> Self {
         Self {
             driver,
             test_name,
             artifacts_dir,
+            workspace,
             trace,
         }
     }
@@ -45,10 +49,14 @@ impl WamlApp {
     }
 
     pub fn expect_workspace_open(&mut self) -> &mut Self {
+        let workspace = self.workspace;
         self.execute(
             "expect workspace open",
-            "workspace contains the available Orders diagram",
-            |driver| workspace::expect_workspace_open(driver, DiagramName::ORDERS),
+            format!(
+                "{} workspace contains the available {} diagram",
+                workspace.root.title, workspace.ready_diagram.display
+            ),
+            |driver| workspace::expect_workspace_open(driver, workspace),
         )
     }
 

@@ -9,13 +9,7 @@ pub(crate) fn stage_fixture(
     run_root: &Path,
 ) -> io::Result<PathBuf> {
     let ownership_root = ownership_root(workspace_root);
-    require_owned_path(&ownership_root, run_root)?;
-    if run_root.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            format!("run root already exists: {}", run_root.display()),
-        ));
-    }
+    require_empty_reserved_run_root(&ownership_root, run_root)?;
     let relative_path = Path::new(descriptor.relative_path);
     require_safe_relative_path(relative_path)?;
     let source = workspace_root
@@ -25,6 +19,59 @@ pub(crate) fn stage_fixture(
     let staged = run_root.join("workspace");
     copy_entry(&source, &staged)?;
     Ok(staged)
+}
+
+pub(crate) fn reserve_run_root(
+    workspace_root: &Path,
+    run_id: &str,
+    test_slug: &str,
+) -> io::Result<(PathBuf, PathBuf)> {
+    let ownership_root = ownership_root(workspace_root);
+    fs::create_dir_all(&ownership_root)?;
+    let ownership_metadata = fs::symlink_metadata(&ownership_root)?;
+    reject_link_or_reparse(&ownership_root, &ownership_metadata)?;
+    if !ownership_metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "run ownership root is not a directory: {}",
+                ownership_root.display()
+            ),
+        ));
+    }
+
+    let allocation_root = ownership_root.join(run_id);
+    fs::create_dir(&allocation_root)?;
+    let run_root = allocation_root.join(test_slug);
+    if let Err(error) = fs::create_dir(&run_root) {
+        return Err(match fs::remove_dir(&allocation_root) {
+            Ok(()) => error,
+            Err(cleanup_error) => io::Error::new(
+                error.kind(),
+                format!(
+                    "{error}; failed to remove reservation {}: {cleanup_error}",
+                    allocation_root.display()
+                ),
+            ),
+        });
+    }
+    Ok((allocation_root, run_root))
+}
+
+fn require_empty_reserved_run_root(ownership_root: &Path, run_root: &Path) -> io::Result<()> {
+    if !validate_cleanup_candidate(ownership_root, run_root)? {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("reserved run root does not exist: {}", run_root.display()),
+        ));
+    }
+    if fs::read_dir(run_root)?.next().transpose()?.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("reserved run root is not empty: {}", run_root.display()),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn cleanup_run(
@@ -258,7 +305,13 @@ mod tests {
 
     const MINI: FixtureDescriptor = FixtureDescriptor {
         relative_path: "tests/fixtures/mini",
-        ready_diagram: "Orders",
+        workspace: crate::config::WorkspaceBinding {
+            root: crate::config::WorkspaceRootFingerprint {
+                title: "Mini",
+                value: "/",
+            },
+            ready_diagram: crate::DiagramName::ORDERS,
+        },
     };
 
     fn synthetic_workspace() -> (TempDir, PathBuf, PathBuf) {
@@ -285,6 +338,7 @@ mod tests {
     #[test]
     fn stage_fixture_copies_every_regular_file_byte_for_byte() {
         let (temp, _, run_root) = synthetic_workspace();
+        fs::create_dir_all(&run_root).unwrap();
 
         let staged = stage_fixture(temp.path(), MINI, &run_root).unwrap();
 
@@ -298,6 +352,7 @@ mod tests {
     #[test]
     fn staged_fixture_changes_do_not_modify_the_catalog_source() {
         let (temp, source, run_root) = synthetic_workspace();
+        fs::create_dir_all(&run_root).unwrap();
         let staged = stage_fixture(temp.path(), MINI, &run_root).unwrap();
 
         fs::write(staged.join("orders.md"), b"changed").unwrap();
@@ -311,12 +366,29 @@ mod tests {
     #[test]
     fn stage_fixture_rejects_source_symlinks_or_reparse_points() {
         let (temp, source, run_root) = synthetic_workspace();
+        fs::create_dir_all(&run_root).unwrap();
         create_file_link(&source.join("orders.md"), &source.join("linked.md")).unwrap();
 
         let error = stage_fixture(temp.path(), MINI, &run_root).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("symbolic link or reparse point"));
+    }
+
+    #[test]
+    fn stage_fixture_refuses_a_nonempty_reserved_run_root() {
+        let (temp, _, run_root) = synthetic_workspace();
+        fs::create_dir_all(&run_root).unwrap();
+        fs::write(run_root.join("failure.txt"), "existing evidence").unwrap();
+
+        let error = stage_fixture(temp.path(), MINI, &run_root).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(run_root.join("failure.txt")).unwrap(),
+            "existing evidence"
+        );
+        assert!(!run_root.join("workspace").exists());
     }
 
     #[test]
