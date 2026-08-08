@@ -568,7 +568,7 @@ mod tests {
                 &okf,
                 &uml,
                 &state,
-                crate::folder_projection::ViewMode::Projected,
+                &waml::view::mask::ProjectionMask::default(),
                 waml::view::chain::ChainLimits::default(),
             );
             assert_eq!(breadcrumb_for(&okf, "sales/archive/order"), before);

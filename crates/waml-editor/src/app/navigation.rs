@@ -299,7 +299,7 @@ impl App {
                     self.session.okf_analysis(),
                     &address,
                     self.chain_limits,
-                    self.view_mode,
+                    &self.projection_mask,
                 ) else {
                     self.set_navigation_message(cx, Some(&format!("Folder not found: {address}")));
                     return false;
@@ -626,21 +626,21 @@ impl App {
     /// build. `refresh_nav` fires on every row click and every navigation
     /// change too, where nothing about the projection moved -- so the build is
     /// memoized on everything it reads: the session revision (bumped by every
-    /// edit and by `replace`), the mode, and the descent cap. Scope and
+    /// edit and by `replace`), the mask, and the descent cap. Scope and
     /// selection are applied to the CACHED tree by `view_of`, which is why
     /// they are not part of the key.
     pub(super) fn refresh_nav(&mut self, cx: &mut Cx, scope_changed: bool) {
         let key = (
             self.session.revision(),
-            self.view_mode,
+            self.projection_mask.clone(),
             self.chain_limits.max_depth,
         );
-        if self.nav_tree.as_ref().map(|(cached, _)| *cached) != Some(key) {
+        if self.nav_tree.as_ref().map(|(cached, _)| cached) != Some(&key) {
             let tree = crate::tree::build_tree(
                 self.session.okf_analysis(),
                 self.session.uml_analysis(),
                 "Untitled",
-                self.view_mode,
+                &self.projection_mask,
                 self.chain_limits,
             );
             self.nav_tree = Some((key, tree));
@@ -667,36 +667,44 @@ impl App {
             if let Some(title) = title {
                 panel.set_scope_title(cx, title);
             }
-            panel.set_view_mode(cx, self.view_mode);
+            panel.set_view_mode(cx, self.projection_mask.clone());
         }
     }
 
-    /// Flip the session-wide projected/raw switch.
+    /// Flip the session-wide mask between empty and every maskable name
+    /// masked.
     ///
-    /// Both surfaces read the same flag, so there is no state in which the
+    /// Both surfaces read the same mask, so there is no state in which the
     /// tree and a folder view disagree about what a directory contains. The
-    /// flag lives in memory only: raw is a deliberate act, not a preference,
-    /// so it is never written to `.waml/settings.json` and every launch
-    /// starts Projected.
+    /// mask lives in memory only: a full mask is a deliberate act, not a
+    /// preference, so it is never written to `.waml/settings.json` and every
+    /// launch starts empty.
     ///
     /// This is presentational. A row the declared chain does not emit is not
-    /// protected by anything; raw simply asks for the identity listing.
-    pub(super) fn toggle_view_mode(&mut self, cx: &mut Cx) {
-        self.view_mode = match self.view_mode {
-            crate::folder_projection::ViewMode::Projected => {
-                crate::folder_projection::ViewMode::Raw
-            }
-            crate::folder_projection::ViewMode::Raw => {
-                crate::folder_projection::ViewMode::Projected
-            }
+    /// protected by anything; a full mask simply asks for the identity
+    /// listing.
+    // Superseded by the projection popup's per-name toggles (Task 10); kept
+    // as the `ToggleViewMode` button's handler until that lands.
+    pub(super) fn toggle_full_raw(&mut self, cx: &mut Cx) {
+        self.projection_mask = if self.projection_mask.is_empty() {
+            let registry = crate::folder_projection::core_registry();
+            waml::view::mask::ProjectionMask::from_names(
+                crate::folder_projection::maskable_names(&registry)
+                    .into_iter()
+                    .flat_map(|(_owner, names)| names)
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            waml::view::mask::ProjectionMask::default()
         };
         self.refresh_nav(cx, false);
         self.refresh_folder_tabs(cx);
         cx.redraw_all();
     }
 
-    /// Re-run every OPEN folder tab under the current mode, in place -- same
-    /// tab, view swapped. Concept tabs are untouched: a mode is about how a
+    /// Re-run every OPEN folder tab under the current mask, in place -- same
+    /// tab, view swapped. Concept tabs are untouched: a mask is about how a
     /// container lists its contents, and a concept has none.
     ///
     /// `ReopenInPlace` rather than `Open` because `Open` keeps the existing
@@ -715,7 +723,7 @@ impl App {
                 self.session.okf_analysis(),
                 &directory,
                 self.chain_limits,
-                self.view_mode,
+                &self.projection_mask,
             ) else {
                 // The directory left the bundle underneath us. Leaving the
                 // stale view up is wrong, but so is silently closing a tab

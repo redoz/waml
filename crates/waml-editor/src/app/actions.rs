@@ -436,7 +436,7 @@ impl App {
         if !toggled {
             return ActionFlow::Continue;
         }
-        self.toggle_view_mode(cx);
+        self.toggle_full_raw(cx);
         ActionFlow::Consumed
     }
 

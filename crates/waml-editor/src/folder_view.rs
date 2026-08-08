@@ -236,18 +236,19 @@ pub struct FolderView {
 }
 
 impl FolderView {
-    /// Resolve `directory`'s rows for `mode` and hold the chain that produced
-    /// them. `Raw` bypasses the declared chain; `Projected` runs it.
+    /// Resolve `directory`'s rows under `mask` and hold the chain that
+    /// produced them. A fully-masked mask bypasses the declared chain; an
+    /// empty mask runs it.
     pub fn build(
         analysis: &waml::analysis::OkfAnalysis,
         directory: &str,
         limits: ChainLimits,
-        mode: crate::folder_projection::ViewMode,
+        mask: &waml::view::mask::ProjectionMask,
     ) -> Option<FolderView> {
         let (chain, rows, mut diagnostics) = crate::folder_projection::project_rows(
             analysis,
             directory,
-            mode,
+            mask,
             limits,
             &crate::folder_projection::core_registry(),
         )?;
@@ -486,7 +487,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let rows = view.row_views();
@@ -522,7 +523,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let rows = view.row_views();
@@ -553,7 +554,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
 
@@ -595,7 +596,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
 
@@ -617,7 +618,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let rows = view.row_views();
@@ -647,7 +648,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let (id, op) = enter_row_op(view.rows(), 0).unwrap();
@@ -672,7 +673,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         assert!(view.rows()[0].caps.rename, "a concept row declares rename");
@@ -700,7 +701,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let rows = view.rows();
@@ -730,7 +731,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         // Orders (index 0) has no preceding row at all; Sales (index 1) has
@@ -750,7 +751,7 @@ mod tests {
             prepared.okf(),
             "/sales",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let rows = view.rows();
@@ -773,7 +774,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         assert!(
@@ -798,7 +799,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let rows = view.rows();
@@ -831,7 +832,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         // Dropped on itself, and dropped immediately after itself: both are
@@ -872,7 +873,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let (id, op) = enter_row_op(view.rows(), 0).unwrap();
@@ -898,7 +899,7 @@ mod tests {
             prepared.okf(),
             "/",
             ChainLimits::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
         )
         .unwrap();
         let (id, op) = tab_row_op(view.rows(), 1).unwrap();

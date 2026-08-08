@@ -19,7 +19,6 @@
 //! so it carries no flag spine and no auto-collapse timer.
 
 use crate::dock::{DockEvent, DockState};
-use crate::folder_projection::ViewMode;
 use crate::icon_button::IconButtonWidgetExt;
 use crate::icons::Icon;
 use crate::icons::IconSet;
@@ -29,6 +28,7 @@ use crate::tree::{ProjectTree as ProjectTreeData, TreeKind, TreeNode};
 use crate::tree_layout::{TreeHit, TreeLayout};
 use makepad_widgets::*;
 use std::collections::HashSet;
+use waml::view::mask::ProjectionMask;
 
 pub(crate) const PROJECT_TREE_W: f64 = 280.0;
 const REVEAL_PULSE_SECS: f64 = 0.7;
@@ -364,11 +364,11 @@ pub struct ProjectTree {
     /// forget the fold state of any folder nested under a closed one.
     #[rust]
     directory_keys: HashSet<String>,
-    /// The mode this panel is currently DISPLAYING, pushed by the app. The
+    /// The mask this panel is currently DISPLAYING, pushed by the app. The
     /// panel never decides it -- it reports a click and redraws what it is
     /// told, so the tree and the folder tabs can never disagree.
     #[rust]
-    view_mode: ViewMode,
+    view_mode: ProjectionMask,
     #[live]
     icons: IconSet,
     // Tint for the row glyphs. Without this the glyphs render at DrawColor's dim
@@ -710,10 +710,7 @@ impl Widget for ProjectTree {
         // resting state is never blank.
         let toggle = self.view.icon_button(cx, ids!(view_mode_btn));
         toggle.set_icon(cx, self.view_mode_icon());
-        toggle.set_active(
-            cx,
-            matches!(self.view_mode, crate::folder_projection::ViewMode::Raw),
-        );
+        toggle.set_active(cx, !self.view_mode.is_empty());
 
         // Same seeding rule as the toggle above: `IconButton::icon` is `#[rust]`
         // and the DSL cannot supply it, so an unseeded button is a blank 28px
@@ -912,19 +909,20 @@ impl ProjectTree {
     /// say "you are seeing the underlying thing", and they sit in different
     /// panels.
     pub fn view_mode_icon(&self) -> Icon {
-        match self.view_mode {
-            crate::folder_projection::ViewMode::Projected => Icon::Library,
-            crate::folder_projection::ViewMode::Raw => Icon::Code,
+        if self.view_mode.is_empty() {
+            Icon::Library
+        } else {
+            Icon::Code
         }
     }
 
-    pub fn set_view_mode(&mut self, cx: &mut Cx, mode: crate::folder_projection::ViewMode) {
-        self.view_mode = mode;
+    pub fn set_view_mode(&mut self, cx: &mut Cx, mask: ProjectionMask) {
+        self.view_mode = mask;
         let icon = self.view_mode_icon();
         let button = self.view.icon_button(cx, ids!(view_mode_btn));
         button.set_icon(cx, icon);
-        // Raw is the deliberate, non-default state, so it reads lit.
-        button.set_active(cx, matches!(mode, crate::folder_projection::ViewMode::Raw));
+        // A non-empty mask is the deliberate, non-default state, so it reads lit.
+        button.set_active(cx, !self.view_mode.is_empty());
     }
 
     pub fn set_presentation_visible(&mut self, cx: &mut Cx, visible: bool) {
@@ -1356,15 +1354,13 @@ mod tests {
     fn the_toggle_glyph_reports_the_current_mode() {
         let (mut cx, mut panel) = mounted_project_tree_test_context();
 
-        panel.set_view_mode(&mut cx, crate::folder_projection::ViewMode::Projected);
-        assert_eq!(
-            panel.view_mode,
-            crate::folder_projection::ViewMode::Projected
-        );
+        panel.set_view_mode(&mut cx, waml::view::mask::ProjectionMask::default());
+        assert_eq!(panel.view_mode, waml::view::mask::ProjectionMask::default());
         assert_eq!(panel.view_mode_icon(), crate::icons::Icon::Library);
 
-        panel.set_view_mode(&mut cx, crate::folder_projection::ViewMode::Raw);
-        assert_eq!(panel.view_mode, crate::folder_projection::ViewMode::Raw);
+        let full_mask = waml::view::mask::ProjectionMask::from_names(["hide", "uml"]);
+        panel.set_view_mode(&mut cx, full_mask.clone());
+        assert_eq!(panel.view_mode, full_mask);
         assert_eq!(panel.view_mode_icon(), crate::icons::Icon::Code);
     }
 
@@ -1374,7 +1370,10 @@ mod tests {
     #[test]
     fn the_toggle_button_is_a_live_mounted_child() {
         let (mut cx, mut panel) = mounted_project_tree_test_context();
-        panel.set_view_mode(&mut cx, crate::folder_projection::ViewMode::Raw);
+        panel.set_view_mode(
+            &mut cx,
+            waml::view::mask::ProjectionMask::from_names(["hide", "uml"]),
+        );
         assert!(
             panel
                 .view

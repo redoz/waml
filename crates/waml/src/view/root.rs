@@ -25,6 +25,12 @@ use super::surface::SurfaceId;
 /// must be able to say so: every row in such a chain is owned by this id.
 pub const ROOT_VIEW_OWNER: &str = "index";
 
+/// The middleware name this stage would answer to in a `view:` chain -- the
+/// terminal stage every chain falls back to, so masking it can never remove
+/// the listing. Offering it as a maskable name would be a lie; see
+/// `waml_editor::folder_projection::maskable_names`, which filters it out.
+pub const ROOT_VIEW_NAME: &str = ROOT_VIEW_OWNER;
+
 /// The `IconId` name this stage stamps on every folder row it mints.
 ///
 /// Public because a surface that shows a directory it did NOT receive as a

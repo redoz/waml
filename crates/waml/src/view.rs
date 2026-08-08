@@ -13,4 +13,4 @@ pub mod row;
 pub mod surface;
 pub mod uml;
 
-pub use root::{FOLDER_ROW_ICON, ROOT_VIEW_OWNER};
+pub use root::{FOLDER_ROW_ICON, ROOT_VIEW_NAME, ROOT_VIEW_OWNER};

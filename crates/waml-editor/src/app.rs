@@ -17,7 +17,6 @@ use crate::dock::{DockMotion, DockState, ResponsiveDockLayout};
 use crate::document::NavCategory;
 use crate::document_host::{DocumentCommand, DocumentHost};
 use crate::editor_session::{EditorSession, ExternalReplacement, SaveCompletion, SaveTicket};
-use crate::folder_projection::ViewMode;
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
 #[cfg(not(target_arch = "wasm32"))]
@@ -32,6 +31,7 @@ use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocatio
 use makepad_widgets::*;
 use std::path::{Path, PathBuf};
 use waml::view::chain::ChainLimits;
+use waml::view::mask::ProjectionMask;
 
 script_mod! {
     use mod.prelude.widgets.*
@@ -710,22 +710,23 @@ pub struct App {
     /// project declares nothing.
     #[rust]
     chain_limits: ChainLimits,
-    /// The session-wide projected/raw switch. In memory only -- NOT persisted,
-    /// and `.waml/settings.json` never sees it, so every launch starts
-    /// `Projected` and the author's declared `view:` is the default a reader
-    /// gets. Read by both the tree seam and every folder tab, so the two can
-    /// never disagree about what a directory contains.
+    /// The session-wide projection mask: which declared middleware stages are
+    /// switched off. In memory only -- NOT persisted, and
+    /// `.waml/settings.json` never sees it, so every launch starts empty and
+    /// the author's declared `view:` is the default a reader gets. Read by
+    /// both the tree seam and every folder tab, so the two can never disagree
+    /// about what a directory contains.
     #[rust]
-    view_mode: ViewMode,
+    projection_mask: ProjectionMask,
     /// The last `tree::build_tree` result, with the key it was built from:
-    /// `(session revision, mode, chain descent cap)`. A build runs the
+    /// `(session revision, mask, chain descent cap)`. A build runs the
     /// folder-view chain for every directory in the bundle, recursively, and
     /// `refresh_nav` fires on every row click; nothing in that key moves on a
     /// click, so the projection is not re-run for one. Every input the build
     /// reads is in the key -- the revision covers the bundle itself, since
     /// both an edit and `EditorSession::replace` bump it.
     #[rust]
-    nav_tree: Option<((u64, ViewMode, usize), crate::tree::ProjectTree)>,
+    nav_tree: Option<((u64, ProjectionMask, usize), crate::tree::ProjectTree)>,
     /// Springy give, in px, currently shown by a collapsed-but-still-held
     /// panel: `(tree, inspector)`. Non-zero only for the length of a drag that
     /// has snapped the panel shut, and reset the moment the finger lifts or the

@@ -42,7 +42,7 @@ pub mod test_support {
 pub struct TreeNode {
     /// The projected row's identity, NOT a file address. Stable across a
     /// re-projection, so selection and expansion survive the chain re-run a
-    /// mode flip triggers; a file address is not, because a middleware may
+    /// mask change triggers; a file address is not, because a middleware may
     /// relabel or mint rows with no file behind them.
     pub key: waml::view::row::RowId,
     /// Directory rows only: the real OKF address this row expands into.
@@ -70,9 +70,9 @@ pub struct TreeNode {
     /// degraded-chain marker so a folder inside a collapsed subtree is not
     /// silently wrong.
     ///
-    /// Mode-dependent by construction: `Raw` never builds the declared chain,
-    /// so it never diagnoses one, and the marker is absent exactly where the
-    /// folder tab would also show nothing. Always `false` for a non-directory
+    /// Mask-dependent by construction: a fully-masked mask never builds the
+    /// declared chain, so it never diagnoses one, and the marker is absent
+    /// exactly where the folder tab would also show nothing. Always `false` for a non-directory
     /// row.
     pub view_degraded: bool,
     pub children: Vec<TreeNode>,
@@ -119,7 +119,7 @@ pub fn build_tree(
     okf: &waml::analysis::OkfAnalysis,
     uml_analysis: &waml::uml::Analysis,
     root_fallback: &str,
-    mode: crate::folder_projection::ViewMode,
+    mask: &waml::view::mask::ProjectionMask,
     limits: waml::view::chain::ChainLimits,
 ) -> ProjectTree {
     // One registry for the whole recursion: `FolderView::build` resolves
@@ -129,7 +129,7 @@ pub fn build_tree(
         okf,
         uml_analysis,
         root_fallback,
-        mode,
+        mask,
         limits,
         &crate::folder_projection::core_registry(),
     )
@@ -142,7 +142,7 @@ fn build_tree_with_registry(
     okf: &waml::analysis::OkfAnalysis,
     uml_analysis: &waml::uml::Analysis,
     root_fallback: &str,
-    mode: crate::folder_projection::ViewMode,
+    mask: &waml::view::mask::ProjectionMask,
     limits: waml::view::chain::ChainLimits,
     registry: &waml::view::chain::MiddlewareRegistry,
 ) -> ProjectTree {
@@ -204,7 +204,7 @@ fn build_tree_with_registry(
         uml_analysis: &waml::uml::Analysis,
         address: &waml::okf::DirectoryAddress,
         root_fallback: &str,
-        mode: crate::folder_projection::ViewMode,
+        mask: &waml::view::mask::ProjectionMask,
         limits: waml::view::chain::ChainLimits,
         registry: &waml::view::chain::MiddlewareRegistry,
         // The `IconId` -> `Icon` table every Folder row's icon resolves
@@ -300,10 +300,10 @@ fn build_tree_with_registry(
         // directory left the bundle underneath us; an empty child list is the
         // honest answer, not a panic.
         let projected =
-            crate::folder_projection::project_rows(okf, address.as_str(), mode, limits, registry);
+            crate::folder_projection::project_rows(okf, address.as_str(), mask, limits, registry);
         // The marker reads the diagnostics of the run that produced the
-        // children above -- the folder tab runs the same chain in the same
-        // mode and shows the same list, so a second `resolved_view` here would
+        // children above -- the folder tab runs the same chain under the same
+        // mask and shows the same list, so a second `resolved_view` here would
         // only be a chance to disagree (and a second full chain run per
         // directory, recursively, on every model refresh).
         // An icon this build could not resolve (an `UnknownIcon` warning, from
@@ -333,7 +333,7 @@ fn build_tree_with_registry(
                             uml_analysis,
                             &child,
                             root_fallback,
-                            mode,
+                            mask,
                             limits,
                             registry,
                             table,
@@ -474,7 +474,7 @@ fn build_tree_with_registry(
             uml_analysis,
             &root,
             root_fallback,
-            mode,
+            mask,
             limits,
             registry,
             &table,
@@ -489,6 +489,18 @@ fn build_tree_with_registry(
 mod tests {
     use super::*;
     use waml::source::SourceBundle;
+    use waml::view::mask::ProjectionMask;
+
+    fn every_maskable_name() -> ProjectionMask {
+        let registry = crate::folder_projection::core_registry();
+        ProjectionMask::from_names(
+            crate::folder_projection::maskable_names(&registry)
+                .into_iter()
+                .flat_map(|(_owner, names)| names)
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>(),
+        )
+    }
 
     fn hidden() -> waml::analysis::PreparedCandidate {
         let source = SourceBundle::try_from_pairs([
@@ -515,7 +527,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             limits,
         );
         let sales = &projected.roots[0].children[0];
@@ -528,7 +540,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Raw,
+            &every_maskable_name(),
             limits,
         );
         let sales = &raw.roots[0].children[0];
@@ -550,16 +562,13 @@ mod tests {
     fn tree_children_equal_the_folder_views_rows_row_for_row_in_both_modes() {
         let prepared = hidden();
         let limits = waml::view::chain::ChainLimits::default();
-        for mode in [
-            crate::folder_projection::ViewMode::Projected,
-            crate::folder_projection::ViewMode::Raw,
-        ] {
-            let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
+        for mask in [ProjectionMask::default(), every_maskable_name()] {
+            let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", &mask, limits);
             let sales = &tree.roots[0].children[0];
             let (_, rows, _) = crate::folder_projection::project_rows(
                 prepared.okf(),
                 "/sales",
-                mode,
+                &mask,
                 limits,
                 &crate::folder_projection::core_registry(),
             )
@@ -573,7 +582,7 @@ mod tests {
                 rows.iter()
                     .map(|row| row.label.as_str())
                     .collect::<Vec<_>>(),
-                "{mode:?}: tree children must be the chain's rows, in the chain's order",
+                "{mask:?}: tree children must be the chain's rows, in the chain's order",
             );
         }
     }
@@ -602,7 +611,7 @@ mod tests {
             &bundle,
             &projection,
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let root = &tree.roots[0];
@@ -645,7 +654,7 @@ mod tests {
             &bundle,
             &projection,
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let rows = &tree.roots[0].children[0].children;
@@ -695,13 +704,13 @@ mod tests {
     fn tree_rows_carry_the_projected_rows_declared_capabilities() {
         let prepared = mixed_prepared();
         let limits = waml::view::chain::ChainLimits::default();
-        let mode = crate::folder_projection::ViewMode::Projected;
-        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
+        let mask = ProjectionMask::default();
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", &mask, limits);
         let sales = &tree.roots[0].children[0];
         let (_, rows, _) = crate::folder_projection::project_rows(
             prepared.okf(),
             "/sales",
-            mode,
+            &mask,
             limits,
             &crate::folder_projection::core_registry(),
         )
@@ -809,7 +818,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
             &registry,
         );
@@ -959,7 +968,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
             &registry,
         );
@@ -1041,7 +1050,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let sales = &tree.roots[0].children[0];
@@ -1050,11 +1059,12 @@ mod tests {
         assert!(!tree.roots[0].view_degraded);
     }
 
-    /// Raw never builds the declared chain, so the folder tab opened in Raw
-    /// shows no diagnostics at all. The tree must not contradict it by marking
-    /// the same folder degraded.
+    /// Masking a declared stage by name never builds it, so the folder tab
+    /// opened under that mask shows no diagnostics at all -- even for a
+    /// stage name the registry does not recognize. The tree must not
+    /// contradict it by marking the same folder degraded.
     #[test]
-    fn raw_does_not_mark_a_folder_degraded_the_folder_tab_reports_clean() {
+    fn masking_the_declared_stage_does_not_mark_a_folder_degraded_the_folder_tab_reports_clean() {
         let source = SourceBundle::try_from_pairs([
             ("index.md", "# Root\n\n* [Sales](sales/)\n"),
             (
@@ -1065,21 +1075,28 @@ mod tests {
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         let limits = waml::view::chain::ChainLimits::default();
-        let mode = crate::folder_projection::ViewMode::Raw;
-        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
+        // Masking targets the exact declared (unknown) name -- an unknown name
+        // is never offered by `maskable_names`, so `every_maskable_name()`
+        // would not bypass it; the point here is that masking the DECLARED
+        // stage bypasses it regardless of whether the registry knows it.
+        let mask = ProjectionMask::from_names(["no-such-middleware"]);
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", &mask, limits);
         let sales = &tree.roots[0].children[0];
         let (_, _, diagnostics) = crate::folder_projection::project_rows(
             prepared.okf(),
             "/sales",
-            mode,
+            &mask,
             limits,
             &crate::folder_projection::core_registry(),
         )
         .unwrap();
-        assert!(diagnostics.is_empty(), "raw builds no declared chain");
+        assert!(
+            diagnostics.is_empty(),
+            "masking the declared stage never builds it, so it never diagnoses"
+        );
         assert!(
             !sales.view_degraded,
-            "the tree marked a folder degraded that the raw folder tab reports clean",
+            "the tree marked a folder degraded that the folder tab reports clean",
         );
     }
 
@@ -1102,7 +1119,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let root = &tree.roots[0];
@@ -1126,7 +1143,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Raw,
+            &every_maskable_name(),
             waml::view::chain::ChainLimits::default(),
         );
         let sales = &tree.roots[0].children[0];
@@ -1148,7 +1165,7 @@ mod tests {
         let (chain, _, _) = crate::folder_projection::project_rows(
             prepared.okf(),
             "/sales",
-            crate::folder_projection::ViewMode::Raw,
+            &every_maskable_name(),
             limits,
             &crate::folder_projection::core_registry(),
         )
@@ -1208,7 +1225,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let domain = &tree.roots[0].children[0];
@@ -1237,16 +1254,16 @@ mod tests {
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         let limits = waml::view::chain::ChainLimits::default();
-        let mode = crate::folder_projection::ViewMode::Projected;
+        let mask = ProjectionMask::default();
 
-        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", mode, limits);
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", &mask, limits);
         let tree_icons: std::collections::HashMap<String, Icon> = tree.roots[0]
             .children
             .iter()
             .map(|node| (node.title.clone(), node.presentation.icon))
             .collect();
 
-        let folder = crate::folder_view::FolderView::build(prepared.okf(), "/", limits, mode)
+        let folder = crate::folder_view::FolderView::build(prepared.okf(), "/", limits, &mask)
             .expect("root is in the bundle");
         let folder_icons: std::collections::HashMap<String, Icon> = folder
             .row_views()
@@ -1279,7 +1296,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
 
@@ -1309,7 +1326,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let icons: std::collections::HashMap<String, Icon> = tree.roots[0]
@@ -1353,7 +1370,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let root = &tree.roots[0];
@@ -1451,13 +1468,13 @@ mod tests {
         ])
         .unwrap();
         let limits = waml::view::chain::ChainLimits::default();
-        let mode = crate::folder_projection::ViewMode::Projected;
+        let mask = ProjectionMask::default();
 
         let tree = build_tree_with_registry(
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            mode,
+            &mask,
             limits,
             &registry,
         );
@@ -1471,7 +1488,7 @@ mod tests {
         let (_, rows, _) = crate::folder_projection::project_rows(
             prepared.okf(),
             "/sales",
-            mode,
+            &mask,
             limits,
             &registry,
         )
@@ -1515,7 +1532,7 @@ mod tests {
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
             &registry,
         );
@@ -1644,7 +1661,7 @@ view: unknown-icon
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
             &registry,
         );
@@ -1685,7 +1702,7 @@ view: unknown-icon
             prepared.okf(),
             prepared.uml(),
             "Fallback",
-            crate::folder_projection::ViewMode::Projected,
+            &ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
             &registry,
         );

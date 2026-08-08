@@ -47,10 +47,10 @@ pub struct OpenCtx<'a> {
     /// ignorant of `ProjectionCtx` construction, which is per-directory and
     /// already owned by the document-provider layer.
     pub resolve: &'a dyn Fn(&RowId) -> Option<Row>,
-    /// The session's view mode, carried rather than assumed: a folder surface
-    /// opened through this seam must list what the tree and the folder tabs
-    /// list. One mode, read everywhere, is the invariant.
-    pub mode: crate::folder_projection::ViewMode,
+    /// The session's projection mask, carried rather than assumed: a folder
+    /// surface opened through this seam must list what the tree and the
+    /// folder tabs list. One mask, read everywhere, is the invariant.
+    pub mask: &'a waml::view::mask::ProjectionMask,
 }
 
 /// A factory, not an instance -- called when a row is opened, not when it is
@@ -203,7 +203,7 @@ fn open_folder(ctx: &OpenCtx<'_>, id: &RowId) -> Option<Box<dyn DocView>> {
         RowTarget::Folder(directory) => directory,
         RowTarget::Concept(_) | RowTarget::Virtual => return None,
     };
-    let view = FolderView::build(ctx.analysis, &directory, ctx.limits, ctx.mode)?;
+    let view = FolderView::build(ctx.analysis, &directory, ctx.limits, ctx.mask)?;
     Some(Box::new(view))
 }
 
@@ -328,7 +328,7 @@ mod tests {
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
             limits: ChainLimits::default(),
-            mode: crate::folder_projection::ViewMode::Projected,
+            mask: &waml::view::mask::ProjectionMask::default(),
             resolve: &|id: &RowId| {
                 Some(
                     Row::new(

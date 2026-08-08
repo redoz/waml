@@ -43,10 +43,10 @@ pub struct PackageRow {
 pub fn packages(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
-    mode: crate::folder_projection::ViewMode,
+    mask: &waml::view::mask::ProjectionMask,
     limits: waml::view::chain::ChainLimits,
 ) -> Vec<PackageRow> {
-    packages_of(&build_tree(okf, uml, "Untitled", mode, limits), okf)
+    packages_of(&build_tree(okf, uml, "Untitled", mask, limits), okf)
 }
 
 /// `packages` against a tree the caller already built. A tree build runs the
@@ -131,10 +131,10 @@ pub fn view(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
     state: &NavState,
-    mode: crate::folder_projection::ViewMode,
+    mask: &waml::view::mask::ProjectionMask,
     limits: waml::view::chain::ChainLimits,
 ) -> NavView {
-    view_of(&build_tree(okf, uml, "Untitled", mode, limits), state)
+    view_of(&build_tree(okf, uml, "Untitled", mask, limits), state)
 }
 
 /// `view` against a tree the caller already built; see `packages_of`.
@@ -181,7 +181,7 @@ mod tests {
         let rows = packages(
             &bundle,
             &projection,
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         // Row 0: synthetic whole-model root, key "", titled from model.path.
@@ -209,7 +209,7 @@ mod tests {
         let rows = packages(
             &bundle,
             &projection,
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         assert!(!rows.iter().any(|row| row.key == "sub/cls"));
@@ -229,7 +229,7 @@ mod tests {
             &bundle,
             &projection,
             &NavState::default(),
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let t = browse_roots(&v);
@@ -258,7 +258,7 @@ mod tests {
             &bundle,
             &projection,
             &state,
-            crate::folder_projection::ViewMode::Projected,
+            &waml::view::mask::ProjectionMask::default(),
             waml::view::chain::ChainLimits::default(),
         );
         let t = browse_roots(&v);
@@ -283,7 +283,7 @@ mod tests {
                 &bundle,
                 &projection,
                 &state,
-                crate::folder_projection::ViewMode::Projected,
+                &waml::view::mask::ProjectionMask::default(),
                 waml::view::chain::ChainLimits::default(),
             ),
             NavView::Empty

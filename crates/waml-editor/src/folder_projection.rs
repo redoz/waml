@@ -1,7 +1,7 @@
 //! Where a folder's rows come from — for BOTH surfaces that show them.
 //!
 //! The folder surface (`folder_view.rs`) and the tree seam (`tree.rs`) run
-//! the same chain, against the same registry, in the same mode. Two row
+//! the same chain, against the same registry, under the same mask. Two row
 //! sources that disagree are invisible: the tree lists a child the folder
 //! view does not, or marks a folder degraded that opens clean, and the gate
 //! is green either way.
@@ -14,23 +14,31 @@ use crate::icons::Icon;
 use waml::diagnostic::Diagnostic;
 use waml::okf::Directory;
 use waml::view::chain::{Chain, ChainLimits, MiddlewareRegistry};
+use waml::view::mask::ProjectionMask;
 use waml::view::projection::ProjectionCtx;
 use waml::view::row::Row;
 
-/// The session-wide projected/raw switch, held in memory on `App` and read by
-/// every surface that lists a folder's contents.
+/// The stages a reader may switch off, grouped by owning extension.
 ///
-/// NOT persisted, and `.waml/settings.json` never sees it: raw is a deliberate
-/// act, not a preference, so every launch starts `Projected` and an author's
-/// declared `view:` is what a reader sees unless they ask otherwise.
+/// `registry.owners()` minus the terminal `index` stage: `RootView` is where a
+/// chain lands whenever it runs out of declared stages, so masking `index`
+/// cannot remove the listing and offering it would be a lie. An extension left
+/// with nothing maskable is dropped rather than shown as an empty group.
 ///
-/// `Raw` is presentational reachability and performs no access check. Nothing
-/// in waml treats a row a chain declined to emit as protected.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ViewMode {
-    #[default]
-    Projected,
-    Raw,
+/// Driven off the registry -- NOT a second hand-written extension list. Two
+/// construction sites that disagree are invisible (see `editor_registry`).
+pub fn maskable_names(registry: &MiddlewareRegistry) -> Vec<(&str, Vec<&str>)> {
+    registry
+        .owners()
+        .into_iter()
+        .filter_map(|(owner, names)| {
+            let names: Vec<&str> = names
+                .into_iter()
+                .filter(|name| *name != waml::view::ROOT_VIEW_NAME)
+                .collect();
+            (!names.is_empty()).then_some((owner, names))
+        })
+        .collect()
 }
 
 /// The middleware registry every folder-listing path in the editor resolves
@@ -76,28 +84,22 @@ pub fn icon_table() -> Vec<(&'static str, Icon)> {
         .collect()
 }
 
-/// The chain `directory` runs under `mode`, plus any build-level diagnostics
+/// The chain `directory` runs under `mask`, plus any build-level diagnostics
 /// (unknown middleware name, bad params) the declared chain produced.
 ///
-/// `Raw` pins the chain to `Chain::raw()` -- the identity listing -- and never
-/// builds the declared chain at all, which is why it never diagnoses one.
+/// An empty mask is exactly today's projected behaviour. A mask naming every
+/// maskable stage yields the identity listing -- the chain builds, every
+/// declared stage is skipped, and `RootView` owns every row.
 pub fn chain_for(
     analysis: &waml::analysis::OkfAnalysis,
     directory: &str,
-    mode: ViewMode,
+    mask: &ProjectionMask,
     registry: &MiddlewareRegistry,
 ) -> (Chain, Vec<Diagnostic>) {
-    match mode {
-        ViewMode::Projected => analysis.bundle.resolved_view(
-            directory,
-            registry,
-            &waml::view::mask::ProjectionMask::default(),
-        ),
-        ViewMode::Raw => (Chain::raw(), Vec::new()),
-    }
+    analysis.bundle.resolved_view(directory, registry, mask)
 }
 
-/// Run `directory`'s chain for `mode` and hand back the chain itself, its
+/// Run `directory`'s chain under `mask` and hand back the chain itself, its
 /// rows, and every diagnostic (build-level and run-level) it produced.
 ///
 /// The chain comes back with the rows because a later gesture must call
@@ -109,12 +111,12 @@ pub fn chain_for(
 pub fn project_rows(
     analysis: &waml::analysis::OkfAnalysis,
     directory: &str,
-    mode: ViewMode,
+    mask: &ProjectionMask,
     limits: ChainLimits,
     registry: &MiddlewareRegistry,
 ) -> Option<(Chain, Vec<Row>, Vec<Diagnostic>)> {
     let dir: Directory = analysis.bundle.directory(directory)?.clone();
-    let (chain, mut diagnostics) = chain_for(analysis, directory, mode, registry);
+    let (chain, mut diagnostics) = chain_for(analysis, directory, mask, registry);
     // A middleware's params ARE the folder's own index frontmatter -- `hide`
     // reads its globs from here, and `Chain::build` validated them against
     // this same map. Passing an empty one makes every param-taking stage fail
@@ -142,6 +144,18 @@ mod tests {
     use std::collections::BTreeSet;
     use waml::extension::CoreExtension;
     use waml::source::SourceBundle;
+    use waml::view::mask::ProjectionMask;
+
+    fn every_maskable_name() -> ProjectionMask {
+        let registry = core_registry();
+        ProjectionMask::from_names(
+            maskable_names(&registry)
+                .into_iter()
+                .flat_map(|(_owner, names)| names)
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>(),
+        )
+    }
 
     /// Task 9: the middleware registry and the editor registry must name the
     /// same extension set -- two construction sites that disagree are
@@ -184,14 +198,14 @@ mod tests {
     }
 
     #[test]
-    fn projected_runs_the_declared_chain_and_raw_bypasses_it() {
+    fn an_empty_mask_runs_the_declared_chain_and_a_full_mask_bypasses_it() {
         let prepared = hidden_bundle();
         let limits = ChainLimits::default();
 
         let (_, projected, diagnostics) = project_rows(
             prepared.okf(),
             "/",
-            ViewMode::Projected,
+            &ProjectionMask::default(),
             limits,
             &core_registry(),
         )
@@ -208,21 +222,48 @@ mod tests {
             vec!["Orders"],
         );
 
-        let (_, raw, raw_diagnostics) =
-            project_rows(prepared.okf(), "/", ViewMode::Raw, limits, &core_registry()).unwrap();
+        let (_, raw, raw_diagnostics) = project_rows(
+            prepared.okf(),
+            "/",
+            &every_maskable_name(),
+            limits,
+            &core_registry(),
+        )
+        .unwrap();
         assert!(
             raw_diagnostics.is_empty(),
-            "raw never builds the declared chain"
+            "masking a stage is not an author error"
         );
         assert_eq!(
             raw.iter().map(|row| row.label.as_str()).collect::<Vec<_>>(),
             vec!["Orders", "References"],
-            "raw is presentational reachability, not a permission decision",
+            "a full mask is presentational reachability, not a permission decision",
         );
     }
 
     #[test]
-    fn raw_never_diagnoses_a_declared_chain_it_does_not_build() {
+    fn masking_only_hide_leaves_every_other_stage_running() {
+        let prepared = hidden_bundle();
+        let (_, rows, diagnostics) = project_rows(
+            prepared.okf(),
+            "/",
+            &ProjectionMask::from_names(["hide"]),
+            ChainLimits::default(),
+            &core_registry(),
+        )
+        .unwrap();
+        assert!(diagnostics.is_empty());
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Orders", "References"],
+            "`hide` is the only stage this folder declares, so its rows come back",
+        );
+    }
+
+    #[test]
+    fn an_unknown_middleware_name_still_diagnoses_under_an_empty_mask() {
         let prepared = analysis([
             (
                 "index.md",
@@ -230,21 +271,15 @@ mod tests {
             ),
             ("orders.md", "# Orders\n"),
         ]);
-        let limits = ChainLimits::default();
-
         let (_, _, declared) = project_rows(
             prepared.okf(),
             "/",
-            ViewMode::Projected,
-            limits,
+            &ProjectionMask::default(),
+            ChainLimits::default(),
             &core_registry(),
         )
         .unwrap();
         assert!(!declared.is_empty(), "an unknown middleware name diagnoses");
-
-        let (_, _, raw) =
-            project_rows(prepared.okf(), "/", ViewMode::Raw, limits, &core_registry()).unwrap();
-        assert!(raw.is_empty());
     }
 
     #[test]
@@ -253,7 +288,7 @@ mod tests {
         assert!(project_rows(
             prepared.okf(),
             "/missing",
-            ViewMode::Projected,
+            &ProjectionMask::default(),
             ChainLimits::default(),
             &core_registry(),
         )
@@ -261,12 +296,12 @@ mod tests {
     }
 
     #[test]
-    fn raw_mode_owns_every_row_through_the_root_view() {
+    fn a_full_mask_leaves_every_row_owned_by_the_root_view() {
         let prepared = hidden_bundle();
         let (_, rows, _) = project_rows(
             prepared.okf(),
             "/",
-            ViewMode::Raw,
+            &every_maskable_name(),
             ChainLimits::default(),
             &core_registry(),
         )
@@ -274,7 +309,38 @@ mod tests {
         assert!(
             rows.iter()
                 .all(|row| row.id.owner.as_str() == waml::view::ROOT_VIEW_OWNER),
-            "in Raw the chain is [index], so RootView owns every row",
+            "with every declared stage masked the chain is empty, so RootView owns every row",
+        );
+    }
+
+    #[test]
+    fn index_is_never_offered_as_maskable() {
+        let registry = core_registry();
+        let offered: Vec<&str> = maskable_names(&registry)
+            .into_iter()
+            .flat_map(|(_owner, names)| names)
+            .collect();
+        assert!(
+            !offered.contains(&"index"),
+            "`index` is the terminal stage; masking it cannot remove the listing",
+        );
+        assert!(offered.contains(&"hide"));
+        assert!(offered.contains(&"uml"));
+    }
+
+    #[test]
+    fn an_extension_toggle_masks_exactly_that_extensions_names() {
+        let registry = core_registry();
+        let core_names: Vec<&str> = maskable_names(&registry)
+            .into_iter()
+            .find(|(owner, _)| *owner == "core")
+            .expect("core owns at least one maskable stage")
+            .1;
+        let mask = ProjectionMask::from_names(core_names.iter().map(|n| n.to_string()));
+        assert!(mask.is_masked("hide"));
+        assert!(
+            !mask.is_masked("uml"),
+            "an extension toggle must not reach another extension's stages",
         );
     }
 }

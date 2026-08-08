@@ -2030,9 +2030,9 @@ fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
     let tabs_before = app.documents.tabs().len();
     let tab_id = app.documents.active_id();
 
-    app.toggle_view_mode(&mut cx);
+    app.toggle_full_raw(&mut cx);
 
-    assert_eq!(app.view_mode, crate::folder_projection::ViewMode::Raw);
+    assert!(!app.projection_mask.is_empty());
     assert_eq!(app.documents.tabs().len(), tabs_before, "no second tab");
     assert_eq!(
         app.documents.active_id(),
@@ -2040,17 +2040,17 @@ fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
         "the tab keeps its identity"
     );
 
-    app.toggle_view_mode(&mut cx);
-    assert_eq!(app.view_mode, crate::folder_projection::ViewMode::Projected);
+    app.toggle_full_raw(&mut cx);
+    assert!(app.projection_mask.is_empty());
     assert_eq!(app.documents.tabs().len(), tabs_before);
 }
 
-/// Mode is a session fact, not a preference. Nothing writes it anywhere.
+/// The mask is a session fact, not a preference. Nothing writes it anywhere.
 #[test]
-fn the_mode_starts_projected_and_is_never_persisted() {
+fn the_mask_starts_empty_and_is_never_persisted() {
     let (mut cx, mut app) = navigation_app();
-    assert_eq!(app.view_mode, crate::folder_projection::ViewMode::Projected);
-    app.toggle_view_mode(&mut cx);
+    assert!(app.projection_mask.is_empty());
+    app.toggle_full_raw(&mut cx);
     // The settings type has no field for it, by construction. This
     // assertion is the fence: adding one must break a test, not pass
     // silently.
