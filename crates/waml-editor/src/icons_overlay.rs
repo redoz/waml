@@ -86,7 +86,11 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(List, "Enumeration kind"),
             ie!(Workflow, "Process kind"),
             ie!(Activity, "Event / signal kind"),
-            ie!(ArrowLeftRight, "Association kind"),
+            ie!(
+                ArrowLeftRight,
+                "Retired sequence glyph; superseded by ChartNoAxesGantt"
+            ),
+            ie!(ChartNoAxesGantt, "Sequence / interaction kind"),
             ie!(StickyNote, "Note kind"),
             ie!(ChevronsUpDown, "Scope / select dropdown"),
             ie!(Library, "Tree/folder view is projected (chain running)"),
@@ -323,6 +327,9 @@ mod drift {
         // kept catalogued (the catalog is pruned deliberately, not by drift).
         Icon::SquareLibrary,
         Icon::SquareCode,
+        // Superseded as the sequence/interaction glyph by ChartNoAxesGantt,
+        // kept catalogued on the same rule.
+        Icon::ArrowLeftRight,
     ];
 
     fn table_icons() -> Vec<Icon> {

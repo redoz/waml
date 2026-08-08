@@ -272,7 +272,7 @@ impl IconSet {
             TreeKind::OkfDocument => Icon::FileText,
             TreeKind::Diagram => Icon::Workflow,
             TreeKind::Behavior => Icon::Activity,
-            TreeKind::Sequence => Icon::ArrowLeftRight,
+            TreeKind::Sequence => Icon::ChartNoAxesGantt,
             TreeKind::Note => Icon::StickyNote,
         })
     }
@@ -2092,7 +2092,7 @@ mod icon_map_tests {
         assert_eq!(IconSet::icon_for(TreeKind::Behavior), Some(Icon::Activity));
         assert_eq!(
             IconSet::icon_for(TreeKind::Sequence),
-            Some(Icon::ArrowLeftRight)
+            Some(Icon::ChartNoAxesGantt)
         );
         assert_eq!(IconSet::icon_for(TreeKind::Note), Some(Icon::StickyNote));
         assert_eq!(

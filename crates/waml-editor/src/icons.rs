@@ -3180,6 +3180,27 @@ script_mod! {
         }
     }
 
+    // Chart no-axes gantt: three staggered horizontal bars -- the sequence
+    // diagram's messages marching down the lifelines.
+    // Faithful port of resources/icons/chart-no-axes-gantt.svg via scripts/gen-icon.py.
+    mod.draw.IconChartNoAxesGantt = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.3333, s * 0.2500)
+            sdf.line_to(s * 0.7500, s * 0.2500)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2500, s * 0.5000)
+            sdf.line_to(s * 0.6250, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.4583, s * 0.7500)
+            sdf.line_to(s * 0.7500, s * 0.7500)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     // Folder: the Lucide folder -- single body outline with the raised tab.
     // Faithful port of resources/icons/folder.svg via scripts/gen-icon.py.
     mod.draw.IconFolder = mod.draw.DrawColor{
@@ -4326,6 +4347,7 @@ script_mod! {
         broom_sparkles: mod.draw.IconBroomSparkles{ color: atlas.accent }
         library: mod.draw.IconLibrary{ color: atlas.accent }
         library_big: mod.draw.IconLibraryBig{ color: atlas.accent }
+        chart_no_axes_gantt: mod.draw.IconChartNoAxesGantt{ color: atlas.accent }
     }
 }
 
@@ -4594,6 +4616,7 @@ pub struct IconSet {
     pub library: DrawColor,
     #[live]
     pub library_big: DrawColor,
+    pub chart_no_axes_gantt: DrawColor,
 }
 
 impl IconSet {
@@ -4730,6 +4753,7 @@ impl IconSet {
             Icon::BroomSparkles => &mut self.broom_sparkles,
             Icon::Library => &mut self.library,
             Icon::LibraryBig => &mut self.library_big,
+            Icon::ChartNoAxesGantt => &mut self.chart_no_axes_gantt,
         }
     }
 
@@ -4880,12 +4904,13 @@ pub enum Icon {
     BroomSparkles,
     Library,
     LibraryBig,
+    ChartNoAxesGantt,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 129] = [
+    pub const ALL: [Icon; 130] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -5015,6 +5040,7 @@ impl Icon {
         Icon::BroomSparkles,
         Icon::Library,
         Icon::LibraryBig,
+        Icon::ChartNoAxesGantt,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5150,6 +5176,7 @@ impl Icon {
             Icon::BroomSparkles => "broom-sparkles",
             Icon::Library => "library",
             Icon::LibraryBig => "library-big",
+            Icon::ChartNoAxesGantt => "chart-no-axes-gantt",
         }
     }
 }
@@ -5159,8 +5186,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_129_entries() {
-        assert_eq!(Icon::ALL.len(), 129);
+    fn icon_all_has_130_entries() {
+        assert_eq!(Icon::ALL.len(), 130);
     }
 
     // ------------------------------------------------------------------
@@ -5363,6 +5390,14 @@ mod tests {
         assert_eq!(Icon::Plus.label(), "plus");
     }
 
+    /// The sequence/interaction glyph, appended last so the catalog indices
+    /// above stay put.
+    #[test]
+    fn gantt_glyph_closes_the_catalog_with_its_lucide_slug() {
+        assert_eq!(Icon::ALL[129], Icon::ChartNoAxesGantt);
+        assert_eq!(Icon::ChartNoAxesGantt.label(), "chart-no-axes-gantt");
+    }
+
     #[test]
     fn view_bar_glyphs_present_with_lucide_slugs() {
         assert_eq!(Icon::ZoomIn.label(), "zoom-in");
@@ -5382,7 +5417,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 129);
+        assert_eq!(seen.len(), 130);
     }
 
     #[test]
