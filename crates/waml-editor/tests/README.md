@@ -3,11 +3,13 @@
 `waml-editor` is a library crate with a thin `main.rs` shim (it just calls
 `app_main!(App)`): every module is declared in `src/lib.rs`, so the inline
 `#[cfg(test)]` unit tests in `src/*.rs` run as the **lib** unit-test harness.
-The five integration files in `tests/` (`editor_history.rs`, `view_history.rs`,
-`history_integration.rs`, `markdown_authority.rs`, `markdown_integration.rs`)
-link that same compiled library and test its public modules (`editor_history`,
-`view_history`) plus filesystem-level fixtures. Modules stay crate-private
-(`mod`) unless a `tests/` file or a `src/bin/*` harness actually imports them.
+The five always-enabled integration files in `tests/` (`editor_history.rs`,
+`view_history.rs`, `history_integration.rs`, `markdown_authority.rs`,
+`markdown_integration.rs`) link that same compiled library and test its public
+modules (`editor_history`, `view_history`) plus filesystem-level fixtures. The
+feature-gated `ui.rs` target runs the semantic editor journey described below.
+Modules stay crate-private (`mod`) unless a `tests/` file or a `src/bin/*`
+harness actually imports them.
 
 ## Unit tests (no GPU)
 
@@ -19,10 +21,76 @@ Covers the engine-agnostic modules: `load`, `sizing`, `scene` (including routed
 edge polylines), `camera`, `cli`, `tree::build_tree`, and `tree_panel`'s id-map
 round-trip. No GPU required.
 
-## Visual verification (verification of record)
+## Semantic editor navigation
+
+Linux runs the semantic journey headlessly:
+
+```bash
+rtk cargo test -p waml-editor --features ui-tests --test ui -- --test-threads=1
+```
+
+The feature gate keeps this target out of the normal
+`cargo nextest run --workspace --profile ci` suite. CI runs the dedicated
+command once, after the normal workspace tests, in the required Linux
+`build-test` job. The journey verifies that the staged Mini fixture is ready,
+activates the Orders diagram, and switches the active document from Diagram to
+Source and back to Diagram.
+
+Windows does not have a working headless runtime for this journey. Do not run
+the native UI test binary headlessly on Windows. Windows CI still compiles all
+feature-gated code through
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`. A
+Windows developer can compile the target without running it:
 
 ```powershell
-./run.ps1    # stages fixtures/mini to target/run-fixture-mini and launches it
+rtk cargo test -p waml-editor --features ui-tests --test ui --no-run
+```
+
+For visible diagnosis, start Makepad Studio and its remote bridge first. Then
+run the same scenario without source changes:
+
+```powershell
+$env:MAKEPAD_TEST_VISIBLE='1'
+$env:MAKEPAD_TEST_STUDIO='127.0.0.1:8001'
+$env:MAKEPAD_TEST_STUDIO_MOUNT='waml'
+rtk cargo test -p waml-editor --features ui-tests --test ui -- --test-threads=1
+```
+
+Scenario files are a typed semantic DSL. Import only semantic types from
+`waml_ui_test`, and call `WamlApp` domain operations. Do not import
+`makepad_test` or use selectors, widget IDs, coordinates, sleeps, raw Makepad
+events, or timeout values. An `ensure_*` operation establishes an idempotent
+precondition, an imperative operation performs one action, and an `expect_*`
+operation observes without mutation.
+
+A failed run prints and preserves its directory under
+`target/waml-ui-test/<run-id>/<test-slug>/`. The directory contains:
+
+```text
+semantic-trace.txt
+semantic-trace.json
+failure.txt
+logs.txt
+widget-snapshot.json
+widget-tree.txt
+failure-screenshot.png
+workspace/
+```
+
+The `workspace/` directory is the staged, run-owned fixture. Successful runs
+remove their run directory.
+
+The automated journey is the verification of record for fixture readiness,
+Orders activation, and Diagram/Source switching. Manual verification remains
+the record for visual rendering, temporal canvas gestures, and navigation that
+the semantic journey does not cover. You can perform a covered navigation step
+to set up a manual visual check, but do not record that setup step as separate
+manual verification.
+
+## Manual visual and interaction verification (verification of record)
+
+```powershell
+./run.ps1 -Title manual-visual-check
 ```
 
 Committed fixtures under `tests/fixtures/` are **read-only inputs**: the
@@ -34,11 +102,12 @@ and will dirty the committed files).
 Opens the native GPU window. The window is a resizable `Splitter`: the left
 pane is the `ProjectTree` panel (a `FileTree` showing the `Mini` bundle's root
 package with the `Order`/`Customer` classifiers and the `Orders` diagram); the
-right pane is the `ClassDiagramSurface`. Clicking the `Orders` diagram row loads it into
-the canvas (fits on first draw). Pan the canvas with left-drag, zoom with the
-scroll wheel; drag the splitter bar to resize the panes. This interactive run is
-the **verification of record** for both the renderer and the tree panel — there
-is no automated headless render check (see below).
+right pane is the `ClassDiagramSurface`. Pan the canvas with left-drag, zoom
+with the scroll wheel, and drag the splitter bar to resize the panes. This
+interactive run is the verification of record for renderer output, tree
+presentation, temporal gestures, and uncovered navigation. It is not the
+verification of record for fixture load, Orders activation, or Diagram/Source
+switching. There is no automated headless pixel-render check (see below).
 
 ### Class-diagram surface regression pass
 
@@ -75,7 +144,7 @@ refactor: `start-screen`, `class-diagram`, `classifier-preview`, `source-view`,
 `tab-switching`, `popup`, `overlay`, and `docks-closed`.
 
 Interaction checklist: open/replace/promote/activate/close tabs; close fallback;
-diagram switch; source fallback; picker and placement-dial armed/closed order;
+picker and placement-dial armed/closed order;
 conflict focus, delete, keep-open and dismiss; burger/logo/node/nav/doc-switcher
 popups; shortcuts/fonts/icons/colors overlays; wide/narrow left and right dock
 toggles; browser debounce save and refresh restore; native save remains
@@ -117,15 +186,16 @@ independent, decisive reasons found while implementing it:
    There is no in-process "render this widget to an RGBA buffer" function to
    call, so the check cannot participate in `cargo test -p waml-editor`.
 
-Because the headless backend is platform-incomplete here **and** structurally
-unreachable from an external test crate, the automated headless test is omitted
-(a plan-sanctioned outcome). The interactive `cargo run` above is the
-verification of record — this applies equally to the `ProjectTree` panel added
-in Task 3: it too is a crate-private widget with no in-process render hook, so
-its `FileTree` rendering, fold state, and diagram-row click wiring are only
-exercised by the same interactive run (its data-layer pieces — `tree::build_tree`
-and the `tree_panel` id-map round-trip — remain unit-tested above). If the fork
-later fixes the Windows headless backend, the manual regression flow would be:
+Because the pixel renderer is platform-incomplete here **and** structurally
+unreachable from an external test crate, the automated headless pixel test is
+omitted (a plan-sanctioned outcome). The semantic Linux journey covers project
+readiness, Orders activation, and Diagram/Source switching, but it does not
+qualify pixel output or temporal gestures. The interactive `cargo run` above
+remains the verification of record for those visual and temporal properties,
+the `ProjectTree` fold state, and navigation outside the semantic journey.
+The data-layer pieces — `tree::build_tree` and the `tree_panel` id-map
+round-trip — remain unit-tested above. If the fork later fixes the Windows
+headless pixel backend, the manual regression flow would be:
 
 ```bash
 # (only works once the fork's Windows headless backend compiles)

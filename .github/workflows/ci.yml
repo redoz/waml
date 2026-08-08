@@ -76,6 +76,10 @@ jobs:
       - name: Cargo test
         run: cargo nextest run --workspace --profile ci
 
+      - name: Semantic editor UI test
+        if: runner.os == 'Linux'
+        run: cargo test -p waml-editor --features ui-tests --test ui -- --test-threads=1
+
       # nextest does not run doctests at all -- it would skip them silently, so
       # they get their own step.
       - name: Cargo doctest
