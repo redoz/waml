@@ -3,6 +3,7 @@ use waml::action::SyntaxChangeBatch;
 use waml::analysis::{prepare_candidate, PreparedCandidate, PreviousAnalyses};
 use waml::diagnostic::{Diagnostic, Severity};
 use waml::edit::{EditBatch, EditContext};
+use waml::index_md::reindex_source;
 use waml::source::{BundlePath, SourceBundle};
 use waml::uml::{ActionContext, Formatter};
 
@@ -173,9 +174,49 @@ pub struct FmtResult {
     pub skipped: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexChange {
+    Upsert { path: String, rendered: String },
+    Remove { path: String },
+}
+
 pub fn prepare(files: &[(String, String)]) -> Result<PreparedCandidate, String> {
     let source = SourceBundle::try_from_pairs(files.iter().cloned()).map_err(|e| e.to_string())?;
     prepare_candidate(source, None, 0).map_err(|e| e.to_string())
+}
+
+pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, String> {
+    let prepared = prepare(files)?;
+    let before: std::collections::BTreeMap<String, String> =
+        prepared.source().to_pairs().into_iter().collect();
+    let after: std::collections::BTreeMap<String, String> = reindex_source(prepared.source())
+        .to_pairs()
+        .into_iter()
+        .collect();
+    let paths: std::collections::BTreeSet<_> = before.keys().chain(after.keys()).collect();
+    let mut changes = Vec::new();
+
+    for path in paths {
+        if !path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("index.md"))
+        {
+            continue;
+        }
+        if before.get(path) == after.get(path) {
+            continue;
+        }
+        match after.get(path) {
+            Some(rendered) => changes.push(IndexChange::Upsert {
+                path: path.clone(),
+                rendered: rendered.clone(),
+            }),
+            None => changes.push(IndexChange::Remove { path: path.clone() }),
+        }
+    }
+
+    Ok(changes)
 }
 
 pub fn diagnostics(

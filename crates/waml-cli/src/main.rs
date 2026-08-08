@@ -98,6 +98,14 @@ enum Command {
         #[arg(long)]
         stdout: bool,
     },
+    /// Rebuild deterministic directory index documents.
+    Index {
+        /// One directory that contains the Markdown bundle.
+        path: PathBuf,
+        /// Do not write; exit non-zero when an index differs.
+        #[arg(long)]
+        check: bool,
+    },
     /// Create, rename, update, or remove a node.
     Node {
         #[command(subcommand)]
@@ -478,6 +486,7 @@ fn main() {
             }
             exit
         }
+        Command::Index { path, check } => run_index(&path, check),
         Command::Lsp { stdio: _ } => lsp::run(),
         Command::Serve {
             dir,
@@ -511,6 +520,45 @@ fn main() {
         } => run_export_site(&dir, &out, force),
     };
     std::process::exit(code);
+}
+
+fn run_index(path: &Path, check: bool) -> i32 {
+    let bundle = match io::read_physical_bundle(std::slice::from_ref(&path.to_path_buf())) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let changes = match commands::plan_indexes(&bundle.files) {
+        Ok(changes) => changes,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    if check {
+        for change in &changes {
+            let path = match change {
+                commands::IndexChange::Upsert { path, .. }
+                | commands::IndexChange::Remove { path } => path,
+            };
+            let display = bundle
+                .display_paths
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| bundle.root.join(path).display().to_string());
+            eprintln!("waml: {display}: generated index is stale");
+        }
+        return i32::from(!changes.is_empty());
+    }
+    match io::write_indexes(&bundle.root, &changes) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            2
+        }
+    }
 }
 
 fn node_dto(a: NodeCmd) -> OpDto {

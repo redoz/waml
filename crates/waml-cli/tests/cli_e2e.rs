@@ -552,3 +552,62 @@ fn export_site_without_an_embedded_editor_explains_itself() {
     assert!(stderr.contains("WAML_WEB_EMBED_DIR"), "{stderr}");
     assert!(!d.join("site").exists());
 }
+
+#[test]
+fn index_check_reports_each_stale_index_and_exits_one() {
+    let dir = tmp();
+    std::fs::write(dir.join("index.md"), "# Wrong\n").unwrap();
+    std::fs::write(
+        dir.join("order.md"),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+    )
+    .unwrap();
+
+    let output = bin()
+        .args(["index"])
+        .arg(&dir)
+        .arg("--check")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains(&format!(
+            "waml: {}: generated index is stale",
+            dir.join("index.md").display()
+        )),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn index_write_reconciles_then_check_is_clean() {
+    let dir = tmp();
+    std::fs::write(
+        dir.join("order.md"),
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n",
+    )
+    .unwrap();
+
+    assert!(bin().args(["index"]).arg(&dir).status().unwrap().success());
+    assert!(dir.join("index.md").is_file());
+    assert!(bin()
+        .args(["index"])
+        .arg(&dir)
+        .arg("--check")
+        .status()
+        .unwrap()
+        .success());
+}
+
+#[test]
+fn index_never_changes_non_index_documents() {
+    let dir = tmp();
+    let leaf = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n";
+    std::fs::write(dir.join("order.md"), leaf).unwrap();
+
+    assert!(bin().args(["index"]).arg(&dir).status().unwrap().success());
+
+    assert_eq!(std::fs::read_to_string(dir.join("order.md")).unwrap(), leaf);
+}

@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use waml::bundle_envelope::split_bundle;
 use waml::host::ingest::{ingest_markdown, IngestError, IngestErrorKind, IngestOptions};
 
+use crate::commands::IndexChange;
+
 /// Expand a valid Bundle Envelope v1 or retain the input as one plain document.
 pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(String, String)>> {
     match split_bundle(text).map_err(|source| {
@@ -194,6 +196,146 @@ pub fn read_physical_bundle(paths: &[PathBuf]) -> std::io::Result<PhysicalBundle
         files,
         display_paths,
     })
+}
+
+fn invalid_index_path(message: impl Into<String>) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, message.into())
+}
+
+fn escaped_index_path(message: impl Into<String>) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::PermissionDenied, message.into())
+}
+
+fn resolve_index_target(
+    root: &Path,
+    relative: &str,
+    create_parents: bool,
+) -> std::io::Result<PathBuf> {
+    let canonical_root = fs::canonicalize(root)?;
+    let mut components = Vec::new();
+    for component in Path::new(relative).components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(component) => components.push(component),
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                return Err(invalid_index_path(format!(
+                    "invalid index path: {relative}"
+                )));
+            }
+        }
+    }
+    let Some(filename) = components.pop() else {
+        return Err(invalid_index_path("index path is empty"));
+    };
+    if !filename.to_string_lossy().eq_ignore_ascii_case("index.md") {
+        return Err(invalid_index_path(format!(
+            "not an index document: {relative}"
+        )));
+    }
+
+    let mut current = canonical_root.clone();
+    for component in components {
+        let candidate = current.join(component);
+        match fs::symlink_metadata(&candidate) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(escaped_index_path(format!(
+                        "symlinked index parent: {}",
+                        candidate.display()
+                    )));
+                }
+                if !metadata.is_dir() {
+                    return Err(invalid_index_path(format!(
+                        "index parent is not a directory: {}",
+                        candidate.display()
+                    )));
+                }
+                let resolved = fs::canonicalize(&candidate)?;
+                if !resolved.starts_with(&canonical_root) {
+                    return Err(escaped_index_path(format!(
+                        "index path escapes root: {}",
+                        candidate.display()
+                    )));
+                }
+                current = resolved;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && create_parents => {
+                fs::create_dir(&candidate)?;
+                let resolved = fs::canonicalize(&candidate)?;
+                if !resolved.starts_with(&canonical_root) {
+                    return Err(escaped_index_path(format!(
+                        "index path escapes root: {}",
+                        candidate.display()
+                    )));
+                }
+                current = resolved;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let target = current.join(filename);
+    if !target.starts_with(&canonical_root) {
+        return Err(invalid_index_path(format!(
+            "index path escapes root: {relative}"
+        )));
+    }
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(escaped_index_path(format!(
+                    "symlinked index target: {}",
+                    target.display()
+                )));
+            }
+            let resolved = fs::canonicalize(&target)?;
+            if !resolved.starts_with(&canonical_root) {
+                return Err(escaped_index_path(format!(
+                    "index path escapes root: {}",
+                    target.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(target)
+}
+
+pub fn write_indexes(root: &Path, changes: &[IndexChange]) -> std::io::Result<()> {
+    for change in changes {
+        match change {
+            IndexChange::Upsert { path, rendered } => {
+                let target = resolve_index_target(root, path, true)?;
+                if let Ok(metadata) = fs::symlink_metadata(&target) {
+                    if !metadata.file_type().is_file() {
+                        return Err(invalid_index_path(format!(
+                            "index target is not a file: {}",
+                            target.display()
+                        )));
+                    }
+                }
+                fs::write(target, rendered.as_bytes())?;
+            }
+            IndexChange::Remove { path } => {
+                let target = resolve_index_target(root, path, false)?;
+                match fs::symlink_metadata(&target) {
+                    Ok(metadata) => {
+                        if !metadata.file_type().is_file() {
+                            return Err(invalid_index_path(format!(
+                                "index target is not a file: {}",
+                                target.display()
+                            )));
+                        }
+                        fs::remove_file(target)?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Read an NDJSON op-log: `(line_number, trimmed_line)` per non-blank line.
@@ -1340,6 +1482,121 @@ mod tests {
         );
         assert!(!temp.0.join("delete.md").exists());
         assert_eq!(directory_entries(&temp.0), ["nested", "update.md"]);
+    }
+
+    #[test]
+    fn write_indexes_rejects_traversal_before_creating_a_file() {
+        let temp = TempDir::new();
+        let outside = temp.0.parent().unwrap().join("outside-index.md");
+        let error = write_indexes(
+            &temp.0,
+            &[crate::commands::IndexChange::Upsert {
+                path: "../outside-index.md/index.md".into(),
+                rendered: "bad".into(),
+            }],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!outside.exists());
+    }
+
+    #[test]
+    fn write_indexes_rejects_an_absolute_target_before_removal() {
+        let temp = TempDir::new();
+        let outside = temp.0.parent().unwrap().join("absolute-index.md");
+        fs::write(&outside, "keep").unwrap();
+        let error = write_indexes(
+            &temp.0,
+            &[crate::commands::IndexChange::Remove {
+                path: outside.to_string_lossy().into_owned(),
+            }],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read_to_string(outside).unwrap(), "keep");
+    }
+
+    #[test]
+    fn write_indexes_rejects_a_non_index_basename_before_writing() {
+        let temp = TempDir::new();
+        let error = write_indexes(
+            &temp.0,
+            &[crate::commands::IndexChange::Upsert {
+                path: "nested/not-index.md".into(),
+                rendered: "bad".into(),
+            }],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!temp.0.join("nested").exists());
+    }
+
+    #[test]
+    fn write_indexes_rejects_a_symlinked_parent_before_writing() {
+        let temp = TempDir::new();
+        let outside = TempDir::new();
+        let link = temp.0.join("linked");
+        if create_dir_symlink(&outside.0, &link).is_err() {
+            return;
+        }
+
+        let error = write_indexes(
+            &temp.0,
+            &[crate::commands::IndexChange::Upsert {
+                path: "linked/index.md".into(),
+                rendered: "bad".into(),
+            }],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(!outside.0.join("index.md").exists());
+    }
+
+    #[test]
+    fn write_indexes_rejects_a_symlinked_index_before_removal() {
+        let temp = TempDir::new();
+        let outside = TempDir::new();
+        let target = outside.0.join("index.md");
+        fs::write(&target, "keep").unwrap();
+        let link = temp.0.join("index.md");
+        if create_file_symlink(&target, &link).is_err() {
+            return;
+        }
+
+        let error = write_indexes(
+            &temp.0,
+            &[crate::commands::IndexChange::Remove {
+                path: "index.md".into(),
+            }],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(target).unwrap(), "keep");
+    }
+
+    #[cfg(windows)]
+    fn create_dir_symlink(source: &Path, target: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(source, target)
+    }
+
+    #[cfg(not(windows))]
+    fn create_dir_symlink(source: &Path, target: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(source, target)
+    }
+
+    #[cfg(windows)]
+    fn create_file_symlink(source: &Path, target: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_file(source, target)
+    }
+
+    #[cfg(not(windows))]
+    fn create_file_symlink(source: &Path, target: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(source, target)
     }
 
     fn directory_entries(path: &Path) -> Vec<String> {
