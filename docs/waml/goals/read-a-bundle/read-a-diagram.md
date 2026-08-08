@@ -1,23 +1,21 @@
 # Read a Diagram
 
-**Goal:** A reader reads a UML document as a diagram.
+**Goal:** A reader reads each supported UML document as a diagram.
 
-**Why:** The diagram is the result that the reader wants. Text that stays text
-does not need this tool.
+**Why:** A diagram gives the visual structure that a reader expects from a UML
+document.
 
-**Done when:** Each diagram in this bundle draws with no overlap, with no
-clipped label, and with no crossing that a reader calls an error. This is true
-at the default zoom and at each zoom that the reader can select.
+**Done when:** Each supported diagram kind has a shipped reading contract for
+its visible scene, selection, camera, and empty or diagnostic state.
 
-**Status:** partial — unverified
+**Status:** planned
 **MVP:** yes
 
 ## Notes
 
-- Each kind controls its own diagram quality. Refer to the [UML](../uml/) cuts
-  for the content of each kind. Refer to [UML shared](../uml/shared/) for the
-  layout, the routing, and the labels below them.
-- Zoom is slow. The tool makes a raster of the text for each zoom size. Thus
-  interactive zoom gives only a few frames each second.
-- A diagram switcher and a view bar let the reader move between the views of a
-  document.
+- Each diagram-kind goal owns its rendering and interaction behavior. Refer to
+  the [UML goals](../uml/).
+- Shared layout, routing, labels, selection, and theme behavior is owned by the
+  [shared UML goals](../uml/shared/).
+- The current prose workaround for semantic view anchors and post-draw results
+  is recorded in [FG-003](../../waml-feature-gaps.md#fg-003--view-anchors-and-eventual-draw-results).

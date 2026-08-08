@@ -1,31 +1,45 @@
 # Navigate and Return
 
-**Goal:** A reader follows a link and then returns.
+**Goal:** A reader sees the current document path and returns to earlier view
+positions.
 
-**Why:** A bundle is a graph. To read a graph is to walk in it. A walk with no
-return path stops the reader.
+**Why:** A reader needs location context and a reliable return path while the
+reader moves through a bundle.
 
-**Done when:** A click on a link in text or on a node in a diagram opens the
-target. Back returns to the previous position, with the same scroll position
-and the same selection. Forward moves to the position again.
+**Done when:** The editor creates breadcrumbs for documents and directories,
+and Back and Forward restore documents and their view anchors.
 
-**Status:** done — unverified
+**Status:** done
 **MVP:** yes
+
+## Shipped behavior
+
+#### NATIVE-013 — breadcrumbs show the document and directory path
+
+**Applies to:** native
+
+**Given** a document or directory is active
+**When** the editor presents its breadcrumb
+**Then** the breadcrumb contains the labels and targets from the bundle root to the active item
+
+**Evidence:** `crates/waml-editor/src/navigation.rs::breadcrumb_for` `crates/waml-editor/src/navigation.rs::breadcrumb_for_directory`
+
+#### NATIVE-016 — back and forward restore document anchors
+
+**Applies to:** native
+
+**Given** the reader moved between documents with stored view anchors
+**When** the reader uses Back or Forward
+**Then** the editor restores the selected history document and its view anchor
+
+**Evidence:** `crates/waml-editor/src/app/tests/navigation.rs::manual_and_preview_transitions_follow_back_and_forward_history` `crates/waml-editor/tests/history_integration.rs::back_and_forward_restore_view_anchors_without_tab_metadata`
+
+## Verification gaps
+
+- NATIVE-013 — target: native; No native test asserts breadcrumb labels and targets.
 
 ## Notes
 
-- Tree rows, breadcrumb segments, and links in text use one navigation policy.
-  The policy covers documents, directories, and fragments in a document. Three
-  call sites with three behaviors make the function impossible to test. One
-  policy makes this goal possible to complete.
-- To reveal is not to navigate. A click on a breadcrumb shows the position of
-  the current document in the tree. It opens no document and it does not change
-  a folder.
-- The navigation history has a limit. A long session cannot increase it without
-  end.
-- A live view stays after a model revision if the revision is compatible with
-  it. If the revision is not compatible, the tool removes the view and makes it
-  again with the full lifecycle. The tool does not repair a view in part,
-  because a partially repaired view shows incorrect content.
-- Verify the accuracy of the position. Return to the correct document operates.
-  Return to the correct position in that document is not verified.
+- In-bundle document links are owned by [Open a Bundle](./open-a-bundle.md).
+- External links and tree reveal are owned by
+  [Browse the Tree](./browse-the-tree.md).

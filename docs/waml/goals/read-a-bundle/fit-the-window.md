@@ -1,33 +1,44 @@
 # Fit the Window
 
-**Goal:** The editor stays usable from a viewport as narrow as a telephone to a
-wide desktop viewport. A change of size does not remove the state of the
-reader.
+**Goal:** The editor keeps its responsive controls usable in narrow and wide
+viewports.
 
-**Why:** A reader opens a share link on the device that the reader has. A
-layout for desktop widths only makes the link useless on many devices.
+**Why:** A reader can open the editor on devices with different viewport
+widths.
 
-**Done when:** At a width of approximately 390 pixels, the caption controls,
-the document, the canvas, and the dock panels stay usable. A change across the
-width threshold does not change the open document and does not change the
-panels that the reader selected. The threshold has hysteresis, thus a drag near
-the threshold does not oscillate.
+**Done when:** The shell enters and leaves narrow mode with hysteresis, and the
+tree toggle stays at the responsive shell edge in both layouts.
 
-**Status:** partial — unverified
+**Status:** done
 **MVP:** yes
+
+## Shipped behavior
+
+#### NATIVE-006 — shell width changes use hysteresis
+
+**Applies to:** native
+
+**Given** the editor is in a wide or narrow shell mode
+**When** the viewport width crosses a responsive threshold
+**Then** the editor enters narrow mode below 640 pixels and leaves it above 680 pixels
+**And** the current mode remains stable inside the hysteresis band
+
+**Evidence:** `crates/waml-editor/src/app/tests/menus.rs::breakpoint_enters_below_640_and_leaves_above_680` `crates/waml-editor/src/app/tests/menus.rs::breakpoint_preserves_mode_through_the_hysteresis_band`
+
+#### NATIVE-007 — the tree toggle follows the responsive shell edge
+
+**Applies to:** native
+
+**Given** the editor presents the responsive shell
+**When** the shell changes between wide and narrow layout
+**Then** the tree toggle stays at the column edge or the row head for that layout
+
+**Evidence:** `crates/waml-editor/src/app/tests/shell.rs::the_toggle_rides_the_column_edge_and_falls_back_to_the_row_head`
 
 ## Notes
 
-- There is one chrome mode with two states: wide and narrow. There is no set of
-  intermediate layouts. The narrow state puts the tree and the inspector above
-  the view. The wide state puts them at the side.
-- The width that starts the narrow state is less than the width that starts the
-  wide state. This difference prevents oscillation.
-- A change across the threshold moves chrome only. It must not close a
-  document, change the active tab, or change the panels that the reader
-  selected.
-- Docked collapsible panels, dock splitters, and a caption bar with two rows
-  operate together with this goal. A change to chrome can make text disappear
-  when one fixed child fills a fixed parent.
-- Touch input operates in the web form, and this includes pinch on the canvas.
-  Thus a narrow viewport is a real target.
+- Dock state and non-width shell behavior are owned by
+  [Use the Shell](./use-the-shell.md).
+- The current prose workaround for responsive view anchors and post-draw
+  results is recorded in
+  [FG-003](../../waml-feature-gaps.md#fg-003--view-anchors-and-eventual-draw-results).

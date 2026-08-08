@@ -1,10 +1,12 @@
 # Read a Bundle
 
-A reader opens a bundle and moves in it.
+A reader opens a bundle, moves through its content, and controls its reading workspace.
 
-* [Open a Bundle](./open-a-bundle.md) - A reader opens a bundle from a folder, a recent entry, or a link.
-* [Browse the Tree](./browse-the-tree.md) - A reader sees the structure and opens documents from it.
-* [Read a Document](./read-a-document.md) - A reader reads an OKF document as formatted text.
-* [Read a Diagram](./read-a-diagram.md) - A reader reads a UML document as a diagram.
-* [Navigate and Return](./navigate-and-return.md) - A reader follows a link and then returns.
-* [Fit the Window](./fit-the-window.md) - The editor stays usable from a narrow viewport to a wide one.
+* [Open a Bundle](./open-a-bundle.md) - Open a bundle and keep the prior workspace after an open failure.
+* [Browse the Tree](./browse-the-tree.md) - Browse, reveal, and refresh bundle content in the project tree.
+* [Read a Document](./read-a-document.md) - Read a Markdown document in read-only presentation.
+* [Read a Diagram](./read-a-diagram.md) - Read each supported UML document as a diagram.
+* [Navigate and Return](./navigate-and-return.md) - Use breadcrumbs and restore earlier view positions.
+* [Fit the Window](./fit-the-window.md) - Use the editor in narrow and wide responsive layouts.
+* [Use the Shell](./use-the-shell.md) - Use docks and document-shell controls.
+* [Work with Tabs](./work-with-tabs.md) - Use preview and permanent document tabs.
