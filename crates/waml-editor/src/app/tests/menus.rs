@@ -169,6 +169,7 @@ fn document_switcher_items_preserve_order_and_tab_identity() {
     assert!(items.iter().all(|item| item.enabled && !item.danger));
 }
 
+// Scenario: NATIVE-006
 #[test]
 fn breakpoint_enters_below_640_and_leaves_above_680() {
     assert!(next_narrow(false, 639.9));

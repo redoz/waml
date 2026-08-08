@@ -142,7 +142,6 @@ const exportBundle = async (page, into) => {
 // run as skipped.
 const options = skipReason ? { skip: skipReason } : {};
 
-// Scenario: BROWSER-001
 // Scenario: BROWSER-004
 // Scenario: BROWSER-006
 // Scenario: BROWSER-011

@@ -91,7 +91,6 @@ fn editable_mount_emits_an_exact_revisioned_source_proposal() {
     ));
 }
 
-// Scenario: NATIVE-022
 #[test]
 fn read_only_mount_never_emits_a_source_proposal() {
     let (mut cx, editor, mut session) = mounted("# Order\n");
