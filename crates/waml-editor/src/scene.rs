@@ -869,15 +869,26 @@ fn stress_layout(
             )
         })
         .collect();
-    // One diagnostic per solver-dropped placement (a genuine contradiction —
-    // NOT a compile-time drop like an unknown operand, which never reaches
-    // the solver), mirroring the authored-layout path's `apply_axis`/`eq`
-    // (geometry.rs) so a contradictory diagram still reports
-    // `DiagCode::LayoutConflict`.
-    diags.extend(dropped.iter().take(solver_dropped_count).map(|_| {
+    // One diagnostic per dropped constraint. The solver-dropped prefix is a
+    // genuine contradiction, mirroring the authored-layout path's
+    // `apply_axis`/`eq` (geometry.rs). The compile-time suffix
+    // (`compiled.dropped`: unknown/sizeless operand, alignment with no
+    // shared axis, group-center align) never reaches the solver but must
+    // surface too — the replaced geometry path warned for each of these
+    // ("alignment edges share no axis", ...), and swallowing them leaves an
+    // authored statement silently without effect.
+    diags.extend(dropped.iter().enumerate().map(|(i, d)| {
+        let msg = if i < solver_dropped_count {
+            "conflicting layout constraint dropped"
+        } else {
+            match &d.relation {
+                Constraint::Align { .. } => "alignment constraint could not be applied; dropped",
+                Constraint::Place { .. } => "placement constraint could not be applied; dropped",
+            }
+        };
         Diagnostic::warn(
             waml::diagnostic::DiagCode::LayoutConflict,
-            "conflicting layout constraint dropped",
+            msg,
             diagram.key.clone(),
             0,
         )
@@ -1589,6 +1600,44 @@ mod tests {
             scene.conflicts.is_empty(),
             "clean diagram must report no conflicts: {:?}",
             scene.conflicts
+        );
+    }
+
+    #[test]
+    fn compile_dropped_alignment_surfaces_a_layout_conflict_diag() {
+        use waml::diagnostic::DiagCode;
+        use waml::layout::{Anchored, Edge, LayoutStatement, NameRef, Operand, OperandRef};
+        // `align Order.top, Customer.left` shares no axis: constrain::compile
+        // records it as a compile-time drop, so it never reaches the solver.
+        // The replaced geometry path warned ("alignment edges share no axis");
+        // the unified path must not swallow it silently.
+        let model = mini();
+        let mut diagram = model.diagrams[0].clone();
+        let anchored = |slug: &str, edge| Anchored {
+            edge: Some(edge),
+            operand: Operand {
+                ref_: OperandRef::Name(NameRef::Link {
+                    title: title_for(&model, slug),
+                    slug: slug.to_string(),
+                }),
+                axis: None,
+                hints: Vec::new(),
+            },
+        };
+        diagram.layout.push(LayoutStatement::Alignment {
+            left: anchored("order", Edge::Top),
+            right: anchored("customer", Edge::Left),
+        });
+
+        let (_, diags) = build_scene(
+            &model,
+            &diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        assert!(
+            diags.iter().any(|d| d.code == DiagCode::LayoutConflict),
+            "a compile-dropped alignment must surface a LayoutConflict diagnostic: {diags:?}"
         );
     }
 
