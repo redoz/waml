@@ -363,11 +363,13 @@ pub fn solve_diagram_routed(
 
 /// Terminal-label width floor per connected pair.
 ///
-/// Within ONE edge the two terminal labels share the gap, so their widths add.
-/// ACROSS parallel edges between the same pair they do not: each edge's labels
-/// ride its own route, so the gap only has to hold the widest edge. Summing
-/// there would blow a facing-border gap out by a multiple of what one edge needs.
-fn connected_label_widths(
+/// Within ONE edge the two terminal labels share the gap, so their widths
+/// add. ACROSS parallel edges between the same pair they do not: each edge's
+/// labels ride its own route, so the gap only has to hold the widest edge.
+/// Shared by `solve_diagram_routed` (the wasm/CLI path) and the editor's
+/// unified stress path (`constrain::compile`'s `label_widths` input), so the
+/// two paths compute this floor identically.
+pub fn connected_label_widths(
     edges: &[(BoxId, BoxId)],
     label_requests: &[label::LabelRequest],
 ) -> BTreeMap<(BoxId, BoxId), f64> {

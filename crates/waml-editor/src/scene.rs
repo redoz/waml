@@ -8,8 +8,8 @@ use waml::model::{
 };
 use waml::multiplicity::Multiplicity;
 use waml::solve::{
-    route, solve_diagram, stress, BoxId, BoxKind, FlagSet, Rect, Size, SizeMap, SolveConfig,
-    Solved, SolvedGroup, SolvedRouting,
+    constrain, resolve, route, solve_diagram, stress, BoxId, BoxKind, Constraint, DroppedPlacement,
+    FlagSet, Rect, Size, SizeMap, SolveConfig, Solved, SolvedGroup, SolvedRouting,
 };
 
 use crate::diagram_display::ResolvedDiagramDisplay;
@@ -261,16 +261,6 @@ pub fn project_scene_node_with_display(
     }
 }
 
-/// A diagram with no authored `## Layout` section gets the semi-smart
-/// stress-majorization default instead of the constraint solver's edge-blind
-/// left-to-right strip — regardless of whether it has member groups. Groups
-/// are not layout: `stress_default` folds them into the solve as a soft
-/// cohesion force (see `stress::layout_grouped`), so an authored `## Layout`
-/// section is what routes a diagram to `solve_diagram`, not group membership.
-fn use_stress_default(diagram: &Diagram) -> bool {
-    diagram.layout.is_empty()
-}
-
 /// The model's drawable edges, in `model.edges` order, with self-loops dropped
 /// (`source != target`, Node endpoints only). This is the single load-bearing
 /// definition tying the router's ordered `Solved.routes` stream to the scene:
@@ -424,19 +414,12 @@ pub fn conflict_participants(c: &SceneConflict) -> Vec<String> {
     out
 }
 
-/// Flatten a `DiagramGroup` forest into `stress::GroupSpec`s (member indices
-/// into `index`, resolved recursively so a nested group's members are also
-/// listed in every ancestor) plus a parallel `(title, depth)` list for
-/// emission, in the same pre-order the input tree is walked. Member keys
-/// absent from `index` (not part of this diagram's sized set) are skipped, as
-/// is the parser's trivial (unnamed, childless) member group.
-/// Per-kept-group bookkeeping alongside `stress::GroupSpec`: what the hull is
-/// labelled, how deep it sits, and which kept group encloses it. `parent` is the
-/// nearest *kept* ancestor — a dropped one contributed no resolved members, so it
-/// can share none and skipping it changes no answer.
+/// Per-kept-group bookkeeping for the entanglement warning: what the hull is
+/// labelled, how deep it sits, and which kept group encloses it. `parent` is
+/// the nearest *kept* ancestor — a dropped one contributed no resolved
+/// members, so it can share none and skipping it changes no answer.
 struct GroupMeta {
     title: Option<String>,
-    depth: u8,
     parent: Option<usize>,
 }
 
@@ -451,22 +434,34 @@ impl GroupMeta {
     }
 }
 
+/// Flatten a `DiagramGroup` forest into member-index sets (resolved against
+/// `index`, a sizes-derived key->index map, so an unresolved/unsized member
+/// key never contributes a phantom hull) plus a parallel `GroupMeta` list, in
+/// the same pre-order the input tree is walked.
+///
+/// Purely diagnostic: used ONLY to compute the entanglement warning below.
+/// Real cohesion/hulls/routing come from `constrain::Compiled` (the box
+/// forest `resolve::resolve` builds), which enforces single ownership across
+/// the WHOLE scene — a node declared under two `### ` sections is legal WAML
+/// (the entanglement warning exists precisely to flag it) but can only be
+/// parented ONCE in a layout tree, so `resolve::add_group` drops the second
+/// claim. Re-deriving straight from the raw, unresolved `DiagramGroup` forest
+/// here is what lets a doubly-declared member still show up in BOTH sets.
 fn flatten_groups(
     groups: &[DiagramGroup],
     index: &std::collections::BTreeMap<&str, usize>,
-    depth: u8,
     parent: Option<usize>,
-    specs: &mut Vec<stress::GroupSpec>,
+    specs: &mut Vec<std::collections::BTreeSet<usize>>,
     meta: &mut Vec<GroupMeta>,
 ) {
     fn collect_members(
         g: &DiagramGroup,
         index: &std::collections::BTreeMap<&str, usize>,
-        acc: &mut Vec<usize>,
+        acc: &mut std::collections::BTreeSet<usize>,
     ) {
         for m in &g.members {
             if let Some(&i) = index.get(m.as_str()) {
-                acc.push(i);
+                acc.insert(i);
             }
         }
         for c in &g.children {
@@ -476,35 +471,25 @@ fn flatten_groups(
 
     for g in groups {
         // The parser wraps a diagram's flat `## Members` list in a trivial
-        // (unnamed, childless) member group. That is not an authored cluster —
-        // treating it as one would give every group-less diagram whole-diagram
-        // cohesion plus a phantom whole-canvas hull. Skip it; a *named* group
-        // (or an unnamed one that carries real `###` children) is real.
+        // (unnamed, childless) member group. Skip it; a *named* group (or an
+        // unnamed one that carries real `###` children) is real.
         if g.name.is_empty() && g.children.is_empty() {
             continue;
         }
-        let mut members = Vec::new();
+        let mut members = std::collections::BTreeSet::new();
         collect_members(g, index, &mut members);
-        // A group whose members are all unresolved/unsized has no geometry: its
-        // hull would be a degenerate `Rect{0,0,0,0}` at the origin, which would
-        // become a phantom route obstacle and a zero-size dashed overlay. Drop
-        // it (children are still walked — a child may resolve).
         let mut child_parent = parent;
         if !members.is_empty() {
-            specs.push(stress::GroupSpec { members, depth });
+            specs.push(members);
             let title = if g.name.is_empty() {
                 None
             } else {
                 Some(g.name.clone())
             };
             child_parent = Some(meta.len());
-            meta.push(GroupMeta {
-                title,
-                depth,
-                parent,
-            });
+            meta.push(GroupMeta { title, parent });
         }
-        flatten_groups(&g.children, index, depth + 1, child_parent, specs, meta);
+        flatten_groups(&g.children, index, child_parent, specs, meta);
     }
 }
 
@@ -521,12 +506,10 @@ fn flatten_groups(
 /// Runs on the same resolved indices `flatten_groups` produced, not on member
 /// names: a shared key that resolves to nothing has no geometry, so it cannot
 /// tangle anything and must not raise a warning.
-fn entangled_group_pairs(specs: &[stress::GroupSpec], meta: &[GroupMeta]) -> Vec<(String, String)> {
-    let sets: Vec<std::collections::BTreeSet<usize>> = specs
-        .iter()
-        .map(|s| s.members.iter().copied().collect())
-        .collect();
-
+fn entangled_group_pairs(
+    sets: &[std::collections::BTreeSet<usize>],
+    meta: &[GroupMeta],
+) -> Vec<(String, String)> {
     let encloses = |anc: usize, mut node: usize| -> bool {
         while let Some(p) = meta[node].parent {
             if p == anc {
@@ -558,7 +541,7 @@ fn entangled_group_pairs(specs: &[stress::GroupSpec], meta: &[GroupMeta]) -> Vec
 /// routes plus both router inputs, so the caller can hand them to
 /// `place_labels_with_reroute` and reroute under the same containment rules.
 ///
-/// Split out of `stress_default` so containment-aware routing is testable
+/// Split out of `stress_layout` so containment-aware routing is testable
 /// against hand-placed geometry (the stress solve's own placement is not
 /// controllable enough to stage a crossing).
 #[allow(clippy::type_complexity)]
@@ -612,30 +595,94 @@ fn route_with_groups(
     (routes, rect_map, boxes)
 }
 
-/// Native-only stress/grid default layout. Kept at this call seam (not inside
-/// `solve_diagram`) so the wasm/web path stays unchanged — web keeps dagre.
-/// Node set is every sized member; the caller's undirected drawable edges among
-/// them drive the stress solve, and `diagram_groups` folds in as a soft
-/// cohesion force (`stress::layout_grouped`). An edgeless, groupless set falls
-/// back to `grid_pack`; edgeless-but-grouped still goes through
-/// `layout_grouped` so cohesion still applies.
-fn stress_default(
-    model_edges: &[&waml::model::Edge],
-    sizes: &SizeMap,
-    diagram_groups: &[DiagramGroup],
-) -> (Solved, SolvedRouting, Vec<(String, String)>) {
-    use std::collections::{BTreeMap, BTreeSet};
+/// Order-independent key for an unordered box pair (local twin of
+/// `waml::solve::geometry::pair`, which is `pub(super)` and not visible
+/// outside the `waml` crate).
+fn pair(a: &BoxId, b: &BoxId) -> (BoxId, BoxId) {
+    if a <= b {
+        (a.clone(), b.clone())
+    } else {
+        (b.clone(), a.clone())
+    }
+}
 
-    let keys: Vec<String> = sizes.keys().cloned().collect();
+/// Unordered node<->node edge-connected pairs, so `constrain::compile`'s gap
+/// policy floors a `Place` gap between associated boxes exactly like the
+/// wasm/CLI path's `geometry::solve_with_rects_labeled` does. Group-as-endpoint
+/// edges are ignored (mirrors that function).
+fn connected_pairs(edges: &[(BoxId, BoxId)]) -> std::collections::BTreeSet<(BoxId, BoxId)> {
+    let mut connected = std::collections::BTreeSet::new();
+    for (a, b) in edges {
+        if matches!(a, BoxId::Node(_)) && matches!(b, BoxId::Node(_)) {
+            connected.insert(pair(a, b));
+        }
+    }
+    connected
+}
+
+/// The unified placement path: authored `## Layout` statements compile
+/// (`constrain::compile`) into hard separation/alignment constraints
+/// projected inside the stress solve (`stress::layout_constrained`), instead
+/// of switching the whole diagram onto the edge-blind rigid-offset strip
+/// packer the moment any `place` statement is authored. Every diagram --
+/// hinted or not, grouped or not -- goes through this one function.
+///
+/// Node set is `compiled.keys` (scene order) plus any sized-but-unauthored
+/// key appended after (still renders, matching the old "every sized member
+/// solves" contract). `compiled.seps`' boundary-var indices assume a base
+/// offset of `compiled.keys.len()`; those are shifted to `ids.len()` so they
+/// land on `layout_constrained`'s own extra-var space, which starts after
+/// EVERY id (including the appended ones).
+#[allow(clippy::type_complexity)]
+fn stress_layout(
+    diagram: &Diagram,
+    compiled: &constrain::Compiled,
+    sizes: &SizeMap,
+    model_edges: &[&waml::model::Edge],
+) -> (
+    Solved,
+    SolvedRouting,
+    Vec<(String, String)>,
+    Vec<DroppedPlacement>,
+    Vec<Diagnostic>,
+) {
+    use std::collections::{BTreeMap, BTreeSet};
+    use waml::solve::vpsc::Sep;
+
+    let base_cfg = SolveConfig::default();
+    let n = compiled.keys.len();
+    let mut keys = compiled.keys.clone();
+    let mut dims: Vec<Size> = (0..n)
+        .map(|i| {
+            if compiled.flags[i].collapsed {
+                base_cfg.chip
+            } else {
+                sizes.get(&keys[i]).copied().unwrap_or(base_cfg.chip)
+            }
+        })
+        .collect();
+
+    // Every sized key the scene never mentioned still renders.
+    let known: BTreeSet<&str> = keys.iter().map(|k| k.as_str()).collect();
+    let mut extra_keys: Vec<String> = sizes
+        .keys()
+        .filter(|k| !known.contains(k.as_str()))
+        .cloned()
+        .collect();
+    extra_keys.sort(); // deterministic: no authored order exists for these
+    let extra = extra_keys.len();
+    for k in &extra_keys {
+        dims.push(sizes[k]);
+    }
+    keys.extend(extra_keys);
+
     let ids: Vec<BoxId> = keys.iter().cloned().map(BoxId::Node).collect();
-    let dims: Vec<Size> = keys.iter().map(|k| sizes[k]).collect();
     let index: BTreeMap<&str, usize> = keys
         .iter()
         .enumerate()
         .map(|(i, k)| (k.as_str(), i))
         .collect();
 
-    // Undirected edge index pairs among members; drop self-loops and duplicates.
     let mut seen = BTreeSet::new();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     for e in model_edges {
@@ -651,67 +698,192 @@ fn stress_default(
         }
     }
 
-    let mut group_specs: Vec<stress::GroupSpec> = Vec::new();
-    let mut group_meta: Vec<GroupMeta> = Vec::new();
-    flatten_groups(
-        diagram_groups,
-        &index,
-        0,
-        None,
-        &mut group_specs,
-        &mut group_meta,
-    );
-    let entangled = entangled_group_pairs(&group_specs, &group_meta);
-
-    let cfg = stress::StressConfig::default();
-    let (rects, hulls) = if pairs.is_empty() && group_specs.is_empty() {
-        (stress::grid_pack(&ids, &dims, &cfg), Vec::new())
-    } else {
-        stress::layout_grouped(&ids, &dims, &pairs, &group_specs, &cfg)
+    let shift = |i: usize| if i < n { i } else { i + extra };
+    let shift_sep = |s: &Sep| Sep {
+        left: shift(s.left),
+        right: shift(s.right),
+        ..*s
+    };
+    let seps = stress::SepSpecs {
+        x: compiled.seps.x.iter().map(shift_sep).collect(),
+        y: compiled.seps.y.iter().map(shift_sep).collect(),
+        extra_vars: compiled.seps.extra_vars,
     };
 
-    // Directed (BoxId, BoxId) edge list from the caller's shared
-    // `drawable_edges` list (P-5: computed once in build_scene, not again
-    // here), so routes come out in the exact order build_scene consumes them.
-    // route::route presence-filters internally.
+    let cohesion_groups: Vec<stress::GroupSpec> = compiled
+        .group_specs
+        .iter()
+        .cloned()
+        .chain(compiled.inline_specs.iter().cloned())
+        .collect();
+
+    let cfg = stress::StressConfig::default();
+    let (rects, all_hulls, (dx, dy)) =
+        stress::layout_constrained(&ids, &dims, &pairs, &cohesion_groups, &seps, &cfg);
+    // `layout_constrained`'s hull list is one-per-`cohesion_groups`-entry;
+    // inline groups (appended after the real ones) never get a hull.
+    let hulls: Vec<Rect> = all_hulls
+        .into_iter()
+        .take(compiled.group_specs.len())
+        .collect();
+
     let route_edges: Vec<(BoxId, BoxId)> = model_edges
         .iter()
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
-
-    let depths: Vec<u8> = group_meta.iter().map(|m| m.depth).collect();
-    let (routes, rect_map, boxes) =
-        route_with_groups(&keys, &rects, &hulls, &group_specs, &depths, &route_edges);
+    let group_depths: Vec<u8> = compiled.group_meta.iter().map(|(_, d, _)| *d).collect();
+    let (routes, rect_map, boxes) = route_with_groups(
+        &keys,
+        &rects,
+        &hulls,
+        &compiled.group_specs,
+        &group_depths,
+        &route_edges,
+    );
 
     let groups: Vec<SolvedGroup> = hulls
         .into_iter()
-        .zip(group_meta)
-        .map(|(rect, m)| SolvedGroup {
+        .zip(compiled.group_meta.iter())
+        .map(|(rect, (title, depth, shape))| SolvedGroup {
             rect,
-            shape: Shape::Shrink,
-            title: m.title,
-            depth: m.depth,
+            shape: *shape,
+            title: title.clone(),
+            depth: *depth,
         })
         .collect();
 
+    let mut flags: BTreeMap<String, FlagSet> = BTreeMap::new();
+    for (key, flag) in keys.iter().take(n).zip(compiled.flags.iter()) {
+        if flag.emphasized || flag.collapsed {
+            flags.insert(key.clone(), *flag);
+        }
+    }
+
     let solved = Solved {
-        nodes: keys.into_iter().zip(rects).collect(),
+        nodes: keys.iter().cloned().zip(rects).collect(),
         groups,
-        flags: BTreeMap::new(),
+        flags,
         routes,
         labels: Vec::new(),
         label_reroutes: 0,
         label_leaders: 0,
     };
-    // Hand the router's own inputs back: a label reroute must see the same
-    // group boxes/hulls the first pass routed against, or it can reroute an
-    // edge straight through a cluster the initial route went around.
     let routing = SolvedRouting {
         boxes,
         rects: rect_map,
         edges: route_edges.into_iter().map(|(s, t)| (s, t, None)).collect(),
     };
-    (solved, routing, entangled)
+
+    // Entanglement is diagnostic-only, re-derived straight from the raw,
+    // unresolved `diagram.groups` forest against a sizes-keyed index (see
+    // `flatten_groups`' doc): the box forest `constrain::Compiled` came from
+    // enforces single ownership, so a node declared under two `### `
+    // sections — legal WAML, and exactly what this warning exists to flag —
+    // only keeps its FIRST group membership there.
+    let legacy_index: BTreeMap<&str, usize> = sizes
+        .keys()
+        .enumerate()
+        .map(|(i, k)| (k.as_str(), i))
+        .collect();
+    let mut legacy_specs: Vec<BTreeSet<usize>> = Vec::new();
+    let mut legacy_meta: Vec<GroupMeta> = Vec::new();
+    flatten_groups(
+        &diagram.groups,
+        &legacy_index,
+        None,
+        &mut legacy_specs,
+        &mut legacy_meta,
+    );
+    let entangled = entangled_group_pairs(&legacy_specs, &legacy_meta);
+
+    // Solver-dropped seps -> DroppedPlacement, deduped by relation (a
+    // diagonal dropped on both axes must report once). `conflicts_with`: the
+    // OTHER live seps on the same axis pinning the exact same variable pair
+    // (a direct A-vs-B reversal, e.g. authoring both `a left of b` and
+    // `b left of a`) — narrower than the authored-layout path's full rigid-
+    // component reachability (geometry.rs's `component_constraints`), which
+    // `vpsc::project`'s dropped-index-only return doesn't expose, but it
+    // covers the direct-contradiction case the conflict list exists for.
+    let same_pair_conflicts = |seps: &[Sep],
+                               provenance: &[Option<Constraint>],
+                               dropped_idx: usize,
+                               own: &Constraint|
+     -> Vec<Constraint> {
+        let d = seps[dropped_idx];
+        let mut out = Vec::new();
+        for (j, s) in seps.iter().enumerate() {
+            if j == dropped_idx {
+                continue;
+            }
+            let same_pair = (s.left == d.left && s.right == d.right)
+                || (s.left == d.right && s.right == d.left);
+            if !same_pair {
+                continue;
+            }
+            if let Some(Some(c)) = provenance.get(j) {
+                if c != own && !out.contains(c) {
+                    out.push(c.clone());
+                }
+            }
+        }
+        out
+    };
+
+    let mut relations: Vec<(Constraint, Vec<Constraint>)> = Vec::new();
+    for &i in &dx {
+        if let Some(Some(c)) = compiled.provenance_x.get(i) {
+            if !relations.iter().any(|(r, _)| r == c) {
+                let conflicts = same_pair_conflicts(&seps.x, &compiled.provenance_x, i, c);
+                relations.push((c.clone(), conflicts));
+            }
+        }
+    }
+    for &i in &dy {
+        if let Some(Some(c)) = compiled.provenance_y.get(i) {
+            if !relations.iter().any(|(r, _)| r == c) {
+                let conflicts = same_pair_conflicts(&seps.y, &compiled.provenance_y, i, c);
+                relations.push((c.clone(), conflicts));
+            }
+        }
+    }
+    let solver_dropped_count = relations.len();
+    let mut dropped: Vec<DroppedPlacement> = relations
+        .into_iter()
+        .map(|(relation, conflicts_with)| DroppedPlacement {
+            relation,
+            conflicts_with,
+        })
+        .collect();
+    dropped.extend(compiled.dropped.iter().cloned());
+
+    let mut diags: Vec<Diagnostic> = entangled
+        .iter()
+        .map(|(a, b)| {
+            Diagnostic::warn(
+                waml::diagnostic::DiagCode::EntangledGroups,
+                format!(
+                    "groups `{a}` and `{b}` share members without nesting; their clusters cannot be separated and will overlap"
+                ),
+                diagram.key.clone(),
+                0,
+            )
+        })
+        .collect();
+    // One diagnostic per solver-dropped placement (a genuine contradiction —
+    // NOT a compile-time drop like an unknown operand, which never reaches
+    // the solver), mirroring the authored-layout path's `apply_axis`/`eq`
+    // (geometry.rs) so a contradictory diagram still reports
+    // `DiagCode::LayoutConflict`.
+    diags.extend(dropped.iter().take(solver_dropped_count).map(|_| {
+        Diagnostic::warn(
+            waml::diagnostic::DiagCode::LayoutConflict,
+            "conflicting layout constraint dropped",
+            diagram.key.clone(),
+            0,
+        )
+    }));
+
+    (solved, routing, entangled, dropped, diags)
 }
 
 /// Straight-line fallback route between two node centers, emitted as an
@@ -773,36 +945,25 @@ pub fn build_scene(
     // be sized to hold each pair's terminal labels. These requests index into
     // `model_edges`, which is the same list (same order) as `edges`.
     let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
-    let (mut solved, diags, dropped, routing) = if use_stress_default(diagram) {
-        let (solved, routing, entangled) = stress_default(&model_edges, &sizes, &diagram.groups);
-        // Groups that share an element without nesting cannot be separated by
-        // the stress solve; say so instead of shipping tangled hulls silently.
-        // `entangled` comes back from the solve itself, off the same resolved
-        // member indices the solver refused to separate — so the warning can
-        // never disagree with what actually shipped.
-        let diags: Vec<Diagnostic> = entangled
-            .into_iter()
-            .map(|(a, b)| {
-                Diagnostic::warn(
-                    waml::diagnostic::DiagCode::EntangledGroups,
-                    format!(
-                        "groups `{a}` and `{b}` share members without nesting; their clusters cannot be separated and will overlap"
-                    ),
-                    diagram.key.clone(),
-                    0,
-                )
-            })
-            .collect();
-        (solved, diags, Vec::new(), routing)
-    } else {
-        waml::solve::solve_diagram_routed(
-            diagram,
-            &edges,
-            &sizes,
-            &sizing_requests,
-            &SolveConfig::default(),
-        )
-    };
+
+    // Every diagram -- hinted or not, grouped or not -- goes through the one
+    // unified placement path: authored `## Layout` statements compile into
+    // hard separation/alignment constraints projected inside the stress
+    // solve, instead of switching the whole diagram onto the edge-blind
+    // rigid-offset strip packer the moment any `place` statement is authored.
+    let (scene, resolve_diags) = resolve::resolve(diagram);
+    let connected = connected_pairs(&edges);
+    let label_widths = waml::solve::connected_label_widths(&edges, &sizing_requests);
+    let compiled = constrain::compile(
+        &scene,
+        &sizes,
+        &label_widths,
+        &connected,
+        &SolveConfig::default(),
+    );
+    let (mut solved, routing, _entangled, dropped, mut diags) =
+        stress_layout(diagram, &compiled, &sizes, &model_edges);
+    diags.extend(resolve_diags);
 
     let mut nodes = Vec::with_capacity(solved.nodes.len());
     for (key, rect) in &solved.nodes {
@@ -1858,16 +2019,25 @@ mod tests {
     }
 
     #[test]
-    fn stress_default_populates_routes() {
+    fn stress_layout_populates_routes() {
         let model = mini();
-        // stress_default is layout-agnostic (it reads model + sizes, not the
-        // diagram's layout block), so any sized diagram exercises it.
-        let sizes = crate::sizing::size_map(
-            &model,
-            &model.diagrams[0],
-            &std::collections::HashSet::new(),
+        let diagram = &model.diagrams[0];
+        let sizes = crate::sizing::size_map(&model, diagram, &std::collections::HashSet::new());
+        let model_edges = drawable_edges(&model);
+        let edges: Vec<(BoxId, BoxId)> = model_edges
+            .iter()
+            .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
+            .collect();
+        let (scene, _) = resolve::resolve(diagram);
+        let connected = connected_pairs(&edges);
+        let compiled = constrain::compile(
+            &scene,
+            &sizes,
+            &std::collections::BTreeMap::new(),
+            &connected,
+            &SolveConfig::default(),
         );
-        let (solved, _routing, _entangled) = stress_default(&drawable_edges(&model), &sizes, &[]);
+        let (solved, ..) = stress_layout(diagram, &compiled, &sizes, &model_edges);
         // mini declares one associates edge order -> customer.
         assert_eq!(solved.routes.len(), 1);
         assert!(!solved.routes[0].points.is_empty());
@@ -2069,13 +2239,10 @@ mod tests {
     }
 
     #[test]
-    fn stress_default_scene_edges_carry_points() {
+    fn unified_layout_scene_edges_carry_points() {
         let model = mini();
-        // Clearing `layout` routes build_scene through stress_default (see
-        // use_stress_default: layout.is_empty()).
         let mut diagram = model.diagrams[0].clone();
         diagram.layout = Vec::new();
-        assert!(use_stress_default(&diagram), "expected stress path");
 
         let (scene, _) = build_scene(
             &model,
@@ -2091,7 +2258,7 @@ mod tests {
     }
 
     #[test]
-    fn stress_default_ignores_the_implicit_unnamed_member_group() {
+    fn unified_layout_ignores_the_implicit_unnamed_member_group() {
         // A diagram with a flat `## Members` list still parses into ONE
         // unnamed, childless `DiagramGroup` holding every member. It is not an
         // authored cluster: an ungrouped diagram must keep the plain stress
@@ -2099,7 +2266,6 @@ mod tests {
         let model = mini();
         let mut diagram = model.diagrams[0].clone();
         diagram.layout = Vec::new();
-        assert!(use_stress_default(&diagram), "expected stress path");
         assert!(
             diagram.groups.iter().any(|g| g.name.is_empty()),
             "fixture must carry the implicit unnamed group, or this test is vacuous"
@@ -2117,37 +2283,38 @@ mod tests {
             scene.groups
         );
 
-        // ...and the rects are exactly the ones the group-free solve produces.
-        // (`diagram.groups` also carries the member list, so it cannot simply
-        // be cleared: the sizes come out of the real diagram, the groups do
-        // not.) Sizing mirrors `build_scene`'s own pre-pass.
-        let expanded = std::collections::HashSet::new();
-        let mut sizes = crate::sizing::size_map(&model, &diagram, &expanded);
-        for (key, size) in &mut sizes {
-            if let Some(node) = model.nodes.iter().find(|n| &n.key == key) {
-                let projected = project_scene_node_with_display(&model, node, &test_display());
-                let (w, h) = crate::card::card_size(&projected, &crate::card::mono_sheet());
-                *size = Size { w, h };
-            }
-        }
-        let (expected, _, _) = stress_default(&drawable_edges(&model), &sizes, &[]);
-        for node in &scene.nodes {
-            assert_eq!(
-                Some(&node.rect),
-                expected.nodes.get(&node.key),
-                "{} moved vs. the group-free layout",
-                node.key
-            );
-        }
+        // ...and it contributes no COHESION either. `stress_layout` builds
+        // its cohesion-group list directly off `compiled.group_specs` (+
+        // `inline_specs`) -- the same field the hull-emptiness assert above
+        // already pins -- so there is no separate code path left for the
+        // trivial wrapper to sneak a soft cohesion force through even though
+        // it draws no hull. (A rect-equality comparison against a truly
+        // groupless diagram isn't meaningful here: `resolve::add_group` is
+        // the ONLY thing that ever creates a leaf box, so clearing
+        // `diagram.groups` entirely also removes every leaf box and changes
+        // which order the nodes solve in -- a confound, not evidence.)
+        let (scene_boxes, _) = resolve::resolve(&diagram);
+        let compiled = constrain::compile(
+            &scene_boxes,
+            &crate::sizing::size_map(&model, &diagram, &std::collections::HashSet::new()),
+            &std::collections::BTreeMap::new(),
+            &std::collections::BTreeSet::new(),
+            &SolveConfig::default(),
+        );
+        assert!(
+            compiled.group_specs.is_empty() && compiled.inline_specs.is_empty(),
+            "the implicit wrapper must not compile to a cohesion group: {:?} / {:?}",
+            compiled.group_specs,
+            compiled.inline_specs
+        );
     }
 
     #[test]
-    fn stress_default_emits_group_hull_from_diagram_groups() {
+    fn unified_layout_emits_group_hull_from_diagram_groups() {
         let model = mini();
-        // Clearing `layout` routes build_scene through stress_default, and a
-        // group with no `with frame` layout statement still emits a hull for
-        // containment-aware routing / the show-hidden overlay (it just renders
-        // as `GroupDraw::Skip` normally).
+        // A group with no `with frame` layout statement still emits a hull
+        // for containment-aware routing / the show-hidden overlay (it just
+        // renders as `GroupDraw::Skip` normally).
         let mut diagram = model.diagrams[0].clone();
         diagram.layout = Vec::new();
         diagram.groups = vec![DiagramGroup {
@@ -2155,7 +2322,6 @@ mod tests {
             members: vec!["order".into(), "customer".into()],
             children: Vec::new(),
         }];
-        assert!(use_stress_default(&diagram), "expected stress path");
 
         let (scene, _) = build_scene(
             &model,
@@ -2182,7 +2348,7 @@ mod tests {
     }
 
     #[test]
-    fn stress_default_warns_about_entangled_groups() {
+    fn unified_layout_warns_about_entangled_groups() {
         // The same element under two `###` headings: WAML permits it, but the
         // separation pass has to skip such a pair (translating one drags the
         // shared member out of the other), so their hulls stay tangled. That
@@ -2202,7 +2368,6 @@ mod tests {
                 children: Vec::new(),
             },
         ];
-        assert!(use_stress_default(&diagram), "expected stress path");
 
         let (_scene, diags) = build_scene(
             &model,
@@ -2323,7 +2488,7 @@ mod tests {
     }
 
     #[test]
-    fn stress_default_skips_groups_with_no_resolved_members() {
+    fn unified_layout_skips_groups_with_no_resolved_members() {
         // Every member key misses the size map, so the group has no geometry:
         // it must not emit a zero-size hull (a phantom route obstacle at the
         // origin plus a degenerate dashed overlay).
@@ -2342,7 +2507,6 @@ mod tests {
                 children: Vec::new(),
             },
         ];
-        assert!(use_stress_default(&diagram), "expected stress path");
 
         let (scene, _) = build_scene(
             &model,
@@ -2370,7 +2534,6 @@ mod tests {
             diagram.layout.is_empty(),
             "fixture must have no ## Layout section"
         );
-        assert!(use_stress_default(diagram), "expected stress path");
 
         let (scene, _) = build_scene(
             &model,
@@ -2506,8 +2669,12 @@ mod tests {
 
         fn report_for(name: &str, model: &Model, group_weight: f64, crossing_passes: u32) {
             for diagram in &model.diagrams {
-                // Force the stress-default path regardless of any authored
-                // `## Layout` block: this plan is about that path specifically.
+                // Cleared for continuity with the numbers already recorded in
+                // this test's doc comment (taken before the unification, when
+                // any authored `## Layout` block routed the whole diagram
+                // through the OTHER, edge-blind path). The unified path
+                // handles both the same way now, but re-recording the corpus
+                // with hints intact is a separate re-measurement.
                 let mut diagram = diagram.clone();
                 diagram.layout = Vec::new();
 
@@ -2517,20 +2684,36 @@ mod tests {
                     continue;
                 }
                 let model_edges = drawable_edges(model);
+                let edges: Vec<(BoxId, BoxId)> = model_edges
+                    .iter()
+                    .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
+                    .collect();
 
                 let cfg = StressConfig {
                     group_weight,
                     crossing_passes,
                     ..StressConfig::default()
                 };
-                let keys: Vec<String> = sizes.keys().cloned().collect();
+                let (scene, _) = resolve::resolve(&diagram);
+                let connected = connected_pairs(&edges);
+                let compiled = constrain::compile(
+                    &scene,
+                    &sizes,
+                    &std::collections::BTreeMap::new(),
+                    &connected,
+                    &SolveConfig::default(),
+                );
+                let keys = compiled.keys.clone();
                 let index: std::collections::BTreeMap<&str, usize> = keys
                     .iter()
                     .enumerate()
                     .map(|(i, k)| (k.as_str(), i))
                     .collect();
                 let ids: Vec<BoxId> = keys.iter().cloned().map(BoxId::Node).collect();
-                let dims: Vec<Size> = keys.iter().map(|k| sizes[k]).collect();
+                let dims: Vec<Size> = keys
+                    .iter()
+                    .map(|k| sizes.get(k).copied().unwrap_or(SolveConfig::default().chip))
+                    .collect();
 
                 let mut seen = std::collections::BTreeSet::new();
                 let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -2545,30 +2728,38 @@ mod tests {
                     }
                 }
 
-                let mut group_specs: Vec<stress::GroupSpec> = Vec::new();
-                let mut group_meta: Vec<GroupMeta> = Vec::new();
-                flatten_groups(
-                    &diagram.groups,
-                    &index,
-                    0,
-                    None,
-                    &mut group_specs,
-                    &mut group_meta,
+                let cohesion_groups: Vec<stress::GroupSpec> = compiled
+                    .group_specs
+                    .iter()
+                    .cloned()
+                    .chain(compiled.inline_specs.iter().cloned())
+                    .collect();
+                let (rects, all_hulls, _) = stress::layout_constrained(
+                    &ids,
+                    &dims,
+                    &pairs,
+                    &cohesion_groups,
+                    &compiled.seps,
+                    &cfg,
                 );
-
-                let (rects, hulls) = if pairs.is_empty() && group_specs.is_empty() {
-                    (stress::grid_pack(&ids, &dims, &cfg), Vec::new())
-                } else {
-                    stress::layout_grouped(&ids, &dims, &pairs, &group_specs, &cfg)
-                };
+                let hulls: Vec<Rect> = all_hulls
+                    .into_iter()
+                    .take(compiled.group_specs.len())
+                    .collect();
 
                 let route_edges: Vec<(BoxId, BoxId)> = model_edges
                     .iter()
                     .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
                     .collect();
-                let depths: Vec<u8> = group_meta.iter().map(|m| m.depth).collect();
-                let (routes, _rect_map, _boxes) =
-                    route_with_groups(&keys, &rects, &hulls, &group_specs, &depths, &route_edges);
+                let depths: Vec<u8> = compiled.group_meta.iter().map(|(_, d, _)| *d).collect();
+                let (routes, _rect_map, _boxes) = route_with_groups(
+                    &keys,
+                    &rects,
+                    &hulls,
+                    &compiled.group_specs,
+                    &depths,
+                    &route_edges,
+                );
 
                 let centers: Vec<(f64, f64)> = rects
                     .iter()

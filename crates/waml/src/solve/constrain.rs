@@ -11,7 +11,7 @@ use super::geometry::{axis_constraints, edge_axes, off_x, off_y, pair_gap, Dropp
 use super::stress::{GroupSpec, SepSpecs, StressConfig};
 use super::vpsc::Sep;
 use super::{Box, BoxId, Constraint, FlagSet, Scene, Size, SolveConfig};
-use crate::layout::{Direction, Margin};
+use crate::layout::{Direction, Margin, Shape};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Everything the unified stress path needs from a resolved `Scene`.
@@ -22,8 +22,11 @@ pub struct Compiled {
     /// One `GroupSpec` per `Group` box (scene order), members = descendant
     /// leaf indices — replaces the editor's `flatten_groups` on this path.
     pub group_specs: Vec<GroupSpec>,
-    /// `(title, depth)` per group, same order as `group_specs`.
-    pub group_meta: Vec<(Option<String>, u8)>,
+    /// `(title, depth, shape)` per group, same order as `group_specs`. Shape
+    /// carries the authored `with frame`/etc. hint (default `Shape::Shrink`,
+    /// same as `resolve::add_group`'s default) so the unified path renders
+    /// the same chrome the authored-layout path always has.
+    pub group_meta: Vec<(Option<String>, u8, Shape)>,
     /// One `GroupSpec` per `Inline` box (scene order): cohesion only, no
     /// hull — inline groups cluster without a frame.
     pub inline_specs: Vec<GroupSpec>,
@@ -189,8 +192,24 @@ pub fn compile(
         .collect();
 
     // Rule 2: groups + inline groups (recursive descendant-leaf walk).
+    //
+    // Two cases are filtered out of `group_specs`/`group_meta` (cohesion +
+    // hull), matching the editor's old `flatten_groups`:
+    //   - the implicit wrapper the parser synthesizes for a diagram's flat
+    //     `## Members` list (unnamed, and — by construction — never has a
+    //     nested `### ` subgroup child): not an authored cluster, and
+    //     including it would give every groupless diagram whole-diagram
+    //     cohesion plus a phantom whole-canvas hull.
+    //   - a group whose resolved membership has no geometry (every member
+    //     key either doesn't resolve to a leaf box at all, or resolves to one
+    //     with no measured size): its hull would be a degenerate `Rect` at
+    //     the origin, a phantom route obstacle. A leaf box gets created for
+    //     ANY declared member key regardless of whether it names a real sized
+    //     node (`resolve::add_group` doesn't check), so "resolved" here means
+    //     "has an entry in `leaf_sizes`", matching the old `flatten_groups`'
+    //     `collect_members` filtering against the sizes-derived `index`.
     let mut group_specs: Vec<GroupSpec> = Vec::new();
-    let mut group_meta: Vec<(Option<String>, u8)> = Vec::new();
+    let mut group_meta: Vec<(Option<String>, u8, Shape)> = Vec::new();
     let mut inline_specs: Vec<GroupSpec> = Vec::new();
     let mut group_members_by_id: BTreeMap<BoxId, Vec<usize>> = BTreeMap::new();
     for b in &scene.boxes {
@@ -199,11 +218,20 @@ pub fn compile(
                 let mut members = Vec::new();
                 descendant_leaves(&b.id, &boxes_by_id, &leaf_index, &mut members);
                 group_members_by_id.insert(b.id.clone(), members.clone());
-                group_specs.push(GroupSpec {
-                    members,
-                    depth: b.depth,
-                });
-                group_meta.push((b.title.clone(), b.depth));
+                let is_trivial_wrapper =
+                    b.title.is_none() && !b.children.iter().any(|c| matches!(c, BoxId::Group(_)));
+                let sized_members: Vec<usize> = members
+                    .iter()
+                    .copied()
+                    .filter(|&m| leaf_sizes[m].is_some())
+                    .collect();
+                if !is_trivial_wrapper && !sized_members.is_empty() {
+                    group_specs.push(GroupSpec {
+                        members: sized_members,
+                        depth: b.depth,
+                    });
+                    group_meta.push((b.title.clone(), b.depth, b.shape));
+                }
             }
             BoxId::Inline(_) => {
                 let mut members = Vec::new();
@@ -789,5 +817,83 @@ mod tests {
         let cfg = SolveConfig::default();
         let expected_gap = cfg.margin(Margin::Medium).max(cfg.min_sep) + cfg.chip.w;
         assert!((compiled.seps.x[0].gap - expected_gap).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trivial_unnamed_childless_group_is_excluded_from_cohesion_and_hulls() {
+        // Mirrors the parser's implicit wrapper for a flat `## Members` list:
+        // unnamed, no nested `### ` subgroup children. Not an authored
+        // cluster -- must not become whole-diagram cohesion + a phantom hull.
+        let scene = Scene {
+            boxes: vec![
+                leaf("a"),
+                leaf("b"),
+                Box {
+                    id: BoxId::Group(1),
+                    kind: super::super::BoxKind::Group,
+                    children: vec![BoxId::Node("a".into()), BoxId::Node("b".into())],
+                    axis: None,
+                    shape: Shape::Shrink,
+                    margin: Margin::Medium,
+                    flags: FlagSet::default(),
+                    title: None,
+                    depth: 0,
+                },
+            ],
+            constraints: vec![],
+        };
+        let sz = sizes(&[("a", 100.0, 50.0), ("b", 100.0, 50.0)]);
+        let compiled = compile(
+            &scene,
+            &sz,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &SolveConfig::default(),
+        );
+        assert!(compiled.group_specs.is_empty());
+        assert!(compiled.group_meta.is_empty());
+    }
+
+    #[test]
+    fn memberless_named_group_is_excluded() {
+        // Every member key fails to resolve (no leaf box at all) -> its hull
+        // would be a degenerate zero-size rect at the origin.
+        let scene = Scene {
+            boxes: vec![group(1, vec![BoxId::Node("ghost".into())], None, "Ghost")],
+            constraints: vec![],
+        };
+        let compiled = compile(
+            &scene,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &SolveConfig::default(),
+        );
+        assert!(compiled.group_specs.is_empty());
+        assert!(compiled.group_meta.is_empty());
+    }
+
+    #[test]
+    fn group_with_only_sizeless_members_is_excluded() {
+        // The member key resolves to a real leaf BOX -- a declared group
+        // membership always creates one, `resolve::add_group` never checks
+        // `sizes` -- but has no entry in `sizes`: no geometry, so the hull
+        // would still be a degenerate zero-size rect at the origin.
+        let scene = Scene {
+            boxes: vec![
+                leaf("not-a-node"),
+                group(1, vec![BoxId::Node("not-a-node".into())], None, "Ghost"),
+            ],
+            constraints: vec![],
+        };
+        let compiled = compile(
+            &scene,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &SolveConfig::default(),
+        );
+        assert!(compiled.group_specs.is_empty());
+        assert!(compiled.group_meta.is_empty());
     }
 }
