@@ -237,11 +237,13 @@ pub enum ProjectTreeAction {
         key: String,
         anchor: DVec2,
     },
-    /// The projected/raw toggle was clicked. The panel does not flip its own
-    /// mode: `App` owns the session-wide switch and pushes the new mode back
-    /// via `set_view_mode`, so the tree and every open folder tab move
-    /// together or not at all.
-    ToggleViewMode,
+    /// The projection glyph was clicked. The panel does not flip its own
+    /// mode: `App` owns the session-wide mask and pushes it back via
+    /// `set_projection`, so the tree and every open folder tab move together
+    /// or not at all.
+    OpenProjectionMenu {
+        anchor: DVec2,
+    },
 }
 
 /// Which projection the panel is showing, for the empty state. The rendered
@@ -368,7 +370,13 @@ pub struct ProjectTree {
     /// panel never decides it -- it reports a click and redraws what it is
     /// told, so the tree and the folder tabs can never disagree.
     #[rust]
-    view_mode: ProjectionMask,
+    projection_mask: ProjectionMask,
+    /// Every stage a reader may switch off, from
+    /// `folder_projection::maskable_names`. Stored because "fully masked" is
+    /// only meaningful against this universe -- a mask naming `index` (which
+    /// is not maskable) must not read as raw.
+    #[rust]
+    maskable: Vec<String>,
     #[live]
     icons: IconSet,
     // Tint for the row glyphs. Without this the glyphs render at DrawColor's dim
@@ -657,7 +665,20 @@ impl Widget for ProjectTree {
                 .icon_button(cx, ids!(view_mode_btn))
                 .clicked(actions)
             {
-                cx.widget_action(uid, ProjectTreeAction::ToggleViewMode);
+                let rect = self
+                    .view
+                    .icon_button(cx, ids!(view_mode_btn))
+                    .area()
+                    .rect(cx);
+                cx.widget_action(
+                    uid,
+                    ProjectTreeAction::OpenProjectionMenu {
+                        anchor: DVec2 {
+                            x: rect.pos.x,
+                            y: rect.pos.y + rect.size.y,
+                        },
+                    },
+                );
             }
         }
     }
@@ -706,11 +727,12 @@ impl Widget for ProjectTree {
         // `#[rust]` and defaults to `None` -- nothing draws -- and the DSL
         // cannot give it one, so without this the button is an empty 28px hole
         // on every draw that precedes the first `App::refresh_nav`.
-        // `set_view_mode` still pushes on a flip; this only guarantees the
+        // `set_projection` still pushes on a flip; this only guarantees the
         // resting state is never blank.
         let toggle = self.view.icon_button(cx, ids!(view_mode_btn));
-        toggle.set_icon(cx, self.view_mode_icon());
-        toggle.set_active(cx, !self.view_mode.is_empty());
+        let icon = self.projection_icon();
+        toggle.set_icon(cx, icon);
+        toggle.set_active(cx, !matches!(icon, Icon::Library));
 
         // Same seeding rule as the toggle above: `IconButton::icon` is `#[rust]`
         // and the DSL cannot supply it, so an unseeded button is a blank 28px
@@ -900,29 +922,38 @@ impl ProjectTree {
         self.apply_dock(cx, DockEvent::Close);
     }
 
-    /// The glyph for the CURRENT state -- `Library` when the declared chain is
-    /// running, `Code` when it is bypassed. Not the action the button would
-    /// perform: a reader must be able to read the panel and know what they are
-    /// looking at.
+    /// The glyph for the CURRENT state -- `Library` when every declared stage
+    /// is running, `LibraryBig` when some are switched off, `Code` when they
+    /// all are. Not the action the button would perform: a reader must be
+    /// able to read the panel and know what they are looking at.
     ///
     /// `Code` is also the document header's source toggle. Deliberate: both
     /// say "you are seeing the underlying thing", and they sit in different
     /// panels.
-    pub fn view_mode_icon(&self) -> Icon {
-        if self.view_mode.is_empty() {
+    pub fn projection_icon(&self) -> Icon {
+        let masked = self
+            .maskable
+            .iter()
+            .filter(|name| self.projection_mask.is_masked(name))
+            .count();
+        if masked == 0 {
             Icon::Library
-        } else {
+        } else if masked == self.maskable.len() {
             Icon::Code
+        } else {
+            Icon::LibraryBig
         }
     }
 
-    pub fn set_view_mode(&mut self, cx: &mut Cx, mask: ProjectionMask) {
-        self.view_mode = mask;
-        let icon = self.view_mode_icon();
+    pub fn set_projection(&mut self, cx: &mut Cx, mask: ProjectionMask, maskable: Vec<String>) {
+        self.projection_mask = mask;
+        self.maskable = maskable;
+        let icon = self.projection_icon();
         let button = self.view.icon_button(cx, ids!(view_mode_btn));
         button.set_icon(cx, icon);
-        // A non-empty mask is the deliberate, non-default state, so it reads lit.
-        button.set_active(cx, !self.view_mode.is_empty());
+        // Anything other than "everything running" is the deliberate,
+        // non-default state, so it reads lit.
+        button.set_active(cx, !matches!(icon, Icon::Library));
     }
 
     pub fn set_presentation_visible(&mut self, cx: &mut Cx, visible: bool) {
@@ -1079,14 +1110,16 @@ impl ProjectTree {
         None
     }
 
-    /// The projected/raw toggle button was clicked. The panel does not flip
-    /// its own mode -- `App` owns the session-wide switch and pushes the new
-    /// mode back via `set_view_mode`.
-    pub fn view_mode_toggled(&self, actions: &Actions) -> bool {
-        let Some(item) = actions.find_widget_action(self.widget_uid()) else {
-            return false;
-        };
-        matches!(item.cast(), ProjectTreeAction::ToggleViewMode)
+    /// The projection glyph was clicked. The panel does not flip its own
+    /// mode -- `App` owns the session-wide mask and pushes it back via
+    /// `set_projection`. Returns the anchor to drop the projection popup
+    /// from.
+    pub fn projection_menu_opened(&self, actions: &Actions) -> Option<DVec2> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        if let ProjectTreeAction::OpenProjectionMenu { anchor } = item.cast() {
+            return Some(anchor);
+        }
+        None
     }
 
     /// Fold/unfold the directory row keyed `key`. Returns `false` for a key no
@@ -1349,19 +1382,63 @@ mod tests {
 
     /// The glyph shows the CURRENT state, not the action the button would
     /// perform: a reader looking at the panel must be able to tell whether
-    /// what they see is the author's declared view or the raw listing.
+    /// what they see is the author's declared view, a partial projection, or
+    /// the raw listing.
     #[test]
-    fn the_toggle_glyph_reports_the_current_mode() {
+    fn the_projection_glyph_reports_all_three_mask_states() {
         let (mut cx, mut panel) = mounted_project_tree_test_context();
+        let maskable = vec!["hide".to_string(), "uml".to_string()];
 
-        panel.set_view_mode(&mut cx, waml::view::mask::ProjectionMask::default());
-        assert_eq!(panel.view_mode, waml::view::mask::ProjectionMask::default());
-        assert_eq!(panel.view_mode_icon(), crate::icons::Icon::Library);
+        panel.set_projection(
+            &mut cx,
+            waml::view::mask::ProjectionMask::default(),
+            maskable.clone(),
+        );
+        assert_eq!(
+            panel.projection_icon(),
+            crate::icons::Icon::Library,
+            "an empty mask means the declared chain is running",
+        );
 
-        let full_mask = waml::view::mask::ProjectionMask::from_names(["hide", "uml"]);
-        panel.set_view_mode(&mut cx, full_mask.clone());
-        assert_eq!(panel.view_mode, full_mask);
-        assert_eq!(panel.view_mode_icon(), crate::icons::Icon::Code);
+        panel.set_projection(
+            &mut cx,
+            waml::view::mask::ProjectionMask::from_names(["hide"]),
+            maskable.clone(),
+        );
+        assert_eq!(
+            panel.projection_icon(),
+            crate::icons::Icon::LibraryBig,
+            "some stages off, some on",
+        );
+
+        panel.set_projection(
+            &mut cx,
+            waml::view::mask::ProjectionMask::from_names(["hide", "uml"]),
+            maskable.clone(),
+        );
+        assert_eq!(
+            panel.projection_icon(),
+            crate::icons::Icon::Code,
+            "every maskable stage off is the old Raw",
+        );
+    }
+
+    /// A mask naming a stage outside this panel's maskable universe must not
+    /// read as fully masked -- "fully masked" is judged against the universe,
+    /// not the raw name count.
+    #[test]
+    fn a_mask_naming_an_unmaskable_stage_does_not_read_as_fully_masked() {
+        let (mut cx, mut panel) = mounted_project_tree_test_context();
+        panel.set_projection(
+            &mut cx,
+            waml::view::mask::ProjectionMask::from_names(["index"]),
+            vec!["hide".to_string(), "uml".to_string()],
+        );
+        assert_eq!(
+            panel.projection_icon(),
+            crate::icons::Icon::Library,
+            "`index` is not maskable, so masking it changes nothing the glyph reports",
+        );
     }
 
     /// The button must actually be mounted and queryable. An unregistered or
@@ -1370,9 +1447,10 @@ mod tests {
     #[test]
     fn the_toggle_button_is_a_live_mounted_child() {
         let (mut cx, mut panel) = mounted_project_tree_test_context();
-        panel.set_view_mode(
+        panel.set_projection(
             &mut cx,
             waml::view::mask::ProjectionMask::from_names(["hide", "uml"]),
+            vec!["hide".to_string(), "uml".to_string()],
         );
         assert!(
             panel

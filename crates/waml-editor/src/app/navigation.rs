@@ -667,7 +667,13 @@ impl App {
             if let Some(title) = title {
                 panel.set_scope_title(cx, title);
             }
-            panel.set_view_mode(cx, self.projection_mask.clone());
+            let registry = crate::folder_projection::core_registry();
+            let maskable = crate::folder_projection::maskable_names(&registry)
+                .into_iter()
+                .flat_map(|(_owner, names)| names)
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>();
+            panel.set_projection(cx, self.projection_mask.clone(), maskable);
         }
     }
 

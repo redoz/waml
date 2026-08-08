@@ -32,7 +32,7 @@ const DOCUMENT_POPUP_RELAY_ORDER: [PopupRelay; 2] = [PopupRelay::Armed, PopupRel
 enum ExclusiveHandler {
     TreeContextMenu,
     TreeNavigation,
-    TreeViewModeToggle,
+    TreeProjectionMenu,
     HistoryControls,
     DocumentHeader,
     DiagramSwitcher,
@@ -50,7 +50,7 @@ enum ExclusiveHandler {
 const EXCLUSIVE_ORDER: [ExclusiveHandler; 15] = [
     ExclusiveHandler::TreeContextMenu,
     ExclusiveHandler::TreeNavigation,
-    ExclusiveHandler::TreeViewModeToggle,
+    ExclusiveHandler::TreeProjectionMenu,
     ExclusiveHandler::HistoryControls,
     ExclusiveHandler::DocumentHeader,
     ExclusiveHandler::DiagramSwitcher,
@@ -98,8 +98,8 @@ impl App {
             let flow = match handler {
                 ExclusiveHandler::TreeContextMenu => self.handle_tree_context_menu(cx, actions),
                 ExclusiveHandler::TreeNavigation => self.handle_tree_navigation(cx, actions),
-                ExclusiveHandler::TreeViewModeToggle => {
-                    self.handle_tree_view_mode_toggle(cx, actions)
+                ExclusiveHandler::TreeProjectionMenu => {
+                    self.handle_tree_projection_menu(cx, actions)
                 }
                 ExclusiveHandler::HistoryControls => self.handle_history_controls(cx, actions),
                 ExclusiveHandler::DocumentHeader => self.handle_document_header_action(cx, actions),
@@ -427,15 +427,17 @@ impl App {
         ActionFlow::Consumed
     }
 
-    fn handle_tree_view_mode_toggle(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
-        let toggled = self
+    // TODO(Task 10): open the projection popup at `anchor` with per-name
+    // checkable rows instead of the blunt full/raw flip.
+    fn handle_tree_projection_menu(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let opened = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow::<crate::tree_panel::ProjectTree>()
-            .is_some_and(|panel| panel.view_mode_toggled(actions));
-        if !toggled {
+            .and_then(|panel| panel.projection_menu_opened(actions));
+        let Some(_anchor) = opened else {
             return ActionFlow::Continue;
-        }
+        };
         self.toggle_full_raw(cx);
         ActionFlow::Consumed
     }
@@ -1214,7 +1216,7 @@ mod tests {
             [
                 ExclusiveHandler::TreeContextMenu,
                 ExclusiveHandler::TreeNavigation,
-                ExclusiveHandler::TreeViewModeToggle,
+                ExclusiveHandler::TreeProjectionMenu,
                 ExclusiveHandler::HistoryControls,
                 ExclusiveHandler::DocumentHeader,
                 ExclusiveHandler::DiagramSwitcher,
