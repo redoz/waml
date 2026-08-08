@@ -56,6 +56,7 @@ pub fn navigation_for(action: &FolderRowAction) -> Option<NavigationTarget> {
     match action {
         FolderRowAction::OpenConcept(concept_id) => Some(NavigationTarget::Document {
             concept_id: concept_id.clone(),
+            surface: None,
             fragment: None,
         }),
         FolderRowAction::OpenFolder(address) => Some(NavigationTarget::Directory {
@@ -627,6 +628,7 @@ mod tests {
             navigation_for(&rows[0].action),
             Some(NavigationTarget::Document {
                 concept_id: "orders".to_string(),
+                surface: None,
                 fragment: None,
             })
         );

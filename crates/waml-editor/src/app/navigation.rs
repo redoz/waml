@@ -256,6 +256,7 @@ impl App {
         match target {
             crate::navigation::NavigationTarget::Document {
                 concept_id,
+                surface,
                 fragment,
             } => {
                 if self.session.okf().concept(&concept_id).is_none() {
@@ -265,6 +266,21 @@ impl App {
                     );
                     return false;
                 }
+                let locator = match surface {
+                    Some(surface) => {
+                        let target = waml::view::row::RowTarget::Concept(concept_id.clone());
+                        let (resolved, _diagnostic) = waml::view::surface::resolve_surface(
+                            Some(surface.as_str()),
+                            &target,
+                            &self.session.okf_analysis().bundle,
+                            crate::documents::KNOWN_SURFACES,
+                            "index.md",
+                            0,
+                        );
+                        crate::navigation::DocumentLocator::new(target, resolved)
+                    }
+                    None => self.primary_locator(&concept_id),
+                };
                 self.pending_fragment = fragment.map(|fragment| PendingFragment {
                     concept_id: concept_id.clone(),
                     fragment,
@@ -287,7 +303,7 @@ impl App {
                 let changed = self.transition_to_location(
                     cx,
                     ViewLocation {
-                        document: self.primary_locator(&concept_id),
+                        document: locator,
                         anchor,
                     },
                     TransitionCause::UserNavigation,
@@ -443,10 +459,21 @@ impl App {
     /// behavior canvas, Task 9) can reach the same code path from its own
     /// selection affordance.
     pub(super) fn open_view_source(&mut self, cx: &mut Cx, key: &str) {
+        self.open_source_for(cx, waml::view::row::RowTarget::Concept(key.to_string()));
+    }
+
+    /// Opens `target`'s "source" surface through the shared history-aware
+    /// transition path (spec §2/§5). `open_view_source` is a thin
+    /// concept-keyed wrapper around this; the follow-on spec's folder-tab
+    /// source affordance calls this directly with a `RowTarget::Folder`.
+    pub(super) fn open_source_for(&mut self, cx: &mut Cx, target: waml::view::row::RowTarget) {
         self.transition_to_location(
             cx,
             ViewLocation {
-                document: crate::navigation::DocumentLocator::source(key),
+                document: crate::navigation::DocumentLocator::new(
+                    target,
+                    waml::view::surface::SurfaceId::source(),
+                ),
                 anchor: ViewAnchor::None,
             },
             TransitionCause::UserNavigation,

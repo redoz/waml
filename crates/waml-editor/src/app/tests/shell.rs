@@ -197,6 +197,7 @@ fn configure_mounted_dock(
                 title: "Order".into(),
                 target: NavigationTarget::Document {
                     concept_id: "sales/order".into(),
+                    surface: None,
                     fragment: None,
                 },
             }],
@@ -433,6 +434,7 @@ fn visible_mounted_document_header_is_client_area_but_collapsed_header_is_not() 
         title: "Order".into(),
         target: NavigationTarget::Document {
             concept_id: "sales/order".into(),
+            surface: None,
             fragment: None,
         },
     };

@@ -8,6 +8,9 @@ use waml_markdown_editor::syntax::{DocumentRevision, TextRange};
 pub enum NavigationTarget {
     Document {
         concept_id: String,
+        /// `None` = the target's default resolution
+        /// (`documents::default_surface_for`).
+        surface: Option<waml::view::surface::SurfaceId>,
         fragment: Option<String>,
     },
     Directory {
@@ -112,6 +115,7 @@ pub fn breadcrumb_for(
             .unwrap_or_else(|| last_segment(concept_id).to_string()),
         target: NavigationTarget::Document {
             concept_id: concept_id.to_owned(),
+            surface: None,
             fragment: None,
         },
     });
@@ -220,6 +224,7 @@ pub fn resolve_link(
         }
         return Ok(NavigationTarget::Document {
             concept_id: current_concept_id.to_owned(),
+            surface: None,
             fragment,
         });
     }
@@ -285,6 +290,7 @@ pub fn resolve_link(
         }
         Ok(NavigationTarget::Document {
             concept_id,
+            surface: None,
             fragment,
         })
     }
@@ -339,6 +345,7 @@ mod tests {
     fn doc(concept_id: &str, fragment: Option<&str>) -> NavigationTarget {
         NavigationTarget::Document {
             concept_id: concept_id.into(),
+            surface: None,
             fragment: fragment.map(str::to_owned),
         }
     }
@@ -468,6 +475,7 @@ mod tests {
                     "Purchase Order",
                     NavigationTarget::Document {
                         concept_id: "sales/archive/order".into(),
+                        surface: None,
                         fragment: None,
                     },
                 ),

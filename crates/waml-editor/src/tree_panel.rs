@@ -315,6 +315,7 @@ fn row_navigation(
     concept_id.map(|concept_id| NavigationIntent::Resolved {
         target: NavigationTarget::Document {
             concept_id: concept_id.to_owned(),
+            surface: None,
             fragment: None,
         },
         disposition: if tap_count == 2 {
@@ -1056,6 +1057,7 @@ impl ProjectTree {
         let key = concept_id.and_then(|id| {
             let document = NavigationTarget::Document {
                 concept_id: id.to_owned(),
+                surface: None,
                 fragment: None,
             };
             let directory = NavigationTarget::Directory {
@@ -1468,6 +1470,7 @@ mod tests {
             &mut cx,
             &NavigationTarget::Document {
                 concept_id: "/sales/archive/order".into(),
+                surface: None,
                 fragment: None,
             },
         ));
@@ -1532,6 +1535,7 @@ mod tests {
             &mut cx,
             &NavigationTarget::Document {
                 concept_id: "/missing".into(),
+                surface: None,
                 fragment: None,
             },
         ));
@@ -1792,6 +1796,7 @@ mod tests {
         NavigationIntent::Resolved {
             target: NavigationTarget::Document {
                 concept_id: concept_id.into(),
+                surface: None,
                 fragment: None,
             },
             disposition,

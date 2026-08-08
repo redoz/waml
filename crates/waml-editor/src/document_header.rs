@@ -574,6 +574,7 @@ mod tests {
             title: title.into(),
             target: NavigationTarget::Document {
                 concept_id: concept_id.into(),
+                surface: None,
                 fragment: None,
             },
         }
@@ -763,6 +764,7 @@ mod tests {
     fn clicking_current_segment_emits_its_document_target() {
         let expected = NavigationTarget::Document {
             concept_id: "current".into(),
+            surface: None,
             fragment: None,
         };
         let state = DocumentHeaderState::for_test(

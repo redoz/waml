@@ -532,6 +532,7 @@ fn navigation_browser_failure_preserves_document_and_directory_state() {
         &mut cx,
         NavigationTarget::Document {
             concept_id: "sales/order".into(),
+            surface: None,
             fragment: None,
         },
         OpenDisposition::Persistent,
@@ -580,12 +581,47 @@ fn navigation_browser_failure_preserves_document_and_directory_state() {
     assert_eq!(crate::statusbar::save_error(&statusbar), Some("disk full"));
 }
 
+/// spec Testing bullet 4: an explicit `surface` on `NavigationTarget::Document`
+/// survives the navigation and produces the SAME tab identity that
+/// `open_view_source` produces for the same key -- the duplication this plan
+/// exists to remove, asserted as identity.
+#[test]
+fn navigation_document_explicit_surface_survives_and_matches_view_source_identity() {
+    let (mut cx, mut app) = navigation_app();
+    let mut browser = FakeBrowser::default();
+
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Document {
+            concept_id: "sales/order".into(),
+            surface: Some(waml::view::surface::SurfaceId::source()),
+            fragment: None,
+        },
+        OpenDisposition::Preview,
+        &mut browser,
+    ));
+
+    let active_tab_id = app.documents.active_id();
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator,
+        crate::navigation::DocumentLocator::source("sales/order")
+    );
+
+    app.open_view_source(&mut cx, "sales/order");
+    assert_eq!(
+        app.documents.active_id(),
+        active_tab_id,
+        "an explicit-surface navigation and open_view_source must land on the same tab"
+    );
+}
+
 #[test]
 fn navigation_document_preview_persistence_and_repeat_activation_are_stable() {
     let (mut cx, mut app) = navigation_app();
     let mut browser = FakeBrowser::default();
     let order = NavigationTarget::Document {
         concept_id: "sales/order".into(),
+        surface: None,
         fragment: None,
     };
 
@@ -1218,6 +1254,7 @@ fn breadcrumb_reveal_rejects_unknown_target_without_changes() {
             crate::document_header::DocumentHeaderAction::RevealInTree(
                 NavigationTarget::Document {
                     concept_id: "/missing".into(),
+                    surface: None,
                     fragment: None,
                 },
             ),
@@ -1238,6 +1275,7 @@ fn breadcrumb_reveal_rejects_unknown_target_without_changes() {
 fn navigation_document_ingresses_from_tree_and_markdown_share_preview_command() {
     let target = NavigationTarget::Document {
         concept_id: "sales/customer".into(),
+        surface: None,
         fragment: None,
     };
     let tree_intent = NavigationIntent::Resolved {
@@ -1337,6 +1375,7 @@ fn navigation_markdown_failures_preserve_document_and_report_exact_status() {
         &mut cx,
         NavigationTarget::Document {
             concept_id: "sales/order".into(),
+            surface: None,
             fragment: None,
         },
         OpenDisposition::Persistent,
@@ -1437,6 +1476,7 @@ fn navigation_directory_intents_from_tree_and_markdown_share_one_toggle_path() {
             &mut cx,
             NavigationTarget::Document {
                 concept_id: "sales/order".into(),
+                surface: None,
                 fragment: None,
             },
             OpenDisposition::Persistent,
@@ -1502,6 +1542,7 @@ fn navigation_draw_hook_scrolls_recorded_fragment_after_target_draw() {
         &mut cx,
         NavigationTarget::Document {
             concept_id: "sales/customer".into(),
+            surface: None,
             fragment: Some("history".into()),
         },
         OpenDisposition::Preview,
@@ -1560,6 +1601,7 @@ fn navigation_draw_hook_keeps_mismatch_then_reports_missing_once() {
         &mut cx,
         NavigationTarget::Document {
             concept_id: "sales/order".into(),
+            surface: None,
             fragment: None,
         },
         OpenDisposition::Preview,
@@ -1592,6 +1634,7 @@ fn navigation_draw_hook_keeps_mismatch_then_reports_missing_once() {
         &mut cx,
         NavigationTarget::Document {
             concept_id: "sales/customer".into(),
+            surface: None,
             fragment: Some("missing".into()),
         },
         OpenDisposition::Preview,
@@ -1840,6 +1883,7 @@ fn document_header_projection_obeys_breadcrumb_flag_and_hidden_chrome() {
         title: "Order".into(),
         target: NavigationTarget::Document {
             concept_id: "sales/order".into(),
+            surface: None,
             fragment: None,
         },
     };

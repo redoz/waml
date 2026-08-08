@@ -54,7 +54,7 @@ pub fn default_surface_for(
 /// from `CoreEditorExtension::surfaces` -- `extension_editor`'s own gate
 /// test (`todays_four_surfaces_are_registered_by_the_core_editor_half`)
 /// asserts the other side of the same set.
-const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
+pub(crate) const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
 
 /// Opens a projected chain `Row` (Task E2's "open rows through the surface
 /// table"), honoring an explicit `row.surface` override (a future
