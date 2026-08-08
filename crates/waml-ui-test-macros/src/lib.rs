@@ -29,6 +29,7 @@ fn expand_waml_ui_test(
         }
     }
     function.attrs = inner_attributes;
+    function.vis = syn::Visibility::Inherited;
 
     let test_ident = function.sig.ident.clone();
     let test_name = test_ident.to_string();
@@ -164,6 +165,21 @@ mod tests {
     }
 
     #[test]
+    fn makes_generated_inner_function_private() {
+        let expanded = expand_waml_ui_test(
+            quote!(workspace = Mini),
+            quote! {
+                pub fn navigation(app: WamlApp) {}
+            },
+        )
+        .unwrap()
+        .to_string();
+
+        assert!(expanded.contains("fn __waml_ui_test_navigation"));
+        assert!(!expanded.contains("pub fn __waml_ui_test_navigation"));
+    }
+
+    #[test]
     fn rejects_invalid_catalog_test_signatures() {
         for (attribute, function) in [
             (
@@ -188,6 +204,12 @@ mod tests {
                 quote!(workspace = Mini),
                 quote!(
                     fn navigation<T>(app: WamlApp) {}
+                ),
+            ),
+            (
+                quote!(workspace = Mini),
+                quote!(
+                    fn navigation(app: WamlApp) -> Result<(), ()> {}
                 ),
             ),
             (
