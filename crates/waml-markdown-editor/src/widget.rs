@@ -1322,9 +1322,27 @@ impl MarkdownEditor {
                 self.draw_selection.draw_abs(cx, *rect);
             }
             DrawCommand::Text { .. } => {}
-            // Painted for real once the severity colours and mono-run painting
-            // land (see the diagnostic-squiggle plan, Task 7).
-            DrawCommand::DiagnosticMessage { .. } => {}
+            DrawCommand::DiagnosticMessage {
+                rect,
+                text,
+                severity,
+                ..
+            } => {
+                // Mono at the gutter's size convention, coloured by severity;
+                // it reads as chrome rather than prose. No leading glyph --
+                // colour carries the severity.
+                let metrics = self.gutter_metrics(cx);
+                self.draw_text_mono.color = self.severity_color(*severity);
+                let saved_font_size = self.draw_text_mono.text_style.font_size;
+                self.draw_text_mono.text_style.font_size = GUTTER_FONT_SIZE * 0.75;
+                // Centre the run in the row band: drop the measured ascent
+                // from the band's vertical centre, mirroring paint_gutter's
+                // baseline arithmetic.
+                let top = rect.pos.y + ((rect.size.y - metrics.ascent) * 0.5).max(0.0);
+                self.draw_text_mono
+                    .draw_abs(cx, dvec2(rect.pos.x, top), text);
+                self.draw_text_mono.text_style.font_size = saved_font_size;
+            }
             DrawCommand::Decoration { rects, role, .. } => match role {
                 DecorationRole::LinkUnderline => {
                     self.draw_decoration.color = self.link_color;
