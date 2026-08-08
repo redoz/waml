@@ -267,17 +267,18 @@ impl Chain {
         let mut resolution: Option<Resolution> = None;
         let mut diagnostics = Vec::new();
         for (entry, (name, view_id)) in decl.entries.iter().zip(names.iter().zip(disambiguated)) {
-            // Switched off by the reader. Silent: no stage, no id, no
-            // diagnostic -- including for a name that is ALSO unknown, since
-            // the reader asked for it off either way.
-            if mask.is_masked(name) {
-                continue;
-            }
             match *name {
                 // Not middleware -- a resolution outcome attached to the
                 // chain (spec: "the chain resolves surfaces too"). Row
                 // projection beneath is unchanged: skip straight to the
                 // next entry rather than looking this name up as a stage.
+                //
+                // Resolved BEFORE the mask, deliberately: the mask switches
+                // STAGES off, and `markdown`/`member` are resolutions, not
+                // stages, so a mask naming either must not silently drop the
+                // surface resolution. (The editor's popup only ever lists
+                // registry-registered stages, but a CLI/vscode caller builds
+                // its own mask.)
                 "markdown" => {
                     resolution = Some(Resolution::Markdown);
                     continue;
@@ -296,26 +297,32 @@ impl Chain {
                     }
                     continue;
                 }
-                // `hide`'s params live in the folder's index frontmatter
-                // (`ctx.params` at project time, `index.extra` here at
-                // declaration time -- the same data, see
-                // `Chain::resolve_member_surface`'s own `index.extra`
-                // read). Checked at declaration time, not deferred to
-                // `project`, so a missing/malformed `hide:` degrades the
-                // whole chain up front with a diagnostic that names the
-                // `view:` entry, exactly like an unknown middleware name.
-                // A masked `hide` never reaches here -- the mask `continue`
-                // above skipped it, so its params are not checked and a
-                // malformed `hide:` cannot collapse a chain whose `hide` is
-                // switched off.
-                "hide" => {
-                    if let Err(message) = super::hide::parse_hide_globs(&index.extra) {
-                        let diagnostic =
-                            super::hide::invalid_params_diagnostic(message, &file, entry.line);
-                        return (Chain::root_only(registry), vec![diagnostic]);
-                    }
-                }
                 _ => {}
+            }
+            // Switched off by the reader. Silent: no stage, no id, no
+            // diagnostic -- including for a name that is ALSO unknown, since
+            // the reader asked for it off either way.
+            if mask.is_masked(name) {
+                continue;
+            }
+            // `hide`'s params live in the folder's index frontmatter
+            // (`ctx.params` at project time, `index.extra` here at
+            // declaration time -- the same data, see
+            // `Chain::resolve_member_surface`'s own `index.extra`
+            // read). Checked at declaration time, not deferred to
+            // `project`, so a missing/malformed `hide:` degrades the
+            // whole chain up front with a diagnostic that names the
+            // `view:` entry, exactly like an unknown middleware name.
+            // A masked `hide` never reaches here -- the mask `continue`
+            // above skipped it, so its params are not checked and a
+            // malformed `hide:` cannot collapse a chain whose `hide` is
+            // switched off.
+            if *name == "hide" {
+                if let Err(message) = super::hide::parse_hide_globs(&index.extra) {
+                    let diagnostic =
+                        super::hide::invalid_params_diagnostic(message, &file, entry.line);
+                    return (Chain::root_only(registry), vec![diagnostic]);
+                }
             }
             match registry.build(name) {
                 Some(stage) => {
@@ -996,6 +1003,32 @@ mod tests {
             1,
             "`index` survives -- the bad params belonged to the masked stage",
         );
+    }
+
+    #[test]
+    fn a_mask_never_drops_a_surface_resolution() {
+        // `markdown`/`member` are resolutions, not stages: the mask switches
+        // STAGES off, so naming either must leave the resolution intact.
+        let registry = core_registry_for_tests();
+        let idx = index();
+
+        let (chain, diags) = Chain::build(
+            &decl(&["markdown"]),
+            &registry,
+            &idx,
+            &ProjectionMask::from_names(["markdown"]),
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(chain.resolution, Some(Resolution::Markdown));
+
+        let (chain, diags) = Chain::build(
+            &decl(&["member:Thing"]),
+            &registry,
+            &idx,
+            &ProjectionMask::from_names(["member"]),
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(chain.resolution, Some(Resolution::Member("Thing".into())));
     }
 
     #[test]

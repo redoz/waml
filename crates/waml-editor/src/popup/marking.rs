@@ -139,8 +139,10 @@ impl MarkingCore {
                 let id = self.items[i].id;
                 if self.sticky {
                     // A checklist toggles and stays open; only light-dismiss
-                    // closes it (the surface never calls `close()` here).
-                    self.armed = None;
+                    // closes it (the surface never calls `close()` here). The
+                    // armed row is KEPT: the pointer is still over it, and the
+                    // re-seed through `set_items` preserves it too, so the
+                    // hover highlight survives its own click.
                     return MarkOutcome::Toggled(id);
                 }
                 self.close();
@@ -383,6 +385,26 @@ mod tests {
             "a sticky commit reports Toggled, NOT Committed -- a checklist stays open",
         );
         assert!(c.is_open(), "the surface must survive its own commit");
+    }
+
+    #[test]
+    fn a_sticky_commit_keeps_the_row_armed_across_the_reseed() {
+        // The pointer has not moved, so the clicked row must stay armed --
+        // otherwise its hover highlight (and accent tint) drops on every
+        // checklist click until the pointer moves.
+        let mut c = MarkingCore::default();
+        c.begin_popup(menu(), T);
+        c.set_sticky(true);
+        c.press(dvec2(P.x, P.y), Some(0));
+        assert_eq!(c.release(Some(0)), MarkOutcome::Toggled(live_id!(a)));
+        assert_eq!(
+            c.armed(),
+            Some(0),
+            "a sticky toggle must not drop the hovered row",
+        );
+        // The opener re-seeds the checked state in place; the arm survives it.
+        c.set_items(menu());
+        assert_eq!(c.armed(), Some(0));
     }
 
     #[test]
