@@ -230,11 +230,13 @@ identity on the open path reintroduces the bug, so the invariant
 (`crates/waml/src/view/hide.rs:7`) belongs in the test suite, not just in a
 comment.
 
-**The `__legacy_edit__` sentinel has no `RowTarget`.** `editor_session.rs:515`
-constructs `DocumentLocator::primary("__legacy_edit__")`, which works only
-because the concept-id slot is an unvalidated `String`. A `RowTarget`-typed
-locator has nowhere to put it; it needs a real representation or removal before
-§1 lands.
+**The `__legacy_edit__` sentinel needs a representation** — a small one.
+`editor_session.rs:515` constructs `DocumentLocator::primary("__legacy_edit__")`,
+which works only because the concept-id slot is an unvalidated `String`. It sits
+inside `apply_with_preparer` (`:500-530`), which is `#[cfg(test)]`, reached only
+from a `#[cfg(test)]` helper — so no production code constructs it and this is a
+test-fixture concern, not a migration risk. `{ Virtual, "markdown" }` is the
+honest value, and §1 already grants `Virtual` a locator.
 
 **The dead code has never run.** `resolve_surface`'s degrade path and
 `SurfaceFactory`'s `Option` return are covered only by tests written against a
