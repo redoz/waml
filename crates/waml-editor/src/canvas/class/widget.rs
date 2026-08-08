@@ -50,7 +50,16 @@ script_mod! {
         color_deep: uniform(atlas.text)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
+            // Sdf2d coverage is `clamp(-dist * aa)` with `aa = 1 /
+            // length(vec2(|dFdx|, |dFdy|))` = 1/sqrt(2) for a pixel-unit quad,
+            // and it carries no half-pixel bias -- so a bar snapped exactly onto
+            // the device grid still rasterized 0.35 / 1.0 / 0.35 instead of
+            // solid, i.e. a 3px CAD bar read as a grey-fringed hairline. Restore
+            // the sqrt(2) AND grow the box by the missing half pixel, which
+            // together give true box coverage: interior pixels fully inked, a
+            // fractional end still antialiased.
+            sdf.aa = sdf.aa * 1.4142136
+            sdf.rect(-0.5, -0.5, self.rect_size.x + 1.0, self.rect_size.y + 1.0)
             // Color deepens non-linearly as zoom drops: k = 0 at zoom >= 1 (the
             // line stays text_dim), fading toward the darker `text` stop zoomed
             // out so the thinning bar keeps its contrast on the field.
@@ -83,21 +92,28 @@ script_mod! {
         bar_out: uniform(vec4(0.0, 0.0, 0.0, 0.0))
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            // Same coverage correction as `EdgeLine`: restore the sqrt(2) the
+            // fork's `antialias()` drops, and grow every shape by the half pixel
+            // Sdf2d's ramp is missing, so a corner inks as solidly as the bars it
+            // joins instead of reading a shade lighter.
+            sdf.aa = sdf.aa * 1.4142136
             // Fillet arc band = annulus (outer disc minus inner disc). Built with
             // shape METHODS only -- assigning sdf.shape/dist directly from a pixel fn
             // silently fails this fork's shader VM, so there's no manual `min`.
-            sdf.circle(self.center.x, self.center.y, self.radius + self.hw)
-            sdf.circle(self.center.x, self.center.y, self.radius - self.hw)
+            sdf.circle(self.center.x, self.center.y, self.radius + self.hw + 0.5)
+            sdf.circle(self.center.x, self.center.y, self.radius - self.hw - 0.5)
             sdf.subtract()
             // Gate to the quarter facing the vertex: intersect with the quadrant
             // rect. Both bounding rays are axis-aligned for an orthogonal bend, so a
             // plain rect suffices and the band flat-caps exactly on the bar tangents.
+            // The gate is NOT grown: it only trims the annulus to the right
+            // quadrant, and its cut lands under the bar stubs either way.
             sdf.rect(self.gate.x, self.gate.y, self.gate.z, self.gate.w)
             sdf.intersect()
             // Union the two bar stubs; each `rect` mins into `sdf.shape`, so the
             // arc-to-bar joints are interior to one filled shape (solid, no AA seam).
-            sdf.rect(self.bar_in.x, self.bar_in.y, self.bar_in.z, self.bar_in.w)
-            sdf.rect(self.bar_out.x, self.bar_out.y, self.bar_out.z, self.bar_out.w)
+            sdf.rect(self.bar_in.x - 0.5, self.bar_in.y - 0.5, self.bar_in.z + 1.0, self.bar_in.w + 1.0)
+            sdf.rect(self.bar_out.x - 0.5, self.bar_out.y - 0.5, self.bar_out.z + 1.0, self.bar_out.w + 1.0)
             let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
             sdf.fill(mix(self.color, self.color_deep, k))
             return sdf.result
@@ -124,6 +140,10 @@ script_mod! {
         bg: uniform(atlas.field_bg)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            // Coverage correction, as in `EdgeLine`. The half-pixel bias rides
+            // the stroke width below rather than the path, which a polygon
+            // cannot be grown by.
+            sdf.aa = sdf.aa * 1.4142136
             sdf.move_to(self.v01.x, self.v01.y)
             sdf.line_to(self.v01.z, self.v01.w)
             sdf.line_to(self.v23.x, self.v23.y)
@@ -133,7 +153,7 @@ script_mod! {
             // (both flags 0). The flags are mutually exclusive so the sum is clean.
             let fill = self.bg * self.hollow + self.color * self.filled
             sdf.fill_keep(fill)
-            sdf.stroke(self.color, self.stroke_w)
+            sdf.stroke(self.color, self.stroke_w + 0.5)
             return sdf.result
         }
     }

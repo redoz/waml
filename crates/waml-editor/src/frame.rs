@@ -214,11 +214,27 @@ script_mod! {
             // Border size uses `zoom * stroke_scale`: CAD supplies inverse zoom
             // through stroke_scale for stable screen-space linework.
             let dpi = max(1.0, self.draw_pass.dpi_factor)
-            let bw_dev = max(1.0, floor(1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected) * dpi + 0.5))
+            // The `+ 0.001` is not slop, it is the CAD mode's whole point. There
+            // `stroke_scale` is `1.0 / zoom` rounded to f32, so `zoom *
+            // stroke_scale` is 1.0 give or take one ULP and the rounding term
+            // lands EXACTLY on `floor(2.0)` at dpi 1. A one-ULP shortfall then
+            // floors to 1 instead of 2, so the border flipped between one and
+            // two device pixels as the camera moved -- the "linework changes
+            // weight when you zoom" bug. The epsilon is far below the next
+            // reachable width and cannot promote an honest 1.99.
+            let bw_dev = max(1.0, floor(1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected) * dpi + 0.501))
             // `stroke` takes a half-width. The extra half device pixel moves
             // its antialias ramp away from the crisp border samples.
             let sw = (bw_dev * 0.5 + 0.5) / dpi
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            // Sdf2d's coverage is `clamp(-dist * aa)` with `aa = 1 /
+            // length(vec2(|dFdx|, |dFdy|))`, and for a quad whose local units
+            // are pixels both derivatives are 1 -- so `aa` is 1/sqrt(2), not
+            // 1/pixel, and every stroke loses ~30% of its ink to the ramp. CAD
+            // wants the pixel-exact coverage the snapping already earned, so
+            // restore the missing sqrt(2). Non-canvas consumers keep the softer
+            // ramp they were tuned against.
+            sdf.aa = sdf.aa * mix(1.0, 1.4142136, self.screen_space)
             // One grey-aware accent drives bloom, frost tint, and stroke.
             let a = self.accent_col.rgb
             let alum = a.x * 0.299 + a.y * 0.587 + a.z * 0.114
@@ -293,6 +309,66 @@ script_mod! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `canvas::viewport`'s camera clamp, restated: that module is private to
+    /// `canvas`, and widening it just to read two numbers in a test would be a
+    /// worse trade than repeating them.
+    const MIN_ZOOM: f64 = 0.05;
+    const MAX_ZOOM: f64 = 20.0;
+
+    /// Rust mirror of the shader's `bw_dev`, so the rounding that decides a
+    /// CAD border's device width is testable. `bias` is the shader's rounding
+    /// term; the shader ships `0.501` and the test below shows why a bare `0.5`
+    /// is not a rounding term at all here but a coin flip.
+    fn border_device_px(zoom: f32, stroke_scale: f32, selected: f32, dpi: f32, bias: f32) -> f32 {
+        let sel = 1.0 + (1.5 - 1.0) * selected.clamp(0.0, 1.0);
+        (1.5 * zoom * stroke_scale * sel * dpi + bias).floor().max(1.0)
+    }
+
+    /// Every zoom the camera can reach, at CAD's inverse-zoom `stroke_scale`.
+    fn cad_zoom_sweep() -> impl Iterator<Item = (f32, f32)> {
+        let mut zoom = MIN_ZOOM;
+        std::iter::from_fn(move || {
+            if zoom > MAX_ZOOM {
+                return None;
+            }
+            let z = zoom;
+            zoom *= 1.01;
+            Some((z as f32, (1.0 / z) as f32))
+        })
+    }
+
+    /// The CAD contract: one fixed device-pixel border at EVERY zoom. `zoom *
+    /// stroke_scale` is 1.0 only to within an f32 ULP, so the quantiser has to
+    /// survive a product that lands a hair either side of 1.
+    #[test]
+    fn a_cad_border_holds_one_device_width_across_the_whole_zoom_range() {
+        for (zoom, stroke_scale) in cad_zoom_sweep() {
+            for dpi in [1.0_f32, 1.25, 1.5, 2.0] {
+                let expected = (1.5 * dpi + 0.5).floor().max(1.0);
+                assert_eq!(
+                    border_device_px(zoom, stroke_scale, 0.0, dpi, 0.501),
+                    expected,
+                    "zoom {zoom} dpi {dpi}"
+                );
+            }
+        }
+    }
+
+    /// The bug the epsilon fixes: at dpi 1 the unbiased expression evaluates to
+    /// exactly `floor(2.0)`, so a one-ULP shortfall floors to 1 and the border
+    /// visibly changes weight as the camera moves. Guard the regression by
+    /// proving the naive form really is unstable.
+    #[test]
+    fn the_unbiased_quantiser_flips_width_somewhere_in_that_range() {
+        let widths: std::collections::BTreeSet<u32> = cad_zoom_sweep()
+            .map(|(zoom, stroke_scale)| border_device_px(zoom, stroke_scale, 0.0, 1.0, 0.5) as u32)
+            .collect();
+        assert!(
+            widths.len() > 1,
+            "expected the naive `+ 0.5` form to be zoom-dependent, got {widths:?}"
+        );
+    }
 
     fn approx(a: f64, b: f64) {
         assert!((a - b).abs() < 1e-9, "{a} != {b}");
@@ -421,9 +497,10 @@ mod tests {
             "let ba = mix(self.bloom * glow, {SURFACE_SEL_BLOOM_A:.2}, self.selected)"
         )));
         assert!(code.contains(&format!(
-            "let bw_dev = max(1.0, floor({SURFACE_BORDER_PX} * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected) * dpi + 0.5))"
+            "let bw_dev = max(1.0, floor({SURFACE_BORDER_PX} * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected) * dpi + 0.501))"
         )));
         assert!(code.contains("let sw = (bw_dev * 0.5 + 0.5) / dpi"));
+        assert!(code.contains("sdf.aa = sdf.aa * mix(1.0, 1.4142136, self.screen_space)"));
         assert!(code.contains("let accent = mix(a, vec3(alum, alum, alum), self.grey)"));
         assert!(code.contains("let orgb = accent * balpha"));
         assert!(code.contains(
