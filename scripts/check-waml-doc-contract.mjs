@@ -27,7 +27,15 @@ const BROWSER_IMPLEMENTATION_PATHS = [
 ];
 
 function compareCodePoints(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
+  const leftPoints = [...left];
+  const rightPoints = [...right];
+  const length = Math.min(leftPoints.length, rightPoints.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftPoint = leftPoints[index].codePointAt(0);
+    const rightPoint = rightPoints[index].codePointAt(0);
+    if (leftPoint !== rightPoint) return leftPoint - rightPoint;
+  }
+  return leftPoints.length - rightPoints.length;
 }
 
 function normalizedPath(root, file) {
@@ -169,7 +177,24 @@ async function inspectArchitectureViews(documents, docsRoot, repositoryRoot, err
       addError(errors, documentPath, link.number, "implementation concept link escapes docs/waml");
       continue;
     }
-    const concept = await readFile(realTarget, "utf8");
+    let targetInfo;
+    try {
+      targetInfo = await stat(realTarget);
+    } catch {
+      addError(errors, documentPath, link.number, "implementation concept link cannot be inspected");
+      continue;
+    }
+    if (!targetInfo.isFile()) {
+      addError(errors, documentPath, link.number, "implementation concept link is not a file");
+      continue;
+    }
+    let concept;
+    try {
+      concept = await readFile(realTarget, "utf8");
+    } catch {
+      addError(errors, documentPath, link.number, "linked implementation concept cannot be read");
+      continue;
+    }
     if (!hasSourcesFrontmatter(concept)) {
       addError(errors, documentPath, link.number, "linked implementation concept needs frontmatter sources");
     }
@@ -230,7 +255,13 @@ async function inspectEvidence(scenario, repositoryRoot, target) {
       continue;
     }
 
-    const lines = (await readFile(realFile, "utf8")).split(/\r?\n/);
+    let lines;
+    try {
+      lines = (await readFile(realFile, "utf8")).split(/\r?\n/);
+    } catch {
+      addError(errors, scenario.document, reference.documentLine, `evidence file cannot be read: ${reference.path}`);
+      continue;
+    }
     if (reference.line !== undefined) {
       if (reference.line > lines.length) {
         addError(errors, scenario.document, reference.documentLine, `evidence line is outside the file: ${reference.path}:${reference.line}`);

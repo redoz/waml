@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import test from "node:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,18 @@ async function check(files) {
     await mkdir(dirname(absolute), { recursive: true });
     await writeFile(absolute, text);
   }
+  return checkDocsContract(join(repositoryRoot, "docs/waml"), repositoryRoot);
+}
+
+async function checkPrepared(t, files, prepare) {
+  const repositoryRoot = await mkdtemp(join(tmpdir(), "waml-doc-contract-"));
+  t.after(() => rm(repositoryRoot, { force: true, recursive: true }));
+  for (const [path, text] of Object.entries(files)) {
+    const absolute = join(repositoryRoot, path);
+    await mkdir(dirname(absolute), { recursive: true });
+    await writeFile(absolute, text);
+  }
+  await prepare(repositoryRoot);
   return checkDocsContract(join(repositoryRoot, "docs/waml"), repositoryRoot);
 }
 
@@ -181,4 +193,220 @@ test("prints deterministic diagnostics and exits one from the CLI", async () => 
       return true;
     },
   );
+});
+
+test("sorts diagnostics by Unicode code points", async () => {
+  const errors = await check({
+    "docs/waml/goals/\u{10000}.md": "# Supplementary\n\n**Status:** implemented\n",
+    "docs/waml/goals/\u{e000}.md": "# Private use\n\n**Status:** implemented\n",
+  });
+
+  assert.deepEqual(errors, [
+    "docs/waml/goals/\u{e000}.md:3: invalid **Status:** value",
+    "docs/waml/goals/\u{10000}.md:3: invalid **Status:** value",
+  ]);
+});
+
+test("checks architecture view source ownership", async () => {
+  const cases = [
+    {
+      name: "accepts direct sources",
+      files: {
+        "docs/waml/architecture/views/direct.md": "---\nsources:\n---\n# Direct\n",
+      },
+      expected: [],
+    },
+    {
+      name: "accepts a sourced implementation concept",
+      files: {
+        "docs/waml/architecture/views/linked.md":
+          "# Linked\n\n[Implementation](../concepts/implementation/linked.md)\n",
+        "docs/waml/architecture/concepts/implementation/linked.md":
+          "---\nsources:\n---\n# Linked implementation\n",
+      },
+      expected: [],
+    },
+    {
+      name: "rejects a view without ownership evidence",
+      files: {
+        "docs/waml/architecture/views/missing.md": "# Missing\n",
+      },
+      expected: [
+        "docs/waml/architecture/views/missing.md:1: view needs frontmatter sources or a link to ../concepts/implementation/",
+      ],
+    },
+    {
+      name: "rejects an unsourced implementation concept",
+      files: {
+        "docs/waml/architecture/views/linked.md":
+          "# Linked\n\n[Implementation](../concepts/implementation/linked.md)\n",
+        "docs/waml/architecture/concepts/implementation/linked.md": "---\ntype: Concept\n---\n# Linked\n",
+      },
+      expected: [
+        "docs/waml/architecture/views/linked.md:3: linked implementation concept needs frontmatter sources",
+      ],
+    },
+    {
+      name: "rejects a concept link that escapes docs/waml",
+      files: {
+        "docs/waml/architecture/views/escape.md":
+          "# Escape\n\n[Implementation](../concepts/implementation/../../../../outside.md)\n",
+        "docs/outside.md": "---\nsources:\n---\n# Outside\n",
+      },
+      expected: [
+        "docs/waml/architecture/views/escape.md:3: implementation concept link escapes docs/waml",
+      ],
+    },
+  ];
+
+  for (const fixture of cases) {
+    assert.deepEqual(await check(fixture.files), fixture.expected, fixture.name);
+  }
+});
+
+test("reports an architecture evidence link to a directory", async (t) => {
+  const errors = await checkPrepared(
+    t,
+    {
+      "docs/waml/architecture/views/directory.md":
+        "# Directory\n\n[Implementation](../concepts/implementation/source)\n",
+    },
+    (repositoryRoot) =>
+      mkdir(join(repositoryRoot, "docs/waml/architecture/concepts/implementation/source"), {
+        recursive: true,
+      }),
+  );
+
+  assert.deepEqual(errors, [
+    "docs/waml/architecture/views/directory.md:3: implementation concept link is not a file",
+  ]);
+});
+
+test("reports an evidence directory instead of reading it", async (t) => {
+  const document = canonical.replace(
+    "crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview",
+    "crates/waml-editor/src::preview_replaces_preview",
+  );
+  const errors = await checkPrepared(
+    t,
+    { "docs/waml/goals/tabs.md": document },
+    (repositoryRoot) => mkdir(join(repositoryRoot, "crates/waml-editor/src"), { recursive: true }),
+  );
+
+  assert.equal(
+    errors.includes("docs/waml/goals/tabs.md:13: evidence path is not a file: crates/waml-editor/src"),
+    true,
+  );
+});
+
+test("reports an evidence path escape on its document line", async () => {
+  const document = canonical.replace(
+    "crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview",
+    "../outside.rs::preview_replaces_preview",
+  );
+  const errors = await check({ "docs/waml/goals/tabs.md": document });
+
+  assert.equal(
+    errors.includes("docs/waml/goals/tabs.md:13: invalid evidence path ../outside.rs"),
+    true,
+  );
+});
+
+test("reports evidence that resolves through a symlink outside the repository", async (t) => {
+  const outsideRoot = await mkdtemp(join(tmpdir(), "waml-doc-contract-outside-"));
+  t.after(() => rm(outsideRoot, { force: true, recursive: true }));
+  const outsideFile = join(outsideRoot, "outside.rs");
+  await writeFile(outsideFile, "pub fn preview_replaces_preview() {}\n");
+
+  let linkError;
+  const errors = await checkPrepared(
+    t,
+    { "docs/waml/goals/tabs.md": canonical },
+    async (repositoryRoot) => {
+      const link = join(repositoryRoot, "crates/waml-editor/src/doc_tabs.rs");
+      await mkdir(dirname(link), { recursive: true });
+      try {
+        await symlink(outsideFile, link, "file");
+      } catch (error) {
+        linkError = error;
+      }
+    },
+  );
+  if (linkError?.code === "EPERM" || linkError?.code === "EACCES") {
+    t.skip(`symbolic links are unavailable: ${linkError.code}`);
+    return;
+  }
+  if (linkError) throw linkError;
+
+  assert.equal(
+    errors.includes(
+      "docs/waml/goals/tabs.md:13: evidence path escapes the repository: crates/waml-editor/src/doc_tabs.rs",
+    ),
+    true,
+  );
+});
+
+test("rejects stale, orphan, and duplicate verification gaps", async () => {
+  const sourceGap = `${canonical}\n## Verification gaps\n\n- TAB-001 — target: native; No native test asserts the result.\n`;
+  const cases = [
+    {
+      name: "stale",
+      files: {
+        "docs/waml/goals/tabs.md": sourceGap,
+        "crates/waml-editor/src/doc_tabs.rs":
+          "// Scenario: TAB-001\n#[test]\nfn preview_replaces_preview() {}\n",
+      },
+      expected: "docs/waml/goals/tabs.md:17: Verification gaps item is stale for TAB-001",
+    },
+    {
+      name: "orphan",
+      files: {
+        "docs/waml/goals/gaps.md":
+          "# Gaps\n\n## Verification gaps\n\n- TAB-001 — target: native; No native test asserts the result.\n",
+      },
+      expected: "docs/waml/goals/gaps.md:5: Verification gaps item has no shipped scenario",
+    },
+    {
+      name: "duplicate",
+      files: {
+        "docs/waml/goals/tabs.md": `${sourceGap}- TAB-001 — target: native; A second reason exists.\n`,
+        "crates/waml-editor/src/doc_tabs.rs": "pub fn preview_replaces_preview() {}\n",
+      },
+      expected: "docs/waml/goals/tabs.md:18: duplicate Verification gaps item TAB-001",
+    },
+  ];
+
+  for (const fixture of cases) {
+    const errors = await check(fixture.files);
+    assert.equal(errors.includes(fixture.expected), true, fixture.name);
+  }
+});
+
+test("accepts browser allowlist evidence and an explicit parity seam", async () => {
+  const browser = canonical
+    .replaceAll("TAB-001", "WEB-001")
+    .replace("**Applies to:** shared", "**Applies to:** browser")
+    .replace(
+      "crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview",
+      "scripts/export-site-browser.test.mjs::browser boot",
+    );
+  const browserErrors = await check({
+    "docs/waml/goals/web.md": browser,
+    "scripts/export-site-browser.test.mjs":
+      '// Scenario: WEB-001\ntest("browser boot", () => {});\n',
+  });
+  assert.deepEqual(browserErrors, []);
+
+  const parity = canonical.replace(
+    "`crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview`",
+    "`crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview` `scripts/export-site-browser.test.mjs::preview parity`",
+  );
+  const parityErrors = await check({
+    "docs/waml/goals/tabs.md": parity,
+    "crates/waml-editor/src/doc_tabs.rs":
+      "// Scenario: TAB-001\n#[test]\nfn preview_replaces_preview() {}\n",
+    "scripts/export-site-browser.test.mjs":
+      '// Scenario: TAB-001\ntest("preview parity", () => {});\n',
+  });
+  assert.deepEqual(parityErrors, []);
 });
