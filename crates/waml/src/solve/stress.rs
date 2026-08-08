@@ -81,6 +81,18 @@ pub struct GroupSpec {
     pub depth: u8,
 }
 
+/// Per-axis separation constraints over layout indices. Indices `0..n-1` are
+/// the nodes (`ids` order); indices `n..` address the boundary variables
+/// appended by `constrain.rs`'s `boundary_vars`, in that same order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SepSpecs {
+    pub x: Vec<super::vpsc::Sep>,
+    pub y: Vec<super::vpsc::Sep>,
+    /// Extra positionless variables (group boundaries): this many are
+    /// appended after the node variables on BOTH axes.
+    pub extra_vars: usize,
+}
+
 /// Guard against division by zero when two points coincide (Guttman denom).
 const COINCIDENT_EPS: f64 = 1e-9;
 
@@ -117,20 +129,90 @@ pub fn layout_grouped(
     groups: &[GroupSpec],
     cfg: &StressConfig,
 ) -> (Vec<Rect>, Vec<Rect>) {
+    let (rects, hulls, _) =
+        layout_grouped_inner(ids, sizes, edges, groups, &SepSpecs::default(), cfg);
+    (rects, hulls)
+}
+
+/// `layout_grouped` + hard constraints: stress-solve, pack components, then
+/// project `seps` and re-run overlap removal with the authored seps folded
+/// in so it cannot un-satisfy them. Returns `(node rects, hull rects,
+/// (dropped x-sep indices, dropped y-sep indices))`. With `seps` empty this
+/// is byte-identical to `layout_grouped` (see
+/// `layout_constrained_empty_seps_matches_layout_grouped`).
+#[allow(clippy::type_complexity)]
+pub fn layout_constrained(
+    ids: &[BoxId],
+    sizes: &[Size],
+    edges: &[(usize, usize)],
+    groups: &[GroupSpec],
+    seps: &SepSpecs,
+    cfg: &StressConfig,
+) -> (Vec<Rect>, Vec<Rect>, (Vec<usize>, Vec<usize>)) {
+    layout_grouped_inner(ids, sizes, edges, groups, seps, cfg)
+}
+
+/// Project authored `seps` onto already-packed global coordinates, then run
+/// overlap removal with those seps folded in so it cannot undo them. Returns
+/// the authored-sep drop report (see `remove_overlaps_with`). No-op (aside
+/// from the trivial empty-seps projection) when `seps` is empty; callers
+/// only invoke this when at least one axis is non-empty.
+fn apply_seps_and_overlap(
+    rects: &mut [Rect],
+    seps: &SepSpecs,
+    cfg: &StressConfig,
+) -> (Vec<usize>, Vec<usize>) {
+    let n = rects.len();
+    let total = n + seps.extra_vars;
+    let mut w = vec![1.0_f64; total];
+    for wv in w.iter_mut().skip(n) {
+        *wv = 0.01;
+    }
+    let mut xs: Vec<f64> = rects.iter().map(|r| r.x).collect();
+    xs.resize(total, 0.0); // constrain.rs emits containment seps that position these
+    super::vpsc::project(&mut xs, &w, &seps.x);
+    for (r, x) in rects.iter_mut().zip(xs.iter().take(n)) {
+        r.x = *x;
+    }
+    let mut ys: Vec<f64> = rects.iter().map(|r| r.y).collect();
+    ys.resize(total, 0.0);
+    super::vpsc::project(&mut ys, &w, &seps.y);
+    for (r, y) in rects.iter_mut().zip(ys.iter().take(n)) {
+        r.y = *y;
+    }
+    remove_overlaps_with(rects, cfg.gap, &seps.x, &seps.y, seps.extra_vars)
+}
+
+#[allow(clippy::type_complexity)]
+fn layout_grouped_inner(
+    ids: &[BoxId],
+    sizes: &[Size],
+    edges: &[(usize, usize)],
+    groups: &[GroupSpec],
+    seps: &SepSpecs,
+    cfg: &StressConfig,
+) -> (Vec<Rect>, Vec<Rect>, (Vec<usize>, Vec<usize>)) {
+    let has_seps = !(seps.x.is_empty() && seps.y.is_empty());
     let n = ids.len();
     assert_eq!(n, sizes.len(), "ids and sizes length mismatch");
     if n == 0 {
-        return (vec![], vec![]);
+        return (vec![], vec![], (Vec::new(), Vec::new()));
     }
     if n == 1 {
-        let rects = vec![Rect {
+        let mut rects = vec![Rect {
             x: 0.0,
             y: 0.0,
             w: sizes[0].w,
             h: sizes[0].h,
         }];
+        let dropped = if has_seps {
+            apply_seps_and_overlap(&mut rects, seps, cfg)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        normalize_to_origin(&mut rects);
         let hulls = group_hulls(&rects, groups, cfg);
-        return (rects, hulls);
+        return (rects, hulls, dropped);
     }
 
     let clean = dedup_edges(n, edges);
@@ -150,11 +232,16 @@ pub fn layout_grouped(
         // arm is reachable with non-empty `groups` whenever every group has
         // fewer than two members (no clique edges) and there are no real edges.
         let mut rects = grid_pack(ids, sizes, cfg);
-        separate_hulls(&mut rects, groups, cfg);
+        let dropped = if has_seps {
+            apply_seps_and_overlap(&mut rects, seps, cfg)
+        } else {
+            separate_hulls(&mut rects, groups, cfg);
+            (Vec::new(), Vec::new())
+        };
         normalize_to_origin(&mut rects);
         let hulls = group_hulls(&rects, groups, cfg);
         debug_assert_eq!(hulls.len(), groups.len());
-        return (rects, hulls);
+        return (rects, hulls, dropped);
     }
 
     let adj = adjacency(n, &merged);
@@ -228,8 +315,19 @@ pub fn layout_grouped(
     // hull guard is vacuous, so `reduce_crossings` runs `remove_overlaps`
     // itself before returning (see its docs). Nothing else here does. The pass
     // measures against the eventual output, not this mid-pipeline snapshot.
-    reduce_crossings(&mut out, groups, &clean, cfg);
-    separate_hulls(&mut out, groups, cfg);
+    //
+    // With authored seps present, `reduce_crossings` and `separate_hulls` are
+    // both skipped: their moves are sep-blind (whole-group/whole-node bulk
+    // translations) and could un-satisfy a constraint that
+    // `apply_seps_and_overlap`'s per-pair projection just enforced. A
+    // diagram with authored hints already has a human's opinion baked in.
+    let dropped = if has_seps {
+        apply_seps_and_overlap(&mut out, seps, cfg)
+    } else {
+        reduce_crossings(&mut out, groups, &clean, cfg);
+        separate_hulls(&mut out, groups, cfg);
+        (Vec::new(), Vec::new())
+    };
 
     // Normalize the min corner to the origin, matching `layout`'s convention;
     // the separation pass can push rects negative.
@@ -237,7 +335,7 @@ pub fn layout_grouped(
 
     let hulls = group_hulls(&out, groups, cfg);
     debug_assert_eq!(hulls.len(), groups.len());
-    (out, hulls)
+    (out, hulls, dropped)
 }
 
 /// Translate `rects` so their bounding box's min corner sits at the origin.
@@ -1275,7 +1373,51 @@ fn overlap_removal_pass(
     st: &mut OverlapAccum,
     skip_pair: impl Fn(usize, usize) -> bool,
 ) -> bool {
-    use super::vpsc::{project, Sep};
+    use super::vpsc::project;
+    let added_any = overlap_discover(rects, gap, st, skip_pair);
+    let m = rects.len();
+    let w = vec![1.0; m];
+    let mut xs: Vec<f64> = rects.iter().map(|r| r.x).collect();
+    let dropped_x = project(&mut xs, &w, &st.xsep);
+    for (r, x) in rects.iter_mut().zip(&xs) {
+        r.x = *x;
+    }
+    // Highest index first: swap_remove would otherwise invalidate later
+    // indices still pending removal.
+    for &di in dropped_x.iter().rev() {
+        let (i, j) = st.xsep_pairs[di];
+        st.covered[i][j] = false;
+        st.xsep.swap_remove(di);
+        st.xsep_pairs.swap_remove(di);
+    }
+    let mut ys: Vec<f64> = rects.iter().map(|r| r.y).collect();
+    let dropped_y = project(&mut ys, &w, &st.ysep);
+    for (r, y) in rects.iter_mut().zip(&ys) {
+        r.y = *y;
+    }
+    for &di in dropped_y.iter().rev() {
+        let (i, j) = st.ysep_pairs[di];
+        st.covered[i][j] = false;
+        st.ysep.swap_remove(di);
+        st.ysep_pairs.swap_remove(di);
+    }
+    added_any
+}
+
+/// Discovery-only half of `overlap_removal_pass`: scan every not-yet-
+/// `covered`, not-`skip_pair`-filtered rect pair and commit any
+/// newly-overlapping pair's Sep on its cheaper axis into `st` (marking it
+/// covered). Does NOT project — extracted so `remove_overlaps_with` can
+/// combine the discovered seps with authored ones in a single
+/// `vpsc::project` call per axis instead of projecting twice per pass.
+/// Returns whether any new pair was found.
+fn overlap_discover(
+    rects: &[Rect],
+    gap: f64,
+    st: &mut OverlapAccum,
+    skip_pair: impl Fn(usize, usize) -> bool,
+) -> bool {
+    use super::vpsc::Sep;
     let m = rects.len();
     let mut added_any = false;
     for i in 0..m {
@@ -1321,32 +1463,105 @@ fn overlap_removal_pass(
             }
         }
     }
-    let w = vec![1.0; m];
-    let mut xs: Vec<f64> = rects.iter().map(|r| r.x).collect();
-    let dropped_x = project(&mut xs, &w, &st.xsep);
-    for (r, x) in rects.iter_mut().zip(&xs) {
-        r.x = *x;
-    }
-    // Highest index first: swap_remove would otherwise invalidate later
-    // indices still pending removal.
-    for &di in dropped_x.iter().rev() {
-        let (i, j) = st.xsep_pairs[di];
-        st.covered[i][j] = false;
-        st.xsep.swap_remove(di);
-        st.xsep_pairs.swap_remove(di);
-    }
-    let mut ys: Vec<f64> = rects.iter().map(|r| r.y).collect();
-    let dropped_y = project(&mut ys, &w, &st.ysep);
-    for (r, y) in rects.iter_mut().zip(&ys) {
-        r.y = *y;
-    }
-    for &di in dropped_y.iter().rev() {
-        let (i, j) = st.ysep_pairs[di];
-        st.covered[i][j] = false;
-        st.ysep.swap_remove(di);
-        st.ysep_pairs.swap_remove(di);
-    }
     added_any
+}
+
+/// Overlap removal that folds authored separation constraints in so the
+/// per-pair minimal-displacement passes can never undo them: `extra_x`/
+/// `extra_y` (already-compiled `constrain.rs` seps, or `layout_constrained`'s
+/// own authored seps) are placed FIRST in the per-axis list handed to
+/// `vpsc::project` every pass, ahead of the seps `overlap_discover` finds —
+/// a dropped index `< extra_x.len()` (resp. `extra_y.len()`) therefore
+/// always names an authored sep, never a generated overlap sep (those
+/// regenerate on the next pass and are never reported).
+///
+/// The position vector is `rects.len() + extra_vars` long: indices
+/// `0..rects.len()` are the node rects, `rects.len()..` are extra
+/// positionless variables (group boundary vars) carried at low weight
+/// (`0.01`) so they follow their members instead of dragging them; they
+/// take no part in overlap discovery (they have no rect) but do get
+/// projected by any authored sep that references them. Returns
+/// `(dropped_x, dropped_y)` — indices into `extra_x`/`extra_y` that
+/// `vpsc::project` ultimately could not satisfy against the final rects.
+fn remove_overlaps_with(
+    rects: &mut [Rect],
+    gap: f64,
+    extra_x: &[super::vpsc::Sep],
+    extra_y: &[super::vpsc::Sep],
+    extra_vars: usize,
+) -> (Vec<usize>, Vec<usize>) {
+    use super::vpsc::project;
+    let m = rects.len();
+    let total = m + extra_vars;
+    let mut st = OverlapAccum::new(m);
+    let mut ex_x = vec![0.0_f64; extra_vars];
+    let mut ex_y = vec![0.0_f64; extra_vars];
+    let mut weights = vec![1.0_f64; m];
+    weights.resize(total, 0.01);
+    let max_passes = (m * m.saturating_sub(1) / 2).max(4) + 1;
+    let (mut dropped_x, mut dropped_y) = (Vec::new(), Vec::new());
+    for _ in 0..max_passes {
+        let discovered = if m >= 2 {
+            overlap_discover(rects, gap, &mut st, |_, _| false)
+        } else {
+            false
+        };
+
+        let mut xs: Vec<f64> = rects
+            .iter()
+            .map(|r| r.x)
+            .chain(ex_x.iter().copied())
+            .collect();
+        let mut xseps: Vec<super::vpsc::Sep> = extra_x.to_vec();
+        let extra_x_len = xseps.len();
+        xseps.extend(st.xsep.iter().copied());
+        let dx = project(&mut xs, &weights, &xseps);
+        for (r, x) in rects.iter_mut().zip(xs.iter().take(m)) {
+            r.x = *x;
+        }
+        ex_x.copy_from_slice(&xs[m..]);
+        // Highest index first: swap_remove would otherwise invalidate later
+        // indices still pending removal.
+        for &di in dx.iter().rev() {
+            if di >= extra_x_len {
+                let gi = di - extra_x_len;
+                let (i, j) = st.xsep_pairs[gi];
+                st.covered[i][j] = false;
+                st.xsep.swap_remove(gi);
+                st.xsep_pairs.swap_remove(gi);
+            }
+        }
+        dropped_x = dx.into_iter().filter(|&di| di < extra_x_len).collect();
+
+        let mut ys: Vec<f64> = rects
+            .iter()
+            .map(|r| r.y)
+            .chain(ex_y.iter().copied())
+            .collect();
+        let mut yseps: Vec<super::vpsc::Sep> = extra_y.to_vec();
+        let extra_y_len = yseps.len();
+        yseps.extend(st.ysep.iter().copied());
+        let dy = project(&mut ys, &weights, &yseps);
+        for (r, y) in rects.iter_mut().zip(ys.iter().take(m)) {
+            r.y = *y;
+        }
+        ex_y.copy_from_slice(&ys[m..]);
+        for &di in dy.iter().rev() {
+            if di >= extra_y_len {
+                let gi = di - extra_y_len;
+                let (i, j) = st.ysep_pairs[gi];
+                st.covered[i][j] = false;
+                st.ysep.swap_remove(gi);
+                st.ysep_pairs.swap_remove(gi);
+            }
+        }
+        dropped_y = dy.into_iter().filter(|&di| di < extra_y_len).collect();
+
+        if !discovered {
+            break;
+        }
+    }
+    (dropped_x, dropped_y)
 }
 
 /// Edgeless fallback: wrap the flat node list into a `ceil(sqrt(n))`-column
@@ -1428,6 +1643,187 @@ mod tests {
     }
     fn overlaps(a: &Rect, b: &Rect) -> bool {
         a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    #[test]
+    fn layout_constrained_empty_seps_matches_layout_grouped() {
+        let ids = ids(&["a", "b", "c"]);
+        let sz = sizes(3, 100.0, 50.0);
+        let edges = vec![(0usize, 1usize), (1, 2)];
+        let cfg = StressConfig::default();
+        let (r1, h1) = layout_grouped(&ids, &sz, &edges, &[], &cfg);
+        let (r2, h2, dropped) =
+            layout_constrained(&ids, &sz, &edges, &[], &SepSpecs::default(), &cfg);
+        assert_eq!(r1, r2);
+        assert_eq!(h1, h2);
+        assert!(dropped.0.is_empty() && dropped.1.is_empty());
+    }
+
+    #[test]
+    fn layout_constrained_enforces_a_y_separation() {
+        // "a above b" as a y-sep: y_a + h_a + 40 <= y_b — regardless of where
+        // stress wanted them.
+        use crate::solve::vpsc::Sep;
+        let ids = ids(&["a", "b"]);
+        let sz = sizes(2, 100.0, 50.0);
+        let seps = SepSpecs {
+            y: vec![Sep {
+                left: 0,
+                right: 1,
+                gap: 50.0 + 40.0,
+                equality: false,
+            }],
+            ..SepSpecs::default()
+        };
+        let (rects, _, dropped) =
+            layout_constrained(&ids, &sz, &[(0, 1)], &[], &seps, &StressConfig::default());
+        assert!(dropped.0.is_empty() && dropped.1.is_empty());
+        assert!(
+            rects[0].y + rects[0].h + 40.0 <= rects[1].y + 1e-6,
+            "a must sit above b: {:?}",
+            rects
+        );
+    }
+
+    #[test]
+    fn layout_constrained_enforces_an_alignment_equality() {
+        use crate::solve::vpsc::Sep;
+        // Align left edges: x_a == x_b (equality sep, gap 0).
+        let ids = ids(&["a", "b"]);
+        let sz = sizes(2, 100.0, 50.0);
+        let seps = SepSpecs {
+            x: vec![Sep {
+                left: 0,
+                right: 1,
+                gap: 0.0,
+                equality: true,
+            }],
+            ..SepSpecs::default()
+        };
+        let (rects, _, _) =
+            layout_constrained(&ids, &sz, &[(0, 1)], &[], &seps, &StressConfig::default());
+        assert!((rects[0].x - rects[1].x).abs() < 1e-6);
+        // Overlap removal must have separated them on Y instead of breaking the
+        // x-equality.
+        assert!(!overlaps(&rects[0], &rects[1]));
+    }
+
+    #[test]
+    fn layout_constrained_cross_component_sep_holds() {
+        use crate::solve::vpsc::Sep;
+        // Two disconnected components; a sep between them still holds because
+        // projection runs on packed global coordinates.
+        let ids = ids(&["a", "b", "c", "d"]);
+        let sz = sizes(4, 100.0, 50.0);
+        let edges = vec![(0usize, 1usize), (2, 3)]; // components {a,b} and {c,d}
+        let seps = SepSpecs {
+            x: vec![Sep {
+                left: 3,
+                right: 0,
+                gap: 100.0 + 40.0,
+                equality: false,
+            }],
+            ..SepSpecs::default()
+        };
+        let (rects, _, dropped) =
+            layout_constrained(&ids, &sz, &edges, &[], &seps, &StressConfig::default());
+        assert!(dropped.0.is_empty());
+        assert!(
+            rects[3].x + 100.0 + 40.0 <= rects[0].x + 1e-6,
+            "d left of a"
+        );
+    }
+
+    #[test]
+    fn layout_constrained_reports_contradictory_seps() {
+        use crate::solve::vpsc::Sep;
+        let ids = ids(&["a", "b"]);
+        let sz = sizes(2, 100.0, 50.0);
+        let seps = SepSpecs {
+            x: vec![
+                Sep {
+                    left: 0,
+                    right: 1,
+                    gap: 140.0,
+                    equality: false,
+                },
+                Sep {
+                    left: 1,
+                    right: 0,
+                    gap: 140.0,
+                    equality: false,
+                },
+            ],
+            ..SepSpecs::default()
+        };
+        let (_, _, (dx, _)) =
+            layout_constrained(&ids, &sz, &[(0, 1)], &[], &seps, &StressConfig::default());
+        assert_eq!(dx, vec![1], "the later authored sep loses, and is reported");
+    }
+
+    #[test]
+    fn layout_constrained_is_deterministic() {
+        use crate::solve::vpsc::Sep;
+        let ids = ids(&["a", "b", "c", "d", "e"]);
+        let sz = sizes(5, 100.0, 50.0);
+        let edges = vec![(0usize, 1), (1, 2), (2, 3), (3, 4), (0, 4)];
+        let seps = SepSpecs {
+            x: vec![Sep {
+                left: 0,
+                right: 2,
+                gap: 140.0,
+                equality: false,
+            }],
+            y: vec![Sep {
+                left: 1,
+                right: 3,
+                gap: 90.0,
+                equality: false,
+            }],
+            ..SepSpecs::default()
+        };
+        let one = layout_constrained(&ids, &sz, &edges, &[], &seps, &StressConfig::default());
+        let two = layout_constrained(&ids, &sz, &edges, &[], &seps, &StressConfig::default());
+        assert_eq!(one, two);
+    }
+
+    #[test]
+    fn layout_constrained_with_seps_skips_reduce_crossings_but_grouped_default_keeps_it() {
+        // Contract pin: authored seps disable the crossing post-pass (its moves
+        // are sep-blind). Empty seps must keep byte-identical behavior to
+        // layout_grouped — that equivalence is already asserted above; here we
+        // only pin that a sep-carrying solve still returns overlap-free rects.
+        use crate::solve::vpsc::Sep;
+        let ids = ids(&["a", "b", "c", "d"]);
+        let sz = sizes(4, 100.0, 50.0);
+        let groups = vec![
+            GroupSpec {
+                members: vec![0, 1],
+                depth: 0,
+            },
+            GroupSpec {
+                members: vec![2, 3],
+                depth: 0,
+            },
+        ];
+        let edges = vec![(0usize, 2usize), (1, 3)];
+        let seps = SepSpecs {
+            x: vec![Sep {
+                left: 0,
+                right: 2,
+                gap: 140.0,
+                equality: false,
+            }],
+            ..SepSpecs::default()
+        };
+        let (rects, hulls, _) =
+            layout_constrained(&ids, &sz, &edges, &groups, &seps, &StressConfig::default());
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                assert!(!overlaps(&rects[i], &rects[j]));
+            }
+        }
+        assert_eq!(hulls.len(), 2);
     }
 
     #[test]
