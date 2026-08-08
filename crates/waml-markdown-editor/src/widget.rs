@@ -788,8 +788,27 @@ struct DrawCommandsCache {
     installed: Arc<InstalledPresentation>,
     layout: Arc<LayoutSnapshot>,
     selections: crate::selection::SelectionSet,
+    /// Mono advance the cached commands were ellipsized against; a font
+    /// refresh or scale change that moves it must rebuild.
+    message_advance: f64,
     commands: Arc<[DrawCommand]>,
     plan: Arc<[Vec<usize>; DRAW_LAYERS.len()]>,
+}
+
+/// Whether a previously built `DrawCommandsCache` still covers this frame's
+/// inputs. Split out from `cached_draw_commands` so tests can probe the
+/// predicate directly instead of driving a whole widget.
+fn draw_commands_cache_reusable(
+    cache: &DrawCommandsCache,
+    installed: &Arc<InstalledPresentation>,
+    layout: &Arc<LayoutSnapshot>,
+    selections: &crate::selection::SelectionSet,
+    message_advance: f64,
+) -> bool {
+    Arc::ptr_eq(&cache.installed, installed)
+        && Arc::ptr_eq(&cache.layout, layout)
+        && cache.selections == *selections
+        && cache.message_advance.to_bits() == message_advance.to_bits()
 }
 
 impl Widget for MarkdownEditor {
@@ -1038,7 +1057,7 @@ impl MarkdownEditor {
             .as_ref()
             .ok_or(MarkdownEditorError::MissingLayoutDocument)?
             .clone();
-        let (base_commands, plan) = self.cached_draw_commands(session, &installed, &layout)?;
+        let (base_commands, plan) = self.cached_draw_commands(cx, session, &installed, &layout)?;
         let content_origin = viewport.pos + dvec2(gutter, 0.0) - self.scroll_bars.get_scroll_pos();
         self.scroll_bars.begin(cx, walk, Layout::default());
         self.last_draw = DrawRecorder::default();
@@ -1112,20 +1131,26 @@ impl MarkdownEditor {
     #[allow(clippy::type_complexity)]
     fn cached_draw_commands(
         &mut self,
+        cx: &mut Cx,
         session: &MarkdownDocumentSession,
         installed: &Arc<InstalledPresentation>,
         layout: &Arc<LayoutSnapshot>,
     ) -> Result<(Arc<[DrawCommand]>, Arc<[Vec<usize>; DRAW_LAYERS.len()]>), MarkdownEditorError>
     {
+        let message_advance = self.gutter_metrics(cx).digit_width;
         let reusable = session.ime().is_none()
             && self
                 .pipeline
                 .draw_commands_cache
                 .as_ref()
                 .is_some_and(|cache| {
-                    Arc::ptr_eq(&cache.installed, installed)
-                        && Arc::ptr_eq(&cache.layout, layout)
-                        && cache.selections == *session.selections()
+                    draw_commands_cache_reusable(
+                        cache,
+                        installed,
+                        layout,
+                        session.selections(),
+                        message_advance,
+                    )
                 });
         if !reusable {
             let frame = PresentationFrame {
@@ -1137,10 +1162,13 @@ impl MarkdownEditor {
                 diagnostics: installed.diagnostics.clone(),
                 assets: installed.assets.clone(),
             };
+            let styles = installed
+                .styles
+                .with_diagnostic_message_advance(message_advance);
             let commands = build_draw_commands(
                 &frame,
                 &installed.plan,
-                &installed.styles,
+                &styles,
                 session.selections(),
                 session.ime(),
             )
@@ -1150,6 +1178,7 @@ impl MarkdownEditor {
                 installed: installed.clone(),
                 layout: layout.clone(),
                 selections: session.selections().clone(),
+                message_advance,
                 commands,
                 plan,
             });
@@ -2607,6 +2636,7 @@ mod layout_pipeline_tests {
                     TextSize::new(0),
                 )
                 .expect("empty caret selection"),
+                message_advance: 6.6,
                 commands: Arc::from([]),
                 plan: Arc::new(Default::default()),
             }),
@@ -2662,7 +2692,7 @@ mod layout_pipeline_tests {
             let mut inner = editor.borrow_mut().expect("mounted editor");
             inner.pipeline.installed = Some(installed.clone());
             inner
-                .cached_draw_commands(&session, &installed, &layout)
+                .cached_draw_commands(&mut cx, &session, &installed, &layout)
                 .expect("draw commands build for an empty document");
             assert!(
                 inner.pipeline.draw_commands_cache.is_some(),
@@ -2678,5 +2708,36 @@ mod layout_pipeline_tests {
             "clear_presentation must drop the cached draw commands",
         );
         assert!(inner.pipeline.installed.is_none());
+    }
+
+    #[test]
+    fn a_changed_message_advance_invalidates_the_draw_command_cache() {
+        let installed = installed_presentation();
+        let layout = layout_snapshot();
+        let selections = SelectionSet::caret_in_text(
+            DocumentRevision::INITIAL,
+            &waml_syntax::SourceText::new(String::new()).unwrap(),
+            TextSize::new(0),
+        )
+        .expect("empty caret selection");
+        let cache = DrawCommandsCache {
+            installed: installed.clone(),
+            layout: layout.clone(),
+            selections: selections.clone(),
+            message_advance: 6.6,
+            commands: Arc::from([]),
+            plan: Arc::new(Default::default()),
+        };
+        assert!(draw_commands_cache_reusable(
+            &cache,
+            &installed,
+            &layout,
+            &selections,
+            6.6
+        ));
+        assert!(
+            !draw_commands_cache_reusable(&cache, &installed, &layout, &selections, 7.0),
+            "a font refresh that changes the mono advance must rebuild the commands"
+        );
     }
 }
