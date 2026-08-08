@@ -11,6 +11,15 @@ pub fn describe(
         .or_else(|| crate::okf_documents::describe(okf, concept_id))
 }
 
+/// The combined uml-then-generic open, kept as a directly callable unit so
+/// the behavior-preservation tests (`uml_provider_precedes_generic_okf_provider`
+/// et al.) can pin its tab identity independent of the surface table's own
+/// wiring in `open_locator_with_asset_host`/`open_row_with_asset_host` --
+/// both of which now route through `extension_editor::surface_table`'s
+/// `open_canvas` (which folds in the same uml-then-generic degrade) rather
+/// than calling this function. Not dead: exercised directly by this
+/// module's tests as the behavior baseline the table must match.
+#[allow(dead_code)]
 pub fn open_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -45,9 +54,6 @@ pub fn default_surface_for(
 /// from `CoreEditorExtension::surfaces` -- `extension_editor`'s own gate
 /// test (`todays_four_surfaces_are_registered_by_the_core_editor_half`)
 /// asserts the other side of the same set.
-// Consumer: `open_row_with_asset_host` below (itself `#[allow(dead_code)]`
-// pending live wiring -- see that function's doc comment).
-#[allow(dead_code)]
 const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
 
 /// Opens a projected chain `Row` (Task E2's "open rows through the surface
@@ -65,15 +71,14 @@ const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
 /// degrades to the row's type default with a diagnostic (never a blank
 /// tab, never a panic) per `waml::view::surface::resolve_surface`.
 ///
-/// Not yet called from `folder_view.rs`'s live click-through path: that
-/// path still routes through `NavigationTarget::Document`, which has no
-/// surface field, so an override can only be exercised directly (as this
-/// module's own tests do) until a variant or field is added to carry a
-/// resolved `SurfaceId` end to end -- a follow-up, since every row the
-/// editor can produce today has `surface: None` and is unaffected either
-/// way. Task E2's own Testing bullets (surface totality, unknown-surface
-/// degrade, the four-surfaces registration) are covered by this module's
-/// and `extension_editor`'s tests regardless of live wiring.
+/// The locator path (`open_locator_with_asset_host`) is live through the
+/// surface table today; this row-click path still routes through
+/// `NavigationTarget`, which has no surface field, so an override can only
+/// be exercised directly (as this module's own tests do) until a variant or
+/// field is added to carry a resolved `SurfaceId` end to end (Task 6). Every
+/// row the editor can produce today has `surface: None` and is unaffected
+/// either way -- so this entry point still has no live (non-test) caller
+/// until Task 6 wires `folder_view.rs`'s click-through path to it.
 #[allow(dead_code)]
 pub fn open_row_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
@@ -83,36 +88,26 @@ pub fn open_row_with_asset_host(
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> (Option<OpenDocument>, Option<waml::diagnostic::Diagnostic>) {
-    match &row.target {
-        RowTarget::Folder(directory) => (open_folder(okf, directory, limits, mask), None),
-        // No file behind a Virtual row; the owning middleware would need to
-        // interpret the path itself. No middleware does yet -- degrades to
-        // "nothing to open" rather than guessing.
-        RowTarget::Virtual => (None, None),
-        RowTarget::Concept(concept_id) => {
-            let Some(requested) = row.surface.as_ref() else {
-                return (open_with_asset_host(okf, uml, concept_id, assets), None);
-            };
-            let (surface, diagnostic) = waml::view::surface::resolve_surface(
-                Some(requested.as_str()),
-                &row.target,
-                &okf.bundle,
-                KNOWN_SURFACES,
-                "index.md",
-                0,
-            );
-            let doc = match surface.as_str() {
-                "source" => {
-                    crate::okf_documents::open_source_with_asset_host(okf, concept_id, assets)
-                }
-                "canvas" => open_with_asset_host(okf, uml, concept_id, assets),
-                // "markdown" and any other resolved default: the generic
-                // reading surface.
-                _ => crate::okf_documents::open_with_asset_host(okf, concept_id, assets),
-            };
-            (doc, diagnostic)
-        }
-    }
+    let (surface, diagnostic) = waml::view::surface::resolve_surface(
+        row.surface.as_ref().map(|s| s.0.as_str()),
+        &row.target,
+        &okf.bundle,
+        KNOWN_SURFACES,
+        "index.md",
+        0,
+    );
+    let ctx = crate::extension_editor::OpenCtx {
+        analysis: okf,
+        uml,
+        assets: assets.clone(),
+        limits,
+        mask,
+    };
+    let doc = crate::extension_editor::surface_table()
+        .into_iter()
+        .find(|(name, _)| *name == surface.as_str())
+        .and_then(|(_, factory)| factory(&ctx, &row.target));
+    (doc, diagnostic)
 }
 
 /// The folder-view provider entry: keyed on a directory address, not a
@@ -148,6 +143,14 @@ pub fn reopen_with_asset_host(
     open_locator_with_asset_host(okf, uml, &tab.locator(), assets, limits, mask)
 }
 
+/// Opens a stored `DocumentLocator` by looking its surface up in the editor
+/// build's registered surface table (`extension_editor::surface_table`) and
+/// calling the matching factory with the locator's target. Keyed on
+/// `RowTarget`, never on row/tab identity -- a `hide`-hidden concept has no
+/// `RowId` in Projected mode, so this is the only open path that can reach
+/// it in both view modes (see `a_hidden_concept_still_opens_through_the_surface_path_in_both_modes`).
+/// An unknown surface id degrades via `resolve_surface`'s type-based default
+/// rather than returning `None` -- never a blank tab.
 pub fn open_locator_with_asset_host(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -156,20 +159,25 @@ pub fn open_locator_with_asset_host(
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
-    match (locator.surface.as_str(), &locator.target) {
-        ("folder", RowTarget::Folder(directory)) => open_folder(okf, directory, limits, mask),
-        ("source", target) => crate::okf_documents::open_source_for_target(okf, target, assets),
-        ("canvas", RowTarget::Concept(id)) => {
-            // A stored canvas locator can go stale when a concept's type is
-            // edited away from uml.*; today's Primary arm fell through to
-            // the generic provider, so the canvas surface keeps that
-            // degrade path (research finding 5). Task 5 keeps this arm.
-            crate::uml_documents::open_with_asset_host(okf, uml, id, assets)
-                .or_else(|| crate::okf_documents::open_with_asset_host(okf, id, assets))
-        }
-        (_, RowTarget::Concept(id)) => crate::okf_documents::open_with_asset_host(okf, id, assets),
-        _ => None,
-    }
+    let (surface, _diagnostic) = waml::view::surface::resolve_surface(
+        Some(locator.surface.as_str()),
+        &locator.target,
+        &okf.bundle,
+        KNOWN_SURFACES,
+        "index.md",
+        0,
+    );
+    let ctx = crate::extension_editor::OpenCtx {
+        analysis: okf,
+        uml,
+        assets: assets.clone(),
+        limits,
+        mask,
+    };
+    crate::extension_editor::surface_table()
+        .into_iter()
+        .find(|(name, _)| *name == surface.as_str())
+        .and_then(|(_, factory)| factory(&ctx, &locator.target))
 }
 
 #[cfg(test)]
@@ -182,6 +190,18 @@ fn assets_for_test() -> crate::markdown_hosts::SharedMarkdownAssetHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn every_maskable_name() -> waml::view::mask::ProjectionMask {
+        let registry = crate::folder_projection::core_registry();
+        waml::view::mask::ProjectionMask::from_names(
+            crate::folder_projection::maskable_names(&registry)
+                .into_iter()
+                .flat_map(|(_owner, names)| names)
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>(),
+        )
+    }
+
     use crate::{
         document::{DocumentCapabilities, DocumentPresentation, NavCategory},
         icons::Icon,
@@ -554,6 +574,82 @@ mod tests {
         assert_eq!(
             reopened.tab_id,
             crate::okf_documents::source_document_tab_id("runbook")
+        );
+    }
+
+    /// `hide` is presentational, never a permission boundary (hide.rs:7). A
+    /// concept a middleware hides has NO RowId in Projected mode (spike Q2),
+    /// so any open path keyed on row identity would make it unopenable. The
+    /// locator path must open it in BOTH modes.
+    #[test]
+    fn a_hidden_concept_still_opens_through_the_surface_path_in_both_modes() {
+        let source = SourceBundle::try_from_pairs([
+            ("index.md", "# Root\n\n* [Shop](shop/)\n"),
+            (
+                "shop/index.md",
+                "---\nview: hide\nhide: [\"shop/secret\"]\n---\n# Shop\n\n* [Order](order.md)\n* [Secret](secret.md)\n",
+            ),
+            ("shop/order.md", "---\ntype: Runbook\n---\n# Order\n"),
+            ("shop/secret.md", "---\ntype: Runbook\n---\n# Secret\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 41).unwrap();
+        let locator =
+            DocumentLocator::concept("shop/secret", waml::view::surface::SurfaceId::markdown());
+        // Both ends of the projection range: nothing masked (the chain runs,
+        // so `hide` swallows the row) and every maskable stage masked (raw).
+        for mask in [
+            waml::view::mask::ProjectionMask::default(),
+            every_maskable_name(),
+        ] {
+            assert!(
+                open_locator_with_asset_host(
+                    prepared.okf(),
+                    prepared.uml(),
+                    &locator,
+                    &assets(),
+                    waml::view::chain::ChainLimits::default(),
+                    &mask,
+                )
+                .is_some(),
+                "hide must stay presentational with mask {mask:?}"
+            );
+        }
+        // The source surface of a hidden concept opens too.
+        assert!(open_locator_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &DocumentLocator::source("shop/secret"),
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn an_unknown_surface_locator_degrades_to_the_type_default() {
+        let source =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 43).unwrap();
+        let locator = DocumentLocator::new(
+            RowTarget::Concept("order".to_string()),
+            waml::view::surface::SurfaceId("no-such-surface".to_string()),
+        );
+
+        let doc = open_locator_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &locator,
+            &assets(),
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
+        )
+        .expect("an unknown surface must degrade, never open nothing");
+        assert_eq!(
+            doc.tab_id,
+            crate::uml_documents::uml_document_tab_id("order")
         );
     }
 }

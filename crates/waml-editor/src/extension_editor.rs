@@ -24,11 +24,6 @@ use crate::icons::{Icon, IconSet};
 use crate::markdown_hosts::SharedMarkdownAssetHost;
 
 /// Everything a `SurfaceFactory` needs to open a target.
-// Not yet constructed outside tests: Task E2's remaining half (rewiring
-// `documents.rs`/`folder_view.rs` to open rows through this table instead of
-// the current provider-chain `describe()` mechanism) is the concrete
-// consumer, deferred to a following unit -- see the plan's Task E2 notes.
-#[allow(dead_code)]
 pub struct OpenCtx<'a> {
     pub analysis: &'a OkfAnalysis,
     pub uml: &'a waml::uml::Analysis,
@@ -42,12 +37,8 @@ pub struct OpenCtx<'a> {
 
 /// A factory, not an instance -- called when a target is opened, not when it
 /// is listed. See module docs for why this returns `Option`.
-// Consumer: the documents.rs/folder_view.rs rewiring, deferred (see OpenCtx).
-#[allow(dead_code)]
 pub type SurfaceFactory = Box<dyn Fn(&OpenCtx<'_>, &RowTarget) -> Option<OpenDocument>>;
 
-// Consumer: the documents.rs/folder_view.rs rewiring, deferred (see OpenCtx).
-#[allow(dead_code)]
 pub trait EditorExtension {
     /// Matches its `CoreExtension` half's `name()` -- checked by Task E4's
     /// gate assertion, not at runtime.
@@ -64,8 +55,6 @@ pub trait EditorExtension {
 /// Today's four surfaces: markdown reading, source, canvas, and the folder
 /// listing itself. No speculative format registry -- only what the editor
 /// can already open.
-// Consumer: the documents.rs/folder_view.rs rewiring, deferred (see OpenCtx).
-#[allow(dead_code)]
 pub struct CoreEditorExtension;
 
 impl EditorExtension for CoreEditorExtension {
@@ -97,7 +86,6 @@ impl EditorExtension for CoreEditorExtension {
 /// `uml`'s editor half: no surfaces of its own yet (it decorates rows the
 /// core surfaces already open), and one icon -- the package/box glyph its
 /// `UmlView` middleware stamps on `uml-domain` folders.
-#[allow(dead_code)]
 pub struct UmlEditorExtension;
 
 impl EditorExtension for UmlEditorExtension {
@@ -149,12 +137,24 @@ pub fn resolve_icon(
     }
 }
 
+/// The surface table an editor build actually registers -- core + uml, the
+/// same pair as `folder_projection::core_registry`'s middleware side.
+pub fn surface_table() -> Vec<(&'static str, SurfaceFactory)> {
+    // Names checked here, not just documented: keeps `EditorExtension::name`
+    // a live call site (Task E4's fuller registration gate is still
+    // deferred) and pins the two names this table is built from.
+    debug_assert_eq!(CoreEditorExtension.name(), "core");
+    debug_assert_eq!(UmlEditorExtension.name(), "uml");
+    let mut table = CoreEditorExtension.surfaces();
+    table.extend(UmlEditorExtension.surfaces());
+    table
+}
+
 // The following free functions are the `SurfaceFactory` values registered by
-// `CoreEditorExtension::surfaces`, itself unreachable outside tests until the
-// rewiring above lands -- deferred, not orphaned. Each delegates to the same
-// provider function the LIVE open path already uses, so a factory produces
-// the exact same tab (wrappers included) as today's provider chain.
-#[allow(dead_code)]
+// `CoreEditorExtension::surfaces` and looked up by `documents::open_locator_with_asset_host`
+// through `surface_table`. Each delegates to the same provider function the
+// live open path already uses, so a factory produces the exact same tab
+// (wrappers included) as today's provider chain.
 fn open_markdown(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
     let RowTarget::Concept(id) = target else {
         return None;
@@ -162,20 +162,22 @@ fn open_markdown(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> 
     crate::okf_documents::open_with_asset_host(ctx.analysis, id, &ctx.assets)
 }
 
-#[allow(dead_code)]
 fn open_source(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
     crate::okf_documents::open_source_for_target(ctx.analysis, target, &ctx.assets)
 }
 
-#[allow(dead_code)]
 fn open_canvas(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
     let RowTarget::Concept(id) = target else {
         return None;
     };
+    // A stored canvas locator can go stale when a concept's type is edited
+    // away from uml.*; today's Primary arm fell through to the generic
+    // provider, so the canvas surface keeps that degrade path (research
+    // finding 5).
     crate::uml_documents::open_with_asset_host(ctx.analysis, ctx.uml, id, &ctx.assets)
+        .or_else(|| crate::okf_documents::open_with_asset_host(ctx.analysis, id, &ctx.assets))
 }
 
-#[allow(dead_code)]
 fn open_folder(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
     let RowTarget::Folder(directory) = target else {
         return None;
