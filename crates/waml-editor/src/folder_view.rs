@@ -586,8 +586,11 @@ mod tests {
         ]);
         let bundle = &prepared.okf().bundle;
 
-        let (_, tree_diagnostics) =
-            bundle.resolved_view("/", &crate::folder_projection::core_registry());
+        let (_, tree_diagnostics) = bundle.resolved_view(
+            "/",
+            &crate::folder_projection::core_registry(),
+            &waml::view::mask::ProjectionMask::default(),
+        );
         let view = FolderView::build(
             prepared.okf(),
             "/",

@@ -123,7 +123,12 @@ mod tests {
     }
 
     fn run_ids(registry: &MiddlewareRegistry) -> Vec<String> {
-        let (chain, diagnostics) = Chain::build(&decl_one("index"), registry, &index());
+        let (chain, diagnostics) = Chain::build(
+            &decl_one("index"),
+            registry,
+            &index(),
+            &crate::view::mask::ProjectionMask::default(),
+        );
         assert!(
             diagnostics.is_empty(),
             "the `index` name must resolve through a registry built from CoreExt"
@@ -179,7 +184,12 @@ mod tests {
         let index_rows = run_ids(&registry);
         assert!(index_rows.is_empty());
 
-        let (chain, diagnostics) = Chain::build(&decl_one("uml"), &registry, &index());
+        let (chain, diagnostics) = Chain::build(
+            &decl_one("uml"),
+            &registry,
+            &index(),
+            &crate::view::mask::ProjectionMask::default(),
+        );
         assert!(
             diagnostics.is_empty(),
             "the `uml` name must resolve through a registry built from UmlExt"

@@ -88,7 +88,11 @@ pub fn chain_for(
     registry: &MiddlewareRegistry,
 ) -> (Chain, Vec<Diagnostic>) {
     match mode {
-        ViewMode::Projected => analysis.bundle.resolved_view(directory, registry),
+        ViewMode::Projected => analysis.bundle.resolved_view(
+            directory,
+            registry,
+            &waml::view::mask::ProjectionMask::default(),
+        ),
         ViewMode::Raw => (Chain::raw(), Vec::new()),
     }
 }

@@ -116,7 +116,12 @@ mod tests {
                 line: 1,
             }],
         };
-        let (chain, diagnostics) = Chain::build(&decl, &registry, index);
+        let (chain, diagnostics) = Chain::build(
+            &decl,
+            &registry,
+            index,
+            &crate::view::mask::ProjectionMask::default(),
+        );
         assert!(diagnostics.is_empty(), "uml chain builds cleanly");
         chain.run(&projection_ctx, ChainLimits::default()).rows
     }

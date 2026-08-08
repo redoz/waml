@@ -1124,7 +1124,11 @@ mod tests {
         let projection_ctx = ctx(&directory, &bundle, &params, &descend);
 
         let registry = MiddlewareRegistry::from_extensions(&[&crate::extension::CoreExt]).unwrap();
-        let (chain, build_diags) = bundle.resolved_view("/", &registry);
+        let (chain, build_diags) = bundle.resolved_view(
+            "/",
+            &registry,
+            &crate::view::mask::ProjectionMask::default(),
+        );
         assert!(build_diags.is_empty());
 
         let id = RowId {
@@ -1217,7 +1221,11 @@ mod tests {
         let projection_ctx = ctx(&directory, &bundle, &params, &descend);
 
         let registry = MiddlewareRegistry::from_extensions(&[&crate::extension::CoreExt]).unwrap();
-        let (chain, build_diags) = bundle.resolved_view("/", &registry);
+        let (chain, build_diags) = bundle.resolved_view(
+            "/",
+            &registry,
+            &crate::view::mask::ProjectionMask::default(),
+        );
         assert!(build_diags.is_empty());
         assert_every_declared_capability_is_accepted_by_apply(&chain, &projection_ctx);
     }

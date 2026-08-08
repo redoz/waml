@@ -557,6 +557,7 @@ impl Bundle {
         &self,
         directory: &str,
         registry: &crate::view::chain::MiddlewareRegistry,
+        mask: &crate::view::mask::ProjectionMask,
     ) -> (
         crate::view::chain::Chain,
         Vec<crate::diagnostic::Diagnostic>,
@@ -567,14 +568,14 @@ impl Bundle {
             return (Chain::root_only(registry), Vec::new());
         };
         if let Some(decl) = &index.view {
-            return Chain::build(decl, registry, index);
+            return Chain::build(decl, registry, index, mask);
         }
         if let Some(decl) = self
             .resolved_profile(directory)
             .and_then(crate::profile::profile)
             .and_then(|profile_def| profile_def.default_view)
         {
-            return Chain::build(&decl, registry, index);
+            return Chain::build(&decl, registry, index, mask);
         }
         (Chain::root_only(registry), Vec::new())
     }
@@ -1736,7 +1737,11 @@ mod tests {
             )])
             .unwrap();
             let local_bundle = Bundle::parse(&local_source).unwrap();
-            let (chain, diags) = local_bundle.resolved_view("/", &registry);
+            let (chain, diags) = local_bundle.resolved_view(
+                "/",
+                &registry,
+                &crate::view::mask::ProjectionMask::default(),
+            );
             assert!(diags.is_empty());
             assert_eq!(run_surface(&local_bundle, "/", &chain), "local");
 
@@ -1744,7 +1749,11 @@ mod tests {
             // whose surface is the root view's own.
             let bare_source = SourceBundle::try_from_pairs([("index.md", "# Root\n")]).unwrap();
             let bare_bundle = Bundle::parse(&bare_source).unwrap();
-            let (chain, diags) = bare_bundle.resolved_view("/", &registry);
+            let (chain, diags) = bare_bundle.resolved_view(
+                "/",
+                &registry,
+                &crate::view::mask::ProjectionMask::default(),
+            );
             assert!(diags.is_empty());
             assert_eq!(run_surface(&bare_bundle, "/", &chain), "folder");
         }
@@ -1766,7 +1775,11 @@ mod tests {
 
             // The profile's default is real (drives the marker if step 1 is
             // skipped) -- but the local `view:` wins, so "local" wins out.
-            let (chain, diags) = bundle.resolved_view("/", &registry);
+            let (chain, diags) = bundle.resolved_view(
+                "/",
+                &registry,
+                &crate::view::mask::ProjectionMask::default(),
+            );
             assert!(diags.is_empty());
             assert_eq!(run_surface(&bundle, "/", &chain), "local");
         }
@@ -1786,7 +1799,11 @@ mod tests {
             .unwrap();
             let bundle = Bundle::parse(&source).unwrap();
 
-            let (chain, diags) = bundle.resolved_view("/", &registry);
+            let (chain, diags) = bundle.resolved_view(
+                "/",
+                &registry,
+                &crate::view::mask::ProjectionMask::default(),
+            );
             assert!(diags.is_empty());
             assert_eq!(run_surface(&bundle, "/", &chain), "profile");
         }
@@ -1797,7 +1814,11 @@ mod tests {
             let bundle = Bundle::parse(&source).unwrap();
             let registry = registry();
 
-            let (chain, diags) = bundle.resolved_view("/nowhere", &registry);
+            let (chain, diags) = bundle.resolved_view(
+                "/nowhere",
+                &registry,
+                &crate::view::mask::ProjectionMask::default(),
+            );
             assert!(diags.is_empty());
             assert_eq!(run_surface(&bundle, "/", &chain), "folder");
         }
@@ -1820,7 +1841,11 @@ mod tests {
             .unwrap();
             let bundle = Bundle::parse(&source).unwrap();
 
-            let (chain, diags) = bundle.resolved_view("/", &registry);
+            let (chain, diags) = bundle.resolved_view(
+                "/",
+                &registry,
+                &crate::view::mask::ProjectionMask::default(),
+            );
             assert!(
                 diags.is_empty(),
                 "the uml-domain profile default resolves the [\"uml\"] chain cleanly"

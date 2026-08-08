@@ -9,6 +9,7 @@ use crate::diagnostic::{DiagCode, Diagnostic};
 use crate::okf;
 
 use super::decl::ViewDecl;
+use super::mask::ProjectionMask;
 use super::projection::{
     Next, Projection, ProjectionCtx, ProjectionError, RowOp, Unresolved, Unsupported,
 };
@@ -242,13 +243,23 @@ impl Chain {
     /// Build from a `ViewDecl` against a middleware registry. An unknown
     /// name is a declaration-level failure: returns the root-view-only
     /// chain plus a diagnostic spanned on the name in `view:`.
+    ///
+    /// `mask` switches declared stages OFF. A masked name is SKIPPED, never
+    /// looked up: removing it from the registry instead would hit the
+    /// unknown-name path below and collapse the whole chain, destroying the
+    /// per-stage granularity the mask exists to provide and spraying
+    /// diagnostics that read as author errors.
     pub fn build(
         decl: &ViewDecl,
         registry: &MiddlewareRegistry,
         index: &okf::Index,
+        mask: &ProjectionMask,
     ) -> (Chain, Vec<Diagnostic>) {
         let file = format!("{}/index.md", index.directory.as_str());
         let names: Vec<&str> = decl.entries.iter().map(|e| entry_name(&e.raw)).collect();
+        // Disambiguated over the DECLARED names, before masking: a surviving
+        // stage keeps the id it would have had unmasked, so flipping the mask
+        // never silently renumbers a row's owner.
         let disambiguated = ViewId::disambiguate(names.iter().copied());
 
         let mut ids = Vec::with_capacity(decl.entries.len());
@@ -256,6 +267,12 @@ impl Chain {
         let mut resolution: Option<Resolution> = None;
         let mut diagnostics = Vec::new();
         for (entry, (name, view_id)) in decl.entries.iter().zip(names.iter().zip(disambiguated)) {
+            // Switched off by the reader. Silent: no stage, no id, no
+            // diagnostic -- including for a name that is ALSO unknown, since
+            // the reader asked for it off either way.
+            if mask.is_masked(name) {
+                continue;
+            }
             match *name {
                 // Not middleware -- a resolution outcome attached to the
                 // chain (spec: "the chain resolves surfaces too"). Row
@@ -287,6 +304,10 @@ impl Chain {
                 // `project`, so a missing/malformed `hide:` degrades the
                 // whole chain up front with a diagnostic that names the
                 // `view:` entry, exactly like an unknown middleware name.
+                // A masked `hide` never reaches here -- the mask `continue`
+                // above skipped it, so its params are not checked and a
+                // malformed `hide:` cannot collapse a chain whose `hide` is
+                // switched off.
                 "hide" => {
                     if let Err(message) = super::hide::parse_hide_globs(&index.extra) {
                         let diagnostic =
@@ -345,6 +366,11 @@ impl Chain {
     /// access check.
     pub fn raw() -> Chain {
         Chain::default()
+    }
+
+    /// The resolved stage ids, in order. Test + diagnostic surface.
+    pub fn ids(&self) -> &[ViewId] {
+        &self.ids
     }
 
     fn next(&self) -> Next<'_> {
@@ -845,11 +871,143 @@ mod tests {
         registry
     }
 
+    fn core_registry_for_tests() -> MiddlewareRegistry {
+        let extensions: Vec<&dyn crate::extension::CoreExtension> =
+            crate::extension::SHIPPED_EXTENSIONS
+                .iter()
+                .map(|ext| *ext as &dyn crate::extension::CoreExtension)
+                .collect();
+        MiddlewareRegistry::from_extensions(&extensions).unwrap()
+    }
+
+    /// An `okf::Index` whose `extra` carries a `hide:` param of the wrong
+    /// shape (a scalar where `parse_hide_globs` requires a list), so `hide`
+    /// collapses the chain when it is not masked off.
+    fn index_with_malformed_hide_globs() -> okf::Index {
+        let mut idx = index();
+        idx.extra.entries.push((
+            "hide".to_string(),
+            crate::frontmatter::FmValue::Str("not-a-list".to_string()),
+        ));
+        idx
+    }
+
+    #[test]
+    fn an_empty_mask_reproduces_the_unmasked_chain_exactly() {
+        let registry = registry_with_doubles();
+        let idx = index();
+        let (unmasked, diags) = Chain::build(
+            &decl(&["pass-through", "pass-through"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
+        assert!(diags.is_empty());
+        assert_eq!(unmasked.ids().len(), 2);
+    }
+
+    #[test]
+    fn masking_one_stage_keeps_its_siblings_and_diagnoses_nothing() {
+        let registry = core_registry_for_tests();
+        let idx = index();
+        let mask = ProjectionMask::from_names(["uml"]);
+        let (chain, diags) = Chain::build(&decl(&["index", "uml"]), &registry, &idx, &mask);
+        assert!(
+            diags.is_empty(),
+            "a masked stage is a reader's choice, not an author error: {diags:?}",
+        );
+        assert_eq!(
+            chain.ids().len(),
+            1,
+            "the sibling survives; only the masked stage is dropped",
+        );
+    }
+
+    #[test]
+    fn a_surviving_stage_keeps_the_id_it_would_have_had_unmasked() {
+        let registry = core_registry_for_tests();
+        let idx = index();
+        let unmasked = Chain::build(
+            &decl(&["index", "uml"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        )
+        .0;
+        let masked = Chain::build(
+            &decl(&["index", "uml"]),
+            &registry,
+            &idx,
+            &ProjectionMask::from_names(["index"]),
+        )
+        .0;
+        assert_eq!(
+            masked.ids().first(),
+            unmasked.ids().get(1),
+            "ids come from the DECLARED names, so a mask flip never renumbers an owner",
+        );
+    }
+
+    #[test]
+    fn an_unknown_name_still_collapses_the_whole_chain() {
+        let registry = core_registry_for_tests();
+        let idx = index();
+        let (chain, diags) = Chain::build(
+            &decl(&["nonexistent"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
+        assert_eq!(chain.ids().len(), 0);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, DiagCode::UnknownViewMiddleware);
+    }
+
+    #[test]
+    fn a_masked_hide_with_malformed_globs_does_not_collapse_the_chain() {
+        let registry = core_registry_for_tests();
+        let idx = index_with_malformed_hide_globs();
+
+        let (collapsed, diags) = Chain::build(
+            &decl(&["hide", "index"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
+        assert_eq!(
+            collapsed.ids().len(),
+            0,
+            "unmasked, a bad `hide:` still collapses"
+        );
+        assert_eq!(diags.len(), 1);
+
+        let (survives, diags) = Chain::build(
+            &decl(&["hide", "index"]),
+            &registry,
+            &idx,
+            &ProjectionMask::from_names(["hide"]),
+        );
+        assert!(
+            diags.is_empty(),
+            "a switched-off stage's params are not checked: {diags:?}",
+        );
+        assert_eq!(
+            survives.ids().len(),
+            1,
+            "`index` survives -- the bad params belonged to the masked stage",
+        );
+    }
+
     #[test]
     fn an_unknown_middleware_name_yields_root_chain_plus_spanned_diagnostic() {
         let registry = registry_with_doubles();
         let idx = index();
-        let (chain, diagnostics) = Chain::build(&decl(&["nonexistent"]), &registry, &idx);
+        let (chain, diagnostics) = Chain::build(
+            &decl(&["nonexistent"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
 
         assert!(chain.ids.is_empty(), "unknown name yields the root chain");
         assert_eq!(diagnostics.len(), 1);
@@ -862,7 +1020,12 @@ mod tests {
     fn a_failing_stage_discards_earlier_stages_output_and_yields_the_root_view() {
         let registry = registry_with_doubles();
         let idx = index();
-        let (chain, build_diags) = Chain::build(&decl(&["adding", "failing"]), &registry, &idx);
+        let (chain, build_diags) = Chain::build(
+            &decl(&["adding", "failing"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
         assert!(build_diags.is_empty());
 
         let directory = dir();
@@ -886,7 +1049,12 @@ mod tests {
     fn pass_through_chain_equals_root_only_chain() {
         let registry = registry_with_doubles();
         let idx = index();
-        let (chain, build_diags) = Chain::build(&decl(&["pass-through"]), &registry, &idx);
+        let (chain, build_diags) = Chain::build(
+            &decl(&["pass-through"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
         assert!(build_diags.is_empty());
 
         let directory = dir();
@@ -934,7 +1102,12 @@ mod tests {
         let idx = index();
         // A folder declaring `adding` gets an extra row ahead of the
         // identity listing when its declared chain runs.
-        let (declared, build_diags) = Chain::build(&decl(&["adding"]), &registry, &idx);
+        let (declared, build_diags) = Chain::build(
+            &decl(&["adding"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
         assert!(build_diags.is_empty());
 
         let directory = dir();
@@ -966,7 +1139,12 @@ mod tests {
     fn row_id_is_stable_across_reprojection_with_unchanged_inputs() {
         let registry = registry_with_doubles();
         let idx = index();
-        let (chain, _) = Chain::build(&decl(&["adding"]), &registry, &idx);
+        let (chain, _) = Chain::build(
+            &decl(&["adding"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
 
         let directory = dir();
         let bundle = okf::Bundle::default();
@@ -995,16 +1173,24 @@ mod tests {
         // longer works as a generic disambiguation-only test double.
         let registry = registry_with_doubles();
         let idx = index();
-        let (chain, build_diags) =
-            Chain::build(&decl(&["pass-through", "pass-through"]), &registry, &idx);
+        let (chain, build_diags) = Chain::build(
+            &decl(&["pass-through", "pass-through"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
         assert!(build_diags.is_empty());
         assert_eq!(
             chain.ids.iter().map(ViewId::as_str).collect::<Vec<_>>(),
             vec!["pass-through", "pass-through#2"]
         );
 
-        let (chain_again, _) =
-            Chain::build(&decl(&["pass-through", "pass-through"]), &registry, &idx);
+        let (chain_again, _) = Chain::build(
+            &decl(&["pass-through", "pass-through"]),
+            &registry,
+            &idx,
+            &ProjectionMask::default(),
+        );
         assert_eq!(chain.ids, chain_again.ids);
     }
 
@@ -1481,7 +1667,9 @@ mod tests {
         fn descend_for<'a>(bundle: &'a okf::Bundle) -> impl Fn(&okf::Directory) -> Chain + 'a {
             move |dir: &okf::Directory| {
                 let registry = MiddlewareRegistry::new();
-                bundle.resolved_view(dir.address.as_str(), &registry).0
+                bundle
+                    .resolved_view(dir.address.as_str(), &registry, &ProjectionMask::default())
+                    .0
             }
         }
 
@@ -1489,7 +1677,8 @@ mod tests {
             bundle: &okf::Bundle,
             registry: &MiddlewareRegistry,
         ) -> (Vec<Row>, SurfaceId, Vec<Diagnostic>) {
-            let (chain, mut build_diags) = bundle.resolved_view("/", registry);
+            let (chain, mut build_diags) =
+                bundle.resolved_view("/", registry, &ProjectionMask::default());
             let directory = bundle.directory("/").unwrap().clone();
             let params = bundle
                 .index("/")
@@ -1659,7 +1848,9 @@ mod tests {
         fn descend_for<'a>(bundle: &'a okf::Bundle) -> impl Fn(&okf::Directory) -> Chain + 'a {
             move |dir: &okf::Directory| {
                 let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
-                bundle.resolved_view(dir.address.as_str(), &registry).0
+                bundle
+                    .resolved_view(dir.address.as_str(), &registry, &ProjectionMask::default())
+                    .0
             }
         }
 
@@ -1667,7 +1858,8 @@ mod tests {
             bundle: &okf::Bundle,
             registry: &MiddlewareRegistry,
         ) -> (Vec<Row>, SurfaceId, Vec<Diagnostic>) {
-            let (chain, mut build_diags) = bundle.resolved_view("/", registry);
+            let (chain, mut build_diags) =
+                bundle.resolved_view("/", registry, &ProjectionMask::default());
             let directory = bundle.directory("/").unwrap().clone();
             let params = bundle
                 .index("/")
@@ -1834,7 +2026,8 @@ mod tests {
         fn a_hidden_path_does_not_resolve_through_the_chain() {
             let bundle = hidden_fixture();
             let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
-            let (chain, build_diags) = bundle.resolved_view("/", &registry);
+            let (chain, build_diags) =
+                bundle.resolved_view("/", &registry, &ProjectionMask::default());
             assert!(build_diags.is_empty());
 
             let directory = bundle.directory("/").unwrap().clone();
@@ -1872,7 +2065,8 @@ mod tests {
         fn a_hidden_path_cannot_be_edited_through_the_chain() {
             let bundle = hidden_fixture();
             let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
-            let (chain, build_diags) = bundle.resolved_view("/", &registry);
+            let (chain, build_diags) =
+                bundle.resolved_view("/", &registry, &ProjectionMask::default());
             assert!(build_diags.is_empty());
 
             let directory = bundle.directory("/").unwrap().clone();
@@ -1903,7 +2097,7 @@ mod tests {
         fn a_surviving_row_still_edits_through_the_hide_chain() {
             let bundle = hidden_fixture();
             let registry = MiddlewareRegistry::from_extensions(&[&CoreExt]).unwrap();
-            let (chain, _) = bundle.resolved_view("/", &registry);
+            let (chain, _) = bundle.resolved_view("/", &registry, &ProjectionMask::default());
 
             let directory = bundle.directory("/").unwrap().clone();
             let params = bundle.index("/").unwrap().extra.clone();
@@ -1981,7 +2175,7 @@ mod tests {
                 "references/** is hidden -- only orders survives"
             );
 
-            let (chain, _) = fresh.resolved_view("/", &registry);
+            let (chain, _) = fresh.resolved_view("/", &registry, &ProjectionMask::default());
             let directory = fresh.directory("/").unwrap().clone();
             let params = fresh.index("/").unwrap().extra.clone();
             let descend = descend_for(&fresh);
