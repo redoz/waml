@@ -1,8 +1,12 @@
 # Surface-routed navigation
 
-**Status:** parked. Written up front so the reasoning is not lost; scheduled
-after `2026-08-08-source-as-navigation-design.md`, which deliberately builds on
-today's `DocumentKind` instead of waiting for this.
+**Status:** scheduled FIRST, ahead of `2026-08-08-source-as-navigation-design.md`.
+
+Originally parked behind that spec, on the reasoning that a two-destination
+toggle does not need a general surface router. That held until "a folder tab
+should have view-source too" — see "Why this now goes first" below, which is a
+requirement this design has to satisfy and the `DocumentKind` design provably
+cannot.
 
 ## Problem
 
@@ -47,10 +51,45 @@ therefore lives outside `DocumentLocator` entirely — a folder tab has no
 locator, so it is invisible to locator-keyed tab lookup and to view history.
 `"folder"` is nonetheless a registered surface.
 
+## Why this now goes first
+
+The forcing case is view-source on a folder tab, which the source-as-navigation
+work wanted and could not express.
+
+Half of it already works on today's shapes. `document_by_concept_id`
+(`source.rs:357`) is pure path derivation — it parses `"{id}.md"` — so directory
+`/shop` reaches its index through the key `"shop/index"`, and `Bundle::index`
+(`okf.rs:494`) answers whether that index exists. `SourceView` would render it
+unchanged.
+
+The return direction is what fails, and it fails structurally. Indexes are
+reserved documents held separately from concepts, so `bundle.concept("shop/index")`
+misses; `open_source_with_asset_host` gates on exactly that lookup
+(`okf_documents.rs:91`). Loosening the gate opens the source tab but strands it:
+`Eye` would navigate to `DocumentLocator::primary("shop/index")`, and
+`open_with_asset_host` misses on the same lookup, because an index has no
+primary document.
+
+The deeper reason is the one this spec exists for — **a folder tab has no
+locator at all**. `DocumentLocator` is `(concept_id, DocumentKind)`; folders are
+keyed on a directory address and sit outside the system (`documents.rs:103`).
+There is no value expressible in today's locator meaning "back to the folder
+view of `/shop`". The alternatives are a remembered-origin field on the tab —
+rejected, because view history already does that job — or widening the locator,
+which is this spec.
+
+Under §1 below the case is ordinary: the folder tab is
+`{ target: Folder("/shop"), surface: "folder" }`, its source is
+`{ target: Folder("/shop"), surface: "source" }`, and both directions are
+locator-expressible, tab-reusable, and history-recorded like any other pair.
+
 ## Goal
 
 One vocabulary. A navigation names a target and a surface; the surface table
 resolves it; `DocumentKind` stops existing.
+
+Success is measured by the folder case above working end to end, not by the
+refactor landing.
 
 ## Design
 
@@ -101,7 +140,24 @@ surface when the UML analysis claims it, `"markdown"` otherwise. `UmlEditorExten
 registers no surfaces of its own (`extension_editor.rs:121-123`) — it decorates
 rows the core surfaces open — so this is a resolution change, not a new factory.
 
-### 5. `OpenCtx` gets constructed for real
+### 5. The `"source"` surface resolves per target, not per concept
+
+`open_source_with_asset_host` currently hard-gates on `bundle.concept(id)`
+(`okf_documents.rs:91`), which is what excludes folders. As a surface factory it
+resolves its key from the `RowTarget` instead:
+
+- `Concept(id)` → key `id`, gated on `bundle.concept(id)`.
+- `Folder(address)` → key is the address's index document (`/shop` →
+  `"shop/index"`, root → `"index"`), gated on `bundle.index(address)`.
+- `Virtual` → no source.
+
+The `"source"` surface being absent for a given target is the single answer to
+"should the toggle be shown", replacing the source-as-navigation spec's two
+independent suppressions (`no_source` plus a concept lookup). A surface that
+does not resolve is not offered — one rule, and it covers the virtual-view case
+that `no_source` was invented for.
+
+### 6. `OpenCtx` gets constructed for real
 
 `OpenCtx` (`extension_editor.rs:40`) is `#[allow(dead_code)]` and built only in
 tests. Live construction needs a per-directory `ProjectionCtx` to back its
@@ -144,3 +200,8 @@ live wiring to find that the seam's shape is subtly wrong.
 - A folder tab round-trips through back/forward (new capability).
 - The `"source"`-surface factory and the source-navigation toggle open the same
   tab — the duplication this spec exists to remove.
+- **The forcing case:** a folder tab whose directory has an `index.md` resolves
+  the `"source"` surface, opens it, and returns to the folder tab — the
+  round-trip that is inexpressible today.
+- A folder whose directory has no `index.md` does not resolve `"source"`, and is
+  offered no toggle. Same rule, no special case.

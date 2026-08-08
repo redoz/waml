@@ -1,5 +1,18 @@
 # Source as navigation, not an in-tab toggle
 
+**Status:** blocked on `2026-08-08-surface-routed-navigation-design.md`, which
+now lands first. The problem statement, the deletion of `SourceToggleView`, and
+the shell-owned-toggle direction all stand. What changes once the surface work
+lands: the toggle dispatches on the active tab's **surface**, not on
+`DocumentKind` (which stops existing), and §3's two suppressions collapse into
+one — a target that does not resolve the `"source"` surface is offered no
+toggle. Sections below are written in the pre-surface vocabulary; read them for
+intent, not for field names.
+
+The order flipped because view-source on a folder tab turned out to be
+inexpressible in `(concept_id, DocumentKind)`. That reasoning lives in the
+surface spec's "Why this now goes first".
+
 ## Problem
 
 "View source" means two different things depending on how you reach it.
