@@ -677,33 +677,25 @@ impl App {
         }
     }
 
-    /// Flip the session-wide mask between empty and every maskable name
-    /// masked.
+    /// Install a new session-wide projection mask.
     ///
     /// Both surfaces read the same mask, so there is no state in which the
-    /// tree and a folder view disagree about what a directory contains. The
-    /// mask lives in memory only: a full mask is a deliberate act, not a
-    /// preference, so it is never written to `.waml/settings.json` and every
-    /// launch starts empty.
+    /// tree and a folder view disagree about what a directory contains. It
+    /// lives in memory only: raw is a deliberate act, not a preference, so it
+    /// is never written to `.waml/settings.json` and every launch starts with
+    /// an empty mask.
     ///
-    /// This is presentational. A row the declared chain does not emit is not
-    /// protected by anything; a full mask simply asks for the identity
-    /// listing.
-    // Superseded by the projection popup's per-name toggles (Task 10); kept
-    // as the `ToggleViewMode` button's handler until that lands.
-    pub(super) fn toggle_full_raw(&mut self, cx: &mut Cx) {
-        self.projection_mask = if self.projection_mask.is_empty() {
-            let registry = crate::folder_projection::core_registry();
-            waml::view::mask::ProjectionMask::from_names(
-                crate::folder_projection::maskable_names(&registry)
-                    .into_iter()
-                    .flat_map(|(_owner, names)| names)
-                    .map(|name| name.to_string())
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            waml::view::mask::ProjectionMask::default()
-        };
+    /// This is presentational. A row a masked stage would have removed is not
+    /// protected by anything; masking simply asks for the listing without it.
+    pub(super) fn set_projection_mask(
+        &mut self,
+        cx: &mut Cx,
+        mask: waml::view::mask::ProjectionMask,
+    ) {
+        if self.projection_mask == mask {
+            return;
+        }
+        self.projection_mask = mask;
         self.refresh_nav(cx, false);
         self.refresh_folder_tabs(cx);
         cx.redraw_all();

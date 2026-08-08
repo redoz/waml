@@ -33,6 +33,7 @@ enum ExclusiveHandler {
     TreeContextMenu,
     TreeNavigation,
     TreeProjectionMenu,
+    ProjectionMenuToggle,
     HistoryControls,
     DocumentHeader,
     DiagramSwitcher,
@@ -47,10 +48,11 @@ enum ExclusiveHandler {
     DocumentTabs,
 }
 
-const EXCLUSIVE_ORDER: [ExclusiveHandler; 15] = [
+const EXCLUSIVE_ORDER: [ExclusiveHandler; 16] = [
     ExclusiveHandler::TreeContextMenu,
     ExclusiveHandler::TreeNavigation,
     ExclusiveHandler::TreeProjectionMenu,
+    ExclusiveHandler::ProjectionMenuToggle,
     ExclusiveHandler::HistoryControls,
     ExclusiveHandler::DocumentHeader,
     ExclusiveHandler::DiagramSwitcher,
@@ -100,6 +102,9 @@ impl App {
                 ExclusiveHandler::TreeNavigation => self.handle_tree_navigation(cx, actions),
                 ExclusiveHandler::TreeProjectionMenu => {
                     self.handle_tree_projection_menu(cx, actions)
+                }
+                ExclusiveHandler::ProjectionMenuToggle => {
+                    self.handle_projection_menu_toggle(cx, actions)
                 }
                 ExclusiveHandler::HistoryControls => self.handle_history_controls(cx, actions),
                 ExclusiveHandler::DocumentHeader => self.handle_document_header_action(cx, actions),
@@ -427,18 +432,83 @@ impl App {
         ActionFlow::Consumed
     }
 
-    // TODO(Task 10): open the projection popup at `anchor` with per-name
-    // checkable rows instead of the blunt full/raw flip.
     fn handle_tree_projection_menu(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
         let opened = self
             .ui
             .widget(cx, ids!(project_tree))
             .borrow::<crate::tree_panel::ProjectTree>()
             .and_then(|panel| panel.projection_menu_opened(actions));
-        let Some(_anchor) = opened else {
+        let Some(anchor) = opened else {
             return ActionFlow::Continue;
         };
-        self.toggle_full_raw(cx);
+        let registry = crate::folder_projection::core_registry();
+        let maskable = crate::folder_projection::maskable_names(&registry);
+        let items = crate::app::menus::projection_menu_items(&maskable, &self.projection_mask);
+        let bounds = self.window_bounds(cx);
+        if let Some(mut popup) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            popup.show_at(
+                cx,
+                PopupSpec::Menu {
+                    tag: live_id!(projection_menu),
+                    anchor,
+                    bounds,
+                    items,
+                    open: MenuOpen::Sticky { max_height: None },
+                },
+            );
+        }
+        ActionFlow::Consumed
+    }
+
+    /// A row in the open projection popup was toggled: update the session
+    /// mask and re-seed the still-open card's checkmarks in place --
+    /// reopening would reset the anchor and drop the hover.
+    fn handle_projection_menu_toggle(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
+        let toggled = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow::<PopupRoot>()
+            .and_then(|popup| popup.toggled_event(actions));
+        let Some((tag, id)) = toggled else {
+            return ActionFlow::Continue;
+        };
+        if tag != live_id!(projection_menu) {
+            return ActionFlow::Continue;
+        }
+        let registry = crate::folder_projection::core_registry();
+        let maskable = crate::folder_projection::maskable_names(&registry);
+        let Some(target) = crate::app::menus::projection_toggle_target(id, &maskable) else {
+            return ActionFlow::Consumed;
+        };
+        let mut mask = self.projection_mask.clone();
+        match target {
+            // An extension row moves all of its names together: if any is
+            // still running, the row switches the whole extension off;
+            // otherwise it switches the whole extension back on.
+            crate::app::menus::ProjectionToggle::Extension(names) => {
+                let any_running = names.iter().any(|name| !mask.is_masked(name));
+                for name in &names {
+                    mask.set_masked(name, any_running);
+                }
+            }
+            crate::app::menus::ProjectionToggle::Stage(name) => {
+                let masked = mask.is_masked(&name);
+                mask.set_masked(&name, !masked);
+            }
+        }
+        self.set_projection_mask(cx, mask);
+        let items = crate::app::menus::projection_menu_items(&maskable, &self.projection_mask);
+        if let Some(mut popup) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            popup.set_menu_items(cx, tag, items);
+        }
         ActionFlow::Consumed
     }
 
@@ -1217,6 +1287,7 @@ mod tests {
                 ExclusiveHandler::TreeContextMenu,
                 ExclusiveHandler::TreeNavigation,
                 ExclusiveHandler::TreeProjectionMenu,
+                ExclusiveHandler::ProjectionMenuToggle,
                 ExclusiveHandler::HistoryControls,
                 ExclusiveHandler::DocumentHeader,
                 ExclusiveHandler::DiagramSwitcher,

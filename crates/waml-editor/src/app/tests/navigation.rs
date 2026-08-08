@@ -2030,7 +2030,16 @@ fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
     let tabs_before = app.documents.tabs().len();
     let tab_id = app.documents.active_id();
 
-    app.toggle_full_raw(&mut cx);
+    let registry = crate::folder_projection::core_registry();
+    let full_mask = waml::view::mask::ProjectionMask::from_names(
+        crate::folder_projection::maskable_names(&registry)
+            .into_iter()
+            .flat_map(|(_owner, names)| names)
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>(),
+    );
+
+    app.set_projection_mask(&mut cx, full_mask);
 
     assert!(!app.projection_mask.is_empty());
     assert_eq!(app.documents.tabs().len(), tabs_before, "no second tab");
@@ -2040,7 +2049,7 @@ fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
         "the tab keeps its identity"
     );
 
-    app.toggle_full_raw(&mut cx);
+    app.set_projection_mask(&mut cx, waml::view::mask::ProjectionMask::default());
     assert!(app.projection_mask.is_empty());
     assert_eq!(app.documents.tabs().len(), tabs_before);
 }
@@ -2050,7 +2059,15 @@ fn a_mode_flip_re_runs_open_folder_tabs_in_place() {
 fn the_mask_starts_empty_and_is_never_persisted() {
     let (mut cx, mut app) = navigation_app();
     assert!(app.projection_mask.is_empty());
-    app.toggle_full_raw(&mut cx);
+    let registry = crate::folder_projection::core_registry();
+    let full_mask = waml::view::mask::ProjectionMask::from_names(
+        crate::folder_projection::maskable_names(&registry)
+            .into_iter()
+            .flat_map(|(_owner, names)| names)
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>(),
+    );
+    app.set_projection_mask(&mut cx, full_mask);
     // The settings type has no field for it, by construction. This
     // assertion is the fence: adding one must break a test, not pass
     // silently.

@@ -158,3 +158,154 @@ pub fn logo_command_for(id: LiveId) -> Option<LogoCommand> {
         None
     }
 }
+
+/// What a projection popup row toggles.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectionToggle {
+    /// Every one of this extension's maskable names, moved together.
+    Extension(Vec<String>),
+    /// One stage.
+    Stage(String),
+}
+
+fn extension_row_id(owner: &str) -> LiveId {
+    LiveId::from_str(&format!("ext:{owner}"))
+}
+
+fn stage_row_id(name: &str) -> LiveId {
+    LiveId::from_str(&format!("stage:{name}"))
+}
+
+/// The projection checklist: one row per extension owning maskable stages,
+/// its stage rows nested beneath.
+///
+/// CHECKED MEANS RUNNING, not masked -- the popup answers "what is on", the
+/// same question the toolbar glyph answers.
+///
+/// Built from `folder_projection::maskable_names`, which is built from the
+/// registry. Never hand-write an extension list here: two construction sites
+/// that disagree are invisible.
+pub fn projection_menu_items(
+    maskable: &[(&str, Vec<&str>)],
+    mask: &waml::view::mask::ProjectionMask,
+) -> Vec<crate::popup::base::PopupItem> {
+    use crate::popup::base::PopupItem;
+    let mut items = Vec::new();
+    for (owner, names) in maskable {
+        let all_masked = names.iter().all(|name| mask.is_masked(name));
+        items.push(PopupItem {
+            id: extension_row_id(owner),
+            label: (*owner).to_string(),
+            icon: None,
+            danger: false,
+            enabled: true,
+            checked: Some(!all_masked),
+        });
+        for name in names {
+            items.push(PopupItem {
+                id: stage_row_id(name),
+                // Two leading spaces read as nesting without a new indent
+                // mechanism in the menu's row layout.
+                label: format!("  {name}"),
+                icon: None,
+                danger: false,
+                enabled: true,
+                checked: Some(!mask.is_masked(name)),
+            });
+        }
+    }
+    items
+}
+
+/// Map a committed row id back to what it toggles, by re-deriving the same ids
+/// `projection_menu_items` minted. Never parses a label.
+pub fn projection_toggle_target(
+    id: LiveId,
+    maskable: &[(&str, Vec<&str>)],
+) -> Option<ProjectionToggle> {
+    for (owner, names) in maskable {
+        if id == extension_row_id(owner) {
+            return Some(ProjectionToggle::Extension(
+                names.iter().map(|n| (*n).to_string()).collect(),
+            ));
+        }
+        for name in names {
+            if id == stage_row_id(name) {
+                return Some(ProjectionToggle::Stage((*name).to_string()));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use waml::view::mask::ProjectionMask;
+
+    fn maskable() -> Vec<(&'static str, Vec<&'static str>)> {
+        vec![("core", vec!["hide"]), ("uml", vec!["uml"])]
+    }
+
+    #[test]
+    fn an_empty_mask_shows_every_row_checked() {
+        let items = projection_menu_items(&maskable(), &ProjectionMask::default());
+        assert_eq!(
+            items.len(),
+            4,
+            "two extension rows and their two stage rows",
+        );
+        assert!(
+            items.iter().all(|item| item.checked == Some(true)),
+            "checked means running, and an empty mask runs everything",
+        );
+    }
+
+    #[test]
+    fn masking_a_stage_unchecks_it_and_its_extension() {
+        let items = projection_menu_items(&maskable(), &ProjectionMask::from_names(["hide"]));
+        let core_ext = items
+            .iter()
+            .find(|item| item.id == LiveId::from_str("ext:core"))
+            .unwrap();
+        let hide = items
+            .iter()
+            .find(|item| item.id == LiveId::from_str("stage:hide"))
+            .unwrap();
+        let uml = items
+            .iter()
+            .find(|item| item.id == LiveId::from_str("stage:uml"))
+            .unwrap();
+        assert_eq!(hide.checked, Some(false));
+        assert_eq!(
+            core_ext.checked,
+            Some(false),
+            "core's only maskable stage is off, so core reads off",
+        );
+        assert_eq!(uml.checked, Some(true), "another extension is untouched");
+    }
+
+    #[test]
+    fn index_never_appears_as_a_row() {
+        let items = projection_menu_items(&maskable(), &ProjectionMask::default());
+        assert!(
+            !items.iter().any(|item| item.label.trim() == "index"),
+            "the terminal stage is not maskable, so offering it would be a lie",
+        );
+    }
+
+    #[test]
+    fn an_extension_row_resolves_to_all_of_its_names() {
+        let target = projection_toggle_target(LiveId::from_str("ext:core"), &maskable());
+        assert_eq!(
+            target,
+            Some(ProjectionToggle::Extension(vec!["hide".to_string()])),
+        );
+        let stage = projection_toggle_target(LiveId::from_str("stage:uml"), &maskable());
+        assert_eq!(stage, Some(ProjectionToggle::Stage("uml".to_string())));
+        assert_eq!(
+            projection_toggle_target(LiveId::from_str("ext:nope"), &maskable()),
+            None,
+        );
+    }
+}

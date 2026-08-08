@@ -28,6 +28,8 @@ pub enum MenuOpen {
         open_marking: Option<LiveId>,
         max_height: Option<f64>,
     },
+    /// Checklist open: rows toggle and the card stays up until light-dismiss.
+    Sticky { max_height: Option<f64> },
 }
 
 /// How to open the wedge.
@@ -208,6 +210,18 @@ impl PopupRoot {
         self.active.is_some()
     }
 
+    /// Re-seed an open sticky menu's rows in place. A no-op unless `tag` is the
+    /// currently-open menu surface -- an opener whose toggle raced a dismiss
+    /// must not resurrect a closed card.
+    pub fn set_menu_items(&mut self, cx: &mut Cx, tag: LiveId, items: Vec<PopupItem>) {
+        if !active_tag_is(self.active, tag) {
+            return;
+        }
+        if let Some(mut m) = self.body.widget(cx, ids!(menu)).borrow_mut::<MenuPopup>() {
+            m.set_items(cx, items);
+        }
+    }
+
     /// Open `spec`'s surface, superseding (dismissing) any currently-open popup
     /// first -- the single-active guarantee.
     /// Reset whichever surface is active (if any) and emit its Dismissed
@@ -294,6 +308,9 @@ impl PopupRoot {
                     MenuOpen::Popup {
                         max_height: Some(max),
                         ..
+                    }
+                    | MenuOpen::Sticky {
+                        max_height: Some(max),
                     } => full_height.min(*max),
                     _ => full_height,
                 };
@@ -306,6 +323,9 @@ impl PopupRoot {
                             open_marking,
                             max_height,
                         } => m.open_popup(cx, placed, items, open_marking, max_height),
+                        MenuOpen::Sticky { max_height } => {
+                            m.open_sticky(cx, placed, items, max_height)
+                        }
                     }
                 }
                 self.active = Some((ActiveKind::Menu, tag));
