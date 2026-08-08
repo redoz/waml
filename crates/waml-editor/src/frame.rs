@@ -322,7 +322,9 @@ mod tests {
     /// is not a rounding term at all here but a coin flip.
     fn border_device_px(zoom: f32, stroke_scale: f32, selected: f32, dpi: f32, bias: f32) -> f32 {
         let sel = 1.0 + (1.5 - 1.0) * selected.clamp(0.0, 1.0);
-        (1.5 * zoom * stroke_scale * sel * dpi + bias).floor().max(1.0)
+        (1.5 * zoom * stroke_scale * sel * dpi + bias)
+            .floor()
+            .max(1.0)
     }
 
     /// Every zoom the camera can reach, at CAD's inverse-zoom `stroke_scale`.
