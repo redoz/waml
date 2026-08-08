@@ -154,12 +154,15 @@ A use-case document shall not contain a GWT body line. For each body line,
 validation shall repeatedly remove leading block-quote markers, unordered-list
 markers (`-`, `+`, or `*`), and ordered-list markers such as `1.` or `1)`.
 Validation shall then remove an optional opening emphasis marker and test for
-`Given`, `When`, `Then`, or `And` followed by white space, end of line, closing
-emphasis, or punctuation such as `:`. This rule covers plain, emphasized,
+`Given`, `When`, `Then`, or `And` followed only by white space, a colon, closing
+emphasis, or end of line. This rule covers plain, emphasized,
 nested-list, and nested-block-quote forms. It does not match a keyword inside a
 word or later in prose. Validator self-tests shall accept `+ Given`, `1. Given`,
 `> - **Given**`, and `Given:` as copied GWT lines. They shall reject non-GWT
-prose such as `Givenchy`, `Whenever`, and a keyword later in a sentence.
+prose such as `Givenchy`, `Whenever`, `Given-name fields`, `And, unlike the
+editor`, and a keyword later in a sentence. Validation shall scan every
+Markdown document under `docs/waml/use-cases`, including actor, workflow, view,
+and index documents.
 Planned-only behavior remains in its goal document until it has a shipped
 scenario.
 

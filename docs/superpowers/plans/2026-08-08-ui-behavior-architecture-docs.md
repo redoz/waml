@@ -179,7 +179,7 @@ not a second product parser or a new WAML feature.
      }
      function Test-GwtBodyLine([string] $Line) {
        $value = Remove-GwtPrefix $Line
-       return $value -match "^(?i:Given|When|Then|And)(?:\*\*|__)?(?=$|[\s:;,.!?—-])"
+       return $value -match "^(?i:Given|When|Then|And)(?:\*\*|__)?(?=$|[\s:])"
      }
      $positive = @(
        "+ Given a bundle is open",
@@ -192,7 +192,11 @@ not a second product parser or a new WAML feature.
        "Givenchy is a typeface.",
        "Whenever the reader opens it, the product responds.",
        "This use case is given one owner.",
-       "Android is an external platform."
+       "Android is an external platform.",
+       "And, unlike the editor, the CLI exits.",
+       "Given-name fields are optional.",
+       "Then—after validation—the command exits.",
+       "When? is a question heading."
      )
      foreach ($line in $positive) {
        if (-not (Test-GwtBodyLine $line)) { throw ("missed copied GWT: " + $line) }
@@ -200,10 +204,7 @@ not a second product parser or a new WAML feature.
      foreach ($line in $negative) {
        if (Test-GwtBodyLine $line) { throw ("false copied GWT: " + $line) }
      }
-     $files = @(
-       Get-ChildItem "docs/waml/use-cases/actors" -Filter "*.md" -File
-       Get-ChildItem "docs/waml/use-cases/workflows" -Filter "*.md" -File
-     ) | Where-Object Name -ne "index.md"
+     $files = @(Get-ChildItem "docs/waml/use-cases" -Filter "*.md" -File -Recurse)
      foreach ($file in $files) {
        $lines = @(Get-Content $file.FullName)
        $bodyStart = 0
@@ -226,8 +227,10 @@ not a second product parser or a new WAML feature.
 
    Expected: exit 0 with no output. The positive cases prove `+ Given`,
    `1. Given`, nested `> - **Given**`, `Given:`, and repeated mixed prefixes.
-   The negative cases prove that keyword stems and keywords later in prose do
-   not produce false findings.
+   The eight negative cases prove that keyword stems, comma/hyphen/question-mark
+   prose, em-dash prose, and keywords later in a sentence do not produce false
+   findings. The recursive file enumeration scans actors, workflows, views,
+   root documents, and all generated indexes under `docs/waml/use-cases`.
 6. Parse each view into its frontmatter, `##` sections, `###` member groups,
    and member links. Require `type: Diagram`, `profile: uml-domain`, one
    `### External actors` group, and one named product-boundary group. Reject a
@@ -2140,7 +2143,7 @@ rtk rg -n "^#### [A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-[0-9]+ — " docs/waml/goals
 rtk git diff --check
 ```
 
-Run the exact PowerShell body checker from step 5 of the Product Use-Case Traceability Procedure. Do not replace it with one regular-expression search. Expected: its five positive cases pass, its four negative cases pass, and no actor or use-case body contains a copied GWT line. The forbidden-status search returns no matches. The scenario list contains unique identifiers already accepted by the checker. The Product Use-Case Traceability Procedure has already proved parsed layout absence and complete view coverage. `git diff --check` returns no error.
+Run the exact PowerShell body checker from step 5 of the Product Use-Case Traceability Procedure. Do not replace it with one regular-expression search. Expected: its five positive cases pass, its eight negative cases pass, and no Markdown body anywhere under `docs/waml/use-cases` contains a copied GWT line. The forbidden-status search returns no matches. The scenario list contains unique identifiers already accepted by the checker. The Product Use-Case Traceability Procedure has already proved parsed layout absence and complete view coverage. `git diff --check` returns no error.
 
 - [ ] **Step 5: Delete the temporary inventory and reports**
 
