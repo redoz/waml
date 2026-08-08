@@ -16,8 +16,8 @@ This report links each shipped UI behavior scenario to its implementation and te
 | NATIVE-001 | <code>crates/waml-editor/src/start_screen.rs:173 (StartScreen)</code> | — | native | gap | No native test asserts the visible empty/start screen. |
 | NATIVE-002 | <code>crates/waml-editor/src/config.rs:195 (sort_recents)</code> | — | native | gap | No native test asserts rendered recent-item order. |
 | NATIVE-003 | <code>crates/waml-editor/src/config.rs:323 (set_pinned)</code> | — | native | gap | No native test asserts pinning from the start screen. |
-| NATIVE-004 | <code>crates/waml-editor/src/load.rs:59 (read_bundle)</code> | — | native | gap | The test covers replacement saves, not the full active-workspace open result. |
-| NATIVE-005 | <code>crates/waml-editor/src/app/workspace.rs:151 (prepare_open_documents)</code> | — | native | gap | The test checks the asset root only, not the complete prior-workspace result. |
+| NATIVE-004 | <code>crates/waml-editor/src/app/workspace.rs:493 (App::open_dir)</code><br><code>crates/waml-editor/src/app/workspace.rs:595 (App::open_bundle)</code> | — | native | gap | The test covers replacement saves, not the full active-workspace open result. |
+| NATIVE-005 | <code>crates/waml-editor/src/app/workspace.rs:493 (App::open_dir)</code> | — | native | gap | The test checks the asset root only, not the complete prior-workspace result. |
 | NATIVE-056 | — | <code>crates/waml-editor/src/app/tests/workspace.rs::failed_save_blocks_close_and_keeps_document_state</code> (marked) | native | verified | — |
 | NATIVE-057 | — | <code>crates/waml-editor/src/app/tests/workspace.rs::successful_save_allows_close_and_clears_document_state</code> (marked) | native | verified | — |
 | BROWSER-001 | <code>crates/waml-editor/src/browser_boot.rs:48 (select_browser_boot)</code> | <code>scripts/export-site-browser.test.mjs::an exported site boots and exports its model back</code> (partial) | browser | gap | The browser E2E proves that a share fragment overrides site boot configuration, but it does not provide competing API and bundle query sources or assert the full boot priority. |
