@@ -536,7 +536,7 @@ fn entangled_group_pairs(
 ///
 /// The rect map the router works from carries the node rects **and** each
 /// group's hull under `BoxId::Group(i)`, so a hull is an obstacle exactly like
-/// `geometry::solve_box` makes it for the constraint path; the box forest gives
+/// a solved group frame is on the routing side; the box forest gives
 /// the router the membership it must never infer from rect overlap. Returns the
 /// routes plus both router inputs, so the caller can hand them to
 /// `place_labels_with_reroute` and reroute under the same containment rules.
@@ -607,9 +607,8 @@ fn pair(a: &BoxId, b: &BoxId) -> (BoxId, BoxId) {
 }
 
 /// Unordered node<->node edge-connected pairs, so `constrain::compile`'s gap
-/// policy floors a `Place` gap between associated boxes exactly like the
-/// wasm/CLI path's `geometry::solve_with_rects_labeled` does. Group-as-endpoint
-/// edges are ignored (mirrors that function).
+/// policy can floor a `Place` gap between associated boxes. Group-as-endpoint
+/// edges are ignored.
 fn connected_pairs(edges: &[(BoxId, BoxId)]) -> std::collections::BTreeSet<(BoxId, BoxId)> {
     let mut connected = std::collections::BTreeSet::new();
     for (a, b) in edges {
@@ -800,10 +799,10 @@ fn stress_layout(
     // diagonal dropped on both axes must report once). `conflicts_with`: the
     // OTHER live seps on the same axis pinning the exact same variable pair
     // (a direct A-vs-B reversal, e.g. authoring both `a left of b` and
-    // `b left of a`) — narrower than the authored-layout path's full rigid-
-    // component reachability (geometry.rs's `component_constraints`), which
-    // `vpsc::project`'s dropped-index-only return doesn't expose, but it
-    // covers the direct-contradiction case the conflict list exists for.
+    // `b left of a`) — narrower than full rigid-component reachability
+    // (which `vpsc::project`'s dropped-index-only return doesn't expose),
+    // but it covers the direct-contradiction case the conflict list exists
+    // for.
     let same_pair_conflicts = |seps: &[Sep],
                                provenance: &[Option<Constraint>],
                                dropped_idx: usize,
@@ -870,11 +869,10 @@ fn stress_layout(
         })
         .collect();
     // One diagnostic per dropped constraint. The solver-dropped prefix is a
-    // genuine contradiction, mirroring the authored-layout path's
-    // `apply_axis`/`eq` (geometry.rs). The compile-time suffix
+    // genuine contradiction. The compile-time suffix
     // (`compiled.dropped`: unknown/sizeless operand, alignment with no
     // shared axis, group-center align) never reaches the solver but must
-    // surface too — the replaced geometry path warned for each of these
+    // surface too — the retired geometry path warned for each of these
     // ("alignment edges share no axis", ...), and swallowing them leaves an
     // authored statement silently without effect.
     diags.extend(dropped.iter().enumerate().map(|(i, d)| {

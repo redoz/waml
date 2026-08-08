@@ -1,13 +1,12 @@
 //! Semi-smart default layout via stress majorization (SMACOF).
 //!
-//! Standalone, edge-aware placement for diagrams with **no** authored layout.
-//! Connected nodes are pulled toward each other so the result reflects the
-//! model's relationships instead of the edge-blind left-to-right strip that
-//! `geometry::solve` produces for unconstrained roots. Fully deterministic
-//! (circular seed, fixed iteration order, no RNG) — same input, same pixels.
+//! Edge-aware placement: connected nodes are pulled toward each other so the
+//! result reflects the model's relationships instead of an edge-blind
+//! left-to-right strip. Fully deterministic (circular seed, fixed iteration
+//! order, no RNG) — same input, same pixels. Authored `## Layout` statements
+//! enter through `layout_constrained`'s compiled seps (`constrain::compile`).
 //!
 //! See docs/superpowers/specs/2026-07-21-default-layout-stress-majorization-design.md.
-//! Not yet wired into `solve_diagram`; that is Phase 3, gated on screenshot review.
 
 use super::crossing::segment_crossings_touching;
 use super::{BoxId, Rect, Size, SolveConfig};

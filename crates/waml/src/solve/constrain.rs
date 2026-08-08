@@ -3,9 +3,8 @@
 //! Lowers authored `Constraint::Place`/`Constraint::Align` statements (plus
 //! `Box::axis` row/column chains) into per-axis `vpsc::Sep` lists over leaf
 //! indices, with boundary variables standing in for group operands. This is
-//! the single source of truth the unified stress path (`stress::layout_constrained`)
-//! consumes; `geometry::solve_cluster`'s edge-blind strip packer stays in
-//! place for the wasm/CLI callers this plan does not touch.
+//! the single source of truth the unified stress path
+//! (`stress::layout_constrained`) consumes — every frontend routes through it.
 
 use super::geometry::{axis_constraints, edge_axes, off_x, off_y, pair_gap, DroppedPlacement};
 use super::stress::{GroupSpec, SepSpecs, StressConfig};
@@ -42,6 +41,11 @@ pub struct Compiled {
     pub provenance_y: Vec<Option<Constraint>>,
 }
 
+/// Fallback extent for a leaf with no measured size (inherited from the
+/// retired strip packer's leaf default), so containment stays sane rather
+/// than panicking on an index.
+const UNMEASURED_LEAF_SIZE: Size = Size { w: 100.0, h: 40.0 };
+
 /// One endpoint of a `Place`/`Align` relation once resolved against the
 /// scene: a leaf (with its effective size — chip-sized when collapsed) or a
 /// group standing in for its not-yet-allocated boundary variables.
@@ -53,8 +57,8 @@ enum Endpoint {
 /// Which axis (`true` = x) each `Direction` constrains, and whether operand
 /// `a` plays the "left"/"top" role (occupies the space before the gap) on
 /// that axis. Diagonals combine the two orthogonal directions they are named
-/// after (`AboveLeft = Above + LeftOf`, etc. — see `geometry::place_deltas`,
-/// whose per-direction deltas this mirrors).
+/// after (`AboveLeft = Above + LeftOf`, etc.), spending the same gap on both
+/// axes.
 fn axis_components(dir: Direction) -> Vec<(bool, bool)> {
     use Direction::*;
     match dir {
@@ -118,10 +122,8 @@ fn boundary_pair(
     let members = group_members_by_id.get(group).cloned().unwrap_or_default();
     for m in members {
         // A member missing from `sizes` (no test forces this path) falls
-        // back to the same default `geometry::solve_box` uses for a leaf
-        // with no measured size, so containment stays sane rather than
-        // panicking on an index.
-        let size = leaf_sizes[m].unwrap_or(Size { w: 100.0, h: 40.0 });
+        // back to the unmeasured-leaf default.
+        let size = leaf_sizes[m].unwrap_or(UNMEASURED_LEAF_SIZE);
         let extent = if axis_x { size.w } else { size.h };
         let near = Sep {
             left: l,

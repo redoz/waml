@@ -89,7 +89,8 @@ pub fn label_requests(edges: &[SceneEdge], display: &ResolvedDiagramDisplay) -> 
 
 /// The same requests, composed from MODEL edges instead of scene edges, so the
 /// pre-solve pass that sizes connected gaps to hold their terminal labels
-/// (`solve_diagram_reported_labeled`) can be fed before any geometry exists.
+/// (`connected_label_widths` -> `constrain::compile`) can be fed before any
+/// geometry exists.
 /// `edge` indexes into the slice given here, matching the `(BoxId, BoxId)` edge
 /// list the solver is handed.
 pub fn model_label_requests(

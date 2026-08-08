@@ -211,7 +211,7 @@ fn diagram_projection_preserves_complete_two_link_placement() {
 }
 
 #[test]
-fn contradictory_linked_placements_reach_shared_solver_conflict_diagnostics() {
+fn contradictory_linked_placements_reach_the_shared_solver_dropped_report() {
     let source = SourceBundle::try_from_pairs([
         (
             "diagram.md",
@@ -224,22 +224,69 @@ fn contradictory_linked_placements_reach_shared_solver_conflict_diagnostics() {
     .unwrap();
     let analysis = analyze(&source);
     let diagram = analysis.projection.diagrams.first().unwrap();
-    let sizes = ["a", "b", "c"]
+    let sizes: waml::solve::SizeMap = ["a", "b", "c"]
         .into_iter()
         .map(|key| (key.to_string(), waml::solve::Size { w: 100.0, h: 60.0 }))
         .collect();
 
-    let (_, diagnostics, dropped) = waml::solve::solve_diagram_reported(
-        diagram,
-        &[],
+    // The unified path every frontend takes: resolve -> constrain::compile ->
+    // stress::layout_constrained. The link-resolved placements must survive
+    // compilation intact, and the solver must drop the cycle-closing sep and
+    // trace it back — via the compiled provenance — to the authored relation
+    // (that mapping is what the editor's conflict list is built from).
+    let (scene, _resolve_diagnostics) = waml::solve::resolve::resolve(diagram);
+    let compiled = waml::solve::constrain::compile(
+        &scene,
         &sizes,
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeSet::new(),
         &waml::solve::SolveConfig::default(),
     );
+    assert!(
+        compiled.dropped.is_empty(),
+        "all three placements name known members; none may drop at compile time: {:?}",
+        compiled.dropped
+    );
 
-    assert!(!dropped.is_empty());
-    assert!(diagnostics
+    let ids: Vec<waml::solve::BoxId> = compiled
+        .keys
         .iter()
-        .any(|diagnostic| diagnostic.code == waml::diagnostic::DiagCode::LayoutConflict));
+        .cloned()
+        .map(waml::solve::BoxId::Node)
+        .collect();
+    let dims: Vec<waml::solve::Size> = compiled.keys.iter().map(|key| sizes[key]).collect();
+    let (_rects, _hulls, (dropped_x, dropped_y)) = waml::solve::stress::layout_constrained(
+        &ids,
+        &dims,
+        &[],
+        &[],
+        &compiled.seps,
+        &waml::solve::stress::StressConfig::default(),
+    );
+
+    let dropped: Vec<&waml::solve::Constraint> = dropped_x
+        .iter()
+        .filter_map(|&i| compiled.provenance_x.get(i).and_then(Option::as_ref))
+        .chain(
+            dropped_y
+                .iter()
+                .filter_map(|&i| compiled.provenance_y.get(i).and_then(Option::as_ref)),
+        )
+        .collect();
+    assert!(
+        !dropped.is_empty(),
+        "the contradictory cycle must surface in the solver's dropped report"
+    );
+    assert!(
+        dropped.iter().all(|relation| matches!(
+            relation,
+            waml::solve::Constraint::Place {
+                dir: waml::layout::Direction::LeftOf,
+                ..
+            }
+        )),
+        "every dropped sep must trace to an authored left-of placement: {dropped:?}"
+    );
 }
 
 #[test]

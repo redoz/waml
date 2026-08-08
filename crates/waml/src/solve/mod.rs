@@ -1,7 +1,6 @@
 //! Diagram layout solver: resolve a `model::Diagram` into absolute pixel rects.
 //! See docs/superpowers/specs/2026-07-12-diagram-layout-solver-design.md.
 
-use crate::diagnostic::Diagnostic;
 use crate::layout::{Axis, Direction, Edge, Margin, Shape};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,7 +10,6 @@ pub mod flow;
 pub mod geometry;
 pub mod interaction;
 pub mod label;
-pub mod potentials;
 pub mod resolve;
 pub mod route;
 pub mod sizing;
@@ -264,50 +262,6 @@ pub fn pretty_flow(solved: &Solved) -> String {
     out
 }
 
-/// Top-level entry: resolve the diagram to a `Scene`, then solve it. Keeps the
-/// 2-tuple shape the wasm crate depends on; drops the placement report.
-pub fn solve_diagram(
-    diagram: &crate::model::Diagram,
-    edges: &[(BoxId, BoxId)],
-    sizes: &SizeMap,
-    cfg: &SolveConfig,
-) -> (Solved, Vec<Diagnostic>) {
-    let (solved, diags, _dropped) = solve_diagram_reported(diagram, edges, sizes, cfg);
-    (solved, diags)
-}
-
-/// Native-only entry: like `solve_diagram` but also returns the solver's
-/// dropped-placement report (unsatisfiable placements + their contradiction sets).
-/// The editor's conflict error list consumes this; the wasm path uses
-/// `solve_diagram` and never sees it.
-pub fn solve_diagram_reported(
-    diagram: &crate::model::Diagram,
-    edges: &[(BoxId, BoxId)],
-    sizes: &SizeMap,
-    cfg: &SolveConfig,
-) -> (Solved, Vec<Diagnostic>, Vec<DroppedPlacement>) {
-    solve_diagram_reported_labeled(diagram, edges, sizes, &[], cfg)
-}
-
-/// Like `solve_diagram_reported`, but also factors each connected pair's
-/// terminal-label widths into the connected-gap floor (see
-/// `geometry::solve_with_rects_labeled`). `label_requests`' `edge` field
-/// indexes into `edges`, matching the convention `place_labels_with_reroute` uses against
-/// `solved.routes`. Callers with no labels to size for (the wasm path,
-/// `flow.rs`) get exactly `solve_diagram_reported`'s behaviour via the empty
-/// wrapper above.
-pub fn solve_diagram_reported_labeled(
-    diagram: &crate::model::Diagram,
-    edges: &[(BoxId, BoxId)],
-    sizes: &SizeMap,
-    label_requests: &[label::LabelRequest],
-    cfg: &SolveConfig,
-) -> (Solved, Vec<Diagnostic>, Vec<DroppedPlacement>) {
-    let (solved, diags, dropped, _routing) =
-        solve_diagram_routed(diagram, edges, sizes, label_requests, cfg);
-    (solved, diags, dropped)
-}
-
 /// The routing inputs a solve fed the router, handed back so a caller can
 /// replay edges through it (`place_labels_with_reroute`) instead of rebuilding
 /// the box forest and rect map — which only the solver knows — for itself.
@@ -328,47 +282,13 @@ impl SolvedRouting {
     }
 }
 
-/// `solve_diagram_reported_labeled`, plus the routing inputs it used. Frontends
-/// that place edge labels want this one: without the routing context there is
-/// nothing to reroute against, so labels can only ever be placed against the
-/// routes the first pass happened to produce.
-pub fn solve_diagram_routed(
-    diagram: &crate::model::Diagram,
-    edges: &[(BoxId, BoxId)],
-    sizes: &SizeMap,
-    label_requests: &[label::LabelRequest],
-    cfg: &SolveConfig,
-) -> (
-    Solved,
-    Vec<Diagnostic>,
-    Vec<DroppedPlacement>,
-    SolvedRouting,
-) {
-    let (scene, mut diags) = resolve::resolve(diagram);
-    let label_widths = connected_label_widths(edges, label_requests);
-    let (mut solved, rects, mut geo_diags, dropped) =
-        geometry::solve_with_rects_labeled(&scene, edges, sizes, &label_widths, cfg);
-    diags.append(&mut geo_diags);
-    solved.routes = route::route(&scene.boxes, &rects, edges, cfg);
-    let routing = SolvedRouting {
-        boxes: scene.boxes,
-        edges: edges
-            .iter()
-            .map(|(s, t)| (s.clone(), t.clone(), None))
-            .collect(),
-        rects,
-    };
-    (solved, diags, dropped, routing)
-}
-
 /// Terminal-label width floor per connected pair.
 ///
 /// Within ONE edge the two terminal labels share the gap, so their widths
 /// add. ACROSS parallel edges between the same pair they do not: each edge's
 /// labels ride its own route, so the gap only has to hold the widest edge.
-/// Shared by `solve_diagram_routed` (the wasm/CLI path) and the editor's
-/// unified stress path (`constrain::compile`'s `label_widths` input), so the
-/// two paths compute this floor identically.
+/// Feeds `constrain::compile`'s `label_widths` input on the unified stress
+/// path, so every frontend computes this floor identically.
 pub fn connected_label_widths(
     edges: &[(BoxId, BoxId)],
     label_requests: &[label::LabelRequest],
