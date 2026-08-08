@@ -59,3 +59,12 @@ quote = "1"
 syn = { version = "2", features = ["full", "visit-mut"] }
 waml = { path = "../waml", features = ["serde", "test-support"] }
 waml-syntax = { path = "../waml-syntax" }
+waml-ui-test = { path = "../waml-ui-test" }
+
+[features]
+ui-tests = []
+
+[[test]]
+name = "ui"
+path = "tests/ui.rs"
+required-features = ["ui-tests"]

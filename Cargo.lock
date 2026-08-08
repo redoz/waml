@@ -2747,6 +2747,7 @@ dependencies = [
  "waml",
  "waml-markdown-editor",
  "waml-syntax",
+ "waml-ui-test",
  "winresource",
 ]
 

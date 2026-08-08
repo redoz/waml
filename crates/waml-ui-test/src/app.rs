@@ -1,4 +1,6 @@
+use crate::adapters::{documents, workspace};
 use crate::config::WorkspaceFixture;
+use crate::domain::{DiagramName, ViewKind};
 use crate::error::{OperationFailure, WamlUiError};
 use crate::trace::SemanticTrace;
 use std::path::{Path, PathBuf};
@@ -50,6 +52,56 @@ impl WamlApp {
             || action(driver),
         );
         self
+    }
+
+    pub fn expect_workspace_open(&mut self) -> &mut Self {
+        self.execute(
+            "expect workspace open",
+            "workspace contains the available Orders diagram",
+            |driver| workspace::expect_workspace_open(driver, DiagramName::ORDERS),
+        )
+    }
+
+    pub fn ensure_diagram_open(&mut self, diagram: DiagramName) -> &mut Self {
+        self.execute(
+            format!("ensure {} diagram open", diagram.display),
+            format!("{} diagram is active in Diagram view", diagram.display),
+            |driver| documents::ensure_diagram_open(driver, diagram),
+        )
+    }
+
+    pub fn expect_active_diagram(&mut self, diagram: DiagramName) -> &mut Self {
+        self.execute(
+            format!("expect active diagram {}", diagram.display),
+            format!(
+                "{} diagram is active with a visible canvas",
+                diagram.display
+            ),
+            |driver| documents::expect_active_diagram(driver, diagram),
+        )
+    }
+
+    pub fn switch_active_document_to(&mut self, view: ViewKind) -> &mut Self {
+        self.execute(
+            format!("switch active document to {}", view_name(view)),
+            format!("{} view is active", view_name(view)),
+            |driver| documents::switch_active_document_to(driver, view),
+        )
+    }
+
+    pub fn expect_active_view(&mut self, view: ViewKind) -> &mut Self {
+        self.execute(
+            format!("expect active view {}", view_name(view)),
+            format!("{} view is active", view_name(view)),
+            |driver| documents::expect_active_view(driver, view),
+        )
+    }
+}
+
+fn view_name(view: ViewKind) -> &'static str {
+    match view {
+        ViewKind::Diagram => "Diagram",
+        ViewKind::Source => "Source",
     }
 }
 
