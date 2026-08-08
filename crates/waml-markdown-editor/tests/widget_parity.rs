@@ -664,6 +664,52 @@ fn install_presentation_cancels_a_pending_clear() {
 }
 
 #[test]
+fn installing_a_layout_presentation_keeps_the_widget_code_default() {
+    let source = "Body text\n";
+    let (mut cx, editor, session) = mounted_editor(source);
+    cx.init_cx_os();
+    let styles = Arc::new(PresentationStyles::for_emphasis(EditorEmphasis::Layout));
+    let plan = compile_presentation(
+        session.snapshot().syntax(),
+        &styles,
+        &HighlighterRegistry::default(),
+    )
+    .expect("the layout-emphasis plan compiles");
+    let layout_document = Arc::new(
+        build_layout_document(&plan, &styles, &EmbeddedMeasurements::default())
+            .expect("the layout-emphasis document builds"),
+    );
+    let presentation = InstalledPresentation::new(
+        plan,
+        styles,
+        layout_document,
+        Arc::from([]),
+        Arc::new(EmbeddedAssetFrame {
+            revision: session.snapshot().revision(),
+            items: Arc::from([]),
+        }),
+    )
+    .expect("the layout-emphasis presentation validates");
+
+    editor.install_presentation(
+        &mut cx,
+        presentation,
+        LayoutChangeCause::ExternalReplacement,
+    );
+
+    assert_eq!(editor.emphasis(), EditorEmphasis::Code);
+    let installed = editor
+        .test_installed_presentation()
+        .expect("the presentation stays installed");
+    assert_eq!(installed.styles.emphasis(), EditorEmphasis::Code);
+    assert!(installed
+        .layout_document
+        .text_runs
+        .iter()
+        .any(|run| run.metrics.font == FONT_MONO));
+}
+
+#[test]
 fn emphasis_rebuilds_the_installed_layout_without_mutating_session_state() {
     let source = "Body text\n";
     let (mut cx, editor, session) = mounted_editor(source);
@@ -747,7 +793,7 @@ fn installed_presentation() -> Arc<InstalledPresentation> {
             blocks: Arc::from([]),
             diagnostics: Arc::from([]),
         }),
-        Arc::new(PresentationStyles::balanced()),
+        Arc::new(PresentationStyles::default()),
         Arc::new(LayoutDocument {
             revision,
             content_insets: Default::default(),

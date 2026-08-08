@@ -2194,8 +2194,41 @@ impl MarkdownEditorRef {
             return;
         }
         if let Some(mut inner) = self.borrow_mut() {
+            let presentation = if presentation.styles.emphasis() == inner.emphasis {
+                presentation
+            } else {
+                let styles = Arc::new(PresentationStyles::for_emphasis(inner.emphasis));
+                let measurements = EmbeddedMeasurements {
+                    revision: Some(presentation.revision),
+                    blocks: presentation.layout_document.embedded_blocks.clone(),
+                };
+                let replacement = build_layout_document(&presentation.plan, &styles, &measurements)
+                    .and_then(|layout_document| {
+                        InstalledPresentation::new(
+                            presentation.plan.clone(),
+                            styles,
+                            Arc::new(layout_document),
+                            presentation.diagnostics.clone(),
+                            presentation.assets.clone(),
+                        )
+                    });
+                match replacement {
+                    Ok(replacement) => replacement,
+                    Err(error) => {
+                        let message = format!(
+                            "install_presentation rejected revision {}: {error}",
+                            presentation.revision.get()
+                        );
+                        if inner.last_install_validation_error.as_deref() != Some(message.as_str())
+                        {
+                            log!("{message}");
+                            inner.last_install_validation_error = Some(message);
+                        }
+                        return;
+                    }
+                }
+            };
             inner.last_install_validation_error = None;
-            inner.emphasis = presentation.styles.emphasis();
             inner.pipeline.installed = Some(presentation);
             // A pending clear belongs to the presentation that was cleared. This
             // install supersedes it, so the next frame must resync from whatever
