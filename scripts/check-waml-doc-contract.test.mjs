@@ -410,3 +410,31 @@ test("accepts browser allowlist evidence and an explicit parity seam", async () 
   });
   assert.deepEqual(parityErrors, []);
 });
+
+test("accepts an existing evidence file line", async () => {
+  const document = `${canonical.replace(
+    "crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview",
+    "crates/waml-editor/src/doc_tabs.rs:1",
+  )}\n## Verification gaps\n\n- TAB-001 — target: native; No native test asserts the result.\n`;
+  const errors = await check({
+    "docs/waml/goals/tabs.md": document,
+    "crates/waml-editor/src/doc_tabs.rs": "one source line",
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test("reports an evidence line outside the file", async () => {
+  const document = `${canonical.replace(
+    "`crates/waml-editor/src/doc_tabs.rs::preview_replaces_preview`",
+    "`crates/waml-editor/src/doc_tabs.rs:1` `crates/waml-editor/src/doc_tabs.rs:2`",
+  )}\n## Verification gaps\n\n- TAB-001 — target: native; No native test asserts the result.\n`;
+  const errors = await check({
+    "docs/waml/goals/tabs.md": document,
+    "crates/waml-editor/src/doc_tabs.rs": "one source line",
+  });
+
+  assert.deepEqual(errors, [
+    "docs/waml/goals/tabs.md:13: evidence line is outside the file: crates/waml-editor/src/doc_tabs.rs:2",
+  ]);
+});
