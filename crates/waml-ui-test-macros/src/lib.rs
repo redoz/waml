@@ -82,7 +82,7 @@ fn parse_workspace(attr: proc_macro2::TokenStream) -> syn::Result<syn::Ident> {
 fn validate_function(function: &ItemFn) -> syn::Result<()> {
     if function.sig.asyncness.is_some() {
         return Err(syn::Error::new_spanned(
-            &function.sig.asyncness,
+            function.sig.asyncness,
             "#[waml_ui_test] does not support async functions",
         ));
     }
