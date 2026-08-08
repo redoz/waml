@@ -10,9 +10,9 @@
 //!
 //! There is no header band: the search field and the type-filter chip that used
 //! to be hand-drawn over one are gone, and the rows start at the top of the
-//! panel. The caption bar's tree toggle is the sole collapse/expand
-//! affordance for the panel itself; the panel owns exactly one control of its
-//! own, the projected/raw toggle (see `control_strip` below).
+//! panel. The panel owns a small left-aligned control strip of its own: the
+//! projection state/menu button and a collapse-all/expand-all pair, plus the
+//! inert tidy button (see `control_strip` below).
 //!
 //! The panel's dock state is binary -- `Pinned` (a flush column) or `Flag`
 //! (zero pixels, nothing drawn). Like the inspector it never enters `Peek`,
@@ -194,17 +194,20 @@ script_mod! {
             text_style: fonts.text_label
         }
 
-        // The panel's only control. It owns no other IconButton children --
-        // collapse and expand both arrive from the caption bar -- so this
-        // strip exists solely to seat it.
+        // The panel's controls: the projection state/menu button, the two fold
+        // buttons, and the (inert) tidy button. A LEFT-aligned icon-only
+        // cluster -- deliberately not the Visual Studio look, so no split
+        // buttons and no caret affordances.
         control_strip := View {
             width: Fill
             height: Fit
             flow: Right
-            align: Align{x: 1.0}
+            align: Align{x: 0.0}
             padding: Inset{left: 6.0, right: 6.0, top: 6.0, bottom: 2.0}
-            tidy_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
             view_mode_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
+            collapse_all_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
+            expand_all_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
+            tidy_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
         }
 
         // The row body. We draw rows into this view's rect ourselves; it exists
@@ -680,6 +683,20 @@ impl Widget for ProjectTree {
                     },
                 );
             }
+            if self
+                .view
+                .icon_button(cx, ids!(collapse_all_btn))
+                .clicked(actions)
+            {
+                self.collapse_all(cx);
+            }
+            if self
+                .view
+                .icon_button(cx, ids!(expand_all_btn))
+                .clicked(actions)
+            {
+                self.expand_all(cx);
+            }
         }
     }
 
@@ -740,6 +757,12 @@ impl Widget for ProjectTree {
         self.view
             .icon_button(cx, ids!(tidy_btn))
             .set_icon(cx, Icon::BroomSparkles);
+        self.view
+            .icon_button(cx, ids!(collapse_all_btn))
+            .set_icon(cx, Icon::ListCollapse);
+        self.view
+            .icon_button(cx, ids!(expand_all_btn))
+            .set_icon(cx, Icon::ListExpand);
 
         // Expanded draws a flush column butted to the window edge: strip the
         // docked-edge (left) margin + the float top/bottom margins so no
@@ -1135,6 +1158,30 @@ impl ProjectTree {
         self.fold_next_frame = cx.new_next_frame();
         self.view.redraw(cx);
         true
+    }
+
+    /// Close every directory the panel knows about.
+    ///
+    /// Driven off `directory_keys`, not off the visible rows: a subtree
+    /// beneath a collapsed parent has no visible row, and expand-all must
+    /// reach it.
+    pub fn collapse_all(&mut self, cx: &mut Cx) {
+        self.set_all_folds(cx, false);
+    }
+
+    /// Open every directory the panel knows about, including ones nested
+    /// under a folder that was collapsed.
+    pub fn expand_all(&mut self, cx: &mut Cx) {
+        self.set_all_folds(cx, true);
+    }
+
+    fn set_all_folds(&mut self, cx: &mut Cx, open: bool) {
+        let keys: Vec<String> = self.directory_keys.iter().cloned().collect();
+        for key in keys {
+            self.layout.set_folder_open(&key, open, true);
+        }
+        self.fold_next_frame = cx.new_next_frame();
+        self.view.redraw(cx);
     }
 
     /// The current scope label shown in the header title. `App` pushes this
@@ -1727,6 +1774,26 @@ mod tests {
     fn toggle_directory_rejects_a_key_no_row_carries() {
         let (mut cx, mut panel) = one_folder_panel();
         assert!(!panel.toggle_directory(&mut cx, &k("/nope")));
+    }
+
+    #[test]
+    fn collapse_all_closes_every_known_directory_and_expand_all_opens_them() {
+        let (mut cx, mut panel) = mounted_project_tree_test_context();
+        panel.directory_keys.insert(k("/sales"));
+        panel.directory_keys.insert(k("/ops"));
+        panel.layout.set_folder_open(&k("/sales"), true, false);
+        panel.layout.set_folder_open(&k("/ops"), true, false);
+
+        panel.collapse_all(&mut cx);
+        assert!(!panel.layout.is_folder_open(&k("/sales")));
+        assert!(!panel.layout.is_folder_open(&k("/ops")));
+
+        panel.expand_all(&mut cx);
+        assert!(panel.layout.is_folder_open(&k("/sales")));
+        assert!(
+            panel.layout.is_folder_open(&k("/ops")),
+            "expand-all reaches directories that were not visible while collapsed",
+        );
     }
 
     #[test]

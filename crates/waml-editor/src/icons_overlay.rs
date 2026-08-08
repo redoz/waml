@@ -96,6 +96,8 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
                 "Retired projected glyph; superseded by Library"
             ),
             ie!(SquareCode, "Retired raw glyph; superseded by Code"),
+            ie!(ListCollapse, "Collapse-all toolbar button"),
+            ie!(ListExpand, "Expand-all toolbar button"),
         ],
     ),
     (
