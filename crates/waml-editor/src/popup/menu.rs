@@ -425,6 +425,11 @@ pub struct MenuPopup {
     open_marking: Option<LiveId>,
     #[rust]
     thumb_drag: Option<f64>,
+    /// Last sticky-mode toggle awaiting relay: `PopupRoot::route` drains this
+    /// via `take_toggled` (right after `handle`) and emits the tagged action,
+    /// since only the root knows the opener's opaque `tag`.
+    #[rust]
+    last_toggled: Option<LiveId>,
 }
 
 impl Widget for MenuPopup {
@@ -468,6 +473,7 @@ impl MenuPopup {
         self.geom = LinearGeom::new(anchor, items.len());
         self.open_marking = None;
         self.thumb_drag = None;
+        self.last_toggled = None;
         self.mark.begin_marking(press, items, DRAG_THRESHOLD);
         self.draw_frame.redraw(cx);
     }
@@ -485,8 +491,42 @@ impl MenuPopup {
         self.geom.set_max_height(max_height);
         self.open_marking = open_marking;
         self.thumb_drag = None;
+        self.last_toggled = None;
         self.mark.begin_popup(items, DRAG_THRESHOLD);
         self.draw_frame.redraw(cx);
+    }
+
+    /// Checklist open: rows toggle and the card stays up until light-dismiss.
+    pub fn open_sticky(
+        &mut self,
+        cx: &mut Cx,
+        anchor: DVec2,
+        items: Vec<PopupItem>,
+        max_height: Option<f64>,
+    ) {
+        self.open_popup(cx, anchor, items, None, max_height);
+        self.mark.set_sticky(true);
+    }
+
+    pub fn is_sticky(&self) -> bool {
+        self.mark.is_sticky()
+    }
+
+    /// Re-seed an OPEN surface's rows, keeping its geometry and armed row. A
+    /// toggle repaints its own checkmark through this rather than reopening,
+    /// which would reset the anchor and drop the hover.
+    pub fn set_items(&mut self, cx: &mut Cx, items: Vec<PopupItem>) {
+        if !self.is_open() {
+            return;
+        }
+        self.mark.set_items(items);
+        self.draw_frame.redraw(cx);
+    }
+
+    /// Drain the last sticky-mode toggle, if any. Called by `PopupRoot::route`
+    /// right after `handle`, since only the root knows the opener's tag.
+    pub fn take_toggled(&mut self) -> Option<LiveId> {
+        self.last_toggled.take()
     }
 
     /// Draw the card + rows at the stored anchor. Called from `draw_walk`.
@@ -616,7 +656,13 @@ impl Popup for MenuPopup {
                 if self.thumb_drag.take().is_some() {
                     PopupVerdict::Consumed
                 } else {
-                    map_outcome(self.mark.release(self.geom.row_at(e.abs)))
+                    match self.mark.release(self.geom.row_at(e.abs)) {
+                        MarkOutcome::Toggled(id) => {
+                            self.last_toggled = Some(id);
+                            PopupVerdict::Consumed
+                        }
+                        other => map_outcome(other),
+                    }
                 }
             }
             // Popup mode: a primary press ON the card arms the row (press-hold);
@@ -650,6 +696,7 @@ impl Popup for MenuPopup {
     fn reset(&mut self) {
         self.thumb_drag = None;
         self.open_marking = None;
+        self.last_toggled = None;
         self.mark.close();
     }
 
@@ -663,5 +710,8 @@ fn map_outcome(o: MarkOutcome) -> PopupVerdict {
         MarkOutcome::Committed(id) => PopupVerdict::Closed(PopupResult::Invoked(id)),
         MarkOutcome::Cancelled => PopupVerdict::Closed(PopupResult::Dismissed),
         MarkOutcome::None => PopupVerdict::Consumed,
+        // Handled at the call site (needs `&mut self` to stash the id); never
+        // reaches here, but the match must stay exhaustive.
+        MarkOutcome::Toggled(_) => PopupVerdict::Consumed,
     }
 }

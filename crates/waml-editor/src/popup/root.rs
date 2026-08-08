@@ -94,6 +94,13 @@ pub enum PopupRootAction {
         tag: LiveId,
         id: Option<LiveId>,
     },
+    /// A sticky surface's row was toggled. The surface is STILL OPEN; the
+    /// opener updates its own state and pushes fresh rows back via
+    /// `MenuPopup::set_items`.
+    Toggled {
+        tag: LiveId,
+        id: LiveId,
+    },
 }
 
 /// Which surface is active. Pairs with the active tag in the slot. (The spec's
@@ -502,6 +509,20 @@ impl PopupRoot {
                     cx.widget_action(self.widget_uid(), PopupRootAction::Armed { tag, id: armed });
                 }
             }
+            // A sticky menu commit toggles and stays open: `MenuPopup` cannot
+            // emit its own tagged action (it doesn't know the opener's opaque
+            // `tag`, only `PopupRoot` does), so it stashes the id and this
+            // drains it right after `handle`.
+            if kind == ActiveKind::Menu {
+                let toggled = self
+                    .body
+                    .widget(cx, ids!(menu))
+                    .borrow_mut::<MenuPopup>()
+                    .and_then(|mut m| m.take_toggled());
+                if let Some(id) = toggled {
+                    cx.widget_action(self.widget_uid(), PopupRootAction::Toggled { tag, id });
+                }
+            }
             decide(verdict, is_primary_press(ev))
         };
         if let RouteStep::Close(result) = step {
@@ -571,6 +592,18 @@ impl PopupRoot {
             .filter_widget_actions(self.widget_uid())
             .find_map(|item| match item.cast() {
                 PopupRootAction::Armed { tag, id } => Some((tag, id)),
+                _ => None,
+            })
+    }
+
+    /// Read a sticky toggle from the action queue. The surface is still open;
+    /// the opener updates its own state and re-seeds rows via
+    /// `MenuPopup::set_items`.
+    pub fn toggled_event(&self, actions: &Actions) -> Option<(LiveId, LiveId)> {
+        actions
+            .filter_widget_actions(self.widget_uid())
+            .find_map(|item| match item.cast() {
+                PopupRootAction::Toggled { tag, id } => Some((tag, id)),
                 _ => None,
             })
     }

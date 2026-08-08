@@ -14,6 +14,9 @@ use makepad_widgets::*;
 #[derive(Clone, Debug, PartialEq)]
 pub enum MarkOutcome {
     Committed(LiveId),
+    /// A sticky (checklist) commit: the surface stays open, the opener re-seeds
+    /// the row's checked state via `MenuPopup::set_items`.
+    Toggled(LiveId),
     Cancelled,
     None,
 }
@@ -36,6 +39,8 @@ pub struct MarkingCore {
     press_pos: DVec2,
     /// Cursor travel before a held press becomes a marking drag (surface-set).
     drag_threshold: f64,
+    /// Checklist: an enabled commit toggles and stays open instead of closing.
+    sticky: bool,
 }
 
 #[allow(dead_code)]
@@ -54,6 +59,23 @@ impl MarkingCore {
     pub fn armed(&self) -> Option<usize> {
         self.armed
     }
+    pub fn is_sticky(&self) -> bool {
+        self.sticky
+    }
+    /// Checklist open: an enabled commit toggles and stays open, instead of the
+    /// default pick-one-and-close. Light-dismiss is unaffected.
+    pub fn set_sticky(&mut self, sticky: bool) {
+        self.sticky = sticky;
+    }
+    /// Re-seed an OPEN surface's rows, keeping the armed index when the new
+    /// list is the same length (a toggle repaints its own checkmark through
+    /// this rather than reopening, which would drop the hover).
+    pub fn set_items(&mut self, items: Vec<PopupItem>) {
+        if items.len() != self.items.len() {
+            self.armed = None;
+        }
+        self.items = items;
+    }
 
     /// Press-open: the press lands at `press_pos` (tap-vs-drag origin); enter
     /// marking mode — held-drag arms, release commits/cancels. (Burger / node
@@ -67,6 +89,7 @@ impl MarkingCore {
         self.armed = None;
         self.press_pos = press_pos;
         self.drag_threshold = drag_threshold;
+        self.sticky = false;
     }
 
     /// Popup-open: open directly in click/press-to-pick mode, no button held.
@@ -79,6 +102,7 @@ impl MarkingCore {
         self.popup = true;
         self.armed = None;
         self.drag_threshold = drag_threshold;
+        self.sticky = false;
     }
 
     /// Pointer moved to `cursor`; `hit` is the raw slot under it (or `None`).
@@ -113,6 +137,12 @@ impl MarkingCore {
         match hit {
             Some(i) if self.items[i].enabled => {
                 let id = self.items[i].id;
+                if self.sticky {
+                    // A checklist toggles and stays open; only light-dismiss
+                    // closes it (the surface never calls `close()` here).
+                    self.armed = None;
+                    return MarkOutcome::Toggled(id);
+                }
                 self.close();
                 MarkOutcome::Committed(id)
             }
@@ -165,6 +195,7 @@ impl MarkingCore {
         self.dragged = false;
         self.popup = false;
         self.armed = None;
+        self.sticky = false;
     }
 }
 
@@ -335,6 +366,57 @@ mod tests {
         c.begin_popup(menu(), T);
         assert_eq!(c.click(None, false), MarkOutcome::Cancelled);
         assert!(!c.is_open());
+    }
+
+    // --- sticky checklist mode ---
+
+    #[test]
+    fn a_sticky_commit_toggles_and_stays_open() {
+        let mut c = MarkingCore::default();
+        c.begin_popup(menu(), T);
+        c.set_sticky(true);
+        assert!(c.is_sticky());
+        c.press(dvec2(P.x, P.y), Some(0));
+        assert_eq!(
+            c.release(Some(0)),
+            MarkOutcome::Toggled(live_id!(a)),
+            "a sticky commit reports Toggled, NOT Committed -- a checklist stays open",
+        );
+        assert!(c.is_open(), "the surface must survive its own commit");
+    }
+
+    #[test]
+    fn a_non_sticky_popup_still_commits_and_closes() {
+        let mut c = MarkingCore::default();
+        c.begin_popup(menu(), T);
+        c.press(dvec2(P.x, P.y), Some(0));
+        assert_eq!(c.release(Some(0)), MarkOutcome::Committed(live_id!(a)));
+        assert!(!c.is_open());
+    }
+
+    #[test]
+    fn set_items_of_the_same_length_preserves_the_armed_slot() {
+        let mut c = MarkingCore::default();
+        c.begin_popup(menu(), T);
+        c.pointer_move(dvec2(P.x, P.y), Some(0));
+        assert_eq!(c.armed(), Some(0));
+        c.set_items(menu());
+        assert_eq!(
+            c.armed(),
+            Some(0),
+            "a same-length reseed keeps the armed row"
+        );
+        assert_eq!(c.items()[0].id, live_id!(a));
+    }
+
+    #[test]
+    fn set_items_of_a_different_length_clears_armed() {
+        let mut c = MarkingCore::default();
+        c.begin_popup(menu(), T);
+        c.pointer_move(dvec2(P.x, P.y), Some(0));
+        c.set_items(vec![item(live_id!(only), true)]);
+        assert_eq!(c.armed(), None);
+        assert_eq!(c.items().len(), 1);
     }
 
     #[test]

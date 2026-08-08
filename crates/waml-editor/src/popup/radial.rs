@@ -852,6 +852,8 @@ fn map_outcome(o: MarkOutcome) -> PopupVerdict {
         MarkOutcome::Committed(id) => PopupVerdict::Closed(PopupResult::Invoked(id)),
         MarkOutcome::Cancelled => PopupVerdict::Closed(PopupResult::Dismissed),
         MarkOutcome::None => PopupVerdict::Consumed,
+        // The radial never opens sticky; kept only for exhaustiveness.
+        MarkOutcome::Toggled(_) => PopupVerdict::Consumed,
     }
 }
 
