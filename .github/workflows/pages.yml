@@ -17,10 +17,16 @@ permissions:
   pages: write
   id-token: write
 
-# Never let two deploys race; the newest push wins.
+# Never let two deploys race. A run that has already started is left to finish
+# rather than cancelled: cancelling threw away a nearly-complete wasm build
+# every time a push landed during one, and under a run of pushes no run ever
+# reached the deploy at all. GitHub still cancels the *pending* run of the
+# group when a newer one queues, so a push storm collapses to the running build
+# plus the newest, and the site ends up at the tip either way -- one deploy
+# later than before.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # The full lint/test gate. Nothing ships unless this is green.
