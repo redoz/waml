@@ -67,36 +67,47 @@ pub(crate) fn run_scenario(config: ScenarioConfig, scenario: impl FnOnce(WamlApp
         ));
     });
     let promotion = promote_driver_evidence(&run_root);
+    let result = result.map_err(|error| error.message().to_string());
+    if let Err(error) = finalize_run(
+        &ownership_root(&workspace_root),
+        &run_root,
+        result,
+        promotion,
+    ) {
+        panic!("scenario `{test_name}` failed:\n{error}");
+    }
+}
 
-    match (result, promotion) {
-        (Ok(()), Ok(())) => {
-            cleanup_run(&ownership_root(&workspace_root), &run_root, true).unwrap_or_else(
-                |error| {
-                    panic!(
-                        "scenario `{test_name}` passed but cleanup failed: {error}; run: {}",
-                        run_root.display()
-                    )
-                },
-            );
-        }
-        (Ok(()), Err(promotion_error)) => {
-            panic!(
-                "scenario `{test_name}` passed but driver evidence promotion failed: \
-                 {promotion_error}; preserved run: {}",
-                run_root.display()
-            );
-        }
-        (Err(error), Ok(())) => {
-            panic!("{}\nPreserved run: {}", error.message(), run_root.display());
-        }
-        (Err(error), Err(promotion_error)) => {
-            panic!(
-                "{}\nDriver evidence promotion also failed: {}\nPreserved run: {}",
-                error.message(),
-                promotion_error,
-                run_root.display()
-            );
-        }
+fn finalize_run(
+    ownership_root: &Path,
+    run_root: &Path,
+    run_result: Result<(), String>,
+    promotion_result: io::Result<()>,
+) -> Result<(), String> {
+    let succeeded = run_result.is_ok() && promotion_result.is_ok();
+    let cleanup_result = cleanup_run(ownership_root, run_root, succeeded);
+    let mut failures = Vec::new();
+
+    if let Err(error) = run_result {
+        failures.push(error);
+    }
+    if let Err(error) = promotion_result {
+        failures.push(format!("driver evidence promotion also failed: {error}"));
+    }
+    if let Err(error) = cleanup_result {
+        let label = if failures.is_empty() {
+            "cleanup failed"
+        } else {
+            "cleanup validation also failed"
+        };
+        failures.push(format!("{label}: {error}"));
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        failures.push(format!("Preserved run: {}", run_root.display()));
+        Err(failures.join("\n"))
     }
 }
 
@@ -154,9 +165,11 @@ fn promote_driver_evidence(run_root: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_driver_config, promote_driver_evidence};
+    use super::{build_driver_config, finalize_run, promote_driver_evidence};
     use crate::config::{RunIdentity, ScenarioConfig, WorkspaceFixture};
     use std::fs;
+    use std::io;
+    use std::path::Path;
 
     #[test]
     fn driver_config_binds_owned_artifacts_workspace_and_unique_title() {
@@ -234,5 +247,38 @@ mod tests {
 
         assert!(promote_driver_evidence(&run_root).is_err());
         assert!(source.is_dir());
+    }
+
+    #[test]
+    fn finalization_validates_a_failed_run_before_preserving_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let ownership_root = temp.path().join("target").join("waml-ui-test");
+        let actual_run = ownership_root.join("actual-run");
+        let linked_run = ownership_root.join("linked-run");
+        fs::create_dir_all(&actual_run).unwrap();
+        create_directory_link(&actual_run, &linked_run).unwrap();
+
+        let error = finalize_run(
+            &ownership_root,
+            &linked_run,
+            Err("driver failed".to_string()),
+            Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("driver failed"));
+        assert!(error.contains("cleanup validation also failed"));
+        assert!(fs::symlink_metadata(&linked_run).is_ok());
+        assert!(actual_run.is_dir());
+    }
+
+    #[cfg(unix)]
+    fn create_directory_link(source: &Path, link: &Path) -> io::Result<()> {
+        std::os::unix::fs::symlink(source, link)
+    }
+
+    #[cfg(windows)]
+    fn create_directory_link(source: &Path, link: &Path) -> io::Result<()> {
+        std::os::windows::fs::symlink_dir(source, link)
     }
 }

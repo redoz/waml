@@ -20,6 +20,31 @@ pub enum StepOutcome {
     Failed { detail: String },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistPhase {
+    PrepareText,
+    PrepareJson,
+    PublishText,
+    PublishJson,
+}
+
+struct TracePaths {
+    text: PathBuf,
+    json: PathBuf,
+    next_text: PathBuf,
+    next_json: PathBuf,
+    previous_text: PathBuf,
+    previous_json: PathBuf,
+}
+
+#[derive(Default)]
+struct PublishState {
+    text_backed_up: bool,
+    json_backed_up: bool,
+    text_published: bool,
+    json_published: bool,
+}
+
 pub(crate) struct SemanticTrace {
     artifacts_dir: PathBuf,
     records: Vec<StepRecord>,
@@ -96,13 +121,67 @@ impl SemanticTrace {
     }
 
     fn persist(&self) -> io::Result<()> {
-        fs::write(
-            self.artifacts_dir.join("semantic-trace.txt"),
-            self.render_text(),
-        )?;
+        self.persist_with_hook(|_| Ok(()))
+    }
+
+    fn persist_with_hook(
+        &self,
+        mut hook: impl FnMut(PersistPhase) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let text = self.render_text();
         let json = serde_json::to_vec_pretty(&self.records)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        fs::write(self.artifacts_dir.join("semantic-trace.json"), json)
+        let paths = TracePaths::new(&self.artifacts_dir);
+        let mut state = PublishState::default();
+        let transaction = (|| {
+            remove_file_if_present(&paths.next_text)?;
+            remove_file_if_present(&paths.next_json)?;
+            remove_file_if_present(&paths.previous_text)?;
+            remove_file_if_present(&paths.previous_json)?;
+
+            hook(PersistPhase::PrepareText)?;
+            fs::write(&paths.next_text, text)?;
+            hook(PersistPhase::PrepareJson)?;
+            fs::write(&paths.next_json, json)?;
+
+            let text_exists = paths.text.try_exists()?;
+            let json_exists = paths.json.try_exists()?;
+            if text_exists != json_exists {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "semantic trace text and JSON files are not a complete pair",
+                ));
+            }
+            if text_exists {
+                fs::rename(&paths.text, &paths.previous_text)?;
+                state.text_backed_up = true;
+                fs::rename(&paths.json, &paths.previous_json)?;
+                state.json_backed_up = true;
+            }
+
+            hook(PersistPhase::PublishText)?;
+            fs::rename(&paths.next_text, &paths.text)?;
+            state.text_published = true;
+            hook(PersistPhase::PublishJson)?;
+            fs::rename(&paths.next_json, &paths.json)?;
+            state.json_published = true;
+            Ok(())
+        })();
+
+        if let Err(error) = transaction {
+            let rollback = rollback_publish(&paths, &state);
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => io::Error::new(
+                    error.kind(),
+                    format!("{error}; trace rollback also failed: {rollback_error}"),
+                ),
+            });
+        }
+
+        let _ = remove_file_if_present(&paths.previous_text);
+        let _ = remove_file_if_present(&paths.previous_json);
+        Ok(())
     }
 
     fn render_text(&self) -> String {
@@ -129,11 +208,63 @@ impl SemanticTrace {
     }
 }
 
+impl TracePaths {
+    fn new(artifacts_dir: &std::path::Path) -> Self {
+        Self {
+            text: artifacts_dir.join("semantic-trace.txt"),
+            json: artifacts_dir.join("semantic-trace.json"),
+            next_text: artifacts_dir.join("semantic-trace.txt.next"),
+            next_json: artifacts_dir.join("semantic-trace.json.next"),
+            previous_text: artifacts_dir.join("semantic-trace.txt.previous"),
+            previous_json: artifacts_dir.join("semantic-trace.json.previous"),
+        }
+    }
+}
+
+fn rollback_publish(paths: &TracePaths, state: &PublishState) -> io::Result<()> {
+    let mut failures = Vec::new();
+    if state.text_published {
+        collect_file_result(&mut failures, remove_file_if_present(&paths.text));
+    }
+    if state.json_published {
+        collect_file_result(&mut failures, remove_file_if_present(&paths.json));
+    }
+    if state.text_backed_up {
+        collect_file_result(&mut failures, fs::rename(&paths.previous_text, &paths.text));
+    }
+    if state.json_backed_up {
+        collect_file_result(&mut failures, fs::rename(&paths.previous_json, &paths.json));
+    }
+    collect_file_result(&mut failures, remove_file_if_present(&paths.next_text));
+    collect_file_result(&mut failures, remove_file_if_present(&paths.next_json));
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other(failures.join("; ")))
+    }
+}
+
+fn collect_file_result(failures: &mut Vec<String>, result: io::Result<()>) {
+    if let Err(error) = result {
+        failures.push(error.to_string());
+    }
+}
+
+fn remove_file_if_present(path: &std::path::Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SemanticTrace;
+    use super::{PersistPhase, SemanticTrace, StepOutcome};
     use serde_json::Value;
     use std::fs;
+    use std::io;
 
     #[test]
     fn begin_immediately_persists_a_running_record_in_text_and_json() {
@@ -199,5 +330,61 @@ mod tests {
             json[0]["outcome"]["Failed"]["detail"],
             "source control was disabled"
         );
+    }
+
+    #[test]
+    fn json_preparation_failure_preserves_the_previous_trace_pair() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut trace = SemanticTrace::new(temp.path()).unwrap();
+        trace.begin("open Orders", "Orders is active").unwrap();
+        let text_path = temp.path().join("semantic-trace.txt");
+        let json_path = temp.path().join("semantic-trace.json");
+        let previous_text = fs::read(&text_path).unwrap();
+        let previous_json = fs::read(&json_path).unwrap();
+        trace.records[0].observed = "Orders is active".to_string();
+        trace.records[0].outcome = StepOutcome::Passed;
+
+        let error = trace
+            .persist_with_hook(|phase| {
+                if phase == PersistPhase::PrepareJson {
+                    Err(io::Error::other("injected JSON preparation failure"))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("injected JSON preparation failure"));
+        assert_eq!(fs::read(text_path).unwrap(), previous_text);
+        assert_eq!(fs::read(json_path).unwrap(), previous_json);
+    }
+
+    #[test]
+    fn json_publish_failure_rolls_back_to_the_previous_trace_pair() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut trace = SemanticTrace::new(temp.path()).unwrap();
+        trace.begin("open Orders", "Orders is active").unwrap();
+        let text_path = temp.path().join("semantic-trace.txt");
+        let json_path = temp.path().join("semantic-trace.json");
+        let previous_text = fs::read(&text_path).unwrap();
+        let previous_json = fs::read(&json_path).unwrap();
+        trace.records[0].observed = "Orders is active".to_string();
+        trace.records[0].outcome = StepOutcome::Passed;
+
+        let error = trace
+            .persist_with_hook(|phase| {
+                if phase == PersistPhase::PublishJson {
+                    Err(io::Error::other("injected JSON publish failure"))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected JSON publish failure"));
+        assert_eq!(fs::read(text_path).unwrap(), previous_text);
+        assert_eq!(fs::read(json_path).unwrap(), previous_json);
     }
 }

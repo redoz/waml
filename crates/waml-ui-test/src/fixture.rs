@@ -32,17 +32,13 @@ pub(crate) fn cleanup_run(
     candidate: &Path,
     succeeded: bool,
 ) -> io::Result<()> {
-    require_owned_path(ownership_root, candidate)?;
+    let candidate_exists = validate_cleanup_candidate(ownership_root, candidate)?;
     if !succeeded {
         return Ok(());
     }
-    if !candidate.exists() {
+    if !candidate_exists {
         return Ok(());
     }
-    reject_link_or_reparse(candidate, &fs::symlink_metadata(candidate)?)?;
-    let canonical_ownership_root = fs::canonicalize(ownership_root)?;
-    let canonical_candidate = fs::canonicalize(candidate)?;
-    require_owned_path(&canonical_ownership_root, &canonical_candidate)?;
     fs::remove_dir_all(candidate)
 }
 
@@ -120,7 +116,7 @@ fn reject_link_or_reparse(path: &Path, metadata: &fs::Metadata) -> io::Result<()
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "fixture entry is a symbolic link or reparse point: {}",
+                "path is a symbolic link or reparse point: {}",
                 path.display()
             ),
         ));
@@ -173,6 +169,82 @@ fn require_owned_path(ownership_root: &Path, candidate: &Path) -> io::Result<()>
         ));
     }
     Ok(())
+}
+
+fn validate_cleanup_candidate(ownership_root: &Path, candidate: &Path) -> io::Result<bool> {
+    require_owned_path(ownership_root, candidate)?;
+
+    let ownership_metadata = fs::symlink_metadata(ownership_root)?;
+    reject_link_or_reparse(ownership_root, &ownership_metadata)?;
+    if !ownership_metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "ownership root is not a directory: {}",
+                ownership_root.display()
+            ),
+        ));
+    }
+
+    let mut nearest_existing = ownership_root.to_path_buf();
+    let mut candidate_exists = true;
+    let relative = candidate.strip_prefix(ownership_root).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "path is not below ownership root {}: {}",
+                ownership_root.display(),
+                candidate.display()
+            ),
+        )
+    })?;
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "cleanup path has an unsafe component: {}",
+                    candidate.display()
+                ),
+            ));
+        };
+        nearest_existing.push(component);
+        match fs::symlink_metadata(&nearest_existing) {
+            Ok(metadata) => {
+                reject_link_or_reparse(&nearest_existing, &metadata)?;
+                if !metadata.is_dir() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "cleanup path component is not a directory: {}",
+                            nearest_existing.display()
+                        ),
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                nearest_existing.pop();
+                candidate_exists = false;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let canonical_ownership_root = fs::canonicalize(ownership_root)?;
+    let canonical_nearest_existing = fs::canonicalize(&nearest_existing)?;
+    if !canonical_nearest_existing.starts_with(&canonical_ownership_root) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "cleanup path resolves outside ownership root {}: {}",
+                canonical_ownership_root.display(),
+                canonical_nearest_existing.display()
+            ),
+        ));
+    }
+
+    Ok(candidate_exists)
 }
 
 #[cfg(test)]
@@ -310,6 +382,70 @@ mod tests {
     }
 
     #[test]
+    fn failed_cleanup_refuses_a_linked_run_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let ownership_root = temp.path().join("target").join("waml-ui-test");
+        let actual_run = ownership_root.join("actual-run");
+        let linked_run = ownership_root.join("linked-run");
+        fs::create_dir_all(&actual_run).unwrap();
+        create_directory_link(&actual_run, &linked_run).unwrap();
+
+        let error = cleanup_run(&ownership_root, &linked_run, false).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(actual_run.is_dir());
+    }
+
+    #[test]
+    fn failed_cleanup_refuses_a_linked_ancestor() {
+        let temp = tempfile::tempdir().unwrap();
+        let ownership_root = temp.path().join("target").join("waml-ui-test");
+        let outside_parent = temp.path().join("outside-parent");
+        let linked_parent = ownership_root.join("linked-parent");
+        let candidate = linked_parent.join("run");
+        fs::create_dir_all(outside_parent.join("run")).unwrap();
+        fs::create_dir_all(&ownership_root).unwrap();
+        create_directory_link(&outside_parent, &linked_parent).unwrap();
+
+        let error = cleanup_run(&ownership_root, &candidate, false).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(outside_parent.join("run").is_dir());
+    }
+
+    #[test]
+    fn successful_cleanup_refuses_a_dangling_link_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let ownership_root = temp.path().join("target").join("waml-ui-test");
+        let missing_target = ownership_root.join("missing-target");
+        let dangling_run = ownership_root.join("dangling-run");
+        fs::create_dir_all(&ownership_root).unwrap();
+        create_directory_link(&missing_target, &dangling_run).unwrap();
+
+        let error = cleanup_run(&ownership_root, &dangling_run, true).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(fs::symlink_metadata(&dangling_run).is_ok());
+    }
+
+    #[test]
+    fn successful_cleanup_validates_the_nearest_existing_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let ownership_root = temp.path().join("target").join("waml-ui-test");
+        let outside_parent = temp.path().join("outside-parent");
+        let linked_parent = ownership_root.join("linked-parent");
+        let missing_candidate = linked_parent.join("missing-run");
+        fs::create_dir_all(&outside_parent).unwrap();
+        fs::create_dir_all(&ownership_root).unwrap();
+        create_directory_link(&outside_parent, &linked_parent).unwrap();
+
+        let error = cleanup_run(&ownership_root, &missing_candidate, true).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(!outside_parent.join("missing-run").exists());
+    }
+
+    #[test]
     fn workspace_root_is_the_parent_of_the_editor_crates_directory() {
         let temp = tempfile::tempdir().unwrap();
         let manifest_dir = temp.path().join("crates").join("waml-editor");
@@ -341,5 +477,15 @@ mod tests {
     #[cfg(windows)]
     fn create_file_link(source: &Path, link: &Path) -> io::Result<()> {
         std::os::windows::fs::symlink_file(source, link)
+    }
+
+    #[cfg(unix)]
+    fn create_directory_link(source: &Path, link: &Path) -> io::Result<()> {
+        std::os::unix::fs::symlink(source, link)
+    }
+
+    #[cfg(windows)]
+    fn create_directory_link(source: &Path, link: &Path) -> io::Result<()> {
+        std::os::windows::fs::symlink_dir(source, link)
     }
 }
