@@ -1,21 +1,22 @@
 //! Project-local editor state, stored under `<project>/.waml/`.
 //!
 //! ```text
-//! <project>/.waml/settings.json   versioned UI state for THIS project
-//! <project>/.waml/README.md       written once, explaining the directory
+//! <project>/.waml/editor.json   versioned UI state for THIS project
+//! <project>/.waml/README.md     written once, explaining the directory
 //! ```
 //!
 //! This is the project-scoped counterpart to the global `~/.waml/editor.json`
 //! that [`crate::config`] owns: theme and recents are properties of the user,
-//! dock column widths are properties of the project being looked at. The two
-//! stores share a disk seam -- [`crate::config::load_from`] /
+//! dock column widths are properties of the project being looked at. Same file
+//! name in both scopes, deliberately -- the scope is the directory, not the
+//! spelling. The two stores share a disk seam -- [`crate::config::load_from`] /
 //! [`crate::config::store_to`] give us the atomic temp-write plus rename, the
 //! corrupt-file-to-`.bak` rescue, and the never-panics posture for free, and
 //! being directory-injectable they let these tests run against a temp dir.
 //!
 //! Error posture, per the dock-splitters design: a missing or unreadable
-//! `settings.json` yields defaults, malformed JSON is moved aside to
-//! `settings.json.bak` and defaults are used, and a failed write returns its io
+//! `editor.json` yields defaults, malformed JSON is moved aside to
+//! `editor.json.bak` and defaults are used, and a failed write returns its io
 //! error for the caller to log and swallow. Losing a panel width must never cost
 //! a user an edit.
 
@@ -30,13 +31,18 @@ use crate::tree_panel::PROJECT_TREE_W;
 /// Directory holding this project's editor state, relative to the project root.
 pub(crate) const PROJECT_DIR: &str = ".waml";
 /// Settings file inside [`PROJECT_DIR`].
-const SETTINGS_FILE: &str = "settings.json";
+const EDITOR_FILE: &str = "editor.json";
+/// What [`EDITOR_FILE`] was called before it was renamed to match the global
+/// `~/.waml/editor.json`. Read once, on [`load`], when the current name is not
+/// there yet, so a project that already had a layout keeps it; the next
+/// [`store`] writes the current name and this one stops being consulted.
+const LEGACY_SETTINGS_FILE: &str = "settings.json";
 /// Explanatory readme inside [`PROJECT_DIR`]; written once, never overwritten.
 const README_FILE: &str = "README.md";
-/// Current `settings.json` schema version.
+/// Current `editor.json` schema version.
 const SETTINGS_VERSION: u32 = 1;
 
-/// Prose dropped beside `settings.json` the first time it is written, for the
+/// Prose dropped beside `editor.json` the first time it is written, for the
 /// benefit of whoever finds this directory in a diff and wonders what it is.
 const README_TEXT: &str = "\
 # `.waml/`
@@ -47,7 +53,7 @@ the project itself, and the editor will load it exactly the same whether this
 directory exists or not. Deleting `.waml/` costs you nothing but the layout
 you had set up.
 
-`settings.json` is where that layout lives: things like how wide you dragged
+`editor.json` is where that layout lives: things like how wide you dragged
 the model tree and the inspector columns. It is versioned, so a newer editor
 can read a file an older one wrote.
 
@@ -87,7 +93,7 @@ impl Default for DockWidths {
     }
 }
 
-/// Contents of `<project>/.waml/settings.json`.
+/// Contents of `<project>/.waml/editor.json`.
 ///
 /// Every field carries `#[serde(default)]` -- exactly as `EditorConfig` does --
 /// so a file written by an older editor, or one hand-edited down to `{}`, still
@@ -129,18 +135,33 @@ fn project_dir(project_root: &Path) -> PathBuf {
     project_root.join(PROJECT_DIR)
 }
 
-/// Load `<project>/.waml/settings.json`.
+/// Load `<project>/.waml/editor.json`, falling back to the pre-rename
+/// [`LEGACY_SETTINGS_FILE`] when only that one is on disk.
 ///
 /// Missing or unreadable -> defaults. Malformed JSON -> the bad file is renamed
-/// to `settings.json.bak` and defaults are returned. Never panics, never errors:
+/// to `editor.json.bak` and defaults are returned. Never panics, never errors:
 /// a project whose settings cannot be read is simply a project at default
 /// widths.
 pub(crate) fn load(project_root: &Path) -> ProjectSettings {
-    crate::config::load_from(&project_dir(project_root), SETTINGS_FILE)
+    let dir = project_dir(project_root);
+    // The current name wins whenever it exists, INCLUDING when it is corrupt:
+    // falling through to the legacy file on a parse failure would resurrect a
+    // layout the user has since changed, and would hide the `.bak` rescue.
+    let file = if !dir.join(EDITOR_FILE).exists() && dir.join(LEGACY_SETTINGS_FILE).exists() {
+        LEGACY_SETTINGS_FILE
+    } else {
+        EDITOR_FILE
+    };
+    crate::config::load_from(&dir, file)
 }
 
-/// Store `settings` to `<project>/.waml/settings.json`, creating the directory
+/// Store `settings` to `<project>/.waml/editor.json`, creating the directory
 /// if needed, and write [`README_FILE`] alongside it the first time.
+///
+/// Always writes the current name; a leftover [`LEGACY_SETTINGS_FILE`] is left
+/// where it is rather than deleted. It is inert once `editor.json` exists, and
+/// the editor removing a file out of the user's project to tidy up after itself
+/// is a worse trade than one stale file.
 ///
 /// The written file is always stamped with the current [`SETTINGS_VERSION`],
 /// mirroring how `config.rs` stamps `editor.json` -- the caller supplies state,
@@ -156,7 +177,7 @@ pub(crate) fn store(project_root: &Path, settings: &ProjectSettings) -> io::Resu
         version: SETTINGS_VERSION,
         ..settings.clone()
     };
-    crate::config::store_to(&dir, SETTINGS_FILE, &stamped)?;
+    crate::config::store_to(&dir, EDITOR_FILE, &stamped)?;
     write_readme_once(&dir);
     Ok(())
 }
@@ -223,7 +244,7 @@ mod tests {
         let tmp = TempDir::new();
         let dir = project_dir(tmp.path());
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(SETTINGS_FILE), br#"{"version":1}"#).unwrap();
+        std::fs::write(dir.join(EDITOR_FILE), br#"{"version":1}"#).unwrap();
         assert_eq!(load(tmp.path()).dock, DockWidths::default());
     }
 
@@ -232,15 +253,57 @@ mod tests {
         let tmp = TempDir::new();
         let dir = project_dir(tmp.path());
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(SETTINGS_FILE);
+        let path = dir.join(EDITOR_FILE);
         std::fs::write(&path, b"{ not valid json ]").unwrap();
 
         assert_eq!(load(tmp.path()), ProjectSettings::default());
         assert!(!path.exists(), "corrupt file moved aside");
         assert!(
-            dir.join("settings.json.bak").exists(),
+            dir.join("editor.json.bak").exists(),
             "corrupt file preserved to .bak"
         );
+    }
+
+    /// The file was called `settings.json` before it was renamed to match the
+    /// global `~/.waml/editor.json`. A project that already had a layout must
+    /// keep it rather than silently snapping back to default widths.
+    #[test]
+    fn project_settings_read_the_pre_rename_file_when_it_is_the_only_one() {
+        let tmp = TempDir::new();
+        let dir = project_dir(tmp.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(LEGACY_SETTINGS_FILE),
+            br#"{"version":1,"dock":{"tree_w":410.0,"inspector_w":250.0}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(load(tmp.path()).dock.tree_w, 410.0);
+
+        // The next store writes the current name, and the legacy file stops
+        // being consulted from then on -- including when the two disagree.
+        store(tmp.path(), &settings(305.0, 315.0)).unwrap();
+        assert!(dir.join(EDITOR_FILE).exists());
+        assert_eq!(load(tmp.path()).dock.tree_w, 305.0);
+    }
+
+    /// A corrupt `editor.json` must take the `.bak` rescue, NOT fall through to
+    /// a stale legacy file: resurrecting an old layout would look like the
+    /// editor ignoring everything the user has done since the rename.
+    #[test]
+    fn a_corrupt_current_file_does_not_fall_back_to_the_legacy_one() {
+        let tmp = TempDir::new();
+        let dir = project_dir(tmp.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(LEGACY_SETTINGS_FILE),
+            br#"{"version":1,"dock":{"tree_w":410.0,"inspector_w":250.0}}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join(EDITOR_FILE), b"{ not valid json ]").unwrap();
+
+        assert_eq!(load(tmp.path()), ProjectSettings::default());
+        assert!(dir.join("editor.json.bak").exists());
     }
 
     #[test]
@@ -286,7 +349,7 @@ mod tests {
         let tmp = TempDir::new();
         let dir = project_dir(tmp.path());
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(SETTINGS_FILE), br#"{"version":1}"#).unwrap();
+        std::fs::write(dir.join(EDITOR_FILE), br#"{"version":1}"#).unwrap();
         let loaded = load(tmp.path());
         assert_eq!(loaded.max_view_depth, None);
         assert_eq!(

@@ -563,7 +563,7 @@ impl App {
         self.open_dir = Some(next_root);
         // The project root is only known here, so this is where the per-project
         // dock column widths are seeded (defaults if the project has no
-        // `.waml/settings.json`).
+        // `.waml/editor.json`).
         if let Some(root) = self.open_dir.clone() {
             self.load_dock_widths(cx, &root);
         }

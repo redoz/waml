@@ -44,7 +44,7 @@ fn waml_dir() -> Option<PathBuf> {
 /// file up to `<file>.bak`, then return `T::default()`. Never panics.
 ///
 /// Shared seam: `pub(crate)` because `project_settings` reuses it for the
-/// project-local `<project>/.waml/settings.json` rather than reimplementing the
+/// project-local `<project>/.waml/editor.json` rather than reimplementing the
 /// corrupt-file rescue. Keep it directory-injectable.
 pub(crate) fn load_from<T: DeserializeOwned + Default>(dir: &Path, file: &str) -> T {
     let path = dir.join(file);
@@ -74,7 +74,7 @@ pub(crate) fn load_from<T: DeserializeOwned + Default>(dir: &Path, file: &str) -
 /// Creates `dir` if absent. Returns the io error on failure.
 ///
 /// Shared seam: `pub(crate)` because `project_settings` reuses it for the
-/// project-local `<project>/.waml/settings.json` rather than reimplementing the
+/// project-local `<project>/.waml/editor.json` rather than reimplementing the
 /// atomic temp-write plus rename. Keep it directory-injectable.
 pub(crate) fn store_to<T: Serialize>(dir: &Path, file: &str, val: &T) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;

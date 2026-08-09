@@ -580,7 +580,7 @@ impl App {
 
     /// Seed the dock column widths and the view-chain depth cap from the
     /// project that just opened. Called once per `open_dir`; a project with no
-    /// `.waml/settings.json` (or an unreadable one) lands on the compiled-in
+    /// `.waml/editor.json` (or an unreadable one) lands on the compiled-in
     /// defaults. One read for both: they come from the same file, and a second
     /// read is a second chance for the two to disagree.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]

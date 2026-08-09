@@ -1027,7 +1027,7 @@ mod tests {
         fs::write(temp.0.join("order.md"), "# Order\n").unwrap();
         fs::create_dir_all(temp.0.join(".waml")).unwrap();
         fs::write(temp.0.join(".waml/README.md"), "# Not your model\n").unwrap();
-        fs::write(temp.0.join(".waml/settings.json"), "{}").unwrap();
+        fs::write(temp.0.join(".waml/editor.json"), "{}").unwrap();
 
         let bundle = read_bundle_rooted(std::slice::from_ref(&temp.0), false).unwrap();
         let keys: Vec<&str> = bundle.iter().map(|(p, _)| p.as_str()).collect();

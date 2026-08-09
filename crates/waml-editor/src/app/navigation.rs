@@ -723,7 +723,7 @@ impl App {
     /// Both surfaces read the same mask, so there is no state in which the
     /// tree and a folder view disagree about what a directory contains. It
     /// lives in memory only: raw is a deliberate act, not a preference, so it
-    /// is never written to `.waml/settings.json` and every launch starts with
+    /// is never written to `.waml/editor.json` and every launch starts with
     /// an empty mask.
     ///
     /// This is presentational. A row a masked stage would have removed is not

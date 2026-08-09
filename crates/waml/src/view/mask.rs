@@ -9,7 +9,7 @@
 //! is never a permission boundary.
 //!
 //! Session-only by construction: nothing here serializes, and no caller writes
-//! it to `.waml/settings.json`. Raw is a deliberate act, not a preference, so
+//! it to `.waml/editor.json`. Raw is a deliberate act, not a preference, so
 //! every launch starts empty and an author's declared `view:` is what a reader
 //! sees unless they ask otherwise.
 

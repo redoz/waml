@@ -6,7 +6,7 @@ the project itself, and the editor will load it exactly the same whether this
 directory exists or not. Deleting `.waml/` costs you nothing but the layout
 you had set up.
 
-`settings.json` is where that layout lives: things like how wide you dragged
+`editor.json` is where that layout lives: things like how wide you dragged
 the model tree and the inspector columns. It is versioned, so a newer editor
 can read a file an older one wrote.
 

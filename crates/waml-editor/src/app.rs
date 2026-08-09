@@ -698,13 +698,13 @@ pub struct App {
     #[rust]
     dock_layout: ResponsiveDockLayout,
     /// User-dragged widths of the two dock columns, seeded from the open
-    /// project's `.waml/settings.json` and persisted back on drag release.
+    /// project's `.waml/editor.json` and persisted back on drag release.
     /// Replaces the compile-time `PROJECT_TREE_W` / `INSPECTOR_W` that
     /// `responsive_layout` used to be handed.
     #[rust]
     dock_widths: DockWidths,
     /// The view-chain descent cap in force, from the same
-    /// `.waml/settings.json` read that seeds `dock_widths`. User/workspace
+    /// `.waml/editor.json` read that seeds `dock_widths`. User/workspace
     /// scope ONLY -- a bundle cannot reach this, by construction: nothing
     /// builds `ChainLimits` from bundle frontmatter. Defaults to 20 when the
     /// project declares nothing.
@@ -712,7 +712,7 @@ pub struct App {
     chain_limits: ChainLimits,
     /// The session-wide projection mask: which declared middleware stages are
     /// switched off. In memory only -- NOT persisted, and
-    /// `.waml/settings.json` never sees it, so every launch starts empty and
+    /// `.waml/editor.json` never sees it, so every launch starts empty and
     /// the author's declared `view:` is the default a reader gets. Read by
     /// both the tree seam and every folder tab, so the two can never disagree
     /// about what a directory contains.

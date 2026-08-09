@@ -718,7 +718,7 @@ fn guard_descend<'a>(
     }
 }
 
-/// Runner bounds. Constructed by the HOST (editor from `.waml/settings.json`,
+/// Runner bounds. Constructed by the HOST (editor from `.waml/editor.json`,
 /// tests directly, LSP from its own config) and passed in. There is no
 /// constructor that reads a bundle: bundle-supplied `max_view_depth` is
 /// unreachable by construction, not by filtering.
