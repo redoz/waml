@@ -168,13 +168,20 @@ pub enum ProjectionToggle {
     Stage(String),
 }
 
-/// A projection row's leading glyph: the same eye pair the tree toolbar's
-/// button reads in, so the checklist and the glyph that opened it agree.
-fn projection_row_icon(running: bool) -> crate::icons::Icon {
-    if running {
+/// A projection row's leading glyph, from the same three eyes the tree
+/// toolbar's button reads in (`TreePanel::projection_icon`), so the checklist
+/// and the glyph that opened it say the same thing: open for running, dashed
+/// for an extension only partly running, closed for switched off.
+///
+/// `running` counts how many of the row's stages are on, out of `total` -- a
+/// stage row is simply the one-of-one case.
+fn projection_row_icon(running: usize, total: usize) -> crate::icons::Icon {
+    if running == 0 {
+        crate::icons::Icon::EyeClosed
+    } else if running == total {
         crate::icons::Icon::Eye
     } else {
-        crate::icons::Icon::EyeOff
+        crate::icons::Icon::EyeDashed
     }
 }
 
@@ -202,7 +209,7 @@ pub fn projection_menu_items(
     use crate::popup::base::PopupItem;
     let mut items = Vec::new();
     for (owner, names) in maskable {
-        let all_masked = names.iter().all(|name| mask.is_masked(name));
+        let running = names.iter().filter(|name| !mask.is_masked(name)).count();
         items.push(PopupItem {
             id: extension_row_id(owner),
             // The registry name is an identifier, not a caption -- see
@@ -211,15 +218,16 @@ pub fn projection_menu_items(
             // A checkable row's on/off state is drawn as its leading icon's
             // TINT (see `popup::menu::row_tint_role`), which is only drawn for
             // a row that HAS an icon -- an iconless row would render its state
-            // nowhere. The eye pair says the same thing a second way, and
-            // matches the tree toolbar's glyph.
-            icon: Some(projection_row_icon(!all_masked)),
+            // nowhere. The eye glyph carries the same state a second way, and
+            // resolves the one thing the checkmark cannot: an extension whose
+            // stages are SPLIT reads dashed rather than simply checked.
+            icon: Some(projection_row_icon(running, names.len())),
             danger: false,
             enabled: true,
-            checked: Some(!all_masked),
+            checked: Some(running > 0),
         });
         for name in names {
-            let running = !mask.is_masked(name);
+            let running = usize::from(!mask.is_masked(name));
             items.push(PopupItem {
                 id: stage_row_id(name),
                 // Two leading spaces read as nesting without a new indent
@@ -227,10 +235,10 @@ pub fn projection_menu_items(
                 label: format!("  {}", crate::folder_projection::stage_label(name)),
                 // Same reason as the extension row above: no icon, no visible
                 // checked state.
-                icon: Some(projection_row_icon(running)),
+                icon: Some(projection_row_icon(running, 1)),
                 danger: false,
                 enabled: true,
-                checked: Some(running),
+                checked: Some(running == 1),
             });
         }
     }
@@ -425,8 +433,8 @@ mod projection_tests {
         );
     }
 
-    /// The glyph carries the same on/off reading as the tint, and the same
-    /// pair the tree toolbar's button uses.
+    /// The glyph carries the same reading as the tint, out of the same three
+    /// eyes the tree toolbar's button uses.
     #[test]
     fn a_switched_off_row_draws_the_closed_eye() {
         let items = projection_menu_items(&maskable(), &ProjectionMask::from_names(["hide"]));
@@ -434,10 +442,28 @@ mod projection_tests {
             let expected = if item.checked == Some(true) {
                 crate::icons::Icon::Eye
             } else {
-                crate::icons::Icon::EyeOff
+                crate::icons::Icon::EyeClosed
             };
             assert_eq!(item.icon, Some(expected), "row {:?}", item.label);
         }
+    }
+
+    /// The one state a checkmark cannot show: an extension with some stages on
+    /// and some off is checked either way, so the glyph has to carry it.
+    #[test]
+    fn a_split_extension_row_draws_the_dashed_eye() {
+        let maskable = vec![("core", vec!["hide", "hide-others"])];
+        let items = projection_menu_items(&maskable, &ProjectionMask::from_names(["hide"]));
+        let ext = items
+            .iter()
+            .find(|item| item.id == extension_row_id("core"))
+            .unwrap();
+        assert_eq!(ext.icon, Some(crate::icons::Icon::EyeDashed));
+        assert_eq!(
+            ext.checked,
+            Some(true),
+            "something is still running, so the row stays checked",
+        );
     }
 
     #[test]

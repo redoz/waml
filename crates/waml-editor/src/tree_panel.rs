@@ -959,25 +959,32 @@ impl ProjectTree {
             .count()
     }
 
-    /// The glyph for the CURRENT state -- `Eye` while anything is still being
-    /// projected, `EyeOff` once every maskable stage is off and the tree is
-    /// the raw bundle. Not the action the button would perform: a reader must
-    /// be able to read the panel and know what they are looking at.
+    /// The glyph for the CURRENT state -- one per state, so the state is
+    /// legible from the glyph alone and never from the lit tint, which a
+    /// reader has no reference point for:
     ///
-    /// Two glyphs, three states: a PARTIAL mask keeps `Eye` and separates
-    /// from "everything running" by reading lit (see `projection_lit`) --
-    /// something is still being projected, just not all of it.
+    /// - `Eye`: the whole declared chain is running.
+    /// - `EyeDashed`: some stages are switched off -- the eye is drawn, but
+    ///   only in part.
+    /// - `EyeClosed`: every maskable stage is off; the tree is the raw bundle.
+    ///
+    /// Not the action the button would perform: a reader must be able to read
+    /// the panel and know what they are looking at.
     pub fn projection_icon(&self) -> Icon {
         let masked = self.masked_count();
-        if masked > 0 && masked == self.maskable.len() {
-            Icon::EyeOff
-        } else {
+        if masked == 0 {
             Icon::Eye
+        } else if masked == self.maskable.len() {
+            Icon::EyeClosed
+        } else {
+            Icon::EyeDashed
         }
     }
 
     /// Whether the glyph reads lit. Anything other than "the whole declared
-    /// chain is running" is the deliberate, non-default state.
+    /// chain is running" is the deliberate, non-default state -- emphasis
+    /// only, since [`projection_icon`](Self::projection_icon) already tells
+    /// the three states apart on its own.
     pub fn projection_lit(&self) -> bool {
         self.masked_count() > 0
     }
@@ -1581,13 +1588,10 @@ mod tests {
         );
         assert_eq!(
             panel.projection_icon(),
-            crate::icons::Icon::Eye,
-            "some stages off, some on: still projecting, so still an open eye",
+            crate::icons::Icon::EyeDashed,
+            "some stages off, some on: the eye is drawn, but only in part",
         );
-        assert!(
-            panel.projection_lit(),
-            "a partial mask separates from the default state by reading lit",
-        );
+        assert!(panel.projection_lit());
 
         panel.set_projection(
             &mut cx,
@@ -1596,7 +1600,7 @@ mod tests {
         );
         assert_eq!(
             panel.projection_icon(),
-            crate::icons::Icon::EyeOff,
+            crate::icons::Icon::EyeClosed,
             "every maskable stage off is the old Raw",
         );
         assert!(panel.projection_lit());

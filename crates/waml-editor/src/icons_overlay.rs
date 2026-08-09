@@ -96,10 +96,12 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(ChartNoAxesGantt, "Sequence / interaction kind"),
             ie!(StickyNote, "Note kind"),
             ie!(ChevronsUpDown, "Scope / select dropdown"),
+            ie!(EyeDashed, "Tree/folder view is partially masked"),
             ie!(
-                EyeOff,
+                EyeClosed,
                 "Tree/folder view is fully masked (raw bundle listing)"
             ),
+            ie!(EyeOff, "Struck-through eye; catalogued, no call site"),
             ie!(
                 Library,
                 "Retired projected glyph; superseded by Eye / EyeOff"
@@ -343,6 +345,9 @@ mod drift {
         Icon::SquareCode,
         Icon::Library,
         Icon::LibraryBig,
+        // The struck-through eye lost its call site when the tree panel took
+        // the Eye / EyeDashed / EyeClosed trio; same rule.
+        Icon::EyeOff,
         // Superseded as the sequence/interaction glyph by ChartNoAxesGantt,
         // kept catalogued on the same rule.
         Icon::ArrowLeftRight,

@@ -1898,6 +1898,74 @@ script_mod! {
         }
     }
 
+    // Faithful port of resources/icons/eye-closed.svg via scripts/gen-icon.py.
+    mod.draw.IconEyeClosed = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.6250, s * 0.7500)
+            sdf.line_to(s * 0.5949, s * 0.6146)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.0833, s * 0.3333)
+            sdf.arc_to(s * 0.5000, s * 0.1813, s * 0.4435, 2.7917, 0.3499)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8333, s * 0.6250)
+            sdf.line_to(s * 0.7614, s * 0.5396)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1667, s * 0.6250)
+            sdf.line_to(s * 0.2386, s * 0.5396)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.3750, s * 0.7500)
+            sdf.line_to(s * 0.4051, s * 0.6146)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Faithful port of resources/icons/eye-dashed.svg via scripts/gen-icon.py.
+    mod.draw.IconEyeDashed = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.5439, s * 0.7894)
+            sdf.arc_to(s * 0.5000, s * 0.3332, s * 0.4583, 1.4747, 1.6669)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.5439, s * 0.2106)
+            sdf.arc_to(s * 0.4997, s * 0.6668, s * 0.4583, -1.4743, -1.6664)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7113, s * 0.2614)
+            sdf.arc_to(s * 0.4941, s * 0.6650, s * 0.4583, -1.0771, -0.8851)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7844, s * 0.6897)
+            sdf.arc_to(s * 0.4940, s * 0.3351, s * 0.4583, 0.8846, 1.0767)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1048, s * 0.5543)
+            sdf.arc_to(s * 0.5091, s * 0.3384, s * 0.4583, 2.6511, 2.7471)
+            sdf.arc_to(s * 0.1250, s * 0.5000, s * 0.0417, 2.7856, 3.4976)
+            sdf.arc_to(s * 0.5094, s * 0.6607, s * 0.4583, -2.7493, -2.6532)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.8952, s * 0.4457)
+            sdf.arc_to(s * 0.4910, s * 0.6618, s * 0.4583, -0.4910, -0.3949)
+            sdf.arc_to(s * 0.8750, s * 0.5000, s * 0.0417, -0.3560, 0.3560)
+            sdf.arc_to(s * 0.4911, s * 0.3380, s * 0.4583, 0.3953, 0.4913)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2155, s * 0.3103)
+            sdf.arc_to(s * 0.5059, s * 0.6649, s * 0.4583, -2.2570, -2.0649)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.2886, s * 0.7386)
+            sdf.arc_to(s * 0.5059, s * 0.3351, s * 0.4583, 2.0649, 2.2570)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.6250, s * 0.5000)
+            sdf.arc_to(s * 0.5000, s * 0.5000, s * 0.1250, 0.0000, 3.1416)
+            sdf.arc_to(s * 0.5000, s * 0.5000, s * 0.1250, 3.1416, 6.2832)
+            sdf.close_path()
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     // Faithful port of resources/icons/frame.svg via scripts/gen-icon.py.
     // Faithful port of resources/icons/frame.svg via scripts/gen-icon.py.
     mod.draw.IconFrame = mod.draw.DrawColor{
@@ -4348,6 +4416,8 @@ script_mod! {
         library: mod.draw.IconLibrary{ color: atlas.accent }
         library_big: mod.draw.IconLibraryBig{ color: atlas.accent }
         chart_no_axes_gantt: mod.draw.IconChartNoAxesGantt{ color: atlas.accent }
+        eye_closed: mod.draw.IconEyeClosed{ color: atlas.accent }
+        eye_dashed: mod.draw.IconEyeDashed{ color: atlas.accent }
     }
 }
 
@@ -4618,6 +4688,10 @@ pub struct IconSet {
     pub library_big: DrawColor,
     #[live]
     pub chart_no_axes_gantt: DrawColor,
+    #[live]
+    pub eye_closed: DrawColor,
+    #[live]
+    pub eye_dashed: DrawColor,
 }
 
 impl IconSet {
@@ -4755,6 +4829,8 @@ impl IconSet {
             Icon::Library => &mut self.library,
             Icon::LibraryBig => &mut self.library_big,
             Icon::ChartNoAxesGantt => &mut self.chart_no_axes_gantt,
+            Icon::EyeClosed => &mut self.eye_closed,
+            Icon::EyeDashed => &mut self.eye_dashed,
         }
     }
 
@@ -4906,12 +4982,14 @@ pub enum Icon {
     Library,
     LibraryBig,
     ChartNoAxesGantt,
+    EyeClosed,
+    EyeDashed,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 130] = [
+    pub const ALL: [Icon; 132] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -5042,6 +5120,8 @@ impl Icon {
         Icon::Library,
         Icon::LibraryBig,
         Icon::ChartNoAxesGantt,
+        Icon::EyeClosed,
+        Icon::EyeDashed,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5178,6 +5258,8 @@ impl Icon {
             Icon::Library => "library",
             Icon::LibraryBig => "library-big",
             Icon::ChartNoAxesGantt => "chart-no-axes-gantt",
+            Icon::EyeClosed => "eye-closed",
+            Icon::EyeDashed => "eye-dashed",
         }
     }
 }
@@ -5187,8 +5269,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_130_entries() {
-        assert_eq!(Icon::ALL.len(), 130);
+    fn icon_all_has_132_entries() {
+        assert_eq!(Icon::ALL.len(), 132);
     }
 
     // ------------------------------------------------------------------
@@ -5391,12 +5473,22 @@ mod tests {
         assert_eq!(Icon::Plus.label(), "plus");
     }
 
-    /// The sequence/interaction glyph, appended last so the catalog indices
-    /// above stay put.
+    /// The sequence/interaction glyph, appended so the catalog indices above
+    /// stay put.
     #[test]
-    fn gantt_glyph_closes_the_catalog_with_its_lucide_slug() {
+    fn gantt_glyph_keeps_its_catalog_index_and_lucide_slug() {
         assert_eq!(Icon::ALL[129], Icon::ChartNoAxesGantt);
         assert_eq!(Icon::ChartNoAxesGantt.label(), "chart-no-axes-gantt");
+    }
+
+    /// The tree panel's partial/fully-masked projection glyphs, appended last
+    /// on the same rule.
+    #[test]
+    fn the_projection_eye_pair_closes_the_catalog_with_its_lucide_slugs() {
+        assert_eq!(Icon::ALL[130], Icon::EyeClosed);
+        assert_eq!(Icon::ALL[131], Icon::EyeDashed);
+        assert_eq!(Icon::EyeClosed.label(), "eye-closed");
+        assert_eq!(Icon::EyeDashed.label(), "eye-dashed");
     }
 
     #[test]
@@ -5418,7 +5510,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 130);
+        assert_eq!(seen.len(), 132);
     }
 
     #[test]
