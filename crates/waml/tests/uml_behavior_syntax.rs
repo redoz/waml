@@ -635,6 +635,65 @@ fn missing_lifeline_link_is_incomplete_but_present_malformed_link_is_invalid() {
 }
 
 #[test]
+fn lifeline_as_without_an_alias_is_reported_on_the_keyword() {
+    let authored = "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md) as\n\n## Messages\n";
+    let analysis = analyze([("sequence.md", authored)]);
+    let lifelines = &analysis.declared.concept("sequence").unwrap().lifelines;
+    assert_eq!(lifelines.len(), 1);
+    assert!(matches!(
+        lifelines[0].alias,
+        uml::DeclaredField::Incomplete { .. }
+    ));
+
+    let as_start = authored.find(" as\n").unwrap() + 1;
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("sequence.md").unwrap())
+        .unwrap();
+    let diagnostics = analysis.syntax.document(id).unwrap().syntax().diagnostics();
+    let malformed = diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::MalformedLifeline
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(malformed.len(), 1);
+    assert_eq!(malformed[0].range.start().to_usize(), as_start);
+    assert_eq!(malformed[0].range.end().to_usize(), as_start + "as".len());
+    assert_eq!(
+        malformed[0].message.as_ref(),
+        "expected a lifeline alias after \"as\""
+    );
+}
+
+#[test]
+fn lifeline_without_an_as_keyword_is_not_reported() {
+    let authored =
+        "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md)\n\n## Messages\n";
+    let analysis = analyze([("sequence.md", authored)]);
+    let lifelines = &analysis.declared.concept("sequence").unwrap().lifelines;
+    assert_eq!(lifelines.len(), 1);
+    assert!(matches!(lifelines[0].alias, uml::DeclaredField::Absent));
+
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("sequence.md").unwrap())
+        .unwrap();
+    assert!(!analysis
+        .syntax
+        .document(id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
+        .iter()
+        .any(
+            |diagnostic| diagnostic.code == uml::syntax::UmlSyntaxDiagnosticCode::MalformedLifeline
+        ));
+}
+
+#[test]
 fn required_behavior_accessors_return_indexed_missing_tokens_without_panicking() {
     let flow = "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### initial\n- entry: `begin`\n- transitions\n- transitions to [broken\n### object\n### object [broken\n";
     let sequence =

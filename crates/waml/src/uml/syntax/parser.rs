@@ -988,6 +988,15 @@ fn lifeline_line(
             f,
             UmlSyntaxKind::LifelineAlias,
             if alias_start == alias_end {
+                // The alias is optional, but `as` promises one.  Mark the
+                // keyword itself rather than the whole bullet: the link ahead
+                // of it parsed fine.
+                diags.push(diag(
+                    UmlSyntaxDiagnosticCode::MalformedLifeline,
+                    as_start,
+                    as_start + 2,
+                    "expected a lifeline alias after \"as\"",
+                ));
                 GreenElement::Token(f.missing_token(UmlSyntaxKind::AliasToken))
             } else {
                 token(
