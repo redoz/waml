@@ -2,9 +2,9 @@
 //! Pins the retained Rust JSON shape of `Model`.
 use waml::diagnostic::{DiagCode, Diagnostic, Severity};
 use waml::model::{
-    AssocName, BehaviorKind, ElementType, EndpointRef, FragmentKind, InteractionUseId, MessageId,
-    MessageKind, Model, Node, OperandSpec, SeqBinding, SeqChild, SeqEdge, SeqInteractionUse,
-    SeqNode, SequenceDoc, UmlMetaclass, Visibility,
+    AssocName, BehaviorKind, DiagramKind, ElementType, EndpointRef, FragmentKind, InteractionUseId,
+    MessageId, MessageKind, Model, Node, OperandSpec, SeqBinding, SeqChild, SeqEdge,
+    SeqInteractionUse, SeqNode, SequenceDoc, UmlMetaclass, Visibility,
 };
 use waml::multiplicity::Multiplicity;
 fn projection(bundle: &[(String, String)]) -> Model {
@@ -257,6 +257,21 @@ fn instance_edge_kinds_serialize_lowercase() {
     assert_eq!(RelationshipKind::Links.as_str(), "links");
     assert!(!RelationshipKind::InstanceOf.is_ended());
     assert!(!RelationshipKind::Links.is_ended());
+}
+
+#[test]
+fn diagram_kinds_serialize_as_rust_enum_names() {
+    let cases = [
+        (DiagramKind::Class, "Class"),
+        (DiagramKind::UseCase, "UseCase"),
+        (DiagramKind::Activity, "Activity"),
+        (DiagramKind::StateMachine, "StateMachine"),
+        (DiagramKind::Sequence, "Sequence"),
+    ];
+
+    for (kind, name) in cases {
+        assert_eq!(serde_json::to_value(kind).unwrap(), serde_json::json!(name));
+    }
 }
 
 #[test]

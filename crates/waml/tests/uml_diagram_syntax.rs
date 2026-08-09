@@ -1,6 +1,22 @@
+use waml::model::DiagramKind;
 use waml::uml::syntax::UmlSyntaxKind;
 use waml::{analysis::analyze_okf, source::SourceBundle, uml};
 use waml_syntax::AstNode;
+
+#[test]
+fn canonical_diagram_kinds_round_trip() {
+    let cases = [
+        ("uml.ClassDiagram", DiagramKind::Class),
+        ("uml.UseCaseDiagram", DiagramKind::UseCase),
+        ("uml.ActivityDiagram", DiagramKind::Activity),
+        ("uml.StateMachineDiagram", DiagramKind::StateMachine),
+        ("uml.SequenceDiagram", DiagramKind::Sequence),
+    ];
+    for (name, kind) in cases {
+        assert_eq!(DiagramKind::parse(name), Some(kind));
+        assert_eq!(kind.as_str(), name);
+    }
+}
 
 fn analyze(source: &SourceBundle) -> uml::Analysis {
     let okf = analyze_okf(source, None, 1).unwrap();

@@ -419,6 +419,48 @@ impl BehaviorKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum DiagramKind {
+    Class,
+    UseCase,
+    Activity,
+    StateMachine,
+    Sequence,
+}
+
+impl DiagramKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "uml.ClassDiagram" => Some(Self::Class),
+            "uml.UseCaseDiagram" => Some(Self::UseCase),
+            "uml.ActivityDiagram" => Some(Self::Activity),
+            "uml.StateMachineDiagram" => Some(Self::StateMachine),
+            "uml.SequenceDiagram" => Some(Self::Sequence),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Class => "uml.ClassDiagram",
+            Self::UseCase => "uml.UseCaseDiagram",
+            Self::Activity => "uml.ActivityDiagram",
+            Self::StateMachine => "uml.StateMachineDiagram",
+            Self::Sequence => "uml.SequenceDiagram",
+        }
+    }
+
+    pub const fn behavior_kind(self) -> Option<BehaviorKind> {
+        match self {
+            Self::Class | Self::UseCase => None,
+            Self::Activity => Some(BehaviorKind::Activity),
+            Self::StateMachine => Some(BehaviorKind::StateMachine),
+            Self::Sequence => Some(BehaviorKind::Sequence),
+        }
+    }
+}
+
 /// A flow node's closed kind set (heading keyword). `Plain` = no keyword →
 /// action (activity) or state (state machine).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
