@@ -20,11 +20,12 @@ pub use selector::{RelationshipSelector, Selector};
 pub type Projection = crate::model::Model;
 pub use analysis::{analyze, Analysis};
 pub use declared::{
-    DeclaredAttribute, DeclaredBinding, DeclaredBundle, DeclaredConcept, DeclaredEndpointRef,
-    DeclaredField, DeclaredFlowNode, DeclaredFlowTransition, DeclaredFragment, DeclaredGate,
-    DeclaredInlineInstance, DeclaredInteractionUse, DeclaredLayoutStatement, DeclaredLifeline,
-    DeclaredMember, DeclaredMemberGroup, DeclaredMessage, DeclaredMessageKind, DeclaredOperand,
-    DeclaredOperandSpec, DeclaredRelationship, DeclaredSlot, DeclaredValue, ExpectedSyntax,
+    expected_for_slot, DeclaredAttribute, DeclaredBinding, DeclaredBundle, DeclaredConcept,
+    DeclaredEndpointRef, DeclaredField, DeclaredFlowNode, DeclaredFlowTransition, DeclaredFragment,
+    DeclaredGate, DeclaredInlineInstance, DeclaredInteractionUse, DeclaredLayoutStatement,
+    DeclaredLifeline, DeclaredMember, DeclaredMemberGroup, DeclaredMessage, DeclaredMessageKind,
+    DeclaredOperand, DeclaredOperandSpec, DeclaredRelationship, DeclaredSlot, DeclaredValue,
+    ExpectedSyntax,
 };
 pub use syntax::{
     AnchoredSyntax, AxisSyntax, BindingSyntax, DiagramMembersSyntax, DirectionClauseSyntax,

@@ -2960,7 +2960,9 @@ fn declared_lifeline(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredLifel
                     if as_present {
                         crate::uml::DeclaredField::Incomplete {
                             syntax: slot,
-                            expected: crate::uml::ExpectedSyntax::MessageTarget,
+                            expected: crate::uml::declared::expected_for_slot(
+                                syntax::UmlSyntaxKind::LifelineAlias,
+                            ),
                         }
                     } else {
                         crate::uml::DeclaredField::Absent
@@ -3090,7 +3092,7 @@ fn declared_optional_message_token(
         node,
         slot_kind,
         token_kind,
-        crate::uml::ExpectedSyntax::MessageTarget,
+        crate::uml::declared::expected_for_slot(slot_kind),
     )
 }
 
@@ -3140,7 +3142,7 @@ fn declared_gate(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredGate {
         &node,
         syntax::UmlSyntaxKind::GateName,
         syntax::UmlSyntaxKind::IdentifierToken,
-        crate::uml::ExpectedSyntax::MessageTarget,
+        crate::uml::declared::expected_for_slot(syntax::UmlSyntaxKind::GateName),
     );
     crate::uml::DeclaredGate { syntax, name }
 }
@@ -3223,13 +3225,13 @@ fn declared_binding(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredBindin
         &node,
         syntax::UmlSyntaxKind::BindingLocal,
         syntax::UmlSyntaxKind::LocalToken,
-        crate::uml::ExpectedSyntax::MessageTarget,
+        crate::uml::declared::expected_for_slot(syntax::UmlSyntaxKind::BindingLocal),
     );
     let target = declared_required_token(
         &node,
         syntax::UmlSyntaxKind::BindingTarget,
         syntax::UmlSyntaxKind::TargetToken,
-        crate::uml::ExpectedSyntax::MessageTarget,
+        crate::uml::declared::expected_for_slot(syntax::UmlSyntaxKind::BindingTarget),
     );
     crate::uml::DeclaredBinding {
         syntax,
@@ -3249,7 +3251,7 @@ fn declared_interaction_use(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
         &node,
         syntax::UmlSyntaxKind::InteractionUseAlias,
         syntax::UmlSyntaxKind::AliasToken,
-        crate::uml::ExpectedSyntax::MessageTarget,
+        crate::uml::declared::expected_for_slot(syntax::UmlSyntaxKind::InteractionUseAlias),
     );
     let bindings = items(node.clone(), syntax::UmlSyntaxKind::Binding)
         .into_iter()
@@ -3297,7 +3299,7 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
             syntax,
         };
     }
-    let name = field(syntax.name_token(), crate::uml::ExpectedSyntax::ColonToken);
+    let name = field(syntax.name_token(), crate::uml::ExpectedSyntax::SlotName);
     if syntax
         .colon_token()
         .map_or(true, |t| t.flags().is_missing())
@@ -3329,7 +3331,7 @@ fn declared_slot(node: SyntaxNode<UmlLanguage>) -> crate::uml::DeclaredSlot {
             syntax,
         };
     }
-    let mut value = field(syntax.value_token(), crate::uml::ExpectedSyntax::LinkTarget);
+    let mut value = field(syntax.value_token(), crate::uml::ExpectedSyntax::SlotValue);
     if let Some(token) = syntax.value_token() {
         let raw = token.text().write_to_string();
         if (syntax.value_kind() == syntax::SlotValueKind::Quoted

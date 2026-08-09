@@ -261,3 +261,85 @@ fn brace_multiplicity_repairs_use_the_exact_typed_slot_range() {
         .all(|action| action.title != "Replace invalid multiplicity"));
     }
 }
+
+use waml::uml::{declared::expected_for_slot, syntax::UmlSyntaxKind, ExpectedSyntax};
+
+fn sequence(text: &str) -> PreparedCandidate {
+    prepare_candidate(
+        SourceBundle::try_from_pairs([
+            ("class.md", text),
+            ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
+        ])
+        .unwrap(),
+        None,
+        5,
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_missing_lifeline_alias_is_reported_as_an_alias_not_a_message_target() {
+    let candidate = sequence(
+        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as\n",
+    );
+    let concept = candidate.uml().declared.concept("class").unwrap();
+    assert!(
+        matches!(
+            concept.lifelines[0].alias,
+            waml::uml::DeclaredField::Incomplete {
+                expected: ExpectedSyntax::Alias,
+                ..
+            }
+        ),
+        "expected Alias, got something else"
+    );
+}
+
+#[test]
+fn a_missing_call_id_is_reported_as_a_call_id() {
+    let candidate = sequence(
+        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A calls A `x()` as\n",
+    );
+    let concept = candidate.uml().declared.concept("class").unwrap();
+    assert!(matches!(
+        concept.messages[0].call_id,
+        waml::uml::DeclaredField::Incomplete {
+            expected: ExpectedSyntax::CallId,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn the_slot_kind_table_is_total_over_the_slots_it_names() {
+    assert_eq!(
+        expected_for_slot(UmlSyntaxKind::LifelineAlias),
+        ExpectedSyntax::Alias
+    );
+    assert_eq!(
+        expected_for_slot(UmlSyntaxKind::InteractionUseAlias),
+        ExpectedSyntax::Alias
+    );
+    assert_eq!(
+        expected_for_slot(UmlSyntaxKind::MessageCallId),
+        ExpectedSyntax::CallId
+    );
+    assert_eq!(
+        expected_for_slot(UmlSyntaxKind::MessageReturnCall),
+        ExpectedSyntax::CallId
+    );
+    assert_eq!(
+        expected_for_slot(UmlSyntaxKind::MessageTarget),
+        ExpectedSyntax::MessageTarget
+    );
+    assert_eq!(
+        expected_for_slot(UmlSyntaxKind::FlowTarget),
+        ExpectedSyntax::FlowTarget
+    );
+    // An unlisted slot keeps the historical catch-all rather than panicking:
+    // a new slot kind must not turn a half-typed document into a crash.
+    assert_eq!(
+        expected_for_slot(UmlSyntaxKind::Root),
+        ExpectedSyntax::MessageTarget
+    );
+}

@@ -19,6 +19,37 @@ pub enum ExpectedSyntax {
     LayoutOperand,
     FlowTarget,
     MessageTarget,
+    /// A handle the author invents: a lifeline or interaction-use alias.
+    Alias,
+    /// The name of an inline instance.
+    InstanceName,
+    /// The name half of a `## Slots` entry.
+    SlotName,
+    /// The value half of a `## Slots` entry.
+    SlotValue,
+    /// A message call id, declared after `as` or referenced after `for`.
+    CallId,
+}
+
+/// The one table mapping a typed slot to what the grammar expects in it.
+/// The analysis reads it to label an `Incomplete` field and `uml::complete`
+/// reads the same slot kinds to pick a candidate provider -- neither reads the
+/// other. An unlisted slot falls back to `MessageTarget`, which is what every
+/// unlabelled site reported before this table existed, so adding a slot kind
+/// can never turn an unfinished document into a panic.
+pub fn expected_for_slot(slot: super::syntax::UmlSyntaxKind) -> ExpectedSyntax {
+    use super::syntax::UmlSyntaxKind as K;
+    match slot {
+        K::LifelineAlias | K::InteractionUseAlias => ExpectedSyntax::Alias,
+        K::MessageCallId | K::MessageReturnCall => ExpectedSyntax::CallId,
+        K::InlineInstance => ExpectedSyntax::InstanceName,
+        K::Slot => ExpectedSyntax::SlotName,
+        K::FlowTarget => ExpectedSyntax::FlowTarget,
+        K::TypeReference => ExpectedSyntax::TypeReference,
+        K::Multiplicity => ExpectedSyntax::ValidMultiplicity,
+        K::Link => ExpectedSyntax::LinkTarget,
+        _ => ExpectedSyntax::MessageTarget,
+    }
 }
 #[derive(Clone)]
 pub enum DeclaredField<L: SyntaxLanguage, T> {
