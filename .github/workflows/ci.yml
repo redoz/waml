@@ -74,6 +74,13 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          # The UI test harness cargo-builds waml-editor in release with
+          # MAKEPAD=headless into crates/waml-editor/target (the makepad test
+          # driver pins CARGO_TARGET_DIR to the editor manifest dir). Cache it
+          # or every CI run pays for a cold release build of makepad.
+          cache-directories: |
+            crates/waml-editor/target
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -83,6 +90,19 @@ jobs:
 
       - name: Cargo test
         run: cargo nextest run --workspace --profile ci
+
+      # The harness spawns the editor through the studio hub, which runs
+      # `cargo build -p waml-editor --release` with MAKEPAD=headless and then
+      # execs the binary. Prebuild that exact configuration here so a compile
+      # failure fails this step with readable errors (the in-test build's
+      # output is swallowed) and the in-test build is a warm no-op instead of
+      # eating the startup timeout.
+      - name: Prebuild headless editor for UI tests
+        if: runner.os == 'Linux'
+        env:
+          MAKEPAD: headless
+          CARGO_TARGET_DIR: crates/waml-editor/target
+        run: cargo build -p waml-editor --release
 
       - name: Semantic editor UI test
         if: runner.os == 'Linux'

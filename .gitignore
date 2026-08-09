@@ -1,5 +1,7 @@
 # Rust build output
 /target
+# The makepad UI-test driver pins the spawned editor's CARGO_TARGET_DIR here
+/crates/waml-editor/target
 
 # Node build output and caches
 node_modules/
