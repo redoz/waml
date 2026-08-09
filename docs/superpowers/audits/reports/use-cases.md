@@ -26,7 +26,7 @@
 - `open-a-bundle` — `NATIVE-001` through `NATIVE-005`, and `NATIVE-014`.
 - `read-a-document` — `NATIVE-022`, `NATIVE-045`, and `NATIVE-061`.
 - `use-the-shell` — `NATIVE-008`, `NATIVE-009`, and `NATIVE-055`.
-- `work-with-tabs` — `NATIVE-017` through `NATIVE-021`.
+- `work-with-tabs` — `NATIVE-017` through `NATIVE-020`.
 - `export-a-bundle` — `BROWSER-001`, `BROWSER-003`, `BROWSER-004`, `BROWSER-006`, `BROWSER-011`, and `BROWSER-016`.
 - `publish-a-site` — `BROWSER-012`.
 - `run-in-a-browser` — `BROWSER-005`.
@@ -47,7 +47,7 @@
 # Evidence
 
 The semantic-intention key is the deterministic workflow leaf slug. The 25
-intention groups contain 145 shipped scenario headings. Of these headings, 113
+intention groups contain 144 shipped scenario headings. Of these headings, 112
 come from the frozen inventory and 32 come from the shipped sequence-language
 contract that Task 9 kept stable.
 
@@ -89,7 +89,7 @@ contract that Task 9 kept stable.
 | `solve-the-layout.md` | `solve-the-layout` | `goals/uml/shared/solve-the-layout.md` | `NATIVE-036` | Reader | `editor-workflows` |
 | `text-editor-integration.md` | `text-editor-integration` | `goals/tooling-around-the-repo/text-editor-integration.md` | `VSCODE-001..006`, `VSCODE-008` | Author | `tooling-workflows` |
 | `use-the-shell.md` | `use-the-shell` | `goals/read-a-bundle/use-the-shell.md` | `NATIVE-008`, `NATIVE-009`, `NATIVE-055` | Reader | `editor-workflows` |
-| `work-with-tabs.md` | `work-with-tabs` | `goals/read-a-bundle/work-with-tabs.md` | `NATIVE-017..021` | Reader | `editor-workflows` |
+| `work-with-tabs.md` | `work-with-tabs` | `goals/read-a-bundle/work-with-tabs.md` | `NATIVE-017..020` | Reader | `editor-workflows` |
 
 The actor leaf set equals the union of the three `### External actors` groups.
 The use-case leaf set equals the union of the three named product-boundary
@@ -109,7 +109,7 @@ correct these inventory values. Task 11 does not invent a second owner.
 - `NATIVE-040..044` and `NATIVE-054` now occur in `goals/uml/sequence/interact-with-a-sequence-diagram.md`.
 - `NATIVE-049` now occurs in `goals/author-in-the-editor/save-and-undo.md`.
 - `NATIVE-008`, `NATIVE-009`, and `NATIVE-055` now occur in `goals/read-a-bundle/use-the-shell.md`.
-- `NATIVE-017..021` now occur in `goals/read-a-bundle/work-with-tabs.md`.
+- `NATIVE-017..020` now occur in `goals/read-a-bundle/work-with-tabs.md`.
 
 # Verification gaps
 
@@ -142,9 +142,6 @@ owning goals. Task 11 adds traceability and does not change their evidence.
 - Task 12 must reconcile the 35 frozen owner paths listed under `# Evidence`.
   This is a traceability ownership correction, not a product-behavior
   discrepancy.
-- Task 12 must reconcile the duplicate product result in `NATIVE-021` and
-  `NATIVE-017`. Task 11 links both frozen shipped scenario headings and does not
-  merge or renumber them.
 
 # Feature gaps
 

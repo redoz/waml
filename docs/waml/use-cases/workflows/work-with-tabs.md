@@ -20,5 +20,3 @@ description: A reader uses preview and permanent document tabs.
 - [NATIVE-018](../../goals/read-a-bundle/work-with-tabs.md#native-018-—-promotion-keeps-a-preview-as-a-permanent-tab)
 - [NATIVE-019](../../goals/read-a-bundle/work-with-tabs.md#native-019-—-reopening-a-permanent-tab-does-not-duplicate-it)
 - [NATIVE-020](../../goals/read-a-bundle/work-with-tabs.md#native-020-—-closing-the-active-tab-selects-the-fallback-tab)
-- [NATIVE-021](../../goals/read-a-bundle/work-with-tabs.md#native-021-—-preview-replacement-leaves-only-the-new-preview-open)
-
