@@ -192,7 +192,7 @@ fn canonical_document(source: &str, structure: &MarkdownStructureMap) -> String 
         if !prefix.ends_with('\n') {
             prefix.push('\n');
         }
-        if !prefix.ends_with("\n\n") {
+        if !ends_with_blank_line(&prefix) {
             prefix.push('\n');
         }
         if section.order.is_some() && !section.protected {
@@ -205,6 +205,17 @@ fn canonical_document(source: &str, structure: &MarkdownStructureMap) -> String 
         }
     }
     prefix
+}
+
+fn ends_with_blank_line(text: &str) -> bool {
+    let Some(before_lf) = text.strip_suffix('\n') else {
+        return false;
+    };
+    before_lf
+        .strip_suffix('\r')
+        .unwrap_or(before_lf)
+        .trim_end_matches([' ', '\t'])
+        .ends_with('\n')
 }
 
 fn canonical_prefix(prefix: &str) -> String {

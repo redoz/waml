@@ -428,6 +428,121 @@ fn adjacent_unknown_sections_keep_exact_bytes_and_format_idempotently() {
     assert!(first_text.find("## Owning goal").unwrap() < first_text.find("## Scenarios").unwrap());
 }
 
+fn assert_passthrough_separator_is_stable(path: &str, source: &str, expected: &str, revision: u64) {
+    let candidate = prepared(path, source, revision);
+    let first = apply(
+        &candidate,
+        Formatter
+            .format(
+                ActionContext::from_prepared(&candidate).unwrap(),
+                document(&candidate, path),
+            )
+            .unwrap(),
+    );
+    let first_text = first
+        .document(&BundlePath::parse(path).unwrap())
+        .unwrap()
+        .text();
+    assert_eq!(first_text, expected, "{path}: exact first-pass bytes");
+
+    let reparsed = prepared(path, first_text, revision + 1);
+    let second_action = Formatter
+        .format(
+            ActionContext::from_prepared(&reparsed).unwrap(),
+            document(&reparsed, path),
+        )
+        .unwrap();
+    assert!(
+        second_action.changes[0].edits.is_empty(),
+        "{path}: second pass produced edits"
+    );
+    let second = apply(&reparsed, second_action);
+    assert_eq!(
+        second
+            .document(&BundlePath::parse(path).unwrap())
+            .unwrap()
+            .text(),
+        expected,
+        "{path}: second-pass bytes"
+    );
+}
+
+#[test]
+fn crlf_passthrough_blank_line_is_not_extended() {
+    let source = concat!(
+        "---\n",
+        "type: uml.UseCase\n",
+        "---\n",
+        "# Complete checkout\n",
+        "\n",
+        "## Relationships\n",
+        "\n",
+        "- includes [Checkout](./checkout.md)\n",
+        "\n",
+        "## Owning goal\r\n",
+        "Keep the raw CRLF bytes.\r\n",
+        "\r\n",
+        "## Scenarios\n",
+        "- Complete checkout.\n",
+    );
+    let expected = concat!(
+        "---\n",
+        "type: uml.UseCase\n",
+        "---\n",
+        "\n",
+        "# Complete checkout\n",
+        "\n",
+        "## Relationships\n",
+        "- includes [Checkout](./checkout.md)\n",
+        "\n",
+        "## Owning goal\r\n",
+        "Keep the raw CRLF bytes.\r\n",
+        "\r\n",
+        "## Scenarios\n",
+        "- Complete checkout.\n",
+    );
+
+    assert_passthrough_separator_is_stable("crlf-use-case.md", source, expected, 64);
+}
+
+#[test]
+fn whitespace_only_passthrough_blank_line_is_not_extended() {
+    let source = concat!(
+        "---\n",
+        "type: uml.UseCase\n",
+        "---\n",
+        "# Complete checkout\n",
+        "\n",
+        "## Relationships\n",
+        "\n",
+        "- includes [Checkout](./checkout.md)\n",
+        "\n",
+        "## Owning goal\n",
+        "Keep spaces and tabs on the blank line.\n",
+        " \t \n",
+        "## Scenarios\n",
+        "- Complete checkout.\n",
+    );
+    let expected = concat!(
+        "---\n",
+        "type: uml.UseCase\n",
+        "---\n",
+        "\n",
+        "# Complete checkout\n",
+        "\n",
+        "## Relationships\n",
+        "- includes [Checkout](./checkout.md)\n",
+        "\n",
+        "## Owning goal\n",
+        "Keep spaces and tabs on the blank line.\n",
+        " \t \n",
+        "## Scenarios\n",
+        "- Complete checkout.\n",
+    );
+
+    assert_passthrough_separator_is_stable("whitespace-use-case.md", source, expected, 66);
+}
+
 #[test]
 fn formatter_preserves_unowned_claimed_body_while_formatting_both_sides() {
     let source = "---\ntype:   uml.Class\n---\n# C\n\nBody 😀 stays byte exact.   \n\n## Values\n\n- Ready\n";
