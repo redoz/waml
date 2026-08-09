@@ -30,7 +30,7 @@ COMPLETE. The permanent semantic product-use-case model is committed.
 ## Ownership
 
 - Each semantic intention has one owning completed goal leaf.
-- The completed goal leaves expose 35 stale frozen `goal_document` values.
+- The completed goal leaves expose 34 stale frozen `goal_document` values.
   `reports/use-cases.md` records their reconciled heading owners for Task 12.
 - Task 11 does not edit the inventory and does not invent a second owner.
 - The Task 12 ruling keeps `NATIVE-017` as the one product contract for preview
@@ -76,7 +76,9 @@ COMPLETE. The permanent semantic product-use-case model is committed.
 
 ## Concerns for Task 12
 
-- Reconcile the 35 frozen owner paths without inventing new ownership.
+- Reconcile the 34 frozen owner paths without inventing new ownership.
+- Remove the duplicate frozen `BHV-TAB-005` and `NATIVE-021` product record
+  and goal scenario. Keep `NATIVE-017` as the preview-replacement contract.
 - There is no remaining Task 11 blocker.
 
 ## NATIVE-021 correction
@@ -85,6 +87,10 @@ The Task 12 deduplication ruling keeps `NATIVE-017` as the one product
 contract for preview replacement. This correction removes the `NATIVE-021`
 link from `work-with-tabs.md` and from the use-case report. It does not change
 an actor, workflow owner, or view membership.
+
+Task 12 must remove the duplicate frozen `BHV-TAB-005` inventory row and the
+`NATIVE-021` goal scenario. This work is separate from the 34 owner
+corrections.
 
 Fresh validation results:
 

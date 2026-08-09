@@ -97,7 +97,7 @@ groups. Cross-boundary workflows occur in each applicable view.
 
 ## Frozen owner reconciliation for Task 12
 
-The completed goal leaves reconcile the workflow owners, but 35 frozen
+The completed goal leaves reconcile the workflow owners, but 34 frozen
 `goal_document` values still name the pre-integration location. Task 12 must
 correct these inventory values. Task 11 does not invent a second owner.
 
@@ -139,9 +139,12 @@ owning goals. Task 11 adds traceability and does not change their evidence.
 
 # Open discrepancies
 
-- Task 12 must reconcile the 35 frozen owner paths listed under `# Evidence`.
+- Task 12 must reconcile the 34 frozen owner paths listed under `# Evidence`.
   This is a traceability ownership correction, not a product-behavior
   discrepancy.
+- Task 12 must remove the duplicate frozen `BHV-TAB-005` and `NATIVE-021`
+  product record and goal scenario. `NATIVE-017` remains the one product
+  contract for preview replacement.
 
 # Feature gaps
 
