@@ -256,6 +256,33 @@ goal documents exist.
 
 - [Documentation Contract](./documentation-contract.md)
 - Every goal document with scenarios.
+- [Product Use Cases](./use-cases/index.md)
+- [Product Workflows](./use-cases/workflows/index.md)
+- [Browse the Tree](./use-cases/workflows/browse-the-tree.md)
+- [Command-Line Tool](./use-cases/workflows/command-line-tool.md)
+- [Edit Prose](./use-cases/workflows/edit-prose.md)
+- [Export a Bundle](./use-cases/workflows/export-a-bundle.md)
+- [Fit the Window](./use-cases/workflows/fit-the-window.md)
+- [Interact with an Activity Diagram](./use-cases/workflows/interact-with-an-activity-diagram.md)
+- [Interact with a Class Diagram](./use-cases/workflows/interact-with-a-class-diagram.md)
+- [Interact with a Sequence Diagram](./use-cases/workflows/interact-with-a-sequence-diagram.md)
+- [Language Server](./use-cases/workflows/language-server.md)
+- [Navigate and Return](./use-cases/workflows/navigate-and-return.md)
+- [Open a Bundle](./use-cases/workflows/open-a-bundle.md)
+- [Publish a Site](./use-cases/workflows/publish-a-site.md)
+- [Read a Document](./use-cases/workflows/read-a-document.md)
+- [Report Every Problem](./use-cases/workflows/report-every-problem.md)
+- [Route the Edges](./use-cases/workflows/route-the-edges.md)
+- [Run in a Browser](./use-cases/workflows/run-in-a-browser.md)
+- [Save and Undo](./use-cases/workflows/save-and-undo.md)
+- [Select and Inspect](./use-cases/workflows/select-and-inspect.md)
+- [Sequence Language](./use-cases/workflows/sequence-language.md)
+- [Serve Locally](./use-cases/workflows/serve-locally.md)
+- [Share a Link](./use-cases/workflows/share-a-link.md)
+- [Solve the Layout](./use-cases/workflows/solve-the-layout.md)
+- [Text Editor Integration](./use-cases/workflows/text-editor-integration.md)
+- [Use the Shell](./use-cases/workflows/use-the-shell.md)
+- [Work with Tabs](./use-cases/workflows/work-with-tabs.md)
 
 ### Kind
 
