@@ -1,4 +1,78 @@
+use waml::analysis::prepare_candidate;
+use waml::source::SourceBundle;
 use waml::uml::vocabulary;
+
+fn diagnostics_for<I, P, T>(pairs: I) -> Vec<String>
+where
+    I: IntoIterator<Item = (P, T)>,
+    P: Into<String>,
+    T: Into<String>,
+{
+    let bundle = SourceBundle::try_from_pairs(pairs).unwrap();
+    prepare_candidate(bundle, None, 1)
+        .unwrap()
+        .uml()
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect()
+}
+
+#[test]
+fn every_layout_hint_phrase_parses_without_a_diagnostic() {
+    for phrase in vocabulary::LAYOUT_HINT_PHRASES {
+        let text = format!(
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n### G\n- [A](./a.md)\n\n## Layout\n- A with {phrase}\n"
+        );
+        let diagnostics = diagnostics_for([
+            ("doc.md".to_string(), text),
+            (
+                "a.md".to_string(),
+                "---\ntype: uml.Class\n---\n# A\n".to_string(),
+            ),
+        ]);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|message| !message.contains("layout")),
+            "{phrase:?} produced {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn every_message_verb_parses_without_a_malformed_message_diagnostic() {
+    for verb in vocabulary::MESSAGE_VERBS {
+        // `returns` has no direct target of its own -- only an optional
+        // `to <target>` -- so it cannot share the `<verb> B` shape the other
+        // four verbs take.
+        let message_line = if *verb == "returns" {
+            "A returns to B".to_string()
+        } else {
+            format!("A {verb} B")
+        };
+        let text = format!(
+            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n- [B](./b.md) as B\n\n## Messages\n\n- {message_line}\n"
+        );
+        let diagnostics = diagnostics_for([
+            ("doc.md".to_string(), text),
+            (
+                "a.md".to_string(),
+                "---\ntype: uml.Class\n---\n# A\n".to_string(),
+            ),
+            (
+                "b.md".to_string(),
+                "---\ntype: uml.Class\n---\n# B\n".to_string(),
+            ),
+        ]);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|message| !message.contains("message")),
+            "{verb:?} produced {diagnostics:?}"
+        );
+    }
+}
 
 #[test]
 fn layout_keywords_are_sorted_unique_and_cover_every_phrase_word() {

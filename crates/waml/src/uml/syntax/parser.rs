@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use crate::uml::vocabulary;
+
 use super::{UmlLanguage, UmlSyntaxDiagnosticCode, UmlSyntaxKind};
 use waml_syntax::{
     GreenElement, GreenFactory, GreenText, MarkdownStructureMap, SourceText, SyntaxIdentity,
@@ -1959,10 +1961,7 @@ fn sequence_message(
     if matches!(verb, "replies" | "sends") {
         return unsupported_message(f, text, source, start, end, diags);
     }
-    if !matches!(
-        verb,
-        "calls" | "returns" | "signals" | "creates" | "destroys"
-    ) {
+    if !vocabulary::MESSAGE_VERBS.contains(&verb) {
         return malformed_message(f, text, source, start, end, diags);
     }
     children.push(slot(
@@ -2672,10 +2671,9 @@ fn unsupported_sequence_body(body: &str) -> bool {
 }
 
 fn canonical_message_body(body: &str) -> bool {
-    matches!(
-        body.split_ascii_whitespace().nth(1),
-        Some("calls" | "returns" | "signals" | "creates" | "destroys")
-    )
+    body.split_ascii_whitespace()
+        .nth(1)
+        .is_some_and(|verb| vocabulary::MESSAGE_VERBS.contains(&verb))
 }
 
 fn behavior_bounds(source: &str, start: usize, end: usize) -> (usize, usize, usize) {
@@ -3404,7 +3402,7 @@ impl<'a> LayoutShapeCursor<'a> {
                 LayoutExpectation::Reference,
             ));
         }
-        if matches!(word, "row" | "column") {
+        if vocabulary::LAYOUT_AXIS_WORDS.contains(&word) {
             let axis = word.to_string();
             self.pos += 1;
             if !self.eat("of") {
@@ -3442,11 +3440,11 @@ impl<'a> LayoutShapeCursor<'a> {
             ));
         };
         match word {
-            "frame" | "box" | "shrink" | "emphasized" | "collapsed" => {
+            word if vocabulary::LAYOUT_SHAPE_HINTS.contains(&word) => {
                 self.pos += 1;
                 Ok(())
             }
-            "no" | "small" | "medium" | "large" => {
+            word if vocabulary::LAYOUT_MARGIN_SIZES.contains(&word) => {
                 let size = word.to_string();
                 self.pos += 1;
                 if self.eat("margin") || self.eat("margins") {
@@ -3474,13 +3472,13 @@ impl<'a> LayoutShapeCursor<'a> {
 
     fn anchored(&mut self) -> Result<(std::ops::Range<usize>, bool), LayoutShapeError> {
         let start = self.pos;
-        let has_edge = matches!(
-            self.word(),
-            Some("top") | Some("bottom") | Some("left") | Some("right") | Some("center")
-        ) && self
-            .words
-            .get(self.pos + 1)
-            .is_some_and(|word| word == "of");
+        let has_edge = self
+            .word()
+            .is_some_and(|word| vocabulary::LAYOUT_EDGE_WORDS.contains(&word))
+            && self
+                .words
+                .get(self.pos + 1)
+                .is_some_and(|word| word == "of");
         if has_edge {
             self.pos += 2;
         }
@@ -3491,7 +3489,8 @@ impl<'a> LayoutShapeCursor<'a> {
     fn direction(&mut self) -> Result<Option<std::ops::Range<usize>>, LayoutShapeError> {
         let start = self.pos;
         match self.word() {
-            Some("above") | Some("below") => {
+            Some(word) if matches!(word, "above" | "below") => {
+                debug_assert!(vocabulary::LAYOUT_DIRECTION_HEADS.contains(&word));
                 self.pos += 1;
                 if matches!(self.word(), Some("left") | Some("right")) {
                     self.pos += 1;
@@ -3509,7 +3508,8 @@ impl<'a> LayoutShapeCursor<'a> {
                 }
                 Ok(Some(start..self.pos))
             }
-            Some("left") | Some("right") => {
+            Some(word) if matches!(word, "left" | "right") => {
+                debug_assert!(vocabulary::LAYOUT_DIRECTION_HEADS.contains(&word));
                 self.pos += 1;
                 if !self.eat("of") {
                     return Err(self.error(
