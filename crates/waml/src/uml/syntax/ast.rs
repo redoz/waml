@@ -69,6 +69,10 @@ pub struct FlowNodeSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct FlowTransitionSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
+pub struct FlowTracesSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
+pub struct FlowTraceSyntax(pub(crate) SyntaxNode<UmlLanguage>);
+#[derive(Clone, Debug)]
 pub struct FlowBlockSyntax(pub(crate) SyntaxNode<UmlLanguage>);
 #[derive(Clone, Debug)]
 pub struct FlowInternalSyntax(pub(crate) SyntaxNode<UmlLanguage>);
@@ -265,6 +269,8 @@ simple_ast!(MarginSyntax, Margin);
 simple_ast!(FlagSyntax, Flag);
 simple_ast!(FlowNodeSyntax, FlowNode);
 simple_ast!(FlowTransitionSyntax, FlowTransition);
+simple_ast!(FlowTracesSyntax, FlowTraces);
+simple_ast!(FlowTraceSyntax, FlowTrace);
 simple_ast!(FlowBlockSyntax, FlowBlock);
 simple_ast!(FlowInternalSyntax, FlowInternal);
 simple_ast!(LifelineSyntax, Lifeline);
@@ -329,8 +335,9 @@ impl FlowTransitionSyntax {
     pub const TARGET_SLOT: usize = 5;
     pub const CARRIES_SLOT: usize = 6;
     pub const EFFECT_SLOT: usize = 7;
-    pub const RECOVERY_SLOT: usize = 8;
-    pub const NEWLINE_SLOT: usize = 9;
+    pub const TRACES_SLOT: usize = 8;
+    pub const RECOVERY_SLOT: usize = 9;
+    pub const NEWLINE_SLOT: usize = 10;
 
     pub fn trigger_token(&self) -> Option<SyntaxToken<UmlLanguage>> {
         present_slot_token_at(&self.0, Self::TRIGGER_SLOT, 1)
@@ -360,8 +367,30 @@ impl FlowTransitionSyntax {
         present_slot_token_at(&self.0, Self::GUARD_SLOT, 0)
             .filter(|token| token.kind() == UmlSyntaxKind::ElseToken)
     }
+    pub fn traces(&self) -> std::vec::IntoIter<FlowTraceSyntax> {
+        node_at(&self.0, Self::TRACES_SLOT)
+            .map(|traces| {
+                traces
+                    .children()
+                    .filter_map(SyntaxElement::into_node)
+                    .filter_map(FlowTraceSyntax::cast)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+    }
 }
 behavior_syntax!(FlowTransitionSyntax, FlowTransitionSyntax::RECOVERY_SLOT);
+
+impl FlowTraceSyntax {
+    pub const KEYWORD_SLOT: usize = 0;
+    pub const LINK_SLOT: usize = 1;
+    pub const RECOVERY_SLOT: usize = 2;
+
+    pub fn link(&self) -> Option<SyntaxNode<UmlLanguage>> {
+        node_at(&self.0, Self::LINK_SLOT)
+    }
+}
 
 impl FlowBlockSyntax {
     pub fn nodes(&self) -> impl Iterator<Item = FlowNodeSyntax> + '_ {

@@ -38,6 +38,8 @@ pub enum UmlSyntaxKind {
     FlowSection,
     FlowNode,
     FlowTransition,
+    FlowTraces,
+    FlowTrace,
     FlowBlock,
     LifelinesSection,
     Lifeline,

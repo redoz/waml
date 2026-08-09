@@ -31,14 +31,14 @@ pub use declared::{
 };
 pub use syntax::{
     AnchoredSyntax, AxisSyntax, BindingSyntax, DiagramMembersSyntax, DirectionClauseSyntax,
-    EdgeSyntax, FlagSyntax, FlowBlockSyntax, FlowInternalSyntax, FlowNodeSyntax,
-    FlowTransitionSyntax, GateSyntax, HintClauseSyntax, HintSyntax, InlineInstanceSyntax,
-    InteractionUseSyntax, LayoutAlignmentSyntax, LayoutAtomSyntax, LayoutPlacementSyntax,
-    LayoutSectionSyntax, LayoutStandaloneSyntax, LayoutStatementSyntax, LifelineSyntax,
-    MarginSyntax, MemberGroupSyntax, MemberSyntax, MessageSyntax, MessagesBlockSyntax,
-    NameRefSyntax, OperandRefSyntax, OperandSyntax, RelationshipEndSyntax, RelationshipSyntax,
-    SequenceFragmentSyntax, SequenceOperandSyntax, ShapeSyntax, SlotSyntax, SlotValueKind,
-    ValueSyntax,
+    EdgeSyntax, FlagSyntax, FlowBlockSyntax, FlowInternalSyntax, FlowNodeSyntax, FlowTraceSyntax,
+    FlowTracesSyntax, FlowTransitionSyntax, GateSyntax, HintClauseSyntax, HintSyntax,
+    InlineInstanceSyntax, InteractionUseSyntax, LayoutAlignmentSyntax, LayoutAtomSyntax,
+    LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax, LayoutStatementSyntax,
+    LifelineSyntax, MarginSyntax, MemberGroupSyntax, MemberSyntax, MessageSyntax,
+    MessagesBlockSyntax, NameRefSyntax, OperandRefSyntax, OperandSyntax, RelationshipEndSyntax,
+    RelationshipSyntax, SequenceFragmentSyntax, SequenceOperandSyntax, ShapeSyntax, SlotSyntax,
+    SlotValueKind, ValueSyntax,
 };
 
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {

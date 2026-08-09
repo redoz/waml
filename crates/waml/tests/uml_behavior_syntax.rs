@@ -87,6 +87,40 @@ fn flow_fixed_slots_project_every_current_node_and_transition_form_losslessly() 
 }
 
 #[test]
+fn transition_traces_are_typed_and_lossless() {
+    let authored = "---\r\ntype: uml.StateMachine\r\n---\r\n# Sign in\r\n\r\n## Nodes\r\n### Idle\r\n- on `authenticated` transitions to SignedIn traces [AUTH-OIDC-004](./sign-in-behavior.md#auth-oidc-004)\r\n- on `retry` transitions to Idle traces [Retry](#retry) traces [Policy](https://example.com/policy)\r\n- on `fallback` transitions to SignedIn\r\n  traces [Local](#fallback)\r\n  traces [External](https://openid.net/specs/openid-connect-core-1_0.html)\r\n### final SignedIn\r\n";
+    let analysis = analyze([
+        ("sign-in.md", authored),
+        (
+            "sign-in-behavior.md",
+            "---\ntype: okf.Behavior\n---\n# Sign-in behavior\n\n## AUTH-OIDC-004\n",
+        ),
+    ]);
+
+    let syntax = root(&analysis, "sign-in.md");
+    let transitions = typed::<uml::FlowTransitionSyntax>(syntax.clone());
+    let traces = typed::<uml::FlowTraceSyntax>(syntax);
+
+    assert_eq!(transitions.len(), 3);
+    assert_eq!(traces.len(), 5);
+    assert_eq!(transitions[0].traces().count(), 1);
+    assert_eq!(transitions[1].traces().count(), 2);
+    assert_eq!(transitions[2].traces().count(), 2);
+    for transition in transitions {
+        assert_eq!(transition.syntax().children().count(), 11);
+        assert_eq!(
+            transition
+                .syntax()
+                .child_at(uml::FlowTransitionSyntax::TRACES_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::FlowTraces
+        );
+    }
+    assert_eq!(written(&analysis, "sign-in.md"), authored);
+}
+
+#[test]
 fn sequence_nested_slots_project_current_forms_losslessly() {
     let authored = "---\r\ntype: uml.Sequence\r\ntitle: Checkout\r\n---\r\n# Checkout\r\n\r\n## Lifelines\r\n- [Buyer](./buyer.md) as buyer\r\n- [Order](./order.md)\r\n\r\n## Messages\r\n- buyer calls Order `place(é)`\r\n- alt\r\n  - when `valid`\r\n    - Order returns `ok` to buyer\r\n    - loop\r\n      - when `again`\r\n        - buyer signals Order\r\n  - else\r\n    - buyer destroys Order\r\n- par\r\n  - branch `self`\r\n    - buyer calls buyer\r\n  - branch `outside`\r\n    - outside signals Order `found`\r\n";
     let analysis = analyze([
@@ -435,7 +469,15 @@ fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() 
     let transitions = typed::<uml::FlowTransitionSyntax>(flow_root);
     assert_eq!(transitions.len(), 3);
     for transition in &transitions {
-        assert_eq!(transition.syntax().children().count(), 10);
+        assert_eq!(transition.syntax().children().count(), 11);
+        assert_eq!(
+            transition
+                .syntax()
+                .child_at(uml::FlowTransitionSyntax::TRACES_SLOT)
+                .unwrap()
+                .kind(),
+            uml::syntax::UmlSyntaxKind::FlowTraces
+        );
         assert_eq!(
             transition
                 .syntax()

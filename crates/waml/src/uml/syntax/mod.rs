@@ -362,13 +362,14 @@ fn has_annotations(node: &waml_syntax::GreenNode<UmlLanguage>) -> bool {
 pub use ast::{
     AnchoredSyntax, AttributeSyntax, AxisSyntax, BindingSyntax, DiagramMembersSyntax,
     DirectionClauseSyntax, EdgeSyntax, FlagSyntax, FlowBlockSyntax, FlowInternalSyntax,
-    FlowNodeSyntax, FlowTransitionSyntax, GateSyntax, HintClauseSyntax, HintSyntax,
-    InlineInstanceSyntax, InteractionUseSyntax, LayoutAlignmentSyntax, LayoutAtomSyntax,
-    LayoutPlacementSyntax, LayoutSectionSyntax, LayoutStandaloneSyntax, LayoutStatementSyntax,
-    LifelineSyntax, MarginSyntax, MemberGroupSyntax, MemberLineSyntax, MemberSyntax, MessageSyntax,
-    MessagesBlockSyntax, MultiplicitySyntax, NameRefSyntax, OperandRefSyntax, OperandSyntax,
-    RelationshipEndSyntax, RelationshipSyntax, SequenceFragmentSyntax, SequenceOperandSyntax,
-    ShapeSyntax, SlotSyntax, SlotValueKind, TypeReferenceSyntax, ValueSyntax,
+    FlowNodeSyntax, FlowTraceSyntax, FlowTracesSyntax, FlowTransitionSyntax, GateSyntax,
+    HintClauseSyntax, HintSyntax, InlineInstanceSyntax, InteractionUseSyntax,
+    LayoutAlignmentSyntax, LayoutAtomSyntax, LayoutPlacementSyntax, LayoutSectionSyntax,
+    LayoutStandaloneSyntax, LayoutStatementSyntax, LifelineSyntax, MarginSyntax, MemberGroupSyntax,
+    MemberLineSyntax, MemberSyntax, MessageSyntax, MessagesBlockSyntax, MultiplicitySyntax,
+    NameRefSyntax, OperandRefSyntax, OperandSyntax, RelationshipEndSyntax, RelationshipSyntax,
+    SequenceFragmentSyntax, SequenceOperandSyntax, ShapeSyntax, SlotSyntax, SlotValueKind,
+    TypeReferenceSyntax, ValueSyntax,
 };
 pub use kind::{UmlSyntaxDiagnosticCode, UmlSyntaxKind};
 #[derive(Debug)]

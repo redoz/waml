@@ -378,7 +378,10 @@ fn flow_block(
             *have_node = false;
         }
     };
-    for (start, end) in lines_between(source, from, to) {
+    let lines = lines_between(source, from, to).collect::<Vec<_>>();
+    let mut line_index = 0;
+    while let Some(&(start, end)) = lines.get(line_index) {
+        let mut next_index = line_index + 1;
         let nested = structure
             .nested_headings
             .iter()
@@ -389,6 +392,7 @@ fn flow_block(
                 current.extend(flow_heading(f, text, source, start, end, diags));
                 have_node = true;
                 notes = false;
+                line_index = next_index;
                 continue;
             }
             if heading.level == 4
@@ -400,12 +404,14 @@ fn flow_block(
             {
                 current.push(raw(f, text, start, end));
                 notes = true;
+                line_index = next_index;
                 continue;
             }
         }
         let trimmed = source[start..end].trim_end_matches(['\r', '\n']);
         if trimmed.trim().is_empty() {
             (if have_node { &mut current } else { &mut roots }).push(raw(f, text, start, end));
+            line_index = next_index;
             continue;
         }
         if !have_node {
@@ -418,12 +424,29 @@ fn flow_block(
                 "flow content before first node heading",
                 diags,
             ));
+            line_index = next_index;
             continue;
         }
         if notes && trimmed.trim_start().starts_with("- ") {
             current.push(flow_value_line(f, text, source, start, end));
         } else if !notes {
-            current.push(flow_line(f, text, source, start, end, diags));
+            let mut trace_lines = Vec::new();
+            if !flow_line_is_internal(source, start, end) {
+                let transition_indent = behavior_bounds(source, start, end).0 - start;
+                while let Some(&(trace_start, trace_end)) = lines.get(next_index) {
+                    if !is_flow_trace_continuation(
+                        source,
+                        trace_start,
+                        trace_end,
+                        transition_indent,
+                    ) {
+                        break;
+                    }
+                    trace_lines.push((trace_start, trace_end));
+                    next_index += 1;
+                }
+            }
+            current.push(flow_line(f, text, source, start, end, &trace_lines, diags));
         } else {
             let message = if notes {
                 "malformed flow note"
@@ -440,6 +463,7 @@ fn flow_block(
                 diags,
             ));
         }
+        line_index = next_index;
     }
     close(&mut current, &mut roots, &mut have_node);
     f.node(UmlSyntaxKind::FlowBlock, roots).unwrap()
@@ -1261,6 +1285,7 @@ fn flow_line(
     source: &str,
     start: usize,
     end: usize,
+    trace_lines: &[(usize, usize)],
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (_, content_end, _) = behavior_bounds(source, start, end);
@@ -1271,8 +1296,29 @@ fn flow_line(
     if matches!(word, "entry:" | "do:" | "exit:" | "refines" | "partition:") {
         flow_internal(f, text, source, start, end, diags)
     } else {
-        flow_transition(f, text, source, start, end, diags)
+        flow_transition(f, text, source, start, end, trace_lines, diags)
     }
+}
+
+fn flow_line_is_internal(source: &str, start: usize, end: usize) -> bool {
+    let (_, content_end, _) = behavior_bounds(source, start, end);
+    let lead = skip_ws(source, start, content_end);
+    let body = skip_ws(source, (lead + 1).min(content_end), content_end);
+    let word_end = scan_word(source, body, content_end);
+    matches!(
+        &source[body..word_end],
+        "entry:" | "do:" | "exit:" | "refines" | "partition:"
+    )
+}
+
+fn is_flow_trace_continuation(
+    source: &str,
+    start: usize,
+    end: usize,
+    transition_indent: usize,
+) -> bool {
+    let (lead, content_end, _) = behavior_bounds(source, start, end);
+    lead > start + transition_indent && keyword_at(source, lead, content_end, "traces")
 }
 
 fn flow_internal(
@@ -1467,6 +1513,7 @@ fn flow_transition(
     source: &str,
     start: usize,
     end: usize,
+    trace_lines: &[(usize, usize)],
     diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
 ) -> GreenElement<UmlLanguage> {
     let (lead, content_end, newline) = behavior_bounds(source, start, end);
@@ -1605,7 +1652,7 @@ fn flow_transition(
         children.push(GreenElement::Token(f.missing_token(UmlSyntaxKind::ToToken)));
         valid = false;
     }
-    let target_end = find_clause(source, p, content_end, &[" carries ", ": "]);
+    let target_end = find_clause(source, p, content_end, &[" carries ", ": ", " traces "]);
     let target_trimmed = trim_end_ws(source, p, target_end);
     if p < target_trimmed && source.as_bytes()[p] == b'[' {
         let (link, next) = behavior_link(
@@ -1650,10 +1697,7 @@ fn flow_transition(
         let keyword = token(f, text, owned, p, p + 7, UmlSyntaxKind::FlowKeywordToken);
         owned = p + 7;
         let link_start = skip_ws(source, p + 7, content_end);
-        let link_end = source[link_start..content_end]
-            .find(": ")
-            .map(|offset| link_start + offset)
-            .unwrap_or(content_end);
+        let link_end = find_clause(source, link_start, content_end, &[": ", " traces "]);
         let (link, next) = behavior_link(
             f,
             text,
@@ -1726,6 +1770,32 @@ fn flow_transition(
             .unwrap(),
         ));
     }
+    p = skip_ws(source, p, content_end);
+    let mut trace_children = Vec::new();
+    while keyword_at(source, p, content_end, "traces") {
+        let clause_end = find_clause(source, p + 6, content_end, &[" traces "]);
+        let (trace, next, trace_valid) =
+            flow_trace_clause(f, text, source, owned, p, clause_end, diags);
+        trace_children.push(trace);
+        owned = next;
+        p = skip_ws(source, next, content_end);
+        valid &= trace_valid;
+    }
+    if !trace_lines.is_empty() {
+        push_behavior_newline(f, text, &mut trace_children, owned, newline, end);
+        for &(trace_start, trace_end) in trace_lines {
+            let (lead, trace_content_end, trace_newline) =
+                behavior_bounds(source, trace_start, trace_end);
+            let (trace, next, trace_valid) =
+                flow_trace_clause(f, text, source, trace_start, lead, trace_content_end, diags);
+            trace_children.push(trace);
+            push_behavior_newline(f, text, &mut trace_children, next, trace_newline, trace_end);
+            valid &= trace_valid;
+        }
+    }
+    children.push(GreenElement::Node(
+        f.node(UmlSyntaxKind::FlowTraces, trace_children).unwrap(),
+    ));
     let recovery = if p < content_end {
         let recovery = skipped(
             f,
@@ -1749,8 +1819,67 @@ fn flow_transition(
         ));
     }
     children.push(behavior_recovery(f, recovery));
-    push_behavior_newline(f, text, &mut children, owned, newline, end);
+    if trace_lines.is_empty() {
+        push_behavior_newline(f, text, &mut children, owned, newline, end);
+    } else {
+        children.push(missing_token(
+            f,
+            text,
+            trace_lines.last().map_or(end, |(_, end)| *end),
+            trace_lines.last().map_or(end, |(_, end)| *end),
+            UmlSyntaxKind::NewlineToken,
+        ));
+    }
     GreenElement::Node(f.node(UmlSyntaxKind::FlowTransition, children).unwrap())
+}
+
+fn flow_trace_clause(
+    f: &GreenFactory<UmlLanguage>,
+    text: &SourceText,
+    source: &str,
+    owned: usize,
+    start: usize,
+    end: usize,
+    diags: &mut Vec<TreeDiagnostic<UmlSyntaxDiagnosticCode>>,
+) -> (GreenElement<UmlLanguage>, usize, bool) {
+    let keyword_end = (start + 6).min(end);
+    let keyword = token(
+        f,
+        text,
+        owned,
+        start,
+        keyword_end,
+        UmlSyntaxKind::FlowKeywordToken,
+    );
+    let link_start = skip_ws(source, keyword_end, end);
+    let (link, next) = behavior_link(
+        f,
+        text,
+        source,
+        link_start,
+        end,
+        keyword_end,
+        UmlSyntaxDiagnosticCode::MalformedFlow,
+        "malformed transition trace",
+        diags,
+    );
+    let recovery =
+        (next < end).then(|| skipped(f, text, next, end, UmlSyntaxDiagnosticCode::MalformedFlow));
+    let valid = keyword_at(source, start, end, "traces")
+        && link_start < end
+        && source.as_bytes().get(link_start) == Some(&b'[')
+        && next == end;
+    (
+        GreenElement::Node(
+            f.node(
+                UmlSyntaxKind::FlowTrace,
+                [keyword, link, behavior_recovery(f, recovery)],
+            )
+            .unwrap(),
+        ),
+        end,
+        valid,
+    )
 }
 
 fn sequence_fragment(
