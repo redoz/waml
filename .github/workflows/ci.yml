@@ -64,6 +64,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: WAML documentation contract
+        run: |
+          cargo run -p waml-cli -- check docs/waml
+          cargo run -p waml-cli -- fmt --check docs/waml
+          cargo run -p waml-cli -- index docs/waml --check
+          node scripts/check-waml-doc-contract.mjs docs/waml
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 

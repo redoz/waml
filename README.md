@@ -9,6 +9,17 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+### Documentation contract
+
+```bash
+cargo run -p waml-cli -- check docs/waml
+cargo run -p waml-cli -- fmt --check docs/waml
+cargo run -p waml-cli -- index docs/waml --check
+node scripts/check-waml-doc-contract.mjs docs/waml
+```
+
+If the index check reports stale files, run `cargo run -p waml-cli -- index docs/waml` to rewrite the generated indexes. Then run the checks again.
+
 Run the native editor with `run.ps1` on Windows or `run.sh` on Unix-like
 systems.
 
