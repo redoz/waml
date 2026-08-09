@@ -465,9 +465,11 @@ impl DocumentHeader {
         button.set_visible(cx, action.is_some());
         if let Some(action) = action {
             button.as_icon_button().set_icon(cx, action.icon);
-            button.as_icon_button().set_tooltip(Some(action.tooltip));
+            button
+                .as_icon_button()
+                .set_tooltip(cx, Some(action.tooltip));
         } else {
-            button.as_icon_button().set_tooltip(None);
+            button.as_icon_button().set_tooltip(cx, None);
         }
         self.sync_content_layout(cx);
     }
@@ -519,6 +521,11 @@ impl DocumentHeader {
     #[cfg(test)]
     pub(crate) fn test_right_dock(&self) -> Option<Icon> {
         self.state.right_dock
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_view_toggle(&self) -> Option<HeaderViewAction> {
+        self.state.view_toggle
     }
 
     #[cfg(test)]

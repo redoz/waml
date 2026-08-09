@@ -70,15 +70,10 @@ impl DocView for GenericOkfView {
         if self.reading.showing_source() {
             body.show_markdown_editor(cx);
             body.markdown_editor().set_read_only(cx, true);
-            body.markdown_viewer_source_toggle(cx)
-                .as_icon_button()
-                .set_icon(cx, Icon::Eye);
         } else {
             body.show_markdown_viewer(cx);
-            body.markdown_viewer_source_toggle(cx)
-                .as_icon_button()
-                .set_icon(cx, Icon::FileCode);
         }
+        body.apply_chrome(cx, self.chrome());
     }
 
     fn sync_from_session(
@@ -186,6 +181,17 @@ impl DocView for GenericOkfView {
 mod tests {
     use super::*;
 
+    fn mounted_body(cx: &mut Cx) -> (WidgetRef, BodyWidgets) {
+        let header = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::document_header::DocumentHeader::script_new_with_default),
+        ));
+        let mut root = cx.with_vm(View::script_new_with_default);
+        root.children.push((live_id!(document_header), header));
+        let ui = WidgetRef::new_with_inner(Box::new(root));
+        let body = BodyWidgets::new(cx, &ui);
+        (ui, body)
+    }
+
     fn generic_view() -> GenericOkfView {
         GenericOkfView::new_with_asset_host(
             "runbook".into(),
@@ -224,6 +230,40 @@ mod tests {
         );
         view.toggle_source();
         assert!(!view.showing_source(), "and puts it back");
+    }
+
+    #[test]
+    fn sync_projects_each_destination_through_the_shared_header() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let (ui, body) = mounted_body(&mut cx);
+        let session = crate::editor_session::EditorSession::default();
+        let snapshot = session.snapshot();
+        let mut view = generic_view();
+
+        view.sync(&mut cx, &body, snapshot.borrowed().into());
+        assert_eq!(
+            ui.widget(&cx, ids!(document_header))
+                .borrow::<crate::document_header::DocumentHeader>()
+                .expect("the shared header must be mounted")
+                .test_view_toggle(),
+            Some(HeaderViewAction {
+                icon: Icon::Code,
+                tooltip: "View source",
+            })
+        );
+
+        view.toggle_source();
+        view.sync(&mut cx, &body, snapshot.borrowed().into());
+        assert_eq!(
+            ui.widget(&cx, ids!(document_header))
+                .borrow::<crate::document_header::DocumentHeader>()
+                .expect("the shared header must be mounted")
+                .test_view_toggle(),
+            Some(HeaderViewAction {
+                icon: Icon::Eye,
+                tooltip: "View rendered",
+            })
+        );
     }
 
     #[test]
