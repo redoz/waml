@@ -12,7 +12,10 @@
     "declaration": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    // TypeScript 6 no longer pulls in every @types package under node_modules
+    // on its own, so name the two this extension actually compiles against.
+    "types": ["node", "vscode"]
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]
