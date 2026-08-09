@@ -3,8 +3,11 @@
 //! re-exported from this module, never on a backend's internals.
 
 pub mod extract;
+pub mod index;
 pub mod query;
 pub mod tokenize;
+
+pub use index::MemSearchIndex;
 
 /// Ranking tier order is declaration order: Names > Model > Prose > Structure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -41,4 +44,14 @@ pub struct QueryScope {
 pub struct Snippet {
     pub text: String,
     pub highlights: Vec<(usize, usize)>,
+}
+
+/// The engine boundary (spec §Engine boundary). Surfaces depend on THIS,
+/// never on a backend, so a native-only tantivy backend can slot in later
+/// without touching any surface.
+pub trait SearchIndex {
+    fn update_document(&mut self, path: &str, fields: extract::DocumentFields);
+    fn remove_document(&mut self, path: &str);
+    fn query(&self, query: &str, scope: &QueryScope) -> Vec<Hit>;
+    fn snippet(&self, hit: &Hit, width: usize) -> Snippet;
 }
