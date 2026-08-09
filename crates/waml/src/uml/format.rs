@@ -192,7 +192,9 @@ fn canonical_document(source: &str, structure: &MarkdownStructureMap) -> String 
         if !prefix.ends_with('\n') {
             prefix.push('\n');
         }
-        prefix.push('\n');
+        if !prefix.ends_with("\n\n") {
+            prefix.push('\n');
+        }
         if section.order.is_some() && !section.protected {
             prefix.push_str(&canonical_section(section.title, section.raw));
         } else {

@@ -337,6 +337,98 @@ fn formatter_moves_owned_sections_without_covering_unknown_markdown() {
 }
 
 #[test]
+fn adjacent_unknown_sections_keep_exact_bytes_and_format_idempotently() {
+    let source = concat!(
+        "---\n",
+        "type: uml.UseCase\n",
+        "---\n",
+        "# Complete checkout\n",
+        "\n",
+        "## Relationships\n",
+        "\n",
+        "- includes [Checkout](./checkout.md)\n",
+        "\n",
+        "## Owning goal\n",
+        "Complete an order without losing cart state.  \n",
+        "\n",
+        "- Keep the selected items.\n",
+        "- Confirm available inventory.\n",
+        "\n",
+        "## Scenarios\n",
+        "Customer starts checkout.\n",
+        "\n",
+        "1. System validates the cart.\n",
+        "2. System confirms the order.\n",
+    );
+    let expected = concat!(
+        "---\n",
+        "type: uml.UseCase\n",
+        "---\n",
+        "\n",
+        "# Complete checkout\n",
+        "\n",
+        "## Relationships\n",
+        "- includes [Checkout](./checkout.md)\n",
+        "\n",
+        "## Owning goal\n",
+        "Complete an order without losing cart state.  \n",
+        "\n",
+        "- Keep the selected items.\n",
+        "- Confirm available inventory.\n",
+        "\n",
+        "## Scenarios\n",
+        "Customer starts checkout.\n",
+        "\n",
+        "1. System validates the cart.\n",
+        "2. System confirms the order.\n",
+    );
+
+    let candidate = prepared("use-case.md", source, 62);
+    let first = apply(
+        &candidate,
+        Formatter
+            .format(
+                ActionContext::from_prepared(&candidate).unwrap(),
+                document(&candidate, "use-case.md"),
+            )
+            .unwrap(),
+    );
+    let first_text = first
+        .document(&BundlePath::parse("use-case.md").unwrap())
+        .unwrap()
+        .text();
+    let reparsed = prepared("use-case.md", first_text, 63);
+    let second_action = Formatter
+        .format(
+            ActionContext::from_prepared(&reparsed).unwrap(),
+            document(&reparsed, "use-case.md"),
+        )
+        .unwrap();
+    let second = apply(&reparsed, second_action.clone());
+    let second_text = second
+        .document(&BundlePath::parse("use-case.md").unwrap())
+        .unwrap()
+        .text();
+
+    assert_eq!(
+        second_text, first_text,
+        "second formatting pass changed bytes"
+    );
+    assert_eq!(first_text, expected, "exact canonical bytes");
+    assert!(second_action.changes[0].edits.is_empty());
+    assert!(first_text.contains(
+        "## Owning goal\nComplete an order without losing cart state.  \n\n- Keep the selected items.\n- Confirm available inventory.\n"
+    ));
+    assert!(first_text.contains(
+        "## Scenarios\nCustomer starts checkout.\n\n1. System validates the cart.\n2. System confirms the order.\n"
+    ));
+    assert!(
+        first_text.find("## Relationships").unwrap() < first_text.find("## Owning goal").unwrap()
+    );
+    assert!(first_text.find("## Owning goal").unwrap() < first_text.find("## Scenarios").unwrap());
+}
+
+#[test]
 fn formatter_preserves_unowned_claimed_body_while_formatting_both_sides() {
     let source = "---\ntype:   uml.Class\n---\n# C\n\nBody 😀 stays byte exact.   \n\n## Values\n\n- Ready\n";
     let raw = "Body 😀 stays byte exact.   ";
