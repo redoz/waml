@@ -41,6 +41,45 @@ pub fn maskable_names(registry: &MiddlewareRegistry) -> Vec<(&str, Vec<&str>)> {
         .collect()
 }
 
+/// A human label for an extension that owns maskable stages. The registry
+/// name (`core`, `uml`) is an identifier, not a caption -- it is what the DSL
+/// and the mask are keyed on and must never change to make a menu read better.
+///
+/// An unknown owner falls back to its raw name capitalised, so a new extension
+/// lists sanely before anyone writes it a label.
+pub fn extension_label(owner: &str) -> String {
+    match owner {
+        "core" => "Built-in".to_string(),
+        "uml" => "UML".to_string(),
+        _ => capitalise(owner),
+    }
+}
+
+/// A human label for one maskable stage. Phrased as what the stage DOES while
+/// it runs, because the checklist's checkmark means running (see
+/// `app::menus::projection_menu_items`) -- a label naming the off-state would
+/// invert with its own checkbox.
+///
+/// Same fallback rule as [`extension_label`].
+pub fn stage_label(name: &str) -> String {
+    match name {
+        "hide" => "Hide marked items".to_string(),
+        "uml" => "Package icons".to_string(),
+        // Never offered (`maskable_names` filters it), listed so the mapping
+        // covers every stage the core registry declares.
+        "index" => "Folder listing".to_string(),
+        _ => capitalise(name),
+    }
+}
+
+fn capitalise(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 /// The middleware registry every folder-listing path in the editor resolves
 /// against: the core extension's `index` and `hide`.
 ///
@@ -352,5 +391,36 @@ mod tests {
             !mask.is_masked("uml"),
             "an extension toggle must not reach another extension's stages",
         );
+    }
+
+    /// Every name the shipped registry offers has a written caption. The
+    /// fallback exists for an extension nobody has labelled yet, not for the
+    /// ones we ship: a menu row reading `hide` is a leaked identifier.
+    #[test]
+    fn every_shipped_maskable_name_has_a_written_label() {
+        let registry = core_registry();
+        for (owner, names) in maskable_names(&registry) {
+            assert_ne!(
+                extension_label(owner),
+                capitalise(owner),
+                "extension `{owner}` is still falling back to its registry name",
+            );
+            for name in names {
+                assert_ne!(
+                    stage_label(name),
+                    capitalise(name),
+                    "stage `{name}` is still falling back to its registry name",
+                );
+            }
+        }
+    }
+
+    /// An extension nobody has written labels for still lists sanely rather
+    /// than showing a lowercase identifier row.
+    #[test]
+    fn an_unknown_name_falls_back_to_its_capitalised_self() {
+        assert_eq!(extension_label("erd"), "Erd");
+        assert_eq!(stage_label("collapse"), "Collapse");
+        assert_eq!(stage_label(""), "");
     }
 }

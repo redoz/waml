@@ -168,6 +168,16 @@ pub enum ProjectionToggle {
     Stage(String),
 }
 
+/// A projection row's leading glyph: the same eye pair the tree toolbar's
+/// button reads in, so the checklist and the glyph that opened it agree.
+fn projection_row_icon(running: bool) -> crate::icons::Icon {
+    if running {
+        crate::icons::Icon::Eye
+    } else {
+        crate::icons::Icon::EyeOff
+    }
+}
+
 fn extension_row_id(owner: &str) -> LiveId {
     LiveId::from_str(&format!("ext:{owner}"))
 }
@@ -195,28 +205,32 @@ pub fn projection_menu_items(
         let all_masked = names.iter().all(|name| mask.is_masked(name));
         items.push(PopupItem {
             id: extension_row_id(owner),
-            label: (*owner).to_string(),
+            // The registry name is an identifier, not a caption -- see
+            // `folder_projection::extension_label`.
+            label: crate::folder_projection::extension_label(owner),
             // A checkable row's on/off state is drawn as its leading icon's
             // TINT (see `popup::menu::row_tint_role`), which is only drawn for
             // a row that HAS an icon -- an iconless row would render its state
-            // nowhere.
-            icon: Some(crate::icons::Icon::Library),
+            // nowhere. The eye pair says the same thing a second way, and
+            // matches the tree toolbar's glyph.
+            icon: Some(projection_row_icon(!all_masked)),
             danger: false,
             enabled: true,
             checked: Some(!all_masked),
         });
         for name in names {
+            let running = !mask.is_masked(name);
             items.push(PopupItem {
                 id: stage_row_id(name),
                 // Two leading spaces read as nesting without a new indent
                 // mechanism in the menu's row layout.
-                label: format!("  {name}"),
+                label: format!("  {}", crate::folder_projection::stage_label(name)),
                 // Same reason as the extension row above: no icon, no visible
                 // checked state.
-                icon: Some(crate::icons::Icon::Library),
+                icon: Some(projection_row_icon(running)),
                 danger: false,
                 enabled: true,
-                checked: Some(!mask.is_masked(name)),
+                checked: Some(running),
             });
         }
     }
@@ -339,7 +353,7 @@ mod projection_tests {
         let mask = ProjectionMask::default();
         let row_id = projection_menu_items(&maskable, &mask)
             .into_iter()
-            .find(|item| item.label.trim() == "hide")
+            .find(|item| item.id == stage_row_id("hide"))
             .expect("the hide stage has a row")
             .id;
         let target = projection_toggle_target(row_id, &maskable).expect("the row resolves");
@@ -348,10 +362,12 @@ mod projection_tests {
         assert!(!mask.is_masked("uml"), "no other stage moved");
 
         let items = projection_menu_items(&maskable, &mask);
-        let checked = |label: &str| {
+        // Keyed on the minted id, never on the label: labels are captions and
+        // may be reworded without the seam noticing.
+        let checked = |name: &str| {
             items
                 .iter()
-                .find(|item| item.label.trim() == label)
+                .find(|item| item.id == stage_row_id(name))
                 .unwrap()
                 .checked
         };
@@ -383,9 +399,45 @@ mod projection_tests {
     fn index_never_appears_as_a_row() {
         let items = projection_menu_items(&maskable(), &ProjectionMask::default());
         assert!(
-            !items.iter().any(|item| item.label.trim() == "index"),
+            !items.iter().any(|item| item.id == stage_row_id("index")),
             "the terminal stage is not maskable, so offering it would be a lie",
         );
+    }
+
+    /// The checklist reads as captions, not as the registry identifiers the
+    /// mask is keyed on. A row labelled `hide` or `core` is a leaked internal.
+    #[test]
+    fn rows_read_as_captions_not_registry_names() {
+        let items = projection_menu_items(&maskable(), &ProjectionMask::default());
+        let labels: Vec<String> = items
+            .iter()
+            .map(|item| item.label.trim().to_string())
+            .collect();
+        assert!(
+            !labels
+                .iter()
+                .any(|label| label == "core" || label == "uml" || label == "hide"),
+            "raw registry names leaked into the menu: {labels:?}",
+        );
+        assert!(
+            labels.iter().any(|label| label == "Hide marked items"),
+            "the hide stage is captioned by what it does while running: {labels:?}",
+        );
+    }
+
+    /// The glyph carries the same on/off reading as the tint, and the same
+    /// pair the tree toolbar's button uses.
+    #[test]
+    fn a_switched_off_row_draws_the_closed_eye() {
+        let items = projection_menu_items(&maskable(), &ProjectionMask::from_names(["hide"]));
+        for item in &items {
+            let expected = if item.checked == Some(true) {
+                crate::icons::Icon::Eye
+            } else {
+                crate::icons::Icon::EyeOff
+            };
+            assert_eq!(item.icon, Some(expected), "row {:?}", item.label);
+        }
     }
 
     #[test]

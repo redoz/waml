@@ -54,7 +54,10 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
         &[
             ie!(FileCode, "View source"),
             ie!(Code, "View source (header toggle)"),
-            ie!(Eye, "View rendered (header toggle)"),
+            ie!(
+                Eye,
+                "View rendered (header toggle); tree/folder view is projecting"
+            ),
             ie!(FileCodeCorner, "View source -- open-edge variant, unwired"),
             ie!(Search, "Find in diagrams"),
             ie!(PackageOpen, "Open package (radial)"),
@@ -93,11 +96,21 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
             ie!(ChartNoAxesGantt, "Sequence / interaction kind"),
             ie!(StickyNote, "Note kind"),
             ie!(ChevronsUpDown, "Scope / select dropdown"),
-            ie!(Library, "Tree/folder view is projected (chain running)"),
-            ie!(LibraryBig, "Tree/folder view is partially masked"),
+            ie!(
+                EyeOff,
+                "Tree/folder view is fully masked (raw bundle listing)"
+            ),
+            ie!(
+                Library,
+                "Retired projected glyph; superseded by Eye / EyeOff"
+            ),
+            ie!(
+                LibraryBig,
+                "Retired partially-masked glyph; the eye pair reads partial as lit Eye"
+            ),
             ie!(
                 SquareLibrary,
-                "Retired projected glyph; superseded by Library"
+                "Retired projected glyph; superseded by Library, then by Eye"
             ),
             ie!(SquareCode, "Retired raw glyph; superseded by Code"),
             ie!(ListCollapse, "Collapse-all toolbar button"),
@@ -323,10 +336,13 @@ mod drift {
         Icon::Book,
         Icon::Box,
         Icon::BroomSparkles,
-        // Superseded as the tree panel's projected/raw pair by Library / Code,
-        // kept catalogued (the catalog is pruned deliberately, not by drift).
+        // Superseded as the tree panel's projected/raw pair -- first by
+        // Library / Code, now by the Eye / EyeOff pair -- kept catalogued (the
+        // catalog is pruned deliberately, not by drift).
         Icon::SquareLibrary,
         Icon::SquareCode,
+        Icon::Library,
+        Icon::LibraryBig,
         // Superseded as the sequence/interaction glyph by ChartNoAxesGantt,
         // kept catalogued on the same rule.
         Icon::ArrowLeftRight,

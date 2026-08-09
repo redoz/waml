@@ -661,7 +661,7 @@ mod checked_row_tests {
         PopupItem {
             id,
             label: "Hide".to_string(),
-            icon: Some(Icon::Library),
+            icon: Some(Icon::Eye),
             danger: false,
             enabled: true,
             checked: Some(checked),
@@ -696,7 +696,7 @@ mod checked_row_tests {
         let plain = PopupItem {
             id: live_id!(plain),
             label: "Plain".to_string(),
-            icon: Some(Icon::Library),
+            icon: Some(Icon::Eye),
             danger: false,
             enabled: true,
             checked: None,

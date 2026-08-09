@@ -751,10 +751,11 @@ impl Widget for ProjectTree {
         // on every draw that precedes the first `App::refresh_nav`.
         // `set_projection` still pushes on a flip; this only guarantees the
         // resting state is never blank.
-        let toggle = self.view.icon_button(cx, ids!(view_mode_btn));
         let icon = self.projection_icon();
+        let lit = self.projection_lit();
+        let toggle = self.view.icon_button(cx, ids!(view_mode_btn));
         toggle.set_icon(cx, icon);
-        toggle.set_active(cx, !matches!(icon, Icon::Library));
+        toggle.set_active(cx, lit);
 
         // Same seeding rule as the toggle above: `IconButton::icon` is `#[rust]`
         // and the DSL cannot supply it, so an unseeded button is a blank 28px
@@ -950,38 +951,45 @@ impl ProjectTree {
         self.apply_dock(cx, DockEvent::Close);
     }
 
-    /// The glyph for the CURRENT state -- `Library` when every declared stage
-    /// is running, `LibraryBig` when some are switched off, `Code` when they
-    /// all are. Not the action the button would perform: a reader must be
-    /// able to read the panel and know what they are looking at.
-    ///
-    /// `Code` is also the document header's source toggle. Deliberate: both
-    /// say "you are seeing the underlying thing", and they sit in different
-    /// panels.
-    pub fn projection_icon(&self) -> Icon {
-        let masked = self
-            .maskable
+    /// How many of this panel's maskable stages are switched off.
+    fn masked_count(&self) -> usize {
+        self.maskable
             .iter()
             .filter(|name| self.projection_mask.is_masked(name))
-            .count();
-        if masked == 0 {
-            Icon::Library
-        } else if masked == self.maskable.len() {
-            Icon::Code
+            .count()
+    }
+
+    /// The glyph for the CURRENT state -- `Eye` while anything is still being
+    /// projected, `EyeOff` once every maskable stage is off and the tree is
+    /// the raw bundle. Not the action the button would perform: a reader must
+    /// be able to read the panel and know what they are looking at.
+    ///
+    /// Two glyphs, three states: a PARTIAL mask keeps `Eye` and separates
+    /// from "everything running" by reading lit (see `projection_lit`) --
+    /// something is still being projected, just not all of it.
+    pub fn projection_icon(&self) -> Icon {
+        let masked = self.masked_count();
+        if masked > 0 && masked == self.maskable.len() {
+            Icon::EyeOff
         } else {
-            Icon::LibraryBig
+            Icon::Eye
         }
+    }
+
+    /// Whether the glyph reads lit. Anything other than "the whole declared
+    /// chain is running" is the deliberate, non-default state.
+    pub fn projection_lit(&self) -> bool {
+        self.masked_count() > 0
     }
 
     pub fn set_projection(&mut self, cx: &mut Cx, mask: ProjectionMask, maskable: Vec<String>) {
         self.projection_mask = mask;
         self.maskable = maskable;
         let icon = self.projection_icon();
+        let lit = self.projection_lit();
         let button = self.view.icon_button(cx, ids!(view_mode_btn));
         button.set_icon(cx, icon);
-        // Anything other than "everything running" is the deliberate,
-        // non-default state, so it reads lit.
-        button.set_active(cx, !matches!(icon, Icon::Library));
+        button.set_active(cx, lit);
     }
 
     pub fn set_presentation_visible(&mut self, cx: &mut Cx, visible: bool) {
@@ -1558,8 +1566,12 @@ mod tests {
         );
         assert_eq!(
             panel.projection_icon(),
-            crate::icons::Icon::Library,
+            crate::icons::Icon::Eye,
             "an empty mask means the declared chain is running",
+        );
+        assert!(
+            !panel.projection_lit(),
+            "the default state is not the deliberate one, so it does not read lit",
         );
 
         panel.set_projection(
@@ -1569,8 +1581,12 @@ mod tests {
         );
         assert_eq!(
             panel.projection_icon(),
-            crate::icons::Icon::LibraryBig,
-            "some stages off, some on",
+            crate::icons::Icon::Eye,
+            "some stages off, some on: still projecting, so still an open eye",
+        );
+        assert!(
+            panel.projection_lit(),
+            "a partial mask separates from the default state by reading lit",
         );
 
         panel.set_projection(
@@ -1580,9 +1596,10 @@ mod tests {
         );
         assert_eq!(
             panel.projection_icon(),
-            crate::icons::Icon::Code,
+            crate::icons::Icon::EyeOff,
             "every maskable stage off is the old Raw",
         );
+        assert!(panel.projection_lit());
     }
 
     /// A mask naming a stage outside this panel's maskable universe must not
@@ -1598,8 +1615,12 @@ mod tests {
         );
         assert_eq!(
             panel.projection_icon(),
-            crate::icons::Icon::Library,
+            crate::icons::Icon::Eye,
             "`index` is not maskable, so masking it changes nothing the glyph reports",
+        );
+        assert!(
+            !panel.projection_lit(),
+            "`index` is not maskable, so masking it does not light the glyph either",
         );
     }
 
