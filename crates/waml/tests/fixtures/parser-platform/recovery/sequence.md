@@ -1,5 +1,5 @@
 ---
-type: uml.Sequence
+type: uml.SequenceDiagram
 title: Broken sequence
 ---
 # Broken sequence

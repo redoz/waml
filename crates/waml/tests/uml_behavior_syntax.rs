@@ -63,11 +63,11 @@ fn written(analysis: &uml::Analysis, path: &str) -> String {
 
 #[test]
 fn flow_fixed_slots_project_every_current_node_and_transition_form_losslessly() {
-    let authored = "---\r\ntype: uml.Activity\r\ntitle: Café flow\r\n---\r\n# Café flow\r\n\r\n## Nodes\r\n### initial Start\r\n- transitions to Work\r\n### Work\r\n- entry: `begin`\r\n- do: `serve ☕`\r\n- exit: `finish`\r\n- on `paid` when `ok` transitions to Choice carries [Order](./order.md): `record`\r\n- refines [Child](./child.md)\r\n- partition: Kitchen\r\n#### Notes\r\n- naïve note\r\n### decision Choice\r\n- else transitions to Done\r\n### final Done\r\n";
+    let authored = "---\r\ntype: uml.ActivityDiagram\r\ntitle: Café flow\r\n---\r\n# Café flow\r\n\r\n## Nodes\r\n### initial Start\r\n- transitions to Work\r\n### Work\r\n- entry: `begin`\r\n- do: `serve ☕`\r\n- exit: `finish`\r\n- on `paid` when `ok` transitions to Choice carries [Order](./order.md): `record`\r\n- refines [Child](./child.md)\r\n- partition: Kitchen\r\n#### Notes\r\n- naïve note\r\n### decision Choice\r\n- else transitions to Done\r\n### final Done\r\n";
     let analysis = analyze([
         ("flow.md", authored),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
-        ("child.md", "---\ntype: uml.Activity\n---\n# Child\n"),
+        ("child.md", "---\ntype: uml.ActivityDiagram\n---\n# Child\n"),
     ]);
     let syntax = root(&analysis, "flow.md");
     assert_eq!(count::<uml::FlowNodeSyntax>(syntax.clone()), 4);
@@ -170,7 +170,7 @@ fn malformed_transition_traces_recover_at_flow_boundaries_losslessly() {
 
 #[test]
 fn sequence_nested_slots_project_current_forms_losslessly() {
-    let authored = "---\r\ntype: uml.Sequence\r\ntitle: Checkout\r\n---\r\n# Checkout\r\n\r\n## Lifelines\r\n- [Buyer](./buyer.md) as buyer\r\n- [Order](./order.md)\r\n\r\n## Messages\r\n- buyer calls Order `place(é)`\r\n- alt\r\n  - when `valid`\r\n    - Order returns `ok` to buyer\r\n    - loop\r\n      - when `again`\r\n        - buyer signals Order\r\n  - else\r\n    - buyer destroys Order\r\n- par\r\n  - branch `self`\r\n    - buyer calls buyer\r\n  - branch `outside`\r\n    - outside signals Order `found`\r\n";
+    let authored = "---\r\ntype: uml.SequenceDiagram\r\ntitle: Checkout\r\n---\r\n# Checkout\r\n\r\n## Lifelines\r\n- [Buyer](./buyer.md) as buyer\r\n- [Order](./order.md)\r\n\r\n## Messages\r\n- buyer calls Order `place(é)`\r\n- alt\r\n  - when `valid`\r\n    - Order returns `ok` to buyer\r\n    - loop\r\n      - when `again`\r\n        - buyer signals Order\r\n  - else\r\n    - buyer destroys Order\r\n- par\r\n  - branch `self`\r\n    - buyer calls buyer\r\n  - branch `outside`\r\n    - outside signals Order `found`\r\n";
     let analysis = analyze([
         ("sequence.md", authored),
         ("buyer.md", "---\ntype: uml.Actor\n---\n# Buyer\n"),
@@ -248,7 +248,7 @@ fn malformed_behavior_recovers_at_confirmed_heading_and_keeps_precise_provenance
 
 #[test]
 fn every_flow_heading_kind_and_claimed_link_state_is_declared_without_byte_loss() {
-    let authored = "---\ntype: uml.StateMachine\n---\n# S\n\n## Nodes\n### initial I\n### final F\n### decision D\n### merge M\n### fork K\n### join J\n### object [Target](./target.md)\n### Plain state\n";
+    let authored = "---\ntype: uml.StateMachineDiagram\n---\n# S\n\n## Nodes\n### initial I\n### final F\n### decision D\n### merge M\n### fork K\n### join J\n### object [Target](./target.md)\n### Plain state\n";
     let analysis = analyze([
         ("states.md", authored),
         ("target.md", "---\ntype: uml.Class\n---\n# Target\n"),
@@ -275,11 +275,11 @@ fn behavior_productions_expose_direct_fixed_slots() {
     let analysis = analyze([
         (
             "flow.md",
-            "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### object [Order](./order.md)\n- on `go` when `ready` transitions to Done carries [Order](./order.md): `effect`\n### final Done\n",
+            "---\ntype: uml.ActivityDiagram\n---\n# Flow\n\n## Nodes\n### object [Order](./order.md)\n- on `go` when `ready` transitions to Done carries [Order](./order.md): `effect`\n### final Done\n",
         ),
         (
             "sequence.md",
-            "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- order calls Order `place()`\n- alt\n  - when `ready`\n    - order returns to Order\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- order calls Order `place()`\n- alt\n  - when `ready`\n    - order returns to Order\n",
         ),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
     ]);
@@ -383,13 +383,13 @@ fn behavior_productions_expose_direct_fixed_slots() {
 
 #[test]
 fn self_par_outside_gate_and_ref_forms_are_accepted() {
-    let authored = "---\ntype: uml.Sequence\n---\n# Current\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Gates\n- entry\n\n## Messages\n- ref [Use](./use.md) as used\n  - bind order to order\n- par\n  - branch `self`\n    - order calls order `work()`\n  - branch `outside`\n    - outside signals order `found`\n  - branch `gate`\n    - @entry signals used@exit `through`\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# Current\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Gates\n- entry\n\n## Messages\n- ref [Use](./use.md) as used\n  - bind order to order\n- par\n  - branch `self`\n    - order calls order `work()`\n  - branch `outside`\n    - outside signals order `found`\n  - branch `gate`\n    - @entry signals used@exit `through`\n";
     let analysis = analyze([
         ("current.md", authored),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
         (
             "use.md",
-            "---\ntype: uml.Sequence\n---\n# Use\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Gates\n- exit\n\n## Messages\n- order signals @exit `ready`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Use\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Gates\n- exit\n\n## Messages\n- order signals @exit `ready`\n",
         ),
     ]);
     let syntax = root(&analysis, "current.md");
@@ -418,7 +418,7 @@ fn self_par_outside_gate_and_ref_forms_are_accepted() {
 
 #[test]
 fn deferred_and_removed_sequence_spellings_have_exact_unsupported_ranges() {
-    let authored = "---\ntype: uml.Sequence\n---\n# Removed\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- strict\n- seq\n- ignore\n- consider\n- coregion order, Order\n- order calls order: `old-call`\n- order replies order: `old-return`\n- order sends order: `old-signal`\n- -> order: `found`\n- order sends ->\n- gate entry -> order\n- order signals order `current`\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# Removed\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- strict\n- seq\n- ignore\n- consider\n- coregion order, Order\n- order calls order: `old-call`\n- order replies order: `old-return`\n- order sends order: `old-signal`\n- -> order: `found`\n- order sends ->\n- gate entry -> order\n- order signals order `current`\n";
     let analysis = analyze([
         ("removed.md", authored),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
@@ -474,11 +474,11 @@ fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() 
     let analysis = analyze([
         (
             "flow.md",
-            "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### Plain\n- entry: `begin`\n- refines [Order](./order.md)\n- transitions to Done\n- on `go` when `ready` transitions to Done carries [Order](./order.md): `effect`\n- transitions to Done: broken\n### object [Order](./order.md)\n### final Done\n",
+            "---\ntype: uml.ActivityDiagram\n---\n# Flow\n\n## Nodes\n### Plain\n- entry: `begin`\n- refines [Order](./order.md)\n- transitions to Done\n- on `go` when `ready` transitions to Done carries [Order](./order.md): `effect`\n- transitions to Done: broken\n### object [Order](./order.md)\n### final Done\n",
         ),
         (
             "sequence.md",
-            "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md)\n- [Order](./order.md) as order\n- [Order](./order.md) trailing\n\n## Messages\n- order calls Order\n- order calls Order `place()`\n- order calls Order `broken\n- alt\n  - else\n  - when `ready`\n  - when broken\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md)\n- [Order](./order.md) as order\n- [Order](./order.md) trailing\n\n## Messages\n- order calls Order\n- order calls Order `place()`\n- order calls Order `broken\n- alt\n  - else\n  - when `ready`\n  - when broken\n",
         ),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
     ]);
@@ -670,7 +670,7 @@ fn behavior_occurrence_indices_are_invariant_across_absent_and_recovery_slots() 
 #[test]
 fn missing_lifeline_link_is_incomplete_but_present_malformed_link_is_invalid() {
     let authored =
-        "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n-\n- broken\n\n## Messages\n";
+        "---\ntype: uml.SequenceDiagram\n---\n# Sequence\n\n## Lifelines\n-\n- broken\n\n## Messages\n";
     let analysis = analyze([("sequence.md", authored)]);
     let lifelines = &analysis.declared.concept("sequence").unwrap().lifelines;
     assert_eq!(lifelines.len(), 2);
@@ -726,7 +726,7 @@ fn missing_lifeline_link_is_incomplete_but_present_malformed_link_is_invalid() {
 
 #[test]
 fn lifeline_as_without_an_alias_is_reported_on_the_keyword() {
-    let authored = "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md) as\n\n## Messages\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md) as\n\n## Messages\n";
     let analysis = analyze([("sequence.md", authored)]);
     let lifelines = &analysis.declared.concept("sequence").unwrap().lifelines;
     assert_eq!(lifelines.len(), 1);
@@ -760,7 +760,7 @@ fn lifeline_as_without_an_alias_is_reported_on_the_keyword() {
 #[test]
 fn lifeline_without_an_as_keyword_is_not_reported() {
     let authored =
-        "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md)\n\n## Messages\n";
+        "---\ntype: uml.SequenceDiagram\n---\n# Sequence\n\n## Lifelines\n- [Order](./order.md)\n\n## Messages\n";
     let analysis = analyze([("sequence.md", authored)]);
     let lifelines = &analysis.declared.concept("sequence").unwrap().lifelines;
     assert_eq!(lifelines.len(), 1);
@@ -785,9 +785,9 @@ fn lifeline_without_an_as_keyword_is_not_reported() {
 
 #[test]
 fn required_behavior_accessors_return_indexed_missing_tokens_without_panicking() {
-    let flow = "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### initial\n- entry: `begin`\n- transitions\n- transitions to [broken\n### object\n### object [broken\n";
+    let flow = "---\ntype: uml.ActivityDiagram\n---\n# Flow\n\n## Nodes\n### initial\n- entry: `begin`\n- transitions\n- transitions to [broken\n### object\n### object [broken\n";
     let sequence =
-        "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Messages\n- sender\n- alt\n  - else\n";
+        "---\ntype: uml.SequenceDiagram\n---\n# Sequence\n\n## Messages\n- sender\n- alt\n  - else\n";
     let analysis = analyze([("flow.md", flow), ("sequence.md", sequence)]);
 
     let flow_root = root(&analysis, "flow.md");

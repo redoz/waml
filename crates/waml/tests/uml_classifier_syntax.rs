@@ -440,7 +440,7 @@ fn invalid_group_inline_instance_never_creates_a_dangling_member() {
     let source = SourceBundle::try_from_pairs([
         (
             "diagram.md",
-            "---\ntype: Diagram\n---\n# Diagram\n\n## Members\n### Invalid\n- instance of [Good](./good.md) as bad with state OPEN\n",
+            "---\ntype: uml.ClassDiagram\n---\n# Diagram\n\n## Members\n### Invalid\n- instance of [Good](./good.md) as bad with state OPEN\n",
         ),
         ("good.md", "---\ntype: uml.Class\n---\n# Good\n"),
     ])
@@ -460,7 +460,7 @@ fn root_only_member_items_use_an_implicit_ordered_group() {
     use waml::model::RelationshipKind;
     use waml::uml::syntax::UmlSyntaxKind;
 
-    let authored = "---\ntype: Diagram\n---\n# Diagram\n\n## Members\n- [First](./first.md)\n- instance of [Kind](./kind.md) as only with state set to OPEN\n- [Last](./last.md)\n";
+    let authored = "---\ntype: uml.ClassDiagram\n---\n# Diagram\n\n## Members\n- [First](./first.md)\n- instance of [Kind](./kind.md) as only with state set to OPEN\n- [Last](./last.md)\n";
     let source = SourceBundle::try_from_pairs([
         ("diagram.md", authored),
         ("first.md", "---\ntype: uml.Class\n---\n# First\n"),
@@ -527,7 +527,7 @@ fn root_only_member_items_use_an_implicit_ordered_group() {
 fn mixed_root_and_group_member_items_preserve_authored_order_and_provenance() {
     use waml::uml::syntax::UmlSyntaxKind;
 
-    let authored = "---\ntype: Diagram\n---\n# Diagram\n\n## Members\n- [Root](./root.md)\n- instance of [Kind](./kind.md) as root-instance with state set to OPEN\n### Group\n- instance of [Kind](./kind.md) as first with state set to OPEN\n- [Middle](./middle.md)\n- instance of [Kind](./kind.md) as second with state set to CLOSED\n- [Last](./last.md)\n";
+    let authored = "---\ntype: uml.ClassDiagram\n---\n# Diagram\n\n## Members\n- [Root](./root.md)\n- instance of [Kind](./kind.md) as root-instance with state set to OPEN\n### Group\n- instance of [Kind](./kind.md) as first with state set to OPEN\n- [Middle](./middle.md)\n- instance of [Kind](./kind.md) as second with state set to CLOSED\n- [Last](./last.md)\n";
     let source = SourceBundle::try_from_pairs([
         ("diagram.md", authored),
         ("root.md", "---\ntype: uml.Class\n---\n# Root\n"),

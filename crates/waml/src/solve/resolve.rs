@@ -300,13 +300,14 @@ pub fn resolve(diagram: &Diagram) -> (Scene, Vec<Diagnostic>) {
 #[cfg(test)]
 mod tests {
     use super::resolve;
-    use crate::model::{Diagram, DiagramGroup};
+    use crate::model::{Diagram, DiagramGroup, DiagramKind};
     use crate::solve::{BoxId, BoxKind};
 
     fn diagram(groups: Vec<DiagramGroup>, layout: Vec<crate::layout::LayoutStatement>) -> Diagram {
         Diagram {
             key: "orders".into(),
             title: "Orders".into(),
+            kind: DiagramKind::Class,
             profile: "uml-domain".into(),
             description: None,
             groups,
@@ -577,6 +578,7 @@ mod tests {
         let d = Diagram {
             key: "tables/dia".into(),
             title: "D".into(),
+            kind: DiagramKind::Class,
             profile: "uml-domain".into(),
             description: None,
             groups: vec![DiagramGroup {

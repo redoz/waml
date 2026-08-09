@@ -49,7 +49,7 @@ pub fn default_surface(target: &RowTarget, bundle: &Bundle) -> SurfaceId {
                         crate::model::ElementType::parse(&concept.ty),
                         crate::model::ElementType::Uml(_)
                             | crate::model::ElementType::Behavior(_)
-                            | crate::model::ElementType::Diagram
+                            | crate::model::ElementType::Diagram(_)
                     )
                 })
                 .unwrap_or(false);

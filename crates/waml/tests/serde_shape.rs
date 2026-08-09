@@ -548,8 +548,8 @@ fn classifier_type_wire_strings_are_stable() {
         "\"uml.Activity\""
     );
     assert_eq!(
-        serde_json::to_string(&ElementType::Diagram).unwrap(),
-        "\"Diagram\""
+        serde_json::to_string(&ElementType::Diagram(DiagramKind::Class)).unwrap(),
+        "\"uml.ClassDiagram\""
     );
     assert_eq!(
         serde_json::to_string(&ElementType::Unknown("bpmn.Task".to_string())).unwrap(),

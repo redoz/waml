@@ -75,7 +75,7 @@ pub fn kind_of(ty: &ElementType) -> RowKind {
         ) => RowKind::Class,
         ElementType::Behavior(BehaviorKind::Sequence) => RowKind::Sequence,
         ElementType::Behavior(_) => RowKind::Behavior,
-        ElementType::Diagram => RowKind::Diagram,
+        ElementType::Diagram(_) => RowKind::Diagram,
         ElementType::Unknown(_) => RowKind::OkfDocument,
     }
 }
@@ -134,7 +134,10 @@ mod tests {
             kind_of(&ElementType::Behavior(BehaviorKind::Sequence)),
             RowKind::Sequence
         );
-        assert_eq!(kind_of(&ElementType::Diagram), RowKind::Diagram);
+        assert_eq!(
+            kind_of(&ElementType::Diagram(crate::model::DiagramKind::Class)),
+            RowKind::Diagram
+        );
     }
 
     #[test]

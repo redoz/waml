@@ -116,6 +116,65 @@ fn assert_source_contract(
 }
 
 #[test]
+fn obsolete_root_types_are_errors_at_the_type_scalar_without_unknown_type_warnings() {
+    let cases = [
+        (
+            "uml.Activity",
+            "obsolete diagram type 'uml.Activity'; use 'uml.ActivityDiagram' or run 'waml upgrade'",
+        ),
+        (
+            "uml.StateMachine",
+            "obsolete diagram type 'uml.StateMachine'; use 'uml.StateMachineDiagram' or run 'waml upgrade'",
+        ),
+        (
+            "uml.Sequence",
+            "obsolete diagram type 'uml.Sequence'; use 'uml.SequenceDiagram' or run 'waml upgrade'",
+        ),
+        (
+            "Diagram",
+            "obsolete diagram type 'Diagram'; run 'waml upgrade' to select 'uml.ClassDiagram' or 'uml.UseCaseDiagram'",
+        ),
+    ];
+    for (ty, message) in cases {
+        let source = format!("---\ntype: {ty}\n---\n# Retired\n");
+        let retired_source: &'static str = Box::leak(source.clone().into_boxed_str());
+        let found = diagnostics([("views/retired.md", retired_source)]);
+        let obsolete = exact(&found, DiagCode::ObsoleteDiagramType, message);
+        assert_source_contract(
+            obsolete,
+            &source,
+            "views/retired.md",
+            Severity::Error,
+            2,
+            (6, 6 + ty.len()),
+            ty,
+        );
+        assert_eq!(
+            found
+                .iter()
+                .filter(|diagnostic| diagnostic.code == DiagCode::ObsoleteDiagramType)
+                .count(),
+            1,
+            "{ty}: {found:#?}"
+        );
+        assert!(
+            found
+                .iter()
+                .all(|diagnostic| diagnostic.code != DiagCode::UnknownType),
+            "{ty}: {found:#?}"
+        );
+    }
+
+    let unknown = diagnostics([(
+        "views/unknown.md",
+        "---\ntype: vendor.Widget\n---\n# Unknown\n",
+    )]);
+    assert!(unknown.iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::UnknownType && diagnostic.severity == Severity::Warning
+    }));
+}
+
+#[test]
 fn instance_of_uses_specific_warn_only_diagnostics() {
     let unresolved = diagnostics([(
         "m/order-42.md",
@@ -191,7 +250,8 @@ fn unknown_slot_warns_even_when_classifier_declares_zero_attributes() {
 
 #[test]
 fn unresolved_diagram_member_is_a_precise_warning() {
-    let diagram = "---\ntype: Diagram\n---\n# D\n\n## Members\n- [Ghost](../missing/ghost.md)\n";
+    let diagram =
+        "---\ntype: uml.ClassDiagram\n---\n# D\n\n## Members\n- [Ghost](../missing/ghost.md)\n";
     let found = diagnostics([("views/d.md", diagram)]);
     let warning = exact(
         &found,
@@ -380,7 +440,7 @@ fn unresolved_instance_links_is_warn_only_and_precise() {
 
 #[test]
 fn inline_instances_apply_classifier_and_empty_classifier_slot_conformance() {
-    let diagram = "---\ntype: Diagram\n---\n# Objects\n\n## Members\n- instance of [Order](../domain/order.md) as order-42 with bogus set to 3\n- instance of [Gone](../domain/gone.md) as gone\n- instance of [Other](../objects/other.md) as other-copy\n";
+    let diagram = "---\ntype: uml.ClassDiagram\n---\n# Objects\n\n## Members\n- instance of [Order](../domain/order.md) as order-42 with bogus set to 3\n- instance of [Gone](../domain/gone.md) as gone\n- instance of [Other](../objects/other.md) as other-copy\n";
     let found = diagnostics([
         ("domain/order.md", "---\ntype: uml.Class\n---\n# Order\n"),
         (
@@ -445,7 +505,7 @@ fn conformant_inline_instance_has_no_instance_diagnostics() {
         ),
         (
             "views/objects.md",
-            "---\ntype: Diagram\n---\n# Objects\n\n## Members\n- instance of [Order](../domain/order.md) as order-42 with id set to \"ORD-42\"\n",
+            "---\ntype: uml.ClassDiagram\n---\n# Objects\n\n## Members\n- instance of [Order](../domain/order.md) as order-42 with id set to \"ORD-42\"\n",
         ),
     ]);
     assert!(
@@ -462,7 +522,7 @@ fn conformant_inline_instance_has_no_instance_diagnostics() {
 
 #[test]
 fn layout_resolution_provenance_is_exact_for_missing_and_ambiguous_refs() {
-    let diagram = "---\r\ntype: Diagram\r\n---\r\n# Café\r\n\r\n## Layout\r\n- [Order](../domain/order.md)\r\n- Customer\r\n- Missing\r\n- Order\r\n";
+    let diagram = "---\r\ntype: uml.ClassDiagram\r\n---\r\n# Café\r\n\r\n## Layout\r\n- [Order](../domain/order.md)\r\n- Customer\r\n- Missing\r\n- Order\r\n";
     let analysis = prepared(
         [
             (
@@ -495,14 +555,14 @@ fn layout_resolution_provenance_is_exact_for_missing_and_ambiguous_refs() {
             "layout operand 'Missing' resolves no member group",
             9,
             (1, 9),
-            (91, 99),
+            (100, 108),
             " Missing",
         ),
         (
             "layout operand 'Order' resolves no member group",
             10,
             (1, 7),
-            (102, 108),
+            (111, 117),
             " Order",
         ),
     ] {
@@ -554,7 +614,7 @@ fn layout_resolution_provenance_is_exact_for_missing_and_ambiguous_refs() {
 
 #[test]
 fn layout_cycle_anchors_first_placement_not_prior_standalone_or_alignment() {
-    let diagram = "---\ntype: Diagram\n---\n# D\n\n## Layout\n- A\n- top of A aligned with bottom of B\n- A left of B\n- B left of A\n";
+    let diagram = "---\ntype: uml.ClassDiagram\n---\n# D\n\n## Layout\n- A\n- top of A aligned with bottom of B\n- A left of B\n- B left of A\n";
     let found = diagnostics([
         ("views/d.md", diagram),
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
@@ -578,7 +638,7 @@ fn layout_cycle_anchors_first_placement_not_prior_standalone_or_alignment() {
     let clean = diagnostics([
         (
             "d.md",
-            "---\ntype: Diagram\n---\n# D\n\n## Layout\n- A left of B left of C\n- A above D\n",
+            "---\ntype: uml.ClassDiagram\n---\n# D\n\n## Layout\n- A left of B left of C\n- A above D\n",
         ),
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),

@@ -46,9 +46,7 @@ pub use syntax::{
 pub(crate) fn recognizes_type(element_type: &crate::model::ElementType) -> bool {
     matches!(
         element_type,
-        crate::model::ElementType::Uml(_)
-            | crate::model::ElementType::Behavior(_)
-            | crate::model::ElementType::Diagram
+        crate::model::ElementType::Uml(_) | crate::model::ElementType::Diagram(_)
     )
 }
 
@@ -91,18 +89,28 @@ mod tests {
     }
 
     #[test]
-    fn recognizer_claims_only_supported_uml_behavior_and_diagram_types() {
+    fn recognizer_claims_only_supported_uml_and_canonical_diagram_types() {
         for ty in [
             "uml.Class",
             "uml.Package",
-            "uml.Activity",
-            "uml.StateMachine",
-            "uml.Sequence",
-            "Diagram",
+            "uml.ClassDiagram",
+            "uml.UseCaseDiagram",
+            "uml.ActivityDiagram",
+            "uml.StateMachineDiagram",
+            "uml.SequenceDiagram",
         ] {
             assert!(recognizes(&concept(ty)), "{ty}");
         }
-        for ty in ["", "Playbook", "bpmn.Task", "uml.FutureThing"] {
+        for ty in [
+            "",
+            "Playbook",
+            "bpmn.Task",
+            "uml.FutureThing",
+            "Diagram",
+            "uml.Activity",
+            "uml.StateMachine",
+            "uml.Sequence",
+        ] {
             assert!(!recognizes(&concept(ty)), "{ty}");
         }
     }
@@ -155,7 +163,7 @@ mod tests {
             ),
             (
                 "diagram.md",
-                "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n- [Vendor](./vendor.md)\n- [Future](./future.md)\n",
+                "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n- [Vendor](./vendor.md)\n- [Future](./future.md)\n",
             ),
         ])
         .unwrap();

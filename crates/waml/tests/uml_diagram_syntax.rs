@@ -1,4 +1,4 @@
-use waml::model::DiagramKind;
+use waml::model::{BehaviorKind, DiagramKind, ElementType};
 use waml::uml::syntax::UmlSyntaxKind;
 use waml::{analysis::analyze_okf, source::SourceBundle, uml};
 use waml_syntax::AstNode;
@@ -15,6 +15,37 @@ fn canonical_diagram_kinds_round_trip() {
     for (name, kind) in cases {
         assert_eq!(DiagramKind::parse(name), Some(kind));
         assert_eq!(kind.as_str(), name);
+    }
+}
+
+#[test]
+fn canonical_diagrams_are_views_and_retired_names_are_not_aliases() {
+    let canonical = [
+        ("uml.ClassDiagram", DiagramKind::Class),
+        ("uml.UseCaseDiagram", DiagramKind::UseCase),
+        ("uml.ActivityDiagram", DiagramKind::Activity),
+        ("uml.StateMachineDiagram", DiagramKind::StateMachine),
+        ("uml.SequenceDiagram", DiagramKind::Sequence),
+    ];
+    for (name, kind) in canonical {
+        let ty = ElementType::parse(name);
+        assert_eq!(ty, ElementType::Diagram(kind));
+        assert!(ty.is_view());
+        assert!(!ty.is_classifier());
+    }
+
+    let behavior = ElementType::Behavior(BehaviorKind::Activity);
+    assert!(behavior.is_classifier());
+    assert!(!behavior.is_view());
+
+    for retired in [
+        "Diagram",
+        "uml.Activity",
+        "uml.StateMachine",
+        "uml.Sequence",
+    ] {
+        assert_eq!(DiagramKind::parse(retired), None, "{retired}");
+        assert!(!ElementType::parse(retired).is_view(), "{retired}");
     }
 }
 
@@ -91,7 +122,7 @@ fn diagram_source(layout: &str) -> SourceBundle {
         (
             "d.md",
             format!(
-                "---\ntype: Diagram\ntitle: D\n---\n# D\n\n## Members\n### G\n- [A](./a.md)\n\n## Layout\n{layout}"
+                "---\ntype: uml.ClassDiagram\ntitle: D\n---\n# D\n\n## Members\n### G\n- [A](./a.md)\n\n## Layout\n{layout}"
             ),
         ),
         ("a.md", "---\ntype: uml.Class\n---\n# A\n".to_string()),
@@ -101,7 +132,7 @@ fn diagram_source(layout: &str) -> SourceBundle {
 
 #[test]
 fn diagram_members_and_layout_are_lossless_and_project_valid_placement() {
-    let authored = "---\r\ntype: Diagram\r\ntitle: D\r\n---\r\n# D\r\n\r\n## Members\r\n### G\r\n- [A](./a.md)\r\n\r\n## Layout\r\n- A left of A\r\n";
+    let authored = "---\r\ntype: uml.ClassDiagram\r\ntitle: D\r\n---\r\n# D\r\n\r\n## Members\r\n### G\r\n- [A](./a.md)\r\n\r\n## Layout\r\n- A left of A\r\n";
     let source = SourceBundle::try_from_pairs([
         ("d.md", authored),
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
@@ -162,7 +193,7 @@ fn linked_diagram_source() -> SourceBundle {
     SourceBundle::try_from_pairs([
         (
             "orders-diagram.md",
-            "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- [Order](./order.md) left of [Customer](./customer.md)\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- [Order](./order.md) left of [Customer](./customer.md)\n",
         ),
         ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
         (
@@ -231,7 +262,7 @@ fn contradictory_linked_placements_reach_the_shared_solver_dropped_report() {
     let source = SourceBundle::try_from_pairs([
         (
             "diagram.md",
-            "---\ntype: Diagram\nprofile: uml-domain\n---\n# Diagram\n\n## Members\n- [A](./a.md)\n- [B](./b.md)\n- [C](./c.md)\n\n## Layout\n- [A](./a.md) left of [B](./b.md)\n- [B](./b.md) left of [C](./c.md)\n- [C](./c.md) left of [A](./a.md)\n",
+            "---\ntype: uml.ClassDiagram\nprofile: uml-domain\n---\n# Diagram\n\n## Members\n- [A](./a.md)\n- [B](./b.md)\n- [C](./c.md)\n\n## Layout\n- [A](./a.md) left of [B](./b.md)\n- [B](./b.md) left of [C](./c.md)\n- [C](./c.md) left of [A](./a.md)\n",
         ),
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
@@ -463,7 +494,7 @@ fn complete_layout_matrix_matches_legacy_model_and_has_fixed_nested_slots() {
 
 #[test]
 fn fixed_layout_slots_preserve_crlf_utf8_recovery_ranges_and_declared_state() {
-    let authored = "---\r\ntype: Diagram\r\n---\r\n# D\r\n\r\n## Layout\r\n- Café left Café\r\n- Café above left of \"Étage\"\r\n";
+    let authored = "---\r\ntype: uml.ClassDiagram\r\n---\r\n# D\r\n\r\n## Layout\r\n- Café left Café\r\n- Café above left of \"Étage\"\r\n";
     let source = SourceBundle::try_from_pairs([("d.md", authored)]).unwrap();
     let analysis = analyze(&source);
     let id = analysis
@@ -712,7 +743,7 @@ fn generic_okf_member_is_declared_and_diagnosed_but_not_projected() {
     let source = SourceBundle::try_from_pairs([
         (
             "d.md",
-            "---\ntype: Diagram\n---\n# D\n\n## Members\n### G\n- [Known](./known.md)\n- [Generic](./generic.md)\n",
+            "---\ntype: uml.ClassDiagram\n---\n# D\n\n## Members\n### G\n- [Known](./known.md)\n- [Generic](./generic.md)\n",
         ),
         ("known.md", "---\ntype: uml.Class\n---\n# Known\n"),
         ("generic.md", "---\ntype: vendor.Widget\n---\n# Generic\n"),

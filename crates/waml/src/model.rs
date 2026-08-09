@@ -981,7 +981,7 @@ pub struct SequenceDoc {
 pub enum ElementType {
     Uml(UmlMetaclass),
     Behavior(BehaviorKind),
-    Diagram,
+    Diagram(DiagramKind),
     Unknown(String),
 }
 
@@ -1001,8 +1001,8 @@ impl From<String> for ElementType {
 
 impl ElementType {
     pub fn parse(s: &str) -> ElementType {
-        if s == "Diagram" {
-            return ElementType::Diagram;
+        if let Some(kind) = DiagramKind::parse(s) {
+            return ElementType::Diagram(kind);
         }
         if let Some((family, metaclass)) = s.split_once('.') {
             if family == "uml" {
@@ -1020,7 +1020,7 @@ impl ElementType {
         match self {
             ElementType::Uml(mc) => format!("uml.{}", mc.name()),
             ElementType::Behavior(bk) => format!("uml.{}", bk.name()),
-            ElementType::Diagram => "Diagram".to_string(),
+            ElementType::Diagram(kind) => kind.as_str().to_string(),
             ElementType::Unknown(s) => s.clone(),
         }
     }
@@ -1049,7 +1049,7 @@ impl ElementType {
             // Behavior ⊂ Class: Activity / Interaction (Sequence) / StateMachine
             // are all Classifiers.
             ElementType::Behavior(_) => true,
-            ElementType::Diagram => false,
+            ElementType::Diagram(_) => false,
             ElementType::Unknown(_) => false,
         }
     }
@@ -1061,7 +1061,7 @@ impl ElementType {
     /// classifier `Node` to `Model.nodes` and is never a relationship/link
     /// target. Distinct from `is_classifier()`, which is `true` for behaviors.
     pub fn is_view(&self) -> bool {
-        matches!(self, ElementType::Diagram | ElementType::Behavior(_))
+        matches!(self, ElementType::Diagram(_))
     }
 }
 
@@ -1158,6 +1158,7 @@ pub struct DiagramGroup {
 pub struct Diagram {
     pub key: String,
     pub title: String,
+    pub kind: DiagramKind,
     pub profile: String,
     #[cfg_attr(
         feature = "serde",
@@ -1397,7 +1398,14 @@ mod tests {
             ElementType::parse("uml.Class"),
             ElementType::Uml(UmlMetaclass::Class)
         );
-        assert_eq!(ElementType::parse("Diagram"), ElementType::Diagram);
+        assert_eq!(
+            ElementType::parse("uml.ClassDiagram"),
+            ElementType::Diagram(DiagramKind::Class)
+        );
+        assert_eq!(
+            ElementType::parse("Diagram"),
+            ElementType::Unknown("Diagram".to_string())
+        );
         assert_eq!(
             ElementType::parse("bpmn.Task"),
             ElementType::Unknown("bpmn.Task".to_string())
@@ -1411,7 +1419,10 @@ mod tests {
     #[test]
     fn classifier_type_round_trips_to_string() {
         assert_eq!(ElementType::Uml(UmlMetaclass::Enum).as_str(), "uml.Enum");
-        assert_eq!(ElementType::Diagram.as_str(), "Diagram");
+        assert_eq!(
+            ElementType::Diagram(DiagramKind::Class).as_str(),
+            "uml.ClassDiagram"
+        );
         assert_eq!(ElementType::Unknown("x.Y".to_string()).as_str(), "x.Y");
     }
 
@@ -1433,17 +1444,18 @@ mod tests {
         assert!(!ElementType::Uml(UmlMetaclass::Package).is_classifier());
         assert!(!ElementType::Uml(UmlMetaclass::Note).is_classifier());
         assert!(!ElementType::Uml(UmlMetaclass::InstanceSpecification).is_classifier());
-        assert!(!ElementType::Diagram.is_classifier());
+        assert!(!ElementType::Diagram(DiagramKind::Class).is_classifier());
         assert!(!ElementType::Unknown("bpmn.Task".to_string()).is_classifier());
     }
 
     #[test]
-    fn is_view_flags_diagrams_and_behaviors() {
+    fn is_view_flags_diagrams_only() {
         // Views / notation — never pooled classifiers, never link targets.
-        assert!(ElementType::Diagram.is_view());
-        assert!(ElementType::Behavior(BehaviorKind::Activity).is_view());
-        assert!(ElementType::Behavior(BehaviorKind::StateMachine).is_view());
-        assert!(ElementType::Behavior(BehaviorKind::Sequence).is_view());
+        assert!(ElementType::Diagram(DiagramKind::Class).is_view());
+        assert!(ElementType::Diagram(DiagramKind::UseCase).is_view());
+        assert!(!ElementType::Behavior(BehaviorKind::Activity).is_view());
+        assert!(!ElementType::Behavior(BehaviorKind::StateMachine).is_view());
+        assert!(!ElementType::Behavior(BehaviorKind::Sequence).is_view());
         // Pool members (classifiers, notes, unknowns) are not views.
         assert!(!ElementType::Uml(UmlMetaclass::Class).is_view());
         assert!(!ElementType::Uml(UmlMetaclass::Note).is_view());

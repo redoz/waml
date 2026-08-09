@@ -328,6 +328,7 @@ pub fn analyze(
     let mut island_snapshots = BTreeMap::new();
     let mut declared = DeclaredBundle::default();
     let mut diagnostics = Vec::new();
+    validate_document_types(&context, &mut diagnostics)?;
     // Index the catalog by concept id once, instead of scanning every document
     // per claimed concept (O(concepts × documents)).
     let mut concept_documents: BTreeMap<String, DocumentId> = BTreeMap::new();
@@ -860,6 +861,102 @@ fn validate_shared_context(context: &DomainAnalysisContext<'_>) -> Result<(), An
             name: "uml",
             reason: "UML analysis context does not share the shell catalog revision".into(),
         });
+    }
+    Ok(())
+}
+
+fn obsolete_diagram_message(ty: &str) -> Option<&'static str> {
+    match ty {
+        "uml.Activity" => Some(
+            "obsolete diagram type 'uml.Activity'; use 'uml.ActivityDiagram' or run 'waml upgrade'",
+        ),
+        "uml.StateMachine" => Some(
+            "obsolete diagram type 'uml.StateMachine'; use 'uml.StateMachineDiagram' or run 'waml upgrade'",
+        ),
+        "uml.Sequence" => Some(
+            "obsolete diagram type 'uml.Sequence'; use 'uml.SequenceDiagram' or run 'waml upgrade'",
+        ),
+        "Diagram" => Some(
+            "obsolete diagram type 'Diagram'; run 'waml upgrade' to select 'uml.ClassDiagram' or 'uml.UseCaseDiagram'",
+        ),
+        _ => None,
+    }
+}
+
+fn type_scalar_range(document: &crate::analysis::DocumentVersion, ty: &str) -> Option<TextRange> {
+    let text = document.text().shared();
+    let line_start = text
+        .match_indices("type:")
+        .map(|(start, _)| start)
+        .find(|start| *start == 0 || text.as_bytes()[start - 1] == b'\n')?;
+    let scalar_start = text[line_start + "type:".len()..]
+        .find(ty)
+        .map(|offset| line_start + "type:".len() + offset)?;
+    let start = TextSize::try_from(scalar_start).ok()?;
+    let end = TextSize::try_from(scalar_start + ty.len()).ok()?;
+    TextRange::new(start, end).ok()
+}
+
+fn validate_document_types(
+    context: &DomainAnalysisContext<'_>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), AnalysisError> {
+    for (id, document) in context.catalog.documents() {
+        let concept_id = crate::okf::id_of(document.path().as_str());
+        let Some(concept) = context.okf.concept(&concept_id) else {
+            continue;
+        };
+        let (code, message, warning) = if let Some(message) = obsolete_diagram_message(&concept.ty)
+        {
+            (
+                crate::diagnostic::DiagCode::ObsoleteDiagramType,
+                message.to_string(),
+                false,
+            )
+        } else if matches!(
+            crate::model::ElementType::parse(&concept.ty),
+            crate::model::ElementType::Unknown(_)
+        ) {
+            (
+                crate::diagnostic::DiagCode::UnknownType,
+                format!("unknown UML type '{}'", concept.ty),
+                true,
+            )
+        } else {
+            continue;
+        };
+        let Some(range) = type_scalar_range(document, &concept.ty) else {
+            continue;
+        };
+        let line = document
+            .line_index()
+            .line_col(document.text(), range.start())
+            .map_err(|_| AnalysisError::CatalogInvariant {
+                reason: format!("type scalar range is not in document: {}", document.path()).into(),
+            })?;
+        let diagnostic = if warning {
+            Diagnostic::warn(
+                code,
+                message,
+                document.path().as_str(),
+                line.line as usize + 1,
+            )
+        } else {
+            Diagnostic::new(
+                code,
+                message,
+                document.path().as_str(),
+                line.line as usize + 1,
+            )
+        };
+        diagnostics.push(
+            diagnostic
+                .with_span((
+                    line.byte_column as usize,
+                    line.byte_column as usize + range.len().to_usize(),
+                ))
+                .with_provenance(*id, document.revision(), range),
+        );
     }
     Ok(())
 }
@@ -1636,8 +1733,9 @@ fn declared_projection(
         let ty = crate::model::ElementType::parse(&okf.ty);
         if matches!(
             ty,
-            crate::model::ElementType::Behavior(crate::model::BehaviorKind::Activity)
-                | crate::model::ElementType::Behavior(crate::model::BehaviorKind::StateMachine)
+            crate::model::ElementType::Diagram(
+                crate::model::DiagramKind::Activity | crate::model::DiagramKind::StateMachine
+            )
         ) {
             lower_flow_behavior(
                 context,
@@ -1648,7 +1746,7 @@ fn declared_projection(
                 &mut model,
                 diagnostics,
             );
-        } else if ty == crate::model::ElementType::Behavior(crate::model::BehaviorKind::Sequence) {
+        } else if ty == crate::model::ElementType::Diagram(crate::model::DiagramKind::Sequence) {
             crate::uml::sequence::lower(
                 context,
                 declared,
@@ -1660,7 +1758,10 @@ fn declared_projection(
                 &mut model,
                 diagnostics,
             );
-        } else if ty == crate::model::ElementType::Diagram {
+        } else if let crate::model::ElementType::Diagram(
+            kind @ (crate::model::DiagramKind::Class | crate::model::DiagramKind::UseCase),
+        ) = ty
+        {
             for member in concept.members.iter() {
                 let crate::uml::DeclaredField::Valid { value: href, .. } = &member.target else {
                     continue;
@@ -1696,6 +1797,7 @@ fn declared_projection(
                     .title
                     .clone()
                     .unwrap_or_else(|| concept.concept_id.clone()),
+                kind,
                 profile: okf.extra.get_str("profile").unwrap_or_default().to_string(),
                 description: okf.description.clone(),
                 groups,
@@ -2208,10 +2310,13 @@ fn lower_flow_behavior(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let flavor = match crate::model::ElementType::parse(&okf.ty) {
-        crate::model::ElementType::Behavior(crate::model::BehaviorKind::Activity) => {
+        crate::model::ElementType::Diagram(crate::model::DiagramKind::Activity) => {
             crate::model::FlowFlavor::Activity
         }
-        _ => crate::model::FlowFlavor::StateMachine,
+        crate::model::ElementType::Diagram(crate::model::DiagramKind::StateMachine) => {
+            crate::model::FlowFlavor::StateMachine
+        }
+        _ => return,
     };
     let mut local = BTreeMap::new();
     for node in concept.flow_nodes.iter() {

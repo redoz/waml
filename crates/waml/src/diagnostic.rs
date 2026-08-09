@@ -17,6 +17,7 @@ pub enum DiagCode {
     DuplicateSlug,
     FrontmatterNotClean,
     UnknownType,
+    ObsoleteDiagramType,
     MalformedAttribute,
     MalformedRelationship,
     MalformedFlowBullet,
@@ -79,6 +80,7 @@ impl DiagCode {
             DiagCode::DuplicateSlug => "duplicate-slug",
             DiagCode::FrontmatterNotClean => "frontmatter-not-clean",
             DiagCode::UnknownType => "unknown-type",
+            DiagCode::ObsoleteDiagramType => "obsolete-diagram-type",
             DiagCode::MalformedAttribute => "malformed-attribute",
             DiagCode::MalformedRelationship => "malformed-relationship",
             DiagCode::MalformedFlowBullet => "malformed-flow-bullet",
@@ -240,6 +242,11 @@ mod tests {
     fn code_has_stable_slug_and_severity() {
         assert_eq!(DiagCode::UnresolvedTarget.as_str(), "unresolved-target");
         assert_eq!(DiagCode::UnknownType.severity(), Severity::Warning);
+        assert_eq!(
+            DiagCode::ObsoleteDiagramType.as_str(),
+            "obsolete-diagram-type"
+        );
+        assert_eq!(DiagCode::ObsoleteDiagramType.severity(), Severity::Error);
         assert_eq!(DiagCode::MalformedAttribute.severity(), Severity::Error);
         assert_eq!(
             DiagCode::SlotUnknownAttribute.as_str(),
