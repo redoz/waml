@@ -694,6 +694,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn markdown_emphasis_serializes_as_lowercase_json_strings() {
+        assert_eq!(
+            serde_json::to_string(&MarkdownEmphasis::Code).unwrap(),
+            r#""code""#
+        );
+        assert_eq!(
+            serde_json::to_string(&MarkdownEmphasis::Layout).unwrap(),
+            r#""layout""#
+        );
+    }
+
+    #[test]
+    fn invalid_markdown_emphasis_backs_up_file_and_loads_code() {
+        let tmp = TempDir::new();
+        let path = tmp.path().join(EDITOR_FILE);
+        std::fs::write(
+            &path,
+            br#"{"version":1,"recents":[],"theme":"light","markdown_emphasis":"invalid"}"#,
+        )
+        .unwrap();
+
+        let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+
+        assert_eq!(cfg.markdown_emphasis, MarkdownEmphasis::Code);
+        assert!(!path.exists(), "corrupt file moved aside");
+        assert!(
+            tmp.path().join("editor.json.bak").exists(),
+            "backup written"
+        );
+    }
+
     /// Minimal temp dir: the repo has no temp-dir dev-dependency, so we make a
     /// unique subdir under the system temp dir and remove it on drop.
     struct TempDir(PathBuf);
