@@ -203,11 +203,11 @@ script_mod! {
             height: Fit
             flow: Right
             align: Align{x: 0.0}
-            padding: Inset{left: 6.0, right: 6.0, top: 6.0, bottom: 2.0}
-            view_mode_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
-            collapse_all_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
-            expand_all_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
-            tidy_btn := IconButton{ width: 28.0 height: 28.0 icon_size: 16.0 }
+            padding: Inset{left: 4.0, right: 4.0, top: 3.0, bottom: 1.0}
+            view_mode_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 15.0 }
+            collapse_all_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 15.0 }
+            expand_all_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 15.0 }
+            tidy_btn := IconButton{ width: 24.0 height: 24.0 icon_size: 15.0 }
         }
 
         // The row body. We draw rows into this view's rect ourselves; it exists
