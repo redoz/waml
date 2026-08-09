@@ -149,10 +149,10 @@ not a second product parser or a new WAML feature.
    each intention. Require one owning goal for each intention. If an intention
    has more than one owner, fail and reconcile the inventory owner before you
    continue.
-3. For each use-case leaf, parse the `## Owning goal` and `## Scenarios`
-   sections. Require exactly one owning-goal document link. Require every
-   scenario link to target that same document and one exact `####` scenario
-   heading.
+3. For each use-case leaf, parse the `## Relationships`, `## Owning goal`, and
+   `## Scenarios` sections. Require this canonical formatter order. Require
+   exactly one owning-goal document link. Require every scenario link to target
+   that same document and one exact `####` scenario heading.
 4. Generate the fragment for each target heading with the repository
    `heading_slug` rule from `crates/waml-cli/src/lsp/query.rs`: trim the heading,
    remove its leading `#` characters, trim again, convert to lower case, split
@@ -1499,7 +1499,7 @@ Do not use `specializes` for job-title similarity. A child actor must be able to
 
 - [ ] **Step 3: Create typed use-case documents and traceability links**
 
-Each workflow leaf uses `type: uml.UseCase`, one H1 that matches `title`, and these sections in this order: `## Owning goal`, `## Scenarios`, and `## Relationships`. The owning-goal section has exactly one document link. The scenario section links each frozen shipped scenario identifier to its heading in that same goal document. Generate each fragment with the repository `heading_slug` rule in the Product Use-Case Traceability Procedure. Do not copy the heading text as a new scenario body.
+Each workflow leaf uses `type: uml.UseCase`, one H1 that matches `title`, and these sections in canonical formatter order: `## Relationships`, `## Owning goal`, and `## Scenarios`. The owning-goal section has exactly one document link. The scenario section links each frozen shipped scenario identifier to its heading in that same goal document. Generate each fragment with the repository `heading_slug` rule in the Product Use-Case Traceability Procedure. Do not copy the heading text as a new scenario body.
 
 Use this structure for the open-bundle workflow, with the exact frozen identifier and title in place of the example identifier when they differ:
 
@@ -1511,6 +1511,10 @@ description: A reader opens a WAML bundle in the product.
 ---
 # Open a bundle
 
+## Relationships
+
+- associates [Reader](../actors/reader.md)
+
 ## Owning goal
 
 - [Open a bundle](../../goals/read-a-bundle/open-a-bundle.md)
@@ -1518,10 +1522,6 @@ description: A reader opens a WAML bundle in the product.
 ## Scenarios
 
 - [BUNDLE-001](../../goals/read-a-bundle/open-a-bundle.md#bundle-001-—-open-a-bundle)
-
-## Relationships
-
-- associates [Reader](../actors/reader.md)
 ```
 
 Put each actor association in the use-case document and author it once. Use `includes` only when the target workflow always runs as a required part of the source workflow. Use `extends` from an optional or conditional workflow to its base workflow. Use `specializes` from a narrower use case to a broader use case only when it inherits the complete parent intention and result. Do not infer a relationship from shared evidence, a shared goal, or execution order alone.
