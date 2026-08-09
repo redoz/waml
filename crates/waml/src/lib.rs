@@ -15,6 +15,7 @@ pub mod model;
 pub mod multiplicity;
 pub mod okf;
 pub mod profile;
+pub mod search;
 pub mod seed;
 pub mod share;
 pub mod site_boot;
