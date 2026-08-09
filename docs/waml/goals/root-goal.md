@@ -71,10 +71,13 @@ blocks the bar.
   If a behavior needs more than one sentence, put it in a document adjacent to
   the goal, as the [Sequence Language](uml/sequence/language.md) does for its
   cut. Then the goal points to that document.
-- A behavior in this tree that has no test is an intention. It is not a
-  guarantee. Write it as an intention.
-- The best form of that rule is a scenario: `Given`, `When`, `Then`, with an
-  identifier that a test names. The [Sequence
+- Exact source evidence or test evidence can establish shipped behavior.
+- Missing target-boundary automation creates a verification gap. It does not
+  change the shipped product state.
+- An adjacent `Scenario:` marker links a sufficient test to a scenario when
+  that test exists.
+- The best form of stable behavior is a scenario: `Given`, `When`, `Then`,
+  with an identifier. The [Sequence
   Language](uml/sequence/language.md) has the first set. Other goals get
   scenarios when their behavior becomes stable. A scenario for an unstable
   behavior gives no help.

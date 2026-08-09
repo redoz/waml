@@ -113,4 +113,4 @@ The order follows the dependencies in the goal tree.
 - BHV-BRW-014 — This MVP scope says that browser authoring and `waml serve`
   are post-MVP. Current source serves the editor at
   `crates/waml-cli/src/serve/mod.rs:30` and sends document writes at
-  `crates/waml-editor/src/api_save.rs:43`.
+  `crates/waml-editor/src/api_save.rs:42`.
