@@ -21,7 +21,7 @@ tower-lsp-server = "0.23"
 url = "2.5"
 proptest = "=1.8.0"
 unicode-segmentation = "1.12"
-unicode-bidi = { git = "https://github.com/redoz/makepad.git", rev = "9e428ab8b77fc3d5beaa78296646aff88b82bd9b" }
+unicode-bidi = { git = "https://github.com/redoz/makepad.git", rev = "7bb5e50a99094c8f82a8ef00e13bc63037ef14d8" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 brotli = "8"
 rand = "0.9"

@@ -33,7 +33,7 @@ waml-markdown-editor = { path = "../waml-markdown-editor" }
 # vertical scroll snapshot/restore from waml-history-scroll-anchors-current. The FileTree
 # fold and draw hooks were reverted once waml took ownership of the tree row list.
 # rev is the reproducible pin; survives upstream force-push / branch renames.
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "9e428ab8b77fc3d5beaa78296646aff88b82bd9b" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "7bb5e50a99094c8f82a8ef00e13bc63037ef14d8" }
 taffy = "0.12.2"
 serde = { workspace = true }
 serde_json = { workspace = true }

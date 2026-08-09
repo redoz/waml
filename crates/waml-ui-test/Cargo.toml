@@ -7,8 +7,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
-makepad-test = { git = "https://github.com/redoz/makepad.git", rev = "9e428ab8b77fc3d5beaa78296646aff88b82bd9b" }
-makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "9e428ab8b77fc3d5beaa78296646aff88b82bd9b" }
+makepad-test = { git = "https://github.com/redoz/makepad.git", rev = "7bb5e50a99094c8f82a8ef00e13bc63037ef14d8" }
+makepad-widgets = { git = "https://github.com/redoz/makepad.git", rev = "7bb5e50a99094c8f82a8ef00e13bc63037ef14d8" }
 serde.workspace = true
 serde_json.workspace = true
 waml-ui-test-macros = { path = "../waml-ui-test-macros" }
