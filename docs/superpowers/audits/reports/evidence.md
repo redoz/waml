@@ -2,8 +2,8 @@
 
 This report links each shipped UI behavior scenario to its implementation and test evidence. A marked test has an adjacent `Scenario:` comment. A partial test has no marker and does not satisfy the target boundary.
 
-- Verified scenarios: 61
-- Verification gaps: 52
+- Verified scenarios: 60
+- Verification gaps: 53
 
 | Scenario | Implementation paths | Test paths | Target boundary | Verification state | Gap reason |
 | --- | --- | --- | --- | --- | --- |
@@ -40,7 +40,7 @@ This report links each shipped UI behavior scenario to its implementation and te
 | BROWSER-020 | <code>crates/waml-cli/src/serve/guard.rs:100 (check)</code><br><code>crates/waml-cli/src/serve/routes.rs:86 (admit)</code> | <code>crates/waml-cli/src/serve/routes.rs::a_mutating_post_without_the_client_header_is_403</code> (partial) | browser | gap | The host route test proves the 403 guard, but no headed browser test observes the anti-CSRF client-header refusal. |
 | CLI-001 | <code>crates/waml-cli/src/main.rs:358 (main)</code><br><code>crates/waml-cli/src/commands.rs:162 (check_exit_code)</code> | <code>crates/waml-cli/tests/cli_e2e.rs::check_reports_malformed_claimed_uml_from_parser_analysis</code> (marked) | native | verified | — |
 | CLI-002 | <code>crates/waml-cli/src/main.rs:358 (main)</code><br><code>crates/waml-cli/src/commands.rs:288 (plan_fmt)</code> | <code>crates/waml-cli/tests/cli_e2e.rs::fmt_canonical_output_is_idempotent</code> (marked) | native | verified | — |
-| CLI-003 | <code>crates/waml-cli/src/main.rs:358 (main)</code> | <code>scripts/export-site-browser.test.mjs::an exported site boots and exports its model back</code> (marked) | native | verified | — |
+| CLI-003 | <code>crates/waml-cli/src/main.rs:358 (main)</code> | <code>scripts/export-site-browser.test.mjs::an exported site boots and exports its model back</code> (partial) | native | gap | The browser E2E invokes waml share --fragment-only as one step, but no native CLI test asserts share fragment or share URL output. |
 | CLI-004 | <code>crates/waml-cli/src/main.rs:726 (run_mutation)</code><br><code>crates/waml-cli/src/main.rs:619 (attr_dto)</code> | <code>crates/waml-cli/tests/cli_e2e.rs::attr_add_writes_the_file</code> (marked)<br><code>crates/waml-cli/tests/cli_e2e.rs::duplicate_attr_exits_1</code> (marked) | native | verified | — |
 | CLI-005 | <code>crates/waml-cli/src/main.rs:844 (run_apply)</code> | <code>crates/waml-cli/tests/cli_e2e.rs::apply_late_multi_file_failure_writes_nothing</code> (marked) | native | verified | — |
 | CLI-006 | <code>crates/waml-cli/src/main.rs:885 (run_show)</code> | <code>crates/waml-cli/tests/cli_e2e.rs::show_json_and_refs_share_prepared_referrer_results</code> (marked) | native | verified | — |

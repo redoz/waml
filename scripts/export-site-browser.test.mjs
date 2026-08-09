@@ -145,7 +145,6 @@ const options = skipReason ? { skip: skipReason } : {};
 // Scenario: BROWSER-004
 // Scenario: BROWSER-006
 // Scenario: BROWSER-011
-// Scenario: CLI-003
 test("an exported site boots and exports its model back", options, async (t) => {
   const work = await mkdtemp(join(tmpdir(), "waml-site-e2e-"));
   t.after(() => rm(work, { recursive: true, force: true }));
