@@ -63,10 +63,11 @@ const BIN =
   resolve("target/release", process.platform === "win32" ? "waml.exe" : "waml");
 
 // Caption geometry in CSS pixels at devicePixelRatio 1 (Playwright's default),
-// measured against a booted site: the burger sits after the 44px logo in the
-// title row, and its menu's third row is **Export WAML bundle...**.
-const BURGER = { x: 59, y: 17 };
-const EXPORT_ROW = { x: 150, y: 122 };
+// measured against a booted site at the fixed viewport below: the burger sits
+// after the 280px navigation dock, and its menu's third row is
+// **Export WAML bundle...**.
+const BURGER = { x: 295, y: 17 };
+const EXPORT_ROW = { x: 380, y: 120 };
 
 const TYPES = {
   ".html": "text/html",
