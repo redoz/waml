@@ -230,8 +230,11 @@ describe("extension lifecycle", () => {
 
   // Scenario: VSCODE-002
   it("pins the installed client's bounded default error and crash-restart behavior", () => {
+    // vscode-languageclient 10 gates its internals behind an `exports` map, so
+    // the old deep path (`lib/common/client.js`) no longer resolves. `$test/`
+    // is the subpath the package publishes for exactly this.
     const dependencyPath = createRequire(__filename).resolve(
-      "vscode-languageclient/lib/common/client.js",
+      "vscode-languageclient/$test/common/client",
     );
     const dependencySource = readFileSync(dependencyPath, "utf8");
     const dependencyFile = ts.createSourceFile(

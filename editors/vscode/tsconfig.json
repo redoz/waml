@@ -2,8 +2,10 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    // vscode-languageclient 10 ships an `exports` map, which the legacy node10
+    // resolver cannot read. `node18` resolves it; the package is
+    // `"type": "commonjs"`, so the emit stays CommonJS either way.
+    "module": "node18",
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
