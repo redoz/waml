@@ -1078,19 +1078,7 @@ struct RelationshipView {
 }
 
 fn relationship_kinds() -> &'static [RelationshipKind] {
-    &[
-        RelationshipKind::InstanceOf,
-        RelationshipKind::Associates,
-        RelationshipKind::Aggregates,
-        RelationshipKind::Composes,
-        RelationshipKind::Specializes,
-        RelationshipKind::Implements,
-        RelationshipKind::Depends,
-        RelationshipKind::Annotates,
-        RelationshipKind::Includes,
-        RelationshipKind::Extends,
-        RelationshipKind::Links,
-    ]
+    crate::uml::vocabulary::RELATIONSHIP_KINDS
 }
 
 fn relationship_view(

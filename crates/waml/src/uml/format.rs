@@ -443,33 +443,6 @@ fn normalize_commas(value: &str) -> String {
 }
 
 fn canonical_layout_keywords(value: &str) -> String {
-    const KEYWORDS: &[&str] = &[
-        "above",
-        "aligned",
-        "and",
-        "as",
-        "below",
-        "bottom",
-        "box",
-        "center",
-        "collapsed",
-        "column",
-        "emphasized",
-        "frame",
-        "large",
-        "left",
-        "margin",
-        "margins",
-        "medium",
-        "no",
-        "of",
-        "right",
-        "row",
-        "shrink",
-        "small",
-        "top",
-        "with",
-    ];
     let mut out = String::new();
     let mut cursor = 0usize;
     let mut quote = None;
@@ -500,11 +473,9 @@ fn canonical_layout_keywords(value: &str) -> String {
                 .map(|relative| cursor + relative)
                 .unwrap_or(value.len());
             let word = &value[cursor..end];
-            let lower = word.to_ascii_lowercase();
-            if KEYWORDS.contains(&lower.as_str()) {
-                out.push_str(if lower == "margins" { "margin" } else { &lower });
-            } else {
-                out.push_str(word);
+            match crate::uml::vocabulary::canonical_layout_keyword(word) {
+                Some(canonical) => out.push_str(canonical),
+                None => out.push_str(word),
             }
             cursor = end;
             continue;
