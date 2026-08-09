@@ -22,4 +22,3 @@ description: A reader opens a WAML bundle in the product.
 - [NATIVE-004](../../goals/read-a-bundle/open-a-bundle.md#native-004-—-a-valid-bundle-replaces-the-active-workspace)
 - [NATIVE-005](../../goals/read-a-bundle/open-a-bundle.md#native-005-—-a-failed-open-keeps-the-prior-workspace)
 - [NATIVE-014](../../goals/read-a-bundle/open-a-bundle.md#native-014-—-an-in-bundle-document-link-opens-in-the-preview)
-

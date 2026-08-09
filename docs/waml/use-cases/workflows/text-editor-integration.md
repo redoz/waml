@@ -23,4 +23,3 @@ description: An author uses WAML language features in an integrated text editor.
 - [VSCODE-005](../../goals/tooling-around-the-repo/text-editor-integration.md#vscode-005-—-a-launch-failure-is-reported-and-cleaned-up)
 - [VSCODE-006](../../goals/tooling-around-the-repo/text-editor-integration.md#vscode-006-—-deactivation-stops-the-active-client-exactly-once)
 - [VSCODE-008](../../goals/tooling-around-the-repo/text-editor-integration.md#vscode-008-—-the-missing-server-action-opens-waml-settings)
-

@@ -18,4 +18,3 @@ description: An author receives diagnostics and status results for current conte
 
 - [NATIVE-032](../../goals/trust-the-content/report-every-problem.md#native-032-—-pending-edits-preserve-only-unchanged-diagnostic-ranges)
 - [NATIVE-050](../../goals/trust-the-content/report-every-problem.md#native-050-—-source-navigation-publishes-a-status-result)
-

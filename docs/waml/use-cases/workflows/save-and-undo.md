@@ -26,4 +26,3 @@ description: An author saves work and moves through edit history.
 - [NATIVE-056](../../goals/author-in-the-editor/save-and-undo.md#native-056-—-a-failed-save-blocks-close-and-keeps-document-state)
 - [NATIVE-057](../../goals/author-in-the-editor/save-and-undo.md#native-057-—-a-successful-save-permits-close-and-clears-document-state)
 - [NATIVE-062](../../goals/author-in-the-editor/save-and-undo.md#native-062-—-an-accepted-source-proposal-becomes-current)
-

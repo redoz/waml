@@ -22,4 +22,3 @@ description: A reader views and interacts with an activity flow.
 - [NATIVE-053](../../goals/uml/activity/interact-with-an-activity-diagram.md#native-053-—-activity-interaction-shows-the-selected-target)
 - [NATIVE-063](../../goals/uml/activity/interact-with-an-activity-diagram.md#native-063-—-refresh-keeps-the-camera-and-a-surviving-selection)
 - [NATIVE-064](../../goals/uml/activity/interact-with-an-activity-diagram.md#native-064-—-an-empty-activity-scene-has-no-hit-target)
-

@@ -23,4 +23,3 @@ description: A reader takes WAML content out of the product.
 - [BROWSER-006](../../goals/share-and-publish/export-a-bundle.md#browser-006-—-download-the-current-browser-model-as-a-bundle)
 - [BROWSER-011](../../goals/share-and-publish/export-a-bundle.md#browser-011-—-export-a-directory-as-a-self-contained-static-site)
 - [BROWSER-016](../../goals/share-and-publish/export-a-bundle.md#browser-016-—-a-browser-save-replaces-the-share-fragment)
-

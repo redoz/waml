@@ -26,4 +26,3 @@ description: A command-line user serves a local bundle to a reader.
 - [BROWSER-018](../../goals/share-and-publish/serve-locally.md#browser-018-—-an-operations-batch-is-atomic-and-reports-changed-files)
 - [BROWSER-019](../../goals/share-and-publish/serve-locally.md#browser-019-—-a-request-without-a-valid-token-is-refused-before-body-validation)
 - [BROWSER-020](../../goals/share-and-publish/serve-locally.md#browser-020-—-a-mutating-request-requires-the-waml-client-header)
-

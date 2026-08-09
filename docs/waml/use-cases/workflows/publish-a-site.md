@@ -17,4 +17,3 @@ description: Automation publishes a complete WAML web artifact.
 ## Scenarios
 
 - [BROWSER-012](../../goals/share-and-publish/publish-a-site.md#browser-012-—-publication-accepts-only-a-complete-web-artifact)
-

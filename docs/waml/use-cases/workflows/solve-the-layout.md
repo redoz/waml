@@ -17,4 +17,3 @@ description: A reader receives a usable diagram layout or a readable conflict.
 ## Scenarios
 
 - [NATIVE-036](../../goals/uml/shared/solve-the-layout.md#native-036-—-solver-conflicts-identify-their-participants)
-

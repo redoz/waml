@@ -22,4 +22,3 @@ description: An author changes the Markdown body of a WAML document.
 - [NATIVE-026](../../goals/author-in-the-editor/edit-prose.md#native-026-—-an-ime-composition-has-visible-preedit-and-reversible-completion)
 - [NATIVE-046](../../goals/author-in-the-editor/edit-prose.md#native-046-—-pointer-clicks-select-a-source-word-or-line)
 - [NATIVE-047](../../goals/author-in-the-editor/edit-prose.md#native-047-—-stale-layout-input-does-not-change-the-document)
-

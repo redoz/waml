@@ -21,4 +21,3 @@ description: A language client requests WAML language features.
 - [LSP-003](../../goals/tooling-around-the-repo/language-server.md#lsp-003-—-answer-document-link-requests)
 - [LSP-004](../../goals/tooling-around-the-repo/language-server.md#lsp-004-—-answer-cross-document-definition-requests)
 - [LSP-005](../../goals/tooling-around-the-repo/language-server.md#lsp-005-—-answer-full-document-semantic-token-requests)
-

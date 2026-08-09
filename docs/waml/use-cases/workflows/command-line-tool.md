@@ -27,4 +27,3 @@ description: A caller validates, formats, queries, and changes a WAML bundle.
 - [CLI-009](../../goals/tooling-around-the-repo/command-line-tool.md#cli-009-—-bundle-a-directory-as-json-or-typescript)
 - [CLI-010](../../goals/tooling-around-the-repo/command-line-tool.md#cli-010-—-format-check-rejects-noncanonical-content)
 - [CLI-011](../../goals/tooling-around-the-repo/command-line-tool.md#cli-011-—-direct-commands-change-nodes,-values,-and-relationships)
-

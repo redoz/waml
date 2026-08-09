@@ -19,4 +19,3 @@ description: A command-line user makes a bundle link for a reader.
 
 - [CLI-003](../../goals/share-and-publish/share-a-link.md#cli-003-—-create-a-share-fragment-or-url)
 - [BROWSER-015](../../goals/share-and-publish/share-a-link.md#browser-015-—-a-damaged-share-link-shows-an-error-and-the-start-screen)
-

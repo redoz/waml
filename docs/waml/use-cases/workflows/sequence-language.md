@@ -48,4 +48,3 @@ description: An author defines sequence behavior with the WAML sequence language
 - [SEQ-EXC-1](../../goals/uml/sequence/language.md#seq-exc-1-—-an-excluded-fragment-head-is-not-accepted)
 - [SEQ-REC-1](../../goals/uml/sequence/language.md#seq-rec-1-—-a-bad-item-does-not-stop-the-next-item)
 - [SEQ-REC-2](../../goals/uml/sequence/language.md#seq-rec-2-—-malformed-source-stays-lossless)
-

@@ -22,4 +22,3 @@ description: A reader views and interacts with a sequence diagram.
 - [NATIVE-043](../../goals/uml/sequence/interact-with-a-sequence-diagram.md#native-043-—-a-fragment-border-is-selectable-but-its-empty-interior-is-not)
 - [NATIVE-044](../../goals/uml/sequence/interact-with-a-sequence-diagram.md#native-044-—-pan-and-zoom-move-the-sequence-camera)
 - [NATIVE-054](../../goals/uml/sequence/interact-with-a-sequence-diagram.md#native-054-—-an-unavailable-behavior-document-shows-diagnostic-feedback)
-

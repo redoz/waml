@@ -27,4 +27,3 @@ description: A product user views and changes a class diagram.
 - [NATIVE-067](../../goals/uml/class/interact-with-a-class-diagram.md#native-067-—-the-connect-tool-becomes-active)
 - [NATIVE-069](../../goals/uml/class/interact-with-a-class-diagram.md#native-069-—-pointer-up-ends-the-active-placement)
 - [NATIVE-072](../../goals/uml/class/interact-with-a-class-diagram.md#native-072-—-the-expansion-handle-toggles-a-classifier)
-

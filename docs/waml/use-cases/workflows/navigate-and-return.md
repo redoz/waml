@@ -18,4 +18,3 @@ description: A reader follows the current path and returns to earlier positions.
 
 - [NATIVE-013](../../goals/read-a-bundle/navigate-and-return.md#native-013-—-breadcrumbs-show-the-document-and-directory-path)
 - [NATIVE-016](../../goals/read-a-bundle/navigate-and-return.md#native-016-—-back-and-forward-restore-document-anchors)
-
