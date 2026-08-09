@@ -20,6 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use makepad_widgets::log;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use waml_markdown_editor::EditorEmphasis;
 
 /// Config file the editor owns, under `~/.waml/`.
 const EDITOR_FILE: &str = "editor.json";
@@ -115,6 +116,23 @@ pub enum ThemeMode {
     Dark,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum MarkdownEmphasis {
+    #[default]
+    Code,
+    Layout,
+}
+
+impl From<MarkdownEmphasis> for EditorEmphasis {
+    fn from(value: MarkdownEmphasis) -> Self {
+        match value {
+            MarkdownEmphasis::Code => EditorEmphasis::Code,
+            MarkdownEmphasis::Layout => EditorEmphasis::Layout,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
 struct EditorConfig {
     /// Current schema version.
@@ -124,6 +142,9 @@ struct EditorConfig {
     /// Chosen UI theme; absent in older files -> `ThemeMode::default()`.
     #[serde(default)]
     theme: ThemeMode,
+    /// Chosen Markdown emphasis; absent in older files -> `MarkdownEmphasis::default()`.
+    #[serde(default)]
+    markdown_emphasis: MarkdownEmphasis,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -279,6 +300,13 @@ pub fn recents() -> Vec<Recent> {
 pub fn theme() -> ThemeMode {
     let config: EditorConfig = load(EDITOR_FILE);
     config.theme
+}
+
+/// Load the Markdown emphasis mode (`Code` when the config file is missing,
+/// malformed, or predates the `markdown_emphasis` field).
+pub fn markdown_emphasis() -> EditorEmphasis {
+    let config: EditorConfig = load(EDITOR_FILE);
+    config.markdown_emphasis.into()
 }
 
 /// Persist `mode` as the chosen UI theme, preserving the rest of the config.
@@ -567,6 +595,7 @@ mod tests {
             version: EDITOR_VERSION,
             recents: vec![rec("/x", 7), rec("/y", 8)],
             theme: ThemeMode::Dark,
+            markdown_emphasis: MarkdownEmphasis::Code,
         };
         store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
         let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
@@ -580,12 +609,14 @@ mod tests {
             version: EDITOR_VERSION,
             recents: vec![rec("/a", 1)],
             theme: ThemeMode::Light,
+            markdown_emphasis: MarkdownEmphasis::Code,
         };
         store_to(tmp.path(), EDITOR_FILE, &a).unwrap();
         let b = EditorConfig {
             version: EDITOR_VERSION,
             recents: vec![rec("/b", 2), rec("/c", 3)],
             theme: ThemeMode::Dark,
+            markdown_emphasis: MarkdownEmphasis::Code,
         };
         store_to(tmp.path(), EDITOR_FILE, &b).unwrap();
         let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
@@ -607,6 +638,7 @@ mod tests {
             version: EDITOR_VERSION,
             recents: Vec::new(),
             theme: ThemeMode::Dark,
+            markdown_emphasis: MarkdownEmphasis::Code,
         };
         store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
         let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
@@ -628,6 +660,38 @@ mod tests {
             ThemeMode::Light,
             "absent theme field -> default Light"
         );
+    }
+
+    #[test]
+    fn markdown_emphasis_field_absent_in_old_file_loads_code() {
+        let tmp = TempDir::new();
+        std::fs::write(
+            tmp.path().join(EDITOR_FILE),
+            br#"{"version":1,"recents":[],"theme":"light"}"#,
+        )
+        .unwrap();
+
+        let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+
+        assert_eq!(cfg.markdown_emphasis, MarkdownEmphasis::Code);
+    }
+
+    #[test]
+    fn markdown_emphasis_code_and_layout_round_trip() {
+        for emphasis in [MarkdownEmphasis::Code, MarkdownEmphasis::Layout] {
+            let tmp = TempDir::new();
+            let cfg = EditorConfig {
+                version: EDITOR_VERSION,
+                recents: Vec::new(),
+                theme: ThemeMode::Light,
+                markdown_emphasis: emphasis,
+            };
+
+            store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
+            let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+
+            assert_eq!(back.markdown_emphasis, emphasis);
+        }
     }
 
     /// Minimal temp dir: the repo has no temp-dir dev-dependency, so we make a
