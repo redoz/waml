@@ -433,9 +433,9 @@ mod tests {
     fn orders_row(checked: bool) -> WidgetSnapshot {
         let mut row = snapshot("row:orders", "WamlProjectTreeRow", true);
         row.text = Some("Orders".to_string());
-        row.value = Some("orders".to_string());
+        row.value = Some("orders-diagram".to_string());
         row.checked = Some(checked);
-        row.selected = Some("orders".to_string());
+        row.selected = Some("orders-diagram".to_string());
         row
     }
 

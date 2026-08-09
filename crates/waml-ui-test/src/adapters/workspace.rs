@@ -232,9 +232,9 @@ mod tests {
             width: 120,
             height: 24,
             text: Some("Orders".to_string()),
-            value: Some("orders".to_string()),
+            value: Some("orders-diagram".to_string()),
             checked: Some(false),
-            selected: Some("orders".to_string()),
+            selected: Some("orders-diagram".to_string()),
         }
     }
 

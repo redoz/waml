@@ -7,9 +7,11 @@ pub struct DiagramName {
 }
 
 impl DiagramName {
+    // `value` is the row's semantic value: the concept id, which the loader
+    // derives from the fixture file name (mini/orders-diagram.md).
     pub const ORDERS: Self = Self {
         display: "Orders",
-        value: "orders",
+        value: "orders-diagram",
     };
 
     pub const fn new(display: &'static str, value: &'static str) -> Self {
