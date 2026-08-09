@@ -1,0 +1,73 @@
+editor | 1 | Names | architecture/concepts/workflows/editor.md | text-span
+editor | 2 | Names | architecture/concepts/workflows/editor.md | model-element
+editor | 3 | Names | architecture/concepts/implementation/editor-session.md | text-span
+editor | 4 | Names | architecture/concepts/implementation/editor-session.md | model-element
+editor | 5 | Names | architecture/concepts/implementation/markdown-editor.md | text-span
+editor | 6 | Names | architecture/concepts/implementation/markdown-editor.md | model-element
+editor | 7 | Names | architecture/concepts/runtime/native-editor.md | text-span
+editor | 8 | Names | architecture/concepts/runtime/native-editor.md | model-element
+mvp | 1 | Names | goals/mvp.md | text-span
+mvp | 2 | Names | goals/root-goal.md | text-span
+mvp | 3 | Prose | goals/author-in-the-editor/arrange-a-diagram.md | text-span
+mvp | 4 | Prose | goals/author-in-the-editor/author-with-the-keyboard.md | text-span
+mvp | 5 | Prose | goals/author-in-the-editor/create-and-delete-documents.md | text-span
+mvp | 6 | Prose | goals/author-in-the-editor/draw-on-the-canvas.md | text-span
+mvp | 7 | Prose | goals/author-in-the-editor/edit-prose.md | text-span
+mvp | 8 | Prose | goals/author-in-the-editor/edit-the-model.md | text-span
+goals | 1 | Prose | goals/mvp.md | text-span
+goals | 2 | Prose | goals/mvp.md | text-span
+goals | 3 | Prose | goals/mvp.md | text-span
+goals | 4 | Prose | goals/read-a-bundle/read-a-diagram.md | text-span
+goals | 5 | Prose | goals/read-a-bundle/read-a-diagram.md | text-span
+goals | 6 | Prose | goals/root-goal.md | text-span
+goals | 7 | Prose | goals/uml/shared/place-the-labels.md | text-span
+goals | 8 | Prose | goals/author-in-the-editor/arrange-a-diagram.md | text-span
+bundle | 1 | Names | architecture/concepts/implementation/source-bundle.md | text-span
+bundle | 2 | Names | architecture/concepts/implementation/source-bundle.md | model-element
+bundle | 3 | Names | architecture/concepts/model/okf-bundle.md | text-span
+bundle | 4 | Names | architecture/concepts/model/okf-bundle.md | model-element
+bundle | 5 | Names | architecture/concepts/runtime/local-bundle.md | text-span
+bundle | 6 | Names | architecture/concepts/runtime/local-bundle.md | model-element
+bundle | 7 | Names | architecture/concepts/workflows/bundle-query.md | text-span
+bundle | 8 | Names | architecture/concepts/workflows/bundle-query.md | model-element
+kind:actor | 1 | Names | architecture/concepts/workflows/author.md | text-span
+kind:actor | 2 | Names | architecture/concepts/workflows/author.md | text-span
+kind:actor | 3 | Names | architecture/concepts/workflows/author.md | text-span
+kind:actor | 4 | Names | architecture/concepts/workflows/author.md | model-element
+kind:actor | 5 | Names | use-cases/actors/author.md | text-span
+kind:actor | 6 | Names | use-cases/actors/author.md | text-span
+kind:actor | 7 | Names | use-cases/actors/author.md | model-element
+kind:actor | 8 | Names | use-cases/actors/automation-client.md | text-span
+projection | 1 | Names | architecture/concepts/workflows/model-projection.md | text-span
+projection | 2 | Names | architecture/concepts/workflows/model-projection.md | model-element
+projection | 3 | Names | architecture/views/incremental-analysis.md | text-span
+projection | 4 | Model | architecture/concepts/model/behavioral-view.md | model-element
+projection | 5 | Model | architecture/concepts/model/diagram.md | model-element
+projection | 6 | Model | architecture/concepts/model/okf-bundle.md | model-element
+projection | 7 | Model | architecture/concepts/model/waml-model.md | model-element
+projection | 8 | Model | architecture/concepts/workflows/bundle-query.md | model-element
+in:goals/ scope | 1 | Names | goals/mvp.md | text-span
+in:goals/ scope | 2 | Prose | goals/mvp.md | text-span
+in:goals/ scope | 3 | Prose | goals/mvp.md | text-span
+in:goals/ scope | 4 | Prose | goals/root-goal.md | text-span
+in:goals/ scope | 5 | Prose | goals/root-goal.md | text-span
+sequence lifeline | 1 | Names | goals/uml/sequence/language.md | text-span
+sequence lifeline | 2 | Names | use-cases/workflows/sequence-language.md | text-span
+sequence lifeline | 3 | Names | use-cases/workflows/sequence-language.md | model-element
+sequence lifeline | 4 | Names | goals/uml/sequence/feature-cut.md | text-span
+sequence lifeline | 5 | Names | goals/uml/sequence/interact-with-a-sequence-diagram.md | text-span
+sequence lifeline | 6 | Names | goals/uml/sequence/interact-with-a-sequence-diagram.md | text-span
+sequence lifeline | 7 | Names | use-cases/workflows/interact-with-a-sequence-diagram.md | text-span
+sequence lifeline | 8 | Names | use-cases/workflows/interact-with-a-sequence-diagram.md | model-element
+markdown editor | 1 | Names | architecture/concepts/implementation/markdown-editor.md | text-span
+markdown editor | 2 | Names | architecture/concepts/implementation/markdown-editor.md | model-element
+markdown editor | 3 | Names | architecture/concepts/implementation/waml-markdown-editor-crate.md | text-span
+markdown editor | 4 | Names | architecture/concepts/implementation/waml-markdown-editor-crate.md | model-element
+markdown editor | 5 | Names | architecture/concepts/implementation/markdown-syntax.md | text-span
+markdown editor | 6 | Names | architecture/concepts/implementation/markdown-syntax.md | model-element
+markdown editor | 7 | Names | architecture/concepts/workflows/editor.md | text-span
+markdown editor | 8 | Names | architecture/concepts/workflows/editor.md | model-element
+search | 1 | Prose | goals/mvp.md | text-span
+search | 2 | Prose | goals/mvp.md | text-span
+search | 3 | Prose | goals/beyond-uml.md | text-span
+search | 4 | Prose | goals/beyond-uml.md | text-span
