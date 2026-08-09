@@ -22,21 +22,15 @@
 - `NATIVE-027` through `NATIVE-031`, `NATIVE-048`, `NATIVE-049`, `NATIVE-056`, `NATIVE-057`, and `NATIVE-062` — `save-and-undo.md`
 - `NATIVE-032` and `NATIVE-050` — `report-every-problem.md`
 
-The ownership plan moves these frozen rows without changing the inventory:
+The integrated inventory records these owner moves:
 
 - `NATIVE-025` and `NATIVE-026` move from
   `author-with-the-keyboard.md` to `edit-prose.md`.
 - `NATIVE-049` moves from `keep-indexes-correct.md` to
   `save-and-undo.md`.
-- `NATIVE-060`, `NATIVE-065`, `NATIVE-066`, `NATIVE-067`, and
-  `NATIVE-069` move from `draw-on-the-canvas.md` to
-  `goals/uml/class/interact-with-a-class-diagram.md`.
 
-Task 12 must reconcile these eight `goal_document` values. This stream does
-not copy the five class-interaction scenarios. `NATIVE-035` also remains a
-Task 8 class-interaction gap. The property-state tests assert emitted values,
-but no native test observes the visible cardinality and attribute-limit
-controls.
+All three `goal_document` values now name these owners. The authoring tree does
+not copy the class-interaction scenarios, which are in `class-shared.md`.
 
 # Evidence
 

@@ -26,10 +26,10 @@
 - Existing sequence boundary, activation, excluded-construct, and recovery IDs
   also remain stable. They now use the same applicability, evidence, and
   verification-gap contract.
-- The frozen inventory has no state-machine or use-case row. Their interaction
+- The integrated inventory has no state-machine or use-case row. Their interaction
   leaves contain no invented scenario identifier and no GWT contract.
 
-The ownership plan moves these frozen rows without changing the inventory:
+The integrated inventory records these owner moves:
 
 - `NATIVE-037` and `NATIVE-064` move from `goals/uml/activity/index.md` to
   `goals/uml/activity/interact-with-an-activity-diagram.md`.
@@ -42,9 +42,8 @@ The ownership plan moves these frozen rows without changing the inventory:
   `goals/uml/sequence/feature-cut.md` to
   `goals/uml/sequence/interact-with-a-sequence-diagram.md`.
 
-Task 12 must reconcile these 12 `goal_document` values. It must also reconcile
-the absence of frozen state-machine and use-case interaction rows before those
-leaves can own stable shipped scenarios.
+All 12 `goal_document` values now name these owners. The inventory remains the
+authority for the absence of state-machine and use-case interaction scenarios.
 
 # Evidence
 
@@ -69,13 +68,11 @@ leaves can own stable shipped scenarios.
 - `NATIVE-044` — target: native; The tests assert zoom feedback and camera preservation during a scene update, but no test exercises pan input or observes the resulting camera movement.
 - `NATIVE-054` — target: native; No native test asserts behavior empty-state and diagnostic presentation.
 - The stable sequence-language scenarios use exact source evidence and native
-  verification-gap records. Task 15 owns their test-marker insertion.
+  verification-gap records.
 
 # Open discrepancies
 
-None in the frozen activity and sequence rows. The missing state-machine and
-use-case rows are an inventory-coverage concern for Task 12, not an invented
-discrepancy record.
+None.
 
 # Feature gaps
 

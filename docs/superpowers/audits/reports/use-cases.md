@@ -95,11 +95,10 @@ The actor leaf set equals the union of the three `### External actors` groups.
 The use-case leaf set equals the union of the three named product-boundary
 groups. Cross-boundary workflows occur in each applicable view.
 
-## Frozen owner reconciliation for Task 12
+## Integrated owner reconciliation
 
-The completed goal leaves reconcile the workflow owners, but 34 frozen
-`goal_document` values still name the pre-integration location. Task 12 must
-correct these inventory values. Task 11 does not invent a second owner.
+The integrated inventory records 34 `goal_document` owner corrections. The
+product use-case model does not invent a second owner.
 
 - `NATIVE-037..039`, `NATIVE-053`, `NATIVE-063`, and `NATIVE-064` now occur in `goals/uml/activity/interact-with-an-activity-diagram.md`.
 - `NATIVE-033`, `NATIVE-035`, `NATIVE-058..060`, `NATIVE-065..067`, `NATIVE-069`, and `NATIVE-072` now occur in `goals/uml/class/interact-with-a-class-diagram.md`.
@@ -111,10 +110,14 @@ correct these inventory values. Task 11 does not invent a second owner.
 - `NATIVE-008`, `NATIVE-009`, and `NATIVE-055` now occur in `goals/read-a-bundle/use-the-shell.md`.
 - `NATIVE-017..020` now occur in `goals/read-a-bundle/work-with-tabs.md`.
 
+The integration also removes the duplicate `BHV-TAB-005` and `NATIVE-021`
+product record. `NATIVE-017` remains the one product contract for preview
+replacement.
+
 # Verification gaps
 
 The following shipped scenarios keep the verification-gap status in their
-owning goals. Task 11 adds traceability and does not change their evidence.
+owning goals. Product use-case traceability does not change their evidence.
 
 - `edit-prose` — native: `NATIVE-047`.
 - `save-and-undo` — native: `NATIVE-030`.
@@ -139,12 +142,7 @@ owning goals. Task 11 adds traceability and does not change their evidence.
 
 # Open discrepancies
 
-- Task 12 must reconcile the 34 frozen owner paths listed under `# Evidence`.
-  This is a traceability ownership correction, not a product-behavior
-  discrepancy.
-- Task 12 must remove the duplicate frozen `BHV-TAB-005` and `NATIVE-021`
-  product record and goal scenario. `NATIVE-017` remains the one product
-  contract for preview replacement.
+None.
 
 # Feature gaps
 

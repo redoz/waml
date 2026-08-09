@@ -2,7 +2,7 @@
 
 This report links each shipped UI behavior scenario to its implementation and test evidence. A marked test has an adjacent `Scenario:` comment. A partial test has no marker and does not satisfy the target boundary.
 
-- Verified scenarios: 60
+- Verified scenarios: 59
 - Verification gaps: 53
 
 | Scenario | Implementation paths | Test paths | Target boundary | Verification state | Gap reason |
@@ -112,7 +112,6 @@ This report links each shipped UI behavior scenario to its implementation and te
 | NATIVE-018 | <code>crates/waml-editor/src/doc_tabs.rs:163 (OpenTabs)</code> | <code>crates/waml-editor/src/doc_tabs.rs::promote_then_open_preview_keeps_the_promoted_tab_and_adds_a_fresh_preview</code> (marked) | native | verified | — |
 | NATIVE-019 | <code>crates/waml-editor/src/document_host.rs:115 (tabs)</code> | <code>crates/waml-editor/src/doc_tabs.rs::reopening_a_promoted_tab_focuses_it_instead_of_duplicating</code> (marked) | native | verified | — |
 | NATIVE-020 | <code>crates/waml-editor/src/doc_tabs.rs:163 (OpenTabs)</code> | <code>crates/waml-editor/src/doc_tabs.rs::close_activates_right_adjacent_then_left_then_first_tab</code> (marked) | native | verified | — |
-| NATIVE-021 | <code>crates/waml-editor/src/document_host.rs:33 (DocumentHost)</code> | <code>crates/waml-editor/src/document_host.rs::prepared_preview_replacement_drops_the_old_live_view</code> (marked) | native | verified | — |
 | VSCODE-001 | <code>editors/vscode/src/serverPath.ts:34 (resolveServerPath)</code> | <code>editors/vscode/src/serverPath.test.ts::uses WAML_SERVER_PATH when set (runnable when the file exists)</code> (partial)<br><code>editors/vscode/src/serverPath.test.ts::uses an explicit waml.serverPath config value</code> (partial)<br><code>editors/vscode/src/serverPath.test.ts::ignores the default config value and falls through to the bundled binary</code> (partial)<br><code>editors/vscode/src/serverPath.test.ts::lets env win over an explicit config value</code> (partial) | native | gap | No test proves a runnable bare waml command on PATH; the existing PATH test proves only the missing-command error path. |
 | VSCODE-002 | <code>editors/vscode/src/extension.ts:19 (activate)</code> | <code>editors/vscode/src/serverPath.test.ts::starts the configured executable once with stdio, restart policy, and markdown initialization</code> (marked)<br><code>editors/vscode/src/serverPath.test.ts::pins the installed client&#39;s bounded default error and crash-restart behavior</code> (marked) | native | verified | — |
 | VSCODE-003 | <code>editors/vscode/src/extension.ts:19 (activate)</code> | <code>editors/vscode/src/serverPath.test.ts::reports an unresolved executable without constructing a client</code> (marked) | native | verified | — |

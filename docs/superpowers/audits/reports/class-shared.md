@@ -22,7 +22,7 @@
 - `NATIVE-036` — `solve-the-layout.md`
 - `NATIVE-051` — `route-the-edges.md`
 
-The ownership plan moves these frozen rows without changing the inventory:
+The integrated inventory records these owner moves:
 
 - `NATIVE-033` moves from `goals/uml/class/index.md` to
   `goals/uml/class/interact-with-a-class-diagram.md`.
@@ -33,8 +33,8 @@ The ownership plan moves these frozen rows without changing the inventory:
   move from `goals/author-in-the-editor/draw-on-the-canvas.md` to
   `goals/uml/class/interact-with-a-class-diagram.md`.
 
-Task 12 must reconcile these ten `goal_document` values. The Task 7 owner does
-not copy the five class-interaction handoff scenarios.
+All ten `goal_document` values now name these owners. The authoring tree does
+not copy the five class-interaction scenarios.
 
 # Evidence
 

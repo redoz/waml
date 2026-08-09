@@ -19,24 +19,25 @@
 - `NATIVE-013` and `NATIVE-016` — `navigate-and-return.md`
 - `NATIVE-006` and `NATIVE-007` — `fit-the-window.md`
 - `NATIVE-008`, `NATIVE-009`, and `NATIVE-055` — `use-the-shell.md`
-- `NATIVE-017` through `NATIVE-021` — `work-with-tabs.md`
+- `NATIVE-017` through `NATIVE-020` — `work-with-tabs.md`
 
-The ownership plan moves these frozen rows without changing the inventory:
+The integrated inventory records these owner moves:
 
 - `NATIVE-014` moves from `navigate-and-return.md` to `open-a-bundle.md`.
 - `NATIVE-015` moves from `navigate-and-return.md` to `browse-the-tree.md`.
 - `NATIVE-008`, `NATIVE-009`, and `NATIVE-055` move from
   `fit-the-window.md` to `use-the-shell.md`.
-- `NATIVE-017` through `NATIVE-021` move from `read-a-document.md` to
+- `NATIVE-017` through `NATIVE-020` move from `read-a-document.md` to
   `work-with-tabs.md`.
 
-`NATIVE-021` has no distinct user-visible result beyond `NATIVE-017`. Its test
-also checks that one preview remains for the new document. Task 12 should merge
-the duplicate product row with `NATIVE-017` and move old live-view release to an
-architecture invariant. This report keeps the smallest observable contract
-required by the current frozen row.
-
 # Evidence
+
+The integration removes the duplicate preview-release product record.
+`NATIVE-017` remains the one preview-replacement contract. The old live-view
+release is an architecture invariant in
+`docs/waml/architecture/concepts/implementation/document-host.md`. Its test is
+`prepared_preview_replacement_drops_the_old_live_view`. Task 17 does not change
+that historical test marker.
 
 - `NATIVE-001` — implementation: `crates/waml-editor/src/start_screen.rs::StartScreen`; test: none.
 - `NATIVE-002` — implementation: `crates/waml-editor/src/config.rs::sort_recents`; test: none.
@@ -58,7 +59,6 @@ required by the current frozen row.
 - `NATIVE-018` — implementation: `crates/waml-editor/src/doc_tabs.rs::OpenTabs`; test: `crates/waml-editor/src/doc_tabs.rs::promote_then_open_preview_keeps_the_promoted_tab_and_adds_a_fresh_preview`.
 - `NATIVE-019` — implementation: `crates/waml-editor/src/document_host.rs::tabs`; test: `crates/waml-editor/src/doc_tabs.rs::reopening_a_promoted_tab_focuses_it_instead_of_duplicating`.
 - `NATIVE-020` — implementation: `crates/waml-editor/src/doc_tabs.rs::OpenTabs`; test: `crates/waml-editor/src/doc_tabs.rs::close_activates_right_adjacent_then_left_then_first_tab`.
-- `NATIVE-021` — implementation: `crates/waml-editor/src/document_host.rs::DocumentHost`; test: `crates/waml-editor/src/document_host.rs::prepared_preview_replacement_drops_the_old_live_view`.
 - `NATIVE-022` — implementation: `crates/waml-editor/src/generic_okf_view.rs:34` (`GenericOkfView::new_with_asset_host`) and `crates/waml-editor/src/source_view.rs:236` (`SourceView::install_snapshot`); partial test: `crates/waml-editor/tests/markdown_integration.rs::read_only_mount_never_emits_a_source_proposal`.
 - `NATIVE-045` — implementation: `crates/waml-markdown-editor/src/widget.rs::navigation_position`; test: `crates/waml-editor/tests/markdown_integration.rs::external_replacement_maps_selection_and_scroll_and_cuts_motion`.
 - `NATIVE-055` — implementation: `crates/waml-editor/src/app/shell.rs::sync_document_shell`; test: `crates/waml-editor/src/app/tests/shell.rs::mounted_history_buttons_lead_the_tab_strip_past_the_tree_column`.

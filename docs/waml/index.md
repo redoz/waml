@@ -1,5 +1,8 @@
 # WAML documentation
 
-- [Architecture](./architecture/index.md): The current product architecture, as concepts and views.
-- [Goals](./goals/index.md): What WAML is for, decomposed until the leaves are implementation-sized.
-- [User](./user.md): A person who opens a WAML bundle to read it.
+* [User](./user.md) - A person who opens a WAML bundle to read it.
+* [WAML architecture](architecture/)
+* [Documentation Contract](./documentation-contract.md) - The scenario, evidence, status, provenance, and freshness rules for docs/waml.
+* [Goals](goals/)
+* [Product Use Cases](use-cases/)
+* [WAML Feature Gaps](./waml-feature-gaps.md) - Language and tooling opportunities found while documenting product behavior.

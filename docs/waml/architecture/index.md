@@ -2,7 +2,6 @@
 
 This package describes the current product model, implementation boundaries, revisioned workflows, and deployment surfaces.
 
-- [Architecture overview](./overview.md)
-- [Architecture concepts](./concepts/)
-- [Implementation concepts](./concepts/implementation/)
-- [Architecture views](./views/)
+* [Architecture overview](./overview.md)
+* [WAML architecture concepts](concepts/)
+* [Architecture views](views/)

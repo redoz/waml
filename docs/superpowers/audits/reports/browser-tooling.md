@@ -10,8 +10,7 @@
 - `docs/waml/goals/tooling-around-the-repo/text-editor-integration.md`
 - `docs/superpowers/audits/reports/browser-tooling.md`
 
-The Task 10 indexes remain unchanged. Task 12 owns final index generation and
-cross-cutting integration.
+Task 17 generated the final indexes and completed cross-cutting integration.
 
 # Scenario identifiers
 
@@ -29,10 +28,9 @@ cross-cutting integration.
   `text-editor-integration.md`
 
 All 41 shipped identifiers and applicability values remain unchanged. The
-non-GWT records are `BHV-BRW-013` (unsupported), `BHV-BRW-021`,
-`BHV-BRW-022`, and `BHV-LSP-007` (discrepant), and `BHV-LSP-006` and
-`BHV-VSC-007` (planned). `BHV-BRW-014` remains in `goals/mvp.md`; Task 12 owns
-that cross-cutting discrepancy and its inventory reconciliation.
+integrated non-GWT records in this stream are `BHV-BRW-013` (unsupported),
+`BHV-BRW-022` (discrepant), and `BHV-LSP-006` and `BHV-VSC-007` (planned).
+The cross-cutting `BHV-BRW-014` discrepancy remains in `goals/mvp.md`.
 
 # Evidence
 
@@ -108,12 +106,8 @@ that cross-cutting discrepancy and its inventory reconciliation.
 - `BHV-BRW-022` remains an implementation discrepancy. A non-success API boot
   HTTP response is logged but does not produce the visible error that the goal
   requires.
-- `BHV-BRW-021` is a stale-document discrepancy corrected in
-  `publish-a-site.md`. Task 12 must reconcile its frozen state after this task.
-- `BHV-LSP-007` is a stale-document discrepancy corrected in
-  `language-server.md`. Task 12 must reconcile its frozen state after this task.
-- `BHV-BRW-014` is owned by `goals/mvp.md`, which is outside Task 10. Task 12
-  must reconcile it; `serve-locally.md` does not duplicate the record.
+- `BHV-BRW-014` remains owned by `goals/mvp.md`; `serve-locally.md` does not
+  duplicate the record.
 
 # Feature gaps
 
@@ -123,6 +117,3 @@ that cross-cutting discrepancy and its inventory reconciliation.
 - [FG-010](../../../waml/waml-feature-gaps.md#fg-010--scenario-to-evidence-traceability)
   records the manual scenario-to-use-case-to-test traceability seam for all 41
   shipped scenarios.
-- The frozen unsupported row `BHV-BRW-013` names `FG-014`, which is not in the
-  current feature-gap ledger. Task 12 must reconcile that frozen reference. This
-  task does not invent or edit a gap outside its file ownership.
