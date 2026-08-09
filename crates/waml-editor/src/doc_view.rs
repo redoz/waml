@@ -235,6 +235,26 @@ impl BodyWidgets {
         self.set_canvas_interaction_enabled(cx, false);
     }
 
+    /// Take every document surface down. The counterpart to the `show_*`
+    /// family above, which are all "mine on, my siblings off" -- fine while
+    /// some view owns the centre, but there is no view to run when the last
+    /// tab closes, and the surface the closed document was drawing on would
+    /// otherwise stay up behind empty chrome.
+    pub fn hide_document_surfaces(&self, cx: &mut Cx) {
+        for surface in [
+            ids!(canvas_wrap),
+            ids!(behavior_canvas_wrap),
+            ids!(diagram_properties_wrap),
+            ids!(markdown_surface),
+            ids!(markdown_viewer_surface),
+            ids!(folder_view_surface),
+        ] {
+            self.ui.widget(cx, surface).set_visible(cx, false);
+        }
+        self.set_canvas_interaction_enabled(cx, false);
+        self.set_behavior_canvas_interaction_enabled(cx, false);
+    }
+
     pub fn folder_list(&self) -> FolderListViewRef {
         self.folder_list.clone()
     }

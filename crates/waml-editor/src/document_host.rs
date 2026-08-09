@@ -286,6 +286,12 @@ impl DocumentHost {
         // locator no longer resolves): neither canvas may take input.
         body.set_canvas_interaction_enabled(cx, false);
         body.set_behavior_canvas_interaction_enabled(cx, false);
+        if self.tabs.active_tab().is_none() {
+            // Nothing is open, so nothing owns the centre. A tombstoned tab is
+            // the other way round -- it stays on screen, dimmed and inert, so
+            // only the genuinely empty case takes the surfaces down.
+            body.hide_document_surfaces(cx);
+        }
     }
 
     fn finish_transition(

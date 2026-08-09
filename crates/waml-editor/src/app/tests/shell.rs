@@ -116,6 +116,54 @@ fn mounted_production_shell() -> (Cx, App) {
     (cx, app)
 }
 
+/// Closing the last document tab has to take the document surface down with
+/// it. Nothing else does: every surface is shown by the view that owns it and
+/// hidden by whichever view takes over next, so with no next view the closed
+/// document's diagram stayed on screen behind empty chrome.
+#[test]
+fn closing_the_last_tab_hides_the_document_surfaces() {
+    let (mut cx, mut app) = mounted_production_shell();
+    let source = waml::source::SourceBundle::try_from_pairs([(
+        "domain.md",
+        "---\ntype: Diagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n",
+    )])
+    .unwrap();
+    app.session.replace(source).unwrap();
+    app.ensure_markdown_asset_host(crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle);
+    app.refresh_nav(&mut cx, true);
+
+    assert!(app.transition_document(&mut cx, "domain", true));
+    assert_eq!(
+        app.documents
+            .active_tab()
+            .map(|tab| tab.presentation.category),
+        Some(NavCategory::Diagram),
+        "the fixture must open as a class diagram, on the canvas"
+    );
+    assert!(
+        app.ui.widget(&cx, ids!(canvas_wrap)).visible(),
+        "the diagram tab owns the canvas while it is open"
+    );
+
+    let id = app.documents.active_id();
+    assert!(app.close_document(&mut cx, id));
+
+    assert!(app.documents.active_tab().is_none(), "no tabs are left");
+    for surface in [
+        ids!(canvas_wrap),
+        ids!(behavior_canvas_wrap),
+        ids!(diagram_properties_wrap),
+        ids!(markdown_surface),
+        ids!(markdown_viewer_surface),
+        ids!(folder_view_surface),
+    ] {
+        assert!(
+            !app.ui.widget(&cx, surface).visible(),
+            "{surface:?} must be hidden once the last tab is closed"
+        );
+    }
+}
+
 #[derive(Debug)]
 struct DockAreas {
     body: Rect,
