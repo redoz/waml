@@ -43,11 +43,6 @@ script_mod! {
     // exact because a per-segment AABB collapses to the bar itself (`sdf.rect`,
     // not `sdf.box`, for a sharp edge).
     mod.draw.EdgeLine = mod.draw.DrawColor{
-        zoom: uniform(1.0)
-        // Zoomed-out target color: at 1:1 the line rides `color` (text_dim), but
-        // a hairline of muted grey washes into the near-white field when zoomed
-        // out, so fade toward this deeper `text` stop as zoom drops.
-        color_deep: uniform(atlas.text)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             // Sdf2d coverage is `clamp(-dist * aa)` with `aa = 1 /
@@ -60,11 +55,11 @@ script_mod! {
             // fractional end still antialiased.
             sdf.aa = sdf.aa * 1.4142136
             sdf.rect(-0.5, -0.5, self.rect_size.x + 1.0, self.rect_size.y + 1.0)
-            // Color deepens non-linearly as zoom drops: k = 0 at zoom >= 1 (the
-            // line stays text_dim), fading toward the darker `text` stop zoomed
-            // out so the thinning bar keeps its contrast on the field.
-            let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
-            sdf.fill(mix(self.color, self.color_deep, k))
+            // One ink at every zoom. CAD linework is defined by its weight, not
+            // by the camera: an edge that darkened as you zoomed out made the
+            // same relationship read as two different strokes, which is exactly
+            // what the fixed-width, pixel-snapped policy exists to prevent.
+            sdf.fill(self.color)
             return sdf.result
         }
     }
@@ -73,11 +68,9 @@ script_mod! {
     // `corner_fillet` as ONE combined SDF. The pixel fn UNIONS the two short bar
     // stubs (`bar_in`/`bar_out`) and quarter-arc band, so their joints are
     // interior to one filled shape: solid, with AA only on the outer boundary.
-    // Fades text_dim -> text zoomed out like `EdgeLine` so a corner never reads
-    // brighter than the bars it joins.
+    // Shares `EdgeLine`'s single zoom-independent ink so a corner never reads
+    // brighter or darker than the bars it joins.
     mod.draw.EdgeElbow = mod.draw.DrawColor{
-        zoom: uniform(1.0)
-        color_deep: uniform(atlas.text)
         center: uniform(vec2(0.0, 0.0))
         radius: uniform(0.0)
         // Arc band HALF-width (= snapped bar thickness / 2), so the band matches the
@@ -114,8 +107,7 @@ script_mod! {
             // arc-to-bar joints are interior to one filled shape (solid, no AA seam).
             sdf.rect(self.bar_in.x - 0.5, self.bar_in.y - 0.5, self.bar_in.z + 1.0, self.bar_in.w + 1.0)
             sdf.rect(self.bar_out.x - 0.5, self.bar_out.y - 0.5, self.bar_out.z + 1.0, self.bar_out.w + 1.0)
-            let k = clamp((1.0 - self.zoom) * 2.0, 0.0, 0.85)
-            sdf.fill(mix(self.color, self.color_deep, k))
+            sdf.fill(self.color)
             return sdf.result
         }
     }
