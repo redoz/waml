@@ -8,13 +8,14 @@ profile: uml-domain
 # Crate Ownership
 
 ## Notes
-- A `depends` arrow points from a consuming crate to the local crate named in its Cargo manifest.
+- The root workspace lists exactly these six crates.
+- A `depends` arrow shows a production path dependency under `[dependencies]`. It points from the consumer to the dependency.
 - `waml-editor` depends on `waml` and `waml-markdown-editor`.
 - `waml-markdown-editor` depends on `waml-syntax`.
 - `waml` depends on `waml-syntax`.
 - `waml-ops-dto` depends on `waml`.
 - `waml-cli` depends on `waml` and `waml-ops-dto`.
-- `waml-ui-test` and `waml-ui-test-macros` are workspace test-support crates. They are outside this six-crate product ownership view.
+- `waml-editor` also has a dev-only path dependency on `waml-syntax`. This production view does not show dependencies under `[dev-dependencies]`.
 - [FG-009 — component ports and transactions](../../waml-feature-gaps.md#fg-009-—-component-ports-and-transactions) records why this view uses dependencies and notes instead of typed component ports.
 
 ## Members

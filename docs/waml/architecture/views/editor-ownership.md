@@ -10,10 +10,15 @@ profile: uml-domain
 ## Notes
 - The app shell owns composition and user-action coordination. `EditorSession` owns the installed revisioned snapshot and edit transaction.
 - The document host owns open-tab state and the live `DocView` registry.
+- The document host also owns the selection, camera, or scroll anchor of each inactive tab.
 - Navigation resolves semantic targets before the app shell sends open, activate, promote, close, or history commands to this boundary.
 - The document host calls the common `DocView` lifecycle. It does not dispatch on Markdown, class, activity, or sequence document families.
 - The Markdown editor owns its document-local session, input, layout, and widget. It does not own `EditorSession`.
-- Diagram renderers consume installed UML analysis. They do not commit source or analysis state.
+- `ClassDiagramView` and `BehaviorDocView` coordinate projection, action routing, and the `DocView` lifecycle.
+- `ClassDiagramSurface` owns the class scene, viewport, interaction, placement, and selection state.
+- `BehaviorSurface` owns the behavior scene, viewport, and selected behavior target.
+- `BodyWidgets` provides access to the shared canvases, inspector, tool dock, selection toolbar, and view toolbar.
+- Diagram views and surfaces consume installed UML analysis. They do not commit source or analysis state.
 - Platform adapters own native and browser effects. The app shell invokes them at the product boundary.
 - A removed tab cannot retain a live view. Reconciliation releases the old view when preview replacement removes its tab.
 - [FG-009 — component ports and transactions](../../waml-feature-gaps.md#fg-009-—-component-ports-and-transactions) records why this view uses dependencies and notes instead of typed component ports.
