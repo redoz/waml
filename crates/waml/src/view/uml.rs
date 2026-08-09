@@ -127,23 +127,6 @@ mod tests {
     }
 
     #[test]
-    fn stamps_box_on_the_uml_domain_child_only() {
-        let (bundle, root) = fixture();
-        let rows = projected_rows(&bundle, &root);
-
-        let pkg_row = rows
-            .iter()
-            .find(|row| row.id.path.as_str() == "pkg")
-            .expect("pkg row present");
-        let plain_row = rows
-            .iter()
-            .find(|row| row.id.path.as_str() == "plain")
-            .expect("plain row present");
-        assert_eq!(pkg_row.icon.as_ref().map(IconId::as_str), Some("box"));
-        assert_eq!(plain_row.icon.as_ref().map(IconId::as_str), Some("book"));
-    }
-
-    #[test]
     fn occludes_is_false_for_every_projected_path() {
         let (bundle, root) = fixture();
         let directory = bundle.directory(root.as_str()).unwrap().clone();

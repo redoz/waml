@@ -158,7 +158,7 @@ fn every_icon_id_a_registered_middleware_can_mint_has_a_registered_icon() {
     let mut mintable: BTreeSet<&'static str> =
         RowKind::ALL.iter().map(RowKind::as_icon_name).collect();
     mintable.insert("book"); // RootView::folder_row
-    mintable.insert("box"); // UmlView's package/box glyph
+    mintable.insert("box"); // RootView::folder_row stamps box on uml-domain folders
 
     let registered: BTreeSet<&'static str> =
         icon_table().into_iter().map(|(name, _)| name).collect();

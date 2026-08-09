@@ -31,15 +31,6 @@ pub const ROOT_VIEW_OWNER: &str = "index";
 /// `waml_editor::folder_projection::maskable_names`, which filters it out.
 pub const ROOT_VIEW_NAME: &str = ROOT_VIEW_OWNER;
 
-/// The `IconId` name this stage stamps on every folder row it mints.
-///
-/// Public because a surface that shows a directory it did NOT receive as a
-/// projected row (the tree's own root node, which has no parent listing to
-/// carry an icon) must resolve the same glyph a listing of that directory's
-/// parent would have given it -- two spellings of "the folder glyph" is the
-/// exact cross-surface disagreement the icon table exists to prevent.
-pub const FOLDER_ROW_ICON: &str = "book";
-
 fn folder_surface() -> SurfaceId {
     SurfaceId("folder".to_string())
 }
@@ -150,7 +141,16 @@ impl RootView {
             None,
         )
         .expect("a Folder target never requires a surface override");
-        row.icon = Some(IconId::new(FOLDER_ROW_ICON));
+        // The glyph is a property of the profile the directory DECLARES in its
+        // own frontmatter (raw `index.profile`, never the inherited
+        // `resolved_profile`): `okf` -> book, `uml-domain` -> box, an unknown or
+        // foreign name -> no ProfileDef -> no stamp. A child that declares no
+        // profile stamps nothing; `resolve_icon` degrades an unstamped Folder
+        // row to `Icon::Folder`, so plain folders draw the plain folder glyph.
+        row.icon = child_index
+            .and_then(|index| index.profile.as_deref())
+            .and_then(crate::profile::profile)
+            .map(|def| IconId::new(def.folder_icon));
         row.caps = super::row::RowCaps {
             rename: true,
             delete: true,
@@ -1279,7 +1279,9 @@ mod tests {
         };
         assert_eq!(icon_for("a"), Some("class".to_string()));
         assert_eq!(icon_for("b"), Some("note".to_string()));
-        assert_eq!(icon_for("archive"), Some("book".to_string()));
+        // `archive` declares no profile, so `folder_row` stamps nothing; the row
+        // carries no icon and `resolve_icon` degrades it to the plain folder glyph.
+        assert_eq!(icon_for("archive"), None);
         // No `type` frontmatter -> ElementType::Unknown -> RowKind::OkfDocument.
         assert_eq!(icon_for("loose"), Some("okf-document".to_string()));
     }

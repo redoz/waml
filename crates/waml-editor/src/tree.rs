@@ -152,6 +152,25 @@ fn build_tree_with_registry(
     limits: waml::view::chain::ChainLimits,
     registry: &waml::view::chain::MiddlewareRegistry,
 ) -> ProjectTree {
+    /// The glyph name a directory draws for its OWN declared profile
+    /// (`index.profile`), defaulting to `"book"` -- the OKF bundle-root glyph
+    /// -- when it declares none. Declaration, not the inherited
+    /// `resolved_profile`, drives it; an unknown/foreign name resolves no
+    /// `ProfileDef` and falls back to `"book"` here (this is only reached for
+    /// the bundle-root node, the one directory no listing produced a row
+    /// for).
+    fn declared_directory_glyph(
+        bundle: &waml::okf::Bundle,
+        address: &waml::okf::DirectoryAddress,
+    ) -> &'static str {
+        bundle
+            .index(address.as_str())
+            .and_then(|index| index.profile.as_deref())
+            .and_then(waml::profile::profile)
+            .map(|def| def.folder_icon)
+            .unwrap_or("book")
+    }
+
     /// The glyph a directory node draws when no projected row supplied one:
     /// the tree's own ROOT (nothing lists it, so no row carries its icon) and
     /// a repeat occurrence's shallow children. Resolved through `resolve_icon`
@@ -161,10 +180,11 @@ fn build_tree_with_registry(
     /// another. Any diagnostic is the caller's to fold into `view_degraded`.
     fn default_directory_icon(
         address: &waml::okf::DirectoryAddress,
+        glyph: &str,
         table: &[(&str, Icon)],
     ) -> (Icon, Option<waml::diagnostic::Diagnostic>) {
         crate::extension_editor::resolve_icon(
-            Some(&waml::view::row::IconId::new(waml::view::FOLDER_ROW_ICON)),
+            Some(&waml::view::row::IconId::new(glyph)),
             &waml::view::row::RowTarget::Folder(address.as_str().to_string()),
             table,
             address.as_str(),
@@ -178,6 +198,7 @@ fn build_tree_with_registry(
     /// so the only thing this decides is "folder, nothing beneath it here".
     fn shallow_directory_node(
         address: &waml::okf::DirectoryAddress,
+        glyph: &str,
         table: &[(&str, Icon)],
     ) -> Option<TreeNode> {
         Some(TreeNode {
@@ -190,7 +211,7 @@ fn build_tree_with_registry(
             title: String::new(),
             kind: NavCategory::Directory,
             presentation: DocumentPresentation {
-                icon: default_directory_icon(address, table).0,
+                icon: default_directory_icon(address, glyph, table).0,
                 accent: crate::accent::tree_kind_color(NavCategory::Directory),
                 category: NavCategory::Directory,
             },
@@ -247,7 +268,8 @@ fn build_tree_with_registry(
         // Only the tree's ROOT keeps this presentation: every other directory
         // node is overwritten below with the icon the row that produced it
         // resolved to.
-        let (default_icon, default_icon_diagnostic) = default_directory_icon(address, table);
+        let glyph = declared_directory_glyph(bundle, address);
+        let (default_icon, default_icon_diagnostic) = default_directory_icon(address, glyph, table);
         let presentation = DocumentPresentation {
             icon: default_icon,
             accent: crate::accent::tree_kind_color(NavCategory::Directory),
@@ -332,7 +354,11 @@ fn build_tree_with_registry(
                     // shallow: same identity, same label, no chain run and
                     // no recursion.
                     let child_node = if repeat {
-                        shallow_directory_node(&child, table)
+                        shallow_directory_node(
+                            &child,
+                            declared_directory_glyph(bundle, &child),
+                            table,
+                        )
                     } else {
                         directory_node(
                             okf,
@@ -1250,10 +1276,7 @@ mod tests {
     #[test]
     fn tree_row_icon_matches_the_folder_row_icon_for_the_same_directory() {
         let source = SourceBundle::try_from_pairs([
-            (
-                "index.md",
-                "---\nview: uml\n---\n# Root\n\n* [Pkg](pkg/)\n* [Docs](docs/)\n",
-            ),
+            ("index.md", "# Root\n\n* [Pkg](pkg/)\n* [Docs](docs/)\n"),
             ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
             ("docs/index.md", "# Docs\n"),
         ])
@@ -1278,20 +1301,17 @@ mod tests {
             .collect();
 
         assert_eq!(tree_icons["Pkg"], Icon::Box, "a uml-domain package");
-        assert_eq!(tree_icons["Docs"], Icon::Book, "a plain folder");
+        assert_eq!(tree_icons["Docs"], Icon::Folder, "a plain folder");
         assert_eq!(tree_icons["Pkg"], folder_icons["Pkg"]);
         assert_eq!(tree_icons["Docs"], folder_icons["Docs"]);
     }
 
-    /// The `uml` stage stamps the package glyph while projecting a LISTING, so
-    /// the stage has to be in the PARENT directory's resolved chain. A folder
-    /// that declares `profile: uml-domain` under a parent that resolves no
-    /// `uml` stage is still a package -- `resolved_profile` says so -- but
-    /// nothing is running that would stamp its row, so it draws the plain
-    /// folder glyph. Declaring the profile on the child is necessary and NOT
-    /// sufficient; this is the failure a bundle author hits first.
+    /// A folder declaring `profile: uml-domain` draws the box glyph from its
+    /// own declaration, with NO `uml` stage in the parent chain -- the "no
+    /// boxes at all" regression this change fixes. Declaration alone is now
+    /// sufficient.
     #[test]
-    fn a_declared_package_under_a_chainless_parent_draws_the_plain_folder_glyph() {
+    fn a_declared_package_draws_a_box_without_a_uml_stage_in_the_parent_chain() {
         let source = SourceBundle::try_from_pairs([
             ("index.md", "# Root\n\n* [Pkg](pkg/)\n"),
             ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
@@ -1313,8 +1333,8 @@ mod tests {
         );
         assert_eq!(
             tree.roots[0].children[0].presentation.icon,
-            Icon::Book,
-            "but the root listing ran no uml stage, so nothing stamped the row",
+            Icon::Box,
+            "the box comes from folder_row's folder_icon, not a uml stage",
         );
     }
 
@@ -1344,18 +1364,17 @@ mod tests {
         assert_eq!(icons["Billing"], Icon::Box, "a declared uml-domain package");
         assert_eq!(
             icons["Notes"],
-            Icon::Book,
+            Icon::Folder,
             "a plain folder declaring nothing"
         );
     }
 
-    /// The ROOT node is the one directory in the tree that no listing
-    /// produced, so nothing hands it a row icon. It must still draw the glyph
-    /// a directory row draws -- a root drawing the folder glyph while every
-    /// directory beneath it draws the book glyph is exactly the cross-surface
-    /// disagreement the icon table exists to prevent (visual check V5).
+    /// The root node is the one directory no listing produced a row for, so it
+    /// stamps its own declared-profile glyph -- defaulting to `book`, the OKF
+    /// bundle-root glyph, for an undeclared top. Its plain interior child draws
+    /// the plain folder glyph; the two legitimately differ now.
     #[test]
-    fn the_root_node_draws_the_same_glyph_as_its_directory_children() {
+    fn the_root_node_draws_the_okf_bundle_root_glyph_for_an_undeclared_top() {
         let source = SourceBundle::try_from_pairs([
             (
                 "index.md",
@@ -1381,10 +1400,7 @@ mod tests {
         );
         let root = &tree.roots[0];
         assert_eq!(root.presentation.icon, Icon::Book);
-        assert_eq!(
-            root.presentation.icon, root.children[0].presentation.icon,
-            "the root and its directory children draw one glyph, not two",
-        );
+        assert_eq!(root.children[0].presentation.icon, Icon::Folder);
     }
 
     /// A stage that stamps the `box` glyph on every row, concept rows

@@ -489,23 +489,23 @@ mod tests {
         assert_eq!(rows[1].label, "Sales");
         assert_eq!(
             rows[1].icon,
-            Icon::Book,
-            "a folder row carries the book glyph"
+            Icon::Folder,
+            "a plain folder row carries the folder glyph"
         );
     }
 
     /// Task 10: a mixed listing -- a `uml-domain` child, a plain child, a
-    /// `uml.Class` concept, and a `note` concept -- projected through a
-    /// declared `view: uml` chain resolves every row to the icon the plan's
-    /// V2/V4 checks expect: the box glyph is `uml`'s alone, the book glyph is
-    /// every plain folder's, and the class/note glyphs are exactly what they
-    /// resolve to today, unchanged.
+    /// `uml.Class` concept, and a `note` concept -- resolves every row to the
+    /// icon the plan's V2/V4 checks expect: the box glyph comes from the
+    /// child's own declared profile (no `uml` stage needed), the plain child
+    /// draws the plain folder glyph, and the class/note glyphs are exactly
+    /// what they resolve to today, unchanged.
     #[test]
     fn row_views_resolves_the_icon_table_for_a_mixed_listing() {
         let prepared = analysis([
             (
                 "index.md",
-                "---\nview: uml\n---\n# Root\n\n* [Pkg](pkg/)\n* [Docs](docs/)\n* [Order](order.md)\n* [Notes](notes.md)\n",
+                "# Root\n\n* [Pkg](pkg/)\n* [Docs](docs/)\n* [Order](order.md)\n* [Notes](notes.md)\n",
             ),
             ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
             ("docs/index.md", "# Docs\n"),
@@ -522,8 +522,9 @@ mod tests {
         let rows = view.row_views();
         assert_eq!(
             rows.iter().map(|row| row.icon).collect::<Vec<_>>(),
-            vec![Icon::Box, Icon::Book, Icon::PanelTop, Icon::FileText],
-            "class and note glyphs are exactly what they resolve to today",
+            vec![Icon::Box, Icon::Folder, Icon::PanelTop, Icon::FileText],
+            "box from the declared uml-domain profile, folder for the plain child; \
+             class and note glyphs unchanged",
         );
     }
 
