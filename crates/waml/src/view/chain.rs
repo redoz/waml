@@ -718,10 +718,11 @@ fn guard_descend<'a>(
     }
 }
 
-/// Runner bounds. Constructed by the HOST (editor from `.waml/editor.json`,
-/// tests directly, LSP from its own config) and passed in. There is no
-/// constructor that reads a bundle: bundle-supplied `max_view_depth` is
-/// unreachable by construction, not by filtering.
+/// Runner bounds. Constructed by the HOST (editor and CLI from
+/// `.waml/project.json` via [`ProjectConfig`], tests directly, LSP from its own
+/// config) and passed in. There is no constructor that reads a bundle:
+/// bundle-supplied `max_view_depth` is unreachable by construction, not by
+/// filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChainLimits {
     /// Maximum descent depth the runner will walk before giving up.
@@ -731,6 +732,48 @@ pub struct ChainLimits {
 impl Default for ChainLimits {
     fn default() -> Self {
         ChainLimits { max_depth: 20 }
+    }
+}
+
+/// Contents of `<project>/.waml/project.json`: how a project wants its views
+/// RESOLVED, as opposed to how one person happens to have their panels sized
+/// (that is the editor's own `.waml/editor.json`, and the two must not mix --
+/// a depth cap is a property of the model, a column width is a property of a
+/// desk).
+///
+/// Lives here, in the core crate beside the bounds it produces, so every host
+/// reads the same shape: the editor today, the CLI and LSP whenever they grow
+/// a chain runner. The FILE READ stays with each host -- this crate does not
+/// take a JSON dependency to own one -- but the schema does not fork.
+///
+/// Every field carries `serde(default)` so a hand-trimmed `{}`, or a file
+/// written by an older tool, still loads with the rest filled in.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectConfig {
+    /// Schema version of this file.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub version: u32,
+    /// Maximum folder-view middleware chain descent depth. `None` (absent, or
+    /// an explicit `null`) means [`ChainLimits::default`]. This file is the
+    /// ONLY source the runner is ever built from -- a bundle or index
+    /// frontmatter never reaches [`ChainLimits`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub max_view_depth: Option<usize>,
+}
+
+impl ProjectConfig {
+    /// Current `project.json` schema version. Hosts stamp this on write so the
+    /// version travels with the schema rather than with whoever wrote it.
+    pub const VERSION: u32 = 1;
+
+    /// Map `max_view_depth` onto the runner's bounds, defaulting an absent or
+    /// `null` value to [`ChainLimits::default`].
+    pub fn chain_limits(&self) -> ChainLimits {
+        match self.max_view_depth {
+            Some(max_depth) => ChainLimits { max_depth },
+            None => ChainLimits::default(),
+        }
     }
 }
 
@@ -1225,6 +1268,22 @@ mod tests {
             &ProjectionMask::default(),
         );
         assert_eq!(chain.ids, chain_again.ids);
+    }
+
+    /// The whole point of the type: a project file's number becomes the
+    /// runner's bound, and an absent one is the default rather than zero.
+    #[test]
+    fn project_config_maps_onto_the_runners_bounds() {
+        assert_eq!(
+            ProjectConfig::default().chain_limits(),
+            ChainLimits::default(),
+            "an absent depth is the default, NOT a depth of zero",
+        );
+        let configured = ProjectConfig {
+            version: ProjectConfig::VERSION,
+            max_view_depth: Some(7),
+        };
+        assert_eq!(configured.chain_limits().max_depth, 7);
     }
 
     #[test]

@@ -47,27 +47,37 @@ const SETTINGS_VERSION: u32 = 1;
 const README_TEXT: &str = "\
 # `.waml/`
 
-This directory holds editor state for **this project**, written by the WAML
-editor. Nothing in here is part of your model -- the model is the markdown in
-the project itself, and the editor will load it exactly the same whether this
-directory exists or not. Deleting `.waml/` costs you nothing but the layout
-you had set up.
+This directory holds settings for **this project**, written by WAML tooling.
+Nothing in here is part of your model -- the model is the markdown in the
+project itself, and it will load whether this directory exists or not.
 
-`editor.json` is where that layout lives: things like how wide you dragged
-the model tree and the inspector columns. It is versioned, so a newer editor
-can read a file an older one wrote.
+There are two files, and they belong to different people:
+
+`editor.json` is yours. It holds the layout you set up: things like how wide
+you dragged the model tree and the inspector columns.
+
+`project.json` is the project's. It holds settings about how the model itself
+is read -- currently `max_view_depth`, how far a folder view will follow its
+view chain before giving up. Any WAML tool reads it, not just the editor.
+
+Both are versioned, so newer tooling can read a file an older version wrote.
 
 ## Should I commit this?
 
-Most people will want to add `.waml/` to their `.gitignore`. These are your
-personal window proportions, and they will churn in every diff and conflict
-with everyone else's while telling no one anything about the model.
+Different answers for the two files, which is why they are two files.
 
-The editor deliberately does **not** write a `.gitignore` entry for you. If a
-team wants to agree on a shared starting layout for a project -- a wide tree
-for a deeply nested model, say -- committing this file is a perfectly
-reasonable thing to do, and that should be a decision someone made on purpose
-rather than one the editor made quietly on their behalf.
+Most people will want to gitignore `editor.json`. Those are your personal
+window proportions: they churn in every diff and conflict with everyone
+else's, while telling no one anything about the model.
+
+`project.json` is usually worth committing. It says something true about the
+model rather than about your screen, and a team is better off agreeing on it
+than each discovering it separately.
+
+The tooling deliberately does **not** write a `.gitignore` entry for you.
+Committing your layout is a perfectly reasonable thing for a team to do --
+a wide tree for a deeply nested model, say -- and that should be a decision
+someone made on purpose rather than one made quietly on their behalf.
 ";
 
 /// Persisted widths of the two dock columns, in logical pixels.
@@ -95,6 +105,13 @@ impl Default for DockWidths {
 
 /// Contents of `<project>/.waml/editor.json`.
 ///
+/// ONE PERSON'S VIEW OF A PROJECT, and nothing else. How a project wants its
+/// views resolved lives in `.waml/project.json`
+/// ([`waml::view::chain::ProjectConfig`], read by
+/// [`crate::project_config`]) -- that is a property of the model, readable by
+/// any waml tool, and a thing a team may well commit; this file is a column
+/// width on one person's desk.
+///
 /// Every field carries `#[serde(default)]` -- exactly as `EditorConfig` does --
 /// so a file written by an older editor, or one hand-edited down to `{}`, still
 /// loads with the missing pieces filled in from defaults.
@@ -106,28 +123,6 @@ pub(crate) struct ProjectSettings {
     /// Dock column widths; absent in a hand-trimmed file -> defaults.
     #[serde(default)]
     pub dock: DockWidths,
-    /// Maximum folder-view middleware chain descent depth; `None` (absent in
-    /// a hand-trimmed file, or explicit `null`) maps to the runner's default
-    /// of 20 via [`ProjectSettings::chain_limits`]. This is the ONLY source
-    /// the runner is ever built from -- a bundle or index frontmatter never
-    /// reaches `waml::view::chain::ChainLimits`.
-    #[serde(default)]
-    pub max_view_depth: Option<usize>,
-}
-
-impl ProjectSettings {
-    /// Map `max_view_depth` to the runner's [`waml::view::chain::ChainLimits`],
-    /// defaulting an absent or `null` value to the runner's built-in default.
-    ///
-    /// Unused outside tests until Task B6 wires the runner into the tree
-    /// panel; that commit removes this allow.
-    #[allow(dead_code)]
-    pub(crate) fn chain_limits(&self) -> waml::view::chain::ChainLimits {
-        match self.max_view_depth {
-            Some(max_depth) => waml::view::chain::ChainLimits { max_depth },
-            None => waml::view::chain::ChainLimits::default(),
-        }
-    }
 }
 
 /// `<project>/.waml`.
@@ -137,6 +132,12 @@ fn project_dir(project_root: &Path) -> PathBuf {
 
 /// Load `<project>/.waml/editor.json`, falling back to the pre-rename
 /// [`LEGACY_SETTINGS_FILE`] when only that one is on disk.
+///
+/// The legacy file also carried `max_view_depth`, which now belongs to
+/// `.waml/project.json`. It is NOT migrated: [`ProjectSettings`] has no such
+/// field, so serde drops it, and a project that had one hand-set goes back to
+/// the runner's default depth until it is set again in the new file. A clean
+/// break, deliberately -- see the module docs on `project_config`.
 ///
 /// Missing or unreadable -> defaults. Malformed JSON -> the bad file is renamed
 /// to `editor.json.bak` and defaults are returned. Never panics, never errors:
@@ -192,7 +193,7 @@ fn write_readme_once(dir: &Path) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -204,7 +205,6 @@ mod tests {
                 tree_w,
                 inspector_w,
             },
-            max_view_depth: None,
         }
     }
 
@@ -274,7 +274,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join(LEGACY_SETTINGS_FILE),
-            br#"{"version":1,"dock":{"tree_w":410.0,"inspector_w":250.0}}"#,
+            br#"{"version":1,"dock":{"tree_w":410.0,"inspector_w":250.0},"max_view_depth":7}"#,
         )
         .unwrap();
 
@@ -285,6 +285,33 @@ mod tests {
         store(tmp.path(), &settings(305.0, 315.0)).unwrap();
         assert!(dir.join(EDITOR_FILE).exists());
         assert_eq!(load(tmp.path()).dock.tree_w, 305.0);
+    }
+
+    /// The layout migrates; the view config does NOT. `max_view_depth` moved to
+    /// `.waml/project.json`, and reading it back out of a legacy EDITOR file to
+    /// seed a non-editor one would re-create the tangle the split undoes. The
+    /// field simply is not in this struct, so serde drops it -- assert that,
+    /// because "the depth quietly stopped applying" is the failure mode.
+    #[test]
+    fn the_pre_split_depth_cap_is_dropped_rather_than_migrated() {
+        let tmp = TempDir::new();
+        let dir = project_dir(tmp.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(LEGACY_SETTINGS_FILE),
+            br#"{"version":1,"dock":{"tree_w":410.0,"inspector_w":250.0},"max_view_depth":7}"#,
+        )
+        .unwrap();
+
+        // The layout survives...
+        assert_eq!(load(tmp.path()).dock.tree_w, 410.0);
+        // ...and the depth cap is not something this file can carry at all.
+        store(tmp.path(), &load(tmp.path())).unwrap();
+        let written = std::fs::read_to_string(dir.join(EDITOR_FILE)).unwrap();
+        assert!(
+            !written.contains("max_view_depth"),
+            "the editor's file must not round-trip a view setting: {written}"
+        );
     }
 
     /// A corrupt `editor.json` must take the `.bak` rescue, NOT fall through to
@@ -334,37 +361,16 @@ mod tests {
         assert_eq!(load(tmp.path()).dock.tree_w, 305.0);
     }
 
-    #[test]
-    fn project_settings_max_view_depth_round_trips() {
-        let tmp = TempDir::new();
-        let mut want = settings(300.0, 300.0);
-        want.max_view_depth = Some(7);
-        store(tmp.path(), &want).unwrap();
-        assert_eq!(load(tmp.path()).max_view_depth, Some(7));
-        assert_eq!(load(tmp.path()).chain_limits().max_depth, 7);
-    }
-
-    #[test]
-    fn absent_field_yields_default_20() {
-        let tmp = TempDir::new();
-        let dir = project_dir(tmp.path());
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(EDITOR_FILE), br#"{"version":1}"#).unwrap();
-        let loaded = load(tmp.path());
-        assert_eq!(loaded.max_view_depth, None);
-        assert_eq!(
-            loaded.chain_limits(),
-            waml::view::chain::ChainLimits::default()
-        );
-    }
-
     /// Minimal temp dir, mirroring `config.rs`'s: the repo has no temp-dir
     /// dev-dependency, so make a unique subdir under the system temp dir and
     /// remove it on drop.
-    struct TempDir(PathBuf);
+    ///
+    /// `pub(crate)` so `project_config`'s tests -- the other half of this
+    /// directory -- borrow it rather than minting a third copy.
+    pub(crate) struct TempDir(PathBuf);
 
     impl TempDir {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             static N: AtomicU32 = AtomicU32::new(0);
             let n = N.fetch_add(1, Ordering::Relaxed);
             let nanos = SystemTime::now()
@@ -381,7 +387,7 @@ mod tests {
             TempDir(dir)
         }
 
-        fn path(&self) -> &Path {
+        pub(crate) fn path(&self) -> &Path {
             &self.0
         }
     }

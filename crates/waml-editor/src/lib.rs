@@ -79,6 +79,7 @@ mod overlay_shell;
 mod panel_splitter;
 mod platform_browser;
 mod popup;
+mod project_config;
 mod project_settings;
 mod property_controls;
 mod reading_view;

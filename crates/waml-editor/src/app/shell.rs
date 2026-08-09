@@ -579,15 +579,17 @@ impl App {
     }
 
     /// Seed the dock column widths and the view-chain depth cap from the
-    /// project that just opened. Called once per `open_dir`; a project with no
-    /// `.waml/editor.json` (or an unreadable one) lands on the compiled-in
-    /// defaults. One read for both: they come from the same file, and a second
-    /// read is a second chance for the two to disagree.
+    /// project that just opened. Called once per `open_dir`; a project with
+    /// neither file (or unreadable ones) lands on the compiled-in defaults.
+    ///
+    /// TWO reads, of two files with two owners: the widths are this person's
+    /// (`.waml/editor.json`), the depth cap is the project's
+    /// (`.waml/project.json`, the shape any waml tool reads). They are seeded
+    /// together only because opening a project is when both are needed.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) fn load_dock_widths(&mut self, cx: &mut Cx, project_root: &std::path::Path) {
-        let settings = crate::project_settings::load(project_root);
-        self.chain_limits = settings.chain_limits();
-        self.dock_widths = settings.dock;
+        self.dock_widths = crate::project_settings::load(project_root).dock;
+        self.chain_limits = crate::project_config::load(project_root).chain_limits();
         self.sync_dock_slots(cx);
     }
 
