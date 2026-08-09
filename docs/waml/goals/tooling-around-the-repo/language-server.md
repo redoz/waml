@@ -69,10 +69,6 @@ current live buffer. Completion remains planned.
 
 - BHV-LSP-006 — Completion of element names, relationship names, relationship kinds, and link targets has no passing acceptance scenario.
 
-## Discrepancies
-
-- BHV-LSP-007 — The earlier goal text said that the server could answer from stale disk content. The current live-buffer result is implemented at `crates/waml-cli/src/lsp/server.rs:223` and is observed after an edit by `crates/waml-cli/tests/lsp_e2e.rs::snapshot_queries_are_advertised_unicode_exact_and_revision_current_over_stdio`.
-
 ## Notes
 
 - The language server is not diagnostics-only. It provides diagnostics,

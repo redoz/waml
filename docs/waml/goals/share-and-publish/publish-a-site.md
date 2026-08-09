@@ -23,10 +23,6 @@ operates, or the workflow fails and reports the failure.
 
 **Evidence:** `.github/workflows/pages.yml:184` and `scripts/verify-web-artifact.mjs:22`
 
-## Discrepancies
-
-- BHV-BRW-021 — The earlier goal text said that delivery automation did not stop defects before the web build. The web-artifact build depends on the full CI job at `.github/workflows/pages.yml:31`.
-
 ## Verification gaps
 
 - BROWSER-012 — target: browser; The verifier checks artifact structure before publication, but no browser test asserts a deployed artifact has every referenced resource.

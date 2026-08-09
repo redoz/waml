@@ -8,7 +8,7 @@ documents available.
 
 **Done when:** A new preview replaces the old preview, promotion keeps a tab,
 reopening a permanent tab does not duplicate it, close selects the specified
-fallback, and preview replacement leaves only the new preview open.
+fallback, and one reusable preview remains open.
 
 **Status:** done
 **MVP:** yes
@@ -55,16 +55,6 @@ fallback, and preview replacement leaves only the new preview open.
 **Then** the editor activates the right tab, then the left tab, then the first remaining tab as available
 
 **Evidence:** `crates/waml-editor/src/doc_tabs.rs::close_activates_right_adjacent_then_left_then_first_tab`
-
-#### NATIVE-021 — preview replacement leaves only the new preview open
-
-**Applies to:** native
-
-**Given** one document is open in preview
-**When** the reader opens a different document in preview
-**Then** only one preview remains open and it shows the new document
-
-**Evidence:** `crates/waml-editor/src/document_host.rs::prepared_preview_replacement_drops_the_old_live_view`
 
 ## Notes
 

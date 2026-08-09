@@ -44,22 +44,16 @@ for each single goal.
 can be `planned` and `MVP: yes`. The second combination shows the work that
 blocks the bar.
 
-Each goal and each feature row that has the word `unverified` has a status from
-a first reading of the code. The word is not a measurement. A later pass must
-replace each guess with a status that has evidence, such as a `file:line`
-reference or the name of a test. The remaining `unverified` marks are the task
-list for that pass.
-
 ## Level-1 roadmap
 
 | Goal | Status | MVP | Note |
 | --- | --- | --- | --- |
-| [Read a Bundle](read-a-bundle/) | partial | yes | The tree, the preview tabs, the document views, the diagram views, and the navigation history operate. |
-| [Author in the Editor](author-in-the-editor/) | partial | yes | Model edits, save, undo, and savepoints operate. Prose authoring and canvas control are weak. |
-| [Trust the Content](trust-the-content/) | partial | yes | The syntax layer is lossless and has many tests. Diagnostics do not go through all layers. |
-| [UML](uml/) | partial | yes | Class diagrams and behavior diagrams draw. Each kind has an incomplete cut. |
-| [Share and Publish](share-and-publish/) | partial | yes | The share link, the web build, and the site publication operate. |
-| [Tooling Around the Repo](tooling-around-the-repo/) | partial | no | The command-line tool, the language server, and the VS Code extension operate. The bar does not need them. |
+| [Read a Bundle](read-a-bundle/) | partial | yes | Seven reading goals are done. Reading every diagram kind remains planned. |
+| [Author in the Editor](author-in-the-editor/) | partial | yes | Prose editing, save, and undo are done. Document, model, and canvas authoring remain partial. |
+| [Trust the Content](trust-the-content/) | partial | yes | Round-trip and canonical formatting are done. Diagnostics, references, and index correction remain partial. |
+| [UML](uml/) | partial | yes | Diagram interaction is shipped. The feature cuts and shared presentation goals remain partial or planned. |
+| [Share and Publish](share-and-publish/) | partial | yes | Share and export are done. Browser parity and publication remain partial. |
+| [Tooling Around the Repo](tooling-around-the-repo/) | partial | no | The command-line tool is done. The language server and VS Code integration remain partial. |
 | [Beyond UML](./beyond-uml.md) | horizon | no | A general documentation tool and wiki. |
 
 ## Notes
