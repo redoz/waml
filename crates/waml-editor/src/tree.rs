@@ -1403,6 +1403,73 @@ mod tests {
         assert_eq!(root.children[0].presentation.icon, Icon::Folder);
     }
 
+    /// The bundle-root node stamps its OWN declared-profile glyph. The packages
+    /// fixture root declares `profile: uml-domain`, so the tree's root node draws
+    /// a box -- the counterpart to `..._for_an_undeclared_top`, which books.
+    #[test]
+    fn the_bundle_root_node_boxes_a_uml_domain_top() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/packages");
+        let source = crate::load::read_bundle(&dir).expect("the packages fixture loads");
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let tree = build_tree(
+            prepared.okf(),
+            prepared.uml(),
+            "Fallback",
+            &ProjectionMask::default(),
+            waml::view::chain::ChainLimits::default(),
+        );
+        assert_eq!(
+            tree.roots[0].presentation.icon,
+            Icon::Box,
+            "the root declares uml-domain, so the root node boxes",
+        );
+    }
+
+    /// The tree and the folder view resolve the SAME `IconId` against the SAME
+    /// table, so an okf child books, a uml-domain child boxes, and a plain child
+    /// folders -- identically on both surfaces.
+    #[test]
+    fn tree_and_folder_view_agree_across_book_box_and_folder_glyphs() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root\n\n* [Book](book-dir/)\n* [Pkg](pkg/)\n* [Plain](plain/)\n",
+            ),
+            ("book-dir/index.md", "---\nprofile: okf\n---\n# Book\n"),
+            ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
+            ("plain/index.md", "# Plain\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let limits = waml::view::chain::ChainLimits::default();
+        let mask = ProjectionMask::default();
+
+        let tree = build_tree(prepared.okf(), prepared.uml(), "Fallback", &mask, limits);
+        let tree_icons: std::collections::HashMap<String, Icon> = tree.roots[0]
+            .children
+            .iter()
+            .map(|node| (node.title.clone(), node.presentation.icon))
+            .collect();
+
+        let folder = crate::folder_view::FolderView::build(prepared.okf(), "/", limits, &mask)
+            .expect("root is in the bundle");
+        let folder_icons: std::collections::HashMap<String, Icon> = folder
+            .row_views()
+            .iter()
+            .map(|row| (row.label.clone(), row.icon))
+            .collect();
+
+        assert_eq!(tree_icons["Book"], Icon::Book);
+        assert_eq!(tree_icons["Pkg"], Icon::Box);
+        assert_eq!(tree_icons["Plain"], Icon::Folder);
+        for label in ["Book", "Pkg", "Plain"] {
+            assert_eq!(
+                tree_icons[label], folder_icons[label],
+                "{label} disagrees across surfaces"
+            );
+        }
+    }
+
     /// A stage that stamps the `box` glyph on every row, concept rows
     /// included -- the shipped `uml` stage only stamps folders, but nothing
     /// in the row model restricts a stamp to one target kind.

@@ -1287,6 +1287,51 @@ mod tests {
     }
 
     #[test]
+    fn folder_row_stamps_the_declared_profiles_glyph() {
+        let source = SourceBundle::try_from_pairs([
+            (
+                "index.md",
+                "# Root\n\n* [Okf](okf/)\n* [Pkg](pkg/)\n* [Plain](plain/)\n",
+            ),
+            ("okf/index.md", "---\nprofile: okf\n---\n# Okf\n"),
+            ("pkg/index.md", "---\nprofile: uml-domain\n---\n# Pkg\n"),
+            ("plain/index.md", "# Plain\n"),
+        ])
+        .unwrap();
+        let prepared = prepare_candidate(source, None, 1).unwrap();
+        let (_, okf, _uml, _) = prepared.into_parts();
+        let bundle = okf.bundle;
+        let root_address = okf::DirectoryAddress::parse("/").unwrap();
+        let directory = bundle.directory(root_address.as_str()).unwrap().clone();
+        let params = crate::frontmatter::Frontmatter::default();
+        let descend = |_: &okf::Directory| Chain::default();
+        let projection_ctx = ctx(&directory, &bundle, &params, &descend);
+
+        let registry = MiddlewareRegistry::new();
+        let chain = Chain::root_only(&registry);
+        let outcome = chain.run(&projection_ctx, ChainLimits::default());
+        let icon_for = |path: &str| -> Option<String> {
+            outcome
+                .rows
+                .iter()
+                .find(|row| row.id.path.as_str() == path)
+                .and_then(|row| row.icon.as_ref())
+                .map(|icon| icon.as_str().to_string())
+        };
+        assert_eq!(
+            icon_for("okf"),
+            Some("book".to_string()),
+            "profile: okf -> book"
+        );
+        assert_eq!(
+            icon_for("pkg"),
+            Some("box".to_string()),
+            "profile: uml-domain -> box"
+        );
+        assert_eq!(icon_for("plain"), None, "no declared profile -> no stamp");
+    }
+
+    #[test]
     fn a_concept_row_for_an_id_absent_from_the_bundle_carries_no_icon() {
         let (bundle, root_address) = fixture();
         let directory = bundle.directory(root_address.as_str()).unwrap().clone();
