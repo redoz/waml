@@ -1763,6 +1763,7 @@ mod tests {
             register_test_profile(ProfileDef {
                 name: "marked-profile",
                 default_view: Some(view_decl("profile-marker")),
+                folder_icon: "book",
             });
             let registry = registry();
 
@@ -1789,6 +1790,7 @@ mod tests {
             register_test_profile(ProfileDef {
                 name: "inherited-only",
                 default_view: Some(view_decl("profile-marker")),
+                folder_icon: "book",
             });
             let registry = registry();
 

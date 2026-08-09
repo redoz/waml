@@ -8,11 +8,16 @@
 
 use crate::view::decl::{ViewDecl, ViewEntry};
 
-/// One known profile: its exact name and its optional default view chain.
+/// One known profile: its exact name, its optional default view chain, and
+/// the folder glyph a directory draws when it declares this profile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileDef {
     pub name: &'static str,
     pub default_view: Option<ViewDecl>,
+    /// The `IconId` name a directory declaring this profile stamps on its
+    /// own folder row (`RootView::folder_row`) and on the tree's root node.
+    /// `"book"` marks an OKF bundle root, `"box"` a UML package.
+    pub folder_icon: &'static str,
 }
 
 /// Core's shipped profiles -- the list `CoreExt` (`crate::extension`) hands
@@ -22,6 +27,7 @@ pub(crate) fn shipped_profiles() -> Vec<ProfileDef> {
     vec![ProfileDef {
         name: "okf",
         default_view: None,
+        folder_icon: "book",
     }]
 }
 
@@ -38,6 +44,7 @@ pub(crate) fn uml_profiles() -> Vec<ProfileDef> {
                 line: 0,
             }],
         }),
+        folder_icon: "box",
     }]
 }
 
@@ -119,10 +126,12 @@ mod tests {
             .map(|e| e.raw.as_str())
             .collect();
         assert_eq!(chain_names, vec!["uml"]);
+        assert_eq!(uml.folder_icon, "box");
 
         let okf = profile("okf").expect("okf is shipped");
         assert_eq!(okf.name, "okf");
         assert_eq!(okf.default_view, None);
+        assert_eq!(okf.folder_icon, "book");
     }
 
     /// The name-check table must stay the union over the shipped extension
