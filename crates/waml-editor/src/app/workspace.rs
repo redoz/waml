@@ -26,13 +26,18 @@ where
     load().map_err(BackingTransitionError::Load)
 }
 
-pub(super) fn close_after_save<T, S>(state: &mut T, save: S) -> Result<(), String>
+/// Flush, then empty the state -- and only in that order, so a failed save
+/// leaves everything intact.
+///
+/// `reset` is a closure rather than `T: Default` because emptying a session is
+/// not the same as replacing it with a fresh one: see [`EditorSession::close`].
+pub(super) fn close_after_save<T, S, R>(state: &mut T, save: S, reset: R) -> Result<(), String>
 where
-    T: Default,
     S: FnOnce(&T) -> Result<(), String>,
+    R: FnOnce(&mut T),
 {
     save(state)?;
-    *state = T::default();
+    reset(state);
     Ok(())
 }
 
@@ -795,7 +800,9 @@ impl App {
                     .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))?
                     .result
                     .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
-            })
+            },
+            crate::editor_session::EditorSession::close,
+            )
         };
 
         #[cfg(target_arch = "wasm32")]
@@ -807,7 +814,9 @@ impl App {
                 );
             }
             Ok(())
-        });
+        },
+        crate::editor_session::EditorSession::close,
+        );
 
         self.save_feedback.finish_save(&result);
         if let Err(error) = &result {

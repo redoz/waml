@@ -1114,6 +1114,17 @@ impl ProjectTree {
         self.layout.selected()
     }
 
+    /// Titles of the rows the panel would draw. Test-only reader for the app
+    /// suite, which needs to see WHICH model the tree is currently showing.
+    #[cfg(test)]
+    pub(crate) fn test_row_titles(&self) -> Vec<String> {
+        self.layout
+            .rows()
+            .iter()
+            .map(|row| row.title.clone())
+            .collect()
+    }
+
     /// Whether the row keyed `key` is unfolded. Test-only reader for the app
     /// suite, which used to probe the fork widget's retained fold state; the
     /// core is now the only place that state exists.

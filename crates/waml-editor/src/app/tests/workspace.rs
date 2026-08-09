@@ -212,10 +212,56 @@ fn failed_save_blocks_close_and_keeps_document_state() {
     let before = state.clone();
 
     assert_eq!(
-        close_after_save(&mut state, |_| Err("disk full".into())),
+        close_after_save(
+            &mut state,
+            |_| Err("disk full".into()),
+            |current| current.clear(),
+        ),
         Err("disk full".into())
     );
     assert_eq!(state, before);
+}
+
+/// Closing a model and opening another one must show the NEW model's tree.
+///
+/// The nav projection is memoized on the session revision, so a close that
+/// rewinds the revision counter (back to a value the previous model already
+/// used) makes the next open collide with the cached tree of the model that
+/// was just closed.
+#[test]
+fn reopening_after_a_close_shows_the_new_model_in_the_tree() {
+    let (mut cx, mut app) = navigation_app();
+    app.refresh_nav(&mut cx, true);
+    assert!(
+        tree_row_titles(&cx, &app).iter().any(|t| t == "Sales"),
+        "the first model's tree is the baseline: {:?}",
+        tree_row_titles(&cx, &app)
+    );
+
+    assert!(app.close_model(&mut cx));
+
+    let next = waml::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root\n\n* [Ops](ops/)\n"),
+        ("ops/index.md", "# Ops\n\n* [Incident](incident.md)\n"),
+        (
+            "ops/incident.md",
+            "---\ntype: Runbook\ntitle: Incident\n---\n# Incident\n",
+        ),
+    ])
+    .unwrap();
+    assert!(app.open_bundle(&mut cx, next, "ops".to_string(), None));
+
+    let titles = tree_row_titles(&cx, &app);
+    assert!(titles.iter().any(|t| t == "Ops"), "{titles:?}");
+    assert!(!titles.iter().any(|t| t == "Sales"), "{titles:?}");
+}
+
+fn tree_row_titles(cx: &Cx, app: &App) -> Vec<String> {
+    app.ui
+        .widget(cx, ids!(project_tree))
+        .borrow::<crate::tree_panel::ProjectTree>()
+        .expect("the test shell mounts project_tree")
+        .test_row_titles()
 }
 
 // Scenario: NATIVE-057
@@ -224,11 +270,15 @@ fn successful_save_allows_close_and_clears_document_state() {
     let mut state = vec!["edited"];
     let mut saved = false;
 
-    close_after_save(&mut state, |current| {
-        assert_eq!(current, &vec!["edited"]);
-        saved = true;
-        Ok(())
-    })
+    close_after_save(
+        &mut state,
+        |current| {
+            assert_eq!(current, &vec!["edited"]);
+            saved = true;
+            Ok(())
+        },
+        |current| current.clear(),
+    )
     .unwrap();
 
     assert!(saved);

@@ -394,6 +394,19 @@ impl EditorSession {
         ))
     }
 
+    /// Return to the empty state when the open model is closed.
+    ///
+    /// Deliberately NOT `*self = Self::default()`: the revision counter has to
+    /// keep climbing across a close. Callers treat the revision as an identity
+    /// for the session's content -- the app memoizes the nav projection on it,
+    /// and `finish_save` matches in-flight save completions against it -- so a
+    /// rewind hands the NEXT model a number this one already published, and
+    /// those lookups silently hit the closed model's state.
+    pub fn close(&mut self) {
+        self.replace(SourceBundle::default())
+            .expect("the empty source bundle must produce valid analyses");
+    }
+
     pub fn replace_external(
         &mut self,
         document: DocumentId,
