@@ -790,32 +790,36 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         let result = {
             let root = self.open_dir.as_deref();
-            close_after_save(&mut self.session, |session| {
-                let Some(ticket) = session.save_ticket() else {
-                    return Ok(());
-                };
-                let root =
-                    root.ok_or_else(|| "native bundle has no opened directory".to_string())?;
-                crate::native_save::save_ticket_atomic(root, &ticket)
-                    .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))?
-                    .result
-                    .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
-            },
-            crate::editor_session::EditorSession::close,
+            close_after_save(
+                &mut self.session,
+                |session| {
+                    let Some(ticket) = session.save_ticket() else {
+                        return Ok(());
+                    };
+                    let root =
+                        root.ok_or_else(|| "native bundle has no opened directory".to_string())?;
+                    crate::native_save::save_ticket_atomic(root, &ticket)
+                        .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))?
+                        .result
+                        .map_err(|error| format!("failed to save OKF dir {root:?}: {error}"))
+                },
+                crate::editor_session::EditorSession::close,
             )
         };
 
         #[cfg(target_arch = "wasm32")]
-        let result = close_after_save(&mut self.session, |session| {
-            if let Some(ticket) = session.save_ticket() {
-                cx.browser_update_url(
-                    &format!("#{}", waml::share::encode_source(&ticket.snapshot.source)),
-                    true,
-                );
-            }
-            Ok(())
-        },
-        crate::editor_session::EditorSession::close,
+        let result = close_after_save(
+            &mut self.session,
+            |session| {
+                if let Some(ticket) = session.save_ticket() {
+                    cx.browser_update_url(
+                        &format!("#{}", waml::share::encode_source(&ticket.snapshot.source)),
+                        true,
+                    );
+                }
+                Ok(())
+            },
+            crate::editor_session::EditorSession::close,
         );
 
         self.save_feedback.finish_save(&result);
