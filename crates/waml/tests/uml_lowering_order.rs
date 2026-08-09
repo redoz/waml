@@ -41,6 +41,104 @@ fn new_class(slug: &str, title: &str) -> uml::Op {
 }
 
 #[test]
+fn transition_trace_sets_select_parallel_transitions_and_reparse_between_ops() {
+    let source = SourceBundle::try_from_pairs([(
+        "sign-in.md",
+        "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [Old](./old.md)\n- on `oidc` transitions to SignedIn\n\n### SignedIn\n",
+    )])
+    .unwrap();
+
+    let changed = lower(
+        &source,
+        vec![
+            uml::Op::TransitionTracesSet {
+                selector: uml::TransitionSelector {
+                    behavior: "sign-in".into(),
+                    source_node: "SignedOut".into(),
+                    occurrence: 1,
+                },
+                traces: vec![
+                    uml::TraceSpec {
+                        label: "AUTH-OIDC-004".into(),
+                        href: "./sign-in-behavior.md#auth-oidc-004".into(),
+                    },
+                    uml::TraceSpec {
+                        label: "OIDC Core".into(),
+                        href: "https://openid.net/specs/openid-connect-core-1_0.html".into(),
+                    },
+                ],
+            },
+            uml::Op::TransitionTracesSet {
+                selector: uml::TransitionSelector {
+                    behavior: "sign-in".into(),
+                    source_node: "SignedOut".into(),
+                    occurrence: 0,
+                },
+                traces: vec![uml::TraceSpec {
+                    label: "AUTH-PASSWORD".into(),
+                    href: "./requirements.md#auth-password".into(),
+                }],
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        changed.document_by_concept_id("sign-in").unwrap().text(),
+        "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [AUTH-PASSWORD](./requirements.md#auth-password)\n- on `oidc` transitions to SignedIn\n  traces [AUTH-OIDC-004](./sign-in-behavior.md#auth-oidc-004)\n  traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n"
+    );
+}
+
+#[test]
+fn transition_trace_edits_add_update_remove_and_reorder() {
+    let source = SourceBundle::try_from_pairs([(
+        "flow.md",
+        "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A](#a) traces [B](#b)\n\n### Done\n",
+    )])
+    .unwrap();
+    let selector = uml::TransitionSelector {
+        behavior: "flow".into(),
+        source_node: "Start".into(),
+        occurrence: 0,
+    };
+
+    let changed = lower(
+        &source,
+        vec![
+            uml::Op::EditTransitionTraces {
+                selector: selector.clone(),
+                edit: uml::TraceEdit::Move { from: 1, to: 0 },
+            },
+            uml::Op::EditTransitionTraces {
+                selector: selector.clone(),
+                edit: uml::TraceEdit::Update {
+                    index: 1,
+                    label: "Updated A".into(),
+                    href: "#updated-a".into(),
+                },
+            },
+            uml::Op::EditTransitionTraces {
+                selector: selector.clone(),
+                edit: uml::TraceEdit::Remove { index: 0 },
+            },
+            uml::Op::EditTransitionTraces {
+                selector,
+                edit: uml::TraceEdit::Insert {
+                    index: 1,
+                    label: "External".into(),
+                    href: "https://example.com/spec".into(),
+                },
+            },
+        ],
+    )
+    .unwrap();
+
+    assert!(changed.document_by_concept_id("flow").unwrap().text().contains(
+        "- transitions to Done\n  traces [Updated A](#updated-a)\n  traces [External](https://example.com/spec)"
+    ));
+}
+
+#[test]
 fn classifier_new_then_set_reads_the_inserted_candidate() {
     let source = SourceBundle::default();
     let changed = lower(

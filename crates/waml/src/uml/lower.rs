@@ -3,8 +3,11 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use super::selector::{render_selector, RelBy, Selector};
-use super::syntax::{AttributeSyntax, RelationshipSyntax, UmlLanguage, UmlSyntaxKind};
-use super::{DiagramDisplaySet, FieldEdit, NameSpec};
+use super::syntax::{
+    AttributeSyntax, FlowNodeSyntax, FlowTransitionSyntax, RelationshipSyntax, UmlLanguage,
+    UmlSyntaxKind,
+};
+use super::{DiagramDisplaySet, FieldEdit, NameSpec, TraceEdit, TraceSpec, TransitionSelector};
 use crate::edit::{EditContext, EditError};
 use crate::layout::Direction;
 use crate::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
@@ -427,7 +430,187 @@ fn op_name(op: &super::Op) -> &'static str {
         super::Op::DiagramSet { .. } => "diagram.set",
         super::Op::PlacementSet { .. } => "place.set",
         super::Op::PlacementRemove { .. } => "place.rm",
+        super::Op::TransitionTracesSet { .. } => "transition.traces.set",
+        super::Op::EditTransitionTraces { .. } => "transition.traces.edit",
     }
+}
+
+pub(crate) fn op_transition_traces_edit(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    selector: &TransitionSelector,
+    edit: &TraceEdit,
+) -> Result<(), EditError> {
+    const OP: &str = "transition.traces.edit";
+    let (path, transition) = selected_transition(work, state, selector, OP)?;
+    let mut traces = transition
+        .traces()
+        .map(|trace| {
+            let link = trace
+                .link()
+                .ok_or_else(|| EditError::at(OP, "selected transition has a malformed trace"))?;
+            let label = link
+                .child_at(1)
+                .and_then(SyntaxElement::into_token)
+                .ok_or_else(|| EditError::at(OP, "selected trace has no label"))?
+                .text()
+                .write_to_string();
+            let href = link
+                .child_at(4)
+                .and_then(SyntaxElement::into_token)
+                .ok_or_else(|| EditError::at(OP, "selected trace has no href"))?
+                .text()
+                .write_to_string();
+            Ok(TraceSpec { label, href })
+        })
+        .collect::<Result<Vec<_>, EditError>>()?;
+    match edit {
+        TraceEdit::Insert { index, label, href } => {
+            if *index > traces.len() {
+                return Err(EditError::at(
+                    OP,
+                    format!("trace index {index} is out of bounds"),
+                ));
+            }
+            traces.insert(
+                *index,
+                TraceSpec {
+                    label: label.clone(),
+                    href: href.clone(),
+                },
+            );
+        }
+        TraceEdit::Update { index, label, href } => {
+            let trace = traces.get_mut(*index).ok_or_else(|| {
+                EditError::at(OP, format!("trace index {index} is out of bounds"))
+            })?;
+            *trace = TraceSpec {
+                label: label.clone(),
+                href: href.clone(),
+            };
+        }
+        TraceEdit::Remove { index } => {
+            if *index >= traces.len() {
+                return Err(EditError::at(
+                    OP,
+                    format!("trace index {index} is out of bounds"),
+                ));
+            }
+            traces.remove(*index);
+        }
+        TraceEdit::Move { from, to } => {
+            if *from >= traces.len() || *to >= traces.len() {
+                return Err(EditError::at(OP, "trace move index is out of bounds"));
+            }
+            let trace = traces.remove(*from);
+            traces.insert(*to, trace);
+        }
+    }
+    replace_transition_traces(work, &path, &transition, &traces, OP)
+}
+
+pub(crate) fn op_transition_traces_set(
+    work: &mut SourceBundle,
+    state: &mut UmlLoweringState,
+    selector: &TransitionSelector,
+    traces: &[TraceSpec],
+) -> Result<(), EditError> {
+    const OP: &str = "transition.traces.set";
+    let (path, transition) = selected_transition(work, state, selector, OP)?;
+    replace_transition_traces(work, &path, &transition, traces, OP)
+}
+
+fn selected_transition(
+    work: &SourceBundle,
+    state: &mut UmlLoweringState,
+    selector: &TransitionSelector,
+    op: &str,
+) -> Result<(BundlePath, FlowTransitionSyntax), EditError> {
+    let (path, tree) = state.tree(work, &selector.behavior, op)?;
+    let flow_node = nodes(&tree, UmlSyntaxKind::FlowNode)
+        .into_iter()
+        .filter_map(FlowNodeSyntax::cast)
+        .find(|node| node.identity_token().text().write_to_string().trim() == selector.source_node)
+        .ok_or_else(|| {
+            EditError::at(
+                op,
+                format!(
+                    "no flow node '{}' in behavior '{}'",
+                    selector.source_node, selector.behavior
+                ),
+            )
+        })?;
+    let mut transitions = Vec::new();
+    syntax_nodes(
+        flow_node.syntax(),
+        UmlSyntaxKind::FlowTransition,
+        &mut transitions,
+    );
+    let transition = transitions
+        .into_iter()
+        .filter_map(FlowTransitionSyntax::cast)
+        .nth(selector.occurrence)
+        .ok_or_else(|| {
+            EditError::at(
+                op,
+                format!(
+                    "no transition occurrence {} from '{}' in behavior '{}'",
+                    selector.occurrence, selector.source_node, selector.behavior
+                ),
+            )
+        })?;
+    Ok((path, transition))
+}
+
+fn replace_transition_traces(
+    work: &mut SourceBundle,
+    path: &BundlePath,
+    transition: &FlowTransitionSyntax,
+    traces: &[TraceSpec],
+    op: &str,
+) -> Result<(), EditError> {
+    let traces_node = transition
+        .syntax()
+        .child_at(FlowTransitionSyntax::TRACES_SLOT)
+        .and_then(SyntaxElement::into_node)
+        .expect("flow transition has a fixed traces occurrence");
+    let source = work.document(path).expect("claimed document").text();
+    let replacement = render_transition_traces(traces, line_ending(source), op)?;
+    replace_range(work, path, node_range(&traces_node), &replacement, op)
+}
+
+fn render_transition_traces(
+    traces: &[TraceSpec],
+    newline: &str,
+    op: &str,
+) -> Result<String, EditError> {
+    let mut rendered = Vec::with_capacity(traces.len());
+    for trace in traces {
+        if trace.label.trim().is_empty() || trace.href.trim().is_empty() {
+            return Err(EditError::at(op, "trace label and href must not be empty"));
+        }
+        if trace.label.contains(['\r', '\n']) || trace.href.contains(['\r', '\n']) {
+            return Err(EditError::at(
+                op,
+                "trace label and href must fit on one line",
+            ));
+        }
+        let label = trace.label.replace('\\', "\\\\").replace(']', "\\]");
+        let href = trace
+            .href
+            .replace('\\', "\\\\")
+            .replace('(', "\\(")
+            .replace(')', "\\)");
+        rendered.push(format!("[{label}]({href})"));
+    }
+    Ok(match rendered.as_slice() {
+        [] => String::new(),
+        [trace] => format!(" traces {trace}"),
+        traces => traces
+            .iter()
+            .map(|trace| format!("{newline}  traces {trace}"))
+            .collect(),
+    })
 }
 
 pub(crate) fn slug_of(path: &str) -> String {

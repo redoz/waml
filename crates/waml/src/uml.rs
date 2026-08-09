@@ -15,7 +15,9 @@ pub mod syntax;
 pub mod vocabulary;
 pub use complete::{completions, expectation_at, Completion, CompletionKind, Expectation};
 pub use format::{ActionContext, FormatError, Formatter};
-pub use ops::{Batch, DiagramDisplaySet, FieldEdit, NameSpec, Op};
+pub use ops::{
+    Batch, DiagramDisplaySet, FieldEdit, NameSpec, Op, TraceEdit, TraceSpec, TransitionSelector,
+};
 pub use repair::repair_actions;
 pub use selector::{RelationshipSelector, Selector};
 

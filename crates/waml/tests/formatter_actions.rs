@@ -143,6 +143,31 @@ fn malformed_recovery_and_unclaimed_generic_source_are_not_rewritten() {
 }
 
 #[test]
+fn formatter_uses_inline_trace_for_one_target_and_lines_for_many() {
+    let source = "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn\n  traces [AUTH-PASSWORD](requirements.md#auth-password)\n- on `oidc` transitions to SignedIn traces [AUTH-OIDC-004](sign-in.md#auth-oidc-004) traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n";
+    let expected = "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [AUTH-PASSWORD](./requirements.md#auth-password)\n- on `oidc` transitions to SignedIn\n  traces [AUTH-OIDC-004](./sign-in.md#auth-oidc-004)\n  traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n";
+    let candidate = prepared("sign-in.md", source, 21);
+
+    let formatted = apply(
+        &candidate,
+        Formatter
+            .format(
+                ActionContext::from_prepared(&candidate).unwrap(),
+                document(&candidate, "sign-in.md"),
+            )
+            .unwrap(),
+    );
+
+    assert_eq!(
+        formatted
+            .document(&BundlePath::parse("sign-in.md").unwrap())
+            .unwrap()
+            .text(),
+        expected
+    );
+}
+
+#[test]
 fn removed_sequence_spellings_are_not_rewritten_as_canonical_messages() {
     let source = "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Messages\n- a sends b: `old`\n- a replies b: `old`\n- a calls b: `old`\n";
     let candidate = prepared("sequence.md", source, 5);

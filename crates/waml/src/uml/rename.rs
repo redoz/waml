@@ -425,6 +425,34 @@ mod tests {
     }
 
     #[test]
+    fn rename_rewrites_transition_trace_paths_and_preserves_fragments() {
+        let b = vec![
+            (
+                "requirements/sign-in.md".to_string(),
+                "---\ntype: uml.Class\ntitle: Sign-in Requirements\n---\n# Sign-in Requirements\n\n## AUTH-OIDC-004\n".to_string(),
+            ),
+            (
+                "behavior/sign-in.md".to_string(),
+                "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `authenticated` transitions to SignedIn traces [AUTH-OIDC-004](../requirements/sign-in.md#auth-oidc-004)\n\n### SignedIn\n".to_string(),
+            ),
+        ];
+
+        let out = apply(
+            &b,
+            vec![node_rename("requirements/sign-in", "authentication")],
+        )
+        .unwrap();
+
+        let behavior = &out
+            .iter()
+            .find(|(path, _)| path == "behavior/sign-in.md")
+            .unwrap()
+            .1;
+        assert!(behavior
+            .contains("traces [AUTH-OIDC-004](../requirements/authentication.md#auth-oidc-004)"));
+    }
+
+    #[test]
     fn rename_resolves_from_by_full_path_id_and_still_rewrites_referrers() {
         // `from` addressed as the parse/graph layer's full bundle-path id
         // (`shop/order-line`), not the bare basename `order-line`.

@@ -72,6 +72,40 @@ pub struct DiagramDisplaySet {
     pub stereotype_colors: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransitionSelector {
+    pub behavior: String,
+    pub source_node: String,
+    pub occurrence: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TraceSpec {
+    pub label: String,
+    pub href: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TraceEdit {
+    Insert {
+        index: usize,
+        label: String,
+        href: String,
+    },
+    Update {
+        index: usize,
+        label: String,
+        href: String,
+    },
+    Remove {
+        index: usize,
+    },
+    Move {
+        from: usize,
+        to: usize,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
     AttributeAdd {
@@ -160,6 +194,14 @@ pub enum Op {
         diagram: String,
         subject_slug: String,
         reference_slug: String,
+    },
+    TransitionTracesSet {
+        selector: TransitionSelector,
+        traces: Vec<TraceSpec>,
+    },
+    EditTransitionTraces {
+        selector: TransitionSelector,
+        edit: TraceEdit,
     },
 }
 
@@ -366,6 +408,12 @@ pub(crate) fn lower_one_with_state(
         } => {
             require_claimed(state, work, diagram, "place.rm")?;
             super::lower::op_place_rm(work, state, diagram, subject_slug, reference_slug)
+        }
+        Op::TransitionTracesSet { selector, traces } => {
+            super::lower::op_transition_traces_set(work, state, selector, traces)
+        }
+        Op::EditTransitionTraces { selector, edit } => {
+            super::lower::op_transition_traces_edit(work, state, selector, edit)
         }
     }
 }

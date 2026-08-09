@@ -334,9 +334,27 @@ fn canonical_section(title: &str, raw: &str) -> String {
 
 fn canonical_flow_lines(lines: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    let mut transition: Option<(String, Vec<String>)> = None;
     for line in lines.iter().map(|line| line.trim_end()) {
         if line.trim().is_empty() {
             continue;
+        }
+        let trimmed = line.trim();
+        if let Some((base, traces)) = flow_transition_traces(trimmed) {
+            if base.is_empty() {
+                if let Some((_, pending)) = transition.as_mut() {
+                    pending.extend(traces);
+                }
+                continue;
+            }
+            if let Some((base, traces)) = transition.take() {
+                push_flow_transition(&mut out, &base, &traces);
+            }
+            transition = Some((base.to_owned(), traces));
+            continue;
+        }
+        if let Some((base, traces)) = transition.take() {
+            push_flow_transition(&mut out, &base, &traces);
         }
         if line.trim_start().starts_with("### ") || line.trim_start().starts_with("#### ") {
             if out.last().map_or(true, |line| !line.is_empty()) {
@@ -347,7 +365,87 @@ fn canonical_flow_lines(lines: &[&str]) -> Vec<String> {
             out.push(canonical_owned_line("Nodes", line));
         }
     }
+    if let Some((base, traces)) = transition {
+        push_flow_transition(&mut out, &base, &traces);
+    }
     out
+}
+
+fn push_flow_transition(out: &mut Vec<String>, base: &str, traces: &[String]) {
+    let base = canonical_owned_line("Nodes", base);
+    match traces {
+        [] => out.push(base),
+        [trace] => out.push(format!("{base} traces {trace}")),
+        traces => {
+            out.push(base);
+            out.extend(traces.iter().map(|trace| format!("  traces {trace}")));
+        }
+    }
+}
+
+fn flow_transition_traces(line: &str) -> Option<(&str, Vec<String>)> {
+    let first = if line.starts_with("traces [") {
+        0
+    } else if let Some(first) = line.find(" traces [") {
+        first + 1
+    } else if line.starts_with("- ") && line.contains(" transitions to ") {
+        return Some((line, Vec::new()));
+    } else {
+        return None;
+    };
+    let mut cursor = first;
+    let mut traces = Vec::new();
+    while line[cursor..].starts_with("traces [") {
+        cursor += "traces ".len();
+        let end = markdown_link_end(line, cursor)?;
+        traces.push(normalize_links(&line[cursor..end]));
+        cursor = end;
+        if cursor == line.len() {
+            break;
+        }
+        if !line[cursor..].starts_with(" traces [") {
+            return None;
+        }
+        cursor += 1;
+    }
+    (cursor == line.len()).then_some((line[..first].trim_end(), traces))
+}
+
+fn markdown_link_end(line: &str, start: usize) -> Option<usize> {
+    let bytes = line.as_bytes();
+    if bytes.get(start) != Some(&b'[') {
+        return None;
+    }
+    let mut cursor = start + 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b']' && bytes.get(cursor.wrapping_sub(1)) != Some(&b'\\') {
+            break;
+        }
+        cursor += 1;
+    }
+    if bytes.get(cursor..cursor + 2) != Some(b"](") {
+        return None;
+    }
+    cursor += 2;
+    let mut depth = 1usize;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'\\' {
+            cursor = (cursor + 2).min(bytes.len());
+            continue;
+        }
+        match bytes[cursor] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(cursor + 1);
+                }
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    None
 }
 
 fn canonical_member_lines(lines: &[&str]) -> Vec<String> {
@@ -519,7 +617,12 @@ fn normalize_links(value: &str) -> String {
         out.push_str(&value[cursor..open_label]);
         let label = value[open_label + 1..close_label].trim();
         let href = value[href_start..close_href].trim();
-        let href = if href.ends_with(".md") && !href.starts_with("./") && !href.starts_with("../") {
+        let path = href.split_once('#').map_or(href, |(path, _)| path);
+        let href = if path.ends_with(".md")
+            && !href.starts_with("./")
+            && !href.starts_with("../")
+            && !href.contains("://")
+        {
             format!("./{href}")
         } else {
             href.to_owned()
