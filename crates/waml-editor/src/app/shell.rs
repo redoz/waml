@@ -103,7 +103,7 @@ pub(super) fn project_document_header(
 ) -> (
     Vec<crate::navigation::BreadcrumbSegment>,
     Option<crate::icons::Icon>,
-    Option<crate::icons::Icon>,
+    Option<crate::doc_view::HeaderViewAction>,
 ) {
     let segments = if chrome.breadcrumb {
         breadcrumb.unwrap_or_default()

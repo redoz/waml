@@ -8,7 +8,8 @@ use makepad_widgets::*;
 use waml_markdown_editor::session::HostSnapshotCause;
 
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocViewIdentity, ViewData, ViewOutcome, ViewReconcilePolicy,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, HeaderViewAction, ViewData, ViewOutcome,
+    ViewReconcilePolicy,
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icon_button::IconButtonWidgetRefExt;
@@ -201,9 +202,15 @@ impl<V: DocView> DocView for SourceToggleView<V> {
         };
         // Icon shows the surface the toggle LEADS to.
         chrome.document_header.view_toggle = Some(if self.showing_source {
-            Icon::Eye
+            HeaderViewAction {
+                icon: Icon::Eye,
+                tooltip: "View rendered",
+            }
         } else {
-            Icon::Code
+            HeaderViewAction {
+                icon: Icon::Code,
+                tooltip: "View source",
+            }
         });
         chrome
     }
@@ -252,7 +259,7 @@ impl<V: DocView> DocView for SourceToggleView<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::doc_view::DocumentHeaderChrome;
+    use crate::doc_view::{DocumentHeaderChrome, HeaderViewAction};
 
     fn wrapped_preview() -> SourceToggleView<crate::classifier_preview_view::ClassifierPreviewView>
     {
@@ -301,7 +308,10 @@ mod tests {
             DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
-                view_toggle: Some(Icon::Code),
+                view_toggle: Some(HeaderViewAction {
+                    icon: Icon::Code,
+                    tooltip: "View source",
+                }),
             }
         );
     }
@@ -319,11 +329,20 @@ mod tests {
             DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
-                view_toggle: Some(Icon::Eye),
+                view_toggle: Some(HeaderViewAction {
+                    icon: Icon::Eye,
+                    tooltip: "View rendered",
+                }),
             }
         );
         view.toggle_for_test();
-        assert_eq!(view.chrome().document_header.view_toggle, Some(Icon::Code));
+        assert_eq!(
+            view.chrome().document_header.view_toggle,
+            Some(HeaderViewAction {
+                icon: Icon::Code,
+                tooltip: "View source",
+            })
+        );
     }
 
     #[test]

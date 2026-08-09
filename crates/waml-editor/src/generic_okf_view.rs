@@ -2,8 +2,8 @@ use makepad_widgets::*;
 use waml_markdown_editor::session::HostSnapshotCause;
 
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
-    ViewReconcilePolicy,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, HeaderViewAction,
+    ViewData, ViewOutcome, ViewReconcilePolicy,
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icon_button::IconButtonWidgetRefExt;
@@ -149,9 +149,15 @@ impl DocView for GenericOkfView {
                 // Icon shows the surface the toggle LEADS to; `sync` keeps it
                 // current when the user flips between them.
                 view_toggle: Some(if self.reading.showing_source() {
-                    Icon::Eye
+                    HeaderViewAction {
+                        icon: Icon::Eye,
+                        tooltip: "View rendered",
+                    }
                 } else {
-                    Icon::Code
+                    HeaderViewAction {
+                        icon: Icon::Code,
+                        tooltip: "View source",
+                    }
                 }),
             },
         }
@@ -232,7 +238,10 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
-                    view_toggle: Some(Icon::Code),
+                    view_toggle: Some(HeaderViewAction {
+                        icon: Icon::Code,
+                        tooltip: "View source",
+                    }),
                 },
             }
         );

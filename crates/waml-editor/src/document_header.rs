@@ -1,4 +1,5 @@
 use crate::cursor;
+use crate::doc_view::HeaderViewAction;
 use crate::icon_button::{IconButtonAction, IconButtonWidgetRefExt};
 use crate::icons::Icon;
 use crate::navigation::{BreadcrumbSegment, NavigationTarget};
@@ -222,7 +223,7 @@ struct DocumentHeaderState {
     segments: Vec<BreadcrumbSegment>,
     right_dock: Option<Icon>,
     /// The view-source/view-rendered toggle, when the active document has one.
-    view_toggle: Option<Icon>,
+    view_toggle: Option<HeaderViewAction>,
     segment_rects: Vec<(usize, Rect)>,
     /// Keeps the header band mounted for an active document even before it has
     /// breadcrumbs, so the body does not reflow when they appear. The history
@@ -264,7 +265,7 @@ impl DocumentHeaderState {
         true
     }
 
-    fn replace_view_toggle(&mut self, view_toggle: Option<Icon>) -> bool {
+    fn replace_view_toggle(&mut self, view_toggle: Option<HeaderViewAction>) -> bool {
         if self.view_toggle == view_toggle {
             return false;
         }
@@ -455,15 +456,18 @@ impl DocumentHeader {
         self.sync_content_layout(cx);
     }
 
-    pub fn set_view_toggle(&mut self, cx: &mut Cx, icon: Option<Icon>) {
-        if !self.state.replace_view_toggle(icon) {
+    pub fn set_view_toggle(&mut self, cx: &mut Cx, action: Option<HeaderViewAction>) {
+        if !self.state.replace_view_toggle(action) {
             return;
         }
 
         let button = self.view.widget(cx, ids!(view_button));
-        button.set_visible(cx, icon.is_some());
-        if let Some(icon) = icon {
-            button.as_icon_button().set_icon(cx, icon);
+        button.set_visible(cx, action.is_some());
+        if let Some(action) = action {
+            button.as_icon_button().set_icon(cx, action.icon);
+            button.as_icon_button().set_tooltip(Some(action.tooltip));
+        } else {
+            button.as_icon_button().set_tooltip(None);
         }
         self.sync_content_layout(cx);
     }
@@ -566,6 +570,7 @@ impl DocumentHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doc_view::HeaderViewAction;
     use crate::icons::Icon;
     use crate::navigation::{BreadcrumbSegment, NavigationTarget};
 
@@ -695,6 +700,25 @@ mod tests {
         assert_eq!(with_button.visible_indices, vec![1, 2]);
         assert_eq!(with_button.segment_rects[0].1.pos.x, HEADER_PAD_X);
         assert_eq!(with_button.segment_rects[1].1.pos.x, 62.0);
+    }
+
+    #[test]
+    fn replacing_the_view_destination_preserves_it_in_one_button_slot() {
+        let mut state = DocumentHeaderState::for_test(Vec::new(), None, Vec::new());
+
+        assert!(state.replace_view_toggle(Some(HeaderViewAction {
+            icon: Icon::Code,
+            tooltip: "View source",
+        })));
+        assert_eq!(state.trailing_buttons_width(), DOCUMENT_HEADER_H);
+
+        let destination = HeaderViewAction {
+            icon: Icon::Eye,
+            tooltip: "View rendered",
+        };
+        assert!(state.replace_view_toggle(Some(destination)));
+        assert_eq!(state.view_toggle, Some(destination));
+        assert_eq!(state.trailing_buttons_width(), DOCUMENT_HEADER_H);
     }
 
     #[test]

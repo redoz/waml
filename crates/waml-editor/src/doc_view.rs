@@ -562,13 +562,19 @@ pub trait DocView {
 }
 
 /// Which pieces of the shared body chrome the active tab drives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeaderViewAction {
+    pub icon: Icon,
+    pub tooltip: &'static str,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DocumentHeaderChrome {
     pub breadcrumb: bool,
     pub right_dock: Option<Icon>,
     /// The view-source/view-rendered toggle in the header's trailing button
     /// row, when the active document offers one.
-    pub view_toggle: Option<Icon>,
+    pub view_toggle: Option<HeaderViewAction>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -661,7 +667,10 @@ mod tests {
                 document_header: DocumentHeaderChrome {
                     breadcrumb: true,
                     right_dock: None,
-                    view_toggle: Some(Icon::Code),
+                    view_toggle: Some(HeaderViewAction {
+                        icon: Icon::Code,
+                        tooltip: "View source",
+                    }),
                 },
             }
         );

@@ -120,6 +120,10 @@ pub struct IconButton {
     /// until set -- nothing draws (an empty, unlit button).
     #[rust]
     icon: Option<Icon>,
+    /// Text shown by the application tooltip overlay while this button is
+    /// hovered. `None` keeps the button silent.
+    #[rust]
+    tooltip: Option<String>,
     /// Persistent lit state (e.g. an active tool / a pinned panel). Tints the
     /// glyph `atlas.accent` on its own; it does NOT paint the hover wash (see
     /// `wash_and_ink`), so resting-on and hovered are distinguishable states.
@@ -173,12 +177,25 @@ impl Widget for IconButton {
                 if !self.dim {
                     cursor::hover_in(cx, MouseCursor::Hand);
                 }
+                if let Some(text) = self.tooltip.clone() {
+                    cx.widget_action(
+                        uid,
+                        TooltipAction::HoverIn {
+                            text,
+                            widget_rect: self.view.area().rect(cx),
+                            options: CalloutTooltipOptions::default(),
+                        },
+                    );
+                }
                 self.hovered = true;
                 self.view.redraw(cx);
             }
             Hit::FingerHoverOut(_) => {
                 if !self.dim {
                     cursor::hover_out(cx);
+                }
+                if self.tooltip.is_some() {
+                    cx.widget_action(uid, TooltipAction::HoverOut);
                 }
                 self.hovered = false;
                 self.view.redraw(cx);
@@ -230,6 +247,11 @@ impl IconButton {
             self.icon = Some(icon);
             self.view.redraw(cx);
         }
+    }
+
+    /// Set the text shown while the pointer is over this button.
+    pub fn set_tooltip(&mut self, tooltip: Option<&str>) {
+        self.tooltip = tooltip.map(str::to_owned);
     }
 
     /// Drive the persistent lit state (active tool / pinned panel), redrawing
@@ -309,6 +331,13 @@ impl IconButtonRef {
     pub fn set_icon(&self, cx: &mut Cx, icon: Icon) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_icon(cx, icon);
+        }
+    }
+
+    /// See [`IconButton::set_tooltip`].
+    pub fn set_tooltip(&self, tooltip: Option<&str>) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_tooltip(tooltip);
         }
     }
 
