@@ -48,7 +48,7 @@ Key modified files: `crates/waml/src/lib.rs`, `crates/waml-editor/src/doc_view.r
 7. **Search tab identity:** `DocumentLocator { target: RowTarget::Virtual, surface: SurfaceId(format!("search:{query}")) }`. `tab_id_for` (`crates/waml-editor/src/documents.rs`) already bakes the surface string into the tab id, so two queries are two tabs and one query re-activates its tab. No new `RowTarget` variant (that would ripple through every tree consumer).
 8. **Activating a projection-hidden hit** opens a small confirm `MenuPopup` ("Show hidden match" / dismiss); confirming opens the document and reveals the span. (Spec: "Activating one offers to reveal the masked content.")
 9. **Hidden-by-projection detection:** a hit is hidden iff its concept is absent from the projected tree (`tree.rs` build output) while present in the bundle. Document-level hiding is what the folder-view middleware chains actually do today; element-level masking is not modelled in v1.
-10. **Index asset:** `search-index.txt` beside `bundle.waml`, carrying a format version and an FNV-1a content hash of the bundle; the editor falls back to building locally when the asset is missing, version-mismatched, or hash-stale — so native and exported site share one code path with one optional fast-load.
+10. **Index asset:** the index file name is **derived from the bundle file name by appending `.search-index`** — `bundle.waml` → `bundle.waml.search-index`, `orders.waml` → `orders.waml.search-index`. It is not a fixed name. `BUNDLE_FILE` (`crates/waml-cli/src/site.rs`) is only the default the CLI writes; boot resolves whatever `?bundle=<name>` supplies into `BrowserBootSource::Bundle(String)`, and two bundles can sit in one served directory. A fixed name would bind the index to the wrong bundle, and because the hash check would then fail into a local rebuild, the symptom would be "the published site is slow" rather than an error. Appending rather than replacing the extension keeps the derivation total for any bundle name and cannot collide with a real bundle. The asset carries a format version and an FNV-1a content hash of the bundle; the editor falls back to building locally when the asset is missing, version-mismatched, or hash-stale — so native and exported site share one code path with one optional fast-load.
 
 ---
 
@@ -820,8 +820,12 @@ git commit -m "feat(editor): F3 cross-document traversal and Esc-terminated sear
 - Produces (`asset.rs`):
 
 ```rust
-pub const SEARCH_INDEX_FILE: &str = "search-index.txt";
+pub const SEARCH_INDEX_SUFFIX: &str = ".search-index";
 pub const FORMAT_VERSION: u32 = 1;
+
+/// `"bundle.waml"` -> `"bundle.waml.search-index"`. Total for any bundle name;
+/// the index must track whatever `?bundle=<name>` resolved to, never a fixed name.
+pub fn index_file_name(bundle_file: &str) -> String;
 
 /// Deterministic, dependency-free, line-oriented text format:
 /// line 1: "waml-search-index v1 <fnv1a-of-bundle-bytes>", then documents,
@@ -832,10 +836,10 @@ pub fn decode(text: &str, expected_bundle_hash: u64) -> Result<MemSearchIndex, A
 pub fn bundle_hash(pairs: &[(String, String)]) -> u64; // FNV-1a over paths+bytes
 ```
 
-- CLI: in `commands.rs` `export site`, after reading the bundle: parse + analyze (the CLI already has the analysis pipeline for `waml check` — reuse it), `extract_bundle`, `MemSearchIndex::build`, `asset::encode`, and insert `SEARCH_INDEX_FILE -> bytes` into the `assemble_site` file map for `SiteSource::Static` (in `site.rs`, next to where `BUNDLE_FILE` is inserted). Spec boundary rule holds by construction: the index is built from exactly the pairs the export ships in `bundle.waml`, so search can never leak what the export withheld.
-- Editor: where the wasm boot path fetches `bundle.waml` (`browser_boot.rs`), also request `search-index.txt`; on success AND `decode(text, bundle_hash(pairs))` Ok, seed `SearchState` from the decoded index; on ANY failure, `SearchState::rebuild` as today (decision 10). Native editor keeps building locally — same `SearchState`, one extra constructor `SearchState::from_index(MemSearchIndex)`.
+- CLI: in `commands.rs` `export site`, after reading the bundle: parse + analyze (the CLI already has the analysis pipeline for `waml check` — reuse it), `extract_bundle`, `MemSearchIndex::build`, `asset::encode`, and insert `index_file_name(BUNDLE_FILE) -> bytes` into the `assemble_site` file map for `SiteSource::Static` (in `site.rs`, next to where `BUNDLE_FILE` is inserted — derived from the same constant, so the pair cannot drift). Spec boundary rule holds by construction: the index is built from exactly the pairs the export ships in `bundle.waml`, so search can never leak what the export withheld.
+- Editor: where the wasm boot path fetches the bundle (`browser_boot.rs`), also request `index_file_name(name)` for the **same** `BrowserBootSource::Bundle(name)` it just fetched — never a literal; on success AND `decode(text, bundle_hash(pairs))` Ok, seed `SearchState` from the decoded index; on ANY failure, `SearchState::rebuild` as today (decision 10). Native editor keeps building locally — same `SearchState`, one extra constructor `SearchState::from_index(MemSearchIndex)`.
 
-- [ ] **Step 1: Failing tests.** `asset.rs`: encode→decode round-trips query results (same `Vec<Hit>` for three probe queries); wrong version and wrong hash are rejected; `decode` of truncated text is `Corrupt`, never a panic. `site.rs` tests (existing style): a static-site assembly now contains `search-index.txt` whose first line carries the version and the hash of the bundle bytes; an API-source site does NOT contain it.
+- [ ] **Step 1: Failing tests.** `asset.rs`: encode→decode round-trips query results (same `Vec<Hit>` for three probe queries); wrong version and wrong hash are rejected; `decode` of truncated text is `Corrupt`, never a panic. `index_file_name` derives `bundle.waml.search-index` from `bundle.waml` and `orders.waml.search-index` from `orders.waml`. `site.rs` tests (existing style): a static-site assembly now contains `bundle.waml.search-index` whose first line carries the version and the hash of the bundle bytes; an API-source site does NOT contain it. `browser_boot.rs` test: booting `?bundle=orders.waml` requests `orders.waml.search-index`, not the default name.
 
 - [ ] **Step 2: Run to verify failure**, then implement (remember: core stays dependency-free and wasm-clean — verify `cargo check -p waml --target wasm32-unknown-unknown`).
 
@@ -919,7 +923,7 @@ The implementer cannot look at a running GUI. All state logic above is asserted 
 5. Canvas dimming: with the find strip active, non-matching nodes dim while matching nodes stay lit, and dimming COMPOSES with selection, hover, and conflict states rather than fighting them (spec risk #4); next/previous visibly pans between lit nodes.
 6. Markdown search-match highlight: visible in both light and dark themes, does not occlude the caret or selection.
 7. `indexing…` note under TEXT renders sanely (force `TextIndexStatus::Building` in a debug build to view).
-8. Exported-site spot check: palette, results tab, find strip, F3, and hidden badges behave identically in the browser build; boot log confirms the shipped `search-index.txt` was accepted (and that deleting it falls back to a local build).
+8. Exported-site spot check: palette, results tab, find strip, F3, and hidden badges behave identically in the browser build; boot log confirms the shipped `bundle.waml.search-index` was accepted (and that deleting it falls back to a local build).
 
 ## Spec coverage self-check (for the reviewer)
 
