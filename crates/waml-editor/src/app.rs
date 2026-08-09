@@ -32,6 +32,7 @@ use makepad_widgets::*;
 use std::path::{Path, PathBuf};
 use waml::view::chain::ChainLimits;
 use waml::view::mask::ProjectionMask;
+use waml_markdown_editor::EditorEmphasis;
 
 script_mod! {
     use mod.prelude.widgets.*
@@ -670,6 +671,8 @@ pub struct App {
     #[rust]
     markdown_assets: Option<crate::markdown_hosts::SharedMarkdownAssetHost>,
     #[rust]
+    markdown_emphasis: EditorEmphasis,
+    #[rust]
     view_history: ViewHistory,
     /// Complete recent-config backing list. `StartScreen` renders a capped copy
     /// of its first five entries, so `OpenRecent(i)` and `TogglePin(i)` resolve
@@ -804,6 +807,7 @@ impl MatchEvent for App {
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_startup(&mut self, cx: &mut Cx) {
         crate::telemetry::init();
+        self.markdown_emphasis = crate::config::markdown_emphasis();
         let argv: Vec<String> = std::env::args().collect();
         let args = match crate::cli::parse(&argv) {
             Ok(a) => a,
@@ -838,6 +842,7 @@ impl MatchEvent for App {
     #[cfg(target_arch = "wasm32")]
     fn handle_startup(&mut self, cx: &mut Cx) {
         crate::telemetry::init();
+        self.markdown_emphasis = crate::config::markdown_emphasis();
         self.reveal_caption_bar_on_web(cx);
         // A browser touch device delivers `TouchUpdate` and nothing else (the
         // backend `preventDefault()`s touches, which also kills the browser's

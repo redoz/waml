@@ -208,6 +208,7 @@ impl DocumentHost {
         session: &EditorSession,
         location: &ViewLocation,
         assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+        emphasis: waml_markdown_editor::EditorEmphasis,
         limits: waml::view::chain::ChainLimits,
         mask: &waml::view::mask::ProjectionMask,
     ) -> bool {
@@ -216,6 +217,7 @@ impl DocumentHost {
             session.uml_analysis(),
             &location.document,
             assets,
+            emphasis,
             limits,
             mask,
         ) else {
@@ -254,6 +256,7 @@ impl DocumentHost {
             &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
+            waml_markdown_editor::EditorEmphasis::Code,
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         )

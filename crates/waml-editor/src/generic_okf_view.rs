@@ -28,12 +28,14 @@ impl GenericOkfView {
             crate::markdown_hosts::EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
+            waml_markdown_editor::EditorEmphasis::Code,
         )
     }
 
     pub fn new_with_asset_host(
         concept_id: String,
         assets: crate::markdown_hosts::SharedMarkdownAssetHost,
+        emphasis: waml_markdown_editor::EditorEmphasis,
     ) -> Self {
         // Opening a concept is a reading action: it renders. Seeing the
         // markdown behind it is a separate, explicit action.
@@ -42,7 +44,7 @@ impl GenericOkfView {
                 concept_id.clone(),
                 assets.clone(),
             ),
-            source: SourceView::new_read_only(concept_id, assets),
+            source: SourceView::new_read_only(concept_id, assets, emphasis),
         }
     }
 
@@ -198,6 +200,7 @@ mod tests {
             crate::markdown_hosts::EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
+            waml_markdown_editor::EditorEmphasis::Code,
         )
     }
 

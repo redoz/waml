@@ -15,6 +15,7 @@ use waml_markdown_editor::{
     session::{HostSnapshotCause, MarkdownDocumentSession},
     syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText},
     widget::MarkdownEditorRef,
+    EditorEmphasis,
 };
 
 use crate::doc_view::{
@@ -106,6 +107,7 @@ fn presented_diagnostics_for(
 
 pub struct SourceView {
     key: String,
+    emphasis: EditorEmphasis,
     read_only: bool,
     line_numbers: LineNumberMode,
     fragment: Option<String>,
@@ -121,12 +123,18 @@ impl SourceView {
             EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
+            EditorEmphasis::Code,
         )
     }
 
-    pub fn new_with_asset_host(key: String, assets: SharedMarkdownAssetHost) -> SourceView {
+    pub fn new_with_asset_host(
+        key: String,
+        assets: SharedMarkdownAssetHost,
+        emphasis: EditorEmphasis,
+    ) -> SourceView {
         SourceView {
             key,
+            emphasis,
             read_only: false,
             line_numbers: LineNumberMode::Absolute,
             fragment: None,
@@ -135,8 +143,12 @@ impl SourceView {
         }
     }
 
-    pub(crate) fn new_read_only(key: String, assets: SharedMarkdownAssetHost) -> SourceView {
-        let mut view = Self::new_with_asset_host(key, assets);
+    pub(crate) fn new_read_only(
+        key: String,
+        assets: SharedMarkdownAssetHost,
+        emphasis: EditorEmphasis,
+    ) -> SourceView {
+        let mut view = Self::new_with_asset_host(key, assets, emphasis);
         view.read_only = true;
         view
     }
@@ -242,6 +254,7 @@ impl SourceView {
     ) {
         body.show_markdown_editor(cx);
         let editor = body.markdown_editor();
+        editor.set_emphasis(cx, self.emphasis);
         let Some((document, syntax)) = Self::resolve_document(workspace, &self.key) else {
             self.set_missing(cx, &editor);
             return;
@@ -651,6 +664,7 @@ mod tests {
         SourceView::new_with_asset_host(
             key.to_owned(),
             EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle),
+            EditorEmphasis::Code,
         )
     }
 
@@ -711,6 +725,32 @@ mod tests {
     }
 
     #[test]
+    fn source_view_copies_and_applies_its_creation_emphasis() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let mut view = SourceView::new_with_asset_host(
+            "shop/order".into(),
+            EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle),
+            waml_markdown_editor::EditorEmphasis::Layout,
+        );
+
+        assert_eq!(view.emphasis, waml_markdown_editor::EditorEmphasis::Layout);
+
+        view.install_snapshot(
+            &mut cx,
+            &body,
+            &source_session().snapshot(),
+            HostSnapshotCause::InitialLoad,
+        );
+
+        assert_eq!(
+            body.markdown_editor().emphasis(),
+            waml_markdown_editor::EditorEmphasis::Layout
+        );
+    }
+
+    #[test]
     fn source_view_compiles_fenced_waml_with_the_snapshot_highlighter() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let ui = mounted_body(&mut cx);
@@ -727,7 +767,8 @@ mod tests {
             )
             .unwrap();
         let snapshot = session.snapshot();
-        let mut view = SourceView::new_with_asset_host("runbook".into(), assets);
+        let mut view =
+            SourceView::new_with_asset_host("runbook".into(), assets, EditorEmphasis::Code);
 
         view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
 
@@ -845,7 +886,8 @@ mod tests {
             )
             .unwrap();
         let snapshot = session.snapshot();
-        let mut view = SourceView::new_with_asset_host("runbook".into(), assets);
+        let mut view =
+            SourceView::new_with_asset_host("runbook".into(), assets, EditorEmphasis::Code);
 
         view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
 
@@ -885,7 +927,8 @@ mod tests {
             .replace(SourceBundle::try_from_pairs([("runbook.md", authored)]).unwrap())
             .unwrap();
         let snapshot = session.snapshot();
-        let mut view = SourceView::new_with_asset_host("runbook".into(), assets);
+        let mut view =
+            SourceView::new_with_asset_host("runbook".into(), assets, EditorEmphasis::Code);
         view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);

@@ -38,9 +38,10 @@ pub fn open_with_asset_host(
     uml: &waml::uml::Analysis,
     concept_id: &str,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
 ) -> Option<OpenDocument> {
-    crate::uml_documents::open_with_asset_host(okf, uml, concept_id, assets)
-        .or_else(|| crate::okf_documents::open_with_asset_host(okf, concept_id, assets))
+    crate::uml_documents::open_with_asset_host(okf, uml, concept_id, assets, emphasis)
+        .or_else(|| crate::okf_documents::open_with_asset_host(okf, concept_id, assets, emphasis))
 }
 
 /// The surface a target opens on when nothing requests one. "canvas" iff
@@ -163,6 +164,7 @@ pub fn open_row_with_asset_host(
     uml: &waml::uml::Analysis,
     row: &Row,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> (Option<OpenDocument>, Option<waml::diagnostic::Diagnostic>) {
@@ -174,7 +176,16 @@ pub fn open_row_with_asset_host(
         "index.md",
         0,
     );
-    let doc = open_on_surface(okf, uml, &row.target, &surface, assets, limits, mask);
+    let doc = open_on_surface(
+        okf,
+        uml,
+        &row.target,
+        &surface,
+        assets,
+        emphasis,
+        limits,
+        mask,
+    );
     (doc, diagnostic)
 }
 
@@ -188,6 +199,7 @@ fn open_on_surface(
     target: &RowTarget,
     surface: &waml::view::surface::SurfaceId,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
@@ -195,6 +207,7 @@ fn open_on_surface(
         analysis: okf,
         uml,
         assets: assets.clone(),
+        emphasis,
         limits,
         mask,
     };
@@ -223,7 +236,13 @@ pub fn open(
     uml: &waml::uml::Analysis,
     concept_id: &str,
 ) -> Option<OpenDocument> {
-    open_with_asset_host(okf, uml, concept_id, &assets_for_test())
+    open_with_asset_host(
+        okf,
+        uml,
+        concept_id,
+        &assets_for_test(),
+        waml_markdown_editor::EditorEmphasis::Code,
+    )
 }
 
 pub fn reopen_with_asset_host(
@@ -231,10 +250,11 @@ pub fn reopen_with_asset_host(
     uml: &waml::uml::Analysis,
     tab: &crate::doc_tabs::DocTab,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
-    open_locator_with_asset_host(okf, uml, &tab.locator(), assets, limits, mask)
+    open_locator_with_asset_host(okf, uml, &tab.locator(), assets, emphasis, limits, mask)
 }
 
 /// Opens a stored `DocumentLocator` by looking its surface up in the editor
@@ -252,6 +272,7 @@ pub fn open_locator_with_asset_host(
     uml: &waml::uml::Analysis,
     locator: &DocumentLocator,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
     limits: waml::view::chain::ChainLimits,
     mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
@@ -263,7 +284,16 @@ pub fn open_locator_with_asset_host(
         "index.md",
         0,
     );
-    open_on_surface(okf, uml, &locator.target, &surface, assets, limits, mask)
+    open_on_surface(
+        okf,
+        uml,
+        &locator.target,
+        &surface,
+        assets,
+        emphasis,
+        limits,
+        mask,
+    )
 }
 
 #[cfg(test)]
@@ -300,6 +330,10 @@ mod tests {
         )
     }
 
+    fn test_emphasis() -> waml_markdown_editor::EditorEmphasis {
+        waml_markdown_editor::EditorEmphasis::Code
+    }
+
     fn future_sibling_descriptor() -> DocumentDescriptor {
         DocumentDescriptor {
             presentation: DocumentPresentation {
@@ -321,14 +355,23 @@ mod tests {
         let prepared = waml::analysis::prepare_candidate(source, None, 7).unwrap();
 
         assert!(crate::uml_documents::open(prepared.okf(), prepared.uml(), "order").is_some());
-        assert!(
-            crate::okf_documents::open_with_asset_host(prepared.okf(), "order", &assets())
-                .is_some()
-        );
+        assert!(crate::okf_documents::open_with_asset_host(
+            prepared.okf(),
+            "order",
+            &assets(),
+            test_emphasis(),
+        )
+        .is_some());
         assert_eq!(
-            open_with_asset_host(prepared.okf(), prepared.uml(), "order", &assets())
-                .unwrap()
-                .tab_id,
+            open_with_asset_host(
+                prepared.okf(),
+                prepared.uml(),
+                "order",
+                &assets(),
+                test_emphasis(),
+            )
+            .unwrap()
+            .tab_id,
             crate::documents::tab_id_for(&DocumentLocator::concept(
                 "order",
                 waml::view::surface::SurfaceId::canvas()
@@ -336,25 +379,37 @@ mod tests {
         );
         assert!(crate::uml_documents::open(prepared.okf(), prepared.uml(), "runbook").is_none());
         assert_eq!(
-            open_with_asset_host(prepared.okf(), prepared.uml(), "runbook", &assets())
-                .unwrap()
-                .tab_id,
+            open_with_asset_host(
+                prepared.okf(),
+                prepared.uml(),
+                "runbook",
+                &assets(),
+                test_emphasis(),
+            )
+            .unwrap()
+            .tab_id,
             crate::documents::tab_id_for(&DocumentLocator::concept(
                 "runbook",
                 waml::view::surface::SurfaceId::markdown()
             ))
         );
 
-        let (generic_tab, _) =
-            open_with_asset_host(prepared.okf(), prepared.uml(), "runbook", &assets())
-                .unwrap()
-                .into_tab(true);
+        let (generic_tab, _) = open_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            "runbook",
+            &assets(),
+            test_emphasis(),
+        )
+        .unwrap()
+        .into_tab(true);
         assert_eq!(
             reopen_with_asset_host(
                 prepared.okf(),
                 prepared.uml(),
                 &generic_tab,
                 &assets(),
+                test_emphasis(),
                 waml::view::chain::ChainLimits::default(),
                 &waml::view::mask::ProjectionMask::default(),
             )
@@ -363,16 +418,21 @@ mod tests {
             generic_tab.id
         );
 
-        let (source_tab, _) =
-            crate::okf_documents::open_source_with_asset_host(prepared.okf(), "runbook", &assets())
-                .unwrap()
-                .into_tab(false);
+        let (source_tab, _) = crate::okf_documents::open_source_with_asset_host(
+            prepared.okf(),
+            "runbook",
+            &assets(),
+            test_emphasis(),
+        )
+        .unwrap()
+        .into_tab(false);
         assert_eq!(
             reopen_with_asset_host(
                 prepared.okf(),
                 prepared.uml(),
                 &source_tab,
                 &assets(),
+                test_emphasis(),
                 waml::view::chain::ChainLimits::default(),
                 &waml::view::mask::ProjectionMask::default(),
             )
@@ -409,8 +469,14 @@ mod tests {
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 11).unwrap();
 
-        let document =
-            open_with_asset_host(prepared.okf(), prepared.uml(), "broken", &assets()).unwrap();
+        let document = open_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            "broken",
+            &assets(),
+            test_emphasis(),
+        )
+        .unwrap();
         assert_eq!(
             document.tab_id,
             crate::documents::tab_id_for(&DocumentLocator::concept(
@@ -444,8 +510,22 @@ mod tests {
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 13).unwrap();
 
-        assert!(open_with_asset_host(prepared.okf(), prepared.uml(), "index", &assets()).is_none());
-        assert!(open_with_asset_host(prepared.okf(), prepared.uml(), "log", &assets()).is_none());
+        assert!(open_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            "index",
+            &assets(),
+            test_emphasis(),
+        )
+        .is_none());
+        assert!(open_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            "log",
+            &assets(),
+            test_emphasis(),
+        )
+        .is_none());
     }
 
     #[test]
@@ -566,6 +646,7 @@ mod tests {
                     prepared.uml(),
                     &locator,
                     &assets(),
+                    test_emphasis(),
                     waml::view::chain::ChainLimits::default(),
                     &waml::view::mask::ProjectionMask::default(),
                 )
@@ -643,6 +724,7 @@ mod tests {
             prepared.uml(),
             &row,
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         );
@@ -669,6 +751,7 @@ mod tests {
             prepared.uml(),
             &row,
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         );
@@ -695,6 +778,7 @@ mod tests {
             prepared.uml(),
             &row,
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         );
@@ -725,6 +809,7 @@ mod tests {
             prepared.uml(),
             &row,
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         );
@@ -743,6 +828,7 @@ mod tests {
             prepared.uml(),
             &row,
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         );
@@ -772,6 +858,7 @@ mod tests {
             prepared.uml(),
             &folder_tab,
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         )
@@ -785,10 +872,14 @@ mod tests {
             SourceBundle::try_from_pairs([("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n")])
                 .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 17).unwrap();
-        let (mut old_source_tab, _) =
-            crate::okf_documents::open_source_with_asset_host(prepared.okf(), "runbook", &assets())
-                .unwrap()
-                .into_tab(false);
+        let (mut old_source_tab, _) = crate::okf_documents::open_source_with_asset_host(
+            prepared.okf(),
+            "runbook",
+            &assets(),
+            test_emphasis(),
+        )
+        .unwrap()
+        .into_tab(false);
         old_source_tab.id = makepad_widgets::LiveId::from_str("closed-transient-tab");
 
         let reopened = reopen_with_asset_host(
@@ -796,6 +887,7 @@ mod tests {
             prepared.uml(),
             &old_source_tab,
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         )
@@ -843,6 +935,7 @@ mod tests {
                     prepared.uml(),
                     &locator,
                     &assets(),
+                    test_emphasis(),
                     waml::view::chain::ChainLimits::default(),
                     &mask,
                 )
@@ -856,6 +949,7 @@ mod tests {
             prepared.uml(),
             &DocumentLocator::source("shop/secret"),
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         )
@@ -878,6 +972,7 @@ mod tests {
             prepared.uml(),
             &locator,
             &assets(),
+            test_emphasis(),
             waml::view::chain::ChainLimits::default(),
             &waml::view::mask::ProjectionMask::default(),
         )

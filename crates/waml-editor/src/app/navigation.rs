@@ -521,6 +521,7 @@ impl App {
             &self.session,
             &location,
             &assets,
+            self.markdown_emphasis,
             self.chain_limits,
             &self.projection_mask,
         ) {
@@ -613,6 +614,7 @@ impl App {
                 self.session.uml_analysis(),
                 &location.document,
                 assets,
+                self.markdown_emphasis,
                 self.chain_limits,
                 &self.projection_mask,
             )

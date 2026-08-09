@@ -41,6 +41,7 @@ pub fn open_with_asset_host(
     analysis: &waml::analysis::OkfAnalysis,
     concept_id: &str,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
 ) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
     let presentation = presentation(analysis, concept_id)?;
@@ -60,6 +61,7 @@ pub fn open_with_asset_host(
             crate::generic_okf_view::GenericOkfView::new_with_asset_host(
                 concept_id.to_string(),
                 assets.clone(),
+                emphasis,
             ),
         ),
     })
@@ -73,6 +75,7 @@ pub fn open(analysis: &waml::analysis::OkfAnalysis, concept_id: &str) -> Option<
         &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
             crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
         ),
+        waml_markdown_editor::EditorEmphasis::Code,
     )
 }
 
@@ -80,6 +83,7 @@ pub fn open_source_with_asset_host(
     analysis: &waml::analysis::OkfAnalysis,
     concept_id: &str,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
 ) -> Option<OpenDocument> {
     let concept = analysis.bundle.concept(concept_id)?;
     let mut presentation = presentation(analysis, concept_id)?;
@@ -99,6 +103,7 @@ pub fn open_source_with_asset_host(
         view: Box::new(crate::source_view::SourceView::new_with_asset_host(
             concept_id.to_string(),
             assets.clone(),
+            emphasis,
         )),
     })
 }
@@ -114,6 +119,7 @@ pub fn open_source(
         &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
             crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
         ),
+        waml_markdown_editor::EditorEmphasis::Code,
     )
 }
 
@@ -176,10 +182,13 @@ pub fn open_source_for_target(
     analysis: &waml::analysis::OkfAnalysis,
     target: &waml::view::row::RowTarget,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
 ) -> Option<OpenDocument> {
     use waml::view::row::RowTarget;
     match target {
-        RowTarget::Concept(concept_id) => open_source_with_asset_host(analysis, concept_id, assets),
+        RowTarget::Concept(concept_id) => {
+            open_source_with_asset_host(analysis, concept_id, assets, emphasis)
+        }
         RowTarget::Folder(address) => {
             let key = source_key_for(target)?;
             if !source_document_exists(analysis, &key) {
@@ -213,6 +222,7 @@ pub fn open_source_for_target(
                 view: Box::new(crate::source_view::SourceView::new_with_asset_host(
                     key.clone(),
                     assets.clone(),
+                    emphasis,
                 )),
             })
         }
@@ -231,6 +241,10 @@ mod tests {
         )
     }
 
+    fn test_emphasis() -> waml_markdown_editor::EditorEmphasis {
+        waml_markdown_editor::EditorEmphasis::Code
+    }
+
     #[test]
     fn generic_provider_excludes_reserved_index_and_log_documents() {
         let source = SourceBundle::try_from_pairs([
@@ -241,14 +255,16 @@ mod tests {
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         assert_eq!(
-            open_with_asset_host(prepared.okf(), "runbook", &assets())
+            open_with_asset_host(prepared.okf(), "runbook", &assets(), test_emphasis())
                 .unwrap()
                 .presentation
                 .icon,
             Icon::FileText
         );
-        assert!(open_with_asset_host(prepared.okf(), "index", &assets()).is_none());
-        assert!(open_with_asset_host(prepared.okf(), "log", &assets()).is_none());
+        assert!(
+            open_with_asset_host(prepared.okf(), "index", &assets(), test_emphasis()).is_none()
+        );
+        assert!(open_with_asset_host(prepared.okf(), "log", &assets(), test_emphasis()).is_none());
     }
 
     #[test]
@@ -296,7 +312,8 @@ mod tests {
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
 
         let source_document =
-            open_source_with_asset_host(prepared.okf(), "runbook", &assets()).unwrap();
+            open_source_with_asset_host(prepared.okf(), "runbook", &assets(), test_emphasis())
+                .unwrap();
 
         assert_eq!(source_document.presentation.icon, Icon::FileCode);
     }
@@ -327,6 +344,7 @@ mod tests {
             prepared.okf(),
             &RowTarget::Folder("/shop".into()),
             &assets(),
+            test_emphasis(),
         )
         .expect("a folder with an index.md resolves the source surface");
         assert_eq!(
@@ -336,10 +354,13 @@ mod tests {
                 SurfaceId::source(),
             ))
         );
-        assert!(
-            open_source_for_target(prepared.okf(), &RowTarget::Folder("/".into()), &assets())
-                .is_some()
-        );
+        assert!(open_source_for_target(
+            prepared.okf(),
+            &RowTarget::Folder("/".into()),
+            &assets(),
+            test_emphasis(),
+        )
+        .is_some());
     }
 
     /// The test the spec's own last Testing bullet demands, and the one that
@@ -362,7 +383,8 @@ mod tests {
         assert!(open_source_for_target(
             prepared.okf(),
             &waml::view::row::RowTarget::Folder("/loose".into()),
-            &assets()
+            &assets(),
+            test_emphasis(),
         )
         .is_none());
     }
@@ -386,8 +408,14 @@ mod tests {
         for concept_id in ["runbook", "loose/thing", "no-such-concept"] {
             let target = RowTarget::Concept(concept_id.to_string());
             assert_eq!(
-                open_source_for_target(prepared.okf(), &target, &assets()).map(|doc| doc.tab_id),
-                open_source_with_asset_host(prepared.okf(), concept_id, &assets())
+                open_source_for_target(prepared.okf(), &target, &assets(), test_emphasis())
+                    .map(|doc| doc.tab_id),
+                open_source_with_asset_host(
+                    prepared.okf(),
+                    concept_id,
+                    &assets(),
+                    test_emphasis(),
+                )
                     .map(|doc| doc.tab_id),
                 "concept `{concept_id}` must delegate unchanged"
             );
@@ -405,7 +433,8 @@ mod tests {
         ] {
             assert_eq!(
                 source_opens_for_target(prepared.okf(), &target),
-                open_source_for_target(prepared.okf(), &target, &assets()).is_some(),
+                open_source_for_target(prepared.okf(), &target, &assets(), test_emphasis())
+                    .is_some(),
                 "probe disagrees with the open for {target:?}"
             );
         }

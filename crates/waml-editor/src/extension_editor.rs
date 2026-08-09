@@ -28,6 +28,7 @@ pub struct OpenCtx<'a> {
     pub analysis: &'a OkfAnalysis,
     pub uml: &'a waml::uml::Analysis,
     pub assets: SharedMarkdownAssetHost,
+    pub emphasis: waml_markdown_editor::EditorEmphasis,
     pub limits: ChainLimits,
     /// The session's projection mask, carried rather than assumed: a folder
     /// surface opened through this seam must list what the tree and the
@@ -159,11 +160,11 @@ fn open_markdown(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> 
     let RowTarget::Concept(id) = target else {
         return None;
     };
-    crate::okf_documents::open_with_asset_host(ctx.analysis, id, &ctx.assets)
+    crate::okf_documents::open_with_asset_host(ctx.analysis, id, &ctx.assets, ctx.emphasis)
 }
 
 fn open_source(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
-    crate::okf_documents::open_source_for_target(ctx.analysis, target, &ctx.assets)
+    crate::okf_documents::open_source_for_target(ctx.analysis, target, &ctx.assets, ctx.emphasis)
 }
 
 fn open_canvas(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
@@ -176,7 +177,7 @@ fn open_canvas(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
     // finding 5) by calling THE uml-then-generic chain itself rather than
     // re-implementing it -- the behavior-preservation tests pin that one
     // function, so the live factory and the pinned baseline cannot drift.
-    crate::documents::open_with_asset_host(ctx.analysis, ctx.uml, id, &ctx.assets)
+    crate::documents::open_with_asset_host(ctx.analysis, ctx.uml, id, &ctx.assets, ctx.emphasis)
 }
 
 fn open_folder(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
@@ -314,6 +315,7 @@ mod tests {
             assets: crate::markdown_hosts::EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
+            emphasis: waml_markdown_editor::EditorEmphasis::Code,
             limits: ChainLimits::default(),
             mask: default_mask(),
         }

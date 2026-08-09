@@ -81,6 +81,7 @@ pub fn open_with_asset_host(
     uml: &waml::uml::Analysis,
     concept_id: &str,
     assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
+    emphasis: waml_markdown_editor::EditorEmphasis,
 ) -> Option<OpenDocument> {
     let concept = okf.bundle.concept(concept_id)?;
     let presentation = presentation(okf, uml, concept_id)?;
@@ -99,16 +100,19 @@ pub fn open_with_asset_host(
             crate::class_diagram_view::ClassDiagramView::new(concept_id.to_string()),
             concept_id.to_string(),
             assets.clone(),
+            emphasis,
         )),
         NavCategory::Behavior => Box::new(SourceToggleView::new(
             crate::behavior_doc_view::BehaviorDocView::flow(concept_id.to_string()),
             concept_id.to_string(),
             assets.clone(),
+            emphasis,
         )),
         NavCategory::Sequence => Box::new(SourceToggleView::new(
             crate::behavior_doc_view::BehaviorDocView::interaction(concept_id.to_string()),
             concept_id.to_string(),
             assets.clone(),
+            emphasis,
         )),
         _ => Box::new(SourceToggleView::new(
             crate::classifier_preview_view::ClassifierPreviewView::new(
@@ -117,6 +121,7 @@ pub fn open_with_asset_host(
             ),
             concept_id.to_string(),
             assets.clone(),
+            emphasis,
         )),
     };
     let locator = DocumentLocator::concept(concept_id, waml::view::surface::SurfaceId::canvas());
@@ -142,6 +147,7 @@ pub fn open(
         &crate::markdown_hosts::EditorMarkdownAssetHost::shared(
             crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
         ),
+        waml_markdown_editor::EditorEmphasis::Code,
     )
 }
 

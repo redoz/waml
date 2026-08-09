@@ -32,10 +32,11 @@ impl<V: DocView> SourceToggleView<V> {
         inner: V,
         concept_id: String,
         assets: crate::markdown_hosts::SharedMarkdownAssetHost,
+        emphasis: waml_markdown_editor::EditorEmphasis,
     ) -> Self {
         Self {
             inner,
-            source: SourceView::new_read_only(concept_id, assets),
+            source: SourceView::new_read_only(concept_id, assets, emphasis),
             showing_source: false,
         }
     }
@@ -272,6 +273,7 @@ mod tests {
             crate::markdown_hosts::EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
+            waml_markdown_editor::EditorEmphasis::Code,
         )
     }
 
@@ -282,6 +284,7 @@ mod tests {
             crate::markdown_hosts::EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
             ),
+            waml_markdown_editor::EditorEmphasis::Code,
         )
     }
 
