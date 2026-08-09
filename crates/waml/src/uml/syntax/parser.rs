@@ -2946,16 +2946,41 @@ fn simple_item(
             section,
         ));
     }
-    if kind == UmlSyntaxKind::Slot && !source[body..content_end].contains(':') {
-        children.push(GreenElement::Token(
-            f.missing_token(UmlSyntaxKind::ColonToken),
-        ));
-        diags.push(diag(
-            UmlSyntaxDiagnosticCode::MissingColon,
-            lead,
-            content_end,
-            "missing ':' in slot",
-        ));
+    if kind == UmlSyntaxKind::Slot {
+        match source[body..content_end].find(':').map(|i| body + i) {
+            None => {
+                children.push(GreenElement::Token(
+                    f.missing_token(UmlSyntaxKind::ColonToken),
+                ));
+                diags.push(diag(
+                    UmlSyntaxDiagnosticCode::MissingColon,
+                    lead,
+                    content_end,
+                    "missing ':' in slot",
+                ));
+            }
+            // A slot names an attribute and gives it a value, and the colon
+            // promises both halves.  The attribute line already reports the
+            // same two shapes; mark the colon so the squiggle sits on the
+            // punctuation that made the promise rather than the whole bullet.
+            Some(colon) => {
+                if source[body..colon].trim().is_empty() {
+                    diags.push(diag(
+                        UmlSyntaxDiagnosticCode::UnexpectedToken,
+                        colon,
+                        colon + 1,
+                        "expected a slot name before \":\"",
+                    ));
+                } else if source[colon + 1..content_end].trim().is_empty() {
+                    diags.push(diag(
+                        UmlSyntaxDiagnosticCode::MissingType,
+                        colon,
+                        colon + 1,
+                        "expected a slot value after \":\"",
+                    ));
+                }
+            }
+        }
     }
     if content_end < end {
         children.push(token(
@@ -3849,9 +3874,13 @@ fn inline_instance(
         relationship_link(f, text, source, p, content_end, keyword_leading, diags);
     c.push(classifier);
     p = skip_ws(source, q, content_end);
+    // Authored span of `as`, when it is there at all.  A keyword the author did
+    // write is what a missing operand after it gets marked on.
+    let mut as_span = None;
     if source[p..content_end].starts_with("as") {
         let as_end = p + 2;
         c.push(token(f, text, q, p, as_end, UmlSyntaxKind::AsToken));
+        as_span = Some((p, as_end));
         keyword_leading = as_end;
         p = skip_ws(source, as_end, content_end);
     } else {
@@ -3867,6 +3896,16 @@ fn inline_instance(
     let name_leading = keyword_leading;
     let name_end = scan_name(source, p, content_end);
     c.push(if p == name_end {
+        // `as` promised a name.  When `as` is missing too the diagnostic above
+        // already covers the line, so only the authored keyword is reported.
+        if let Some((as_start, as_end)) = as_span {
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
+                as_start,
+                as_end,
+                "expected an instance name after \"as\"",
+            ));
+        }
         missing_token(f, text, name_leading, p, UmlSyntaxKind::IdentifierToken)
     } else {
         token(
@@ -3881,6 +3920,7 @@ fn inline_instance(
     p = name_end;
     let before_with = p;
     p = skip_ws(source, p, content_end);
+    let mut with_span = None;
     if source[p..content_end].starts_with("with") {
         c.push(token(
             f,
@@ -3890,9 +3930,11 @@ fn inline_instance(
             p + 4,
             UmlSyntaxKind::WithToken,
         ));
+        with_span = Some((p, p + 4));
         keyword_leading = p + 4;
         p = skip_ws(source, p + 4, content_end);
     }
+    let mut slots = 0usize;
     while p < content_end {
         let name_start = p;
         let name_end = scan_name(source, p, content_end);
@@ -3909,6 +3951,7 @@ fn inline_instance(
         )];
         keyword_leading = name_end;
         p = skip_ws(source, name_end, content_end);
+        let mut set_to_span = None;
         if source[p..content_end].starts_with("set to") {
             slot.push(token(
                 f,
@@ -3918,6 +3961,7 @@ fn inline_instance(
                 p + 6,
                 UmlSyntaxKind::SetToToken,
             ));
+            set_to_span = Some((p, p + 6));
             keyword_leading = p + 6;
             p = skip_ws(source, p + 6, content_end);
         } else {
@@ -3953,6 +3997,16 @@ fn inline_instance(
         } else {
             let q = scan_name(source, p, content_end);
             slot.push(if p == q {
+                // As with `as` above: `set to` promised a value, and when the
+                // keyword itself is missing that is already reported.
+                if let Some((set_to_start, set_to_end)) = set_to_span {
+                    diags.push(diag(
+                        UmlSyntaxDiagnosticCode::UnexpectedToken,
+                        set_to_start,
+                        set_to_end,
+                        "expected a slot value after \"set to\"",
+                    ));
+                }
                 missing_token(f, text, keyword_leading, p, UmlSyntaxKind::IdentifierToken)
             } else {
                 token(
@@ -3969,6 +4023,7 @@ fn inline_instance(
         c.push(GreenElement::Node(
             f.node(UmlSyntaxKind::InlineSlot, slot).unwrap(),
         ));
+        slots += 1;
         let join_leading = p;
         p = skip_ws(source, p, content_end);
         if source[p..content_end].starts_with("and") {
@@ -3984,6 +4039,19 @@ fn inline_instance(
             p = skip_ws(source, p + 3, content_end);
         } else {
             break;
+        }
+    }
+    // `with` promises at least one slot.  Trailing bytes that failed to scan as
+    // a slot name are reported as skipped tokens below, so only an empty tail
+    // reaches here unreported.
+    if let Some((with_start, with_end)) = with_span {
+        if slots == 0 && p >= content_end {
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
+                with_start,
+                with_end,
+                "expected a slot after \"with\"",
+            ));
         }
     }
     if p < content_end {
@@ -4626,6 +4694,19 @@ fn attribute(
             content_end,
             "missing ':' in attribute",
         ));
+    }
+    // A nameless attribute (`- : OrderId`) built a missing identifier and said
+    // nothing.  Report it only when there is a colon to point at -- without one
+    // the missing-':' diagnostic above already covers the line.
+    if name_start == name_end {
+        if let Some(colon) = colon {
+            diags.push(diag(
+                UmlSyntaxDiagnosticCode::UnexpectedToken,
+                colon,
+                colon + 1,
+                "expected an attribute name before \":\"",
+            ));
+        }
     }
     let type_start = skip_ws(source, p, content_end);
     if type_start < content_end && source.as_bytes()[type_start] == b'[' {

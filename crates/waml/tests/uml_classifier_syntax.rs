@@ -722,6 +722,110 @@ fn delimiter_recovery_distinguishes_incomplete_from_invalid_and_never_projects()
     assert!(analysis.projection.node("c#r").is_none());
 }
 
+/// The authored spans and messages of every syntax diagnostic a one-document
+/// bundle carries, so a test can pin what got marked as well as that something
+/// did.
+fn marked(authored: &str) -> Vec<(String, String)> {
+    let source = SourceBundle::try_from_pairs([
+        ("c.md", authored),
+        ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+    ])
+    .unwrap();
+    let analysis = analyze(&source);
+    let id = analysis
+        .syntax
+        .catalog()
+        .id_for_path(&waml::source::BundlePath::parse("c.md").unwrap())
+        .unwrap();
+    analysis
+        .syntax
+        .document(id)
+        .unwrap()
+        .syntax()
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| {
+            (
+                authored[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()]
+                    .to_string(),
+                diagnostic.message.to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn an_item_that_promised_a_half_it_never_wrote_is_marked_on_the_promise() {
+    // Slots: the colon promises a name on its left and a value on its right.
+    assert_eq!(
+        marked("---\ntype: uml.Class\n---\n# C\n\n## Slots\n- status:\n"),
+        [(":".into(), "expected a slot value after \":\"".into())]
+    );
+    assert_eq!(
+        marked("---\ntype: uml.Class\n---\n# C\n\n## Slots\n- status:   \n"),
+        [(":".into(), "expected a slot value after \":\"".into())]
+    );
+    assert_eq!(
+        marked("---\ntype: uml.Class\n---\n# C\n\n## Slots\n- : Draft\n"),
+        [(":".into(), "expected a slot name before \":\"".into())]
+    );
+
+    // Attributes already reported a missing type; the missing name did not.
+    assert_eq!(
+        marked("---\ntype: uml.Class\n---\n# C\n\n## Attributes\n- : OrderId\n"),
+        [(":".into(), "expected an attribute name before \":\"".into())]
+    );
+
+    // Inline instances: `as`, `with` and `set to` each promise an operand.
+    assert_eq!(
+        marked(
+            "---\ntype: uml.Class\n---\n# C\n\n## Members\n- instance of [Order](./order.md) as\n"
+        ),
+        [("as".into(), "expected an instance name after \"as\"".into())]
+    );
+    assert_eq!(
+        marked(
+            "---\ntype: uml.Class\n---\n# C\n\n## Members\n- instance of [Order](./order.md) as p with\n"
+        ),
+        [("with".into(), "expected a slot after \"with\"".into())]
+    );
+    assert_eq!(
+        marked("---\ntype: uml.Class\n---\n# C\n\n## Members\n- instance of [Order](./order.md) as p with status set to\n"),
+        [(
+            "set to".into(),
+            "expected a slot value after \"set to\"".into()
+        )]
+    );
+}
+
+#[test]
+fn a_complete_item_and_an_already_reported_one_gain_no_extra_mark() {
+    // Every well-formed spelling of the shapes above stays silent.
+    for authored in [
+        "---\ntype: uml.Class\n---\n# C\n\n## Slots\n- status: Draft\n",
+        "---\ntype: uml.Class\n---\n# C\n\n## Attributes\n- id: OrderId\n",
+        "---\ntype: uml.Class\n---\n# C\n\n## Members\n- instance of [Order](./order.md) as p\n",
+        "---\ntype: uml.Class\n---\n# C\n\n## Members\n- instance of [Order](./order.md) as p with status set to OPEN\n",
+        "---\ntype: uml.Class\n---\n# C\n\n## Members\n- instance of [Order](./order.md) as p with status set to \"OPEN\" and owner set to [Order](./order.md)\n",
+    ] {
+        assert_eq!(marked(authored), [], "expected silence for {authored:?}");
+    }
+
+    // A missing keyword is reported once, by the keyword's own diagnostic --
+    // the operand that keyword would have promised must not double up.
+    let no_as =
+        marked("---\ntype: uml.Class\n---\n# C\n\n## Members\n- instance of [Order](./order.md)\n");
+    assert_eq!(no_as.len(), 1, "{no_as:?}");
+    assert_eq!(no_as[0].1, "missing 'as' in inline instance");
+    let no_set_to =
+        marked("---\ntype: uml.Class\n---\n# C\n\n## Members\n- instance of [Order](./order.md) as p with status\n");
+    assert_eq!(no_set_to.len(), 1, "{no_set_to:?}");
+    assert_eq!(no_set_to[0].1, "missing 'set to' in inline slot");
+    let no_colon = marked("---\ntype: uml.Class\n---\n# C\n\n## Slots\n- missing value\n");
+    assert_eq!(no_colon.len(), 1, "{no_colon:?}");
+    assert_eq!(no_colon[0].1, "missing ':' in slot");
+}
+
 #[test]
 fn declared_projection_resolves_only_claimed_targets_with_located_diagnostic() {
     let source = SourceBundle::try_from_pairs([
