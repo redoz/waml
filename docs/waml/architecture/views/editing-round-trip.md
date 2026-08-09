@@ -9,8 +9,9 @@ description: An interaction that serializes a semantic edit and returns its rebu
 ## Notes
 - Read this interaction from the top to the bottom.
 - The authored documents stay the source of the rebuilt view. See [Editing and Round Trip](./../concepts/workflows/editing-and-round-trip.md).
-- The editor records the reverse edit before it shows the result. Undo then repeats this same interaction with that reverse edit.
-- The alternative shows the rejection: if the changed bundle does not analyze, the editor keeps the previous documents.
+- [Editor Session](../concepts/implementation/editor-session.md) prepares a complete candidate before it changes the live snapshot.
+- The editor records the reverse edit only after the candidate installs. Undo repeats this interaction with that reverse edit.
+- If preparation fails, the immutable live snapshot and edit history stay unchanged.
 
 ## Lifelines
 - [Author](./../concepts/workflows/author.md) as author
@@ -22,15 +23,16 @@ description: An interaction that serializes a semantic edit and returns its rebu
 
 ## Messages
 - author calls editor `perform semantic edit`
-- editor calls bundle `update the affected authored documents`
-- editor calls serialization `canonicalize the changed documents`
+- editor calls serialization `lower and canonicalize the changed documents in candidate source`
 - serialization returns `stable supported document form` to editor
-- editor calls projection `derive current model and views`
+- editor calls projection `prepare Markdown, OKF, UML, affected, and revision state`
 - alt
-  - when `bundle analyzes`
-    - projection returns `model and views` to editor
+  - when `candidate preparation succeeds`
+    - projection returns `prepared candidate` to editor
+    - editor calls bundle `install the prepared snapshot atomically`
+    - bundle returns `new immutable live snapshot` to editor
     - editor calls history `record the reverse edit`
     - editor returns `updated view` to author
   - else
-    - editor calls bundle `restore the previous documents`
-    - editor returns `previous view and diagnostics` to author
+    - projection returns `analysis error` to editor
+    - editor returns `rejected edit; old snapshot intact` to author

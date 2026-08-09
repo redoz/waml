@@ -8,6 +8,7 @@ description: An activity that validates layout inputs and produces view geometry
 
 ## Notes
 - [Layout Solving](./../concepts/workflows/layout-solving.md) applies to one [Diagram](./../concepts/model/diagram.md).
+- [waml Core Crate](../concepts/implementation/waml-core-crate.md) owns the current layout and routing services.
 - The activity produces [View Geometry](./../concepts/model/view-geometry.md). It makes no change to the model.
 - The two ends are different results, not a success and a failure of the product: a conflict is a report to the author.
 

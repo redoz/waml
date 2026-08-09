@@ -42,3 +42,7 @@ The right group answers "where are they drawn". An author writes
 [Layout Constraint](../concepts/model/layout-constraint.md) statements. The
 solver produces [View Geometry](../concepts/model/view-geometry.md). Read
 [Layout Solving](./layout-solving.md) for that activity.
+
+[OKF Analysis](../concepts/implementation/okf-analysis.md) lowers the
+authored vocabulary. [UML Analysis](../concepts/implementation/uml-analysis.md)
+builds the semantic and diagram projections.

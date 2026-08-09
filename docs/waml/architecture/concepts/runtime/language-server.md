@@ -1,7 +1,7 @@
 ---
 type: uml.Class
 title: Language Server
-description: A responsibility that reports bundle diagnostics to a text editor while the author types.
+description: A responsibility that gives bundle diagnostics and navigation data to a text editor while the author types.
 ---
 
 # Language Server
@@ -16,4 +16,5 @@ description: A responsibility that reports bundle diagnostics to a text editor w
 - The server reads the full bundle from the directory of the workspace. It does not read only the open documents.
 - The server sends the diagnostics for all documents of the bundle. A change in one document can change the diagnostics of a different document.
 - The server uses the standard protocol of the language servers. It speaks through the standard input and the standard output.
-- The server gives diagnostics only. It does not give completion, navigation, or formatting.
+- The server gives diagnostics, document symbols, document links, definitions, and full semantic tokens.
+- The server does not give completion or formatting, and it does not advertise a bundle-write operation.

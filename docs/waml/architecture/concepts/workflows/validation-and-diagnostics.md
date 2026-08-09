@@ -12,6 +12,8 @@ description: A responsibility that evaluates an OKF Bundle, reports errors and w
 
 ## Notes
 - This responsibility evaluates the full bundle. It does not evaluate only the open document.
+- A document that fails shell or size validation can enter quarantine. Other documents continue through analysis.
+- A failed UML island can retain its previous dependent projection. Unrelated projections stay current.
 - It reports incorrect syntax in a supported section.
 - It reports a reference that does not resolve.
 - It reports a connection in a form that its category does not permit.

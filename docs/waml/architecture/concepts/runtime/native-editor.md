@@ -13,6 +13,7 @@ description: A product responsibility that provides WAML editing in native and w
 
 ## Notes
 - The native editor is one application. It runs as a desktop application and in a browser. The two forms show the same views.
+- The desktop build reads and writes local bundles through its native adapter. The browser build reads a configured boot source and writes through share, export, or API paths.
 - The editor draws all views with the graphics processor. It does not use a document object model.
 - The window has three areas: a document tree, the view of the active document, and an inspector. The reader can hide the tree and the inspector.
 - A narrow window puts the tree and the inspector above the view. A wide window puts them at the side.

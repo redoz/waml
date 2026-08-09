@@ -23,4 +23,5 @@ description: A responsibility that publishes the native editor as a static brows
 - The command-line tool writes a site for any model: the editor and one bundle file of that model. The site needs no program on the host.
 - The page carries one placeholder for its start address. The tool replaces the placeholder with the address of the bundle file. A page whose placeholder is absent is refused.
 - The bundle file in a site does not change. An edit in the browser moves the whole model into the address of the page, so a reload keeps the edit, and the reader can take the edited model out of the editor as one file.
+- A local serve page can instead read and write authorized documents through the revisioned API.
 - Only one publication runs at one time. The most recent change has priority.

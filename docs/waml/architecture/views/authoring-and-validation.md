@@ -8,8 +8,9 @@ description: An interaction that evaluates authored content and presents its der
 
 ## Notes
 - Read this interaction from the top to the bottom.
-- [Validation and Diagnostics](./../concepts/workflows/validation-and-diagnostics.md) evaluates the full bundle, not only the document that the author changed.
-- The alternative shows the two results. A warning does not prevent the view. An error prevents the new view, and the previous view stays on the screen.
+- [Validation and Diagnostics](./../concepts/workflows/validation-and-diagnostics.md) evaluates bundle relationships, not only the open document.
+- [UML Analysis](../concepts/implementation/uml-analysis.md) keeps freshness for each island and can retain a stale dependent projection.
+- A malformed document can be quarantined. It does not make unrelated projections stale.
 
 ## Lifelines
 - [Author](./../concepts/workflows/author.md) as author
@@ -20,14 +21,14 @@ description: An interaction that evaluates authored content and presents its der
 
 ## Messages
 - author calls editor `supply authored content`
-- editor calls validation `evaluate bundle`
-- validation returns `diagnostics` to editor
+- editor calls validation `prepare Markdown and catalog; quarantine shell-failed documents`
+- validation returns `accepted catalog, diagnostics, and quarantine state` to editor
+- editor calls projection `analyze every claimed UML concept and build projections`
+- projection returns `model, views, affected metadata, and per-island freshness` to editor
 - alt
-  - when `no error`
-    - editor calls projection `derive current model and views`
-    - projection returns `model and views` to editor
+  - when `the active projection is current`
     - editor calls solver `solve geometry for the active view`
     - solver returns `view geometry` to editor
     - editor returns `view and diagnostics` to author
   - else
-    - editor returns `previous view and diagnostics` to author
+    - editor returns `retained projection, quarantine state, and diagnostics` to author

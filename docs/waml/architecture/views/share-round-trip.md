@@ -9,6 +9,7 @@ description: An interaction that packs a bundle into a link and rebuilds that bu
 ## Notes
 - Read this interaction from the top to the bottom.
 - [Share Link](./../concepts/runtime/share-link.md) states the format and the limits of the link.
+- [Platform Adapter](../concepts/implementation/platform-adapter.md) owns browser boot selection.
 - The browser does not send the fragment of the address to the host. The host receives a request for the page only.
 - The receiver gets a full bundle, not a picture. The receiver can read it, change it, and share it again.
 
@@ -24,8 +25,9 @@ description: An interaction that packs a bundle into a link and rebuilds that bu
 - tool calls link `compress and encode the documents`
 - link returns `address with the bundle in its fragment` to tool
 - tool returns `share link` to author
-- author signals browser `open the share link`
+- author calls browser `open the share link`
 - browser calls editor `start with the fragment of the address`
 - editor calls link `decode the fragment`
 - link returns `the same documents` to editor
-- editor returns `the bundle in the editor` to author
+- editor returns `the bundle in the editor` to browser
+- browser returns `the opened editor` to author

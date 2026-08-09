@@ -8,6 +8,8 @@ description: An activity that builds the native editor for a browser and publish
 
 ## Notes
 - [Native Web Delivery](./../concepts/runtime/native-web-delivery.md) owns the conditions of this activity.
+- [waml Editor Crate](../concepts/implementation/waml-editor-crate.md) is the shared desktop and WebAssembly editor implementation.
+- [waml CLI Crate](../concepts/implementation/waml-cli-crate.md) assembles exported and published sites.
 - The published program is the native editor. It is not a separate web application.
 - The check before the upload is the reason for the two ends: an incomplete artifact stops the activity and does not become available.
 

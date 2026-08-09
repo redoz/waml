@@ -13,8 +13,10 @@ description: A responsibility that derives a model and view representation from 
 - associates [Behavioral View](../model/behavioral-view.md): 1 projection to 0..* views
 
 ## Notes
-- This responsibility derives the model and the views from the current bundle.
-- The projection has two stages. The first stage reads each document as a plain document. The second stage gives the UML meaning to those documents.
-- The first stage keeps the full text and the unknown fields of each document. A document with an unknown kind stays available to the reader.
+- This responsibility derives Markdown syntax and a document catalog from the current source bundle.
+- It lowers the catalog and Markdown structure into OKF analysis.
+- It analyzes UML syntax islands and semantics, then builds domain, diagram, behavioral, diagnostic, and freshness projections.
+- It keeps the full text and unknown fields of accepted documents. A document with an unknown kind stays available to the reader.
 - The projection is complete. It builds all views of the bundle, not only the view that the author looks at.
+- A malformed document can be quarantined while unrelated projections remain current.
 - The projection does not change the bundle.

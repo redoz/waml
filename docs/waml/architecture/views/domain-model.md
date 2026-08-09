@@ -30,8 +30,6 @@ profile: uml-domain
 ### Reported
 - [Diagnostic](./../concepts/model/diagnostic.md)
 
-
-
 ## Reading guide
 
 The three framed groups are the three tiers of the product. The left group is
@@ -53,3 +51,7 @@ This view does not show [Stereotype](../concepts/model/stereotype.md),
 [View Geometry](../concepts/model/view-geometry.md). The
 [Model Vocabulary](./model-vocabulary.md) view shows these elements. A view that
 does not show an element does not remove the element from the model.
+
+The [OKF Analysis](../concepts/implementation/okf-analysis.md) and
+[UML Analysis](../concepts/implementation/uml-analysis.md) concepts give
+this product model its current implementation provenance.

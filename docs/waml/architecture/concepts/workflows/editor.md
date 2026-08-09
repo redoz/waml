@@ -17,3 +17,5 @@ description: A responsibility that presents derived views and applies semantic e
 - The editor shows three kinds of document: a diagram, a behavioral view, and a plain document. A plain document shows its text.
 - The editor keeps the changed documents in memory. The author must save these documents to make the change permanent.
 - The editor reports the diagnostics of the full bundle, also for the documents that are not open.
+- Semantic operations prepare a complete candidate and install one immutable snapshot. A failed preparation leaves the live snapshot unchanged.
+- Exact Markdown edits install source revisions before a separate semantic-completion phase. Stale completion guards do not replace newer state.
