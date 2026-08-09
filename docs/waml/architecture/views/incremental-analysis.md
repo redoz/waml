@@ -1,13 +1,15 @@
 ---
 type: uml.Activity
 title: Incremental Analysis
-description: The revisioned analysis flow from exact text changes to a committed or rejected candidate.
+description: The document-local edit, source promotion, and semantic analysis flow for an incremental Markdown change.
 ---
 
 # Incremental Analysis
 
 ## Notes
-- [Markdown Syntax](../concepts/implementation/markdown-syntax.md) validates exact changes and reports whether reparse is incremental or full.
+- `MarkdownDocumentSession::apply_edit_without_history` validates the local `DocumentRevision` and exact changes, reparses, and then advances its Markdown snapshot.
+- `EditorSession::promote_source_edit` later validates the session document revision and accepted source `Arc` identity before it installs a source-only session revision.
+- A failed promotion leaves the editor-session snapshot unchanged. The app shell then synchronizes the active Markdown view from that snapshot.
 - [Affected Analysis](../concepts/implementation/affected-analysis.md) is sorted and has no duplicate document, island, or diagram identities.
 - [UML Analysis](../concepts/implementation/uml-analysis.md) records freshness for each syntax island.
 - A quarantined document does not make every projection stale. Unrelated diagram projections stay current.
@@ -18,33 +20,46 @@ description: The revisioned analysis flow from exact text changes to a committed
 ## Nodes
 
 ### initial
-- transitions to Exact Text Changes
+- transitions to Validate Local Markdown Edit
 
-### Exact Text Changes
-- do: `apply ordered changes to the accepted source-text identity`
-- transitions to Validate Base Identity
+### Validate Local Markdown Edit
+- do: `validate the local document revision, ordered change ranges, change map, result selection, and next revision`
+- transitions to Local Edit Valid?
 
-### Validate Base Identity
-- transitions to Base Identity Matches?
+### decision Local Edit Valid?
+- when `local revision and changes are valid` transitions to Reparse Local Markdown
+- else transitions to Reject Local Edit
 
-### decision Base Identity Matches?
-- when `revision and source identity match` transitions to Incremental Reparse
-- else transitions to Reject Edit
-
-### Incremental Reparse
+### Reparse Local Markdown
 - do: `reparse valid changed ranges and preserve reusable syntax identities`
 - transitions to Incremental Recovery Applied?
 
 ### decision Incremental Recovery Applied?
-- when `incremental recovery applies` transitions to Prepare Markdown and Catalog
+- when `incremental recovery applies` transitions to Advance Local Markdown State
 - else transitions to Full Document Reparse
 
 ### Full Document Reparse
 - do: `parse the full changed document and record the fallback reason`
+- transitions to Advance Local Markdown State
+
+### Advance Local Markdown State
+- do: `install the next Markdown snapshot and selections, then return a proposed source edit`
+- transitions to Promote Source Edit
+
+### Promote Source Edit
+- do: `submit the proposal to the editor session after document-local editing completes`
+- transitions to Promotion Guards Match?
+
+### decision Promotion Guards Match?
+- when `session document revision and accepted source Arc identity match` transitions to Install Source-Only Session Revision
+- else transitions to Reject Promotion
+
+### Install Source-Only Session Revision
+- do: `apply the exact source changes and advance the editor session with pending semantic work`
 - transitions to Prepare Markdown and Catalog
 
 ### Prepare Markdown and Catalog
-- do: `reuse accepted snapshots and quarantine shell-failed documents`
+- do: `build a provisional catalog, reuse or promote Markdown snapshots, quarantine shell-failed documents, and derive OKF from the accepted catalog`
 - transitions to Malformed Document Quarantined?
 
 ### decision Malformed Document Quarantined?
@@ -82,8 +97,12 @@ description: The revisioned analysis flow from exact text changes to a committed
 - do: `prepare every open tab, reconcile the document set, and update the active view`
 - transitions to final
 
-### Reject Edit
-- do: `keep the accepted snapshot and revision`
+### Reject Local Edit
+- do: `keep the document-local Markdown snapshot and revision`
+- transitions to final
+
+### Reject Promotion
+- do: `keep the editor-session snapshot unchanged and synchronize the active Markdown view from it`
 - transitions to final
 
 ### Reject Candidate

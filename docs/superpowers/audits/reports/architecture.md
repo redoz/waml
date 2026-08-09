@@ -68,13 +68,13 @@ None.
 - `crates/waml-editor/src/native_save.rs`, `platform_browser.rs`, `browser_boot.rs`, and `api_save.rs` define platform-adapter ownership.
 - `crates/waml-editor/src/document_host.rs::reconcile_registry` and `prepared_preview_replacement_drops_the_old_live_view` establish that a removed tab cannot retain a live view.
 - `crates/waml/src/analysis.rs:654` (`prepare_candidate`) starts immutable candidate preparation. `prepare_candidate_inner_with_markdown_updates` at line 756 builds OKF analysis before UML analysis.
-- `crates/waml/src/analysis.rs:964` (`analyze_okf_inner`) reuses, reparses, or promotes Markdown syntax. It quarantines a shell-failed document instead of rejecting the complete bundle.
+- `crates/waml/src/analysis.rs:964-1211` (`analyze_okf_inner`) constructs a provisional `DocumentCatalog` before Markdown parse, reparse, promotion, or reuse. Catalog document identities and revisions are Markdown inputs. It can rebuild the accepted catalog after shell quarantine, then calls `okf::shell::derive` with that catalog and its `MarkdownSyntaxSet`.
 - `crates/waml/src/uml/analysis.rs:275` (`analyze`) visits every claimed concept and builds the projection at line 489. It then calls `analysis_metadata` at line 490 to compute affected closure, retained projections, and per-island freshness.
 - `crates/waml-editor/src/editor_session.rs:539` (`apply_pending_with_preparer`) prepares a semantic edit before snapshot replacement. A failed preparation does not change session state.
-- `crates/waml-editor/src/editor_session.rs:755` (`promote_source_edit`) validates an exact Markdown edit and installs its source-only revision. `install_semantic_completion` at line 887 rejects stale identity or revision results.
-- `crates/waml-markdown-editor/src/session.rs:864` (`apply_edit_without_history`) validates the document revision and exact changes before `reparse_markdown`.
+- `crates/waml-editor/src/editor_session.rs:762-892` (`promote_source_edit`) later validates the session document revision and accepted source `Arc` identity before it installs a source-only revision. `install_semantic_completion` rejects stale identity or revision results.
+- `crates/waml-markdown-editor/src/session.rs:864-910` (`apply_edit_without_history`) validates the local document revision and exact changes, calls `reparse_markdown`, and advances the document-local Markdown snapshot.
 - `DocumentRevision` belongs to the Markdown snapshot. `EditorSession::promote_source_edit` advances a separate `session_revision`, and semantic installation also compares source `Arc` identity.
-- `crates/waml-editor/src/app/actions.rs:983` runs semantic preparation and then installs its completion at line 985 in the same production call stack.
+- `crates/waml-editor/src/app/actions.rs:1020-1068` calls `promote_source_edit`; its error branch calls `DocumentHost::sync_active` so the active Markdown view returns to the unchanged editor-session snapshot. Its success branch runs semantic preparation and installs the completion in the same production call stack.
 - `crates/waml-editor/src/app/workspace.rs:151` prepares every open tab. `crates/waml-editor/src/document_host.rs:377` reconciles that set and synchronizes the active view.
 - `crates/waml-syntax/src/markdown/snapshot.rs:347` (`reparse_markdown`) reports incremental or full reparse and preserves reusable syntax identities.
 - `crates/waml-cli/src/main.rs:28` (`Command`) defines separate check, format, index, query, mutation, share, site, serve, and LSP command surfaces.
