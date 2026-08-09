@@ -523,12 +523,24 @@ impl App {
         let Some((direction, problem)) = direction else {
             return ActionFlow::Continue;
         };
+        self.traverse_history_with_feedback(cx, direction, problem);
+        ActionFlow::Consumed
+    }
+
+    /// The one place a history traversal reports itself: the chrome pair and
+    /// the mouse's back/forward buttons both land here so a dead end reads the
+    /// same either way.
+    pub(super) fn traverse_history_with_feedback(
+        &mut self,
+        cx: &mut Cx,
+        direction: HistoryDirection,
+        problem: &'static str,
+    ) {
         if self.traverse_view_history(cx, direction) {
             self.clear_history_feedback(cx);
         } else {
             self.set_history_problem(cx, Some(problem));
         }
-        ActionFlow::Consumed
     }
 
     fn handle_document_header_action(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {

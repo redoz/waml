@@ -29,6 +29,30 @@ impl App {
     }
 
     pub(super) fn handle_global_shortcuts(&mut self, cx: &mut Cx, event: &Event) -> bool {
+        // The mouse's fourth/fifth buttons drive view history, the same pair
+        // the chrome's arrows drive. Handled app-wide rather than hit-tested
+        // (no widget owns a thumb button), and consumed so no hovered widget
+        // reads the press as a click. `MouseDown` only -- acting on the
+        // matching `MouseUp` too would traverse twice per press.
+        if let Event::MouseDown(me) = event {
+            let direction = if me.button.is_back() {
+                Some((HistoryDirection::Back, "No previous view"))
+            } else if me.button.is_forward() {
+                Some((HistoryDirection::Forward, "No next view"))
+            } else {
+                None
+            };
+            if let Some((direction, problem)) = direction {
+                // Gate on the same condition that shows the chrome pair: with
+                // no document open there is no history to speak about, so stay
+                // silent rather than posting a dead-end message.
+                if self.documents.active_tab().is_some() {
+                    self.traverse_history_with_feedback(cx, direction, problem);
+                }
+                return true;
+            }
+        }
+
         // Model history owns the standard platform chords, even while an
         // editor has focus. Returning here keeps focused widgets from also
         // applying a competing local undo/redo when a stack is empty.

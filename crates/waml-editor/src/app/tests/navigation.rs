@@ -2541,3 +2541,55 @@ fn a_failed_folder_navigation_does_not_promote_the_active_preview_tab() {
         "a failed folder navigation must not promote the preview tab"
     );
 }
+
+/// The two extra mouse buttons every pointing device with a thumb rest has
+/// (XBUTTON1/2 on Windows, `BTN_SIDE`/`BTN_EXTRA` on Linux, X11 buttons 8/9)
+/// drive the same view history as the chrome's back/forward pair.
+fn mouse_button_press(button: MouseButton) -> Event {
+    Event::MouseDown(MouseDownEvent {
+        abs: Vec2d::default(),
+        button,
+        window_id: WindowId(0, 0),
+        modifiers: KeyModifiers::default(),
+        handled: Cell::new(Area::default()),
+        time: 0.0,
+    })
+}
+
+#[test]
+fn mouse_back_and_forward_buttons_traverse_view_history() {
+    let (mut cx, mut app) = navigation_app_with_active_order();
+    assert!(app.transition_document(&mut cx, "sales/customer", false));
+    assert_eq!(app.test_history_enabled(&mut cx), (true, false));
+
+    app.handle_event(&mut cx, &mouse_button_press(MouseButton::BACK));
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some("sales/order")
+    );
+    assert_eq!(app.test_history_enabled(&mut cx), (false, true));
+
+    app.handle_event(&mut cx, &mouse_button_press(MouseButton::FORWARD));
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some("sales/customer")
+    );
+}
+
+#[test]
+fn exhausted_mouse_back_button_reports_the_same_problem_as_the_chrome_button() {
+    let (mut cx, mut app) = navigation_app_with_active_order();
+    assert!(app.transition_document(&mut cx, "sales/customer", false));
+
+    app.handle_event(&mut cx, &mouse_button_press(MouseButton::BACK));
+    app.handle_event(&mut cx, &mouse_button_press(MouseButton::BACK));
+
+    let statusbar = app.ui.widget(&cx, ids!(statusbar));
+    let statusbar = statusbar
+        .borrow::<crate::statusbar::Statusbar>()
+        .expect("test statusbar is mounted");
+    assert_eq!(
+        crate::statusbar::history_feedback(&statusbar),
+        (Some("No previous view"), None)
+    );
+}
