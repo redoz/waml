@@ -31,7 +31,7 @@ canvas is not empty.
 
 ## Discrepancies
 
-- BHV-BRW-022 — The goal says that a browser failure causes a message. A non-success API boot response only logs the error and returns at `crates/waml-editor/src/app.rs:902` and `crates/waml-editor/src/browser_boot.rs:181`.
+- BHV-BRW-022 — The goal says that a browser failure causes a message. A non-success API boot response only logs the error and returns at `crates/waml-editor/src/app.rs:902` and `crates/waml-editor/src/browser_boot.rs:184`.
 
 ## Verification gaps
 
