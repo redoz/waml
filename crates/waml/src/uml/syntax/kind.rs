@@ -153,4 +153,8 @@ pub enum UmlSyntaxDiagnosticCode {
     UnsupportedSequenceForm,
     MalformedIndentation,
     UnresolvedTarget,
+    /// A `## Layout` bullet that did not match the fixed layout grammar.  The
+    /// diagnostic message names the word the grammar wanted, so the parser --
+    /// the only place that knows the grammar -- owns the wording.
+    MalformedLayout,
 }

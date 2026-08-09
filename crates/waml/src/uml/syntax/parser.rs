@@ -2984,6 +2984,10 @@ fn layout_statement(
     // exact authored bytes/trivia; the parallel spellings are used only to
     // choose their fixed grammar slots below.
     let mut atom_words: Vec<String> = Vec::new();
+    // Authored byte span of each entry in `atom_words`, excluding the leading
+    // whitespace the green token carries as trivia.  Recovery diagnostics point
+    // at these spans so a squiggle starts on the word, not in front of it.
+    let mut atom_spans: Vec<(usize, usize)> = Vec::new();
     let mut has_bad_atom = false;
     let mut at = lead + 1;
     while at < content_end {
@@ -3045,13 +3049,22 @@ fn layout_statement(
                 '"' => UmlSyntaxKind::LayoutQuoteToken,
                 _ => UmlSyntaxKind::LayoutWordToken,
             })));
+            // As with a lexed atom, the gap in front of the unlexable bytes is
+            // leading trivia so the recovery node's range starts on them.
+            let leading = (token_start < at)
+                .then(|| {
+                    f.trivia(TriviaKind::Whitespace, slice(text, token_start, at))
+                        .unwrap()
+                })
+                .into_iter();
             children.push(GreenElement::Node(
                 f.node(
                     UmlSyntaxKind::SkippedTokensSyntax,
                     [GreenElement::Token(
-                        f.bad_token(
+                        f.bad_token_with_leading(
                             UmlSyntaxKind::BadToken,
-                            slice(text, token_start, next),
+                            slice(text, at, next),
+                            leading,
                             UmlSyntaxDiagnosticCode::UnexpectedToken,
                         )
                         .unwrap(),
@@ -3060,8 +3073,12 @@ fn layout_statement(
                 .unwrap(),
             ));
         } else {
-            children.push(token(f, text, token_start, token_start, next, kind));
+            // The gap before the atom is leading trivia, not part of the atom.
+            // Folding it into the token text would make every range taken from
+            // a layout node start one space early.
+            children.push(token(f, text, token_start, at, next, kind));
             atom_words.push(source[at..next].trim().to_ascii_lowercase());
+            atom_spans.push((at, next));
         }
         at = next.max(at + ch.len_utf8());
     }
@@ -3136,7 +3153,17 @@ fn layout_statement(
                     .unwrap(),
                 ));
             }
-            Err(error) => append_layout_recovery(f, &mut children, atoms, error),
+            Err(error) => {
+                let (span_start, span_end) =
+                    malformed_layout_span(&error, &atom_spans, lead + 1, content_end);
+                diags.push(diag(
+                    UmlSyntaxDiagnosticCode::MalformedLayout,
+                    span_start,
+                    span_end,
+                    error.expected.message(),
+                ));
+                append_layout_recovery(f, &mut children, atoms, error)
+            }
         }
     }
     if children.len() == 1 {
@@ -3182,11 +3209,58 @@ enum LayoutShape {
     Standalone(std::ops::Range<usize>),
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Why a layout bullet failed to match the fixed grammar.  The shape parser is
+/// the only place that knows which word had to come next, so it carries the
+/// authored words the message needs rather than leaving the analysis layer to
+/// re-derive the grammar from the recovery nodes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LayoutExpectation {
+    /// A fixed keyword had to follow an authored word (`left` -> `of`).
+    Keyword {
+        after: String,
+        keyword: &'static str,
+    },
+    /// A member reference -- a link, a quoted name, or a parenthesised group.
+    Reference,
+    /// `as` must name an explicit axis.
+    Axis,
+    /// A parenthesised group was left open.
+    CloseParen,
+    /// `with`, `and` or `,` must be followed by a hint.
+    Hint,
+    /// A hint word outside the hint vocabulary.
+    UnknownHint(String),
+    /// The statement parsed but words remain after it.
+    TrailingWords,
+    /// An edge anchor (`top of A`) used outside an alignment.
+    EdgeOutsideAlignment,
+}
+
+impl LayoutExpectation {
+    /// The end-user message.  These render inline at the end of the authored
+    /// row, so each one names the missing word and stops.
+    fn message(&self) -> String {
+        match self {
+            Self::Keyword { after, keyword } => format!("expected \"{keyword}\" after \"{after}\""),
+            Self::Reference => "expected a diagram member here".to_string(),
+            Self::Axis => "expected \"row\" or \"column\" after \"as\"".to_string(),
+            Self::CloseParen => "expected \")\" to close the group".to_string(),
+            Self::Hint => "expected a layout hint after \"with\"".to_string(),
+            Self::UnknownHint(word) => format!("\"{word}\" is not a layout hint"),
+            Self::TrailingWords => "unexpected extra words after the layout statement".to_string(),
+            Self::EdgeOutsideAlignment => {
+                "an edge anchor like \"top of\" needs \"aligned with\"".to_string()
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct LayoutShapeError {
     recovery_from: usize,
     missing_at: usize,
     missing: UmlSyntaxKind,
+    expected: LayoutExpectation,
 }
 
 struct LayoutShapeCursor<'a> {
@@ -3216,12 +3290,23 @@ impl<'a> LayoutShapeCursor<'a> {
         recovery_from: usize,
         missing_at: usize,
         missing: UmlSyntaxKind,
+        expected: LayoutExpectation,
     ) -> LayoutShapeError {
         LayoutShapeError {
             recovery_from,
             missing_at,
             missing,
+            expected,
         }
+    }
+
+    /// The word already consumed just before the cursor, for messages that name
+    /// what the missing keyword had to follow.
+    fn previous_word(&self) -> String {
+        self.words
+            .get(self.pos.wrapping_sub(1))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn operand(&mut self) -> Result<std::ops::Range<usize>, LayoutShapeError> {
@@ -3234,6 +3319,7 @@ impl<'a> LayoutShapeCursor<'a> {
                     start.max(axis_at.saturating_sub(1)),
                     axis_at,
                     UmlSyntaxKind::LayoutWordToken,
+                    LayoutExpectation::Axis,
                 ));
             }
             self.pos += 1;
@@ -3260,23 +3346,43 @@ impl<'a> LayoutShapeCursor<'a> {
                 start.saturating_sub(1),
                 start,
                 UmlSyntaxKind::LayoutWordToken,
+                LayoutExpectation::Reference,
             ));
         };
         if word == "(" {
             self.pos += 1;
             self.operand()?;
             if !self.eat(")") {
-                return Err(self.error(start, self.pos, UmlSyntaxKind::LayoutCloseParenToken));
+                return Err(self.error(
+                    start,
+                    self.pos,
+                    UmlSyntaxKind::LayoutCloseParenToken,
+                    LayoutExpectation::CloseParen,
+                ));
             }
             return Ok(());
         }
         if matches!(word, ")" | ",") {
-            return Err(self.error(start, start, UmlSyntaxKind::LayoutWordToken));
+            return Err(self.error(
+                start,
+                start,
+                UmlSyntaxKind::LayoutWordToken,
+                LayoutExpectation::Reference,
+            ));
         }
         if matches!(word, "row" | "column") {
+            let axis = word.to_string();
             self.pos += 1;
             if !self.eat("of") {
-                return Err(self.error(start, self.pos, UmlSyntaxKind::LayoutKeywordToken));
+                return Err(self.error(
+                    start,
+                    self.pos,
+                    UmlSyntaxKind::LayoutKeywordToken,
+                    LayoutExpectation::Keyword {
+                        after: axis,
+                        keyword: "of",
+                    },
+                ));
             }
             self.operand()?;
             while self.eat(",") {
@@ -3294,7 +3400,12 @@ impl<'a> LayoutShapeCursor<'a> {
 
     fn hint(&mut self, recovery_from: usize) -> Result<(), LayoutShapeError> {
         let Some(word) = self.word() else {
-            return Err(self.error(recovery_from, self.pos, UmlSyntaxKind::LayoutWordToken));
+            return Err(self.error(
+                recovery_from,
+                self.pos,
+                UmlSyntaxKind::LayoutWordToken,
+                LayoutExpectation::Hint,
+            ));
         };
         match word {
             "frame" | "box" | "shrink" | "emphasized" | "collapsed" => {
@@ -3302,14 +3413,28 @@ impl<'a> LayoutShapeCursor<'a> {
                 Ok(())
             }
             "no" | "small" | "medium" | "large" => {
+                let size = word.to_string();
                 self.pos += 1;
                 if self.eat("margin") || self.eat("margins") {
                     Ok(())
                 } else {
-                    Err(self.error(recovery_from, self.pos, UmlSyntaxKind::LayoutKeywordToken))
+                    Err(self.error(
+                        recovery_from,
+                        self.pos,
+                        UmlSyntaxKind::LayoutKeywordToken,
+                        LayoutExpectation::Keyword {
+                            after: size,
+                            keyword: "margin",
+                        },
+                    ))
                 }
             }
-            _ => Err(self.error(recovery_from, self.pos, UmlSyntaxKind::LayoutWordToken)),
+            _ => Err(self.error(
+                recovery_from,
+                self.pos,
+                UmlSyntaxKind::LayoutWordToken,
+                LayoutExpectation::UnknownHint(word.to_string()),
+            )),
         }
     }
 
@@ -3337,7 +3462,15 @@ impl<'a> LayoutShapeCursor<'a> {
                 if matches!(self.word(), Some("left") | Some("right")) {
                     self.pos += 1;
                     if !self.eat("of") {
-                        return Err(self.error(start, self.pos, UmlSyntaxKind::LayoutKeywordToken));
+                        return Err(self.error(
+                            start,
+                            self.pos,
+                            UmlSyntaxKind::LayoutKeywordToken,
+                            LayoutExpectation::Keyword {
+                                after: self.words[start..self.pos].join(" "),
+                                keyword: "of",
+                            },
+                        ));
                     }
                 }
                 Ok(Some(start..self.pos))
@@ -3345,7 +3478,15 @@ impl<'a> LayoutShapeCursor<'a> {
             Some("left") | Some("right") => {
                 self.pos += 1;
                 if !self.eat("of") {
-                    return Err(self.error(start, self.pos, UmlSyntaxKind::LayoutKeywordToken));
+                    return Err(self.error(
+                        start,
+                        self.pos,
+                        UmlSyntaxKind::LayoutKeywordToken,
+                        LayoutExpectation::Keyword {
+                            after: self.previous_word(),
+                            keyword: "of",
+                        },
+                    ));
                 }
                 Ok(Some(start..self.pos))
             }
@@ -3360,11 +3501,24 @@ fn parse_layout_shape(words: &[String]) -> Result<LayoutShape, LayoutShapeError>
     if cursor.eat("aligned") {
         let join_start = cursor.pos - 1;
         if !cursor.eat("with") {
-            return Err(cursor.error(join_start, cursor.pos, UmlSyntaxKind::LayoutKeywordToken));
+            return Err(cursor.error(
+                join_start,
+                cursor.pos,
+                UmlSyntaxKind::LayoutKeywordToken,
+                LayoutExpectation::Keyword {
+                    after: "aligned".to_string(),
+                    keyword: "with",
+                },
+            ));
         }
         let (right, _) = cursor.anchored()?;
         if cursor.pos != words.len() {
-            return Err(cursor.error(cursor.pos, cursor.pos, UmlSyntaxKind::EndOfFileToken));
+            return Err(cursor.error(
+                cursor.pos,
+                cursor.pos,
+                UmlSyntaxKind::EndOfFileToken,
+                LayoutExpectation::TrailingWords,
+            ));
         }
         return Ok(LayoutShape::Alignment {
             left: first,
@@ -3373,7 +3527,12 @@ fn parse_layout_shape(words: &[String]) -> Result<LayoutShape, LayoutShapeError>
         });
     }
     if first_has_edge {
-        return Err(cursor.error(0, cursor.pos, UmlSyntaxKind::LayoutKeywordToken));
+        return Err(cursor.error(
+            0,
+            cursor.pos,
+            UmlSyntaxKind::LayoutKeywordToken,
+            LayoutExpectation::EdgeOutsideAlignment,
+        ));
     }
     let mut operands = vec![first];
     let mut directions = Vec::new();
@@ -3391,7 +3550,12 @@ fn parse_layout_shape(words: &[String]) -> Result<LayoutShape, LayoutShapeError>
         }
     }
     if cursor.pos != words.len() {
-        return Err(cursor.error(cursor.pos, cursor.pos, UmlSyntaxKind::EndOfFileToken));
+        return Err(cursor.error(
+            cursor.pos,
+            cursor.pos,
+            UmlSyntaxKind::EndOfFileToken,
+            LayoutExpectation::TrailingWords,
+        ));
     }
     if directions.is_empty() {
         Ok(LayoutShape::Standalone(operands.remove(0)))
@@ -3401,6 +3565,30 @@ fn parse_layout_shape(words: &[String]) -> Result<LayoutShape, LayoutShapeError>
             directions,
         })
     }
+}
+
+/// The authored byte span a layout recovery diagnostic underlines.
+///
+/// The squiggle covers the construct the author got wrong -- from where
+/// recovery starts through the atom the missing word was expected at -- rather
+/// than the whole bullet, so `A left f B` marks `left f` and leaves both
+/// members alone.  Trailing-word errors have nothing missing at a point, so
+/// they run to the last atom instead.
+fn malformed_layout_span(
+    error: &LayoutShapeError,
+    spans: &[(usize, usize)],
+    fallback_start: usize,
+    fallback_end: usize,
+) -> (usize, usize) {
+    let Some(last) = spans.len().checked_sub(1) else {
+        return (fallback_start, fallback_end);
+    };
+    let from = error.recovery_from.min(last);
+    let to = match error.expected {
+        LayoutExpectation::TrailingWords => last,
+        _ => error.missing_at.min(last).max(from),
+    };
+    (spans[from].0, spans[to].1)
 }
 
 fn append_layout_recovery(
@@ -4719,7 +4907,7 @@ fn diag(
     code: UmlSyntaxDiagnosticCode,
     start: usize,
     end: usize,
-    message: &'static str,
+    message: impl Into<std::sync::Arc<str>>,
 ) -> TreeDiagnostic<UmlSyntaxDiagnosticCode> {
     TreeDiagnostic {
         code,

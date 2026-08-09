@@ -91,9 +91,12 @@ fn public_layout_atom_views_preserve_leaf_kind_range_and_authored_order() {
         assert!(token.range().start() >= previous_end);
         assert!(token.range().end() > token.range().start());
         assert!(token.range().end() <= statement.syntax().range().end());
-        let authored = &diagram[token.range().start().to_usize()..token.range().end().to_usize()];
+        // The gap in front of an atom is leading trivia, so the trimmed range
+        // covers exactly the bytes `text()` reports and nothing else.
+        let trimmed = token.trimmed_range();
+        let authored = &diagram[trimmed.start().to_usize()..trimmed.end().to_usize()];
         assert_eq!(token.text().write_to_string(), authored);
-        assert_eq!(authored.trim(), *expected_text);
+        assert_eq!(authored, *expected_text);
         previous_end = token.range().end();
     }
 }

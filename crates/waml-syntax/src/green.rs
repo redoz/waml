@@ -139,7 +139,7 @@ impl GreenTrivia {
         self.text.validate()
     }
 
-    fn width(&self) -> Result<TextSize, TextError> {
+    pub fn width(&self) -> Result<TextSize, TextError> {
         self.text.width()
     }
     fn is_source_independent(&self) -> bool {

@@ -403,7 +403,7 @@ pub fn analyze(
             .map(|syntax| declared_attribute(&context, &document, syntax))
             .collect();
         let layout_fields = layout.into_iter().map(declared_layout).collect::<Vec<_>>();
-        translate_layout_diagnostics(&document, id, &layout_fields, &mut diagnostics)?;
+        translate_layout_diagnostics(&document, id, &tree, &layout_fields, &mut diagnostics)?;
         declared.concepts.insert(
             concept.id.clone(),
             crate::uml::DeclaredConcept {
@@ -2474,9 +2474,17 @@ fn has_direct_recovery(node: &SyntaxNode<UmlLanguage>) -> bool {
 /// Emits a `MalformedLayout` diagnostic for every `layout_fields` entry that
 /// failed to resolve cleanly (`Incomplete` or `Invalid`); `Valid` and
 /// `Absent` fields need no diagnostic.
+///
+/// A field the shape parser already rejected carries its own diagnostic, which
+/// names the word the grammar wanted and underlines only the malformed run;
+/// `translate_parser_diagnostics` forwards those, so this pass skips the field
+/// rather than reporting the same line twice.  What is left are fields that
+/// went `Invalid` without a shape error -- an empty bullet, an unlexable atom --
+/// and those still get the generic message.
 fn translate_layout_diagnostics(
     document: &crate::analysis::DocumentVersion,
     id: DocumentId,
+    tree: &SyntaxTree<UmlLanguage>,
     layout_fields: &[crate::uml::DeclaredField<UmlLanguage, crate::uml::DeclaredLayoutStatement>],
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<(), AnalysisError> {
@@ -2486,7 +2494,18 @@ fn translate_layout_diagnostics(
             crate::uml::DeclaredField::Incomplete { syntax, .. }
             | crate::uml::DeclaredField::Invalid { syntax, .. } => syntax,
         };
-        let range = syntax.range();
+        // The statement node, not the recovery node, is what a parser
+        // diagnostic sits inside; walk up so containment is decidable.
+        let statement = ancestor_or_self(syntax, syntax::UmlSyntaxKind::LayoutStatement);
+        let covered = tree.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == syntax::UmlSyntaxDiagnosticCode::MalformedLayout
+                && diagnostic.range.start() >= statement.range().start()
+                && diagnostic.range.end() <= statement.range().end()
+        });
+        if covered {
+            continue;
+        }
+        let range = syntax.trimmed_range();
         let start = document
             .line_index()
             .line_col(document.text(), range.start())
@@ -2518,6 +2537,24 @@ fn translate_layout_diagnostics(
         );
     }
     Ok(())
+}
+
+/// The nearest enclosing node of `kind`, or the node itself when it is already
+/// that kind or has no such ancestor.
+fn ancestor_or_self(
+    node: &SyntaxNode<UmlLanguage>,
+    kind: syntax::UmlSyntaxKind,
+) -> SyntaxNode<UmlLanguage> {
+    let mut current = node.clone();
+    loop {
+        if current.kind() == kind {
+            return current;
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => return node.clone(),
+        }
+    }
 }
 
 fn translate_parser_diagnostics(
@@ -2557,6 +2594,9 @@ fn translate_parser_diagnostics(
                     }
                     syntax::UmlSyntaxDiagnosticCode::UnresolvedTarget => {
                         crate::diagnostic::DiagCode::UnresolvedTarget
+                    }
+                    syntax::UmlSyntaxDiagnosticCode::MalformedLayout => {
+                        crate::diagnostic::DiagCode::MalformedLayout
                     }
                     // Attribute-line parse errors (missing ':', missing type, an
                     // unparsable multiplicity) and generic parser recovery all

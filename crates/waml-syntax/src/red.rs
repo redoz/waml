@@ -298,6 +298,16 @@ fn node<L: SyntaxLanguage>(
         range,
     }))
 }
+/// Total authored width of a run of trivia.  Trivia that cannot report a
+/// width contributes nothing, which keeps a trimmed range inside the untrimmed
+/// one rather than failing the caller.
+fn trivia_width(trivia: &[crate::GreenTrivia]) -> usize {
+    trivia
+        .iter()
+        .filter_map(|piece| piece.width().ok())
+        .map(TextSize::to_usize)
+        .sum()
+}
 impl<L: SyntaxLanguage> SyntaxNode<L> {
     pub fn kind(&self) -> L::Kind {
         self.0.green.kind()
@@ -307,6 +317,40 @@ impl<L: SyntaxLanguage> SyntaxNode<L> {
     }
     pub fn range(&self) -> TextRange {
         self.0.range
+    }
+    /// The node's range with the leading trivia of its first token and the
+    /// trailing trivia of its last token excluded.  A node range covers the
+    /// trivia its edge tokens own, so anything that paints over a node --
+    /// a diagnostic squiggle, a selection -- needs the trimmed range to start
+    /// on authored text instead of the whitespace in front of it.  Falls back
+    /// to the full range for a node that owns no tokens.
+    pub fn trimmed_range(&self) -> TextRange {
+        let (Some(first), Some(last)) = (self.first_token(), self.last_token()) else {
+            return self.0.range;
+        };
+        let lead = trivia_width(first.leading_trivia());
+        let trail = trivia_width(last.trailing_trivia());
+        let start = TextSize::new(first.range().start().to_usize().saturating_add(lead) as u32);
+        let end = TextSize::new(last.range().end().to_usize().saturating_sub(trail) as u32);
+        TextRange::new(start, end).unwrap_or(self.0.range)
+    }
+    /// The first token in document order beneath this node, if it owns one.
+    pub fn first_token(&self) -> Option<SyntaxToken<L>> {
+        self.children().find_map(|element| match element {
+            SyntaxElement::Token(token) => Some(token),
+            SyntaxElement::Node(node) => node.first_token(),
+        })
+    }
+    /// The last token in document order beneath this node, if it owns one.
+    pub fn last_token(&self) -> Option<SyntaxToken<L>> {
+        self.children()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) => Some(token),
+                SyntaxElement::Node(node) => node.last_token(),
+            })
     }
     pub fn same_green(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0.green, &other.0.green)
@@ -382,6 +426,15 @@ impl<L: SyntaxLanguage> SyntaxToken<L> {
     }
     pub fn range(&self) -> TextRange {
         self.0.range
+    }
+    /// The token's range with its own leading and trailing trivia excluded, so
+    /// it covers exactly the bytes `text()` reports.
+    pub fn trimmed_range(&self) -> TextRange {
+        let lead = trivia_width(self.leading_trivia());
+        let trail = trivia_width(self.trailing_trivia());
+        let start = TextSize::new(self.0.range.start().to_usize().saturating_add(lead) as u32);
+        let end = TextSize::new(self.0.range.end().to_usize().saturating_sub(trail) as u32);
+        TextRange::new(start, end).unwrap_or(self.0.range)
     }
     pub fn parent(&self) -> Option<SyntaxNode<L>> {
         Some(self.0.parent.clone())
@@ -526,5 +579,70 @@ mod tests {
                 actual: Kind::Token
             })
         ));
+    }
+
+    /// `  ab  cd  ` as one node of two tokens, each owning the whitespace on
+    /// either side of it as trivia.
+    fn padded_tree() -> SyntaxTree<Lang> {
+        let factory = GreenFactory::<Lang>::new();
+        let space = |text: &'static str| {
+            factory
+                .trivia(
+                    crate::TriviaKind::Whitespace,
+                    crate::GreenText::Static(text),
+                )
+                .unwrap()
+        };
+        let word = |text: &'static str, lead: Vec<crate::GreenTrivia>, trail: Vec<_>| {
+            GreenElement::Token(
+                factory
+                    .token(Kind::Token, crate::GreenText::Static(text), lead, trail)
+                    .unwrap(),
+            )
+        };
+        let root = factory
+            .node(
+                Kind::Root,
+                [
+                    word("ab", vec![space("  ")], vec![]),
+                    word("cd", vec![space("  ")], vec![space("  ")]),
+                ],
+            )
+            .unwrap();
+        SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT)
+    }
+
+    #[test]
+    fn trimmed_range_drops_edge_trivia_but_keeps_interior_gaps() {
+        let root = padded_tree();
+        let root = root.root();
+        assert_eq!(root.range().start().to_usize(), 0);
+        assert_eq!(root.range().end().to_usize(), 10);
+        // Leading "  " and trailing "  " fall away; the gap between the two
+        // words stays, because it is interior to the node.
+        let trimmed = root.trimmed_range();
+        assert_eq!(trimmed.start().to_usize(), 2);
+        assert_eq!(trimmed.end().to_usize(), 8);
+    }
+
+    #[test]
+    fn trimmed_range_of_a_token_covers_exactly_its_text() {
+        let root = padded_tree();
+        for element in root.root().children() {
+            let token = element.into_token().expect("token child");
+            let trimmed = token.trimmed_range();
+            assert_eq!(
+                trimmed.len().to_usize(),
+                token.text().write_to_string().len()
+            );
+        }
+    }
+
+    #[test]
+    fn trimmed_range_falls_back_to_the_full_range_without_tokens() {
+        let factory = GreenFactory::<Lang>::new();
+        let root = factory.node(Kind::Root, []).unwrap();
+        let tree = SyntaxTree::new(root, Arc::from([]), MarkdownDialect::WAML_DEFAULT);
+        assert_eq!(tree.root().trimmed_range(), tree.root().range());
     }
 }

@@ -720,3 +720,112 @@ fn generic_okf_member_is_declared_and_diagnosed_but_not_projected() {
             && d.range.is_some()
     }));
 }
+
+/// The malformed run of a layout bullet, rendered as the authored line with a
+/// caret row beneath it, so a span regression shows up as a visible shift.
+fn layout_diagnostic_marks(line: &str) -> Vec<(String, String)> {
+    let source = diagram_source(&format!("{line}\n"));
+    analyze(&source)
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == waml::diagnostic::DiagCode::MalformedLayout)
+        .map(|d| {
+            let (start, end) = d.span.expect("layout diagnostic span");
+            let (start, end) = (start.min(line.len()), end.min(line.len()));
+            (
+                format!(
+                    "{}{}",
+                    " ".repeat(start),
+                    "~".repeat(end.saturating_sub(start))
+                ),
+                d.message.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn layout_recovery_names_the_missing_word_and_marks_only_the_malformed_run() {
+    let line = "- [Order](./order.md) left f [Customer](./customer.md)";
+    let marks = layout_diagnostic_marks(line);
+    assert_eq!(
+        marks.len(),
+        1,
+        "one diagnostic per malformed bullet: {marks:?}"
+    );
+    let (caret, message) = &marks[0];
+    // Starts on `left`, not on the space in front of it, and stops after the
+    // word that should have been `of` -- both members are left unmarked.
+    assert_eq!(caret, "                      ~~~~~~");
+    assert_eq!(message, "expected \"of\" after \"left\"");
+}
+
+#[test]
+fn every_layout_shape_failure_names_the_word_the_grammar_wanted() {
+    let cases = [
+        (
+            "- [Order](./order.md) left f [Customer](./customer.md)",
+            "expected \"of\" after \"left\"",
+        ),
+        (
+            "- [Order](./order.md) above left f [Customer](./customer.md)",
+            "expected \"of\" after \"above left\"",
+        ),
+        ("- row [Order](./order.md)", "expected \"of\" after \"row\""),
+        (
+            "- [Order](./order.md) aligned [Customer](./customer.md)",
+            "expected \"with\" after \"aligned\"",
+        ),
+        (
+            "- [Order](./order.md) as sideways",
+            "expected \"row\" or \"column\" after \"as\"",
+        ),
+        (
+            "- [Order](./order.md) with banana",
+            "\"banana\" is not a layout hint",
+        ),
+        (
+            "- [Order](./order.md) with no",
+            "expected \"margin\" after \"no\"",
+        ),
+        (
+            "- ( [Order](./order.md) left of [Customer](./customer.md)",
+            "expected \")\" to close the group",
+        ),
+        (
+            "- [Order](./order.md) left of [Customer](./customer.md) junk here",
+            "unexpected extra words after the layout statement",
+        ),
+        (
+            "- top of [Order](./order.md)",
+            "an edge anchor like \"top of\" needs \"aligned with\"",
+        ),
+    ];
+    for (line, expected) in cases {
+        let marks = layout_diagnostic_marks(line);
+        assert_eq!(marks.len(), 1, "one diagnostic for {line:?}: {marks:?}");
+        assert_eq!(marks[0].1, expected, "message for {line:?}");
+    }
+}
+
+#[test]
+fn layout_diagnostic_spans_never_start_on_whitespace() {
+    for line in [
+        "- [Order](./order.md) left f [Customer](./customer.md)",
+        "- [Order](./order.md) as sideways",
+        "- [Order](./order.md) with banana",
+        "- row [Order](./order.md)",
+        "- ",
+        "- [A](./a.md",
+    ] {
+        for (caret, message) in layout_diagnostic_marks(line) {
+            let Some(start) = caret.find('~') else {
+                continue;
+            };
+            assert!(
+                !line.as_bytes()[start].is_ascii_whitespace(),
+                "{line:?} marks whitespace at {start} ({message})\n{line}\n{caret}"
+            );
+        }
+    }
+}
