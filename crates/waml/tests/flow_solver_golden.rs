@@ -277,6 +277,7 @@ fn decision_without_guards_diagnoses_but_still_solves() {
         is_else: false,
         effect: None,
         carries: None,
+        traces: Vec::new(),
     }];
     let (rf, _) = resolve_flow(&doc, &nodes, &edges);
     let cfg = FlowConfig::default();
@@ -323,6 +324,7 @@ fn multi_root_flow_without_initial_reports_nothing_unreachable() {
             is_else: false,
             effect: None,
             carries: None,
+            traces: Vec::new(),
         }
     }
 
@@ -520,6 +522,7 @@ fn unknown_target_without_to_ref_drops_with_diagnostic() {
         is_else: false,
         effect: None,
         carries: None,
+        traces: Vec::new(),
     }];
     let (rf, diags) = resolve_flow(&doc, &nodes, &edges);
     assert!(rf.edges.is_empty());
@@ -562,6 +565,7 @@ fn cross_document_edge_becomes_off_page_stub() {
         is_else: false,
         effect: None,
         carries: None,
+        traces: Vec::new(),
     }];
     let cfg = FlowConfig::default();
     let (rf, _) = resolve_flow(&doc, &nodes, &edges);
@@ -615,6 +619,7 @@ fn off_page_stub_label_resolves_the_target_document_title() {
         is_else: false,
         effect: None,
         carries: None,
+        traces: Vec::new(),
     }];
     let cfg = FlowConfig::default();
     let (rf, _) = resolve_flow(&doc, &nodes, &edges);
@@ -662,6 +667,7 @@ fn chain(len: usize, partition: Option<&str>) -> (FlowDoc, Vec<ActivityNode>, Ve
             is_else: false,
             effect: None,
             carries: None,
+            traces: Vec::new(),
         })
         .collect();
     let doc = FlowDoc {
@@ -761,6 +767,7 @@ fn a_rank_is_centred_under_its_parents() {
             is_else: false,
             effect: None,
             carries: None,
+            traces: Vec::new(),
         })
         .collect();
     let doc = FlowDoc {
@@ -810,6 +817,7 @@ fn parallel_edges_between_one_pair_each_carry_their_own_route_key() {
             is_else: false,
             effect: None,
             carries: None,
+            traces: Vec::new(),
         })
         .collect();
     let doc = FlowDoc {

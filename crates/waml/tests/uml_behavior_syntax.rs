@@ -117,6 +117,31 @@ fn transition_traces_are_typed_and_lossless() {
             uml::syntax::UmlSyntaxKind::FlowTraces
         );
     }
+    let declared = analysis.declared.concept("sign-in").unwrap();
+    let declared_traces = &declared.flow_nodes[0].transitions[0].traces;
+    assert_eq!(declared_traces.len(), 1);
+    assert!(matches!(
+        &declared_traces[0].label,
+        uml::DeclaredField::Valid { value, .. } if value == "AUTH-OIDC-004"
+    ));
+    assert!(matches!(
+        &declared_traces[0].href,
+        uml::DeclaredField::Valid { value, .. }
+            if value == "./sign-in-behavior.md#auth-oidc-004"
+    ));
+
+    let edges = &analysis.projection.flow_edges;
+    assert_eq!(edges[0].traces.len(), 1);
+    assert_eq!(edges[0].traces[0].label, "AUTH-OIDC-004");
+    assert_eq!(
+        edges[0].traces[0].href,
+        "./sign-in-behavior.md#auth-oidc-004"
+    );
+    assert!(matches!(
+        &edges[0].traces[0].target,
+        waml::model::TraceTarget::InternalFragment { concept_id, fragment }
+            if concept_id == "sign-in-behavior" && fragment == "auth-oidc-004"
+    ));
     assert_eq!(written(&analysis, "sign-in.md"), authored);
 }
 

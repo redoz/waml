@@ -23,7 +23,8 @@ pub type Projection = crate::model::Model;
 pub use analysis::{analyze, Analysis};
 pub use declared::{
     expected_for_slot, DeclaredAttribute, DeclaredBinding, DeclaredBundle, DeclaredConcept,
-    DeclaredEndpointRef, DeclaredField, DeclaredFlowNode, DeclaredFlowTransition, DeclaredFragment,
+    DeclaredEndpointRef, DeclaredField, DeclaredFlowNode, DeclaredFlowTrace, DeclaredFlowTransition,
+    DeclaredFragment,
     DeclaredGate, DeclaredInlineInstance, DeclaredInteractionUse, DeclaredLayoutStatement,
     DeclaredLifeline, DeclaredMember, DeclaredMemberGroup, DeclaredMessage, DeclaredMessageKind,
     DeclaredOperand, DeclaredOperandSpec, DeclaredRelationship, DeclaredSlot, DeclaredValue,

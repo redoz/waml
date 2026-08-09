@@ -1,7 +1,7 @@
 use super::syntax::{
-    AttributeSyntax, BindingSyntax, GateSyntax, InlineInstanceSyntax, InteractionUseSyntax,
-    MemberSyntax, MessageSyntax, RelationshipSyntax, SequenceFragmentSyntax, SequenceOperandSyntax,
-    SlotSyntax, UmlLanguage, ValueSyntax,
+    AttributeSyntax, BindingSyntax, FlowTraceSyntax, GateSyntax, InlineInstanceSyntax,
+    InteractionUseSyntax, MemberSyntax, MessageSyntax, RelationshipSyntax, SequenceFragmentSyntax,
+    SequenceOperandSyntax, SlotSyntax, UmlLanguage, ValueSyntax,
 };
 use crate::{
     model::{TypeRef, Visibility},
@@ -116,6 +116,13 @@ pub struct DeclaredFlowTransition {
     pub target: DeclaredField<UmlLanguage, crate::layout::FlowTargetRef>,
     pub carries: DeclaredField<UmlLanguage, String>,
     pub effect: DeclaredField<UmlLanguage, String>,
+    pub traces: Arc<[DeclaredFlowTrace]>,
+}
+
+pub struct DeclaredFlowTrace {
+    pub syntax: FlowTraceSyntax,
+    pub label: DeclaredField<UmlLanguage, String>,
+    pub href: DeclaredField<UmlLanguage, String>,
 }
 pub struct DeclaredFlowNode {
     pub syntax: super::syntax::FlowNodeSyntax,

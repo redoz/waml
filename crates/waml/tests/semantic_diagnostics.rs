@@ -12,6 +12,39 @@ fn diagnostics(
         .to_vec()
 }
 
+#[test]
+fn transition_trace_targets_have_precise_diagnostics() {
+    let flow = "---\ntype: uml.StateMachine\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done\n  traces [Missing](./missing.md)\n  traces [Fragment](./claims.md#missing-fragment)\n  traces [HTTP](http://example.com/claim)\n  traces [HTTPS](https://example.com/claim)\n### final Done\n";
+    let claims = "---\ntype: okf.Behavior\n---\n# Claims\n\n## Existing fragment\n";
+    let found = diagnostics([("flow.md", flow), ("claims.md", claims)]);
+
+    let trace_diagnostics = found
+        .iter()
+        .filter(|diagnostic| {
+            matches!(
+                diagnostic.code,
+                DiagCode::MissingTraceDocument
+                    | DiagCode::UnresolvedTraceFragment
+                    | DiagCode::MalformedTraceTarget
+                    | DiagCode::UnsupportedTraceScheme
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(trace_diagnostics.len(), 3);
+    assert!(trace_diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::MissingTraceDocument));
+    assert!(trace_diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::UnresolvedTraceFragment));
+    assert!(trace_diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::UnsupportedTraceScheme));
+    assert!(trace_diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.file == "flow.md" && diagnostic.span.is_some()));
+}
+
 fn prepared(
     documents: impl IntoIterator<Item = (&'static str, &'static str)>,
     session_revision: u64,

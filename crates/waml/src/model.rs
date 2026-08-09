@@ -523,6 +523,44 @@ pub enum FlowEdgeKind {
     ObjectFlow,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TraceTarget {
+    InternalDocument {
+        concept_id: String,
+    },
+    InternalFragment {
+        concept_id: String,
+        fragment: String,
+    },
+    Https {
+        url: String,
+    },
+    Unresolved {
+        href: String,
+    },
+    Invalid {
+        href: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TraceSource {
+    pub path: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TransitionTrace {
+    pub label: String,
+    pub href: String,
+    pub target: TraceTarget,
+    pub source: TraceSource,
+}
+
 /// A typed control/object flow edge (design spec §3): a model-level pool member,
 /// referenced from its owning behavior's view (`FlowDoc.edges`) by `key`.
 #[derive(Debug, Clone, PartialEq)]
@@ -573,6 +611,11 @@ pub struct FlowEdge {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub carries: Option<String>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub traces: Vec<TransitionTrace>,
 }
 
 /// One behavior document as a **view** (design spec §4): it no longer owns its

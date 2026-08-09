@@ -1962,6 +1962,132 @@ fn field_value<T>(field: &crate::uml::DeclaredField<UmlLanguage, T>) -> Option<&
     }
 }
 
+fn trace_fragment_exists(
+    context: &DomainAnalysisContext<'_>,
+    concept_id: &str,
+    fragment: &str,
+) -> bool {
+    let Some((document_id, _)) = context
+        .catalog
+        .documents()
+        .iter()
+        .find(|(_, document)| crate::okf::id_of(document.path().as_str()) == concept_id)
+    else {
+        return false;
+    };
+    let Some(snapshot) = context.markdown.document(*document_id) else {
+        return false;
+    };
+    let source = snapshot.text().shared();
+    snapshot.queries().headings().any(|heading| {
+        let start = heading.content_range.start().to_usize();
+        let end = heading.content_range.end().to_usize();
+        crate::okf::fragment_slug(&source.as_str()[start..end]) == fragment
+    })
+}
+
+fn resolve_trace_target(
+    context: &DomainAnalysisContext<'_>,
+    path: &str,
+    href: &str,
+) -> Result<crate::model::TraceTarget, (crate::diagnostic::DiagCode, String)> {
+    if let Some((scheme, remainder)) = href.split_once(':') {
+        let scheme = scheme.to_ascii_lowercase();
+        if scheme != "https" {
+            return Err((
+                crate::diagnostic::DiagCode::UnsupportedTraceScheme,
+                format!("unsupported transition trace scheme '{scheme}'"),
+            ));
+        }
+        let host = remainder
+            .strip_prefix("//")
+            .and_then(|rest| rest.split('/').next())
+            .filter(|host| !host.is_empty() && !host.chars().any(char::is_whitespace));
+        if host.is_none() {
+            return Err((
+                crate::diagnostic::DiagCode::MalformedTraceTarget,
+                format!("malformed HTTPS transition trace '{href}'"),
+            ));
+        }
+        return Ok(crate::model::TraceTarget::Https {
+            url: href.to_string(),
+        });
+    }
+    if href.is_empty() || href.contains('?') {
+        return Err((
+            crate::diagnostic::DiagCode::MalformedTraceTarget,
+            format!("malformed transition trace target '{href}'"),
+        ));
+    }
+    let (document_href, fragment) = match href.split_once('#') {
+        Some((_, "")) => {
+            return Err((
+                crate::diagnostic::DiagCode::MalformedTraceTarget,
+                format!("transition trace has an empty fragment '{href}'"),
+            ));
+        }
+        Some((document, fragment)) => (document, Some(fragment)),
+        None => (href, None),
+    };
+    let concept_id = crate::okf::resolve_href(path, document_href);
+    if context.okf.concept(&concept_id).is_none() {
+        return Err((
+            crate::diagnostic::DiagCode::MissingTraceDocument,
+            format!("missing transition trace document '{concept_id}'"),
+        ));
+    }
+    if let Some(fragment) = fragment {
+        if !trace_fragment_exists(context, &concept_id, fragment) {
+            return Err((
+                crate::diagnostic::DiagCode::UnresolvedTraceFragment,
+                format!("unresolved transition trace fragment '#{fragment}'"),
+            ));
+        }
+        Ok(crate::model::TraceTarget::InternalFragment {
+            concept_id,
+            fragment: fragment.to_string(),
+        })
+    } else {
+        Ok(crate::model::TraceTarget::InternalDocument { concept_id })
+    }
+}
+
+fn lower_transition_trace(
+    context: &DomainAnalysisContext<'_>,
+    path: &str,
+    trace: &crate::uml::DeclaredFlowTrace,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> crate::model::TransitionTrace {
+    let label = field_value(&trace.label).cloned().unwrap_or_default();
+    let href = field_value(&trace.href).cloned().unwrap_or_default();
+    let target = match resolve_trace_target(context, path, &href) {
+        Ok(target) => target,
+        Err((code, message)) => {
+            behavior_diagnostic(context, path, &trace.syntax.0, code, message, diagnostics);
+            if matches!(
+                code,
+                crate::diagnostic::DiagCode::MissingTraceDocument
+                    | crate::diagnostic::DiagCode::UnresolvedTraceFragment
+            ) {
+                crate::model::TraceTarget::Unresolved { href: href.clone() }
+            } else {
+                crate::model::TraceTarget::Invalid { href: href.clone() }
+            }
+        }
+    };
+    let range = trace.syntax.0.range();
+    crate::model::TransitionTrace {
+        label,
+        href,
+        target,
+        source: crate::model::TraceSource {
+            path: path.to_string(),
+            start: range.start().to_usize(),
+            end: range.end().to_usize(),
+        },
+    }
+}
+
 fn lower_flow_behavior(
     context: &DomainAnalysisContext<'_>,
     concept: &crate::uml::DeclaredConcept,
@@ -2093,6 +2219,11 @@ fn lower_flow_behavior(
             });
             let edge_key = format!("{}#e{}", concept.concept_id, model.flow_edges.len());
             edge_keys.push(edge_key.clone());
+            let traces = transition
+                .traces
+                .iter()
+                .map(|trace| lower_transition_trace(context, path, trace, diagnostics))
+                .collect();
             model.flow_edges.push(crate::model::FlowEdge {
                 key: edge_key,
                 kind: if carries.is_some() || *kind == crate::model::FlowNodeKind::Object {
@@ -2109,6 +2240,7 @@ fn lower_flow_behavior(
                 is_else: transition.is_else,
                 effect: field_value(&transition.effect).cloned(),
                 carries,
+                traces,
             });
         }
     }
@@ -2892,6 +3024,33 @@ fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
         })
         .unwrap_or(crate::uml::DeclaredField::Absent);
     let is_else = syntax.else_token().is_some();
+    let traces = syntax
+        .traces()
+        .map(|trace| {
+            let link = trace.link();
+            let field = |kind, expected| {
+                link.as_ref()
+                    .and_then(|link| {
+                        field_from_token(link, kind).map(|value| valid(link.clone(), value))
+                    })
+                    .unwrap_or_else(|| crate::uml::DeclaredField::Incomplete {
+                        syntax: trace.0.clone(),
+                        expected,
+                    })
+            };
+            crate::uml::DeclaredFlowTrace {
+                syntax: trace.clone(),
+                label: field(
+                    syntax::UmlSyntaxKind::LinkTextToken,
+                    crate::uml::ExpectedSyntax::LinkTarget,
+                ),
+                href: field(
+                    syntax::UmlSyntaxKind::LinkTargetToken,
+                    crate::uml::ExpectedSyntax::LinkTarget,
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
     crate::uml::DeclaredFlowTransition {
         syntax,
         trigger: text_field(
@@ -2913,6 +3072,7 @@ fn declared_flow_transition(node: SyntaxNode<UmlLanguage>) -> crate::uml::Declar
             syntax::UmlSyntaxKind::FlowEffect,
             syntax::UmlSyntaxKind::EffectToken,
         ),
+        traces: traces.into(),
     }
 }
 

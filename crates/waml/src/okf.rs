@@ -593,6 +593,17 @@ pub fn id_of(path: &str) -> String {
     norm.strip_suffix(".md").unwrap_or(&norm).to_string()
 }
 
+pub fn fragment_slug(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 /// Resolve a written href (e.g. `./orders.md`, `../shop/order.md`) against the
 /// *referring* document's own bundle-relative path, producing the target's full
 /// id (same shape as [`id_of`]). Bare, `./`, `../`, and root-relative paths are
