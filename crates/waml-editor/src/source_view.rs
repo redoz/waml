@@ -159,6 +159,9 @@ impl SourceView {
             EditorEmphasis::Code => EditorEmphasis::Layout,
             EditorEmphasis::Layout => EditorEmphasis::Code,
         };
+        if let SourceViewState::Ready(ready) = &mut self.state {
+            ready.styles = Arc::new(PresentationStyles::for_emphasis(self.emphasis));
+        }
         editor.set_emphasis(cx, self.emphasis);
     }
 
@@ -190,12 +193,13 @@ impl SourceView {
 
     fn compile(
         syntax: &waml_markdown_editor::syntax::MarkdownSyntaxSnapshot,
+        emphasis: EditorEmphasis,
         diagnostics: Arc<[PresentedDiagnostic]>,
         highlighters: &HighlighterRegistry,
         mut assets: EmbeddedAssets,
         asset_host: Option<(&mut MarkdownAssetLease, &waml::source::BundlePath)>,
     ) -> Result<CompiledPresentation, String> {
-        let styles = Arc::new(PresentationStyles::balanced());
+        let styles = Arc::new(PresentationStyles::for_emphasis(emphasis));
         let plan = compile_presentation(syntax, &styles, highlighters)
             .map_err(|error| format!("presentation compile failed: {error:?}"))?;
         if let Some((host, path)) = asset_host {
@@ -250,6 +254,7 @@ impl SourceView {
         session.set_read_only(true);
         match Self::compile(
             &syntax,
+            self.emphasis,
             Arc::from([]),
             &HighlighterRegistry::default(),
             EmbeddedAssets::default(),
@@ -354,7 +359,7 @@ impl SourceView {
                     blocks: Arc::from([]),
                     diagnostics: Arc::from([]),
                 }),
-                styles: Arc::new(PresentationStyles::balanced()),
+                styles: Arc::new(PresentationStyles::for_emphasis(self.emphasis)),
                 assets: EmbeddedAssets::default(),
                 diagnostics: Arc::from([]),
                 pending_changes: None,
@@ -380,6 +385,7 @@ impl SourceView {
                 .expect("SourceView owns its Markdown asset lease");
             let Ok((plan, styles, assets, installed)) = Self::compile(
                 &syntax,
+                self.emphasis,
                 diagnostics.clone(),
                 &highlighters,
                 retained_assets,
@@ -839,6 +845,63 @@ mod tests {
     }
 
     #[test]
+    fn source_rebuild_retains_the_view_owned_emphasis() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let assets = EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle);
+        let mut session = source_session();
+        let mut view = SourceView::new_with_asset_host(
+            "shop/order".into(),
+            assets,
+            EditorEmphasis::Layout,
+        );
+        view.install_snapshot(
+            &mut cx,
+            &body,
+            &session.snapshot(),
+            HostSnapshotCause::InitialLoad,
+        );
+        view.toggle_emphasis(&mut cx, &body.markdown_editor());
+        let initial_revision = body
+            .markdown_editor()
+            .test_installed_presentation()
+            .expect("the initial presentation must be installed")
+            .revision;
+
+        let snapshot = session.snapshot();
+        let (document, syntax) = SourceView::resolve_document(&snapshot, "shop/order")
+            .expect("the source document must resolve");
+        session
+            .replace_external(
+                document,
+                syntax.revision(),
+                "---\ntype: Runbook\ntitle: Order\n---\n# Order\nUpdated body\n".into(),
+            )
+            .unwrap();
+        view.sync_external_replacement(&mut cx, &body, &session.snapshot());
+
+        let installed = body
+            .markdown_editor()
+            .test_installed_presentation()
+            .expect("the replacement presentation must be installed");
+        assert_ne!(installed.revision, initial_revision);
+        assert_eq!(installed.styles.emphasis(), EditorEmphasis::Code);
+        let SourceViewState::Ready(ready) = &view.state else {
+            panic!("the source view must remain ready");
+        };
+        assert_eq!(ready.styles.emphasis(), EditorEmphasis::Code);
+        assert_eq!(view.emphasis, EditorEmphasis::Code);
+        assert_eq!(
+            view.chrome().document_header.view_toggle,
+            Some(HeaderViewAction {
+                icon: Icon::Eye,
+                tooltip: "Use layout emphasis",
+            })
+        );
+    }
+
+    #[test]
     fn source_view_compiles_fenced_waml_with_the_snapshot_highlighter() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let ui = mounted_body(&mut cx);
@@ -1000,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn source_view_applies_async_image_completion_without_mutating_source() {
+    fn source_view_image_completion_retains_emphasis_without_mutating_source() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         let ui = mounted_body(&mut cx);
         let body = BodyWidgets::new(&mut cx, &ui);
@@ -1016,8 +1079,9 @@ mod tests {
             .unwrap();
         let snapshot = session.snapshot();
         let mut view =
-            SourceView::new_with_asset_host("runbook".into(), assets, EditorEmphasis::Code);
+            SourceView::new_with_asset_host("runbook".into(), assets, EditorEmphasis::Layout);
         view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
+        view.toggle_emphasis(&mut cx, &body.markdown_editor());
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
@@ -1038,6 +1102,15 @@ mod tests {
                 })
             {
                 assert_eq!(ready.session.snapshot().text().shared().as_str(), authored);
+                assert_eq!(ready.styles.emphasis(), EditorEmphasis::Code);
+                assert_eq!(
+                    body.markdown_editor()
+                        .test_installed_presentation()
+                        .expect("image completion must install a presentation")
+                        .styles
+                        .emphasis(),
+                    EditorEmphasis::Code
+                );
                 break;
             }
             assert!(
@@ -1187,6 +1260,7 @@ mod tests {
             .expect("the ready fixture must resolve");
         SourceView::compile(
             &syntax,
+            EditorEmphasis::Layout,
             Arc::from([]),
             &HighlighterRegistry::default(),
             EmbeddedAssets::default(),
