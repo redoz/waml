@@ -65,6 +65,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: WAML documentation contract
+        shell: bash
         run: |
           cargo run -p waml-cli -- check docs/waml
           cargo run -p waml-cli -- fmt --check docs/waml
