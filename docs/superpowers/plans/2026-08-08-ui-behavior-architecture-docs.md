@@ -1704,6 +1704,10 @@ git commit -m "docs: map crate and editor ownership"
 - Modify: `docs/waml/architecture/views/index.md`
 - Modify: `docs/waml/architecture/views/system-context.md`
 - Modify: `docs/waml/architecture/views/authoring-and-validation.md`
+- Modify: `docs/waml/architecture/views/share-round-trip.md`
+- Modify: `docs/waml/architecture/views/domain-model.md`
+- Modify: `docs/waml/architecture/views/layout-solving.md`
+- Modify: `docs/waml/architecture/views/model-vocabulary.md`
 - Modify: `docs/waml/architecture/views/editing-round-trip.md`
 - Modify: `docs/waml/architecture/views/web-delivery.md`
 - Modify: `docs/waml/architecture/concepts/workflows/model-projection.md`
@@ -1769,6 +1773,9 @@ rtk node scripts/check-waml-doc-contract.mjs docs/waml
 ```
 
 Expected: no architecture-link, concept-resolution, metadata, or stale-claim error.
+Task 14 must resolve each full architecture finding in its file scope. If a
+finding belongs to a later task, Task 14 must explicitly reassign it before
+acceptance.
 
 - [ ] **Step 8: Commit runtime architecture**
 
