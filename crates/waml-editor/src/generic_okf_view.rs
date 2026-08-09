@@ -123,12 +123,13 @@ impl DocView for GenericOkfView {
         data: ViewData<'_>,
     ) -> ViewOutcome {
         if body
-            .markdown_viewer_source_toggle(cx)
+            .header_view_action_button(cx)
             .as_icon_button()
             .clicked(actions)
         {
             self.toggle_source();
             self.sync(cx, body, data);
+            return ViewOutcome::default();
         }
         let mut outcome = self.source.handle(cx, body, actions, data);
         outcome.source_edit = None;
@@ -184,11 +185,23 @@ mod tests {
     use super::*;
 
     fn mounted_body(cx: &mut Cx) -> (WidgetRef, BodyWidgets) {
-        let header = WidgetRef::new_with_inner(Box::new(
-            cx.with_vm(crate::document_header::DocumentHeader::script_new_with_default),
+        waml_markdown_editor::live_design(cx);
+        let view_toggle = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::icon_button::IconButton::script_new_with_default),
         ));
+        let mut header =
+            cx.with_vm(crate::document_header::DocumentHeader::script_new_with_default);
+        header.test_mount_view_action_button(view_toggle);
+        let header = WidgetRef::new_with_inner(Box::new(header));
+        let markdown = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(waml_markdown_editor::widget::MarkdownEditor::script_new_with_default),
+        ));
+        let mut surface = cx.with_vm(View::script_new_with_default);
+        surface.children.push((live_id!(editor), markdown));
+        let surface = WidgetRef::new_with_inner(Box::new(surface));
         let mut root = cx.with_vm(View::script_new_with_default);
         root.children.push((live_id!(document_header), header));
+        root.children.push((live_id!(markdown_surface), surface));
         let ui = WidgetRef::new_with_inner(Box::new(root));
         let body = BodyWidgets::new(cx, &ui);
         (ui, body)
@@ -262,6 +275,53 @@ mod tests {
                 .borrow::<crate::document_header::DocumentHeader>()
                 .expect("the shared header must be mounted")
                 .test_view_toggle(),
+            Some(HeaderViewAction {
+                icon: Icon::Eye,
+                tooltip: "View rendered",
+            })
+        );
+    }
+
+    #[test]
+    fn source_toggle_action_changes_only_the_generic_surface() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let (ui, body) = mounted_body(&mut cx);
+        let session = crate::editor_session::EditorSession::default();
+        let snapshot = session.snapshot();
+        let mut view = generic_view();
+        body.markdown_editor()
+            .set_emphasis(&mut cx, waml_markdown_editor::EditorEmphasis::Code);
+        view.sync(&mut cx, &body, snapshot.borrowed().into());
+
+        let toggle = body.header_view_action_button(&mut cx).as_icon_button();
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(crate::icon_button::IconButtonAction::Clicked),
+            widget_uid: toggle.widget_uid(),
+            group: None,
+        })];
+        assert!(
+            toggle.clicked(&actions),
+            "the action must target the toggle"
+        );
+        view.handle(&mut cx, &body, &actions, snapshot.borrowed().into());
+
+        assert!(
+            view.showing_source(),
+            "the click must reveal markdown source"
+        );
+        assert_eq!(
+            body.markdown_editor().emphasis(),
+            waml_markdown_editor::EditorEmphasis::Code,
+            "the generic surface toggle must not also toggle emphasis"
+        );
+        let header = ui.widget(&cx, ids!(document_header));
+        let header = header
+            .borrow::<crate::document_header::DocumentHeader>()
+            .expect("the shared header must be mounted");
+        assert_eq!(header.test_right_dock(), None);
+        assert_eq!(
+            header.test_view_toggle(),
             Some(HeaderViewAction {
                 icon: Icon::Eye,
                 tooltip: "View rendered",

@@ -73,9 +73,9 @@ script_mod! {
                 width: Fill
                 height: Fill
             }
-            // Trailing action buttons. `view_button` is the document's
-            // view-source/view-rendered toggle; `right_button` is the
-            // inspector dock toggle. More document actions slot in here.
+            // Trailing action buttons. `view_button` is the active document's
+            // view action; `right_button` is the inspector dock toggle. More
+            // document actions slot in here.
             view_button := IconButton {
                 visible: false
                 width: 30.0
@@ -222,7 +222,7 @@ fn content_clip_rect(origin: DVec2, available_width: f64, right_button_width: f6
 struct DocumentHeaderState {
     segments: Vec<BreadcrumbSegment>,
     right_dock: Option<Icon>,
-    /// The view-source/view-rendered toggle, when the active document has one.
+    /// The destination action supplied by the active document, when present.
     view_toggle: Option<HeaderViewAction>,
     segment_rects: Vec<(usize, Rect)>,
     /// Keeps the header band mounted for an active document even before it has
@@ -474,9 +474,9 @@ impl DocumentHeader {
         self.sync_content_layout(cx);
     }
 
-    /// The view-source/view-rendered toggle button, for click detection and
-    /// icon updates by the active document view.
-    pub fn view_toggle_button(&self, cx: &mut Cx) -> WidgetRef {
+    /// The active document's view action button, for click detection. Chrome
+    /// projection owns its icon and tooltip.
+    pub fn view_action_button(&self, cx: &mut Cx) -> WidgetRef {
         self.view.widget(cx, ids!(view_button))
     }
 
@@ -526,6 +526,11 @@ impl DocumentHeader {
     #[cfg(test)]
     pub(crate) fn test_view_toggle(&self) -> Option<HeaderViewAction> {
         self.state.view_toggle
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_mount_view_action_button(&mut self, button: WidgetRef) {
+        self.view.children.push((live_id!(view_button), button));
     }
 
     #[cfg(test)]

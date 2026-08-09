@@ -176,33 +176,6 @@ pub fn open_row_with_asset_host(
         "index.md",
         0,
     );
-    let doc = open_on_surface(
-        okf,
-        uml,
-        &row.target,
-        &surface,
-        assets,
-        emphasis,
-        limits,
-        mask,
-    );
-    (doc, diagnostic)
-}
-
-/// The one surface dispatch both entry shapes share: look the resolved
-/// surface up in this build's registered table and hand the target to its
-/// factory. Kept private and single so the row path and the locator path
-/// cannot drift on what "open on surface S" means.
-fn open_on_surface(
-    okf: &waml::analysis::OkfAnalysis,
-    uml: &waml::uml::Analysis,
-    target: &RowTarget,
-    surface: &waml::view::surface::SurfaceId,
-    assets: &crate::markdown_hosts::SharedMarkdownAssetHost,
-    emphasis: waml_markdown_editor::EditorEmphasis,
-    limits: waml::view::chain::ChainLimits,
-    mask: &waml::view::mask::ProjectionMask,
-) -> Option<OpenDocument> {
     let ctx = crate::extension_editor::OpenCtx {
         analysis: okf,
         uml,
@@ -211,10 +184,23 @@ fn open_on_surface(
         limits,
         mask,
     };
+    let doc = open_on_surface(&ctx, &row.target, &surface);
+    (doc, diagnostic)
+}
+
+/// The one surface dispatch both entry shapes share: look the resolved
+/// surface up in this build's registered table and hand the target to its
+/// factory. Kept private and single so the row path and the locator path
+/// cannot drift on what "open on surface S" means.
+fn open_on_surface(
+    ctx: &crate::extension_editor::OpenCtx<'_>,
+    target: &RowTarget,
+    surface: &waml::view::surface::SurfaceId,
+) -> Option<OpenDocument> {
     crate::extension_editor::surface_table()
         .into_iter()
         .find(|(name, _)| *name == surface.as_str())
-        .and_then(|(_, factory)| factory(&ctx, target))
+        .and_then(|(_, factory)| factory(ctx, target))
 }
 
 /// The folder-view provider entry: keyed on a directory address, not a
@@ -284,16 +270,15 @@ pub fn open_locator_with_asset_host(
         "index.md",
         0,
     );
-    open_on_surface(
-        okf,
+    let ctx = crate::extension_editor::OpenCtx {
+        analysis: okf,
         uml,
-        &locator.target,
-        &surface,
-        assets,
+        assets: assets.clone(),
         emphasis,
         limits,
         mask,
-    )
+    };
+    open_on_surface(&ctx, &locator.target, &surface)
 }
 
 #[cfg(test)]
@@ -439,6 +424,48 @@ mod tests {
             .unwrap()
             .tab_id,
             source_tab.id
+        );
+    }
+
+    #[test]
+    fn layout_emphasis_reaches_direct_and_reopened_source_factories() {
+        let source =
+            SourceBundle::try_from_pairs([("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 8).unwrap();
+        let assets = assets();
+        let direct = crate::okf_documents::open_source_with_asset_host(
+            prepared.okf(),
+            "runbook",
+            &assets,
+            waml_markdown_editor::EditorEmphasis::Layout,
+        )
+        .expect("the direct source factory must open the document");
+        assert_eq!(
+            direct.view.chrome().document_header.view_toggle,
+            Some(crate::doc_view::HeaderViewAction {
+                icon: Icon::Code,
+                tooltip: "Use code emphasis",
+            })
+        );
+
+        let (source_tab, _) = direct.into_tab(false);
+        let reopened = reopen_with_asset_host(
+            prepared.okf(),
+            prepared.uml(),
+            &source_tab,
+            &assets,
+            waml_markdown_editor::EditorEmphasis::Layout,
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
+        )
+        .expect("the stored source locator must reopen the document");
+        assert_eq!(
+            reopened.view.chrome().document_header.view_toggle,
+            Some(crate::doc_view::HeaderViewAction {
+                icon: Icon::Code,
+                tooltip: "Use code emphasis",
+            })
         );
     }
 

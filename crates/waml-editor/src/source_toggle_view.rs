@@ -143,7 +143,7 @@ impl<V: DocView> DocView for SourceToggleView<V> {
         data: ViewData<'_>,
     ) -> ViewOutcome {
         if body
-            .markdown_viewer_source_toggle(cx)
+            .header_view_action_button(cx)
             .as_icon_button()
             .clicked(actions)
         {

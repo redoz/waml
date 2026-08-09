@@ -552,7 +552,7 @@ impl DocView for SourceView {
         _data: ViewData<'_>,
     ) -> ViewOutcome {
         if body
-            .markdown_viewer_source_toggle(cx)
+            .header_view_action_button(cx)
             .as_icon_button()
             .clicked(actions)
         {
@@ -817,16 +817,10 @@ mod tests {
         let body = BodyWidgets::new(&mut cx, &ui);
         let session_default = EditorEmphasis::Code;
         let assets = EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle);
-        let mut first = SourceView::new_with_asset_host(
-            "shop/order".into(),
-            assets.clone(),
-            session_default,
-        );
-        let second = SourceView::new_with_asset_host(
-            "shop/invoice".into(),
-            assets,
-            session_default,
-        );
+        let mut first =
+            SourceView::new_with_asset_host("shop/order".into(), assets.clone(), session_default);
+        let second =
+            SourceView::new_with_asset_host("shop/invoice".into(), assets, session_default);
         let editor = body.markdown_editor();
 
         first.toggle_emphasis(&mut cx, &editor);
@@ -851,11 +845,8 @@ mod tests {
         let body = BodyWidgets::new(&mut cx, &ui);
         let assets = EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle);
         let mut session = source_session();
-        let mut view = SourceView::new_with_asset_host(
-            "shop/order".into(),
-            assets,
-            EditorEmphasis::Layout,
-        );
+        let mut view =
+            SourceView::new_with_asset_host("shop/order".into(), assets, EditorEmphasis::Layout);
         view.install_snapshot(
             &mut cx,
             &body,

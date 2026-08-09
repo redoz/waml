@@ -247,14 +247,13 @@ impl BodyWidgets {
         self.markdown_viewer.clone()
     }
 
-    /// The document's "view source"/"view rendered" toggle button. It lives
-    /// in the breadcrumb header's trailing button row; this is the only door
-    /// between the viewer and the raw-markdown editor.
-    pub fn markdown_viewer_source_toggle(&self, cx: &mut Cx) -> WidgetRef {
+    /// The active document's view action button in the breadcrumb header.
+    /// Views use it for source/rendered or emphasis destination actions.
+    pub fn header_view_action_button(&self, cx: &mut Cx) -> WidgetRef {
         self.ui
             .widget(cx, ids!(document_header))
             .borrow::<crate::document_header::DocumentHeader>()
-            .map(|header| header.view_toggle_button(cx))
+            .map(|header| header.view_action_button(cx))
             .unwrap_or_default()
     }
 
@@ -561,7 +560,7 @@ pub trait DocView {
     }
 }
 
-/// Which pieces of the shared body chrome the active tab drives.
+/// A destination action shown in the shared document header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeaderViewAction {
     pub icon: Icon,
@@ -572,8 +571,7 @@ pub struct HeaderViewAction {
 pub struct DocumentHeaderChrome {
     pub breadcrumb: bool,
     pub right_dock: Option<Icon>,
-    /// The view-source/view-rendered toggle in the header's trailing button
-    /// row, when the active document offers one.
+    /// The active document's destination action in the trailing button row.
     pub view_toggle: Option<HeaderViewAction>,
 }
 
