@@ -17,6 +17,13 @@ use crate::tree::{key_string, TreeKind, TreeNode};
 /// was configured with, so rows land where they always did.
 pub const ROW_HEIGHT: f64 = 27.0;
 
+/// Width of the hand-drawn scroll bar, and the shortest its thumb may get so a
+/// long tree still leaves a grabbable target. Owned here beside the geometry
+/// that reads them (`thumb_rect`/`scroll_for_thumb_y`); `tree_panel` draws and
+/// hit-tests the bar through those, so the numbers live in one place.
+pub const SCROLLBAR_W: f64 = 6.0;
+pub const SCROLLBAR_MIN_THUMB: f64 = 24.0;
+
 /// Left margin of the fold chevron box within its row.
 pub const CHEVRON_LEFT_MARGIN: f64 = 4.0;
 /// Side length of the (square) fold chevron box.
@@ -201,6 +208,49 @@ impl TreeLayout {
 
     pub fn set_scroll(&mut self, scroll: f64) {
         self.scroll = scroll.clamp(0.0, self.max_scroll());
+    }
+
+    /// Absolute rect of the scroll-bar thumb for the current viewport and
+    /// offset, or `None` when the whole tree fits (nothing to drag). The bar
+    /// hugs the body's right edge; the thumb's length is proportional to the
+    /// visible fraction, floored at `SCROLLBAR_MIN_THUMB`. This is the rect the
+    /// draw path paints and the one `handle_event` hit-tests, so a press always
+    /// lands on exactly what the user sees.
+    pub fn thumb_rect(&self) -> Option<Rect> {
+        let content = self.content_height();
+        if content <= self.size.y || self.size.y <= 0.0 {
+            return None;
+        }
+        let visible = (self.size.y / content).clamp(0.0, 1.0);
+        let thumb_h = (self.size.y * visible).max(SCROLLBAR_MIN_THUMB);
+        let travel = self.size.y - thumb_h;
+        let progress = if self.max_scroll() > 0.0 {
+            self.scroll / self.max_scroll()
+        } else {
+            0.0
+        };
+        Some(Rect {
+            pos: dvec2(
+                self.origin.x + self.size.x - SCROLLBAR_W,
+                self.origin.y + travel * progress,
+            ),
+            size: dvec2(SCROLLBAR_W, thumb_h),
+        })
+    }
+
+    /// Invert `thumb_rect`: the (clamped) scroll offset that places the thumb's
+    /// top at absolute `thumb_y`. A drag maps the pointer to a scroll this way,
+    /// so dragging past either end simply pins at that end.
+    pub fn scroll_for_thumb_y(&self, thumb_y: f64) -> f64 {
+        let content = self.content_height();
+        if content <= self.size.y {
+            return 0.0;
+        }
+        let visible = (self.size.y / content).clamp(0.0, 1.0);
+        let thumb_h = (self.size.y * visible).max(SCROLLBAR_MIN_THUMB);
+        let travel = (self.size.y - thumb_h).max(1.0);
+        let progress = ((thumb_y - self.origin.y) / travel).clamp(0.0, 1.0);
+        progress * self.max_scroll()
     }
 
     /// Absolute rect of row `index`, already shifted by the scroll offset. Rows
@@ -605,5 +655,47 @@ mod tests {
         assert!(!layout.set_selected(Some(key)), "unchanged: no redraw");
         assert!(layout.set_selected(None));
         assert_eq!(layout.selected(), None);
+    }
+
+    #[test]
+    fn thumb_rect_is_none_when_the_whole_tree_fits() {
+        let mut layout = TreeLayout::new();
+        layout.set_roots(vec![file("only")]);
+        // One 27px row in a 400px viewport: nothing to scroll, no thumb.
+        layout.set_viewport(dvec2(0.0, 0.0), dvec2(280.0, 400.0));
+        assert_eq!(layout.max_scroll(), 0.0);
+        assert_eq!(layout.thumb_rect(), None);
+    }
+
+    #[test]
+    fn thumb_rect_rides_the_right_edge_and_round_trips_through_scroll() {
+        // 3 rows in a 2-row viewport: one row of overflow (see `laid_out`).
+        let mut layout = laid_out();
+        layout.set_scroll(layout.max_scroll() * 0.4);
+
+        let thumb = layout.thumb_rect().expect("overflowing tree has a thumb");
+        // The bar hugs the body's right edge, one bar-width in.
+        let body = layout.viewport_rect();
+        assert!(
+            (thumb.pos.x - (body.pos.x + body.size.x - SCROLLBAR_W)).abs() < 1e-6,
+            "thumb flush to the right edge"
+        );
+        assert!(thumb.size.x - SCROLLBAR_W < 1e-6);
+        // The thumb never shrinks below the floor.
+        assert!(thumb.size.y >= SCROLLBAR_MIN_THUMB);
+        // Inverting the thumb's top recovers the scroll offset that produced it.
+        assert!(
+            (layout.scroll_for_thumb_y(thumb.pos.y) - layout.scroll()).abs() < 0.5,
+            "scroll_for_thumb_y inverts thumb_rect"
+        );
+    }
+
+    #[test]
+    fn scroll_for_thumb_y_clamps_a_drag_past_either_end() {
+        let layout = laid_out();
+        // Dragging the thumb far above the track pins scroll at the top,
+        // far below pins it at the bottom -- neither strands past the range.
+        assert_eq!(layout.scroll_for_thumb_y(-9999.0), 0.0);
+        assert_eq!(layout.scroll_for_thumb_y(9999.0), layout.max_scroll());
     }
 }

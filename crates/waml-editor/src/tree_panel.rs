@@ -32,10 +32,6 @@ use waml::view::mask::ProjectionMask;
 
 pub(crate) const PROJECT_TREE_W: f64 = 280.0;
 const REVEAL_PULSE_SECS: f64 = 0.7;
-/// Width of the hand-drawn scroll bar, and the shortest its thumb may get so a
-/// very long tree still leaves something grabbable.
-const SCROLLBAR_W: f64 = 6.0;
-const SCROLLBAR_MIN_THUMB: f64 = 24.0;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -454,6 +450,10 @@ pub struct ProjectTree {
     reveal_started_at: f64,
     #[rust]
     reveal_next_frame: NextFrame,
+    /// Pointer y-offset from the thumb top while dragging the scroll bar; `None`
+    /// when no drag is in flight. Mirrors `overlay_shell`'s `thumb_drag`.
+    #[rust]
+    scroll_grab: Option<f64>,
 }
 
 /// The package-folder keys `set_view` expands, in depth-first order: the scope
@@ -577,6 +577,42 @@ impl Widget for ProjectTree {
 
         let uid = self.widget_uid();
         self.view.handle_event(cx, event, scope);
+
+        // Hand-drawn scroll bar. The thumb is geometry, not a child widget, so
+        // it is hit by rect (like `overlay_shell`) rather than through the
+        // fork's capture machinery. A primary press on the thumb starts a drag,
+        // tracked by the pointer's offset from the thumb top; a move maps the
+        // pointer back to a scroll offset; the release ends it. Each of these
+        // returns early so the same press is not also read as a row click or a
+        // hover change below.
+        match event {
+            Event::MouseDown(e) if e.button.is_primary() => {
+                if let Some(thumb) = self.layout.thumb_rect() {
+                    if thumb.contains(e.abs) {
+                        self.scroll_grab = Some(e.abs.y - thumb.pos.y);
+                        // Claim the press so the canvas below can't also act on it.
+                        e.handled.set(self.view.area());
+                        return;
+                    }
+                }
+            }
+            Event::MouseMove(e) => {
+                if let Some(grab) = self.scroll_grab {
+                    let before = self.layout.scroll();
+                    self.layout
+                        .set_scroll(self.layout.scroll_for_thumb_y(e.abs.y - grab));
+                    if self.layout.scroll() != before {
+                        self.view.redraw(cx);
+                    }
+                    return;
+                }
+            }
+            Event::MouseUp(e) if e.button.is_primary() && self.scroll_grab.is_some() => {
+                self.scroll_grab = None;
+                return;
+            }
+            _ => {}
+        }
 
         // Hover tracks `MouseMove` containment, NOT `Hit::FingerHover`: an
         // arbiter handing the hit to another widget must not strand the tint on
@@ -858,29 +894,11 @@ impl Widget for ProjectTree {
             );
         }
 
-        // The scroll bar, only when there is something to scroll. Flush to the
-        // body's right edge -- the panel's padding leaves that edge at 0 for
-        // exactly this reason.
-        let content = self.layout.content_height();
-        if content > body.size.y && body.size.y > 0.0 {
-            let visible = (body.size.y / content).clamp(0.0, 1.0);
-            let thumb_h = (body.size.y * visible).max(SCROLLBAR_MIN_THUMB);
-            let travel = body.size.y - thumb_h;
-            let progress = if self.layout.max_scroll() > 0.0 {
-                self.layout.scroll() / self.layout.max_scroll()
-            } else {
-                0.0
-            };
-            self.draw_scrollbar.draw_abs(
-                cx,
-                Rect {
-                    pos: dvec2(
-                        body.pos.x + body.size.x - SCROLLBAR_W,
-                        body.pos.y + travel * progress,
-                    ),
-                    size: dvec2(SCROLLBAR_W, thumb_h),
-                },
-            );
+        // The scroll bar, only when there is something to scroll. The rect comes
+        // from `TreeLayout` so drawing and dragging share one formula -- the
+        // thumb the user grabs is exactly the thumb painted here.
+        if let Some(thumb) = self.layout.thumb_rect() {
+            self.draw_scrollbar.draw_abs(cx, thumb);
         }
 
         // Scroll-into-view is now a scroll offset, not a trigger sent at the
@@ -2204,6 +2222,124 @@ mod tests {
         // The scope row and the packages directly under it; the user drills in
         // from there, so the doubly-nested "inner" stays folded.
         assert_eq!(folders_to_open(&tree), vec![k("/"), k("outer")]);
+    }
+
+    fn mouse_down(abs: DVec2) -> Event {
+        Event::MouseDown(MouseDownEvent {
+            abs,
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            handled: Cell::new(Area::default()),
+            time: 0.0,
+        })
+    }
+
+    fn mouse_move(abs: DVec2) -> Event {
+        Event::MouseMove(MouseMoveEvent {
+            abs,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            handled: Cell::new(Area::default()),
+            time: 0.0,
+        })
+    }
+
+    fn mouse_up(abs: DVec2) -> Event {
+        Event::MouseUp(MouseUpEvent {
+            abs,
+            button: MouseButton::PRIMARY,
+            window_id: WindowId(0, 0),
+            modifiers: KeyModifiers::default(),
+            time: 0.0,
+        })
+    }
+
+    /// A mounted panel whose tree is taller than its viewport, so the scroll bar
+    /// has a draggable thumb. One open folder of eight files -- nine 27px rows --
+    /// in an 80px body.
+    fn panel_with_overflowing_tree() -> (Cx, ProjectTree) {
+        let (cx, mut panel) = mounted_project_tree_test_context();
+        let files: Vec<TreeNode> = (0..8)
+            .map(|i| node(&format!("/f{i}"), "File", TreeKind::Class, vec![]))
+            .collect();
+        panel
+            .layout
+            .set_roots(vec![node("/", "Root", TreeKind::Directory, files)]);
+        let root = panel.layout.rows()[0].key.clone();
+        panel.layout.set_folder_open(&root, true, false);
+        panel
+            .layout
+            .set_viewport(dvec2(0.0, 0.0), dvec2(280.0, 80.0));
+        assert!(
+            panel.layout.max_scroll() > 0.0,
+            "tree must overflow to test the bar"
+        );
+        (cx, panel)
+    }
+
+    #[test]
+    fn dragging_the_scrollbar_thumb_scrolls_the_tree() {
+        let (mut cx, mut panel) = panel_with_overflowing_tree();
+        assert_eq!(panel.layout.scroll(), 0.0, "starts at the top");
+        let thumb = panel.layout.thumb_rect().expect("overflow has a thumb");
+
+        // Press on the thumb, then drag the pointer 40px down the track.
+        let grab = thumb.pos + dvec2(2.0, 2.0);
+        panel.handle_event(&mut cx, &mouse_down(grab), &mut Scope::empty());
+        panel.handle_event(
+            &mut cx,
+            &mouse_move(grab + dvec2(0.0, 40.0)),
+            &mut Scope::empty(),
+        );
+
+        assert!(
+            panel.layout.scroll() > 0.0,
+            "dragging the thumb down scrolled the tree, got {}",
+            panel.layout.scroll()
+        );
+    }
+
+    #[test]
+    fn releasing_the_thumb_ends_the_drag() {
+        let (mut cx, mut panel) = panel_with_overflowing_tree();
+        let thumb = panel.layout.thumb_rect().expect("overflow has a thumb");
+        let grab = thumb.pos + dvec2(2.0, 2.0);
+
+        panel.handle_event(&mut cx, &mouse_down(grab), &mut Scope::empty());
+        panel.handle_event(
+            &mut cx,
+            &mouse_move(grab + dvec2(0.0, 30.0)),
+            &mut Scope::empty(),
+        );
+        panel.handle_event(
+            &mut cx,
+            &mouse_up(grab + dvec2(0.0, 30.0)),
+            &mut Scope::empty(),
+        );
+        let settled = panel.layout.scroll();
+        assert!(settled > 0.0, "drag moved the tree before release");
+
+        // A move after release must not keep scrolling -- the grab is gone.
+        panel.handle_event(
+            &mut cx,
+            &mouse_move(grab + dvec2(0.0, 90.0)),
+            &mut Scope::empty(),
+        );
+        assert_eq!(panel.layout.scroll(), settled, "release ended the drag");
+    }
+
+    #[test]
+    fn a_press_off_the_thumb_does_not_start_a_scroll_drag() {
+        let (mut cx, mut panel) = panel_with_overflowing_tree();
+        // Press in the row body (far left of the thumb), then move down.
+        panel.handle_event(&mut cx, &mouse_down(dvec2(20.0, 10.0)), &mut Scope::empty());
+        panel.handle_event(&mut cx, &mouse_move(dvec2(20.0, 60.0)), &mut Scope::empty());
+        assert_eq!(
+            panel.layout.scroll(),
+            0.0,
+            "a body press is not a scrollbar grab"
+        );
     }
 }
 
