@@ -5,18 +5,34 @@ person does no step.
 
 **Why:** A publication step that a person must remember does not occur.
 
-**Done when:** A push to the main branch makes an artifact that operates, or
-the workflow fails and reports the failure. No defect that the local gate finds
-comes to the published build.
+**Done when:** A push to the main branch makes a complete artifact that
+operates, or the workflow fails and reports the failure.
 
-**Status:** partial — unverified
+**Status:** partial
 **MVP:** yes
+
+## Shipped behavior
+
+#### BROWSER-012 — publication accepts only a complete web artifact
+
+**Applies to:** browser
+
+**Given** the Pages workflow has built a web artifact
+**When** the workflow prepares the artifact for publication
+**Then** it continues only when every referenced artifact file exists
+
+**Evidence:** `.github/workflows/pages.yml:184` and `scripts/verify-web-artifact.mjs:22`
+
+## Discrepancies
+
+- BHV-BRW-021 — The earlier goal text said that delivery automation did not stop defects before the web build. The web-artifact build depends on the full CI job at `.github/workflows/pages.yml:31`.
+
+## Verification gaps
+
+- BROWSER-012 — target: browser; The verifier checks artifact structure before publication, but no browser test asserts a deployed artifact has every referenced resource.
 
 ## Notes
 
-- The workflow builds the artifact and then processes it. The steps remove
-  unused fonts, add the brand, and add the runtime shell.
-- The delivery automation does not stop defects before the web build. This is
-  the reason for the status `partial`.
-- The build tool must have the same revision of the graphics library as the
-  editor. Use an exact revision. Do not use the most recent commit of a branch.
+- The web-artifact build waits for the full CI job. It then removes unused
+  fonts, adds the brand and runtime shell, and verifies the complete artifact.
+- The build tool uses the same exact graphics-library revision as the editor.
