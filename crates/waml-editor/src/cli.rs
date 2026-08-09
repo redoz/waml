@@ -63,6 +63,11 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
                     parse_hex(raw).ok_or_else(|| format!("--color: not a hex colour: {raw}"))?,
                 );
             }
+            // makepad's studio/test runner appends these to every app it
+            // launches; the platform layer consumes them, so skip them here
+            // instead of mistaking them for the bundle dir.
+            "--stdin-loop" => {}
+            other if other.starts_with("--message-format=") => {}
             other if dir.is_none() => dir = Some(PathBuf::from(other)),
             other => return Err(format!("unexpected argument: {other}")),
         }
@@ -276,6 +281,22 @@ mod tests {
         let model = two_diagram_model();
         let picked = select_diagram(&model, Some("nonexistent")).unwrap();
         assert_eq!(picked.key, "orders-key");
+    }
+
+    #[test]
+    fn skips_makepad_runner_plumbing_args() {
+        // Exact argv shape the makepad test driver launches the editor with.
+        let a = parse(&argv(&[
+            "waml-editor",
+            "--message-format=json",
+            "some/dir",
+            "--title",
+            "ui-test",
+            "--stdin-loop",
+        ]))
+        .unwrap();
+        assert_eq!(a.dir, Some(PathBuf::from("some/dir")));
+        assert_eq!(a.badge.as_deref(), Some("ui-test"));
     }
 
     #[test]
