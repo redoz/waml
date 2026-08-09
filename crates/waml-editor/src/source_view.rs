@@ -19,12 +19,13 @@ use waml_markdown_editor::{
 };
 
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
-    ViewReconcilePolicy,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, HeaderViewAction,
+    ViewData, ViewOutcome, ViewReconcilePolicy,
 };
 use crate::editor_session::{
     exact_replacement_change, EditorSessionSnapshot, ProposedSourceEdit, SessionChange,
 };
+use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 use crate::inspector::Subject;
 use crate::markdown_hosts::{
@@ -151,6 +152,27 @@ impl SourceView {
         let mut view = Self::new_with_asset_host(key, assets, emphasis);
         view.read_only = true;
         view
+    }
+
+    fn toggle_emphasis(&mut self, cx: &mut Cx, editor: &MarkdownEditorRef) {
+        self.emphasis = match self.emphasis {
+            EditorEmphasis::Code => EditorEmphasis::Layout,
+            EditorEmphasis::Layout => EditorEmphasis::Code,
+        };
+        editor.set_emphasis(cx, self.emphasis);
+    }
+
+    fn emphasis_action(&self) -> HeaderViewAction {
+        match self.emphasis {
+            EditorEmphasis::Code => HeaderViewAction {
+                icon: Icon::Eye,
+                tooltip: "Use layout emphasis",
+            },
+            EditorEmphasis::Layout => HeaderViewAction {
+                icon: Icon::Code,
+                tooltip: "Use code emphasis",
+            },
+        }
     }
 
     pub(crate) fn resolve_document(
@@ -518,11 +540,20 @@ impl DocView for SourceView {
 
     fn handle(
         &mut self,
-        _cx: &mut Cx,
-        _body: &BodyWidgets,
+        cx: &mut Cx,
+        body: &BodyWidgets,
         actions: &Actions,
         _data: ViewData<'_>,
     ) -> ViewOutcome {
+        if body
+            .markdown_viewer_source_toggle(cx)
+            .as_icon_button()
+            .clicked(actions)
+        {
+            self.toggle_emphasis(cx, &body.markdown_editor());
+            body.apply_chrome(cx, self.chrome());
+            return ViewOutcome::default();
+        }
         let mut outcome = ViewOutcome::default();
         if let SourceViewState::Ready(ready) = &mut self.state {
             if let Some(local) = MarkdownEditorRef::proposed_edit(actions) {
@@ -552,7 +583,7 @@ impl DocView for SourceView {
             document_header: DocumentHeaderChrome {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
-                view_toggle: None,
+                view_toggle: Some(self.emphasis_action()),
             },
         }
     }
@@ -748,6 +779,63 @@ mod tests {
             body.markdown_editor().emphasis(),
             waml_markdown_editor::EditorEmphasis::Layout
         );
+    }
+
+    #[test]
+    fn source_emphasis_action_projects_the_destination() {
+        let mut view = source_view("shop/order");
+
+        assert_eq!(
+            view.chrome().document_header.view_toggle,
+            Some(crate::doc_view::HeaderViewAction {
+                icon: Icon::Eye,
+                tooltip: "Use layout emphasis",
+            })
+        );
+
+        view.emphasis = EditorEmphasis::Layout;
+
+        assert_eq!(
+            view.chrome().document_header.view_toggle,
+            Some(crate::doc_view::HeaderViewAction {
+                icon: Icon::Code,
+                tooltip: "Use code emphasis",
+            })
+        );
+    }
+
+    #[test]
+    fn emphasis_toggle_is_two_way_and_isolated_per_tab() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let session_default = EditorEmphasis::Code;
+        let assets = EditorMarkdownAssetHost::shared(MarkdownAssetPolicy::BrowserBundle);
+        let mut first = SourceView::new_with_asset_host(
+            "shop/order".into(),
+            assets.clone(),
+            session_default,
+        );
+        let second = SourceView::new_with_asset_host(
+            "shop/invoice".into(),
+            assets,
+            session_default,
+        );
+        let editor = body.markdown_editor();
+
+        first.toggle_emphasis(&mut cx, &editor);
+
+        assert_eq!(first.emphasis, EditorEmphasis::Layout);
+        assert_eq!(editor.emphasis(), EditorEmphasis::Layout);
+        assert_eq!(second.emphasis, EditorEmphasis::Code);
+        assert_eq!(session_default, EditorEmphasis::Code);
+
+        first.toggle_emphasis(&mut cx, &editor);
+
+        assert_eq!(first.emphasis, EditorEmphasis::Code);
+        assert_eq!(editor.emphasis(), EditorEmphasis::Code);
+        assert_eq!(second.emphasis, EditorEmphasis::Code);
+        assert_eq!(session_default, EditorEmphasis::Code);
     }
 
     #[test]

@@ -643,21 +643,35 @@ mod tests {
                 },
             }
         );
-        for chrome in [classifier.chrome(), source.chrome()] {
-            assert_eq!(
-                chrome,
-                BodyChrome {
-                    tool_dock: false,
-                    view_bar: false,
-                    canvas_overlays: false,
-                    document_header: DocumentHeaderChrome {
-                        breadcrumb: true,
-                        right_dock: Some(Icon::PanelRight),
-                        view_toggle: None,
-                    },
-                }
-            );
-        }
+        assert_eq!(
+            classifier.chrome(),
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+                canvas_overlays: false,
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: Some(Icon::PanelRight),
+                    view_toggle: None,
+                },
+            }
+        );
+        assert_eq!(
+            source.chrome(),
+            BodyChrome {
+                tool_dock: false,
+                view_bar: false,
+                canvas_overlays: false,
+                document_header: DocumentHeaderChrome {
+                    breadcrumb: true,
+                    right_dock: Some(Icon::PanelRight),
+                    view_toggle: Some(HeaderViewAction {
+                        icon: Icon::Eye,
+                        tooltip: "Use layout emphasis",
+                    }),
+                },
+            }
+        );
         assert_eq!(
             generic.chrome(),
             BodyChrome {
