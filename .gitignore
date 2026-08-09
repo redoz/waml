@@ -34,3 +34,6 @@ Thumbs.db
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .claude/.headroom_wrap_marker.json
+
+# rustc crash dumps, written into the cwd on an internal compiler error
+rustc-ice-*.txt
