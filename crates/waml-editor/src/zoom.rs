@@ -5,9 +5,6 @@
 pub(crate) const ZOOM_LADDER: [u32; 10] = [50, 67, 75, 90, 100, 110, 125, 150, 175, 200];
 
 /// Default zoom percent (100%).
-// Staged: consumed by Task 2's config defaults (plan
-// 2026-08-11-viewer-font-size-control).
-#[allow(dead_code)]
 pub(crate) const ZOOM_DEFAULT: u32 = 100;
 
 /// Which surface a zoom target applies to.

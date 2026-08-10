@@ -145,6 +145,22 @@ struct EditorConfig {
     /// Chosen Markdown emphasis; absent in older files -> `MarkdownEmphasis::default()`.
     #[serde(default)]
     markdown_emphasis: MarkdownEmphasis,
+    /// Reading-view zoom percent; absent in older files -> 100.
+    #[serde(default = "default_zoom")]
+    reading_zoom: u32,
+    /// Markdown source-editor zoom percent; absent in older files -> 100.
+    #[serde(default = "default_zoom")]
+    source_zoom: u32,
+}
+
+/// `#[serde(default = ...)]` for the zoom fields: `EditorConfig` derives
+/// `Default`, whose derived `0` `nearest_rung`-snaps to the ladder's bottom
+/// (50) -- wrong for a field that means "unset". `serde(default)` on read
+/// (absent field) and this fn's value both resolve to 100 instead; the
+/// accessors additionally snap a stored `0` (from a hand-rolled or
+/// `Default`-constructed file) to 100 as well.
+fn default_zoom() -> u32 {
+    crate::zoom::ZOOM_DEFAULT
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -309,6 +325,33 @@ pub fn markdown_emphasis() -> EditorEmphasis {
     config.markdown_emphasis.into()
 }
 
+/// Snap a raw stored zoom percent to the ladder, treating a `0` (the derived
+/// `Default`'s value, meaning "unset") as the default 100%.
+pub(crate) fn snapped_zoom(raw: u32) -> u32 {
+    crate::zoom::nearest_rung(if raw == 0 {
+        crate::zoom::ZOOM_DEFAULT
+    } else {
+        raw
+    })
+}
+
+/// Persisted reading-view zoom (100 when the file is missing, malformed, or
+/// predates the field). Snapped to the ladder so a hand-edited file cannot
+/// strand the control on an unsteppable value.
+#[allow(dead_code)] // consumed by Task 8 (readers) / Task 9 (setters)
+pub fn reading_zoom() -> u32 {
+    let config: EditorConfig = load(EDITOR_FILE);
+    snapped_zoom(config.reading_zoom)
+}
+
+/// Persisted markdown source-editor zoom (100 when the file is missing,
+/// malformed, or predates the field). Snapped to the ladder.
+#[allow(dead_code)] // consumed by Task 8 (readers) / Task 9 (setters)
+pub fn source_zoom() -> u32 {
+    let config: EditorConfig = load(EDITOR_FILE);
+    snapped_zoom(config.source_zoom)
+}
+
 /// Persist `mode` as the chosen UI theme, preserving the rest of the config.
 /// Best-effort -- a write failure is logged and swallowed.
 pub fn set_theme(mode: ThemeMode) {
@@ -317,6 +360,30 @@ pub fn set_theme(mode: ThemeMode) {
     config.theme = mode;
     if let Err(e) = store(EDITOR_FILE, &config) {
         log!("waml-editor: failed to persist theme {:?}: {e}", mode);
+    }
+}
+
+/// Persist the reading-view zoom, preserving the rest of the config.
+/// Best-effort -- a write failure is logged and swallowed.
+#[allow(dead_code)] // consumed by Task 8 (readers) / Task 9 (setters)
+pub fn set_reading_zoom(percent: u32) {
+    let mut config: EditorConfig = load(EDITOR_FILE);
+    config.version = EDITOR_VERSION;
+    config.reading_zoom = percent;
+    if let Err(e) = store(EDITOR_FILE, &config) {
+        log!("waml-editor: failed to persist reading zoom {percent}: {e}");
+    }
+}
+
+/// Persist the markdown source-editor zoom, preserving the rest of the
+/// config. Best-effort -- a write failure is logged and swallowed.
+#[allow(dead_code)] // consumed by Task 8 (readers) / Task 9 (setters)
+pub fn set_source_zoom(percent: u32) {
+    let mut config: EditorConfig = load(EDITOR_FILE);
+    config.version = EDITOR_VERSION;
+    config.source_zoom = percent;
+    if let Err(e) = store(EDITOR_FILE, &config) {
+        log!("waml-editor: failed to persist source zoom {percent}: {e}");
     }
 }
 
@@ -596,6 +663,8 @@ mod tests {
             recents: vec![rec("/x", 7), rec("/y", 8)],
             theme: ThemeMode::Dark,
             markdown_emphasis: MarkdownEmphasis::Code,
+            reading_zoom: default_zoom(),
+            source_zoom: default_zoom(),
         };
         store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
         let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
@@ -610,6 +679,8 @@ mod tests {
             recents: vec![rec("/a", 1)],
             theme: ThemeMode::Light,
             markdown_emphasis: MarkdownEmphasis::Code,
+            reading_zoom: default_zoom(),
+            source_zoom: default_zoom(),
         };
         store_to(tmp.path(), EDITOR_FILE, &a).unwrap();
         let b = EditorConfig {
@@ -617,6 +688,8 @@ mod tests {
             recents: vec![rec("/b", 2), rec("/c", 3)],
             theme: ThemeMode::Dark,
             markdown_emphasis: MarkdownEmphasis::Code,
+            reading_zoom: default_zoom(),
+            source_zoom: default_zoom(),
         };
         store_to(tmp.path(), EDITOR_FILE, &b).unwrap();
         let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
@@ -639,6 +712,8 @@ mod tests {
             recents: Vec::new(),
             theme: ThemeMode::Dark,
             markdown_emphasis: MarkdownEmphasis::Code,
+            reading_zoom: default_zoom(),
+            source_zoom: default_zoom(),
         };
         store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
         let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
@@ -685,6 +760,8 @@ mod tests {
                 recents: Vec::new(),
                 theme: ThemeMode::Light,
                 markdown_emphasis: emphasis,
+                reading_zoom: default_zoom(),
+                source_zoom: default_zoom(),
             };
 
             store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
@@ -724,6 +801,45 @@ mod tests {
             tmp.path().join("editor.json.bak").exists(),
             "backup written"
         );
+    }
+
+    #[test]
+    fn zoom_fields_round_trip() {
+        let tmp = TempDir::new();
+        let cfg = EditorConfig {
+            version: EDITOR_VERSION,
+            recents: Vec::new(),
+            theme: ThemeMode::Light,
+            markdown_emphasis: MarkdownEmphasis::Code,
+            reading_zoom: 125,
+            source_zoom: 150,
+        };
+        store_to(tmp.path(), EDITOR_FILE, &cfg).unwrap();
+        let back: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+        assert_eq!(back.reading_zoom, 125);
+        assert_eq!(back.source_zoom, 150);
+    }
+
+    #[test]
+    fn zoom_fields_absent_in_old_file_load_the_default() {
+        let tmp = TempDir::new();
+        std::fs::write(
+            tmp.path().join(EDITOR_FILE),
+            br#"{"version":1,"recents":[],"theme":"light"}"#,
+        )
+        .unwrap();
+
+        let cfg: EditorConfig = load_from(tmp.path(), EDITOR_FILE);
+
+        assert_eq!(cfg.reading_zoom, 100);
+        assert_eq!(cfg.source_zoom, 100);
+    }
+
+    #[test]
+    fn off_ladder_stored_zoom_is_snapped_on_read() {
+        assert_eq!(snapped_zoom(117), 110);
+        assert_eq!(snapped_zoom(9999), 200);
+        assert_eq!(snapped_zoom(0), 100, "unset (derived Default's 0) -> 100");
     }
 
     /// Minimal temp dir: the repo has no temp-dir dev-dependency, so we make a
