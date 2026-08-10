@@ -2045,7 +2045,7 @@ mod tests {
     fn conflict_delete_removes_only_the_targeted_placement() {
         let source = waml::source::SourceBundle::try_from_pairs([(
             "shop/dia.md".to_string(),
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\
              - [Order](./order.md) left of [PaymentGateway](./payment-gateway.md)\n\
              - [Customer](./customer.md) below [Order](./order.md)\n"
                 .to_string(),

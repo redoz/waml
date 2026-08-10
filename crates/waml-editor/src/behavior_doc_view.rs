@@ -19,7 +19,7 @@ use crate::inspector::{ElementKind, ElementRow, Subject};
 use crate::node_style::AccentBucket;
 use waml::analysis::ProjectionFreshness;
 use waml::diagnostic::Diagnostic;
-use waml::model::{FlowDoc, FlowEdge, FlowFlavor, SeqNode, SequenceDoc};
+use waml::model::{DiagramKind, FlowDoc, FlowEdge, FlowFlavor, SeqNode, SequenceDoc};
 use waml::solve::flow::{measure_flow, resolve_flow, solve_flow, FlowConfig};
 use waml::solve::interaction::{measure_interaction, solve_interaction, InteractionConfig};
 
@@ -692,6 +692,7 @@ fn participant_for_classifier(
 pub struct BehaviorDocView {
     key: String,
     kind: BehaviorKind,
+    diagram_kind: DiagramKind,
     /// Last status line pushed for this document's solver diagnostics, so a
     /// re-`sync` on every revision neither re-logs nor re-pushes unchanged
     /// feedback.
@@ -699,18 +700,25 @@ pub struct BehaviorDocView {
 }
 
 impl BehaviorDocView {
-    pub fn flow(key: String) -> BehaviorDocView {
+    pub fn flow(key: String, diagram_kind: DiagramKind) -> BehaviorDocView {
+        debug_assert!(matches!(
+            diagram_kind,
+            DiagramKind::Activity | DiagramKind::StateMachine
+        ));
         BehaviorDocView {
             key,
             kind: BehaviorKind::Flow,
+            diagram_kind,
             last_diagnostics: None,
         }
     }
 
-    pub fn interaction(key: String) -> BehaviorDocView {
+    pub fn interaction(key: String, diagram_kind: DiagramKind) -> BehaviorDocView {
+        debug_assert_eq!(diagram_kind, DiagramKind::Sequence);
         BehaviorDocView {
             key,
             kind: BehaviorKind::Interaction,
+            diagram_kind,
             last_diagnostics: None,
         }
     }
@@ -830,10 +838,7 @@ impl BehaviorDocView {
 
 impl DocView for BehaviorDocView {
     fn identity(&self) -> DocViewIdentity {
-        match self.kind {
-            BehaviorKind::Flow => DocViewIdentity::BehaviorFlow,
-            BehaviorKind::Interaction => DocViewIdentity::BehaviorInteraction,
-        }
+        DocViewIdentity::Diagram(self.diagram_kind)
     }
 
     fn reconcile_policy(&self) -> ViewReconcilePolicy {
@@ -1111,9 +1116,12 @@ mod tests {
 
     #[test]
     fn flow_and_interaction_constructors_pick_distinct_kinds() {
-        assert_eq!(BehaviorDocView::flow("a".into()).kind, BehaviorKind::Flow);
         assert_eq!(
-            BehaviorDocView::interaction("a".into()).kind,
+            BehaviorDocView::flow("a".into(), DiagramKind::Activity).kind,
+            BehaviorKind::Flow
+        );
+        assert_eq!(
+            BehaviorDocView::interaction("a".into(), DiagramKind::Sequence).kind,
             BehaviorKind::Interaction
         );
     }
@@ -1155,7 +1163,7 @@ mod tests {
     #[test]
     fn behavior_view_retains_live_state_during_session_reconciliation() {
         assert_eq!(
-            BehaviorDocView::flow("flow".into()).reconcile_policy(),
+            BehaviorDocView::flow("flow".into(), DiagramKind::Activity).reconcile_policy(),
             ViewReconcilePolicy::RetainLiveState
         );
     }
@@ -1207,7 +1215,7 @@ mod tests {
             (
                 "flow.md",
                 concat!(
-                    "---\ntype: uml.Activity\ntitle: Fulfil\ndescribes: ",
+                    "---\ntype: uml.ActivityDiagram\ntitle: Fulfil\ndescribes: ",
                     "\"[Order](./order.md)\"\n---\n# Fulfil\n\n## Nodes\n",
                     "### initial Start\n- transitions to Pick\n",
                     "### Pick\n- transitions to Pack\n- transitions to Pack\n",
@@ -1417,7 +1425,7 @@ mod tests {
     fn an_empty_flow_document_carries_its_diagnostic() {
         let source = waml::source::SourceBundle::try_from_pairs([(
             "flow.md",
-            "---\ntype: uml.Activity\ntitle: Fulfil\n---\n# Fulfil\n",
+            "---\ntype: uml.ActivityDiagram\ntitle: Fulfil\n---\n# Fulfil\n",
         )])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
@@ -1546,7 +1554,7 @@ mod tests {
 
         let source = waml::source::SourceBundle::try_from_pairs([(
             "flow.md",
-            "---\ntype: Diagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
         )])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
@@ -1569,7 +1577,7 @@ mod tests {
         ];
         for case in cases {
             let actions: ActionsBuf = vec![widget_action(canvas_uid, case)];
-            let mut view = BehaviorDocView::flow("flow".into());
+            let mut view = BehaviorDocView::flow("flow".into(), DiagramKind::Activity);
             let outcome = view.handle(
                 cx,
                 &body,
@@ -1601,7 +1609,7 @@ mod tests {
 
         let source = waml::source::SourceBundle::try_from_pairs([(
             "flow.md",
-            "---\ntype: Diagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
         )])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
@@ -1628,7 +1636,7 @@ mod tests {
                 BehaviorSurfaceAction::ViewSourceRequested(BehaviorTarget::Message("m0".into())),
             ),
         ];
-        let mut view = BehaviorDocView::flow("flow".into());
+        let mut view = BehaviorDocView::flow("flow".into(), DiagramKind::Activity);
         let outcome = view.handle(
             cx,
             &body,
@@ -1677,7 +1685,7 @@ mod tests {
 
         let source = waml::source::SourceBundle::try_from_pairs([(
             "flow.md",
-            "---\ntype: Diagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Flow\nprofile: uml-domain\n---\n# Flow\n",
         )])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
@@ -1691,7 +1699,7 @@ mod tests {
             widget_uid: canvas_uid,
             group: None,
         })];
-        let mut view = BehaviorDocView::flow("flow".into());
+        let mut view = BehaviorDocView::flow("flow".into(), DiagramKind::Activity);
         let outcome = view.handle(
             cx,
             &body,
@@ -1722,7 +1730,7 @@ mod tests {
         let source = waml::source::SourceBundle::try_from_pairs([(
             "flow.md",
             concat!(
-                "---\ntype: uml.Activity\ntitle: Fulfil\n---\n# Fulfil\n\n",
+                "---\ntype: uml.ActivityDiagram\ntitle: Fulfil\n---\n# Fulfil\n\n",
                 "## Nodes\n### initial Start\n- transitions to Pick\n",
                 "### Pick\n### Orphan\n",
             ),
@@ -1732,7 +1740,7 @@ mod tests {
         let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
         let doc_key = uml_analysis.projection.flows[0].key.clone();
 
-        let mut view = BehaviorDocView::flow(doc_key);
+        let mut view = BehaviorDocView::flow(doc_key, DiagramKind::Activity);
         view.sync(
             cx,
             &body,

@@ -28,7 +28,7 @@ fn diagram_bundle(layout: &str) -> SourceBundle {
     source(vec![(
         "dia.md".to_string(),
         format!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n{layout}"
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n{layout}"
         ),
     )])
 }
@@ -220,7 +220,7 @@ fn semantic_completion_installs_affected_documents_and_diagrams() {
     let document = document_id(&before, "dia.md");
     let local = local_replacement(
         before.markdown_snapshot(document).unwrap().clone(),
-        "---\ntype: Diagram\ntitle: Changed\nprofile: uml-domain\n---\n# D\n\n## Layout\n",
+        "---\ntype: uml.ClassDiagram\ntitle: Changed\nprofile: uml-domain\n---\n# D\n\n## Layout\n",
     );
     let request = session
         .promote_source_edit(
@@ -1848,7 +1848,7 @@ fn ordered_mixed_batch_commits_once_with_one_final_projection() {
         ),
         (
             "sales/orders-diagram.md".into(),
-            "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Layout\n"
+            "---\ntype: uml.ClassDiagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n\n## Layout\n"
                 .into(),
         ),
     ]);

@@ -1792,6 +1792,7 @@ mod tests {
         let diagram = Diagram {
             key: "views/orders".into(),
             title: "Orders".into(),
+            kind: waml::model::DiagramKind::Class,
             profile: "uml-domain".into(),
             description: None,
             groups: vec![],

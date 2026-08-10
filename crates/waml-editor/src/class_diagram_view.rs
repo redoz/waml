@@ -4,7 +4,7 @@
 use makepad_widgets::*;
 use std::collections::HashSet;
 use waml::analysis::ProjectionFreshness;
-use waml::model::Model;
+use waml::model::{DiagramKind, Model};
 
 use crate::canvas::ConstraintVisibility;
 use crate::diagram_display::resolve_display;
@@ -191,6 +191,7 @@ impl ClassDiagramMode {
 
 pub struct ClassDiagramView {
     key: String,
+    kind: DiagramKind,
     /// Node keys whose card body is expanded. Per-tab live state, moved off
     /// the shell in Task 3. Cleared when the diagram changes.
     expanded: HashSet<String>,
@@ -204,9 +205,11 @@ pub struct ClassDiagramView {
 }
 
 impl ClassDiagramView {
-    pub fn new(key: String) -> ClassDiagramView {
+    pub fn new(key: String, kind: DiagramKind) -> ClassDiagramView {
+        debug_assert!(matches!(kind, DiagramKind::Class | DiagramKind::UseCase));
         ClassDiagramView {
             key,
+            kind,
             expanded: HashSet::new(),
             mode: ClassDiagramMode::default(),
             projection_status: None,
@@ -441,7 +444,7 @@ impl ClassDiagramView {
 
 impl DocView for ClassDiagramView {
     fn identity(&self) -> DocViewIdentity {
-        DocViewIdentity::ClassDiagram
+        DocViewIdentity::Diagram(self.kind)
     }
 
     fn reconcile_policy(&self) -> ViewReconcilePolicy {
@@ -1092,7 +1095,7 @@ mod tests {
     use std::collections::HashSet;
     use std::path::Path;
     use waml::analysis::ProjectionFreshness;
-    use waml::model::CardinalityVisibility;
+    use waml::model::{CardinalityVisibility, DiagramKind};
     use waml::uml::DiagramDisplaySet;
 
     struct TestBody {
@@ -1216,7 +1219,7 @@ mod tests {
 
         let source = waml::source::SourceBundle::try_from_pairs([(
             "orders.md",
-            "---\ntype: Diagram\ntitle: Old\nprofile: uml-domain\ndescription: Old description\n---\n# Old\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Old\nprofile: uml-domain\ndescription: Old description\n---\n# Old\n",
         )])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source.clone(), None, 1).unwrap();
@@ -1255,7 +1258,7 @@ mod tests {
     // Scenario: NATIVE-058
     #[test]
     fn diagram_properties_tool_toggles_the_view_instead_of_being_a_no_op() {
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
 
         assert!(view.apply_tool_action(ToolDockAction::Triggered(Tool::DiagramProps)));
         assert_eq!(view.mode, ClassDiagramMode::Properties);
@@ -1263,7 +1266,7 @@ mod tests {
 
     #[test]
     fn properties_mode_preserves_breadcrumb_while_hiding_diagram_controls() {
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
         view.apply_tool_action(ToolDockAction::Triggered(Tool::DiagramProps));
 
         assert_eq!(
@@ -1284,7 +1287,7 @@ mod tests {
     // Scenario: NATIVE-059
     #[test]
     fn a_properties_change_returns_exactly_one_diagram_set() {
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
         view.mode = ClassDiagramMode::Properties;
         let chrome_before = view.chrome();
         let display = DiagramDisplaySet {
@@ -1316,7 +1319,7 @@ mod tests {
         use super::ClassDiagramView;
         use crate::doc_view::DocView;
 
-        let view = ClassDiagramView::new("orders".into());
+        let view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
 
         assert_eq!(
             view.chrome(),
@@ -1335,7 +1338,7 @@ mod tests {
 
     #[test]
     fn clearing_description_does_not_write_the_diagram_title() {
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
 
         let outcome =
             view.properties_actions_outcome([DiagramPropertiesAction::DescriptionChanged(None)]);
@@ -1347,7 +1350,7 @@ mod tests {
 
     #[test]
     fn production_description_typing_coalesces_beyond_the_atomic_tail() {
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
         let location = crate::view_history::ViewLocation {
             document: crate::view_history::DocumentLocator::concept(
                 "orders",
@@ -1397,7 +1400,7 @@ mod tests {
 
     #[test]
     fn description_focus_or_selection_change_breaks_the_merge_group() {
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
 
         let outcome =
             view.properties_actions_outcome([DiagramPropertiesAction::BreakEditMergeGroup]);
@@ -1408,7 +1411,7 @@ mod tests {
 
     #[test]
     fn properties_close_separates_aged_production_typing_sessions() {
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
         let location = crate::view_history::ViewLocation {
             document: crate::view_history::DocumentLocator::concept(
                 "orders",
@@ -1575,14 +1578,14 @@ mod tests {
     #[test]
     fn class_diagram_retains_live_state_during_session_reconciliation() {
         assert_eq!(
-            ClassDiagramView::new("orders".into()).reconcile_policy(),
+            ClassDiagramView::new("orders".into(), DiagramKind::Class).reconcile_policy(),
             ViewReconcilePolicy::RetainLiveState
         );
     }
 
     #[test]
     fn property_action_batch_keeps_every_edit_before_closing() {
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
         view.mode = ClassDiagramMode::Properties;
         let display = DiagramDisplaySet {
             show_attributes: false,
@@ -1623,7 +1626,7 @@ mod tests {
         let body = crate::doc_view::BodyWidgets::new(cx, &ui);
         let field = focused_text_field(cx);
         let field_area = field.area();
-        let mut view = ClassDiagramView::new("orders".into());
+        let mut view = ClassDiagramView::new("orders".into(), DiagramKind::Class);
 
         cx.set_key_focus(field_area);
         advance_focus(cx);
@@ -1662,11 +1665,11 @@ mod tests {
         let ui = test_body(&mut vm);
         let cx = vm.cx_mut();
         let body = crate::doc_view::BodyWidgets::new(cx, &ui);
-        let mut view = ClassDiagramView::new("orders-diagram".into());
+        let mut view = ClassDiagramView::new("orders-diagram".into(), DiagramKind::Class);
         let first = waml::analysis::prepare_candidate(
             waml::source::SourceBundle::try_from_pairs([(
                 "orders-diagram.md",
-                "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n",
+                "---\ntype: uml.ClassDiagram\ntitle: Orders\nprofile: uml-domain\n---\n# Orders\n",
             )])
             .unwrap(),
             None,
@@ -1684,7 +1687,7 @@ mod tests {
         let second = waml::analysis::prepare_candidate(
             waml::source::SourceBundle::try_from_pairs([(
                 "orders-diagram.md",
-                "---\ntype: Diagram\ntitle: Order flow\nprofile: uml-domain\n---\n# Order flow\n",
+                "---\ntype: uml.ClassDiagram\ntitle: Order flow\nprofile: uml-domain\n---\n# Order flow\n",
             )])
             .unwrap(),
             None,
@@ -1725,7 +1728,7 @@ mod tests {
         let source = crate::load::read_bundle(&dir).unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
-        let mut view = ClassDiagramView::new("orders-diagram".into());
+        let mut view = ClassDiagramView::new("orders-diagram".into(), DiagramKind::Class);
         view.sync(
             cx,
             &body,

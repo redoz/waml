@@ -304,7 +304,10 @@ mod tests {
 
     fn wrapped_diagram() -> SourceToggleView<crate::class_diagram_view::ClassDiagramView> {
         SourceToggleView::new(
-            crate::class_diagram_view::ClassDiagramView::new("orders".into()),
+            crate::class_diagram_view::ClassDiagramView::new(
+                "orders".into(),
+                waml::model::DiagramKind::Class,
+            ),
             "orders".into(),
             crate::markdown_hosts::EditorMarkdownAssetHost::shared(
                 crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
@@ -396,7 +399,10 @@ mod tests {
     #[test]
     fn identity_and_policy_are_the_wrapped_views_own() {
         let view = wrapped_diagram();
-        assert_eq!(view.identity(), DocViewIdentity::ClassDiagram);
+        assert_eq!(
+            view.identity(),
+            DocViewIdentity::Diagram(waml::model::DiagramKind::Class)
+        );
         assert_eq!(view.reconcile_policy(), view.inner.reconcile_policy());
     }
 }

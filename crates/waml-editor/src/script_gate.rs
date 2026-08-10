@@ -206,7 +206,7 @@ fn every_surface_id_resolvable_by_a_registered_chain_has_a_registered_factory() 
     let concept = diagram_bundle.concept("order").unwrap();
     assert!(matches!(
         ElementType::parse(&concept.ty),
-        ElementType::Uml(_) | ElementType::Behavior(_) | ElementType::Diagram
+        ElementType::Uml(_) | ElementType::Behavior(_) | ElementType::Diagram(_)
     ));
 
     let mintable: BTreeSet<&'static str> = [

@@ -16,6 +16,45 @@ impl ExternalUrlAdapter for FakeBrowser {
     }
 }
 
+#[test]
+fn navigation_opens_an_empty_use_case_by_its_declared_diagram_kind() {
+    let (mut cx, mut app) = navigation_app();
+    let source = waml::source::SourceBundle::try_from_pairs([(
+        "empty-use-case.md",
+        "---\ntype: uml.UseCaseDiagram\ntitle: Empty Use Case\n---\n# Empty Use Case\n",
+    )])
+    .unwrap();
+    app.session.replace(source).unwrap();
+
+    let document = crate::documents::open(
+        app.session.okf_analysis(),
+        app.session.uml_analysis(),
+        "empty-use-case",
+    )
+    .expect("the declared use-case document opens");
+    assert_eq!(
+        document.view.identity(),
+        DocViewIdentity::Diagram(waml::model::DiagramKind::UseCase),
+        "the view identity comes from the declared diagram kind"
+    );
+
+    let mut browser = FakeBrowser::default();
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Document {
+            concept_id: "empty-use-case".into(),
+            surface: None,
+            fragment: None,
+        },
+        OpenDisposition::Preview,
+        &mut browser,
+    ));
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some("empty-use-case")
+    );
+}
+
 struct ResettingAnchorView(Rc<RefCell<ViewAnchor>>);
 
 impl DocView for ResettingAnchorView {
@@ -104,7 +143,7 @@ fn diagram_properties_app() -> (Cx, App) {
     let mut app = cx.with_vm(App::script_new_with_default);
     let source = waml::source::SourceBundle::try_from_pairs([(
         "orders.md",
-        "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\ndescription: Initial\n---\n# Orders\n",
+        "---\ntype: uml.ClassDiagram\ntitle: Orders\nprofile: uml-domain\ndescription: Initial\n---\n# Orders\n",
     )])
     .unwrap();
     app.session.replace(source).unwrap();
@@ -1687,7 +1726,7 @@ fn non_markdown_active_view_rejects_hidden_stale_fragment_once() {
 
     impl DocView for NonMarkdownView {
         fn identity(&self) -> DocViewIdentity {
-            DocViewIdentity::ClassDiagram
+            DocViewIdentity::Diagram(waml::model::DiagramKind::Class)
         }
 
         fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {

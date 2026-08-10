@@ -234,6 +234,7 @@ mod tests {
         Diagram {
             key: key.to_string(),
             title: title.to_string(),
+            kind: waml::model::DiagramKind::Class,
             profile: "erd".to_string(),
             description: None,
             groups: vec![],

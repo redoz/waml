@@ -728,9 +728,9 @@ mod tests {
 
     fn identity_for(category: NavCategory) -> DocViewIdentity {
         match category {
-            NavCategory::Diagram => DocViewIdentity::ClassDiagram,
-            NavCategory::Behavior => DocViewIdentity::BehaviorFlow,
-            NavCategory::Sequence => DocViewIdentity::BehaviorInteraction,
+            NavCategory::Diagram => DocViewIdentity::Diagram(waml::model::DiagramKind::Class),
+            NavCategory::Behavior => DocViewIdentity::Diagram(waml::model::DiagramKind::Activity),
+            NavCategory::Sequence => DocViewIdentity::Diagram(waml::model::DiagramKind::Sequence),
             NavCategory::OkfDocument => DocViewIdentity::GenericOkf,
             category => DocViewIdentity::ClassifierPreview(category),
         }

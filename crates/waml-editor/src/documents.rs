@@ -750,7 +750,7 @@ mod tests {
             ("index.md", "# Root\n\n* [Shop](shop/)\n"),
             ("shop/index.md", "# Shop\n"),
             ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
-            ("flow.md", "---\ntype: uml.Activity\n---\n# Flow\n"),
+            ("flow.md", "---\ntype: uml.ActivityDiagram\n---\n# Flow\n"),
             ("runbook.md", "---\ntype: Runbook\n---\n# Runbook\n"),
             ("plain.md", "# Plain\n"),
         ])

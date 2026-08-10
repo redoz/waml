@@ -518,9 +518,7 @@ impl ViewData<'_> {
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocViewIdentity {
-    ClassDiagram,
-    BehaviorFlow,
-    BehaviorInteraction,
+    Diagram(waml::model::DiagramKind),
     ClassifierPreview(crate::document::NavCategory),
     GenericOkf,
     Source,
@@ -741,7 +739,10 @@ mod tests {
 
     #[test]
     fn concrete_views_declare_the_existing_chrome() {
-        let diagram = crate::class_diagram_view::ClassDiagramView::new("d".into());
+        let diagram = crate::class_diagram_view::ClassDiagramView::new(
+            "d".into(),
+            waml::model::DiagramKind::Class,
+        );
         let classifier = crate::classifier_preview_view::ClassifierPreviewView::new(
             "order".into(),
             TreeKind::Class,

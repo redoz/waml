@@ -8,10 +8,12 @@ use crate::frontmatter::{FmValue, Frontmatter};
 /// class/domain form. Kept as a small table so adding a kind is one line.
 fn kind_frontmatter(kind: &str) -> (&'static str, Option<&'static str>) {
     match kind {
-        "activity" => ("uml.Activity", None),
-        "sequence" => ("uml.Sequence", None),
-        // "class" | "domain" | "usecase" | anything else
-        _ => ("Diagram", Some("uml-domain")),
+        "class" | "domain" => ("uml.ClassDiagram", Some("uml-domain")),
+        "usecase" => ("uml.UseCaseDiagram", None),
+        "activity" => ("uml.ActivityDiagram", None),
+        "state-machine" => ("uml.StateMachineDiagram", None),
+        "sequence" => ("uml.SequenceDiagram", None),
+        _ => ("uml.ClassDiagram", Some("uml-domain")),
     }
 }
 
@@ -33,43 +35,48 @@ mod tests {
     use super::new_diagram_doc;
     use crate::{analysis::prepare_candidate, source::SourceBundle};
 
+    fn assert_kind_type(kind: &str, expected_type: &str) {
+        let md = new_diagram_doc(kind, "Example");
+        assert!(md.contains(&format!("type: {expected_type}")), "got: {md}");
+    }
+
     #[test]
-    fn class_kind_emits_diagram_type_and_uml_domain_profile() {
+    fn class_kind_emits_canonical_class_diagram_type() {
         let md = new_diagram_doc("class", "My Domain");
-        assert!(md.contains("type: Diagram"), "got: {md}");
-        assert!(md.contains("profile: uml-domain"), "got: {md}");
+        assert!(md.contains("type: uml.ClassDiagram"), "got: {md}");
         assert!(md.contains("title: My Domain"), "got: {md}");
         assert!(md.contains("# My Domain"), "H1 present: {md}");
     }
 
     #[test]
-    fn usecase_kind_emits_diagram_type_and_uml_domain_profile() {
-        let md = new_diagram_doc("usecase", "Actors");
-        assert!(md.contains("type: Diagram"), "got: {md}");
-        assert!(md.contains("profile: uml-domain"), "got: {md}");
-        assert!(md.contains("title: Actors"), "got: {md}");
+    fn domain_kind_emits_canonical_class_diagram_type() {
+        assert_kind_type("domain", "uml.ClassDiagram");
     }
 
     #[test]
-    fn activity_kind_emits_uml_activity_type_and_no_profile() {
-        let md = new_diagram_doc("activity", "Checkout");
-        assert!(md.contains("type: uml.Activity"), "got: {md}");
-        assert!(!md.contains("profile:"), "activity has no profile: {md}");
-        assert!(md.contains("title: Checkout"), "got: {md}");
+    fn usecase_kind_emits_canonical_use_case_diagram_type() {
+        assert_kind_type("usecase", "uml.UseCaseDiagram");
     }
 
     #[test]
-    fn sequence_kind_emits_uml_sequence_type() {
-        let md = new_diagram_doc("sequence", "Place Order");
-        assert!(md.contains("type: uml.Sequence"), "got: {md}");
-        assert!(md.contains("title: Place Order"), "got: {md}");
+    fn activity_kind_emits_canonical_activity_diagram_type() {
+        assert_kind_type("activity", "uml.ActivityDiagram");
+    }
+
+    #[test]
+    fn state_machine_kind_emits_canonical_state_machine_diagram_type() {
+        assert_kind_type("state-machine", "uml.StateMachineDiagram");
+    }
+
+    #[test]
+    fn sequence_kind_emits_canonical_sequence_diagram_type() {
+        assert_kind_type("sequence", "uml.SequenceDiagram");
     }
 
     #[test]
     fn unknown_kind_falls_back_to_class_form() {
         let md = new_diagram_doc("nonsense", "X");
-        assert!(md.contains("type: Diagram"), "got: {md}");
-        assert!(md.contains("profile: uml-domain"), "got: {md}");
+        assert!(md.contains("type: uml.ClassDiagram"), "got: {md}");
     }
 
     #[test]

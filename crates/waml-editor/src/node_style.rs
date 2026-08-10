@@ -50,7 +50,7 @@ pub fn accent_bucket(ty: &ElementType) -> AccentBucket {
         | ElementType::Uml(UmlMetaclass::Association)
         | ElementType::Uml(UmlMetaclass::InstanceSpecification) => AccentBucket::None,
         ElementType::Behavior(_) => AccentBucket::Behavior,
-        ElementType::Diagram => AccentBucket::None,
+        ElementType::Diagram(_) => AccentBucket::None,
         ElementType::Unknown(_) => AccentBucket::Unknown,
     }
 }
@@ -71,7 +71,7 @@ pub fn stereotype_label(ty: &ElementType) -> Option<&'static str> {
         ElementType::Behavior(BehaviorKind::Activity) => Some("activity"),
         ElementType::Behavior(BehaviorKind::StateMachine) => Some("stateMachine"),
         ElementType::Behavior(BehaviorKind::Sequence) => Some("sequence"),
-        ElementType::Diagram => None,
+        ElementType::Diagram(_) => None,
         ElementType::Unknown(_) => None,
     }
 }
@@ -140,8 +140,9 @@ mod tests {
 
     #[test]
     fn diagram_and_unknown_types_degrade_gracefully() {
-        assert_eq!(accent_bucket(&ElementType::Diagram), AccentBucket::None);
-        assert_eq!(stereotype_label(&ElementType::Diagram), None);
+        let diagram = ElementType::Diagram(waml::model::DiagramKind::Class);
+        assert_eq!(accent_bucket(&diagram), AccentBucket::None);
+        assert_eq!(stereotype_label(&diagram), None);
         let unknown = ElementType::Unknown("x.Weird".to_string());
         assert_eq!(accent_bucket(&unknown), AccentBucket::Unknown);
         assert_eq!(stereotype_label(&unknown), None);

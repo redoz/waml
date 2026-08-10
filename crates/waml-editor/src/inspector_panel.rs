@@ -1673,7 +1673,7 @@ mod tests {
         let source = waml::source::SourceBundle::try_from_pairs([
             (
                 "diagram.md",
-                "---\ntype: Diagram\nprofile: uml-domain\n---\n# Diagram\n\n## Members\n- [Broken](./broken.md)\n",
+                "---\ntype: uml.ClassDiagram\nprofile: uml-domain\n---\n# Diagram\n\n## Members\n- [Broken](./broken.md)\n",
             ),
             (
                 "broken.md",

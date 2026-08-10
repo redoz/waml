@@ -3,6 +3,16 @@ use crate::document::{
 };
 use crate::icons::{Icon, IconSet};
 use crate::view_history::DocumentLocator;
+use waml::model::DiagramKind;
+
+fn declared_diagram_kind(
+    okf: &waml::analysis::OkfAnalysis,
+    concept_id: &str,
+) -> Option<DiagramKind> {
+    let concept = okf.bundle.concept(concept_id)?;
+    DiagramKind::parse(&concept.ty)
+}
+
 fn category(
     okf: &waml::analysis::OkfAnalysis,
     uml: &waml::uml::Analysis,
@@ -10,6 +20,13 @@ fn category(
 ) -> Option<NavCategory> {
     if !uml.claims.contains(concept_id) {
         return None;
+    }
+    if let Some(kind) = declared_diagram_kind(okf, concept_id) {
+        return Some(match kind {
+            DiagramKind::Class | DiagramKind::UseCase => NavCategory::Diagram,
+            DiagramKind::Activity | DiagramKind::StateMachine => NavCategory::Behavior,
+            DiagramKind::Sequence => NavCategory::Sequence,
+        });
     }
     let projection = &uml.projection;
     if projection
@@ -84,6 +101,7 @@ pub fn open_with_asset_host(
     emphasis: waml_markdown_editor::EditorEmphasis,
 ) -> Option<OpenDocument> {
     let concept = okf.bundle.concept(concept_id)?;
+    let diagram_kind = DiagramKind::parse(&concept.ty);
     let presentation = presentation(okf, uml, concept_id)?;
     let title = concept.title.clone().unwrap_or_else(|| {
         concept_id
@@ -95,26 +113,30 @@ pub fn open_with_asset_host(
     // Every UML document is markdown underneath, so each primary view carries
     // the breadcrumb header's in-place source toggle.
     use crate::source_toggle_view::SourceToggleView;
-    let view: Box<dyn crate::doc_view::DocView> = match presentation.category {
-        NavCategory::Diagram => Box::new(SourceToggleView::new(
-            crate::class_diagram_view::ClassDiagramView::new(concept_id.to_string()),
+    let view: Box<dyn crate::doc_view::DocView> = match diagram_kind {
+        Some(kind @ (DiagramKind::Class | DiagramKind::UseCase)) => {
+            Box::new(SourceToggleView::new(
+                crate::class_diagram_view::ClassDiagramView::new(concept_id.to_string(), kind),
+                concept_id.to_string(),
+                assets.clone(),
+                emphasis,
+            ))
+        }
+        Some(kind @ (DiagramKind::Activity | DiagramKind::StateMachine)) => {
+            Box::new(SourceToggleView::new(
+                crate::behavior_doc_view::BehaviorDocView::flow(concept_id.to_string(), kind),
+                concept_id.to_string(),
+                assets.clone(),
+                emphasis,
+            ))
+        }
+        Some(kind @ DiagramKind::Sequence) => Box::new(SourceToggleView::new(
+            crate::behavior_doc_view::BehaviorDocView::interaction(concept_id.to_string(), kind),
             concept_id.to_string(),
             assets.clone(),
             emphasis,
         )),
-        NavCategory::Behavior => Box::new(SourceToggleView::new(
-            crate::behavior_doc_view::BehaviorDocView::flow(concept_id.to_string()),
-            concept_id.to_string(),
-            assets.clone(),
-            emphasis,
-        )),
-        NavCategory::Sequence => Box::new(SourceToggleView::new(
-            crate::behavior_doc_view::BehaviorDocView::interaction(concept_id.to_string()),
-            concept_id.to_string(),
-            assets.clone(),
-            emphasis,
-        )),
-        _ => Box::new(SourceToggleView::new(
+        None => Box::new(SourceToggleView::new(
             crate::classifier_preview_view::ClassifierPreviewView::new(
                 concept_id.to_string(),
                 presentation.category,
@@ -175,8 +197,14 @@ mod tests {
     #[test]
     fn behavior_and_sequence_open_as_behavior_views() {
         let source = SourceBundle::try_from_pairs([
-            ("checkout.md", "---\ntype: uml.Activity\n---\n# Checkout\n"),
-            ("ordering.md", "---\ntype: uml.Sequence\n---\n# Ordering\n"),
+            (
+                "checkout.md",
+                "---\ntype: uml.ActivityDiagram\n---\n# Checkout\n",
+            ),
+            (
+                "ordering.md",
+                "---\ntype: uml.SequenceDiagram\n---\n# Ordering\n",
+            ),
         ])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();

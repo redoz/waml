@@ -1299,7 +1299,7 @@ mod tests {
             ("b.md", "---\ntype: uml.Class\ntitle: B\n---\n# B\n"),
             (
                 "dia.md",
-                "---\ntype: Diagram\ntitle: Before\nprofile: uml-domain\n---\n# Before\n",
+                "---\ntype: uml.ClassDiagram\ntitle: Before\nprofile: uml-domain\n---\n# Before\n",
             ),
         ])
         .unwrap();
@@ -1653,7 +1653,7 @@ mod tests {
             serde_json::from_str(r#"{"op":"diagram.set","key":"dia","clearDesc":true}"#).unwrap();
         let bundle = vec![(
             "dia.md".to_string(),
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\ndescription: Notes\n---\n# D\n"
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\ndescription: Notes\n---\n# D\n"
                 .to_string(),
         )];
 
