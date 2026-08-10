@@ -473,6 +473,24 @@ script_mod! {
                                             draw_bullet +: { color: atlas.text }
                                             flow_body +: {
                                                 font_color: atlas.text
+                                                draw_block +: {
+                                                    // `text_mid`, not `text_dim`: thin
+                                                    // linework (the `---` rule, the
+                                                    // quote bar, table borders) falls
+                                                    // below legibility in the dim grey
+                                                    // on the light surface.
+                                                    sep_color: atlas.text_mid
+                                                    quote_fg_color: atlas.text_mid
+                                                    table_border_color: atlas.text_mid
+                                                    // Block tints one step below the
+                                                    // surface, so quote/code panels
+                                                    // read as panels instead of
+                                                    // vanishing into the page.
+                                                    quote_bg_color: atlas.canvas_ground
+                                                    code_color: atlas.canvas_ground
+                                                    table_header_bg_color: atlas.canvas_ground
+                                                    line_color: atlas.text
+                                                }
                                             }
                                         }
                                     }
