@@ -541,6 +541,7 @@ impl DocumentHost {
             let compatible = prepared.tab_id == current_id
                 && self.views.get(&current_id).is_some_and(|current_view| {
                     current_view.reconcile_policy() == ViewReconcilePolicy::RetainLiveState
+                        && current_view.identity() == prepared.view.identity()
                 });
             if compatible {
                 self.tabs.tabs[index].title = prepared.title;
@@ -1144,6 +1145,52 @@ mod tests {
         assert!(host.views.contains_key(&current_id));
         assert_eq!(old_lifecycle.borrow().on_deactivate, 0);
         assert_eq!(replacement_lifecycle.borrow().on_activate, 0);
+    }
+
+    #[test]
+    fn retained_diagram_view_is_replaced_when_declared_identity_changes() {
+        let old_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let replacement_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let mut current = prepared_with_identity(
+            "diagram",
+            NavCategory::Diagram,
+            DocViewIdentity::Diagram(waml::model::DiagramKind::Class),
+            Rc::new(Cell::new(0)),
+            old_lifecycle.clone(),
+        );
+        current.view = Box::new(ProbeView {
+            identity: DocViewIdentity::Diagram(waml::model::DiagramKind::Class),
+            reconcile_policy: ViewReconcilePolicy::RetainLiveState,
+            chrome_calls: Rc::new(Cell::new(0)),
+            lifecycle: old_lifecycle,
+        });
+        let current_id = current.tab_id;
+        let mut host = DocumentHost::default();
+        host.apply_command(DocumentCommand::Open {
+            document: current,
+            persistent: true,
+        });
+
+        let mut replacement = prepared_with_identity(
+            "diagram",
+            NavCategory::Diagram,
+            DocViewIdentity::Diagram(waml::model::DiagramKind::UseCase),
+            Rc::new(Cell::new(0)),
+            replacement_lifecycle.clone(),
+        );
+        replacement.tab_id = current_id;
+        replacement.view = Box::new(ProbeView {
+            identity: DocViewIdentity::Diagram(waml::model::DiagramKind::UseCase),
+            reconcile_policy: ViewReconcilePolicy::RetainLiveState,
+            chrome_calls: Rc::new(Cell::new(0)),
+            lifecycle: replacement_lifecycle,
+        });
+        host.reconcile_documents(vec![Some(replacement)]);
+
+        assert_eq!(
+            host.views.get(&current_id).map(|view| view.identity()),
+            Some(DocViewIdentity::Diagram(waml::model::DiagramKind::UseCase))
+        );
     }
 
     #[test]
