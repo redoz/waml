@@ -460,6 +460,34 @@ fn check_reports_generic_okf_unknown_type_warning() {
     );
 }
 
+#[test]
+fn check_rejects_quoted_retired_diagram_type() {
+    let d = tmp();
+    let retired = d.join("old.md");
+    std::fs::write(&retired, "---\n\"type\": Diagram\n---\n# Old\n").unwrap();
+
+    let output = bin()
+        .arg("check")
+        .arg(&retired)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        diagnostics,
+        serde_json::json!([{
+            "severity": "error",
+            "code": "obsolete-diagram-type",
+            "message": "obsolete diagram type 'Diagram'; run 'waml upgrade' to select 'uml.ClassDiagram' or 'uml.UseCaseDiagram'",
+            "file": retired.to_string_lossy().into_owned(),
+            "line": 2,
+            "span": [8, 15],
+        }])
+    );
+}
+
 // Scenario: CLI-001
 #[test]
 fn check_reports_malformed_claimed_uml_from_parser_analysis() {

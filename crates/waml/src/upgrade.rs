@@ -93,10 +93,8 @@ fn inspect_document_legacy_type(path: &str, source: &str) -> LegacyTypeInspectio
     let has_type_scalar = parse_frontmatter_source(source)
         .is_some_and(|frontmatter| matches!(frontmatter.get("type"), Some(FmValue::Str(_))));
     match inspect_frontmatter_string_scalar(source, "type") {
-        Ok(FrontmatterStringScalar::String(authored_type)) => {
-            LegacyDiagramType::parse(&authored_type)
-                .map_or(LegacyTypeInspection::NoLegacy, LegacyTypeInspection::Legacy)
-        }
+        Ok(FrontmatterStringScalar::String { value, .. }) => LegacyDiagramType::parse(&value)
+            .map_or(LegacyTypeInspection::NoLegacy, LegacyTypeInspection::Legacy),
         Ok(FrontmatterStringScalar::NoFrontmatter | FrontmatterStringScalar::NoScalar) => {
             LegacyTypeInspection::NoLegacy
         }

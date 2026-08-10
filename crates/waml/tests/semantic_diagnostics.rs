@@ -175,6 +175,27 @@ fn obsolete_root_types_are_errors_at_the_type_scalar_without_unknown_type_warnin
 }
 
 #[test]
+fn quoted_type_key_reports_obsolete_diagram_type_at_scalar() {
+    let source = "---\n\"type\": Diagram\n---\n# Old\n";
+    let found = diagnostics([("views/old.md", source)]);
+    let obsolete = exact(
+        &found,
+        DiagCode::ObsoleteDiagramType,
+        "obsolete diagram type 'Diagram'; run 'waml upgrade' to select 'uml.ClassDiagram' or 'uml.UseCaseDiagram'",
+    );
+
+    assert_source_contract(
+        obsolete,
+        source,
+        "views/old.md",
+        Severity::Error,
+        2,
+        (8, 15),
+        "Diagram",
+    );
+}
+
+#[test]
 fn instance_of_uses_specific_warn_only_diagnostics() {
     let unresolved = diagnostics([(
         "m/order-42.md",

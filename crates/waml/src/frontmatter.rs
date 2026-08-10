@@ -1,6 +1,6 @@
 use waml_syntax::{
     FrontmatterScalarKind, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, OkfSyntaxDiagnosticCode,
-    SyntaxElement, SyntaxNode,
+    SyntaxElement, SyntaxNode, SyntaxToken, TextRange, TextSize,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +28,25 @@ impl std::error::Error for FrontmatterRewriteError {}
 pub(crate) enum FrontmatterStringScalar {
     NoFrontmatter,
     NoScalar,
-    String(String),
+    String { value: String, range: TextRange },
+}
+
+fn trimmed_token_range(token: &SyntaxToken<OkfMarkdownLanguage>) -> TextRange {
+    let authored = token.text().write_to_string();
+    let trimmed = authored.trim();
+    let leading = token
+        .range()
+        .len()
+        .to_usize()
+        .saturating_sub(authored.len())
+        + authored.len()
+        - authored.trim_start().len();
+    let start = (token.range().start()
+        + TextSize::try_from(leading).expect("token leading trivia fits TextSize"))
+    .expect("trimmed token start fits TextSize");
+    let end = (start + TextSize::try_from(trimmed.len()).expect("token spelling fits TextSize"))
+        .expect("trimmed token end fits TextSize");
+    TextRange::new(start, end).expect("trimmed token range is ordered")
 }
 
 /// Maximum `List`/`Map` nesting depth accepted from any input path (authored
@@ -718,7 +736,10 @@ pub(crate) fn inspect_frontmatter_string_scalar(
             },
             _ => return Err(FrontmatterRewriteError::NonStringScalar { key: key.into() }),
         };
-        return Ok(FrontmatterStringScalar::String(value));
+        return Ok(FrontmatterStringScalar::String {
+            value,
+            range: trimmed_token_range(value_token),
+        });
     }
 
     Ok(FrontmatterStringScalar::NoScalar)

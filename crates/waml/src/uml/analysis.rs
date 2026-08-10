@@ -901,17 +901,15 @@ fn obsolete_diagram_message(ty: &str) -> Option<&'static str> {
 }
 
 fn type_scalar_range(document: &crate::analysis::DocumentVersion, ty: &str) -> Option<TextRange> {
-    let text = document.text().shared();
-    let line_start = text
-        .match_indices("type:")
-        .map(|(start, _)| start)
-        .find(|start| *start == 0 || text.as_bytes()[start - 1] == b'\n')?;
-    let scalar_start = text[line_start + "type:".len()..]
-        .find(ty)
-        .map(|offset| line_start + "type:".len() + offset)?;
-    let start = TextSize::try_from(scalar_start).ok()?;
-    let end = TextSize::try_from(scalar_start + ty.len()).ok()?;
-    TextRange::new(start, end).ok()
+    let Ok(crate::frontmatter::FrontmatterStringScalar::String { value, range }) =
+        crate::frontmatter::inspect_frontmatter_string_scalar(
+            document.text().shared().as_str(),
+            "type",
+        )
+    else {
+        return None;
+    };
+    (value == ty).then_some(range)
 }
 
 fn validate_document_types(
