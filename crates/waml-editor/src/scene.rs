@@ -105,6 +105,15 @@ pub struct SceneRelation {
     pub dir: waml::layout::Direction,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneGroup {
+    pub role: waml::model::DiagramGroupRole,
+    pub bounds: Rect,
+    pub heading_bounds: Rect,
+    pub title: Option<String>,
+    pub depth: u8,
+}
+
 /// A placement the solver could not honor, projected from `DroppedPlacement`
 /// into slug-level relations for the editor's conflict error list.
 #[derive(Debug, Clone, PartialEq)]
@@ -120,6 +129,7 @@ pub struct Scene {
     pub display: ResolvedDiagramDisplay,
     pub nodes: Vec<SceneNode>,
     pub groups: Vec<SolvedGroup>,
+    pub use_case_groups: Vec<SceneGroup>,
     pub edges: Vec<SceneEdge>,
     pub relations: Vec<SceneRelation>,
     pub conflicts: Vec<SceneConflict>,
@@ -1042,6 +1052,11 @@ pub fn build_scene(
         nodes.push(node);
     }
 
+    let ports = nodes
+        .iter()
+        .map(|node| (node.key.clone(), port_geometry(node)))
+        .collect::<BTreeMap<_, _>>();
+
     // Walk the same `drawable_edges` list route::route was fed, so the ordered
     // route stream and this consumption stay locked together by construction.
     // Only edges whose endpoints both appear in the solved layout are drawable;
@@ -1072,6 +1087,17 @@ pub fn build_scene(
                 to_end: e.to_end.clone(),
                 points,
             });
+            if let Some(edge) = edges.last_mut() {
+                let source_toward = (target.x + target.w / 2.0, target.y + target.h / 2.0);
+                let target_toward = (source.x + source.w / 2.0, source.y + source.h / 2.0);
+                if let Some(port) = ports.get(&e.source) {
+                    edge.points[0] = waml::solve::route::boundary_port(port, source_toward);
+                }
+                if let Some(port) = ports.get(&e.target) {
+                    let last = edge.points.len() - 1;
+                    edge.points[last] = waml::solve::route::boundary_port(port, target_toward);
+                }
+            }
         }
     }
 
@@ -1106,6 +1132,7 @@ pub fn build_scene(
 
     let relations = project_relations(diagram);
     let conflicts = project_conflicts(&dropped);
+    let use_case_groups = project_use_case_scene_groups(diagram, &solved.groups);
 
     (
         Scene {
@@ -1113,6 +1140,7 @@ pub fn build_scene(
             display,
             nodes,
             groups: solved.groups,
+            use_case_groups,
             edges,
             relations,
             conflicts,
@@ -1120,6 +1148,65 @@ pub fn build_scene(
         },
         diags,
     )
+}
+
+fn port_geometry(node: &SceneNode) -> waml::solve::route::PortGeometry {
+    match &node.geometry {
+        crate::MeasuredNodeGeometry::UseCase(geometry) => {
+            waml::solve::route::PortGeometry::Ellipse(geometry.bounds)
+        }
+        crate::MeasuredNodeGeometry::Actor(geometry) => {
+            let segments = std::iter::once(geometry.body)
+                .chain(geometry.arms)
+                .chain(geometry.legs)
+                .map(|segment| {
+                    (
+                        (segment.from.x, segment.from.y),
+                        (segment.to.x, segment.to.y),
+                    )
+                })
+                .collect();
+            waml::solve::route::PortGeometry::Actor {
+                bounds: geometry.bounds,
+                head_center: (geometry.head_center.x, geometry.head_center.y),
+                head_radius: geometry.head_radius,
+                stroke_radius: 2.0,
+                segments,
+            }
+        }
+        crate::MeasuredNodeGeometry::ClassCard
+        | crate::MeasuredNodeGeometry::Note
+        | crate::MeasuredNodeGeometry::Package => {
+            waml::solve::route::PortGeometry::Rectangle(node.rect)
+        }
+    }
+}
+
+fn project_use_case_scene_groups(diagram: &Diagram, solved: &[SolvedGroup]) -> Vec<SceneGroup> {
+    fn roles(groups: &[DiagramGroup], out: &mut Vec<waml::model::DiagramGroupRole>) {
+        for group in groups {
+            out.push(group.role);
+            roles(&group.children, out);
+        }
+    }
+    let mut ordered_roles = Vec::new();
+    roles(&diagram.groups, &mut ordered_roles);
+    solved
+        .iter()
+        .zip(ordered_roles)
+        .map(|(group, role)| SceneGroup {
+            role,
+            bounds: group.rect,
+            heading_bounds: Rect {
+                x: group.rect.x,
+                y: group.rect.y,
+                w: group.rect.w,
+                h: waml::solve::label::GROUP_TITLE_BAND.min(group.rect.h),
+            },
+            title: group.title.clone(),
+            depth: group.depth,
+        })
+        .collect()
 }
 
 /// Build a single-node `Scene` focused on classifier `key`, sized 1.5x its
@@ -1132,6 +1219,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
             display: ResolvedDiagramDisplay::default(),
             nodes: vec![],
             groups: vec![],
+            use_case_groups: vec![],
             edges: vec![],
             relations: Vec::new(),
             conflicts: Vec::new(),
@@ -1180,6 +1268,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         display: ResolvedDiagramDisplay::default(),
         nodes: vec![scene_node],
         groups: vec![],
+        use_case_groups: vec![],
         edges: vec![],
         relations: Vec::new(),
         conflicts: Vec::new(),
@@ -2194,6 +2283,7 @@ mod tests {
     #[test]
     fn bounding_box_none_for_empty_scene() {
         let scene = Scene {
+            use_case_groups: Vec::new(),
             visual_kind: Default::default(),
             display: test_display(),
             nodes: vec![],

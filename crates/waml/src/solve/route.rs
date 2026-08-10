@@ -4,6 +4,94 @@
 use super::{Box, BoxId, Rect, Route, SolveConfig};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum PortGeometry {
+    Rectangle(Rect),
+    Ellipse(Rect),
+    Actor {
+        bounds: Rect,
+        head_center: (f64, f64),
+        head_radius: f64,
+        stroke_radius: f64,
+        segments: Vec<((f64, f64), (f64, f64))>,
+    },
+}
+
+pub fn boundary_port(geometry: &PortGeometry, toward: (f64, f64)) -> (f64, f64) {
+    match geometry {
+        PortGeometry::Rectangle(rect) => rectangle_port(*rect, toward),
+        PortGeometry::Ellipse(rect) => {
+            let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+            let delta = (toward.0 - center.0, toward.1 - center.1);
+            let scale = 1.0
+                / ((delta.0 / (rect.w / 2.0)).powi(2) + (delta.1 / (rect.h / 2.0)).powi(2))
+                    .sqrt()
+                    .max(f64::EPSILON);
+            (center.0 + delta.0 * scale, center.1 + delta.1 * scale)
+        }
+        PortGeometry::Actor {
+            head_center,
+            head_radius,
+            stroke_radius,
+            segments,
+            ..
+        } => {
+            let mut candidates = Vec::new();
+            let delta = (toward.0 - head_center.0, toward.1 - head_center.1);
+            let length = delta.0.hypot(delta.1).max(f64::EPSILON);
+            candidates.push((
+                head_center.0 + delta.0 / length * head_radius,
+                head_center.1 + delta.1 / length * head_radius,
+            ));
+            for (from, to) in segments {
+                candidates.push(closest_point_on_segment(toward, *from, *to));
+            }
+            candidates
+                .into_iter()
+                .min_by(|a, b| {
+                    distance(*a, toward)
+                        .partial_cmp(&distance(*b, toward))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|point| {
+                    let dx = toward.0 - point.0;
+                    let dy = toward.1 - point.1;
+                    let length = dx.hypot(dy).max(f64::EPSILON);
+                    (
+                        point.0 + dx / length * stroke_radius,
+                        point.1 + dy / length * stroke_radius,
+                    )
+                })
+                .unwrap_or(*head_center)
+        }
+    }
+}
+
+fn rectangle_port(rect: Rect, toward: (f64, f64)) -> (f64, f64) {
+    let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+    let delta = (toward.0 - center.0, toward.1 - center.1);
+    let scale = 1.0
+        / (delta.0.abs() / (rect.w / 2.0))
+            .max(delta.1.abs() / (rect.h / 2.0))
+            .max(f64::EPSILON);
+    (center.0 + delta.0 * scale, center.1 + delta.1 * scale)
+}
+
+fn closest_point_on_segment(point: (f64, f64), from: (f64, f64), to: (f64, f64)) -> (f64, f64) {
+    let delta = (to.0 - from.0, to.1 - from.1);
+    let length_sq = delta.0 * delta.0 + delta.1 * delta.1;
+    let t = if length_sq <= f64::EPSILON {
+        0.0
+    } else {
+        (((point.0 - from.0) * delta.0 + (point.1 - from.1) * delta.1) / length_sq).clamp(0.0, 1.0)
+    };
+    (from.0 + delta.0 * t, from.1 + delta.1 * t)
+}
+
+fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
+    (a.0 - b.0).hypot(a.1 - b.1)
+}
+
 /// One edge as `route_keyed_with` takes it: endpoints, the authored key the
 /// produced `Route` is tagged with, and the `(width, height)` of the label band
 /// the router should try to keep clear beside it (`None` when unlabelled).

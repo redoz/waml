@@ -838,6 +838,7 @@ mod tests {
 
     fn scene() -> Scene {
         Scene {
+            use_case_groups: Vec::new(),
             visual_kind: Default::default(),
             display: Default::default(),
             nodes: vec![
