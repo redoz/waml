@@ -224,26 +224,26 @@ script_mod! {
     // fill-only frame reads as almost nothing; this solid hairline gives the
     // frame an edge. Same inset-rect stroke as `GroupDashed` below, minus the
     // duty mask. `sdf.rect`, never `sdf.box(.., 0)` -- a zero radius floods.
-    mod.draw.GroupBorder = mod.draw.DrawColor{
-        stroke_w: uniform(1.0)
+    mod.draw.GroupBorder = mod.draw.CadPen{
         pixel: fn() {
             let p = self.pos * self.rect_size
             let sdf = Sdf2d.viewport(p)
-            let inset = self.stroke_w * 0.5
-            sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-            sdf.stroke(self.color, self.stroke_w)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
+            let sw = self.pen_sw(self.pen_w)
+            sdf.rect(sw, sw, self.rect_size.x - sw * 2.0, self.rect_size.y - sw * 2.0)
+            sdf.stroke(self.color, sw)
             return sdf.result
         }
     }
 
-    mod.draw.GroupDashed = mod.draw.DrawColor{
+    mod.draw.GroupDashed = mod.draw.CadPen{
         dash_px: uniform(6.0)
-        stroke_w: uniform(1.0)
         pixel: fn() {
             let p = self.pos * self.rect_size
             let sdf = Sdf2d.viewport(p)
-            let inset = self.stroke_w * 0.5
-            sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
+            let sw = self.pen_sw(self.pen_w)
+            sdf.rect(sw, sw, self.rect_size.x - sw * 2.0, self.rect_size.y - sw * 2.0)
             // 50% duty cycle with ~1px of antialiasing on BOTH dash edges.
             // `d` is the symmetric triangle-wave distance to the nearest dash
             // centre in PIXELS (the same `abs(fract(..) - 0.5) * period` idiom
@@ -257,7 +257,7 @@ script_mod! {
             let mask = clamp(d - self.dash_px * 0.25 + 0.5, 0.0, 1.0)
             sdf.stroke(
                 vec4(self.color.x, self.color.y, self.color.z, self.color.w * mask),
-                self.stroke_w
+                sw
             )
             return sdf.result
         }

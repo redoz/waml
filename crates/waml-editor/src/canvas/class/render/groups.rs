@@ -1,5 +1,6 @@
 use super::{primitives::ClassDrawResources, RenderSnapshot};
-use crate::canvas::primitives::{font_raster_size, snap_rect, world_rect_to_screen};
+use crate::canvas::pen::{self, Pen};
+use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
 use makepad_widgets::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -86,7 +87,7 @@ pub(super) fn draw_groups(
         // The frame edge is an SDF stroke at a constant screen-space width, so
         // its rect has to sit on the device grid or the hairline splits over two
         // rows -- the "fatter and blurrier when zoomed out" tell.
-        let framed = snap_rect(cx, screen);
+        let framed = pen::outline(cx, screen, Pen::HAIRLINE);
         match mode {
             GroupDraw::Chrome => {
                 draws.group.draw_abs(cx, framed);
@@ -94,8 +95,8 @@ pub(super) fn draw_groups(
                 // every frame gets a hairline edge over its fill.
                 draws.group_border.set_uniform(
                     cx,
-                    live_id!(stroke_w),
-                    &[snapshot.linework.group_stroke_width],
+                    live_id!(pen_w),
+                    &[Pen::HAIRLINE.width() as f32],
                 );
                 draws.group_border.draw_abs(cx, framed);
             }
@@ -107,8 +108,8 @@ pub(super) fn draw_groups(
                 );
                 draws.group_dashed.set_uniform(
                     cx,
-                    live_id!(stroke_w),
-                    &[snapshot.linework.group_stroke_width],
+                    live_id!(pen_w),
+                    &[Pen::HAIRLINE.width() as f32],
                 );
                 draws.group_dashed.draw_abs(cx, framed);
             }

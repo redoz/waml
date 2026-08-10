@@ -2,7 +2,8 @@ use super::{
     primitives::ClassDrawResources, relations::relations_for_visibility, CardMeasureCache,
     LineworkMetrics, RenderSnapshot,
 };
-use crate::canvas::primitives::{font_raster_size, snap_rect, world_rect_to_screen};
+use crate::canvas::pen::{self, Pen};
+use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
 use crate::frame::SurfaceExt;
 use makepad_widgets::*;
 use std::collections::HashSet;
@@ -168,24 +169,25 @@ fn draw_card(
     // 1-lpx band smears over two rows at half coverage -- reading fatter and
     // blurrier the further you zoom out, which is exactly what CAD linework is
     // supposed to prevent.
-    fn rule_rect(cx: &Cx2d, screen: Rect, card_w: f64, dy: f64, zoom: f64, thickness: f64) -> Rect {
-        snap_rect(
+    fn rule_rect(cx: &Cx2d, screen: Rect, card_w: f64, dy: f64, zoom: f64, pen: Pen) -> Rect {
+        pen::outline(
             cx,
             Rect {
                 pos: dvec2(screen.pos.x, screen.pos.y + dy * zoom),
-                size: dvec2(card_w, thickness),
+                size: dvec2(card_w, pen.width()),
             },
+            pen,
         )
     }
 
     if let Some(dy) = placed.header_divider() {
-        let rect = rule_rect(cx, screen, card_w, dy, zoom, linework.divider_thickness);
+        let rect = rule_rect(cx, screen, card_w, dy, zoom, Pen::HAIRLINE);
         draws.rule.color = vec4(accent.x, accent.y, accent.z, 0.22);
         draws.rule.draw_abs(cx, rect);
     }
 
     for dy in placed.compartment_dividers() {
-        let rect = rule_rect(cx, screen, card_w, dy, zoom, linework.divider_thickness);
+        let rect = rule_rect(cx, screen, card_w, dy, zoom, Pen::HAIRLINE);
         draws.rule.color = vec4(dim.x, dim.y, dim.z, 0.5);
         draws.rule.draw_abs(cx, rect);
     }
@@ -232,19 +234,21 @@ fn draw_card(
         let cy = screen.pos.y + placed.size.1 * 0.5 * zoom - nub * 0.5;
         // Same grid rule as the dividers: a screen-space nub on a fractional
         // edge renders soft and a half pixel wider than its neighbour's.
-        let left = snap_rect(
+        let left = pen::outline(
             cx,
             Rect {
                 pos: dvec2(screen.pos.x - nub * 0.5, cy),
                 size: dvec2(nub, nub),
             },
+            Pen::HAIRLINE,
         );
-        let right = snap_rect(
+        let right = pen::outline(
             cx,
             Rect {
                 pos: dvec2(screen.pos.x + card_w - nub * 0.5, cy),
                 size: dvec2(nub, nub),
             },
+            Pen::HAIRLINE,
         );
         draws.rule.color = accent;
         draws.rule.draw_abs(cx, left);

@@ -2,7 +2,7 @@ use super::{
     primitives::{node_screen_rect, ClassDrawResources},
     RenderSnapshot,
 };
-use crate::canvas::pen::Pen;
+use crate::canvas::pen::{self, Pen};
 use crate::canvas::primitives::{fill_rect, world_rect_to_screen};
 use makepad_widgets::*;
 
@@ -59,94 +59,128 @@ pub(super) fn draw_placement(
     if snapshot.placement.preview_ghost.is_none() {
         fill_rect(cx, draws.rule, origin_screen, vec4(0.52, 0.57, 0.64, 0.40));
         let grey = vec4(0.62, 0.67, 0.74, 0.85);
-        let thickness = Pen::LIGHT.width();
+        let pen = Pen::LIGHT;
+        let thickness = pen.width();
         fill_rect(
             cx,
             draws.rule,
-            Rect {
-                pos: origin_screen.pos,
-                size: dvec2(origin_screen.size.x, thickness),
-            },
+            pen::outline(
+                cx,
+                Rect {
+                    pos: origin_screen.pos,
+                    size: dvec2(origin_screen.size.x, thickness),
+                },
+                pen,
+            ),
             grey,
         );
         fill_rect(
             cx,
             draws.rule,
-            Rect {
-                pos: dvec2(
-                    origin_screen.pos.x,
-                    origin_screen.pos.y + origin_screen.size.y - thickness,
-                ),
-                size: dvec2(origin_screen.size.x, thickness),
-            },
+            pen::outline(
+                cx,
+                Rect {
+                    pos: dvec2(
+                        origin_screen.pos.x,
+                        origin_screen.pos.y + origin_screen.size.y - thickness,
+                    ),
+                    size: dvec2(origin_screen.size.x, thickness),
+                },
+                pen,
+            ),
             grey,
         );
         fill_rect(
             cx,
             draws.rule,
-            Rect {
-                pos: origin_screen.pos,
-                size: dvec2(thickness, origin_screen.size.y),
-            },
+            pen::outline(
+                cx,
+                Rect {
+                    pos: origin_screen.pos,
+                    size: dvec2(thickness, origin_screen.size.y),
+                },
+                pen,
+            ),
             grey,
         );
         fill_rect(
             cx,
             draws.rule,
-            Rect {
-                pos: dvec2(
-                    origin_screen.pos.x + origin_screen.size.x - thickness,
-                    origin_screen.pos.y,
-                ),
-                size: dvec2(thickness, origin_screen.size.y),
-            },
+            pen::outline(
+                cx,
+                Rect {
+                    pos: dvec2(
+                        origin_screen.pos.x + origin_screen.size.x - thickness,
+                        origin_screen.pos.y,
+                    ),
+                    size: dvec2(thickness, origin_screen.size.y),
+                },
+                pen,
+            ),
             grey,
         );
     }
 
     if snapshot.placement.preview_ghost.is_some() {
         let accent = vec4(0.37, 0.63, 1.0, 0.9);
-        let thickness = Pen::REGULAR.width();
+        let pen = Pen::REGULAR;
+        let thickness = pen.width();
         fill_rect(
             cx,
             draws.rule,
-            Rect {
-                pos: ghost_screen.pos,
-                size: dvec2(ghost_screen.size.x, thickness),
-            },
+            pen::outline(
+                cx,
+                Rect {
+                    pos: ghost_screen.pos,
+                    size: dvec2(ghost_screen.size.x, thickness),
+                },
+                pen,
+            ),
             accent,
         );
         fill_rect(
             cx,
             draws.rule,
-            Rect {
-                pos: dvec2(
-                    ghost_screen.pos.x,
-                    ghost_screen.pos.y + ghost_screen.size.y - thickness,
-                ),
-                size: dvec2(ghost_screen.size.x, thickness),
-            },
+            pen::outline(
+                cx,
+                Rect {
+                    pos: dvec2(
+                        ghost_screen.pos.x,
+                        ghost_screen.pos.y + ghost_screen.size.y - thickness,
+                    ),
+                    size: dvec2(ghost_screen.size.x, thickness),
+                },
+                pen,
+            ),
             accent,
         );
         fill_rect(
             cx,
             draws.rule,
-            Rect {
-                pos: ghost_screen.pos,
-                size: dvec2(thickness, ghost_screen.size.y),
-            },
+            pen::outline(
+                cx,
+                Rect {
+                    pos: ghost_screen.pos,
+                    size: dvec2(thickness, ghost_screen.size.y),
+                },
+                pen,
+            ),
             accent,
         );
         fill_rect(
             cx,
             draws.rule,
-            Rect {
-                pos: dvec2(
-                    ghost_screen.pos.x + ghost_screen.size.x - thickness,
-                    ghost_screen.pos.y,
-                ),
-                size: dvec2(thickness, ghost_screen.size.y),
-            },
+            pen::outline(
+                cx,
+                Rect {
+                    pos: dvec2(
+                        ghost_screen.pos.x + ghost_screen.size.x - thickness,
+                        ghost_screen.pos.y,
+                    ),
+                    size: dvec2(thickness, ghost_screen.size.y),
+                },
+                pen,
+            ),
             accent,
         );
     } else {

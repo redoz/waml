@@ -64,8 +64,7 @@ pub(in crate::canvas) fn band_is_horizontal(a: DVec2, b: DVec2) -> bool {
 /// with this rounding by a pixel without its stroke being clipped.
 ///
 /// Only for quads a `CadPen`-derived pen inks inside. A quad that IS the ink
-/// (a flat `DrawColor` fill) wants `outline` instead (added in the task that
-/// gives it its first caller -- see the plan's dead-code constraint).
+/// (a flat `DrawColor` fill) wants [`outline`] instead.
 pub(in crate::canvas) fn band(cx: &Cx2d, a: DVec2, b: DVec2, pen: Pen) -> Rect {
     band_at(a, b, pen, cx.current_dpi_factor())
 }
@@ -92,6 +91,32 @@ pub(in crate::canvas) fn band_at(a: DVec2, b: DVec2, pen: Pen, dpi: f64) -> Rect
             pos: dvec2(x0 / dpi, y0 / dpi),
             size: dvec2(thick_px / dpi, (y1 - y0).max(1.0) / dpi),
         }
+    }
+}
+
+/// The quad for a shape whose OUTLINE a pen strokes -- frames, group hulls,
+/// markers -- with its edges pulled onto the device grid, and guaranteed wide
+/// enough that the shader's `pen_sw` inset cannot invert it.
+///
+/// Also the right helper for a quad that IS the ink: a flat `DrawColor` fill
+/// sized from `pen.width()` needs its edges on the grid and nothing else.
+pub(in crate::canvas) fn outline(cx: &Cx2d, rect: Rect, pen: Pen) -> Rect {
+    outline_at(rect, pen, cx.current_dpi_factor())
+}
+
+fn outline_at(rect: Rect, pen: Pen, dpi: f64) -> Rect {
+    let floor_px = (pen.width() * 2.0 * dpi).ceil().max(1.0);
+    let x0 = (rect.pos.x * dpi).round();
+    let y0 = (rect.pos.y * dpi).round();
+    let x1 = ((rect.pos.x + rect.size.x) * dpi)
+        .round()
+        .max(x0 + floor_px);
+    let y1 = ((rect.pos.y + rect.size.y) * dpi)
+        .round()
+        .max(y0 + floor_px);
+    Rect {
+        pos: dvec2(x0 / dpi, y0 / dpi),
+        size: dvec2((x1 - x0) / dpi, (y1 - y0) / dpi),
     }
 }
 
@@ -182,9 +207,14 @@ mod tests {
 
     #[test]
     fn class_pens_derive_from_cad_pen() {
-        // Task 5 adds `GroupBorder` and `GroupDashed` here.
         let src = include_str!("class/widget.rs");
-        for name in ["EdgeLine", "EdgeElbow", "EdgeMarker"] {
+        for name in [
+            "EdgeLine",
+            "EdgeElbow",
+            "EdgeMarker",
+            "GroupBorder",
+            "GroupDashed",
+        ] {
             assert_derives_from_cad_pen(src, name);
         }
     }
@@ -355,7 +385,36 @@ mod tests {
         // A degenerate pair is horizontal, matching the old `stroke_quad`.
         assert!(band_is_horizontal(dvec2(5.0, 5.0), dvec2(5.0, 5.0)));
     }
-    // `pen::outline` and its guard test land in the task that gives it its
-    // first production caller (class group hulls / dividers / overlays) --
-    // adding it here with no caller yet would trip -D warnings dead_code.
+    #[test]
+    fn an_outline_lands_on_the_device_grid_and_keeps_room_for_its_stroke() {
+        for dpi in [1.0, 1.5, 2.0] {
+            let snapped = outline_at(
+                Rect {
+                    pos: dvec2(10.3, 20.7),
+                    size: dvec2(40.4, 30.2),
+                },
+                Pen::LIGHT,
+                dpi,
+            );
+            for v in [
+                snapped.pos.x,
+                snapped.pos.y,
+                snapped.pos.x + snapped.size.x,
+                snapped.pos.y + snapped.size.y,
+            ] {
+                assert!((v * dpi - (v * dpi).round()).abs() <= 1e-9);
+            }
+            // A degenerate rect cannot invert the shader's inset.
+            let tiny = outline_at(
+                Rect {
+                    pos: dvec2(10.0, 20.0),
+                    size: dvec2(0.0, 0.0),
+                },
+                Pen::LIGHT,
+                dpi,
+            );
+            assert!(tiny.size.x >= Pen::LIGHT.width() * 2.0 - 1e-9);
+            assert!(tiny.size.y >= Pen::LIGHT.width() * 2.0 - 1e-9);
+        }
+    }
 }
