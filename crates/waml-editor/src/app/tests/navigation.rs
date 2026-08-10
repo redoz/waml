@@ -2687,3 +2687,115 @@ fn activating_a_search_result_row_navigates_to_the_hit_document_and_stashes_a_pe
         })
     );
 }
+
+/// "details" hits both `sales/customer.md` (a body word under "## History")
+/// and `sales/next.md` (its own "## Details" heading) -- a guaranteed
+/// two-document result set, the fixture Task 14's cross-document F3 test
+/// needs.
+#[test]
+fn open_search_results_starts_a_bundle_wide_session_over_two_documents() {
+    let (mut cx, mut app) = rebuilt_search_app();
+    app.open_search_results(&mut cx, "details");
+
+    let session = app
+        .session_search
+        .as_ref()
+        .expect("open_search_results starts the bundle-wide session");
+    assert_eq!(session.query, "details");
+    assert_eq!(session.hits.len(), 2);
+    assert!(session.cursor.is_none());
+    let concepts: std::collections::HashSet<String> = session
+        .hits
+        .iter()
+        .map(crate::search_results_view::concept_id_for_hit)
+        .collect();
+    assert_eq!(
+        concepts.len(),
+        2,
+        "the two hits land in different documents"
+    );
+}
+
+#[test]
+fn f3_advances_the_live_session_across_document_boundaries_and_wraps() {
+    let (mut cx, mut app) = rebuilt_search_app();
+    app.open_search_results(&mut cx, "details");
+
+    let first_hit = app.session_search.as_ref().unwrap().hits[0].clone();
+    let first_concept = crate::search_results_view::concept_id_for_hit(&first_hit);
+    let second_concept = crate::search_results_view::concept_id_for_hit(
+        &app.session_search.as_ref().unwrap().hits[1],
+    );
+
+    // Land on the first hit, the way a results-tab row click does.
+    let (navigation, reveal) = crate::search_results_view::navigation_for_hit(&first_hit);
+    app.apply_view_outcome(
+        &mut cx,
+        crate::doc_view::ViewOutcome {
+            navigation: Some(navigation),
+            reveal,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some(first_concept.as_str())
+    );
+    assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(0));
+
+    // F3 crosses into the OTHER document.
+    app.step_session(&mut cx, true);
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some(second_concept.as_str())
+    );
+    assert!(app.pending_reveal.is_some());
+
+    // F3 again wraps back to the first.
+    app.step_session(&mut cx, true);
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some(first_concept.as_str())
+    );
+
+    // Shift+F3 walks backward, wrapping the other way, straight to the
+    // second document.
+    app.step_session(&mut cx, false);
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some(second_concept.as_str())
+    );
+}
+
+#[test]
+fn esc_ends_the_live_session_and_further_f3_is_a_no_op() {
+    let (mut cx, mut app) = rebuilt_search_app();
+    app.open_search_results(&mut cx, "details");
+    app.step_session(&mut cx, true);
+    let landed = app
+        .documents
+        .active_tab()
+        .and_then(|tab| tab.concept_id())
+        .map(str::to_string);
+    assert!(landed.is_some());
+
+    app.handle_escape_event(
+        &mut cx,
+        &Event::KeyDown(KeyEvent {
+            key_code: KeyCode::Escape,
+            ..Default::default()
+        }),
+    );
+
+    assert!(app.session_search.is_none());
+
+    // A further F3 does nothing: no session left to walk.
+    app.step_session(&mut cx, true);
+    assert_eq!(
+        app.documents
+            .active_tab()
+            .and_then(|tab| tab.concept_id())
+            .map(str::to_string),
+        landed
+    );
+}

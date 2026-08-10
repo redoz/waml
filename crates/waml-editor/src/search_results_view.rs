@@ -128,6 +128,19 @@ pub fn group_hits(rows: Vec<ResultRow>) -> Vec<DocumentGroup> {
     groups
 }
 
+/// The bundle-wide session's hit order (Task 14, spec §Search session):
+/// exactly `group_hits`' document/rank order, flattened -- so `SearchSession`'s
+/// F3/Shift+F3 walk lands on the SAME sequence the results tab shows, hit for
+/// hit. Called by `App::open_search_results` alongside `documents::open_search`,
+/// over the identical `rows`, so the tab and the session never disagree about
+/// what "next" means.
+pub fn ordered_hits(rows: Vec<ResultRow>) -> Vec<SearchHit> {
+    group_hits(rows)
+        .into_iter()
+        .flat_map(|group| group.rows.into_iter().map(|row| row.hit))
+        .collect()
+}
+
 fn tag_text(label: RowLabel) -> String {
     match label {
         RowLabel::Name => "NAME".to_string(),
@@ -145,8 +158,8 @@ fn tag_text(label: RowLabel) -> String {
 pub struct SearchResultsView {
     pub query: String,
     groups: Vec<DocumentGroup>,
-    /// F3 traversal marks the current row here (Task 14).
-    #[allow(dead_code)]
+    /// F3 traversal marks the current row here (Task 14): `(group_index,
+    /// row_index)`, set by `set_cursor` from a flat `SearchSession` index.
     cursor: Option<(usize, usize)>,
     /// The `(group_index, row_index)` awaiting the hidden-row confirm popup's
     /// answer (decision 8) -- stashed by `handle` when a hidden row is
@@ -191,6 +204,21 @@ impl SearchResultsView {
         }
         text
     }
+
+    /// Convert a flat `SearchSession` index (results-tab order, the same
+    /// sequence `ordered_hits` flattens `group_hits` into) to the `(group,
+    /// row)` pair the widget addresses. `None` for an out-of-range index
+    /// (a stale session over a since-changed result set).
+    fn locate(&self, flat: usize) -> Option<(usize, usize)> {
+        let mut remaining = flat;
+        for (group_index, group) in self.groups.iter().enumerate() {
+            if remaining < group.rows.len() {
+                return Some((group_index, remaining));
+            }
+            remaining -= group.rows.len();
+        }
+        None
+    }
 }
 
 impl DocView for SearchResultsView {
@@ -203,6 +231,12 @@ impl DocView for SearchResultsView {
         let header = self.header_text();
         body.search_results()
             .set_groups(cx, &header, self.groups.clone());
+        body.search_results().set_cursor(cx, self.cursor);
+    }
+
+    fn mark_search_cursor(&mut self, cx: &mut Cx, body: &BodyWidgets, index: Option<usize>) {
+        self.cursor = index.and_then(|flat| self.locate(flat));
+        body.search_results().set_cursor(cx, self.cursor);
     }
 
     fn handle(
@@ -414,8 +448,11 @@ script_mod! {
         draw_bg +: {
             color: atlas.accent
             hover: uniform(0.0)
+            // F3 traversal's current-row mark (Task 14): stronger tint than
+            // hover, additive so a hovered current row reads brighter still.
+            current: uniform(0.0)
             pixel: fn() {
-                let a = 0.10 * self.hover
+                let a = 0.10 * self.hover + 0.18 * self.current
                 return vec4(self.color.x * a, self.color.y * a, self.color.z * a, a)
             }
         }
@@ -597,6 +634,11 @@ pub struct SearchResultRow {
     view: View,
     #[rust]
     hovered: bool,
+    /// F3 traversal's current-row mark (Task 14), set by `set_row`'s
+    /// `current` argument -- `SearchResultsListView` computes it from its
+    /// own `cursor` field, the widget-side twin of `SearchResultsView::cursor`.
+    #[rust]
+    current: bool,
 }
 
 impl Widget for SearchResultRow {
@@ -624,12 +666,18 @@ impl Widget for SearchResultRow {
         self.view
             .draw_bg
             .set_uniform(cx, live_id!(hover), &[if self.hovered { 1.0 } else { 0.0 }]);
+        self.view.draw_bg.set_uniform(
+            cx,
+            live_id!(current),
+            &[if self.current { 1.0 } else { 0.0 }],
+        );
         self.view.draw_walk(cx, scope, walk)
     }
 }
 
 impl SearchResultRow {
-    pub fn set_row(&mut self, cx: &mut Cx, row: &ResultRow) {
+    pub fn set_row(&mut self, cx: &mut Cx, row: &ResultRow, current: bool) {
+        self.current = current;
         self.view
             .label(cx, ids!(tag_label))
             .set_text(cx, &tag_text(row.label));
@@ -652,9 +700,9 @@ impl SearchResultRow {
 }
 
 impl SearchResultRowRef {
-    pub fn set_row(&self, cx: &mut Cx, row: &ResultRow) {
+    pub fn set_row(&self, cx: &mut Cx, row: &ResultRow, current: bool) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.set_row(cx, row);
+            inner.set_row(cx, row, current);
         }
     }
     pub fn clicked(&self, actions: &Actions) -> bool {
@@ -723,6 +771,12 @@ pub struct SearchResultsListView {
     view: View,
     #[rust]
     groups: Vec<DocumentGroup>,
+    /// F3 traversal's current-row mark (Task 14, set via `set_cursor`),
+    /// independent of `groups` -- a header toggle's `set_groups` call leaves
+    /// it untouched, so collapsing a group never loses the mark it might be
+    /// hiding.
+    #[rust]
+    cursor: Option<(usize, usize)>,
 }
 
 impl Widget for SearchResultsListView {
@@ -745,8 +799,12 @@ impl Widget for SearchResultsListView {
                         }
                         ListItemKind::Row(group_index, row_index) => {
                             let row = list.item(cx, *item_id, id!(Row)).unwrap();
-                            row.as_search_result_row()
-                                .set_row(cx, &self.groups[group_index].rows[row_index]);
+                            let current = self.cursor == Some((group_index, row_index));
+                            row.as_search_result_row().set_row(
+                                cx,
+                                &self.groups[group_index].rows[row_index],
+                                current,
+                            );
                             row.draw_all(cx, &mut Scope::empty());
                         }
                     }
@@ -789,6 +847,15 @@ impl SearchResultsListView {
         self.view.redraw(cx);
     }
 
+    /// Mirror the live search session's cursor (Task 14): `cursor` is the
+    /// `(group_index, row_index)` of the row F3/Shift+F3 (or an activation)
+    /// last landed on, or `None` to clear the mark. Called by
+    /// `SearchResultsView::mark_search_cursor`/`sync`.
+    pub fn set_cursor(&mut self, cx: &mut Cx, cursor: Option<(usize, usize)>) {
+        self.cursor = cursor;
+        self.view.redraw(cx);
+    }
+
     /// `(group_index, row_index)` of the row clicked in `actions`, if any.
     pub fn row_opened(&self, actions: &Actions) -> Option<(usize, usize)> {
         match self.actions_action(actions) {
@@ -819,6 +886,11 @@ impl SearchResultsListViewRef {
     pub fn set_groups(&self, cx: &mut Cx, header_text: &str, groups: Vec<DocumentGroup>) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_groups(cx, header_text, groups);
+        }
+    }
+    pub fn set_cursor(&self, cx: &mut Cx, cursor: Option<(usize, usize)>) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_cursor(cx, cursor);
         }
     }
     pub fn row_opened(&self, actions: &Actions) -> Option<(usize, usize)> {

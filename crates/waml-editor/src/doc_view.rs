@@ -646,6 +646,15 @@ pub trait DocView {
         let _ = (cx, body, target);
     }
 
+    /// Mirror the live bundle-wide search session's cursor (Task 14, spec
+    /// §Search session): `index` is a flat position into `SearchSession::hits`
+    /// (results-tab order), or `None` to clear the mark. No-op default --
+    /// only `SearchResultsView` has a row list to mark; every other view
+    /// ignores it, the same shape as `reveal`.
+    fn mark_search_cursor(&mut self, cx: &mut Cx, body: &BodyWidgets, index: Option<usize>) {
+        let _ = (cx, body, index);
+    }
+
     fn restore_anchor(
         &mut self,
         _cx: &mut Cx,

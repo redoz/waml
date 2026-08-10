@@ -634,7 +634,7 @@ impl App {
     /// spotlight `apply_find_highlights` already set). A no-op when the
     /// session is empty; `reveal_active` itself no-ops when nothing is
     /// active, so this never crashes over a tab with no searchable surface.
-    fn step_find(&mut self, cx: &mut Cx, forward: bool) {
+    pub(super) fn step_find(&mut self, cx: &mut Cx, forward: bool) {
         let hit = match &mut self.find {
             Some(session) => session.advance(forward).cloned(),
             None => None,
@@ -670,6 +670,148 @@ impl App {
             .borrow_mut::<crate::canvas::ClassDiagramSurface>()
         {
             canvas.set_search_spotlight(cx, None);
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Task 14: bundle-wide live search session -- F3/Shift+F3 traversal,
+    // landing-site marking, and Esc termination (spec §Search session).
+    // ----------------------------------------------------------------
+
+    /// The open results tab's id for the CURRENT `session_search`'s query
+    /// (decision 7's locator shape, `documents::tab_id_for`) -- recomputed on
+    /// demand rather than cached, since it is cheap and the query never
+    /// changes without `session_search` itself being replaced.
+    fn session_search_tab_id(&self) -> Option<LiveId> {
+        let session = self.session_search.as_ref()?;
+        let locator = crate::navigation::DocumentLocator::new(
+            waml::view::row::RowTarget::Virtual,
+            waml::view::surface::SurfaceId(format!("search:{}", session.query)),
+        );
+        Some(crate::documents::tab_id_for(&locator))
+    }
+
+    /// Every producer of `ViewOutcome.reveal` is a search-hit landing -- a
+    /// results-tab row click, a palette commit, or F3/Shift+F3 re-running
+    /// `navigation_for_hit` on the session's own next/previous hit (spec
+    /// §Search session) -- so `apply_view_outcome` calls this whenever
+    /// `outcome.reveal` is `Some`, the one place a live session's cursor gets
+    /// marked: locates `(concept_id, target)` in `session_search.hits`
+    /// (matching how `navigation_for_hit` maps a hit to a reveal, since that
+    /// is the only place doing the reverse mapping), mirrors the index into
+    /// the results tab if it is still open, and re-lights every OTHER hit
+    /// the session found in the document that just landed.
+    fn mark_session_landing(
+        &mut self,
+        cx: &mut Cx,
+        concept_id: &str,
+        target: &crate::doc_view::RevealTarget,
+    ) {
+        let Some(session) = self.session_search.as_mut() else {
+            return;
+        };
+        let index = session.hits.iter().position(|hit| {
+            crate::search_results_view::navigation_for_hit(hit)
+                .1
+                .as_ref()
+                .is_some_and(|(cid, t)| cid == concept_id && t == target)
+        });
+        session.cursor = index;
+        if let Some(tab_id) = self.session_search_tab_id() {
+            self.documents
+                .mark_search_cursor(cx, &self.ui, tab_id, index);
+        }
+        self.apply_session_highlights(cx, concept_id);
+    }
+
+    /// Light every OTHER hit `session_search` found in `concept_id`'s
+    /// document (spec §Search session: "every other match in the open
+    /// document is highlighted") -- text hits as markdown search-match
+    /// decoration, model-element hits as a canvas spotlight, the same split
+    /// `apply_find_highlights` (Task 13) uses, filtered here to just this
+    /// document since the session spans the whole bundle.
+    fn apply_session_highlights(&mut self, cx: &mut Cx, concept_id: &str) {
+        let Some(session) = &self.session_search else {
+            return;
+        };
+        let mut text_ranges = Vec::new();
+        let mut model_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for hit in &session.hits {
+            if crate::search_results_view::concept_id_for_hit(hit) != concept_id {
+                continue;
+            }
+            match &hit.target {
+                waml::search::HitTarget::TextSpan { start, end, .. } => {
+                    if let Ok(range) = TextRange::new(TextSize::new(*start), TextSize::new(*end)) {
+                        text_ranges.push(range);
+                    }
+                }
+                waml::search::HitTarget::ModelElement { key } => {
+                    model_keys.insert(key.clone());
+                }
+            }
+        }
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        body.markdown_editor()
+            .set_search_highlights(cx, text_ranges);
+        let spotlight = (!model_keys.is_empty()).then_some(model_keys);
+        if let Some(mut canvas) = body
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.set_search_spotlight(cx, spotlight);
+        }
+    }
+
+    /// F3/Shift+F3 (`shortcuts::SearchCommand::NextHit`/`PreviousHit`, when
+    /// the document-scoped find strip is NOT open -- spec §Search session's
+    /// precedence rule): advance the session cursor, wrapping, and run the
+    /// SAME navigation+reveal path a results-tab row click uses
+    /// (`navigation_for_hit` -> `apply_view_outcome`) so crossing into a
+    /// different document opens it exactly like any other search landing --
+    /// including re-marking the session and mirroring the results tab, both
+    /// of which `apply_view_outcome`'s `outcome.reveal` handling already
+    /// does. A no-op with no live session or no hits.
+    pub(super) fn step_session(&mut self, cx: &mut Cx, forward: bool) {
+        let hit = match self.session_search.as_mut() {
+            Some(session) => session.advance(forward).cloned(),
+            None => None,
+        };
+        let Some(hit) = hit else {
+            return;
+        };
+        let (navigation, reveal) = crate::search_results_view::navigation_for_hit(&hit);
+        let outcome = crate::doc_view::ViewOutcome {
+            navigation: Some(navigation),
+            reveal,
+            ..Default::default()
+        };
+        let _ = self.apply_view_outcome(cx, outcome);
+    }
+
+    /// Esc (spec §Search session): end the live bundle-wide session -- clear
+    /// it, whatever highlight/spotlight it left on the document, the results
+    /// tab's cursor mirror (if that tab is still open), and the find strip
+    /// too if it happened to be open alongside it (a clean end state, even
+    /// though the two sessions are otherwise independent -- see `find`'s own
+    /// doc comment). Called by `handle_escape_event` BEFORE the existing
+    /// per-view escape, so a live session consumes the first Esc.
+    pub(super) fn end_session_search(&mut self, cx: &mut Cx) {
+        if let Some(tab_id) = self.session_search_tab_id() {
+            self.documents
+                .mark_search_cursor(cx, &self.ui, tab_id, None);
+        }
+        self.session_search = None;
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        body.markdown_editor().clear_search_highlights(cx);
+        if let Some(mut canvas) = body
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.set_search_spotlight(cx, None);
+        }
+        if self.find.is_some() {
+            self.close_find_strip(cx);
         }
     }
 
@@ -1521,6 +1663,7 @@ impl App {
         }
 
         if let Some((concept_id, target)) = outcome.reveal {
+            self.mark_session_landing(cx, &concept_id, &target);
             self.pending_reveal = Some(PendingReveal { concept_id, target });
         }
 

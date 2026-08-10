@@ -297,6 +297,28 @@ impl DocumentHost {
         }
     }
 
+    /// Mirror the live search session's cursor into `tab_id`'s view (Task 14)
+    /// -- NOT necessarily the active tab: F3 traversal keeps walking after
+    /// the results tab itself is no longer showing, and Esc must still be
+    /// able to clear its mark. A no-op (`false`) when that tab isn't open
+    /// (closed, or never opened at all -- the session still ends cleanly).
+    pub fn mark_search_cursor(
+        &mut self,
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        tab_id: LiveId,
+        index: Option<usize>,
+    ) -> bool {
+        let body = BodyWidgets::new(cx, ui);
+        match self.views.get_mut(&tab_id) {
+            Some(view) => {
+                view.mark_search_cursor(cx, &body, index);
+                true
+            }
+            None => false,
+        }
+    }
+
     #[cfg(test)]
     pub fn restore_location(
         &mut self,

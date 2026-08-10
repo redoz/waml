@@ -88,9 +88,25 @@ impl App {
                     crate::shortcuts::SearchCommand::OpenFindStrip => {
                         self.open_find_strip(cx);
                     }
-                    // Task 14: F3/Shift+F3 session traversal lands there.
-                    crate::shortcuts::SearchCommand::NextHit
-                    | crate::shortcuts::SearchCommand::PreviousHit => {}
+                    // F3/Shift+F3 (Task 14): a live document-scoped find
+                    // session (Task 13, the strip is open) takes precedence
+                    // over the bundle-wide session (spec §Search session's
+                    // precedence rule) -- `find` IS that "strip is open"
+                    // signal (see its own doc comment).
+                    crate::shortcuts::SearchCommand::NextHit => {
+                        if self.find.is_some() {
+                            self.step_find(cx, true);
+                        } else {
+                            self.step_session(cx, true);
+                        }
+                    }
+                    crate::shortcuts::SearchCommand::PreviousHit => {
+                        if self.find.is_some() {
+                            self.step_find(cx, false);
+                        } else {
+                            self.step_session(cx, false);
+                        }
+                    }
                 }
                 return true;
             }
@@ -141,9 +157,18 @@ impl App {
     }
 
     pub(super) fn handle_escape_event(&mut self, cx: &mut Cx, event: &Event) {
-        // Escape always returns an active diagram tab from its properties page
-        // to the canvas, including while one of the property fields has focus.
         if matches!(event, Event::KeyDown(ke) if ke.key_code == KeyCode::Escape) {
+            // A live bundle-wide search session (Task 14, spec §Search
+            // session) consumes the FIRST Esc and ends there -- the existing
+            // per-view escape below waits for a second press, the same
+            // "peel one layer at a time" shape the shortcuts overlay and
+            // properties page already follow.
+            if self.session_search.is_some() {
+                self.end_session_search(cx);
+                return;
+            }
+            // Escape always returns an active diagram tab from its properties page
+            // to the canvas, including while one of the property fields has focus.
             self.documents.on_active_escape(cx, &self.ui);
             self.session.break_edit_merge_group();
         }

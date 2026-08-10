@@ -45,22 +45,19 @@ impl App {
         crate::navigation::DocumentLocator::concept(concept_id.to_string(), surface)
     }
 
-    /// Runs `query` against the bundle-wide text index (`SearchState`) and
-    /// builds the results-tab `OpenDocument` for it (decision 7's
-    /// `documents::open_search` factory), snippet width 80 (spec §Results
-    /// tab) and `hidden` from `SearchState::hidden_documents`. Called both
-    /// by `open_search_results` (a fresh query) and by
-    /// `transition_to_location`'s search-locator arm (re-running the query
-    /// on reopen).
-    pub(super) fn build_search_document(&self, query: &str) -> crate::document::OpenDocument {
+    /// `query`'s `ResultRow`s (snippet width 80, spec §Results tab), `hidden`
+    /// from `SearchState::hidden_documents`. Shared by `build_search_document`
+    /// (the results tab's own contents) and `open_search_results` (Task 14's
+    /// bundle-wide `session_search`, over the identical rows so the tab and
+    /// the session never disagree about what "next" means).
+    fn build_search_rows(&self, query: &str) -> Vec<crate::search_results_view::ResultRow> {
         let hits = self
             .search
             .query(query, &waml::search::QueryScope::default());
         let hidden = self
             .search
             .hidden_documents(self.session.okf_analysis(), self.session.uml_analysis());
-        let rows = hits
-            .into_iter()
+        hits.into_iter()
             .map(|hit| {
                 let snippet = self.search.snippet(&hit, 80);
                 let hidden_flag = hidden.contains(&hit.document);
@@ -71,8 +68,16 @@ impl App {
                     hidden: hidden_flag,
                 }
             })
-            .collect();
-        crate::documents::open_search(query, rows)
+            .collect()
+    }
+
+    /// Runs `query` against the bundle-wide text index (`SearchState`) and
+    /// builds the results-tab `OpenDocument` for it (decision 7's
+    /// `documents::open_search` factory). Called both by `open_search_results`
+    /// (a fresh query) and by `transition_to_location`'s search-locator arm
+    /// (re-running the query on reopen).
+    pub(super) fn build_search_document(&self, query: &str) -> crate::document::OpenDocument {
+        crate::documents::open_search(query, self.build_search_rows(query))
     }
 
     /// Opens (or re-activates) `query`'s results tab through the shared
@@ -81,7 +86,22 @@ impl App {
     /// than duplicates, and the tab participates in view history like any
     /// other (Back/Forward re-runs the query via the same locator). Called
     /// by the Ctrl+K palette's `MoreText`/`Escalate` row commit (Task 11).
+    ///
+    /// Also (re)starts the bundle-wide `session_search` (Task 14, spec
+    /// §Search session) fresh over this query's hits, in the SAME
+    /// results-tab order (`search_results_view::ordered_hits`) the tab
+    /// itself just opened with -- F3/Shift+F3 and the results tab's own
+    /// cursor mirror never drift apart. The cursor starts `None`; a row
+    /// activation or a palette commit marks it (`App::mark_session_landing`,
+    /// via `ViewOutcome.reveal`).
     pub(crate) fn open_search_results(&mut self, cx: &mut Cx, query: &str) {
+        let rows = self.build_search_rows(query);
+        let hits = crate::search_results_view::ordered_hits(rows);
+        self.session_search = Some(SearchSession::new(
+            query.to_string(),
+            hits,
+            waml::search::QueryScope::default(),
+        ));
         let locator = crate::navigation::DocumentLocator::new(
             waml::view::row::RowTarget::Virtual,
             waml::view::surface::SurfaceId(format!("search:{query}")),

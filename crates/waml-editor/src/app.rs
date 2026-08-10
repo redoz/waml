@@ -839,6 +839,17 @@ pub struct App {
     /// one never leaves the document it was opened against.
     #[rust]
     find: Option<SearchSession>,
+    /// The bundle-wide live search session (Task 14, spec §Search session):
+    /// set by `open_search_results` with the query's hits in results-tab
+    /// order (`search_results_view::ordered_hits`, the same order the tab
+    /// itself shows); the cursor marks whichever hit was last landed on (a
+    /// results-tab row click, a palette commit, or an F3/Shift+F3 step --
+    /// `App::mark_session_landing`, the one place `ViewOutcome.reveal` is
+    /// consumed). `F3`/`Shift+F3` (`step_session`) keep walking it across
+    /// document boundaries. `None` outside a live session; `Esc`
+    /// (`end_session_search`) ends it.
+    #[rust]
+    session_search: Option<SearchSession>,
     /// The Ctrl+K palette's last-pushed sections (Task 11), retained so a row
     /// commit's opaque `p:{section}:{row}` id (`popup::palette::PalettePopup::commit`)
     /// can be resolved back to the `PaletteRow` it was built from -- the
