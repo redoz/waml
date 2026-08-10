@@ -220,6 +220,11 @@ fn measure_use_case(title: &str, text: &dyn TextMeasurer) -> UseCaseGeometry {
         let last = lines.last_mut().unwrap();
         ellipsize(last, text, MAX_TITLE_WIDTH);
     }
+    for line in &mut lines {
+        if text.measure(line).0 > MAX_TITLE_WIDTH {
+            ellipsize(line, text, MAX_TITLE_WIDTH);
+        }
+    }
     let line_height = text.measure("Mg").1;
     let title_width = lines
         .iter()

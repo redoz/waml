@@ -121,3 +121,30 @@ fn measurement_and_translated_hit_bounds_are_deterministic() {
     let bounds = translated.bounds().unwrap();
     assert_eq!((bounds.x, bounds.y), (40.0, 80.0));
 }
+
+#[test]
+fn one_unbroken_token_is_ellipsized_to_the_title_width_bound() {
+    let title = "purchase_request_identifier_that_has_no_available_wrap_boundary_and_keeps_going";
+    let measured = measure_node(policy(), &node("uml.UseCase", title), &MonoTextMeasurer);
+    let MeasuredNodeGeometry::UseCase(measured) = measured else {
+        panic!("use-case geometry")
+    };
+    assert_eq!(measured.title_lines.len(), 1);
+    assert!(measured.title_lines[0].ends_with('…'));
+    assert!(measured.title_bounds.w <= 168.0);
+    assert!(measured.bounds.w <= 240.0);
+    assert!(contains(
+        measured.bounds,
+        Point {
+            x: measured.title_bounds.x + measured.title_bounds.w,
+            y: measured.title_bounds.y + measured.title_bounds.h,
+        }
+    ));
+    assert_eq!(
+        measured,
+        match measure_node(policy(), &node("uml.UseCase", title), &MonoTextMeasurer) {
+            MeasuredNodeGeometry::UseCase(again) => again,
+            _ => unreachable!(),
+        }
+    );
+}
