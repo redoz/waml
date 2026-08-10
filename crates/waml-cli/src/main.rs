@@ -15,6 +15,7 @@ mod lsp;
 mod ops_dto;
 mod serve;
 mod site;
+pub mod upgrade;
 mod web_artifact;
 
 #[derive(Parser)]
