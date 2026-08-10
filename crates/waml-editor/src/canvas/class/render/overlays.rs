@@ -64,20 +64,19 @@ pub(super) fn draw_placement(
         fill_rect(
             cx,
             draws.rule,
-            pen::outline(
+            pen::fill(
                 cx,
                 Rect {
                     pos: origin_screen.pos,
                     size: dvec2(origin_screen.size.x, thickness),
                 },
-                pen,
             ),
             grey,
         );
         fill_rect(
             cx,
             draws.rule,
-            pen::outline(
+            pen::fill(
                 cx,
                 Rect {
                     pos: dvec2(
@@ -86,27 +85,25 @@ pub(super) fn draw_placement(
                     ),
                     size: dvec2(origin_screen.size.x, thickness),
                 },
-                pen,
             ),
             grey,
         );
         fill_rect(
             cx,
             draws.rule,
-            pen::outline(
+            pen::fill(
                 cx,
                 Rect {
                     pos: origin_screen.pos,
                     size: dvec2(thickness, origin_screen.size.y),
                 },
-                pen,
             ),
             grey,
         );
         fill_rect(
             cx,
             draws.rule,
-            pen::outline(
+            pen::fill(
                 cx,
                 Rect {
                     pos: dvec2(
@@ -115,7 +112,6 @@ pub(super) fn draw_placement(
                     ),
                     size: dvec2(thickness, origin_screen.size.y),
                 },
-                pen,
             ),
             grey,
         );
@@ -128,20 +124,19 @@ pub(super) fn draw_placement(
         fill_rect(
             cx,
             draws.rule,
-            pen::outline(
+            pen::fill(
                 cx,
                 Rect {
                     pos: ghost_screen.pos,
                     size: dvec2(ghost_screen.size.x, thickness),
                 },
-                pen,
             ),
             accent,
         );
         fill_rect(
             cx,
             draws.rule,
-            pen::outline(
+            pen::fill(
                 cx,
                 Rect {
                     pos: dvec2(
@@ -150,27 +145,25 @@ pub(super) fn draw_placement(
                     ),
                     size: dvec2(ghost_screen.size.x, thickness),
                 },
-                pen,
             ),
             accent,
         );
         fill_rect(
             cx,
             draws.rule,
-            pen::outline(
+            pen::fill(
                 cx,
                 Rect {
                     pos: ghost_screen.pos,
                     size: dvec2(thickness, ghost_screen.size.y),
                 },
-                pen,
             ),
             accent,
         );
         fill_rect(
             cx,
             draws.rule,
-            pen::outline(
+            pen::fill(
                 cx,
                 Rect {
                     pos: dvec2(
@@ -179,7 +172,6 @@ pub(super) fn draw_placement(
                     ),
                     size: dvec2(thickness, ghost_screen.size.y),
                 },
-                pen,
             ),
             accent,
         );

@@ -188,8 +188,12 @@ pub(super) fn draw_edges(
                     draws
                         .edge
                         .set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);
+                    // `set_dyn_instance`, not `set_uniform`: `thin_y` rides
+                    // `EdgeLine`'s instance buffer so flipping it per segment
+                    // cannot split the batch (see `EdgeLine` in
+                    // `class/widget.rs`).
                     let horizontal = pen::band_is_horizontal(screen[i], screen[i + 1]);
-                    draws.edge.set_uniform(
+                    draws.edge.set_dyn_instance(
                         cx,
                         live_id!(thin_y),
                         &[if horizontal { 1.0 } else { 0.0 }],
@@ -239,7 +243,7 @@ pub(super) fn draw_edges(
             // `bars` now hold the pen's CANVAS, two device pixels wider than the
             // ink. The fillet band has to match the ink, so shrink both bars
             // back to the quantised width before handing them over.
-            let ink = (pen.width() * dpi + 0.501).floor().max(1.0) / dpi;
+            let ink = pen::ink_px(pen, dpi) / dpi;
             let deflate = |bar: Rect, horizontal: bool| -> Rect {
                 if horizontal {
                     Rect {

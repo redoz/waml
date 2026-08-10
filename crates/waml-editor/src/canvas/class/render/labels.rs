@@ -97,10 +97,15 @@ pub(super) fn draw_edge_labels(
             draws
                 .edge
                 .set_uniform(cx, live_id!(pen_w), &[Pen::HAIRLINE.width() as f32]);
+            // `thin_y` rides `EdgeLine`'s instance buffer, so a leader's two
+            // legs batch with each other instead of opening a draw call apiece
+            // (see `class/widget.rs`).
             for (bar, horizontal) in leader_bars(cx, start, end, Pen::HAIRLINE) {
-                draws
-                    .edge
-                    .set_uniform(cx, live_id!(thin_y), &[if horizontal { 1.0 } else { 0.0 }]);
+                draws.edge.set_dyn_instance(
+                    cx,
+                    live_id!(thin_y),
+                    &[if horizontal { 1.0 } else { 0.0 }],
+                );
                 draws.edge.draw_abs(cx, bar);
             }
         }

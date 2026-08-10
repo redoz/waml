@@ -5,9 +5,9 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
-use super::{fill_band, BehaviorPalette, Emphasis, ARROW_HEAD};
+use super::{BehaviorPalette, Emphasis, ARROW_HEAD};
 use crate::accent;
-use crate::canvas::pen::{self, Pen};
+use crate::canvas::pen::{self, fill_band, Pen};
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
 use crate::node_style::AccentBucket;

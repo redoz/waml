@@ -50,7 +50,26 @@ script_mod! {
         // 1.0 -> y is the thin axis (a horizontal bar); 0.0 -> x is.
         // `pen::band_is_horizontal` decides it CPU-side, because the quad's own
         // aspect cannot: a short bar can be wider than it is long.
-        thin_y: uniform(1.0)
+        //
+        // `instance`, not `uniform`: makepad opens a NEW draw call whenever a
+        // draw's `dyn_uniforms` differ from the one it would otherwise append
+        // to, and a `default`-group content lane may not cross that barrier
+        // (`platform/src/draw_list.rs`). `thin_y` flips per routed SEGMENT and
+        // per leader leg, so as a uniform it put every single bar in its own
+        // draw call on every pan and zoom frame. On the instance buffer it
+        // rides along per quad and the whole diagram's linework batches.
+        // Push it with `set_dyn_instance`; `set_uniform` silently no-ops for an
+        // instance.
+        //
+        // `pen_w` deliberately stays the uniform CadPen declares. It is
+        // constant within each pass over this pen (REGULAR for every routed
+        // bar, HAIRLINE for every leader), so it costs one barrier per frame,
+        // not one per quad -- and it could not be overridden here anyway:
+        // `find_highest_shader_io` resolves a field to the MOST ANCESTRAL
+        // marker in the prototype chain, so an `instance(..)` restated on a
+        // derived pen is silently ignored in favour of the base's `uniform(..)`
+        // and the `set_dyn_instance` pushing it would write nothing.
+        thin_y: instance(1.0)
         pixel: fn() {
             let dpi = max(1.0, self.draw_pass.dpi_factor)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
@@ -181,7 +200,11 @@ script_mod! {
             // (both flags 0). The flags are mutually exclusive so the sum is clean.
             let fill = self.bg * self.hollow + self.color * self.filled
             sdf.fill_keep(fill)
-            sdf.stroke(self.color, self.pen_sw(self.pen_w * 0.5))
+            // The WHOLE rung: `pen_sw` already returns a half width. Halving it
+            // here too drew every terminal marker at half the connector's
+            // weight, and at dpi != 1 the two stopped quantising to matching
+            // device widths (dpi 2: a 3 device px marker on a 4 device px bar).
+            sdf.stroke(self.color, self.pen_sw(self.pen_w))
             return sdf.result
         }
     }

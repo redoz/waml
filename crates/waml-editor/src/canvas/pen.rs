@@ -54,27 +54,29 @@ pub(in crate::canvas) fn band_is_horizontal(a: DVec2, b: DVec2) -> bool {
     (a.x - b.x).abs() >= (a.y - b.y).abs()
 }
 
-/// The quad a `CadPen` inks a stroke from `a` to `b` inside.
-///
-/// This is a CANVAS, not the stroke. It is grown one device pixel past the
-/// widest band the pen can resolve to on each side of the centreline, and the
-/// shader inks the quantised band within it -- the same arrangement
-/// `AccentFrame` already uses to ink a border inside a card rect. Growing here
-/// is what lets width stop being a CPU concern: the shader is free to disagree
-/// with this rounding by a pixel without its stroke being clipped.
-///
-/// Only for quads a `CadPen`-derived pen inks inside. A quad that IS the ink
-/// (a flat `DrawColor` fill) wants [`outline`] instead.
-pub(in crate::canvas) fn band(cx: &Cx2d, a: DVec2, b: DVec2, pen: Pen) -> Rect {
-    band_at(a, b, pen, cx.current_dpi_factor())
+/// Whole device pixels a rung resolves to, at `dpi`. The Rust mirror of
+/// `CadPen::pen_dev`, and the ONE flat-fill quantiser: every snapper below and
+/// every plain `DrawColor` quad that has to match a shader-inked stroke goes
+/// through this rather than restating the `+ 0.501` rounding term.
+pub(in crate::canvas) fn ink_px(pen: Pen, dpi: f64) -> f64 {
+    (pen.width() * dpi + 0.501).floor().max(1.0)
 }
 
-/// The dpi-explicit core of [`band`], split out so callers that need to unit
-/// test the geometry they build ON TOP of a band (`labels.rs::leader_bars`)
-/// can do so without a live `Cx2d`, the same way `band` itself is tested
-/// here.
-pub(in crate::canvas) fn band_at(a: DVec2, b: DVec2, pen: Pen, dpi: f64) -> Rect {
-    let thick_px = (pen.width() * dpi + 0.501).floor().max(1.0) + 2.0;
+/// The quad a FLAT FILL inks a stroke from `a` to `b` inside -- this one IS the
+/// ink. Whole device pixels on the thickness axis, starting on a device
+/// boundary. A diagonal pair is treated as whichever axis it runs longest along
+/// (routes and messages are orthogonal).
+///
+/// [`band`] is this same geometry grown for a `CadPen` to ink INSIDE; this is
+/// the helper for a plain `DrawColor` that fills exactly what it is handed.
+pub(in crate::canvas) fn fill_band(cx: &Cx2d, a: DVec2, b: DVec2, pen: Pen) -> Rect {
+    fill_band_at(a, b, pen, cx.current_dpi_factor())
+}
+
+/// The dpi-explicit core of [`fill_band`], so the geometry is testable without
+/// a live `Cx2d`.
+pub(in crate::canvas) fn fill_band_at(a: DVec2, b: DVec2, pen: Pen, dpi: f64) -> Rect {
+    let thick_px = ink_px(pen, dpi);
     if band_is_horizontal(a, b) {
         let y0 = ((a.y + b.y) * 0.5 * dpi - thick_px * 0.5).round();
         let x0 = (a.x.min(b.x) * dpi).round();
@@ -94,18 +96,78 @@ pub(in crate::canvas) fn band_at(a: DVec2, b: DVec2, pen: Pen, dpi: f64) -> Rect
     }
 }
 
-/// The quad for a shape whose OUTLINE a pen strokes -- frames, group hulls,
-/// markers -- with its edges pulled onto the device grid, and guaranteed wide
-/// enough that the shader's `pen_sw` inset cannot invert it.
+/// The quad a `CadPen` inks a stroke from `a` to `b` inside.
 ///
-/// Also the right helper for a quad that IS the ink: a flat `DrawColor` fill
-/// sized from `pen.width()` needs its edges on the grid and nothing else.
+/// This is a CANVAS, not the stroke. It is [`fill_band`] grown one device pixel
+/// past the widest band the pen can resolve to on each side of the centreline,
+/// and the shader inks the quantised band within it -- the same arrangement
+/// `AccentFrame` already uses to ink a border inside a card rect. Growing here
+/// is what lets width stop being a CPU concern: the shader is free to disagree
+/// with this rounding by a pixel without its stroke being clipped.
+///
+/// Only for quads a `CadPen`-derived pen inks inside. A quad that IS the ink
+/// (a flat `DrawColor` fill) wants [`fill_band`] or [`fill`] instead.
+pub(in crate::canvas) fn band(cx: &Cx2d, a: DVec2, b: DVec2, pen: Pen) -> Rect {
+    band_at(a, b, pen, cx.current_dpi_factor())
+}
+
+/// The dpi-explicit core of [`band`], split out so callers that need to unit
+/// test the geometry they build ON TOP of a band (`labels.rs::leader_bars`)
+/// can do so without a live `Cx2d`, the same way `band` itself is tested
+/// here.
+pub(in crate::canvas) fn band_at(a: DVec2, b: DVec2, pen: Pen, dpi: f64) -> Rect {
+    // Growing the ink band by a whole device pixel per side is exact: shifting
+    // the start by one pixel and the thickness by two is what rounding the
+    // centreline against a two-pixel-wider band would have produced anyway, so
+    // there is still only one snapping implementation here.
+    let ink = fill_band_at(a, b, pen, dpi);
+    let grow = 1.0 / dpi;
+    if band_is_horizontal(a, b) {
+        Rect {
+            pos: dvec2(ink.pos.x, ink.pos.y - grow),
+            size: dvec2(ink.size.x, ink.size.y + grow * 2.0),
+        }
+    } else {
+        Rect {
+            pos: dvec2(ink.pos.x - grow, ink.pos.y),
+            size: dvec2(ink.size.x + grow * 2.0, ink.size.y),
+        }
+    }
+}
+
+/// The quad for a shape whose OUTLINE a pen strokes -- frames, group hulls,
+/// fragment plates -- with its edges pulled onto the device grid, and
+/// guaranteed wide enough that the shader's `pen_sw` inset cannot invert it.
+///
+/// NOT for a quad that IS the ink. The `2 * pen` floor below is the room a
+/// `pen_sw` inset needs on BOTH sides of the shape; applied to a rect that is
+/// itself a `pen.width()`-thick fill it doubles the rung -- [`fill`] is that
+/// caller's helper.
 pub(in crate::canvas) fn outline(cx: &Cx2d, rect: Rect, pen: Pen) -> Rect {
     outline_at(rect, pen, cx.current_dpi_factor())
 }
 
 fn outline_at(rect: Rect, pen: Pen, dpi: f64) -> Rect {
-    let floor_px = (pen.width() * 2.0 * dpi).ceil().max(1.0);
+    snap_rect_at(rect, (pen.width() * 2.0 * dpi).ceil(), dpi)
+}
+
+/// The quad for a rect that IS the ink: a flat `DrawColor` fill already sized
+/// from `pen.width()`. Its edges go on the device grid and nothing else --
+/// specifically, it is never widened to the `2 * pen` an inset stroke needs,
+/// only kept off zero by the one device pixel a stroke may not round away to.
+/// It takes no `Pen` for exactly that reason: the rung is already IN the rect.
+pub(in crate::canvas) fn fill(cx: &Cx2d, rect: Rect) -> Rect {
+    fill_at(rect, cx.current_dpi_factor())
+}
+
+fn fill_at(rect: Rect, dpi: f64) -> Rect {
+    snap_rect_at(rect, 1.0, dpi)
+}
+
+/// Both edges of `rect` onto the device grid, keeping it at least `floor_px`
+/// device pixels on each axis.
+fn snap_rect_at(rect: Rect, floor_px: f64, dpi: f64) -> Rect {
+    let floor_px = floor_px.max(1.0);
     let x0 = (rect.pos.x * dpi).round();
     let y0 = (rect.pos.y * dpi).round();
     let x1 = ((rect.pos.x + rect.size.x) * dpi)
@@ -169,15 +231,104 @@ mod tests {
     /// The factor that restores the `sqrt(2)` this fork's `antialias()` drops.
     const PEN_AA_FACTOR: &str = "1.4142136";
 
-    /// The shader source of one `mod.draw.X = mod.draw.Y{` block, comments
-    /// stripped, from a file's `script_mod!`. Mirrors the extraction
-    /// `frame.rs::shader_constants_match_the_padding_contract` uses.
-    fn pen_source<'a>(src: &'a str, name: &str) -> &'a str {
+    /// The shader source of one `mod.draw.X = mod.draw.Y{ .. }` block from a
+    /// file's `script_mod!`: comments stripped, and BOUNDED to that block's own
+    /// braces.
+    ///
+    /// Both halves are load bearing. Returning the whole remainder of the file
+    /// made every `contains` guard below match the Rust test module's own
+    /// mirrors and literals, so the guard passed whatever the shader said;
+    /// keeping the comments made it match CadPen's own prose, which names the
+    /// very constants the guard greps for.
+    fn pen_source(src: &str, name: &str) -> String {
         let head = format!("mod.draw.{name} = mod.draw.");
         let (_, rest) = src.split_once(&head).unwrap_or_else(|| {
             panic!("no `{head}` declaration found");
         });
-        rest
+        let code: String = rest
+            .lines()
+            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let open = code
+            .find('{')
+            .unwrap_or_else(|| panic!("`{head}` declares no block"));
+        let mut depth = 0usize;
+        for (offset, ch) in code[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return code[open..=open + offset].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("`{head}` block is never closed");
+    }
+
+    /// The setter each `live_id!(<field>)` in `src` is pushed through: the
+    /// nearest `set_uniform`/`set_dyn_instance` at or above it.
+    fn setters_for(src: &str, field: &str) -> Vec<&'static str> {
+        let needle = format!("live_id!({field})");
+        let lines: Vec<&str> = src.lines().collect();
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.contains(&needle))
+            .map(|(i, _)| {
+                lines[..=i]
+                    .iter()
+                    .rev()
+                    .find_map(|line| {
+                        if line.contains("set_dyn_instance") {
+                            Some("set_dyn_instance")
+                        } else if line.contains("set_uniform") {
+                            Some("set_uniform")
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("<none>")
+            })
+            .collect()
+    }
+
+    /// A shader field that changes PER QUAD must ride the instance buffer.
+    /// makepad opens a new draw call whenever a draw's `dyn_uniforms` differ
+    /// from the one it would append to, and a content lane may not cross that
+    /// barrier -- so as a uniform, `thin_y` (which flips per routed segment and
+    /// per leader leg) put every single bar in its own draw call on every pan
+    /// and zoom frame. The buffer also decides the setter: `set_uniform`
+    /// silently writes nothing to an instance.
+    #[test]
+    fn the_per_quad_edge_field_rides_the_instance_buffer() {
+        let edge_line = pen_source(include_str!("class/widget.rs"), "EdgeLine");
+        assert!(
+            edge_line.contains("thin_y: instance("),
+            "`thin_y` changes per quad, so it may not be a uniform"
+        );
+        for (label, src) in [
+            (
+                "class/render/edges.rs",
+                include_str!("class/render/edges.rs"),
+            ),
+            (
+                "class/render/labels.rs",
+                include_str!("class/render/labels.rs"),
+            ),
+        ] {
+            let setters = setters_for(src, "thin_y");
+            assert!(!setters.is_empty(), "{label}: expected a `thin_y` push");
+            for setter in setters {
+                assert_eq!(
+                    setter, "set_dyn_instance",
+                    "{label}: `thin_y` is an instance, so `{setter}` writes nothing"
+                );
+            }
+        }
     }
 
     /// Every canvas pen must derive from `CadPen`, not `DrawColor`. This is the
@@ -203,6 +354,38 @@ mod tests {
             cad.contains(PEN_AA_FACTOR),
             "CadPen must restore the sqrt(2) the fork's antialias() drops"
         );
+    }
+
+    /// The guard above can only fail if it reads the shader and nothing else.
+    #[test]
+    fn the_pen_guard_reads_only_its_own_shader_block() {
+        let cad = pen_source(include_str!("pen.rs"), "CadPen");
+        // Bounded: the Rust mirror and the test literals below are not shader
+        // source, and both carry the constants the guard greps for.
+        assert!(!cad.contains("fn pen_dev(w: f32"));
+        assert!(!cad.contains("mod tests"));
+        // Comments stripped: CadPen's own prose names `PEN_ROUND_BIAS`, which
+        // contains the string `0.501`... only as a spelling of a Rust const.
+        assert!(!cad.contains("PEN_ROUND_BIAS"));
+        // What survives is the arithmetic that actually decides a stroke width.
+        assert!(cad.contains("floor(w * dpi + 0.501)"));
+    }
+
+    /// `pen_sw` already returns a HALF width (`pen_dev(w) * 0.5 + 0.5`), so a
+    /// pen that pre-halves its rung strokes at half the weight it was given --
+    /// and at dpi != 1 the two no longer quantise to matching device widths, so
+    /// a marker stops matching the connector it terminates.
+    #[test]
+    fn no_pen_halves_its_rung_before_pen_sw() {
+        for (label, src) in [
+            ("class/widget.rs", include_str!("class/widget.rs")),
+            ("behavior/mod.rs", include_str!("behavior/mod.rs")),
+        ] {
+            assert!(
+                !src.contains("self.pen_sw(self.pen_w *"),
+                "{label}: pen_sw already halves the rung -- pass the whole pen_w"
+            );
+        }
     }
 
     #[test]
@@ -446,6 +629,68 @@ mod tests {
         // A degenerate pair is horizontal, matching the old `stroke_quad`.
         assert!(band_is_horizontal(dvec2(5.0, 5.0), dvec2(5.0, 5.0)));
     }
+    /// A flat fill IS the ink, so it renders at the rung it was sized at. The
+    /// `2 * pen` floor an inset stroke needs would double every card divider,
+    /// origin rail and ghost rail -- 1 device px to 2, 1.5 to 3, 2 to 4.
+    #[test]
+    fn a_flat_fill_keeps_the_rung_it_was_sized_at() {
+        for dpi in [1.0, 1.5, 2.0] {
+            for pen in [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR] {
+                for y in [20.0, 20.3, 20.5, 20.8] {
+                    let rule = fill_at(
+                        Rect {
+                            pos: dvec2(10.0, y),
+                            size: dvec2(120.0, pen.width()),
+                        },
+                        dpi,
+                    );
+                    let thick_px = rule.size.y * dpi;
+                    assert!(
+                        (thick_px - thick_px.round()).abs() <= 1e-9,
+                        "a fill must be a whole number of device pixels"
+                    );
+                    assert!(thick_px >= 1.0, "a rule may never round away entirely");
+                    assert!(
+                        thick_px <= (pen.width() * dpi).ceil(),
+                        "pen {} at dpi {dpi} inked {thick_px} device px, \
+                         which is fatter than its rung",
+                        pen.width()
+                    );
+                }
+            }
+        }
+    }
+
+    /// The flat-fill band snapper, exercised through the function the behavior
+    /// canvas actually calls -- not a re-derivation of its arithmetic.
+    #[test]
+    fn a_filled_band_is_the_rung_wide_and_starts_on_a_device_pixel() {
+        for dpi in [1.0, 1.25, 1.5, 2.0] {
+            for pen in [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR] {
+                for center in [10.0, 10.2, 10.5, 10.7] {
+                    let ink = ink_px(pen, dpi);
+                    let across = fill_band_at(dvec2(4.0, center), dvec2(64.0, center), pen, dpi);
+                    assert_eq!(across.size.y * dpi, ink, "horizontal band is one rung");
+                    assert!((across.pos.y * dpi - (across.pos.y * dpi).round()).abs() <= 1e-9);
+                    assert!(
+                        (across.pos.y + across.size.y * 0.5 - center).abs() <= 0.5 / dpi + 1e-9
+                    );
+
+                    let down = fill_band_at(dvec2(center, 4.0), dvec2(center, 64.0), pen, dpi);
+                    assert_eq!(down.size.x * dpi, ink, "vertical band is one rung");
+                    assert!((down.pos.x * dpi - (down.pos.x * dpi).round()).abs() <= 1e-9);
+                    assert!((down.pos.x + down.size.x * 0.5 - center).abs() <= 0.5 / dpi + 1e-9);
+
+                    // The shader's canvas is this same band, one device pixel
+                    // wider per side -- the two never disagree on the axis.
+                    let canvas = band_at(dvec2(4.0, center), dvec2(64.0, center), pen, dpi);
+                    assert!((canvas.size.y * dpi - (ink + 2.0)).abs() <= 1e-9);
+                    assert!((canvas.pos.y * dpi - (across.pos.y * dpi - 1.0)).abs() <= 1e-9);
+                }
+            }
+        }
+    }
+
     #[test]
     fn an_outline_lands_on_the_device_grid_and_keeps_room_for_its_stroke() {
         for dpi in [1.0, 1.5, 2.0] {

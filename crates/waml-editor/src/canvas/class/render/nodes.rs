@@ -178,13 +178,15 @@ fn draw_card(
     // blurrier the further you zoom out, which is exactly what CAD linework is
     // supposed to prevent.
     fn rule_rect(cx: &Cx2d, screen: Rect, card_w: f64, dy: f64, zoom: f64, pen: Pen) -> Rect {
-        pen::outline(
+        // `pen::fill`, not `pen::outline`: this rect IS the ink, so it must not
+        // pick up the `2 * pen` floor a stroke inset needs -- that drew every
+        // divider at twice its rung.
+        pen::fill(
             cx,
             Rect {
                 pos: dvec2(screen.pos.x, screen.pos.y + dy * zoom),
                 size: dvec2(card_w, pen.width()),
             },
-            pen,
         )
     }
 
@@ -242,21 +244,19 @@ fn draw_card(
         let cy = screen.pos.y + placed.size.1 * 0.5 * zoom - nub * 0.5;
         // Same grid rule as the dividers: a screen-space nub on a fractional
         // edge renders soft and a half pixel wider than its neighbour's.
-        let left = pen::outline(
+        let left = pen::fill(
             cx,
             Rect {
                 pos: dvec2(screen.pos.x - nub * 0.5, cy),
                 size: dvec2(nub, nub),
             },
-            Pen::HAIRLINE,
         );
-        let right = pen::outline(
+        let right = pen::fill(
             cx,
             Rect {
                 pos: dvec2(screen.pos.x + card_w - nub * 0.5, cy),
                 size: dvec2(nub, nub),
             },
-            Pen::HAIRLINE,
         );
         draws.rule.color = accent;
         draws.rule.draw_abs(cx, left);
