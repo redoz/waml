@@ -87,7 +87,7 @@ Each scenario has an identifier. A test that covers a scenario must show that
 identifier in its name or in a comment. A scenario without a test is an
 intention. A rule in this document without a scenario is not yet testable.
 
-Each scenario applies to a document with the type `uml.Sequence`.
+Each scenario applies to a document with the type `uml.SequenceDiagram`.
 
 ### Messages
 

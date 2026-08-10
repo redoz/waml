@@ -430,6 +430,138 @@ fn contains_bad_frontmatter_token(node: &SyntaxNode<OkfMarkdownLanguage>) -> boo
     })
 }
 
+fn quoted_flow_scalar_is_valid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let Some(&quote @ (b'\'' | b'"')) = bytes.first() else {
+        return false;
+    };
+    let mut at = 1;
+    while at < bytes.len() {
+        if bytes[at] == quote {
+            if quote == b'\'' && at + 1 < bytes.len() && bytes[at + 1] == b'\'' {
+                at += 2;
+                continue;
+            }
+            return at + 1 == bytes.len();
+        }
+        if quote == b'"' && bytes[at] == b'\\' {
+            at += 1;
+            if at == bytes.len() {
+                return false;
+            }
+        }
+        at += 1;
+    }
+    false
+}
+
+fn flow_map_field_is_valid(field: &str) -> bool {
+    let field = field.trim();
+    if field.is_empty() {
+        return false;
+    }
+    let bytes = field.as_bytes();
+    let mut quote = None;
+    let mut at = 0;
+    let mut colon = None;
+    while at < bytes.len() {
+        match quote {
+            Some(b'\'') if bytes[at] == b'\'' => {
+                if at + 1 < bytes.len() && bytes[at + 1] == b'\'' {
+                    at += 2;
+                    continue;
+                }
+                quote = None;
+            }
+            Some(b'"') if bytes[at] == b'\\' => {
+                at += 1;
+                if at == bytes.len() {
+                    return false;
+                }
+            }
+            Some(active) if bytes[at] == active => quote = None,
+            Some(_) => {}
+            None if matches!(bytes[at], b'\'' | b'"') => quote = Some(bytes[at]),
+            None if bytes[at] == b':' => {
+                colon = Some(at);
+                break;
+            }
+            None => {}
+        }
+        at += 1;
+    }
+    let Some(colon) = colon else {
+        return false;
+    };
+    let key = field[..colon].trim();
+    let mut key_bytes = key.bytes();
+    let Some(first) = key_bytes.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == b'_')
+        || !key_bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return false;
+    }
+    let value = field[colon + 1..].trim();
+    if value.is_empty() {
+        return false;
+    }
+    if matches!(value.as_bytes().first(), Some(b'\'' | b'"')) {
+        quoted_flow_scalar_is_valid(value)
+    } else {
+        !value
+            .bytes()
+            .any(|byte| matches!(byte, b'\'' | b'"' | b'{' | b'}' | b'[' | b']'))
+    }
+}
+
+fn flat_flow_map_is_valid(value: &str) -> bool {
+    let Some(inner) = value
+        .strip_prefix('{')
+        .and_then(|inner| inner.strip_suffix('}'))
+    else {
+        return false;
+    };
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return false;
+    }
+    let bytes = inner.as_bytes();
+    let mut quote = None;
+    let mut field_start = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        match quote {
+            Some(b'\'') if bytes[at] == b'\'' => {
+                if at + 1 < bytes.len() && bytes[at + 1] == b'\'' {
+                    at += 2;
+                    continue;
+                }
+                quote = None;
+            }
+            Some(b'"') if bytes[at] == b'\\' => {
+                at += 1;
+                if at == bytes.len() {
+                    return false;
+                }
+            }
+            Some(active) if bytes[at] == active => quote = None,
+            Some(_) => {}
+            None if matches!(bytes[at], b'\'' | b'"') => quote = Some(bytes[at]),
+            None if bytes[at] == b',' => {
+                if !flow_map_field_is_valid(&inner[field_start..at]) {
+                    return false;
+                }
+                field_start = at + 1;
+            }
+            None => {}
+        }
+        at += 1;
+    }
+    quote.is_none() && flow_map_field_is_valid(&inner[field_start..])
+}
+
 fn is_inline_map_sequence_recovery(source: &str, at: waml_syntax::TextSize) -> bool {
     let at = at.to_usize().min(source.len());
     let line_start = source[..at].rfind('\n').map_or(0, |newline| newline + 1);
@@ -439,7 +571,16 @@ fn is_inline_map_sequence_recovery(source: &str, at: waml_syntax::TextSize) -> b
     let line = source[line_start..line_end].trim();
     line.strip_prefix('-')
         .map(str::trim_start)
-        .is_some_and(|value| value.starts_with('{') && value.ends_with('}'))
+        .is_some_and(flat_flow_map_is_valid)
+}
+
+fn inline_map_sequences_are_valid(source: &str) -> bool {
+    source.lines().all(|line| {
+        let Some(value) = line.trim().strip_prefix('-').map(str::trim_start) else {
+            return true;
+        };
+        !value.starts_with('{') || flat_flow_map_is_valid(value)
+    })
 }
 
 fn validated_frontmatter_syntax(
@@ -473,6 +614,10 @@ fn validated_frontmatter_syntax(
     }
 
     let range = frontmatter.range();
+    let frontmatter_source = &source[range.start().to_usize()..range.end().to_usize()];
+    if !inline_map_sequences_are_valid(frontmatter_source) {
+        return Err(FrontmatterRewriteError::InvalidFrontmatter);
+    }
     let recovery_only = snapshot
         .diagnostics()
         .iter()

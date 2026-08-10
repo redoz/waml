@@ -181,6 +181,42 @@ fn legacy_document_beside_closed_malformed_frontmatter_is_rejected_during_detect
 }
 
 #[test]
+fn brace_wrapped_malformed_map_without_legacy_is_rejected() {
+    let files = vec![(
+        "malformed.md".to_string(),
+        "---\ntype: uml.Class\nsources:\n  - { id: affected-analysis, resource analysis.rs }\n---\n# Malformed\n"
+            .to_string(),
+    )];
+
+    let error = plan_upgrade(&files).err();
+    assert!(
+        matches!(error, Some(UpgradeError::Inspection(_))),
+        "unexpected result: {error:?}"
+    );
+}
+
+#[test]
+fn legacy_document_beside_brace_wrapped_malformed_map_is_rejected() {
+    let files = vec![
+        (
+            "legacy.md".to_string(),
+            "---\ntype: uml.Activity\n---\n# Activity\n".to_string(),
+        ),
+        (
+            "malformed.md".to_string(),
+            "---\ntype: uml.Class\nsources:\n  - { id: affected-analysis, resource analysis.rs }\n---\n# Malformed\n"
+                .to_string(),
+        ),
+    ];
+
+    let error = plan_upgrade(&files).err();
+    assert!(
+        matches!(error, Some(UpgradeError::Inspection(_))),
+        "unexpected result: {error:?}"
+    );
+}
+
+#[test]
 fn valid_structured_frontmatter_does_not_block_detection() {
     let files = vec![
         (

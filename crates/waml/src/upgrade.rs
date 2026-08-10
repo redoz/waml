@@ -84,17 +84,14 @@ enum LegacyTypeInspection {
     NoLegacy,
     Legacy(LegacyDiagramType),
     Malformed {
-        legacy: Option<LegacyDiagramType>,
+        has_type_scalar: bool,
         error: UpgradeInspectionError,
     },
 }
 
 fn inspect_document_legacy_type(path: &str, source: &str) -> LegacyTypeInspection {
-    let tolerant_legacy =
-        parse_frontmatter_source(source).and_then(|frontmatter| match frontmatter.get("type") {
-            Some(FmValue::Str(authored_type)) => LegacyDiagramType::parse(authored_type),
-            _ => None,
-        });
+    let has_type_scalar = parse_frontmatter_source(source)
+        .is_some_and(|frontmatter| matches!(frontmatter.get("type"), Some(FmValue::Str(_))));
     match inspect_frontmatter_string_scalar(source, "type") {
         Ok(FrontmatterStringScalar::String(authored_type)) => {
             LegacyDiagramType::parse(&authored_type)
@@ -104,7 +101,7 @@ fn inspect_document_legacy_type(path: &str, source: &str) -> LegacyTypeInspectio
             LegacyTypeInspection::NoLegacy
         }
         Err(error) => LegacyTypeInspection::Malformed {
-            legacy: tolerant_legacy,
+            has_type_scalar,
             error: invalid_legacy_bundle(path, error.to_string()),
         },
     }
@@ -116,17 +113,17 @@ pub fn detect_legacy_diagram_types(source: &SourceBundle) -> Result<bool, Upgrad
         .iter()
         .map(|document| inspect_document_legacy_type(document.path().as_str(), document.text()))
         .collect::<Vec<_>>();
-    let legacy_detected = inspections.iter().any(|inspection| {
+    let migration_relevant = inspections.iter().any(|inspection| {
         matches!(
             inspection,
             LegacyTypeInspection::Legacy(_)
                 | LegacyTypeInspection::Malformed {
-                    legacy: Some(_),
+                    has_type_scalar: true,
                     ..
                 }
         )
     });
-    if !legacy_detected {
+    if !migration_relevant {
         return Ok(false);
     }
     if let Some(error) = inspections

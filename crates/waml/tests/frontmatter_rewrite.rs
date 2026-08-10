@@ -62,3 +62,16 @@ fn rewrite_returns_none_when_the_key_or_expected_value_does_not_match() {
         None
     );
 }
+
+#[test]
+fn rewrite_rejects_a_brace_wrapped_malformed_flow_map() {
+    let source = "---\ntype: uml.Activity\nsources:\n  - { id: affected-analysis, resource analysis.rs }\n---\n";
+
+    assert!(replace_frontmatter_string_scalar(
+        source,
+        "type",
+        "uml.Activity",
+        "uml.ActivityDiagram"
+    )
+    .is_err());
+}
