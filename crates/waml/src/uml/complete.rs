@@ -174,6 +174,10 @@ pub fn completions(
         return Ok(Vec::new());
     };
     let mut candidates = fixed_vocabulary(&expectation);
+    let concept_id = crate::okf::id_of(version.path().as_str());
+    if let Some(concept) = context.uml().declared.concept(&concept_id) {
+        candidates.extend(in_document_refs(&expectation, concept));
+    }
     // Later slices append further providers here; each is selected on the slot
     // and token kinds alone, so adding a family is a new function and a match
     // arm and the locator never changes.
@@ -228,6 +232,61 @@ fn fixed_vocabulary(expectation: &Expectation) -> Vec<Completion> {
                         .map(|word| keyword(word, replace, "layout hint")),
                 )
                 .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+use crate::uml::{DeclaredConcept, DeclaredField};
+
+fn reference(value: &str, replace: TextRange, detail: &str) -> Completion {
+    Completion {
+        label: Arc::from(value),
+        insert: Arc::from(value),
+        kind: CompletionKind::Reference,
+        detail: Some(Arc::from(detail)),
+        replace,
+    }
+}
+
+fn declared_name(field: &DeclaredField<UmlLanguage, String>) -> Option<&str> {
+    match field {
+        DeclaredField::Valid { value, .. } => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+/// Names declared elsewhere in this document. Every candidate is a value the
+/// diagnostic at this position accepts -- `UnknownLifelineHandle` for an
+/// endpoint, and so on -- which Task 10 pins as a property test.
+fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec<Completion> {
+    let replace = expectation.prefix;
+    match expectation.token {
+        UmlSyntaxKind::SourceToken
+        | UmlSyntaxKind::TargetToken
+        | UmlSyntaxKind::ReturnTargetToken => {
+            let mut out = Vec::new();
+            for lifeline in concept.lifelines.iter() {
+                if let Some(alias) = declared_name(&lifeline.alias) {
+                    out.push(reference(alias, replace, "lifeline handle"));
+                }
+            }
+            for gate in concept.gates.iter() {
+                if let Some(name) = declared_name(&gate.name) {
+                    out.push(reference(&format!("@{name}"), replace, "local gate"));
+                }
+            }
+            for use_ in concept.interaction_uses.iter() {
+                if let Some(alias) = declared_name(&use_.alias) {
+                    out.push(reference(
+                        &format!("{alias}@"),
+                        replace,
+                        "gate on an interaction use",
+                    ));
+                }
+            }
+            out.push(reference("outside", replace, "outside the frame"));
+            out
         }
         _ => Vec::new(),
     }

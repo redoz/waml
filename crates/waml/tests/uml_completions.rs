@@ -73,16 +73,26 @@ fn a_partially_typed_verb_is_silence_due_to_a_known_locator_gap() {
 
 #[test]
 fn an_empty_bullet_in_messages_offers_message_source_candidates_not_fragment_keywords() {
-    // KNOWN GAP: an empty bullet under `## Messages` locates the message
-    // parse's missing source, not the fragment-kind alternative -- see
+    // An empty bullet under `## Messages` locates the message parse's missing
+    // source, not the fragment-kind alternative -- see
     // `an_empty_bullet_in_messages_locates_the_message_source_not_the_fragment_kind`
-    // in uml_completion_locator.rs. `fixed_vocabulary` has no provider for
-    // SourceToken yet (a later slice's in_document_refs), so today this is
-    // silence, not the fragment keywords.
-    assert!(labels(&sequence(
-        "## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- |\n"
-    ))
-    .is_empty());
+    // in uml_completion_locator.rs. Since Task 8, `in_document_refs` offers the
+    // declared lifeline handle there instead of silence.
+    let offered = labels(&sequence(
+        "## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- |\n",
+    ));
+    assert!(
+        offered
+            .iter()
+            .any(|(label, kind)| label == "A" && *kind == CompletionKind::Reference),
+        "{offered:?}"
+    );
+    assert!(
+        !offered
+            .iter()
+            .any(|(_, kind)| *kind == CompletionKind::Keyword),
+        "no fragment keywords expected at the message source slot: {offered:?}"
+    );
 }
 
 #[test]
@@ -153,6 +163,65 @@ fn an_unknown_document_is_an_error() {
         ),
         Err(waml::action::ActionError::UnknownDocument { .. })
     ));
+}
+
+const SEQUENCE_BODY: &str = concat!(
+    "## Lifelines\n\n",
+    "- [A](./a.md) as buyer\n",
+    "- [B](./b.md) as order\n\n",
+    "## Gates\n\n",
+    "- inbound\n\n",
+    "## Messages\n\n",
+);
+
+#[test]
+fn a_message_target_offers_every_declared_handle_plus_outside_and_gates() {
+    let offered = labels(&sequence(&format!("{SEQUENCE_BODY}- buyer calls |\n")));
+    let references = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Reference)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(references.contains(&"buyer"), "{references:?}");
+    assert!(references.contains(&"order"), "{references:?}");
+    assert!(references.contains(&"outside"), "{references:?}");
+    assert!(references.contains(&"@inbound"), "{references:?}");
+}
+
+#[test]
+fn a_message_source_offers_the_same_handles() {
+    let offered = labels(&sequence(&format!("{SEQUENCE_BODY}- |\n")));
+    let references = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Reference)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(references.contains(&"buyer"), "{references:?}");
+    assert!(references.contains(&"order"), "{references:?}");
+}
+
+#[test]
+fn a_handle_prefix_narrows_the_offered_handles() {
+    let offered = labels(&sequence(&format!("{SEQUENCE_BODY}- buyer calls or|\n")));
+    assert_eq!(
+        offered
+            .iter()
+            .map(|(label, _)| label.as_str())
+            .collect::<Vec<_>>(),
+        ["order"]
+    );
+}
+
+#[test]
+fn a_use_gate_handle_is_offered_after_an_interaction_use() {
+    let offered = labels(&sequence(concat!(
+        "## Lifelines\n\n- [A](./a.md) as buyer\n\n",
+        "## Messages\n\n- ref [B](./b.md) as inner\n- buyer calls |\n"
+    )));
+    assert!(
+        offered.iter().any(|(label, _)| label == "inner@"),
+        "the use alias must be offered as a gate prefix: {offered:?}"
+    );
 }
 
 #[test]
