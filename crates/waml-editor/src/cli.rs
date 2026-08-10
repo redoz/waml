@@ -13,6 +13,9 @@ pub struct Args {
     /// sRGB components in `0.0..=1.0` from `--color`. Deliberately not a makepad
     /// `Vec4`, so this module stays makepad-free and its tests need no `Cx`.
     pub tint: Option<[f32; 3]>,
+    /// Optional native-test marker written after the requested diagram has
+    /// completed its first draw event.
+    pub ready_file: Option<PathBuf>,
 }
 
 /// Parse `#rgb` / `#rrggbb` (leading `#` optional, case-insensitive) into sRGB
@@ -45,6 +48,7 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
     let mut diagram: Option<String> = None;
     let mut badge: Option<String> = None;
     let mut tint: Option<[f32; 3]> = None;
+    let mut ready_file: Option<PathBuf> = None;
     let mut i = 1;
     while i < argv.len() {
         match argv[i].as_str() {
@@ -63,6 +67,12 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
                     parse_hex(raw).ok_or_else(|| format!("--color: not a hex colour: {raw}"))?,
                 );
             }
+            "--ready-file" => {
+                i += 1;
+                ready_file = Some(PathBuf::from(
+                    argv.get(i).ok_or("--ready-file requires a value")?,
+                ));
+            }
             // makepad's studio/test runner appends these to every app it
             // launches; the platform layer consumes them, so skip them here
             // instead of mistaking them for the bundle dir.
@@ -78,6 +88,7 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
         diagram,
         badge,
         tint,
+        ready_file,
     })
 }
 
@@ -148,6 +159,18 @@ mod tests {
         let a = parse(&argv(&["waml-editor", "some/dir", "--diagram", "Orders"])).unwrap();
         assert_eq!(a.dir, Some(PathBuf::from("some/dir")));
         assert_eq!(a.diagram.as_deref(), Some("Orders"));
+    }
+
+    #[test]
+    fn parses_ready_file() {
+        let a = parse(&argv(&[
+            "waml-editor",
+            "some/dir",
+            "--ready-file",
+            "target/capture.ready",
+        ]))
+        .unwrap();
+        assert_eq!(a.ready_file, Some(PathBuf::from("target/capture.ready")));
     }
 
     #[test]

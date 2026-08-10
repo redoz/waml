@@ -1218,7 +1218,9 @@ fn project_use_case_scene_groups(diagram: &Diagram, solved: &[SolvedGroup]) -> V
             bounds: group.rect,
             heading_bounds: Rect {
                 x: group.rect.x,
-                y: group.rect.y,
+                // Nested groups can share their parent's top edge. Give each
+                // depth its own title strip so both headings remain visible.
+                y: group.rect.y + group.depth as f64 * waml::solve::label::GROUP_TITLE_BAND,
                 w: group.rect.w,
                 h: waml::solve::label::GROUP_TITLE_BAND.min(group.rect.h),
             },
@@ -1501,6 +1503,11 @@ mod tests {
                 ),
             ]
         );
+        let boundary = scene.use_case_groups.last().unwrap();
+        let first_band = &scene.use_case_groups[1];
+        assert_eq!(boundary.heading_bounds.y, boundary.bounds.y);
+        assert!(first_band.heading_bounds.y > first_band.bounds.y);
+        assert_ne!(boundary.heading_bounds.y, first_band.heading_bounds.y);
     }
     use crate::load;
     use std::path::Path;

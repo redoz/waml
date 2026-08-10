@@ -857,6 +857,11 @@ pub struct App {
     /// change (same guard shape as `dock_layout`).
     #[rust]
     agent_row_w: f64,
+    /// Native screenshot verification marker. It is consumed after the first
+    /// draw event for the exact requested diagram.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    #[rust]
+    capture_ready: Option<(PathBuf, String)>,
     #[rust]
     pending_fragment: Option<PendingFragment>,
     /// A search-hit reveal waiting on its target document's tab to draw; see
@@ -975,6 +980,17 @@ impl MatchEvent for App {
         match args.dir {
             Some(dir) => {
                 if self.open_dir(cx, &dir, args.diagram.as_deref()) {
+                    if let (Some(path), Some(wanted)) = (args.ready_file, args.diagram.as_deref()) {
+                        if self
+                            .session
+                            .uml_projection()
+                            .diagrams
+                            .iter()
+                            .any(|diagram| diagram.title == wanted || diagram.key == wanted)
+                        {
+                            self.capture_ready = Some((path, wanted.to_owned()));
+                        }
+                    }
                     self.show_editor(cx);
                 } else {
                     // Bad dir -> fall back to the start screen, never a blank window.
@@ -1525,6 +1541,18 @@ impl AppMain for App {
         self.handle_draw_restores(cx, event);
         self.override_caption_drag_query(cx, event);
         self.synchronize_after_event(cx);
+        #[cfg(not(target_arch = "wasm32"))]
+        if matches!(event, Event::Draw(_)) {
+            if let Some((path, title)) = self.capture_ready.take() {
+                if let Err(error) = std::fs::write(&path, title) {
+                    tracing::error!(
+                        error.message = %error,
+                        ready.path = %path.display(),
+                        "could not write screenshot-ready marker"
+                    );
+                }
+            }
+        }
     }
 }
 

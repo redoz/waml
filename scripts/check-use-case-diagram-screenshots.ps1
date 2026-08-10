@@ -5,7 +5,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$editorExe = [IO.Path]::GetFullPath((Join-Path $root 'target/debug/waml-editor.exe'))
 $manifest = @(
     @{ Source='docs/waml/use-cases/views/editor-workflows.md'; Title='Editor Workflows'; Baseline='crates/waml-editor/tests/screenshots/use-case/editor-workflows.png'; Slug='use-case-editor-workflows' },
     @{ Source='docs/waml/use-cases/views/browser-and-publishing-workflows.md'; Title='Browser and Publishing Workflows'; Baseline='crates/waml-editor/tests/screenshots/use-case/browser-and-publishing-workflows.png'; Slug='use-case-browser-workflows' },
@@ -57,19 +56,26 @@ foreach ($entry in $manifest) {
     }
     if (-not $Update -and -not (Test-Path -LiteralPath $baseline -PathType Leaf)) { throw "missing baseline: $baseline" }
 
+    $pidFile = Join-Path ([IO.Path]::GetTempPath()) ("waml-$($entry.Slug)-$PID.pid")
+    $readyFile = Join-Path ([IO.Path]::GetTempPath()) ("waml-$($entry.Slug)-$PID.ready")
+    Remove-Item -LiteralPath $pidFile, $readyFile -ErrorAction SilentlyContinue
     $quotedTitle = '"' + $entry.Title + '"'
-    $arguments = "-NoProfile -File run.ps1 docs/waml -DebugBuild -Diagram $quotedTitle -Title $($entry.Slug)"
+    $arguments = "-NoProfile -File run.ps1 docs/waml -DebugBuild -Diagram $quotedTitle -Title $($entry.Slug) -PidFile `"$pidFile`" -ReadyFile `"$readyFile`""
     $launcher = Start-Process -FilePath pwsh -ArgumentList $arguments -WorkingDirectory $root -WindowStyle Hidden -PassThru
     $app = $null
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(60)
         do {
             Start-Sleep -Milliseconds 250
-            $app = Get-Process waml-editor -ErrorAction SilentlyContinue |
-                Where-Object { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $editorExe) -and $_.MainWindowHandle -ne 0 } |
-                Select-Object -First 1
-        } while (-not $app -and [DateTime]::UtcNow -lt $deadline)
-        if (-not $app) { throw "editor window did not open for '$($entry.Title)'" }
+            if (Test-Path -LiteralPath $pidFile) {
+                $childPid = [int](Get-Content -LiteralPath $pidFile -Raw)
+                $app = Get-Process -Id $childPid -ErrorAction SilentlyContinue
+            }
+            $isReady = $app -and $app.MainWindowHandle -ne 0 -and
+                (Test-Path -LiteralPath $readyFile) -and
+                ((Get-Content -LiteralPath $readyFile -Raw) -eq $entry.Title)
+        } while (-not $isReady -and [DateTime]::UtcNow -lt $deadline)
+        if (-not $isReady) { throw "requested diagram did not become ready: '$($entry.Title)'" }
         # The first presented frame can contain text while GPU-backed linework
         # is still compiling. Capture only after the native scene has settled.
         Start-Sleep -Seconds 15
@@ -89,5 +95,6 @@ foreach ($entry in $manifest) {
     finally {
         if ($app) { Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue }
         Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $pidFile, $readyFile -ErrorAction SilentlyContinue
     }
 }

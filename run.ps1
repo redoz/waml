@@ -12,7 +12,9 @@ param(
     # Per-agent window marker: badge text and wash colour, so several
     # concurrently-running editors can be told apart by eye.
     [string]$Title,
-    [string]$Color
+    [string]$Color,
+    [string]$PidFile,
+    [string]$ReadyFile
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -29,6 +31,7 @@ $useRelease = -not $DebugBuild
 if ($Title) { $markArgs += @('--title', $Title) }
 if ($Color) { $markArgs += @('--color', $Color) }
 if ($Diagram) { $markArgs += @('--diagram', $Diagram) }
+if ($ReadyFile) { $markArgs += @('--ready-file', $ReadyFile) }
 
 # A still-running instance holds the target exe lock, so cargo would relink
 # against a stale binary (or fail) and the new window would show old code.
@@ -43,7 +46,22 @@ Get-Process waml-editor -ErrorAction SilentlyContinue |
 cargo build -p waml-editor --bin waml-editor @profileArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-if ($Empty) {
+if ($PidFile) {
+    [string[]]$childArgs = @()
+    if (-not $Empty) {
+        if (-not $Fixture) { $Fixture = 'crates/waml-editor/tests/fixtures/mini' }
+        $childArgs += $Fixture
+    }
+    $childArgs += $markArgs
+    $start = [Diagnostics.ProcessStartInfo]::new($exePath)
+    $start.UseShellExecute = $false
+    foreach ($arg in $childArgs) { [void]$start.ArgumentList.Add($arg) }
+    $child = [Diagnostics.Process]::Start($start)
+    Set-Content -LiteralPath $PidFile -Value $child.Id -NoNewline
+    $child.WaitForExit()
+    exit $child.ExitCode
+}
+elseif ($Empty) {
     cargo run -p waml-editor --bin waml-editor @profileArgs -- @markArgs
 }
 else {

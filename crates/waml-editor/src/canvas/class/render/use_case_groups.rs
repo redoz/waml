@@ -34,35 +34,47 @@ pub(super) fn commands(group: &SceneGroup) -> Vec<UseCaseGroupCommand> {
     result
 }
 
+fn paint_commands(groups: &[SceneGroup]) -> Vec<UseCaseGroupCommand> {
+    let frames = groups
+        .iter()
+        .rev()
+        .flat_map(commands)
+        .filter(|command| matches!(command, UseCaseGroupCommand::Frame { .. }));
+    let headings = groups
+        .iter()
+        .flat_map(commands)
+        .filter(|command| matches!(command, UseCaseGroupCommand::Heading { .. }));
+    frames.chain(headings).collect()
+}
+
 pub(super) fn draw(
     cx: &mut Cx2d,
     snapshot: &RenderSnapshot<'_>,
     draws: &mut ClassDrawResources<'_>,
 ) {
     let zoom = snapshot.viewport.camera.zoom;
-    // Solved groups are postorder (children before parent). Paint in reverse so
-    // an opaque parent boundary cannot cover its nested band frames/headings.
-    for group in snapshot.scene.use_case_groups.iter().rev() {
-        for command in commands(group) {
-            match command {
-                UseCaseGroupCommand::Frame { bounds } => {
-                    let screen = snap_rect(cx, world_rect_to_screen(snapshot.viewport, bounds));
-                    draws.group.draw_abs(cx, screen);
-                    draws.group_border.set_uniform(
-                        cx,
-                        live_id!(stroke_w),
-                        &[snapshot.linework.group_stroke_width],
-                    );
-                    draws.group_border.draw_abs(cx, screen);
-                }
-                UseCaseGroupCommand::Heading { bounds, text } => {
-                    let screen = world_rect_to_screen(snapshot.viewport, bounds);
-                    let size = (12.0 * zoom) as f32;
-                    let font_size = font_raster_size(size);
-                    draws.text.text_style.font_size = font_size;
-                    draws.text.font_scale = size / font_size;
-                    draws.text.draw_abs(cx, screen.pos, &text);
-                }
+    // Solved groups are postorder (children before parent). Paint every opaque
+    // frame before any heading. This keeps child fills from erasing a parent
+    // heading while still putting child frames above their parent fill.
+    for command in paint_commands(&snapshot.scene.use_case_groups) {
+        match command {
+            UseCaseGroupCommand::Frame { bounds } => {
+                let screen = snap_rect(cx, world_rect_to_screen(snapshot.viewport, bounds));
+                draws.group.draw_abs(cx, screen);
+                draws.group_border.set_uniform(
+                    cx,
+                    live_id!(stroke_w),
+                    &[snapshot.linework.group_stroke_width],
+                );
+                draws.group_border.draw_abs(cx, screen);
+            }
+            UseCaseGroupCommand::Heading { bounds, text } => {
+                let screen = world_rect_to_screen(snapshot.viewport, bounds);
+                let size = (12.0 * zoom) as f32;
+                let font_size = font_raster_size(size);
+                draws.text.text_style.font_size = font_size;
+                draws.text.font_scale = size / font_size;
+                draws.text.draw_abs(cx, screen.pos, &text);
             }
         }
     }
@@ -99,5 +111,16 @@ mod tests {
         assert!(commands(&group(DiagramGroupRole::Generic)).is_empty());
         assert!(!commands(&group(DiagramGroupRole::SystemBoundary)).is_empty());
         assert!(!commands(&group(DiagramGroupRole::Band)).is_empty());
+    }
+
+    #[test]
+    fn nested_frames_are_complete_before_parent_and_child_headings() {
+        let child = group(DiagramGroupRole::Band);
+        let parent = group(DiagramGroupRole::SystemBoundary);
+        let commands = paint_commands(&[child, parent]);
+        assert!(matches!(commands[0], UseCaseGroupCommand::Frame { .. }));
+        assert!(matches!(commands[1], UseCaseGroupCommand::Frame { .. }));
+        assert!(matches!(commands[2], UseCaseGroupCommand::Heading { .. }));
+        assert!(matches!(commands[3], UseCaseGroupCommand::Heading { .. }));
     }
 }
