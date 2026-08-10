@@ -2,6 +2,7 @@ mod interaction;
 mod placement;
 mod render;
 mod selection;
+pub(crate) mod visual;
 mod widget;
 
 use makepad_widgets::DVec2;

@@ -115,6 +115,7 @@ pub struct SceneConflict {
 // An empty scene (derived Default) is the sensible startup default (fed a real one via set_scene).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Scene {
+    pub visual_kind: crate::canvas::StructuralVisualKind,
     pub display: ResolvedDiagramDisplay,
     pub nodes: Vec<SceneNode>,
     pub groups: Vec<SolvedGroup>,
@@ -1076,6 +1077,7 @@ pub fn build_scene(
 
     (
         Scene {
+            visual_kind: Default::default(),
             display,
             nodes,
             groups: solved.groups,
@@ -1094,6 +1096,7 @@ pub fn build_scene(
 pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
     let Some(node) = model.nodes.iter().find(|n| n.key == key) else {
         return Scene {
+            visual_kind: Default::default(),
             display: ResolvedDiagramDisplay::default(),
             nodes: vec![],
             groups: vec![],
@@ -1140,6 +1143,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         h,
     };
     Scene {
+        visual_kind: Default::default(),
         display: ResolvedDiagramDisplay::default(),
         nodes: vec![scene_node],
         groups: vec![],
@@ -2157,6 +2161,7 @@ mod tests {
     #[test]
     fn bounding_box_none_for_empty_scene() {
         let scene = Scene {
+            visual_kind: Default::default(),
             display: test_display(),
             nodes: vec![],
             groups: vec![],

@@ -116,7 +116,10 @@ pub fn open_with_asset_host(
     let view: Box<dyn crate::doc_view::DocView> = match diagram_kind {
         Some(kind @ (DiagramKind::Class | DiagramKind::UseCase)) => {
             Box::new(SourceToggleView::new(
-                crate::class_diagram_view::ClassDiagramView::new(concept_id.to_string(), kind),
+                crate::class_diagram_view::ClassDiagramView::new(
+                    concept_id.to_string(),
+                    crate::canvas::StructuralVisualKind::from(kind),
+                ),
                 concept_id.to_string(),
                 assets.clone(),
                 emphasis,

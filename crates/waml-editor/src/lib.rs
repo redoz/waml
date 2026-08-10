@@ -23,6 +23,7 @@ mod bundle_export;
 // `App::script_mod`). Only `pen` inside stays reachable from outside the
 // crate; every other item in `canvas` keeps its existing `pub(crate)` grain.
 pub mod canvas;
+pub use canvas::{GroupVisualKind, NodeVisualKind, StructuralVisualKind, StructuralVisualPolicy};
 mod card;
 mod chrome_seam;
 mod class_diagram_view;

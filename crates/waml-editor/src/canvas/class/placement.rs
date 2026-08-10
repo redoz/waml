@@ -837,6 +837,7 @@ mod tests {
 
     fn scene() -> Scene {
         Scene {
+            visual_kind: Default::default(),
             display: Default::default(),
             nodes: vec![
                 test_node("a", 0.0),

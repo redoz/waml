@@ -34,7 +34,7 @@ fn navigation_opens_an_empty_use_case_by_its_declared_diagram_kind() {
     .expect("the declared use-case document opens");
     assert_eq!(
         document.view.identity(),
-        DocViewIdentity::Diagram(waml::model::DiagramKind::UseCase),
+        DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::UseCase),
         "the view identity comes from the declared diagram kind"
     );
 
@@ -1726,7 +1726,7 @@ fn non_markdown_active_view_rejects_hidden_stale_fragment_once() {
 
     impl DocView for NonMarkdownView {
         fn identity(&self) -> DocViewIdentity {
-            DocViewIdentity::Diagram(waml::model::DiagramKind::Class)
+            DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::Class)
         }
 
         fn sync(&mut self, cx: &mut Cx, body: &BodyWidgets, _data: ViewData<'_>) {

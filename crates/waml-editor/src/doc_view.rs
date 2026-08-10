@@ -518,6 +518,7 @@ impl ViewData<'_> {
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocViewIdentity {
+    StructuralDiagram(crate::canvas::StructuralVisualKind),
     Diagram(waml::model::DiagramKind),
     ClassifierPreview(crate::document::NavCategory),
     GenericOkf,

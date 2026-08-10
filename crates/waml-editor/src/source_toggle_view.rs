@@ -401,7 +401,7 @@ mod tests {
         let view = wrapped_diagram();
         assert_eq!(
             view.identity(),
-            DocViewIdentity::Diagram(waml::model::DiagramKind::Class)
+            DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::Class)
         );
         assert_eq!(view.reconcile_policy(), view.inner.reconcile_policy());
     }

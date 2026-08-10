@@ -729,7 +729,9 @@ mod tests {
 
     fn identity_for(category: NavCategory) -> DocViewIdentity {
         match category {
-            NavCategory::Diagram => DocViewIdentity::Diagram(waml::model::DiagramKind::Class),
+            NavCategory::Diagram => {
+                DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::Class)
+            }
             NavCategory::Behavior => DocViewIdentity::Diagram(waml::model::DiagramKind::Activity),
             NavCategory::Sequence => DocViewIdentity::Diagram(waml::model::DiagramKind::Sequence),
             NavCategory::OkfDocument => DocViewIdentity::GenericOkf,
@@ -1154,12 +1156,12 @@ mod tests {
         let mut current = prepared_with_identity(
             "diagram",
             NavCategory::Diagram,
-            DocViewIdentity::Diagram(waml::model::DiagramKind::Class),
+            DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::Class),
             Rc::new(Cell::new(0)),
             old_lifecycle.clone(),
         );
         current.view = Box::new(ProbeView {
-            identity: DocViewIdentity::Diagram(waml::model::DiagramKind::Class),
+            identity: DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::Class),
             reconcile_policy: ViewReconcilePolicy::RetainLiveState,
             chrome_calls: Rc::new(Cell::new(0)),
             lifecycle: old_lifecycle,
@@ -1174,13 +1176,13 @@ mod tests {
         let mut replacement = prepared_with_identity(
             "diagram",
             NavCategory::Diagram,
-            DocViewIdentity::Diagram(waml::model::DiagramKind::UseCase),
+            DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::UseCase),
             Rc::new(Cell::new(0)),
             replacement_lifecycle.clone(),
         );
         replacement.tab_id = current_id;
         replacement.view = Box::new(ProbeView {
-            identity: DocViewIdentity::Diagram(waml::model::DiagramKind::UseCase),
+            identity: DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::UseCase),
             reconcile_policy: ViewReconcilePolicy::RetainLiveState,
             chrome_calls: Rc::new(Cell::new(0)),
             lifecycle: replacement_lifecycle,
@@ -1189,7 +1191,9 @@ mod tests {
 
         assert_eq!(
             host.views.get(&current_id).map(|view| view.identity()),
-            Some(DocViewIdentity::Diagram(waml::model::DiagramKind::UseCase))
+            Some(DocViewIdentity::StructuralDiagram(
+                crate::StructuralVisualKind::UseCase,
+            ))
         );
     }
 

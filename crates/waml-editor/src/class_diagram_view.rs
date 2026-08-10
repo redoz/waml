@@ -4,9 +4,10 @@
 use makepad_widgets::*;
 use std::collections::HashSet;
 use waml::analysis::ProjectionFreshness;
-use waml::model::{DiagramKind, Model};
+use waml::model::Model;
 
 use crate::canvas::ConstraintVisibility;
+use crate::canvas::StructuralVisualKind;
 use crate::diagram_display::resolve_display;
 use crate::diagram_properties::{DiagramPropertiesAction, DiagramPropertiesWidgetRefExt};
 use crate::doc_view::{
@@ -191,7 +192,7 @@ impl ClassDiagramMode {
 
 pub struct ClassDiagramView {
     key: String,
-    kind: DiagramKind,
+    visual_kind: StructuralVisualKind,
     /// Node keys whose card body is expanded. Per-tab live state, moved off
     /// the shell in Task 3. Cleared when the diagram changes.
     expanded: HashSet<String>,
@@ -205,11 +206,11 @@ pub struct ClassDiagramView {
 }
 
 impl ClassDiagramView {
-    pub fn new(key: String, kind: DiagramKind) -> ClassDiagramView {
-        debug_assert!(matches!(kind, DiagramKind::Class | DiagramKind::UseCase));
+    pub fn new(key: String, visual_kind: impl Into<StructuralVisualKind>) -> ClassDiagramView {
+        let visual_kind = visual_kind.into();
         ClassDiagramView {
             key,
-            kind,
+            visual_kind,
             expanded: HashSet::new(),
             mode: ClassDiagramMode::default(),
             projection_status: None,
@@ -361,12 +362,13 @@ impl ClassDiagramView {
                 .canvas(cx)
                 .borrow::<crate::canvas::ClassDiagramSurface>()
                 .and_then(|canvas| canvas.selected_key().map(str::to_owned));
-            let (scene, diagnostics) = build_scene(
+            let (mut scene, diagnostics) = build_scene(
                 model,
                 diagram,
                 resolve_display(&diagram.display),
                 &self.expanded,
             );
+            scene.visual_kind = self.visual_kind;
             let node_keys: Vec<String> = scene.nodes.iter().map(|node| node.key.clone()).collect();
             self.set_scene_diagnostics(cx, body, &diagnostics);
             if let Some(mut canvas) = body
@@ -444,7 +446,7 @@ impl ClassDiagramView {
 
 impl DocView for ClassDiagramView {
     fn identity(&self) -> DocViewIdentity {
-        DocViewIdentity::Diagram(self.kind)
+        DocViewIdentity::StructuralDiagram(self.visual_kind)
     }
 
     fn reconcile_policy(&self) -> ViewReconcilePolicy {
@@ -456,7 +458,9 @@ impl DocView for ClassDiagramView {
         let model = &data.uml_analysis.projection;
         self.sync_properties(cx, body, model);
         let built = model.diagrams.iter().find(|d| d.key == self.key).map(|d| {
-            let (scene, diags) = build_scene(model, d, resolve_display(&d.display), &self.expanded);
+            let (mut scene, diags) =
+                build_scene(model, d, resolve_display(&d.display), &self.expanded);
+            scene.visual_kind = self.visual_kind;
             (scene, diags, d.title.clone())
         });
         if let Some((scene, diags, title)) = built {
@@ -739,12 +743,13 @@ impl DocView for ClassDiagramView {
                 // Re-solve the current diagram with the updated set; update_scene
                 // holds the camera and re-resolves the selection by key.
                 if let Some(diagram) = model.diagrams.iter().find(|d| d.key == self.key) {
-                    let (scene, diags) = build_scene(
+                    let (mut scene, diags) = build_scene(
                         model,
                         diagram,
                         resolve_display(&diagram.display),
                         &self.expanded,
                     );
+                    scene.visual_kind = self.visual_kind;
                     self.set_scene_diagnostics(cx, body, &diags);
                     if let Some(mut canvas) = body
                         .canvas(cx)

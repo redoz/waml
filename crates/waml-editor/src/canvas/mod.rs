@@ -2,6 +2,9 @@ use makepad_widgets::*;
 
 mod behavior;
 mod class;
+pub use class::visual::{
+    GroupVisualKind, NodeVisualKind, StructuralVisualKind, StructuralVisualPolicy,
+};
 mod geometry;
 mod linework;
 // `pub`: `crates/waml-editor/src/bin/node_editor_harness.rs` registers
