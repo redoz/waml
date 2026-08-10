@@ -1,6 +1,11 @@
 //! Class-canvas linework. One policy, CAD: every value below is a constant in
 //! SCREEN space, so linework holds its weight at any zoom
 //! (`crate::canvas::linework`).
+//!
+//! Widths now come from `canvas::pen::Pen`; this type is a shrinking shim and
+//! is deleted in the pen migration.
+
+use crate::canvas::pen::Pen;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in super::super) struct LineworkMetrics {
@@ -22,10 +27,10 @@ impl LineworkMetrics {
         Self {
             frame_stroke_scale: (1.0 / zoom) as f32,
             frame_screen_space: 1.0,
-            group_stroke_width: 1.0,
+            group_stroke_width: Pen::HAIRLINE.width() as f32,
             group_dash_period: 6.0,
-            divider_thickness: 1.0,
-            edge_thickness: 3.0,
+            divider_thickness: Pen::HAIRLINE.width(),
+            edge_thickness: Pen::REGULAR.width(),
             marker_size: 10.0,
             nub_size: 6.0,
         }
@@ -44,10 +49,10 @@ mod tests {
 
             assert!(((metrics.frame_stroke_scale as f64 * zoom) - 1.0).abs() <= 1e-6);
             assert_eq!(metrics.frame_screen_space, 1.0);
-            assert_eq!(metrics.group_stroke_width, 1.0);
+            assert_eq!(metrics.group_stroke_width, Pen::HAIRLINE.width() as f32);
             assert_eq!(metrics.group_dash_period, 6.0);
-            assert_eq!(metrics.divider_thickness, 1.0);
-            assert_eq!(metrics.edge_thickness, 3.0);
+            assert_eq!(metrics.divider_thickness, Pen::HAIRLINE.width());
+            assert_eq!(metrics.edge_thickness, Pen::REGULAR.width());
             assert_eq!(metrics.marker_size, 10.0);
             assert_eq!(metrics.nub_size, 6.0);
         }

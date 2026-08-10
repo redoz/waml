@@ -2,6 +2,7 @@ use super::{
     primitives::{node_screen_rect, ClassDrawResources},
     RenderSnapshot,
 };
+use crate::canvas::pen::Pen;
 use crate::canvas::primitives::{fill_rect, world_rect_to_screen};
 use makepad_widgets::*;
 
@@ -58,7 +59,7 @@ pub(super) fn draw_placement(
     if snapshot.placement.preview_ghost.is_none() {
         fill_rect(cx, draws.rule, origin_screen, vec4(0.52, 0.57, 0.64, 0.40));
         let grey = vec4(0.62, 0.67, 0.74, 0.85);
-        let thickness = 1.5;
+        let thickness = Pen::LIGHT.width();
         fill_rect(
             cx,
             draws.rule,
@@ -105,7 +106,7 @@ pub(super) fn draw_placement(
 
     if snapshot.placement.preview_ghost.is_some() {
         let accent = vec4(0.37, 0.63, 1.0, 0.9);
-        let thickness = 2.0;
+        let thickness = Pen::REGULAR.width();
         fill_rect(
             cx,
             draws.rule,

@@ -10,6 +10,9 @@
 //! exactly what a fractional camera offset produces. Every screen-space stroke
 //! must therefore be snapped to the device grid before it is drawn -- see
 //! `crate::canvas::primitives::snap_stroke_rect`.
+//!
+//! Widths now come from `canvas::pen::Pen`; this type is a shrinking shim and
+//! is deleted in the pen migration.
 
 /// Behavior-canvas linework: routes, lifeline stems, message strokes, arrow
 /// heads and markers.

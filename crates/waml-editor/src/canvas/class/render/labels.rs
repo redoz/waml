@@ -1,5 +1,6 @@
 use super::{primitives::ClassDrawResources, RenderSnapshot};
 use crate::canvas::geometry::segment_quad;
+use crate::canvas::pen::Pen;
 use crate::canvas::primitives::{
     edge_point_to_screen, fill_rect, font_raster_size, world_rect_to_screen,
 };
@@ -9,10 +10,6 @@ use waml::adornment::{end_marker, End};
 use waml::solve::label::LabelSlot;
 
 const LABEL_PAD: f64 = 3.0;
-
-/// Screen-space thickness of a leader line: a hairline regardless of zoom, so
-/// it reads as a pointer rather than a route.
-const LEADER_THICKNESS: f64 = 1.0;
 
 /// Below this drawn size edge text is an unreadable smear, so it is skipped.
 ///
@@ -98,7 +95,7 @@ pub(super) fn draw_edge_labels(
         let (pos, leader_end) = nudged(screen.pos, leader_end, nudge);
         if let (Some(leader), Some(end)) = (label.leader, leader_end) {
             let start = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[0]);
-            for bar in leader_bars(start, end, LEADER_THICKNESS) {
+            for bar in leader_bars(start, end, Pen::HAIRLINE.width()) {
                 draws.edge.draw_abs(cx, bar);
             }
         }
@@ -482,26 +479,26 @@ mod tests {
         // painted a solid opaque rectangle over everything between them.
         let start = dvec2(100.0, 100.0);
         let end = dvec2(180.0, 40.0);
-        let bars = leader_bars(start, end, LEADER_THICKNESS);
+        let bars = leader_bars(start, end, Pen::HAIRLINE.width());
         assert_eq!(bars.len(), 2, "an L, not one quad: {bars:?}");
         for bar in &bars {
             assert!(
-                bar.size.x <= LEADER_THICKNESS || bar.size.y <= LEADER_THICKNESS,
+                bar.size.x <= Pen::HAIRLINE.width() || bar.size.y <= Pen::HAIRLINE.width(),
                 "every leg must be a hairline: {bar:?}"
             );
         }
         // The L runs anchor -> corner -> label, so the legs meet and the far
         // leg reaches the label end.
-        assert!(bars[0].pos.x <= start.x.min(end.x) + LEADER_THICKNESS);
+        assert!(bars[0].pos.x <= start.x.min(end.x) + Pen::HAIRLINE.width());
         assert!(bars[1].pos.y <= end.y.max(start.y));
         assert!(bars[1].pos.y + bars[1].size.y >= end.y.min(start.y));
     }
 
     #[test]
     fn an_axis_aligned_leader_is_a_single_bar() {
-        let bars = leader_bars(dvec2(0.0, 10.0), dvec2(60.0, 10.0), LEADER_THICKNESS);
+        let bars = leader_bars(dvec2(0.0, 10.0), dvec2(60.0, 10.0), Pen::HAIRLINE.width());
         assert_eq!(bars.len(), 1, "no degenerate second leg: {bars:?}");
-        assert_eq!(bars[0].size.y, LEADER_THICKNESS);
+        assert_eq!(bars[0].size.y, Pen::HAIRLINE.width());
     }
 
     #[test]

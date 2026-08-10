@@ -8,6 +8,7 @@ use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
 use super::{BehaviorPalette, Emphasis, ARROW_HEAD};
 use crate::accent;
 use crate::canvas::linework::BehaviorLineworkMetrics;
+use crate::canvas::pen::Pen;
 use crate::canvas::primitives::{
     edge_point_to_screen, fill_rect, snap_rect, snap_stroke_width, stroke_quad,
     world_rect_to_screen,
@@ -57,12 +58,8 @@ pub(in crate::canvas::behavior) struct InteractionDrawResources<'a> {
     pub(super) linework: BehaviorLineworkMetrics,
 }
 
-/// Authored linework, in lpx at zoom 1: lifeline stem, message stroke, fragment
-/// frame border and operand divider, plus the destroyed-lifeline X.
-const STEM_THICKNESS: f64 = 1.4;
-const MESSAGE_THICKNESS: f64 = 2.0;
-const FRAME_THICKNESS: f64 = 1.2;
-const DIVIDER_THICKNESS: f64 = 1.4;
+/// Destroyed-lifeline X extent, in lpx at zoom 1. A glyph size, not a stroke
+/// weight, so it stays off the pen ladder.
 const X_MARK_SIZE: f64 = 10.0;
 
 fn accent_with_alpha(accent: Vec4, alpha: f32) -> Vec4 {
@@ -234,7 +231,9 @@ fn draw_stem(
 ) {
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    let thickness = draws.linework.thickness(emphasis.thickness(STEM_THICKNESS));
+    let thickness = draws
+        .linework
+        .thickness(emphasis.thickness(Pen::LIGHT.width()));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let top = (lifeline.stem_x, lifeline.stem_top);
     let bottom = (lifeline.stem_x, lifeline.stem_bottom);
@@ -402,7 +401,7 @@ fn draw_message(
     let rect_pos = viewport.view_rect.pos;
     let thickness = draws
         .linework
-        .thickness(emphasis.thickness(MESSAGE_THICKNESS));
+        .thickness(emphasis.thickness(Pen::REGULAR.width()));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let (dashed, filled_head) = message_style(message.verb);
 
@@ -527,9 +526,9 @@ fn draw_fragment(
         cx,
         draws
             .linework
-            .thickness(emphasis.thickness(FRAME_THICKNESS)),
+            .thickness(emphasis.thickness(Pen::LIGHT.width())),
     ) as f32;
-    let divider = draws.linework.thickness(DIVIDER_THICKNESS);
+    let divider = draws.linework.thickness(Pen::HAIRLINE.width());
     draws.frame_border.color = emphasis.stroke(draws.palette.line, draws.palette);
     draws
         .frame_border
@@ -585,7 +584,7 @@ fn draw_fragment_tab(
         cx,
         draws
             .linework
-            .thickness(emphasis.thickness(FRAME_THICKNESS)),
+            .thickness(emphasis.thickness(Pen::LIGHT.width())),
     ) as f32;
     let stroke = emphasis.stroke(draws.palette.line, draws.palette);
     draws

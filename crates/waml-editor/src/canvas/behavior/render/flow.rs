@@ -6,6 +6,7 @@ use super::super::hit::BehaviorTarget;
 use super::super::scene::{FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
 use super::{BehaviorPalette, Emphasis, ARROW_HEAD};
 use crate::canvas::linework::BehaviorLineworkMetrics;
+use crate::canvas::pen::Pen;
 use crate::canvas::primitives::{
     edge_point_to_screen, fill_rect, stroke_quad, world_rect_to_screen,
 };
@@ -18,8 +19,6 @@ use waml::solve::SolvedGroup;
 /// Behavior accent bucket wash, at low alpha, for a node fill.
 const NODE_ALPHA: f32 = 0.16;
 const GROUP_ALPHA: f32 = 0.06;
-/// Resting route stroke, in lpx at zoom 1.
-const ROUTE_THICKNESS: f64 = 2.0;
 
 /// Where the text inside a node starts, and how far each following line steps,
 /// in lpx at zoom 1. Read off the SAME `FlowConfig` the solver sized the node
@@ -172,7 +171,7 @@ fn draw_route(
         .collect();
     let thickness = draws
         .linework
-        .thickness(emphasis.thickness(ROUTE_THICKNESS));
+        .thickness(emphasis.thickness(Pen::REGULAR.width()));
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     for pair in screen.windows(2) {
         let quad = stroke_quad(cx, pair[0], pair[1], thickness);
@@ -358,7 +357,7 @@ mod tests {
         // Emphasis is colour + wash only: every level strokes at the resting
         // pen weight.
         for e in [Emphasis::None, Emphasis::Hovered, Emphasis::Selected] {
-            assert_eq!(e.thickness(ROUTE_THICKNESS), ROUTE_THICKNESS);
+            assert_eq!(e.thickness(Pen::REGULAR.width()), Pen::REGULAR.width());
         }
         let palette = BehaviorPalette {
             line: vec4(0.4, 0.4, 0.4, 1.0),
