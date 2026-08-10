@@ -19,15 +19,29 @@ const GUARDS: &[DiagCode] = &[
     DiagCode::UnresolvedLayoutRef,
     DiagCode::UnresolvedTarget,
     DiagCode::SlotUnknownAttribute,
+    // A binding endpoint and an interaction-use link are checked against the
+    // *used* interaction, not this document.
+    DiagCode::InvalidInteractionUse,
+    // A declaration site must not offer a name already declared.
+    DiagCode::DuplicateFlowNode,
     // A candidate that satisfies a reference check but wrecks the construct's
     // shape is just as wrong, so the shape codes guard too.
     DiagCode::MalformedLayout,
     DiagCode::MalformedAttribute,
+    DiagCode::MalformedMessage,
+    DiagCode::MalformedFlowBullet,
 ];
 
-const SUPPORT: [(&str, &str); 2] = [
-    ("a.md", "---\ntype: uml.Class\ntitle: A\n---\n# A\n"),
+const SUPPORT: [(&str, &str); 3] = [
+    (
+        "a.md",
+        "---\ntype: uml.Class\ntitle: A\n---\n# A\n\n## Attributes\n\n- status: Number\n",
+    ),
     ("b.md", "---\ntype: uml.Class\ntitle: B\n---\n# B\n"),
+    (
+        "inner.md",
+        "---\ntype: uml.Sequence\ntitle: Inner\n---\n# Inner\n\n## Lifelines\n\n- [A](./a.md) as customer\n",
+    ),
 ];
 
 fn candidate_for(text: &str, revision: u64) -> PreparedCandidate {
@@ -132,6 +146,36 @@ fn corpus() -> Vec<String> {
         concat!(
             "---\ntype: uml.Class\ntitle: C\n---\n# C\n\n",
             "## Relationships\n\n-  [A](./a.md)\n"
+        )
+        .to_owned(),
+        // An interaction use with an unfinished binding: both halves of a
+        // binding are endpoints, but of different interactions.
+        concat!(
+            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+            "## Lifelines\n\n- [A](./a.md) as buyer\n\n",
+            "## Messages\n\n- ref [Inner](./inner.md) as inner\n  - bind buyer to \n"
+        )
+        .to_owned(),
+        // A flow node heading -- a declaration site, where an identity the
+        // document already declares is a duplicate.
+        concat!(
+            "---\ntype: uml.Activity\ntitle: F\n---\n# F\n\n",
+            "## Nodes\n\n### Receive\n\n- transitions to Receive\n\n### decision \n"
+        )
+        .to_owned(),
+        // An instance's own slots, checked against its `instance of` classifier.
+        concat!(
+            "---\ntype: uml.InstanceSpecification\ntitle: O\n---\n# O\n\n",
+            "## Slots\n\n- \n\n## Relationships\n\n- instance of [A](./a.md)\n"
+        )
+        .to_owned(),
+        // A diagram whose member link text is nothing like the document it
+        // names, plus a group whose name carries a space -- neither is
+        // reachable as a layout operand the way it is written.
+        concat!(
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "## Members\n\n- [Status](./a.md)\n\n### Core People\n\n- [B](./b.md)\n\n",
+            "## Layout\n\n- \n"
         )
         .to_owned(),
     ]

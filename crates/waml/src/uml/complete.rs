@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use waml_syntax::{SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize};
+use waml_syntax::{
+    AstNode, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize,
+};
 
 use crate::action::ActionError;
 use crate::analysis::DocumentId;
@@ -244,7 +246,12 @@ pub fn completions(
     let mut candidates = fixed_vocabulary(&expectation);
     let concept_id = crate::okf::id_of(version.path().as_str());
     if let Some(concept) = context.uml().declared.concept(&concept_id) {
-        candidates.extend(in_document_refs(&expectation, concept));
+        candidates.extend(in_document_refs(
+            &expectation,
+            concept,
+            &context,
+            version.path(),
+        ));
         candidates.extend(type_driven(&expectation, &context, concept, version.path()));
         candidates.extend(derived_names(&expectation, concept));
     }
@@ -445,33 +452,89 @@ fn declared_name(field: &DeclaredField<UmlLanguage, String>) -> Option<&str> {
     }
 }
 
-/// A diagram member's authored link text (e.g. the `A` in `[A](./a.md)`).
-/// `member.target` holds the href, which is what the diagnostic resolves
-/// through -- but `## Layout` operands are typed as bare names, matched by
-/// basename against the resolved target (see `solve::resolve::resolve_ref`),
-/// so the candidate this provider offers is the link text, not the href.
-fn member_display_name(member: &crate::uml::DeclaredMember) -> Option<String> {
-    let text_token = member
-        .syntax
-        .link()?
-        .children()
-        .find(|element| element.kind() == UmlSyntaxKind::LinkTextToken)
-        .and_then(SyntaxElement::into_token)?;
-    if text_token.flags().is_missing() {
+/// The bare name a `## Layout` operand may use to reach `member`.
+///
+/// Not the link text: a bare operand is matched by `slugify(name)` against the
+/// member's *resolved id* -- exactly, or by unique basename -- in both
+/// `collect_unresolved_layout_refs` (analysis.rs) and
+/// `solve::resolve::resolve_ref`, so `- [Status](./enum.md)` is reached as
+/// `enum` and offering `Status` there is an outright `UnresolvedLayoutRef`.
+/// The two coincide only when the author happened to title the link after the
+/// file. A basename that is not already in slug form cannot be named by a bare
+/// operand at all (no operand slugifies back to it), so it is not offered.
+fn member_layout_name(
+    member: &crate::uml::DeclaredMember,
+    from: &crate::source::BundlePath,
+) -> Option<String> {
+    let DeclaredField::Valid { value: href, .. } = &member.target else {
+        return None;
+    };
+    let id = crate::okf::resolve_href(from.as_str(), href);
+    let basename = id.rsplit('/').next().unwrap_or(id.as_str()).to_owned();
+    (!basename.is_empty() && crate::slug::slugify(&basename, "") == basename).then_some(basename)
+}
+
+/// `name` spelled as a single `## Layout` atom.
+///
+/// The statement grammar is whitespace-separated and also breaks an atom on
+/// `(`, `)`, `,` and `[`, so a name carrying any of those -- a group heading
+/// like `### Core People` -- parses as one operand only inside quotes. A name
+/// containing a quote itself has no spelling at all and is not offered.
+fn layout_atom(name: &str) -> Option<String> {
+    if name.contains('"') {
         return None;
     }
-    let text = text_token.text().write_to_string();
-    if text.is_empty() {
-        None
+    let breaks = name
+        .chars()
+        .any(|character| character.is_whitespace() || matches!(character, '(' | ')' | ',' | '['));
+    Some(if breaks {
+        format!("\"{name}\"")
     } else {
-        Some(text)
-    }
+        name.to_owned()
+    })
+}
+
+/// The lifeline handles of the interaction the binding under the cursor belongs
+/// to. `validate_use_bindings` (sequence.rs) checks a binding's *target* half
+/// against the referenced interaction's lifelines, not this document's, so this
+/// is the accept set at a `BindingTarget`; an unresolvable use offers nothing.
+fn used_interaction_handles(
+    expectation: &Expectation,
+    context: &ActionContext<'_>,
+    concept: &DeclaredConcept,
+    from: &crate::source::BundlePath,
+) -> Vec<String> {
+    let at = expectation.prefix.start();
+    let Some(use_) = concept.interaction_uses.iter().find(|use_| {
+        let range = use_.syntax.syntax().range();
+        range.start() <= at && at <= range.end()
+    }) else {
+        return Vec::new();
+    };
+    let Some(href) = declared_name(&use_.link) else {
+        return Vec::new();
+    };
+    let target = crate::okf::resolve_href(from.as_str(), href);
+    let Some(target_concept) = context.uml().declared.concept(&target) else {
+        return Vec::new();
+    };
+    target_concept
+        .lifelines
+        .iter()
+        .filter_map(|lifeline| declared_name(&lifeline.alias))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Names declared elsewhere in this document. Every candidate is a value the
 /// diagnostic at this position accepts -- `UnknownLifelineHandle` for an
 /// endpoint, and so on -- which Task 10 pins as a property test.
-fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec<Completion> {
+fn in_document_refs(
+    expectation: &Expectation,
+    concept: &DeclaredConcept,
+    context: &ActionContext<'_>,
+    from: &crate::source::BundlePath,
+) -> Vec<Completion> {
     let replace = expectation.prefix;
     match expectation.token {
         UmlSyntaxKind::SourceToken
@@ -483,6 +546,15 @@ fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec
                     .iter()
                     .filter_map(|node| declared_name(&node.identity))
                     .map(|identity| reference(identity, replace, "flow node"))
+                    .collect();
+            }
+            // A binding's target half is an endpoint of the *used* interaction,
+            // not a message endpoint of this document: no handle of this
+            // document, no gate and no `outside` belongs here.
+            if expectation.slot == UmlSyntaxKind::BindingTarget {
+                return used_interaction_handles(expectation, context, concept, from)
+                    .iter()
+                    .map(|handle| reference(handle, replace, "lifeline of the used interaction"))
                     .collect();
             }
             let mut out = Vec::new();
@@ -517,12 +589,11 @@ fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec
             .filter_map(|message| declared_name(&message.call_id))
             .map(|id| reference(id, replace, "declared call id"))
             .collect(),
-        UmlSyntaxKind::IdentityToken => concept
-            .flow_nodes
-            .iter()
-            .filter_map(|node| declared_name(&node.identity))
-            .map(|identity| reference(identity, replace, "flow node"))
-            .collect(),
+        // `IdentityToken` only ever occurs at a flow node's own heading
+        // (`FlowIdentity`, parser.rs), which *declares* an identity -- a
+        // reference goes through `FlowTarget`/`TargetToken` above. Every
+        // already-declared identity is a `DuplicateFlowNode` here, so a
+        // declaration site offers nothing, exactly as `as <call id>` does.
         UmlSyntaxKind::LocalToken => concept
             .lifelines
             .iter()
@@ -539,21 +610,23 @@ fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec
                 return Vec::new();
             }
             let mut out = Vec::new();
-            let mut push_member = |target: &str| {
-                out.push(reference(target, replace, "diagram member"));
+            let mut push = |name: &str, detail: &str| {
+                if let Some(atom) = layout_atom(name) {
+                    out.push(reference(&atom, replace, detail));
+                }
             };
             for member in concept.members.iter() {
-                if let Some(name) = member_display_name(member) {
-                    push_member(&name);
+                if let Some(name) = member_layout_name(member, from) {
+                    push(&name, "diagram member");
                 }
             }
             for group in concept.member_groups.iter() {
                 if let Some(name) = declared_name(&group.name) {
-                    push_member(name);
+                    push(name, "member group");
                 }
                 for member in group.members.iter() {
-                    if let Some(name) = member_display_name(member) {
-                        push_member(&name);
+                    if let Some(name) = member_layout_name(member, from) {
+                        push(&name, "diagram member");
                     }
                 }
             }

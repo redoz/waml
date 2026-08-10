@@ -21,11 +21,15 @@ fn document(candidate: &PreparedCandidate) -> DocumentId {
         .unwrap()
 }
 
-/// Complete `marked` at its `|`, returning `(label, kind)` pairs.
-fn labels(marked: &str) -> Vec<(String, CompletionKind)> {
+/// Complete `marked` at its `|` against `support` alongside `doc.md`,
+/// returning `(label, kind)` pairs.
+fn labels_with(support: &[(&str, &str)], marked: &str) -> Vec<(String, CompletionKind)> {
     let offset = marked.find('|').expect("the case must place a cursor");
     let text = marked.replacen('|', "", 1);
-    let candidate = prepared(&text, 3);
+    let mut pairs = vec![("doc.md", text.as_str())];
+    pairs.extend(support.iter().copied());
+    let candidate =
+        prepare_candidate(SourceBundle::try_from_pairs(pairs).unwrap(), None, 6).unwrap();
     completions(
         ActionContext::from_prepared(&candidate).unwrap(),
         document(&candidate),
@@ -35,6 +39,11 @@ fn labels(marked: &str) -> Vec<(String, CompletionKind)> {
     .into_iter()
     .map(|completion| (completion.label.to_string(), completion.kind))
     .collect()
+}
+
+/// Complete `marked` at its `|`, returning `(label, kind)` pairs.
+fn labels(marked: &str) -> Vec<(String, CompletionKind)> {
+    labels_with(&SUPPORT, marked)
 }
 
 fn sequence(body: &str) -> String {
@@ -268,19 +277,70 @@ fn transitions_to_offers_declared_flow_node_identities() {
     assert!(references.contains(&"Check"), "{references:?}");
 }
 
+/// A support bundle whose `inner.md` is a sequence with a handle no document
+/// referencing it declares, so the two halves of a binding cannot be confused.
+const USED: [(&str, &str); 2] = [
+    ("a.md", "---\ntype: uml.Class\ntitle: A\n---\n# A\n"),
+    (
+        "inner.md",
+        "---\ntype: uml.Sequence\ntitle: Inner\n---\n# Inner\n\n## Lifelines\n\n- [A](./a.md) as customer\n",
+    ),
+];
+
 #[test]
 fn bind_to_offers_the_used_interactions_handles() {
-    let offered = labels(&sequence(concat!(
-        "## Lifelines\n\n- [A](./a.md) as buyer\n\n",
-        "## Messages\n\n- ref [B](./b.md) as inner\n  - bind buyer to |\n"
-    )));
-    // With no analysis of the used document's handles available, the provider
-    // offers this document's handles, which is the accept set the diagnostic
-    // uses for the local half of a binding.
-    assert!(
-        offered.iter().any(|(label, _)| label == "buyer"),
-        "{offered:?}"
+    // `bind <local> to <target>`: the target half must name a lifeline of the
+    // *referenced* interaction (`validate_use_bindings` in sequence.rs), not a
+    // handle, gate or `outside` of this document.
+    let offered = labels_with(
+        &USED,
+        &sequence(concat!(
+            "## Lifelines\n\n- [A](./a.md) as buyer\n\n",
+            "## Messages\n\n- ref [Inner](./inner.md) as inner\n  - bind buyer to |\n"
+        )),
     );
+    let words = offered
+        .iter()
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(words.contains(&"customer"), "{words:?}");
+    assert!(!words.contains(&"buyer"), "{words:?}");
+    assert!(!words.contains(&"outside"), "{words:?}");
+    assert!(!words.contains(&"inner@"), "{words:?}");
+}
+
+#[test]
+fn bind_from_still_offers_this_documents_handles() {
+    // The local half is the mirror image: it must name a lifeline of *this*
+    // document.
+    let offered = labels_with(
+        &USED,
+        &sequence(concat!(
+            "## Lifelines\n\n- [A](./a.md) as buyer\n\n",
+            "## Messages\n\n- ref [Inner](./inner.md) as inner\n  - bind |\n"
+        )),
+    );
+    let words = offered
+        .iter()
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(words.contains(&"buyer"), "{words:?}");
+    assert!(!words.contains(&"customer"), "{words:?}");
+}
+
+#[test]
+fn a_flow_node_heading_offers_no_declared_identity() {
+    // `### <kind> <identity>` *declares* an identity; every already-declared
+    // one is a `DuplicateFlowNode` there, the same declaration-vs-reference
+    // distinction `as <call id>` already honours.
+    let offered = labels(concat!(
+        "---\ntype: uml.Activity\ntitle: F\n---\n# F\n\n",
+        "## Nodes\n\n",
+        "### Receive\n\n- transitions to Check\n\n",
+        "### Check\n\n- transitions to Receive\n\n",
+        "### decision |\n"
+    ));
+    assert!(offered.is_empty(), "{offered:?}");
 }
 
 #[test]
@@ -295,7 +355,35 @@ fn layout_offers_diagram_member_names() {
         .filter(|(_, kind)| *kind == CompletionKind::Reference)
         .map(|(label, _)| label.as_str())
         .collect::<Vec<_>>();
-    assert!(references.contains(&"B"), "{references:?}");
+    assert!(references.contains(&"b"), "{references:?}");
+}
+
+#[test]
+fn a_layout_operand_offers_the_name_that_resolves_not_the_link_text() {
+    // A bare layout operand is matched by `slugify(name)` against the member's
+    // resolved id (`collect_unresolved_layout_refs`), so `[Status](./a.md)` is
+    // reached as `a` -- offering `Status` there is an `UnresolvedLayoutRef`.
+    let offered = words(concat!(
+        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+        "## Members\n\n- [Status](./a.md)\n\n## Layout\n\n- |\n"
+    ));
+    assert!(offered.contains(&"a".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"Status".to_owned()), "{offered:?}");
+}
+
+#[test]
+fn a_multi_word_group_name_is_offered_quoted() {
+    // The layout grammar is whitespace-separated: a two-word group name only
+    // parses as one operand inside quotes.
+    let offered = words(concat!(
+        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+        "## Members\n\n### Core People\n\n- [A](./a.md)\n\n## Layout\n\n- |\n"
+    ));
+    assert!(
+        offered.contains(&"\"Core People\"".to_owned()),
+        "{offered:?}"
+    );
+    assert!(!offered.contains(&"Core People".to_owned()), "{offered:?}");
 }
 
 fn diagram(body: &str) -> String {
@@ -315,8 +403,8 @@ fn an_empty_layout_bullet_offers_member_names_not_direction_words() {
     // word as one, so `above` typed here would parse as the member reference
     // and raise `UnresolvedLayoutRef`.
     let offered = words(&diagram("## Layout\n\n- |\n"));
-    assert!(offered.contains(&"A".to_owned()), "{offered:?}");
-    assert!(offered.contains(&"B".to_owned()), "{offered:?}");
+    assert!(offered.contains(&"a".to_owned()), "{offered:?}");
+    assert!(offered.contains(&"b".to_owned()), "{offered:?}");
     assert!(!offered.contains(&"above".to_owned()), "{offered:?}");
     assert!(!offered.contains(&"box".to_owned()), "{offered:?}");
 }
@@ -328,7 +416,7 @@ fn after_a_layout_member_the_direction_phrases_are_offered() {
     assert!(offered.contains(&"left of".to_owned()), "{offered:?}");
     // A hint needs `with` first, and a second operand needs a direction first.
     assert!(!offered.contains(&"frame".to_owned()), "{offered:?}");
-    assert!(!offered.contains(&"B".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"b".to_owned()), "{offered:?}");
 }
 
 #[test]
@@ -338,14 +426,14 @@ fn a_layout_hint_slot_offers_hint_phrases_not_member_names() {
     let offered = words(&diagram("## Layout\n\n- A above B with |\n"));
     assert!(offered.contains(&"frame".to_owned()), "{offered:?}");
     assert!(offered.contains(&"no margin".to_owned()), "{offered:?}");
-    assert!(!offered.contains(&"A".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"a".to_owned()), "{offered:?}");
     assert!(!offered.contains(&"above".to_owned()), "{offered:?}");
 }
 
 #[test]
 fn a_layout_operand_after_a_direction_offers_members_only() {
     let offered = words(&diagram("## Layout\n\n- A above |\n"));
-    assert!(offered.contains(&"B".to_owned()), "{offered:?}");
+    assert!(offered.contains(&"b".to_owned()), "{offered:?}");
     assert!(!offered.contains(&"below".to_owned()), "{offered:?}");
 }
 
@@ -458,26 +546,7 @@ const TYPED: [(&str, &str); 2] = [
 ];
 
 fn typed_labels(marked: &str) -> Vec<(String, CompletionKind)> {
-    let offset = marked.find('|').expect("the case must place a cursor");
-    let text = marked.replacen('|', "", 1);
-    let mut pairs = vec![("doc.md", text.as_str())];
-    pairs.extend(TYPED);
-    let candidate =
-        prepare_candidate(SourceBundle::try_from_pairs(pairs).unwrap(), None, 6).unwrap();
-    let id = candidate
-        .okf()
-        .catalog
-        .id_for_path(&BundlePath::parse("doc.md").unwrap())
-        .unwrap();
-    completions(
-        ActionContext::from_prepared(&candidate).unwrap(),
-        id,
-        TextSize::try_from_usize(offset).unwrap(),
-    )
-    .unwrap()
-    .into_iter()
-    .map(|completion| (completion.label.to_string(), completion.kind))
-    .collect()
+    labels_with(&TYPED, marked)
 }
 
 #[test]
