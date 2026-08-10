@@ -1845,7 +1845,8 @@ mod tests {
         let source = crate::load::read_bundle(&dir).unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
-        let mut view = ClassDiagramView::new("orders-diagram".into());
+        let mut view =
+            ClassDiagramView::new("orders-diagram".into(), crate::StructuralVisualKind::Class);
         view.sync(
             cx,
             &body,
@@ -1907,7 +1908,8 @@ mod tests {
         let source = crate::load::read_bundle(&dir).unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
         let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
-        let mut view = ClassDiagramView::new("orders-diagram".into());
+        let mut view =
+            ClassDiagramView::new("orders-diagram".into(), crate::StructuralVisualKind::Class);
         view.sync(
             cx,
             &body,

@@ -1820,6 +1820,7 @@ mod tests {
                 .active_owners(ready.session.selections().primary().cursor.offset),
             diagnostics: ready.diagnostics.clone(),
             assets,
+            search_highlights: Arc::from([]),
         };
         let local = build_draw_commands(
             &frame,

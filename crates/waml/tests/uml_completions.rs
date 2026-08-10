@@ -767,7 +767,7 @@ fn a_lone_bracket_offers_whole_links_filtered_by_the_section() {
     ];
     let offered = labels_with(
         support,
-        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n",
+        "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n",
     );
     let links = offered
         .iter()
@@ -781,7 +781,7 @@ fn a_lone_bracket_offers_whole_links_filtered_by_the_section() {
 
 #[test]
 fn the_bracket_candidate_inserts_the_whole_link_replacing_the_bracket() {
-    let marked = "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n";
+    let marked = "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n";
     let offset = marked.find('|').unwrap();
     let text = marked.replacen('|', "", 1);
     let candidate = prepared(&text, 3);

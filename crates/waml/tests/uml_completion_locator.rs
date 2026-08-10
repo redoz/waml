@@ -188,11 +188,11 @@ fn a_lone_bracket_is_the_unfinished_link_position() {
     // missing link-text slot so the bracket provider can offer whole links.
     for (marked, expected_slot) in [
         (
-            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n",
             UmlSyntaxKind::Link,
         ),
         (
-            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|\n",
             UmlSyntaxKind::Link,
         ),
         (
@@ -213,7 +213,8 @@ fn a_lone_bracket_is_the_unfinished_link_position() {
 #[test]
 fn the_partial_after_the_bracket_is_the_prefix() {
     let (_, _, prefix) =
-        locate("---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|\n").unwrap();
+        locate("---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|\n")
+            .unwrap();
     assert_eq!(prefix, "Bu");
 }
 
@@ -223,7 +224,7 @@ fn a_bracket_position_is_not_reported_where_it_would_corrupt() {
     // whole link would strand the existing `](./a.md)` tail.
     assert_eq!(
         locate(
-            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|yer](./a.md)\n"
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|yer](./a.md)\n"
         ),
         None
     );
