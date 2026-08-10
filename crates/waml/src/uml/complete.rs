@@ -256,6 +256,29 @@ fn declared_name(field: &DeclaredField<UmlLanguage, String>) -> Option<&str> {
     }
 }
 
+/// A diagram member's authored link text (e.g. the `A` in `[A](./a.md)`).
+/// `member.target` holds the href, which is what the diagnostic resolves
+/// through -- but `## Layout` operands are typed as bare names, matched by
+/// basename against the resolved target (see `solve::resolve::resolve_ref`),
+/// so the candidate this provider offers is the link text, not the href.
+fn member_display_name(member: &crate::uml::DeclaredMember) -> Option<String> {
+    let text_token = member
+        .syntax
+        .link()?
+        .children()
+        .find(|element| element.kind() == UmlSyntaxKind::LinkTextToken)
+        .and_then(SyntaxElement::into_token)?;
+    if text_token.flags().is_missing() {
+        return None;
+    }
+    let text = text_token.text().write_to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 /// Names declared elsewhere in this document. Every candidate is a value the
 /// diagnostic at this position accepts -- `UnknownLifelineHandle` for an
 /// endpoint, and so on -- which Task 10 pins as a property test.
@@ -265,6 +288,14 @@ fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec
         UmlSyntaxKind::SourceToken
         | UmlSyntaxKind::TargetToken
         | UmlSyntaxKind::ReturnTargetToken => {
+            if expectation.slot == UmlSyntaxKind::FlowTarget {
+                return concept
+                    .flow_nodes
+                    .iter()
+                    .filter_map(|node| declared_name(&node.identity))
+                    .map(|identity| reference(identity, replace, "flow node"))
+                    .collect();
+            }
             let mut out = Vec::new();
             for lifeline in concept.lifelines.iter() {
                 if let Some(alias) = declared_name(&lifeline.alias) {
@@ -286,6 +317,49 @@ fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec
                 }
             }
             out.push(reference("outside", replace, "outside the frame"));
+            out
+        }
+        // `for` references an id the author already declared with `as`. The
+        // parser gives the two positions different slot kinds, so no keyword
+        // test is needed here.
+        UmlSyntaxKind::ReturnCallToken => concept
+            .messages
+            .iter()
+            .filter_map(|message| declared_name(&message.call_id))
+            .map(|id| reference(id, replace, "declared call id"))
+            .collect(),
+        UmlSyntaxKind::IdentityToken => concept
+            .flow_nodes
+            .iter()
+            .filter_map(|node| declared_name(&node.identity))
+            .map(|identity| reference(identity, replace, "flow node"))
+            .collect(),
+        UmlSyntaxKind::LocalToken => concept
+            .lifelines
+            .iter()
+            .filter_map(|lifeline| declared_name(&lifeline.alias))
+            .map(|alias| reference(alias, replace, "lifeline handle"))
+            .collect(),
+        UmlSyntaxKind::LayoutWordToken => {
+            let mut out = Vec::new();
+            let mut push_member = |target: &str| {
+                out.push(reference(target, replace, "diagram member"));
+            };
+            for member in concept.members.iter() {
+                if let Some(name) = member_display_name(member) {
+                    push_member(&name);
+                }
+            }
+            for group in concept.member_groups.iter() {
+                if let Some(name) = declared_name(&group.name) {
+                    push_member(name);
+                }
+                for member in group.members.iter() {
+                    if let Some(name) = member_display_name(member) {
+                        push_member(&name);
+                    }
+                }
+            }
             out
         }
         _ => Vec::new(),

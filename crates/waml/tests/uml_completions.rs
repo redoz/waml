@@ -225,6 +225,80 @@ fn a_use_gate_handle_is_offered_after_an_interaction_use() {
 }
 
 #[test]
+fn for_offers_declared_call_ids_and_as_offers_none() {
+    let body = concat!(
+        "## Lifelines\n\n- [A](./a.md) as buyer\n- [B](./b.md) as order\n\n",
+        "## Messages\n\n- buyer calls order `submit()` as submission\n"
+    );
+    let referenced = labels(&sequence(&format!(
+        "{body}- order returns to buyer for |\n"
+    )));
+    assert!(
+        referenced.iter().any(|(label, _)| label == "submission"),
+        "a declared call id must be offered after `for`: {referenced:?}"
+    );
+
+    // `as` declares a call id; there is nothing in the document to reference,
+    // so no Reference candidate is offered there.
+    let declared = labels(&sequence(&format!(
+        "{body}- buyer calls order `pay()` as |\n"
+    )));
+    assert!(
+        !declared
+            .iter()
+            .any(|(label, kind)| label == "submission" && *kind == CompletionKind::Reference),
+        "a declaration site must not offer existing ids: {declared:?}"
+    );
+}
+
+#[test]
+fn transitions_to_offers_declared_flow_node_identities() {
+    let offered = labels(concat!(
+        "---\ntype: uml.Activity\ntitle: F\n---\n# F\n\n",
+        "## Nodes\n\n",
+        "### Receive\n\n- transitions to Check\n\n",
+        "### Check\n\n- transitions to |\n"
+    ));
+    let references = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Reference)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(references.contains(&"Receive"), "{references:?}");
+    assert!(references.contains(&"Check"), "{references:?}");
+}
+
+#[test]
+fn bind_to_offers_the_used_interactions_handles() {
+    let offered = labels(&sequence(concat!(
+        "## Lifelines\n\n- [A](./a.md) as buyer\n\n",
+        "## Messages\n\n- ref [B](./b.md) as inner\n  - bind buyer to |\n"
+    )));
+    // With no analysis of the used document's handles available, the provider
+    // offers this document's handles, which is the accept set the diagnostic
+    // uses for the local half of a binding.
+    assert!(
+        offered.iter().any(|(label, _)| label == "buyer"),
+        "{offered:?}"
+    );
+}
+
+#[test]
+fn layout_offers_diagram_member_names() {
+    let offered = labels(concat!(
+        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+        "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n",
+        "## Layout\n\n- A above |\n"
+    ));
+    let references = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Reference)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(references.contains(&"B"), "{references:?}");
+}
+
+#[test]
 fn a_stale_session_revision_is_an_error_before_any_candidate_is_computed() {
     let candidate = prepared("---\ntype: uml.Class\n---\n# C\n", 3);
     assert!(matches!(
