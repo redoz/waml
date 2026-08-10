@@ -103,6 +103,85 @@ fn state_machine_fixture_smoke_loads_nodes_and_edges() {
     assert!(edges.iter().any(|e| e.from == e.to));
 }
 
+fn inline_flow(trace: &str) -> (FlowDoc, Vec<ActivityNode>, Vec<FlowEdge>) {
+    let text = format!(
+        "---\ntype: uml.Activity\ntitle: Trace Isolation\n---\n\n# Trace Isolation\n\n## Nodes\n\n### Start\n- transitions to Done{trace}\n\n### Done\n"
+    );
+    let source = SourceBundle::try_from_pairs([("trace-isolation.md", text)]).unwrap();
+    let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+    let model = &prepared.uml().projection;
+    let doc = model.flows[0].clone();
+    let nodes = doc
+        .nodes
+        .iter()
+        .map(|key| {
+            model
+                .activity_nodes
+                .iter()
+                .find(|node| &node.key == key)
+                .unwrap()
+                .clone()
+        })
+        .collect();
+    let edges = doc
+        .edges
+        .iter()
+        .map(|key| {
+            model
+                .flow_edges
+                .iter()
+                .find(|edge| &edge.key == key)
+                .unwrap()
+                .clone()
+        })
+        .collect();
+    (doc, nodes, edges)
+}
+
+#[test]
+fn transition_traces_do_not_change_flow_semantics_or_geometry() {
+    let (plain_doc, plain_nodes, mut plain_edges) = inline_flow("");
+    let (traced_doc, traced_nodes, mut traced_edges) =
+        inline_flow(" traces [Claim](https://example.com/claim)");
+    assert!(plain_edges[0].traces.is_empty());
+    assert_eq!(traced_edges[0].traces.len(), 1);
+    for edge in &mut plain_edges {
+        edge.traces.clear();
+    }
+    for edge in &mut traced_edges {
+        edge.traces.clear();
+    }
+    assert_eq!(plain_doc, traced_doc);
+    assert_eq!(plain_nodes, traced_nodes);
+    assert_eq!(plain_edges, traced_edges);
+
+    let config = FlowConfig::default();
+    let plain_node_refs = plain_nodes.iter().collect::<Vec<_>>();
+    let traced_node_refs = traced_nodes.iter().collect::<Vec<_>>();
+    let plain_sizes = measure_flow(&plain_node_refs, FlowFlavor::Activity, &config);
+    let traced_sizes = measure_flow(&traced_node_refs, FlowFlavor::Activity, &config);
+    let plain = solve_flow(
+        &plain_doc,
+        &plain_nodes,
+        &plain_edges,
+        &plain_sizes,
+        &config,
+        &|_| None,
+    );
+    let traced = solve_flow(
+        &traced_doc,
+        &traced_nodes,
+        &traced_edges,
+        &traced_sizes,
+        &config,
+        &|_| None,
+    );
+    assert_eq!(pretty_flow(&plain.solved), pretty_flow(&traced.solved));
+    assert_eq!(plain.reversed, traced.reversed);
+    assert_eq!(plain.off_page, traced.off_page);
+    assert_eq!(plain.diagnostics, traced.diagnostics);
+}
+
 fn solve(name: &str, flavor: FlowFlavor) -> waml::solve::flow::FlowSolution {
     let (doc, nodes, edges) = load(name);
     let (rf, resolve_diags) = resolve_flow(&doc, &nodes, &edges);
@@ -270,6 +349,7 @@ fn decision_without_guards_diagnoses_but_still_solves() {
         kind: waml::model::FlowEdgeKind::ControlFlow,
         behavior: "synthetic".into(),
         from: "synthetic#Start".into(),
+        source_occurrence: 0,
         to: "synthetic#Choice".into(),
         to_ref: None,
         trigger: None,
@@ -317,6 +397,7 @@ fn multi_root_flow_without_initial_reports_nothing_unreachable() {
             kind: waml::model::FlowEdgeKind::ControlFlow,
             behavior: "synthetic".into(),
             from: format!("synthetic#{from}"),
+            source_occurrence: 0,
             to: format!("synthetic#{to}"),
             to_ref: None,
             trigger: None,
@@ -515,6 +596,7 @@ fn unknown_target_without_to_ref_drops_with_diagnostic() {
         kind: waml::model::FlowEdgeKind::ControlFlow,
         behavior: "synthetic".into(),
         from: "synthetic#Start".into(),
+        source_occurrence: 0,
         to: "Nowhere".into(),
         to_ref: None,
         trigger: None,
@@ -558,6 +640,7 @@ fn cross_document_edge_becomes_off_page_stub() {
         kind: waml::model::FlowEdgeKind::ControlFlow,
         behavior: "synthetic".into(),
         from: "synthetic#Start".into(),
+        source_occurrence: 0,
         to: "Other Behavior".into(),
         to_ref: Some("other".into()),
         trigger: None,
@@ -612,6 +695,7 @@ fn off_page_stub_label_resolves_the_target_document_title() {
         kind: waml::model::FlowEdgeKind::ControlFlow,
         behavior: "synthetic".into(),
         from: "synthetic#Start".into(),
+        source_occurrence: 0,
         to: "other".into(),
         to_ref: Some("other".into()),
         trigger: None,
@@ -660,6 +744,7 @@ fn chain(len: usize, partition: Option<&str>) -> (FlowDoc, Vec<ActivityNode>, Ve
             kind: waml::model::FlowEdgeKind::ControlFlow,
             behavior: "chain".into(),
             from: format!("chain#n{}", i - 1),
+            source_occurrence: 0,
             to: format!("chain#n{i}"),
             to_ref: None,
             trigger: None,
@@ -760,6 +845,7 @@ fn a_rank_is_centred_under_its_parents() {
             kind: waml::model::FlowEdgeKind::ControlFlow,
             behavior: "fan".into(),
             from: "fan#Start".into(),
+            source_occurrence: i,
             to: format!("fan#{target}"),
             to_ref: None,
             trigger: None,
@@ -810,6 +896,7 @@ fn parallel_edges_between_one_pair_each_carry_their_own_route_key() {
             kind: waml::model::FlowEdgeKind::ControlFlow,
             behavior: "fan".into(),
             from: "fan#A".into(),
+            source_occurrence: i,
             to: "fan#B".into(),
             to_ref: None,
             trigger: Some((*trigger).to_string()),
