@@ -77,9 +77,9 @@ pub(super) fn draw_edges(
             && edge.kind == waml::model::RelationshipKind::Associates
             && screen.len() >= 2
         {
+            draws.actor_line.color = draws.edge.color;
             let geometry =
                 dash_segment_geometry(screen[0], screen[screen.len() - 1], thickness, dpi, 0.0);
-            draws.actor_line.color = draws.edge.color;
             draws
                 .actor_line
                 .set_uniform(cx, live_id!(from), &geometry.from);

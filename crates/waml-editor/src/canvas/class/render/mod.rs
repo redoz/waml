@@ -56,17 +56,19 @@ pub(super) enum RenderPass {
     Edges,
     EdgeLabels,
     Nodes,
+    GroupHeadings,
     Relations,
     ConflictFocus,
     Placement,
 }
 
-pub(super) const PASS_ORDER: [RenderPass; 8] = [
+pub(super) const PASS_ORDER: [RenderPass; 9] = [
     RenderPass::Background,
     RenderPass::Groups,
     RenderPass::Edges,
     RenderPass::EdgeLabels,
     RenderPass::Nodes,
+    RenderPass::GroupHeadings,
     RenderPass::Relations,
     RenderPass::ConflictFocus,
     RenderPass::Placement,
@@ -85,6 +87,11 @@ pub(super) fn draw(
             RenderPass::Edges => edges::draw_edges(cx, snapshot, draws),
             RenderPass::EdgeLabels => labels::draw_edge_labels(cx, snapshot, draws),
             RenderPass::Nodes => nodes::draw_nodes(cx, snapshot, draws, cards),
+            RenderPass::GroupHeadings => {
+                if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase {
+                    use_case_groups::draw_headings(cx, snapshot, draws);
+                }
+            }
             RenderPass::Relations => relations::draw_relations(cx, snapshot, draws),
             RenderPass::ConflictFocus => overlays::draw_conflict_focus(cx, snapshot, draws),
             RenderPass::Placement => overlays::draw_placement(cx, snapshot, draws),
@@ -106,6 +113,7 @@ mod tests {
                 RenderPass::Edges,
                 RenderPass::EdgeLabels,
                 RenderPass::Nodes,
+                RenderPass::GroupHeadings,
                 RenderPass::Relations,
                 RenderPass::ConflictFocus,
                 RenderPass::Placement,

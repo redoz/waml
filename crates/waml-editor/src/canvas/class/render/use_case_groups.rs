@@ -47,35 +47,43 @@ fn paint_commands(groups: &[SceneGroup]) -> Vec<UseCaseGroupCommand> {
     frames.chain(headings).collect()
 }
 
-pub(super) fn draw(
+pub(super) fn draw_frames(
+    cx: &mut Cx2d,
+    snapshot: &RenderSnapshot<'_>,
+    draws: &mut ClassDrawResources<'_>,
+) {
+    // Solved groups are postorder (children before parent). Paint every opaque
+    // frame before any heading. This keeps child fills from erasing a parent
+    // heading while still putting child frames above their parent fill.
+    for command in paint_commands(&snapshot.scene.use_case_groups) {
+        if let UseCaseGroupCommand::Frame { bounds } = command {
+            let screen = snap_rect(cx, world_rect_to_screen(snapshot.viewport, bounds));
+            draws.group.draw_abs(cx, screen);
+            draws.group_border.set_uniform(
+                cx,
+                live_id!(stroke_w),
+                &[snapshot.linework.group_stroke_width],
+            );
+            draws.group_border.draw_abs(cx, screen);
+        }
+    }
+}
+
+pub(super) fn draw_headings(
     cx: &mut Cx2d,
     snapshot: &RenderSnapshot<'_>,
     draws: &mut ClassDrawResources<'_>,
 ) {
     let zoom = snapshot.viewport.camera.zoom;
-    // Solved groups are postorder (children before parent). Paint every opaque
-    // frame before any heading. This keeps child fills from erasing a parent
-    // heading while still putting child frames above their parent fill.
     for command in paint_commands(&snapshot.scene.use_case_groups) {
-        match command {
-            UseCaseGroupCommand::Frame { bounds } => {
-                let screen = snap_rect(cx, world_rect_to_screen(snapshot.viewport, bounds));
-                draws.group.draw_abs(cx, screen);
-                draws.group_border.set_uniform(
-                    cx,
-                    live_id!(stroke_w),
-                    &[snapshot.linework.group_stroke_width],
-                );
-                draws.group_border.draw_abs(cx, screen);
-            }
-            UseCaseGroupCommand::Heading { bounds, text } => {
-                let screen = world_rect_to_screen(snapshot.viewport, bounds);
-                let size = (12.0 * zoom) as f32;
-                let font_size = font_raster_size(size);
-                draws.text.text_style.font_size = font_size;
-                draws.text.font_scale = size / font_size;
-                draws.text.draw_abs(cx, screen.pos, &text);
-            }
+        if let UseCaseGroupCommand::Heading { bounds, text } = command {
+            let screen = world_rect_to_screen(snapshot.viewport, bounds);
+            draws.group.draw_abs(cx, screen);
+            let size = (12.0 * zoom) as f32;
+            let font_size = font_raster_size(size);
+            draws.text.text_style.font_size = font_size;
+            draws.text.font_scale = size / font_size;
+            draws.text.draw_abs(cx, screen.pos, &text);
         }
     }
 }

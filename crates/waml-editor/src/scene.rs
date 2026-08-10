@@ -1053,6 +1053,7 @@ pub fn build_scene(
         nodes.push(node);
     }
 
+    let use_case_groups = project_use_case_scene_groups(diagram, &solved.groups);
     let ports = nodes
         .iter()
         .map(|node| (node.key.clone(), port_geometry(node)))
@@ -1149,8 +1150,6 @@ pub fn build_scene(
 
     let relations = project_relations(diagram);
     let conflicts = project_conflicts(&dropped);
-    let use_case_groups = project_use_case_scene_groups(diagram, &solved.groups);
-
     (
         Scene {
             visual_kind,
@@ -1210,22 +1209,38 @@ fn project_use_case_scene_groups(diagram: &Diagram, solved: &[SolvedGroup]) -> V
     }
     let mut ordered_semantics = Vec::new();
     semantics(&diagram.groups, &mut ordered_semantics);
+    let max_depth = solved.iter().map(|group| group.depth).max().unwrap_or(0);
     solved
         .iter()
         .zip(ordered_semantics)
-        .map(|(group, (role, title))| SceneGroup {
-            role,
-            bounds: group.rect,
-            heading_bounds: Rect {
-                x: group.rect.x,
-                // Nested groups can share their parent's top edge. Give each
-                // depth its own title strip so both headings remain visible.
-                y: group.rect.y + group.depth as f64 * waml::solve::label::GROUP_TITLE_BAND,
-                w: group.rect.w,
-                h: waml::solve::label::GROUP_TITLE_BAND.min(group.rect.h),
-            },
-            title: Some(title),
-            depth: group.depth,
+        .map(|(group, (role, title))| {
+            let reserve = if matches!(
+                role,
+                waml::model::DiagramGroupRole::SystemBoundary | waml::model::DiagramGroupRole::Band
+            ) {
+                (max_depth - group.depth + 1) as f64 * waml::solve::label::GROUP_TITLE_BAND
+            } else {
+                0.0
+            };
+            let heading_y = group.rect.y - reserve;
+            SceneGroup {
+                role,
+                bounds: Rect {
+                    y: heading_y,
+                    h: group.rect.h + reserve,
+                    ..group.rect
+                },
+                heading_bounds: Rect {
+                    x: group.rect.x,
+                    y: heading_y,
+                    // The overlay only needs to protect the heading run, not
+                    // erase the full-width frame and every route beneath it.
+                    w: ((title.chars().count() as f64 * 8.0) + 12.0).min(group.rect.w),
+                    h: waml::solve::label::GROUP_TITLE_BAND,
+                },
+                title: Some(title),
+                depth: group.depth,
+            }
         })
         .collect()
 }
@@ -1464,6 +1479,9 @@ mod tests {
 
     #[test]
     fn real_editor_workflow_scene_preserves_nested_band_roles_and_titles() {
+        let overlaps = |a: Rect, b: Rect| {
+            a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+        };
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/waml");
         let model = crate::load::load_model(&root).unwrap();
         let diagram = model
@@ -1506,8 +1524,13 @@ mod tests {
         let boundary = scene.use_case_groups.last().unwrap();
         let first_band = &scene.use_case_groups[1];
         assert_eq!(boundary.heading_bounds.y, boundary.bounds.y);
-        assert!(first_band.heading_bounds.y > first_band.bounds.y);
+        assert_eq!(first_band.heading_bounds.y, first_band.bounds.y);
         assert_ne!(boundary.heading_bounds.y, first_band.heading_bounds.y);
+        for group in &scene.use_case_groups[1..] {
+            for node in &scene.nodes {
+                assert!(!overlaps(group.heading_bounds, node.rect));
+            }
+        }
     }
     use crate::load;
     use std::path::Path;

@@ -60,7 +60,7 @@ pub(super) fn draw_groups(
     draws: &mut ClassDrawResources<'_>,
 ) {
     if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase {
-        super::use_case_groups::draw(cx, snapshot, draws);
+        super::use_case_groups::draw_frames(cx, snapshot, draws);
     }
     let zoom = snapshot.viewport.camera.zoom;
     let plan = group_plan(
