@@ -118,7 +118,11 @@ pub fn open_with_asset_host(
             Box::new(SourceToggleView::new(
                 crate::class_diagram_view::ClassDiagramView::new(
                     concept_id.to_string(),
-                    crate::canvas::StructuralVisualKind::from(kind),
+                    match kind {
+                        DiagramKind::Class => crate::canvas::StructuralVisualKind::Class,
+                        DiagramKind::UseCase => crate::canvas::StructuralVisualKind::UseCase,
+                        _ => unreachable!("structural diagram match excludes behavior kinds"),
+                    },
                 ),
                 concept_id.to_string(),
                 assets.clone(),

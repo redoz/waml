@@ -55,6 +55,73 @@ fn navigation_opens_an_empty_use_case_by_its_declared_diagram_kind() {
     );
 }
 
+#[test]
+fn equal_structural_members_dispatch_to_distinct_view_identities() {
+    let (_cx, mut app) = navigation_app();
+    let source = waml::source::SourceBundle::try_from_pairs([
+        (
+            "class-view.md",
+            "---\ntype: uml.ClassDiagram\n---\n# Class view\n\n## Members\n- [Buyer](./buyer.md)\n",
+        ),
+        (
+            "use-case-view.md",
+            "---\ntype: uml.UseCaseDiagram\n---\n# Use-case view\n\n## Members\n\n### People\n- [Buyer](./buyer.md)\n",
+        ),
+        ("buyer.md", "---\ntype: uml.Actor\n---\n# Buyer\n"),
+    ])
+    .unwrap();
+    app.session.replace(source).unwrap();
+
+    let class = crate::documents::open(
+        app.session.okf_analysis(),
+        app.session.uml_analysis(),
+        "class-view",
+    )
+    .unwrap();
+    let use_case = crate::documents::open(
+        app.session.okf_analysis(),
+        app.session.uml_analysis(),
+        "use-case-view",
+    )
+    .unwrap();
+    assert_eq!(
+        class.view.identity(),
+        DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::Class)
+    );
+    assert_eq!(
+        use_case.view.identity(),
+        DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::UseCase)
+    );
+}
+
+#[test]
+fn invalid_use_case_edit_keeps_use_case_identity_and_last_projection() {
+    let (_cx, mut app) = navigation_app();
+    let valid = waml::source::SourceBundle::try_from_pairs([(
+        "use-cases.md",
+        "---\ntype: uml.UseCaseDiagram\n---\n# Use cases\n",
+    )])
+    .unwrap();
+    app.session.replace(valid).unwrap();
+    let invalid = waml::source::SourceBundle::try_from_pairs([(
+        "use-cases.md",
+        "---\ntype: uml.UseCaseDiagram\n---\n# Use cases\n\n## Members\n\n### Empty\n",
+    )])
+    .unwrap();
+    app.session.replace(invalid).unwrap();
+    let document = crate::documents::open(
+        app.session.okf_analysis(),
+        app.session.uml_analysis(),
+        "use-cases",
+    )
+    .unwrap();
+
+    assert_eq!(
+        document.view.identity(),
+        DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::UseCase)
+    );
+}
+
 struct ResettingAnchorView(Rc<RefCell<ViewAnchor>>);
 
 impl DocView for ResettingAnchorView {

@@ -1150,6 +1150,50 @@ mod tests {
     }
 
     #[test]
+    fn stale_use_case_reconciliation_keeps_the_structural_view_allocation() {
+        let identity = DocViewIdentity::StructuralDiagram(crate::StructuralVisualKind::UseCase);
+        let old_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let replacement_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
+        let mut current = prepared_with_identity(
+            "use-cases",
+            NavCategory::Diagram,
+            identity,
+            Rc::new(Cell::new(0)),
+            old_lifecycle.clone(),
+        );
+        current.view = Box::new(ProbeView {
+            identity,
+            reconcile_policy: ViewReconcilePolicy::RetainLiveState,
+            chrome_calls: Rc::new(Cell::new(0)),
+            lifecycle: old_lifecycle.clone(),
+        });
+        let current_id = current.tab_id;
+        let mut host = DocumentHost::default();
+        host.apply_command(DocumentCommand::Open {
+            document: current,
+            persistent: true,
+        });
+
+        let mut replacement = prepared_with_identity(
+            "use-cases",
+            NavCategory::Diagram,
+            identity,
+            Rc::new(Cell::new(0)),
+            replacement_lifecycle.clone(),
+        );
+        replacement.tab_id = current_id;
+        host.reconcile_documents(vec![Some(replacement)]);
+
+        assert_eq!(host.active_id(), current_id);
+        assert_eq!(
+            host.views.get(&current_id).map(|view| view.identity()),
+            Some(identity)
+        );
+        assert_eq!(old_lifecycle.borrow().on_deactivate, 0);
+        assert_eq!(replacement_lifecycle.borrow().on_activate, 0);
+    }
+
+    #[test]
     fn retained_diagram_view_is_replaced_when_declared_identity_changes() {
         let old_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));
         let replacement_lifecycle = Rc::new(RefCell::new(ProbeLifecycle::default()));

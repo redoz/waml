@@ -306,7 +306,7 @@ mod tests {
         SourceToggleView::new(
             crate::class_diagram_view::ClassDiagramView::new(
                 "orders".into(),
-                waml::model::DiagramKind::Class,
+                crate::StructuralVisualKind::Class,
             ),
             "orders".into(),
             crate::markdown_hosts::EditorMarkdownAssetHost::shared(

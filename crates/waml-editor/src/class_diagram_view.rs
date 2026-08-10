@@ -206,8 +206,7 @@ pub struct ClassDiagramView {
 }
 
 impl ClassDiagramView {
-    pub fn new(key: String, visual_kind: impl Into<StructuralVisualKind>) -> ClassDiagramView {
-        let visual_kind = visual_kind.into();
+    pub fn new(key: String, visual_kind: StructuralVisualKind) -> ClassDiagramView {
         ClassDiagramView {
             key,
             visual_kind,
@@ -1093,6 +1092,7 @@ mod tests {
     use crate::tool_dock::{Tool, ToolDockAction};
     use crate::view_bar::{ViewBarAction, ViewOption};
     use crate::view_history::ViewAnchor;
+    use crate::StructuralVisualKind as DiagramKind;
     use makepad_widgets::{
         live_id, Area, Cx, DrawList, LiveId, RectArea, ScriptApply, ScriptNew, ScriptVm,
         ScriptVmCx, Trigger, Walk, Widget, WidgetNode, WidgetRef, WidgetUid,
@@ -1100,7 +1100,7 @@ mod tests {
     use std::collections::HashSet;
     use std::path::Path;
     use waml::analysis::ProjectionFreshness;
-    use waml::model::{CardinalityVisibility, DiagramKind};
+    use waml::model::CardinalityVisibility;
     use waml::uml::DiagramDisplaySet;
 
     struct TestBody {

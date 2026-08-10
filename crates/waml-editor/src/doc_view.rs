@@ -742,7 +742,7 @@ mod tests {
     fn concrete_views_declare_the_existing_chrome() {
         let diagram = crate::class_diagram_view::ClassDiagramView::new(
             "d".into(),
-            waml::model::DiagramKind::Class,
+            crate::StructuralVisualKind::Class,
         );
         let classifier = crate::classifier_preview_view::ClassifierPreviewView::new(
             "order".into(),

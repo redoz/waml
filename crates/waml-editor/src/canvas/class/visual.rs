@@ -7,15 +7,6 @@ pub enum StructuralVisualKind {
     UseCase,
 }
 
-impl From<waml::model::DiagramKind> for StructuralVisualKind {
-    fn from(kind: waml::model::DiagramKind) -> Self {
-        match kind {
-            waml::model::DiagramKind::UseCase => Self::UseCase,
-            _ => Self::Class,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeVisualKind {
     ClassCard,
