@@ -27,6 +27,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Upgrade documents to the current WAML format.
+    Upgrade {
+        /// File or directory to upgrade.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Report required changes without writing them.
+        #[arg(long)]
+        check: bool,
+    },
     /// Parse and validate documents, reporting diagnostics.
     Check {
         /// Files or directories to check.
@@ -359,6 +368,7 @@ enum BundleFormat {
 fn main() {
     let cli = Cli::parse();
     let code = match cli.command {
+        Command::Upgrade { path, check } => run_upgrade(&path, check),
         Command::Check {
             paths,
             stdin,
@@ -521,6 +531,51 @@ fn main() {
         } => run_export_site(&dir, &out, force),
     };
     std::process::exit(code);
+}
+
+fn run_upgrade(path: &Path, check: bool) -> i32 {
+    let paths = [path.to_path_buf()];
+    let bundle = match io::read_physical_bundle(&paths) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let plan = match upgrade::plan_upgrade(&bundle.files) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("waml: upgrade failed: {error:?}");
+            return 1;
+        }
+    };
+
+    if check {
+        print_upgrade_reports(&plan.applied);
+        return i32::from(!plan.applied.is_empty());
+    }
+    if plan.applied.is_empty() {
+        return 0;
+    }
+
+    let touched = match io::write_back(&bundle.root, &bundle.files, &plan.files) {
+        Ok(touched) => touched,
+        Err(error) => {
+            eprintln!("waml: could not write upgrade: {error}");
+            return 1;
+        }
+    };
+    print_upgrade_reports(&plan.applied);
+    for warning in touched.iter().filter(|entry| entry.starts_with("warning:")) {
+        eprintln!("{warning}");
+    }
+    0
+}
+
+fn print_upgrade_reports(applied: &[upgrade::AppliedMigration]) {
+    for report in applied {
+        println!("{}: {} - {}", report.path, report.id, report.description);
+    }
 }
 
 fn run_index(path: &Path, check: bool) -> i32 {

@@ -1,5 +1,23 @@
 use std::process::Command;
 
+struct UpgradeTempDir(std::path::PathBuf);
+
+impl UpgradeTempDir {
+    fn new() -> Self {
+        Self(tmp())
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for UpgradeTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_waml"))
 }
@@ -34,6 +52,196 @@ fn tmp() -> std::path::PathBuf {
     }
     std::fs::create_dir_all(&d).unwrap();
     d
+}
+
+const LEGACY_ACTIVITY: &str = "---\ntype: uml.Activity\n---\n# Activity diagram\n";
+const LEGACY_CLASS: &str = "---\ntype: Diagram\n---\n# Class diagram\n";
+
+#[test]
+fn upgrade_defaults_to_the_current_directory() {
+    let temp = UpgradeTempDir::new();
+    let path = temp.path().join("activity.md");
+    std::fs::write(&path, LEGACY_ACTIVITY).unwrap();
+
+    let output = bin()
+        .arg("upgrade")
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "---\ntype: uml.ActivityDiagram\n---\n# Activity diagram\n"
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "activity.md: canonical-uml-diagram-types - Use canonical UML diagram document types\n"
+    );
+}
+
+#[test]
+fn upgrade_path_changes_every_candidate_and_reports_each_path_once() {
+    let temp = UpgradeTempDir::new();
+    let activity = temp.path().join("activity.md");
+    let class = temp.path().join("class.md");
+    std::fs::write(&activity, LEGACY_ACTIVITY).unwrap();
+    std::fs::write(&class, LEGACY_CLASS).unwrap();
+
+    let output = bin().arg("upgrade").arg(temp.path()).output().unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        std::fs::read_to_string(activity).unwrap(),
+        "---\ntype: uml.ActivityDiagram\n---\n# Activity diagram\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(class).unwrap(),
+        "---\ntype: uml.ClassDiagram\n---\n# Class diagram\n"
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        concat!(
+            "activity.md: canonical-uml-diagram-types - Use canonical UML diagram document types\n",
+            "class.md: canonical-uml-diagram-types - Use canonical UML diagram document types\n",
+        )
+    );
+}
+
+#[test]
+fn upgrade_check_reports_needed_changes_without_writing_then_reports_clean() {
+    let temp = UpgradeTempDir::new();
+    let path = temp.path().join("activity.md");
+    std::fs::write(&path, LEGACY_ACTIVITY).unwrap();
+
+    let needed = bin()
+        .args(["upgrade", "--check"])
+        .arg(temp.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(needed.status.code(), Some(1), "{needed:?}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), LEGACY_ACTIVITY);
+    assert_eq!(
+        String::from_utf8(needed.stdout).unwrap(),
+        "activity.md: canonical-uml-diagram-types - Use canonical UML diagram document types\n"
+    );
+
+    let upgraded = bin().arg("upgrade").arg(temp.path()).output().unwrap();
+    assert!(upgraded.status.success(), "{upgraded:?}");
+    let canonical = std::fs::read(&path).unwrap();
+
+    let clean = bin()
+        .arg("upgrade")
+        .arg(temp.path())
+        .arg("--check")
+        .output()
+        .unwrap();
+
+    assert!(clean.status.success(), "{clean:?}");
+    assert!(clean.stdout.is_empty(), "{clean:?}");
+    assert_eq!(std::fs::read(&path).unwrap(), canonical);
+}
+
+#[test]
+fn upgrade_ambiguous_bundle_writes_nothing() {
+    let temp = UpgradeTempDir::new();
+    let files = [
+        (
+            "mixed.md",
+            "---\ntype: Diagram\n---\n# Mixed\n\n## Members\n- [Use case](./use-case.md)\n- [Class](./class.md)\n",
+        ),
+        (
+            "use-case.md",
+            "---\ntype: uml.UseCase\n---\n# Use case\n",
+        ),
+        ("class.md", "---\ntype: uml.Class\n---\n# Class\n"),
+    ];
+    for (path, text) in files {
+        std::fs::write(temp.path().join(path), text).unwrap();
+    }
+
+    let output = bin().arg("upgrade").arg(temp.path()).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    for (path, text) in files {
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(path)).unwrap(),
+            text
+        );
+    }
+}
+
+#[test]
+fn upgrade_strict_validation_error_writes_nothing() {
+    let temp = UpgradeTempDir::new();
+    let invalid =
+        "---\ntype: uml.ClassDiagram\n---\n# Invalid\n\n## Members\n- [Missing](./missing.md)\n";
+    std::fs::write(temp.path().join("activity.md"), LEGACY_ACTIVITY).unwrap();
+    std::fs::write(temp.path().join("invalid.md"), invalid).unwrap();
+
+    let output = bin().arg("upgrade").arg(temp.path()).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("activity.md")).unwrap(),
+        LEGACY_ACTIVITY
+    );
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("invalid.md")).unwrap(),
+        invalid
+    );
+}
+
+#[test]
+fn upgrade_rolls_back_every_file_after_a_later_write_failure() {
+    let temp = UpgradeTempDir::new();
+    let activity = temp.path().join("activity.md");
+    let class = temp.path().join("class.md");
+    std::fs::write(&activity, LEGACY_ACTIVITY).unwrap();
+    std::fs::write(&class, LEGACY_CLASS).unwrap();
+
+    let output = bin()
+        .arg("upgrade")
+        .arg(temp.path())
+        .env("WAML_CLI_TEST_FAIL_RENAME_AT", "4")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(std::fs::read_to_string(activity).unwrap(), LEGACY_ACTIVITY);
+    assert_eq!(std::fs::read_to_string(class).unwrap(), LEGACY_CLASS);
+    assert!(output.stdout.is_empty(), "{output:?}");
+}
+
+#[test]
+fn upgrade_cleanup_warning_keeps_success_after_commit() {
+    let temp = UpgradeTempDir::new();
+    let path = temp.path().join("activity.md");
+    std::fs::write(&path, LEGACY_ACTIVITY).unwrap();
+
+    let output = bin()
+        .arg("upgrade")
+        .arg(temp.path())
+        .env("WAML_CLI_TEST_FAIL_CLEANUP", "1")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "---\ntype: uml.ActivityDiagram\n---\n# Activity diagram\n"
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "activity.md: canonical-uml-diagram-types - Use canonical UML diagram document types\n"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("warning: all changes committed"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("injected cleanup failure"), "{stderr}");
 }
 
 // Scenario: CLI-004

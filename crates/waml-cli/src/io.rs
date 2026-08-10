@@ -363,6 +363,10 @@ pub fn write_back(
     old: &[(String, String)],
     new: &[(String, String)],
 ) -> std::io::Result<Vec<String>> {
+    #[cfg(debug_assertions)]
+    if let Some(ops) = DebugFaultFs::from_env()? {
+        return write_back_with_ops(root, old, new, &ops);
+    }
     write_back_with_ops(root, old, new, &RealFs)
 }
 
@@ -379,6 +383,56 @@ struct RealFs;
 impl FsOps for RealFs {
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
         fs::rename(from, to)
+    }
+}
+
+#[cfg(debug_assertions)]
+struct DebugFaultFs {
+    fail_rename_at: Option<u64>,
+    rename_calls: AtomicU64,
+    fail_cleanup: bool,
+}
+
+#[cfg(debug_assertions)]
+impl DebugFaultFs {
+    fn from_env() -> std::io::Result<Option<Self>> {
+        let fail_rename_at = std::env::var("WAML_CLI_TEST_FAIL_RENAME_AT")
+            .ok()
+            .map(|value| {
+                value.parse::<u64>().map_err(|error| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("invalid WAML_CLI_TEST_FAIL_RENAME_AT: {error}"),
+                    )
+                })
+            })
+            .transpose()?;
+        let fail_cleanup = std::env::var_os("WAML_CLI_TEST_FAIL_CLEANUP").is_some();
+        Ok((fail_rename_at.is_some() || fail_cleanup).then(|| Self {
+            fail_rename_at,
+            rename_calls: AtomicU64::new(0),
+            fail_cleanup,
+        }))
+    }
+}
+
+#[cfg(debug_assertions)]
+impl FsOps for DebugFaultFs {
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        let call = self.rename_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.fail_rename_at == Some(call) {
+            return Err(std::io::Error::other(format!(
+                "injected rename failure at call {call}"
+            )));
+        }
+        fs::rename(from, to)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+        if self.fail_cleanup {
+            return Err(std::io::Error::other("injected cleanup failure"));
+        }
+        fs::remove_dir_all(path)
     }
 }
 
@@ -695,11 +749,23 @@ fn rollback(
         match entry {
             JournalEntry::Updated { target, backup } => {
                 let displaced = staging.join(format!("rollback-{index}"));
-                ops.rename(target, &displaced).map_err(|error| {
-                    rollback_error("displace updated target", target, &displaced, error)
-                })?;
+                let displaced = match ops.rename(target, &displaced) {
+                    Ok(()) => Some(displaced),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => {
+                        return Err(rollback_error(
+                            "displace updated target",
+                            target,
+                            &displaced,
+                            error,
+                        ));
+                    }
+                };
                 if let Err(restore) = ops.rename(backup, target) {
-                    let reinstall = ops.rename(&displaced, target);
+                    let Some(displaced) = displaced.as_ref() else {
+                        return Err(rollback_error("restore backup", backup, target, restore));
+                    };
+                    let reinstall = ops.rename(displaced, target);
                     return Err(match reinstall {
                         Ok(()) => rollback_error("restore backup", backup, target, restore),
                         Err(reinstall) => std::io::Error::new(
@@ -709,7 +775,7 @@ fn rollback(
                                 rollback_error("restore backup", backup, target, restore),
                                 rollback_error(
                                     "reinstall displaced target",
-                                    &displaced,
+                                    displaced,
                                     target,
                                     reinstall
                                 )
@@ -717,7 +783,9 @@ fn rollback(
                         ),
                     });
                 }
-                trash.push(displaced);
+                if let Some(displaced) = displaced {
+                    trash.push(displaced);
+                }
             }
             JournalEntry::Added { target } => {
                 let displaced = staging.join(format!("rollback-{index}"));
