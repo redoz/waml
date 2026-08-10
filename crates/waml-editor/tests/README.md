@@ -142,16 +142,17 @@ The screenshots are not a substitute for temporal interaction verification.
 ### Use-case diagram baselines
 
 The `screenshots/use-case` directory contains native, HiDPI-correct captures of
-the three shipped use-case views. Capture each diagram from `docs/waml` with an
-explicit `-Diagram` and `-Title` argument, then verify the committed PNG files:
+the three shipped use-case views. The check launches each exact diagram with a
+unique title, captures its child process, and compares dimensions and pixels:
 
 ```powershell
 rtk pwsh -File scripts/check-use-case-diagram-screenshots.ps1
 ```
 
-The check requires all three named 1280 x 840 PNG files and rejects missing,
-truncated, or likely blank captures. Review pixel changes visually before you
-update a baseline.
+The default changed-pixel limit is `0.001`. To accept an intentional visual
+change, review a native run first, then replace only the three manifest-owned
+baselines with `-Update`. A missing source, wrong title declaration, missing
+baseline, dimension change, or excessive pixel difference fails the check.
 In one native session, exercise pan, wheel zoom, pinch, scene/selection fits,
 selection/deselection, expansion, inspector selection, context menu, the full
 drag/dwell/retarget/preview/commit/cancel flow, scene refresh with camera

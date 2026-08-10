@@ -1,5 +1,37 @@
 use waml_ui_test::{waml_ui_test, DiagramName, ViewKind, WamlApp};
 
+const USE_CASE_SCREENSHOTS: [(&str, &str, &str); 3] = [
+    (
+        "docs/waml/use-cases/views/editor-workflows.md",
+        "Editor Workflows",
+        "screenshots/use-case/editor-workflows.png",
+    ),
+    (
+        "docs/waml/use-cases/views/browser-and-publishing-workflows.md",
+        "Browser and Publishing Workflows",
+        "screenshots/use-case/browser-and-publishing-workflows.png",
+    ),
+    (
+        "docs/waml/use-cases/views/tooling-workflows.md",
+        "Tooling Workflows",
+        "screenshots/use-case/tooling-workflows.png",
+    ),
+];
+
+#[test]
+fn use_case_screenshot_manifest() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for (source, title, baseline) in USE_CASE_SCREENSHOTS {
+        let source_text = std::fs::read_to_string(workspace.join(source)).unwrap();
+        assert!(source_text.contains("type: uml.UseCaseDiagram"));
+        assert!(source_text.contains(&format!("title: {title}")));
+        assert!(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join(baseline)
+            .is_file());
+    }
+}
+
 #[waml_ui_test(workspace = Mini)]
 fn open_and_switch_document_views(mut app: WamlApp) {
     app.expect_workspace_open()

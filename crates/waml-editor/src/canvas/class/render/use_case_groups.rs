@@ -40,7 +40,9 @@ pub(super) fn draw(
     draws: &mut ClassDrawResources<'_>,
 ) {
     let zoom = snapshot.viewport.camera.zoom;
-    for group in &snapshot.scene.use_case_groups {
+    // Solved groups are postorder (children before parent). Paint in reverse so
+    // an opaque parent boundary cannot cover its nested band frames/headings.
+    for group in snapshot.scene.use_case_groups.iter().rev() {
         for command in commands(group) {
             match command {
                 UseCaseGroupCommand::Frame { bounds } => {

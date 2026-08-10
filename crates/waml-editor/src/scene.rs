@@ -1200,18 +1200,20 @@ fn port_geometry(node: &SceneNode) -> waml::solve::route::PortGeometry {
 }
 
 fn project_use_case_scene_groups(diagram: &Diagram, solved: &[SolvedGroup]) -> Vec<SceneGroup> {
-    fn roles(groups: &[DiagramGroup], out: &mut Vec<waml::model::DiagramGroupRole>) {
+    fn semantics(groups: &[DiagramGroup], out: &mut Vec<(waml::model::DiagramGroupRole, String)>) {
         for group in groups {
-            out.push(group.role);
-            roles(&group.children, out);
+            semantics(&group.children, out);
+            // resolve::Builder pushes group boxes after their children, and
+            // constrain::compile preserves that postorder in group_meta.
+            out.push((group.role, group.name.clone()));
         }
     }
-    let mut ordered_roles = Vec::new();
-    roles(&diagram.groups, &mut ordered_roles);
+    let mut ordered_semantics = Vec::new();
+    semantics(&diagram.groups, &mut ordered_semantics);
     solved
         .iter()
-        .zip(ordered_roles)
-        .map(|(group, role)| SceneGroup {
+        .zip(ordered_semantics)
+        .map(|(group, (role, title))| SceneGroup {
             role,
             bounds: group.rect,
             heading_bounds: Rect {
@@ -1220,7 +1222,7 @@ fn project_use_case_scene_groups(diagram: &Diagram, solved: &[SolvedGroup]) -> V
                 w: group.rect.w,
                 h: waml::solve::label::GROUP_TITLE_BAND.min(group.rect.h),
             },
-            title: group.title.clone(),
+            title: Some(title),
             depth: group.depth,
         })
         .collect()
@@ -1457,6 +1459,49 @@ pub fn bounding_box(scene: &Scene) -> Option<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_editor_workflow_scene_preserves_nested_band_roles_and_titles() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/waml");
+        let model = crate::load::load_model(&root).unwrap();
+        let diagram = model
+            .diagrams
+            .iter()
+            .find(|diagram| diagram.title == "Editor Workflows")
+            .unwrap();
+        let (scene, _) = build_scene(
+            &model,
+            diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        );
+        let groups: Vec<_> = scene
+            .use_case_groups
+            .iter()
+            .map(|group| (group.role, group.title.as_deref()))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![
+                (
+                    waml::model::DiagramGroupRole::ExternalActors,
+                    Some("External actors")
+                ),
+                (
+                    waml::model::DiagramGroupRole::Band,
+                    Some("Create and change")
+                ),
+                (
+                    waml::model::DiagramGroupRole::Band,
+                    Some("Find and understand")
+                ),
+                (
+                    waml::model::DiagramGroupRole::SystemBoundary,
+                    Some("WAML editor boundary")
+                ),
+            ]
+        );
+    }
     use crate::load;
     use std::path::Path;
 
