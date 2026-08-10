@@ -43,15 +43,24 @@ pub struct AppliedMigration {
 
 pub struct UpgradePlan {
     pub files: Vec<(String, String)>,
+    /// One report per changed path. The first migration that changes a path
+    /// supplies its stable ID and description.
     pub applied: Vec<AppliedMigration>,
 }
 
 pub fn plan_upgrade(files: &[(String, String)]) -> Result<UpgradePlan, UpgradeError> {
+    plan_upgrade_with_migrations(files, MIGRATIONS)
+}
+
+pub(crate) fn plan_upgrade_with_migrations(
+    files: &[(String, String)],
+    migrations: &[Migration],
+) -> Result<UpgradePlan, UpgradeError> {
     let mut candidate = SourceBundle::try_from_pairs(files.iter().cloned())
         .map_err(|error| UpgradeError::InvalidSource(error.to_string()))?;
-    let mut applied = Vec::new();
+    let mut applied = BTreeMap::new();
 
-    for migration in MIGRATIONS {
+    for migration in migrations {
         if !(migration.detect)(&candidate)? {
             continue;
         }
@@ -61,11 +70,13 @@ pub fn plan_upgrade(files: &[(String, String)]) -> Result<UpgradePlan, UpgradeEr
         let paths = before.keys().chain(after.keys()).collect::<BTreeSet<_>>();
         for path in paths {
             if before.get(path) != after.get(path) {
-                applied.push(AppliedMigration {
-                    path: path.clone(),
-                    id: migration.id,
-                    description: migration.description,
-                });
+                applied
+                    .entry(path.clone())
+                    .or_insert_with(|| AppliedMigration {
+                        path: path.clone(),
+                        id: migration.id,
+                        description: migration.description,
+                    });
             }
         }
     }
@@ -85,14 +96,28 @@ pub fn plan_upgrade(files: &[(String, String)]) -> Result<UpgradePlan, UpgradeEr
 
     Ok(UpgradePlan {
         files: prepared.source().to_pairs(),
-        applied,
+        applied: applied.into_values().collect(),
     })
 }
 
 fn detect_canonical_uml_diagram_types(source: &SourceBundle) -> Result<bool, UpgradeError> {
-    Ok(!inspect_legacy_diagram_types(source)
-        .map_err(UpgradeError::Inspection)?
-        .is_empty())
+    const LEGACY_TYPES: &[&str] = &[
+        "Diagram",
+        "uml.Activity",
+        "uml.StateMachine",
+        "uml.Sequence",
+    ];
+
+    for document in source.documents() {
+        for legacy_type in LEGACY_TYPES {
+            if replace_frontmatter_string_scalar(document.text(), "type", legacy_type, legacy_type)
+                .is_ok_and(|replacement| replacement.is_some())
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn transform_canonical_uml_diagram_types(
