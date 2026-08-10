@@ -17,6 +17,7 @@ use crate::dock::{DockMotion, DockState, ResponsiveDockLayout};
 use crate::document::NavCategory;
 use crate::document_host::{DocumentCommand, DocumentHost};
 use crate::editor_session::{EditorSession, ExternalReplacement, SaveCompletion, SaveTicket};
+use crate::find_strip::{FindModel, FindStripAction, FindStripWidgetRefExt};
 use crate::fps_meter::FpsMeter;
 use crate::icon_button::IconButtonWidgetRefExt;
 #[cfg(not(target_arch = "wasm32"))]
@@ -28,12 +29,14 @@ use crate::popup::base::PopupResult;
 use crate::popup::palette::PaletteSectionModel;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::project_settings::DockWidths;
+use crate::search_session::SearchSession;
 use crate::search_state::SearchState;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
 use makepad_widgets::*;
 use std::path::{Path, PathBuf};
 use waml::view::chain::ChainLimits;
 use waml::view::mask::ProjectionMask;
+use waml_markdown_editor::syntax::{TextRange, TextSize};
 use waml_markdown_editor::EditorEmphasis;
 
 script_mod! {
@@ -828,6 +831,14 @@ pub struct App {
     /// `apply_pending_reveal` (Task 9, spec §DocView::reveal).
     #[rust]
     pending_reveal: Option<PendingReveal>,
+    /// The Ctrl+F find strip's document-scoped session (Task 13, spec §Find
+    /// strip): the active document's live hits plus a cursor, pre-scoped by
+    /// `open_find_strip` to the concept path that was active when the strip
+    /// opened. `None` while the strip is closed. Task 14 adds a separate
+    /// bundle-wide `session_search` for F3 traversal across documents; this
+    /// one never leaves the document it was opened against.
+    #[rust]
+    find: Option<SearchSession>,
     /// The Ctrl+K palette's last-pushed sections (Task 11), retained so a row
     /// commit's opaque `p:{section}:{row}` id (`popup::palette::PalettePopup::commit`)
     /// can be resolved back to the `PaletteRow` it was built from -- the
@@ -1322,6 +1333,15 @@ impl AppMain for App {
         // `FlatList`'s two row templates -- an unregistered child silently
         // becomes a dead, invisible node.
         crate::search_results_view::script_mod(vm);
+        // `FindStrip` is mounted directly by App's own live layout (inside
+        // `center_stack`'s `find_strip_wrap`), so it must register before the
+        // App DSL is evaluated by `self::script_mod` below -- the same eager
+        // `mod.widgets.*` resolution order rule as `PanelSplitter`/
+        // `DocumentHeader` above. Left unregistered (as it was through Task
+        // 12), the `find_strip := FindStrip{ .. }` node silently becomes
+        // dead and invisible: no draw, no hit, `ids!(find_strip)` empty --
+        // gate-green but Ctrl+F would open nothing.
+        crate::find_strip::script_mod(vm);
         // Registered so the design surface compiles into the crate, but never
         // mounted in the live UI -- it is viewable only via the
         // `node_editor_harness` bin (see `node_design_editor.rs`).

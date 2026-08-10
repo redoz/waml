@@ -5,9 +5,9 @@
 
 use waml::search::{Hit as SearchHit, QueryScope};
 
-/// Unused outside its own tests until `App` gains a `session_search` field
-/// and F3/Shift+F3 wiring consumes `advance` (Task 14).
-#[allow(dead_code)]
+/// `App` owns two of these: `find` (Task 13, document-scoped, driven by the
+/// Ctrl+F strip) and, from Task 14, a bundle-wide `session_search` for F3
+/// traversal across documents.
 pub struct SearchSession {
     pub query: String,
     pub hits: Vec<SearchHit>,
@@ -16,7 +16,6 @@ pub struct SearchSession {
 }
 
 impl SearchSession {
-    #[allow(dead_code)]
     pub fn new(query: String, hits: Vec<SearchHit>, scope: QueryScope) -> Self {
         SearchSession {
             query,
@@ -29,7 +28,6 @@ impl SearchSession {
     /// Advance the cursor one step, wrapping at either end. `None` when
     /// there are no hits to walk (the cursor is cleared, never left
     /// dangling on a list that just emptied).
-    #[allow(dead_code)]
     pub fn advance(&mut self, forward: bool) -> Option<&SearchHit> {
         if self.hits.is_empty() {
             self.cursor = None;

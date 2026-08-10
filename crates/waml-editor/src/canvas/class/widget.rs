@@ -1014,11 +1014,8 @@ impl ClassDiagramSurface {
     /// applied as one more dimming factor at node-draw time
     /// (`render::nodes::node_spotlight_dimmed`), exactly where the existing
     /// focus-mute already dims unrelated nodes. `None` clears. Repaints.
-    ///
-    /// No production caller yet -- the search session that drives this from
-    /// live query results lands in a later plan task (mirrors `RevealTarget`
-    /// in `doc_view.rs`).
-    #[allow(dead_code)]
+    /// Driven by the find strip's live session (Task 13, `app/actions.rs`'s
+    /// `apply_find_highlights`/`close_find_strip`).
     pub fn set_search_spotlight(&mut self, cx: &mut Cx, lit: Option<HashSet<String>>) {
         self.selection.set_search_spotlight(lit);
         self.draw_bg.redraw(cx);

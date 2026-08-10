@@ -6,16 +6,9 @@
 //! `FindModel` is the pure counter model (`"3 of 12"`), unit-tested without a
 //! `Cx`. `FindStrip` is the widget: a query `TextInput`, a counter `Label`,
 //! and next/previous/close `IconButton`s. It only reports what happened
-//! (`FindStripAction`, read via [`FindStrip::action`]) -- re-querying
-//! `SearchState`, driving highlights/spotlight, and Ctrl+F wiring land in
-//! Task 13; this task only creates the surface and proves it compiles +
-//! renders (mirrors `search_results_view.rs`/`popup/palette.rs`'s Task
-//! 8/10 creation-before-wiring shape).
-
-// The shell doesn't call `open`/`close`/`set_model` or read `action` until
-// Task 13 wires Ctrl+F -- several `pub` methods here have no in-crate caller
-// yet, same reason `popup/palette.rs` carries this for Task 11.
-#![allow(dead_code)]
+//! (`FindStripAction`, read via [`FindStrip::action`]) -- `App` (Task 13,
+//! `app/actions.rs`) re-queries `SearchState`, drives highlights/spotlight,
+//! and wires Ctrl+F to `open`.
 
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
@@ -51,6 +44,12 @@ impl FindModel {
 
     /// Advance the cursor one step, wrapping at either end. A no-op (cursor
     /// stays `None`) when there is nothing to walk.
+    ///
+    /// No production caller: `App` (Task 13, `app/actions.rs`) rebuilds a
+    /// fresh `FindModel` from `SearchSession`'s own cursor after every
+    /// `advance` instead of stepping this model in place -- the session is
+    /// the single ordering (spec: no second cursor to drift out of sync).
+    #[allow(dead_code)]
     pub fn step(&mut self, forward: bool) {
         if self.total == 0 {
             self.current = None;
@@ -136,6 +135,10 @@ pub struct FindStrip {
     /// `is_open()` reads true the instant `open` sets it (before any redraw).
     #[rust]
     open: bool,
+    /// Set by `open`, consumed by the next `draw_walk` (see its doc comment
+    /// for why focusing can't happen inside `open` itself).
+    #[rust]
+    pending_focus: bool,
 }
 
 impl Widget for FindStrip {
@@ -159,7 +162,23 @@ impl Widget for FindStrip {
             .widget(cx, ids!(close_button))
             .as_icon_button()
             .set_icon(cx, Icon::CircleX);
-        self.view.draw_walk(cx, scope, walk)
+        let step = self.view.draw_walk(cx, scope, walk);
+        // `query_input`'s draw-quad area only exists once it has actually
+        // drawn -- a `View` with `visible: false` skips `draw_walk`
+        // entirely (never measures/draws its children), so `open`'s own
+        // synchronous `.area()` read, right after flipping `visible` on the
+        // strip's very first open, would always see `Area::Empty` and focus
+        // nothing. Defer the focus grab to here, the first `draw_walk`
+        // AFTER `open` -- by now `self.view.draw_walk` above has drawn
+        // `query_input` for real, so its area is finally valid.
+        if self.pending_focus {
+            let area = self.view.widget(cx, ids!(query_input)).area();
+            if !area.is_empty() {
+                cx.set_key_focus(area);
+                self.pending_focus = false;
+            }
+        }
+        step
     }
 }
 
@@ -209,23 +228,30 @@ impl WidgetMatchEvent for FindStrip {
 }
 
 impl FindStrip {
-    /// Show the strip and grab keyboard focus in its query input.
+    /// Show the strip and arm the query input to grab keyboard focus on the
+    /// next `draw_walk` (see that method's doc comment: `visible: false`
+    /// skips drawing entirely, so `query_input` has no real area to focus
+    /// yet on the very first open -- flipping `visible` here doesn't draw it
+    /// synchronously).
     pub fn open(&mut self, cx: &mut Cx) {
         self.open = true;
+        self.pending_focus = true;
         self.view.set_visible(cx, true);
-        let area = self.view.widget(cx, ids!(query_input)).area();
-        cx.set_key_focus(area);
         self.view.redraw(cx);
     }
 
     /// Hide the strip and release keyboard focus.
     pub fn close(&mut self, cx: &mut Cx) {
         self.open = false;
+        self.pending_focus = false;
         self.view.set_visible(cx, false);
         cx.set_key_focus(Area::Empty);
         self.view.redraw(cx);
     }
 
+    /// No production caller yet -- Task 14's Esc handling ("clear ...  the
+    /// find strip if open") is the first one that needs to ask.
+    #[allow(dead_code)]
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -264,6 +290,7 @@ impl FindStripRef {
     }
 
     /// See [`FindStrip::is_open`].
+    #[allow(dead_code)]
     pub fn is_open(&self) -> bool {
         self.borrow().is_some_and(|inner| inner.is_open())
     }

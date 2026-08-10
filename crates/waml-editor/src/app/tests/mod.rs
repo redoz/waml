@@ -17,6 +17,7 @@ use waml_markdown_editor::widget::MarkdownEditorWidgetRefExt;
 use waml_syntax::{SourceText, TextChange, TextRange, TextSize};
 
 mod completion;
+mod find_strip;
 mod menus;
 mod navigation;
 mod palette;

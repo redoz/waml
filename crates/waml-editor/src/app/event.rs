@@ -85,8 +85,9 @@ impl App {
                     crate::shortcuts::SearchCommand::OpenPalette => {
                         self.open_palette(cx);
                     }
-                    // Task 13: Ctrl+F wiring lands there.
-                    crate::shortcuts::SearchCommand::OpenFindStrip => {}
+                    crate::shortcuts::SearchCommand::OpenFindStrip => {
+                        self.open_find_strip(cx);
+                    }
                     // Task 14: F3/Shift+F3 session traversal lands there.
                     crate::shortcuts::SearchCommand::NextHit
                     | crate::shortcuts::SearchCommand::PreviousHit => {}

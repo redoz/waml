@@ -13,13 +13,15 @@ enum ObserverHandler {
     PopupResults,
     ConflictList,
     Inspector,
+    FindStrip,
 }
 
-const OBSERVER_ORDER: [ObserverHandler; 4] = [
+const OBSERVER_ORDER: [ObserverHandler; 5] = [
     ObserverHandler::CaptionAndDocks,
     ObserverHandler::PopupResults,
     ObserverHandler::ConflictList,
     ObserverHandler::Inspector,
+    ObserverHandler::FindStrip,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +98,7 @@ impl App {
                 ObserverHandler::PopupResults => self.observe_popup_results(cx, actions),
                 ObserverHandler::ConflictList => self.observe_conflict_list(cx, actions),
                 ObserverHandler::Inspector => self.observe_inspector(cx, actions),
+                ObserverHandler::FindStrip => self.observe_find_strip(cx, actions),
             }
         }
 
@@ -495,6 +498,178 @@ impl App {
                 self.open_search_results(cx, &query);
             }
             PaletteRowKind::NoResults { .. } | PaletteRowKind::Indexing => {}
+        }
+    }
+
+    /// Ctrl+F (`shortcuts::SearchCommand::OpenFindStrip`, Task 13): open the
+    /// find strip pre-scoped to the active document (spec §Find strip).
+    /// Opening over a tab with no searchable surface (folder view, no
+    /// concept) leaves the session hitless -- the strip still opens, reading
+    /// "0 results" once a query is typed, never a crash.
+    pub(super) fn open_find_strip(&mut self, cx: &mut Cx) {
+        let scope = waml::search::QueryScope {
+            document: self.active_document_path(),
+        };
+        self.find = Some(SearchSession::new(String::new(), Vec::new(), scope));
+        self.ui
+            .widget(cx, ids!(find_strip))
+            .as_find_strip()
+            .open(cx);
+        self.push_find_model(cx);
+    }
+
+    /// The active tab's bundle-relative document path -- the same shape as
+    /// `Hit::document`/`QueryScope::document` -- or `None` when nothing is
+    /// open or the active tab carries no concept (folder view, start
+    /// screen).
+    fn active_document_path(&self) -> Option<String> {
+        let concept_id = self.documents.active_tab()?.concept_id()?;
+        self.session
+            .snapshot()
+            .source
+            .document_by_concept_id(concept_id)
+            .map(|document| document.path().as_str().to_string())
+    }
+
+    /// Route the find strip's own actions (Task 13): a keystroke re-queries
+    /// `SearchState` scoped to the document the strip opened against;
+    /// Next/Previous step the session cursor; Close ends it and clears
+    /// whatever highlight/spotlight state it left on the document.
+    fn observe_find_strip(&mut self, cx: &mut Cx, actions: &Actions) {
+        let Some(action) = self
+            .ui
+            .widget(cx, ids!(find_strip))
+            .as_find_strip()
+            .action(actions)
+        else {
+            return;
+        };
+        match action {
+            FindStripAction::QueryChanged(query) => self.requery_find(cx, query),
+            FindStripAction::Next => self.step_find(cx, true),
+            FindStripAction::Previous => self.step_find(cx, false),
+            FindStripAction::Close => self.close_find_strip(cx),
+        }
+    }
+
+    /// Re-run the strip's query against `SearchState`, scoped to whatever
+    /// document `open_find_strip` pinned. A fresh `SearchSession` per
+    /// keystroke means the cursor always resets to `None` on a query change
+    /// (spec: no stale "3 of 12" surviving into a different result set).
+    fn requery_find(&mut self, cx: &mut Cx, query: String) {
+        let scope = self
+            .find
+            .as_ref()
+            .map(|session| session.scope.clone())
+            .unwrap_or_default();
+        let hits = self.search.query(&query, &scope);
+        self.find = Some(SearchSession::new(query, hits, scope));
+        self.apply_find_highlights(cx);
+        self.push_find_model(cx);
+    }
+
+    /// Push the strip's `FindModel` counter from the live session's hit
+    /// count and cursor. Called after every session change (open, requery,
+    /// step) so the widget's "3 of 12" readout never lags the session.
+    fn push_find_model(&mut self, cx: &mut Cx) {
+        let Some(session) = &self.find else {
+            return;
+        };
+        let model = FindModel {
+            query: session.query.clone(),
+            total: session.hits.len(),
+            current: session.cursor,
+        };
+        self.ui
+            .widget(cx, ids!(find_strip))
+            .as_find_strip()
+            .set_model(cx, &model);
+    }
+
+    /// Light every current match at once (spec §Find strip): text hits go to
+    /// the markdown editor surface as search-match decoration, model-element
+    /// hits go to the canvas as a spotlight set. Whichever surface isn't
+    /// showing simply holds state nothing draws -- cheap and always correct
+    /// once that surface becomes active. Called on every query change; a
+    /// step (`Next`/`Previous`) narrows the markdown editor's highlight back
+    /// down to the current span via the shared `DocView::reveal` path
+    /// instead (`step_find`), the same single-target reveal the results tab
+    /// and F3 use.
+    fn apply_find_highlights(&mut self, cx: &mut Cx) {
+        let Some(session) = &self.find else {
+            return;
+        };
+        let mut text_ranges = Vec::new();
+        let mut model_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for hit in &session.hits {
+            match &hit.target {
+                waml::search::HitTarget::TextSpan { start, end, .. } => {
+                    if let Ok(range) = TextRange::new(TextSize::new(*start), TextSize::new(*end)) {
+                        text_ranges.push(range);
+                    }
+                }
+                waml::search::HitTarget::ModelElement { key } => {
+                    model_keys.insert(key.clone());
+                }
+            }
+        }
+
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        body.markdown_editor()
+            .set_search_highlights(cx, text_ranges);
+
+        let spotlight = (!model_keys.is_empty()).then_some(model_keys);
+        if let Some(mut canvas) = body
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.set_search_spotlight(cx, spotlight);
+        }
+    }
+
+    /// Advance the session cursor and reveal the landed hit through the
+    /// shared `DocView::reveal` path (spec: "Next/Previous call the active
+    /// view's reveal") -- a text hit scrolls+highlights its span, a model
+    /// hit selects and pans the canvas to it (composing with the persistent
+    /// spotlight `apply_find_highlights` already set). A no-op when the
+    /// session is empty; `reveal_active` itself no-ops when nothing is
+    /// active, so this never crashes over a tab with no searchable surface.
+    fn step_find(&mut self, cx: &mut Cx, forward: bool) {
+        let hit = match &mut self.find {
+            Some(session) => session.advance(forward).cloned(),
+            None => None,
+        };
+        self.push_find_model(cx);
+        let Some(hit) = hit else {
+            return;
+        };
+        let target = match hit.target {
+            waml::search::HitTarget::TextSpan { start, end, .. } => {
+                crate::doc_view::RevealTarget::TextSpan { start, end }
+            }
+            waml::search::HitTarget::ModelElement { key } => {
+                crate::doc_view::RevealTarget::ModelElement { key }
+            }
+        };
+        self.documents.reveal_active(cx, &self.ui, &target);
+    }
+
+    /// End the find session: hide the strip, drop it, and clear whatever
+    /// highlight/spotlight it left on the document (spec §Find strip:
+    /// "Close clears highlights AND the spotlight").
+    fn close_find_strip(&mut self, cx: &mut Cx) {
+        self.find = None;
+        self.ui
+            .widget(cx, ids!(find_strip))
+            .as_find_strip()
+            .close(cx);
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        body.markdown_editor().clear_search_highlights(cx);
+        if let Some(mut canvas) = body
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.set_search_spotlight(cx, None);
         }
     }
 
@@ -1547,6 +1722,7 @@ mod tests {
                 ObserverHandler::PopupResults,
                 ObserverHandler::ConflictList,
                 ObserverHandler::Inspector,
+                ObserverHandler::FindStrip,
             ]
         );
     }
