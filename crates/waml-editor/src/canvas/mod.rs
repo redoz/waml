@@ -2,6 +2,10 @@ use makepad_widgets::*;
 
 mod behavior;
 mod class;
+pub use class::use_case_geometry::{
+    measure_node, ActorGeometry, MeasuredNodeGeometry, MonoTextMeasurer, Point, Segment,
+    TextMeasurer, UseCaseGeometry,
+};
 pub use class::visual::{
     GroupVisualKind, NodeVisualKind, StructuralVisualKind, StructuralVisualPolicy,
 };

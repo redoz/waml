@@ -1196,6 +1196,7 @@ impl NodeDesignEditor {
             key: "preview".to_string(),
             title: "Order".to_string(),
             element_type: waml::model::ElementType::Uml(waml::model::UmlMetaclass::Class),
+            geometry: Default::default(),
             stereotypes,
             stereotype_visible: true,
             attributes,

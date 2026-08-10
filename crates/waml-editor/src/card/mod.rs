@@ -734,6 +734,7 @@ mod tests {
             key: "k".to_string(),
             title: title.to_string(),
             element_type: ElementType::Uml(UmlMetaclass::Class),
+            geometry: Default::default(),
             stereotypes,
             stereotype_visible: true,
             attributes,

@@ -817,6 +817,7 @@ mod tests {
             key: key.to_string(),
             title: key.to_string(),
             element_type: ElementType::Uml(UmlMetaclass::Class),
+            geometry: Default::default(),
             stereotypes: Vec::new(),
             stereotype_visible: true,
             attributes: Vec::new(),

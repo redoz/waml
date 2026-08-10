@@ -37,6 +37,7 @@ pub struct SceneNode {
     /// by `canvas.rs`'s renderer (via `node_style`) to pick an accent color
     /// and optional stereotype guillemet label (U9 mock).
     pub element_type: ElementType,
+    pub geometry: crate::MeasuredNodeGeometry,
     /// User-declared stereotypes (e.g. `aggregateRoot`), rendered as the card's
     /// «guillemet» eyebrow above the title. Distinct from the metaclass-derived
     /// `node_style::stereotype_label` (which handles «interface» etc.); this is
@@ -244,6 +245,7 @@ pub fn project_scene_node_with_display(
             .clone()
             .unwrap_or_else(|| node.key.clone()),
         element_type: node.ty.clone(),
+        geometry: Default::default(),
         stereotypes: displayed_stereotypes(&node.stereotypes, display),
         stereotype_visible: display.show_stereotype,
         attributes: attribute_rows(model, &node.key, display),
@@ -937,13 +939,34 @@ pub fn build_scene(
     let node_of: BTreeMap<&str, &waml::model::Node> =
         model.nodes.iter().map(|n| (n.key.as_str(), n)).collect();
 
+    let visual_kind = match diagram.kind {
+        waml::model::DiagramKind::UseCase => crate::StructuralVisualKind::UseCase,
+        _ => crate::StructuralVisualKind::Class,
+    };
+    let policy = crate::StructuralVisualPolicy { kind: visual_kind };
+    let text = crate::MonoTextMeasurer;
+    let measured: BTreeMap<&str, crate::MeasuredNodeGeometry> = node_of
+        .iter()
+        .map(|(key, node)| (*key, crate::measure_node(policy, node, &text)))
+        .collect();
+
     let mut sizes = crate::sizing::size_map(model, diagram, expanded);
     for (key, size) in &mut sizes {
         if let Some(node) = node_of.get(key.as_str()).copied() {
             let mut projected = project_scene_node_with_display(model, node, &display);
             projected.expanded = expanded.contains(key);
-            let (w, h) = crate::card::card_size(&projected, &crate::card::mono_sheet());
-            *size = Size { w, h };
+            if let Some(bounds) = measured
+                .get(key.as_str())
+                .and_then(|geometry| geometry.bounds())
+            {
+                *size = Size {
+                    w: bounds.w,
+                    h: bounds.h,
+                };
+            } else {
+                let (w, h) = crate::card::card_size(&projected, &crate::card::mono_sheet());
+                *size = Size { w, h };
+            }
         }
     }
     let model_edges = drawable_edges(model);
@@ -986,6 +1009,7 @@ pub fn build_scene(
                 key: key.clone(),
                 title: key.clone(),
                 element_type: ElementType::Unknown(String::new()),
+                geometry: Default::default(),
                 stereotypes: Vec::new(),
                 stereotype_visible: display.show_stereotype,
                 attributes: Vec::new(),
@@ -1003,7 +1027,10 @@ pub fn build_scene(
                 expanded: false,
             },
         };
-        node.rect = *rect;
+        if let Some(geometry) = measured.get(key.as_str()) {
+            node.geometry = geometry.translated(rect.x, rect.y);
+        }
+        node.rect = node.geometry.bounds().unwrap_or(*rect);
         node.emphasized = flags.emphasized;
         node.collapsed = flags.collapsed;
         node.expanded = expanded.contains(key);
@@ -1077,7 +1104,7 @@ pub fn build_scene(
 
     (
         Scene {
-            visual_kind: Default::default(),
+            visual_kind,
             display,
             nodes,
             groups: solved.groups,
@@ -1119,6 +1146,7 @@ pub fn build_focus_scene(model: &Model, key: &str) -> Scene {
         key: key.to_string(),
         title,
         element_type: node.ty.clone(),
+        geometry: Default::default(),
         stereotypes: displayed_stereotypes(&node.stereotypes, &display),
         stereotype_visible: display.show_stereotype,
         attributes,

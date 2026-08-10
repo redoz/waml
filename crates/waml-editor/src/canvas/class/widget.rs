@@ -1510,6 +1510,7 @@ mod tests {
                 key: key.into(),
                 title: title.into(),
                 element_type: ElementType::Uml(UmlMetaclass::Class),
+                geometry: Default::default(),
                 stereotypes: Vec::new(),
                 stereotype_visible: true,
                 attributes: Vec::new(),

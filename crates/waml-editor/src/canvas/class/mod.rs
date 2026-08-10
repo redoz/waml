@@ -2,6 +2,7 @@ mod interaction;
 mod placement;
 mod render;
 mod selection;
+pub(crate) mod use_case_geometry;
 pub(crate) mod visual;
 mod widget;
 
