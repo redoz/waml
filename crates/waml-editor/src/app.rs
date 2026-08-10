@@ -71,6 +71,7 @@ script_mod! {
     use mod.widgets.MarkdownViewer
     use mod.widgets.FolderListView
     use mod.widgets.SearchResultsListView
+    use mod.widgets.FindStrip
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -503,6 +504,24 @@ script_mod! {
                                     search_results_list := SearchResultsListView{
                                         width: Fill
                                         height: Fill
+                                    }
+                                }
+                                // Find strip: a thin bar docked over the TOP of
+                                // the open document, pre-scoped to it (spec
+                                // §Find strip). Lives inside `center_stack` (not
+                                // the whole window) so it overlays the active
+                                // surface only, never the tree/inspector.
+                                // `FindStrip` itself starts `visible: false` and
+                                // draws nothing until `FindStrip::open` (Task 13
+                                // wires Ctrl+F); this wrapper only positions it.
+                                find_strip_wrap := View{
+                                    width: Fill
+                                    height: Fill
+                                    align: Align{x: 0.5, y: 0.0}
+                                    find_strip := FindStrip{
+                                        width: Fit
+                                        height: Fit
+                                        margin: Inset{top: 8.0}
                                     }
                                 }
                                 // Tool dock: left edge of the CENTER, vertically

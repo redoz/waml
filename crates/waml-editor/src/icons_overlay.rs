@@ -145,6 +145,10 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
         &[ie!(ArrowDown, "Expanded result group header (collapse)")],
     ),
     (
+        "FIND STRIP",
+        &[ie!(ArrowUp, "Find strip: previous match (Shift+Enter)")],
+    ),
+    (
         "VIEW BAR",
         &[
             ie!(ZoomIn, "Zoom in"),
