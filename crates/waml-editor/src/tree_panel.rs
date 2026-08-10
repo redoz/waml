@@ -821,6 +821,14 @@ impl Widget for ProjectTree {
         let body = self.view.view(cx, ids!(tree_scroll)).area().rect(cx);
         self.layout.set_viewport(body.pos, body.size);
 
+        // Clip everything we hand-draw to the body rect. The rows are drawn
+        // absolutely AFTER `tree_scroll`'s turtle closed, so that view's own
+        // clip never reaches them: a scrolled row straddling the top edge would
+        // otherwise paint over the control strip above the panel. The cull
+        // below only drops rows entirely outside the body; this trims the
+        // partially-visible ones at the edge.
+        cx.push_clip_rect(body);
+
         let mut reveal_was_drawn = false;
         for (index, row) in self.layout.rows().iter().enumerate() {
             let rect = self.layout.row_rect(index);
@@ -900,6 +908,8 @@ impl Widget for ProjectTree {
         if let Some(thumb) = self.layout.thumb_rect() {
             self.draw_scrollbar.draw_abs(cx, thumb);
         }
+
+        cx.pop_clip_rect();
 
         // Scroll-into-view is now a scroll offset, not a trigger sent at the
         // fork's area: the core owns the offset, so ask it directly.
