@@ -6,7 +6,7 @@
 //! `default_view` is now `Option<ViewDecl>` to match the middleware-chain
 //! design: `Chain`-shaped defaults, not a bespoke view enum.
 
-use crate::view::decl::{ViewDecl, ViewEntry};
+use crate::view::decl::ViewDecl;
 
 /// One known profile: its exact name, its optional default view chain, and
 /// the folder glyph a directory draws when it declares this profile.
@@ -31,19 +31,14 @@ pub(crate) fn shipped_profiles() -> Vec<ProfileDef> {
     }]
 }
 
-/// The `uml` extension's shipped profile: `uml-domain` folders default to the
-/// `["uml"]` chain when they declare no `view:` of their own. `line: 0` marks
-/// the entry as never authored in any file -- a diagnostic spanning an
-/// inherited default must not point at a line the author never wrote.
+/// The `uml` extension's shipped profile. `uml-domain` folders draw the box
+/// glyph (`folder_icon`) from their own declaration; they no longer carry a
+/// default `view:` chain -- a `uml-domain` folder with no `view:` resolves the
+/// root-only chain, and its box comes from `folder_row`, not a stage.
 pub(crate) fn uml_profiles() -> Vec<ProfileDef> {
     vec![ProfileDef {
         name: "uml-domain",
-        default_view: Some(ViewDecl {
-            entries: vec![ViewEntry {
-                raw: "uml".to_string(),
-                line: 0,
-            }],
-        }),
+        default_view: None,
         folder_icon: "box",
     }]
 }
@@ -117,15 +112,7 @@ mod tests {
     fn shipped_profiles_resolve_by_name() {
         let uml = profile("uml-domain").expect("uml-domain is shipped");
         assert_eq!(uml.name, "uml-domain");
-        let chain_names: Vec<&str> = uml
-            .default_view
-            .as_ref()
-            .expect("uml-domain has a default view")
-            .entries
-            .iter()
-            .map(|e| e.raw.as_str())
-            .collect();
-        assert_eq!(chain_names, vec!["uml"]);
+        assert_eq!(uml.default_view, None);
         assert_eq!(uml.folder_icon, "box");
 
         let okf = profile("okf").expect("okf is shipped");

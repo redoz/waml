@@ -958,10 +958,11 @@ mod tests {
 
     #[test]
     fn masking_one_stage_keeps_its_siblings_and_diagnoses_nothing() {
-        let registry = core_registry_for_tests();
+        let registry = registry_with_doubles();
         let idx = index();
-        let mask = ProjectionMask::from_names(["uml"]);
-        let (chain, diags) = Chain::build(&decl(&["index", "uml"]), &registry, &idx, &mask);
+        let mask = ProjectionMask::from_names(["adding"]);
+        let (chain, diags) =
+            Chain::build(&decl(&["pass-through", "adding"]), &registry, &idx, &mask);
         assert!(
             diags.is_empty(),
             "a masked stage is a reader's choice, not an author error: {diags:?}",
@@ -975,20 +976,20 @@ mod tests {
 
     #[test]
     fn a_surviving_stage_keeps_the_id_it_would_have_had_unmasked() {
-        let registry = core_registry_for_tests();
+        let registry = registry_with_doubles();
         let idx = index();
         let unmasked = Chain::build(
-            &decl(&["index", "uml"]),
+            &decl(&["pass-through", "adding"]),
             &registry,
             &idx,
             &ProjectionMask::default(),
         )
         .0;
         let masked = Chain::build(
-            &decl(&["index", "uml"]),
+            &decl(&["pass-through", "adding"]),
             &registry,
             &idx,
-            &ProjectionMask::from_names(["index"]),
+            &ProjectionMask::from_names(["pass-through"]),
         )
         .0;
         assert_eq!(
@@ -2293,7 +2294,7 @@ mod tests {
 
         assert_eq!(registry.owner("hide"), Some("core"));
         assert_eq!(registry.owner("index"), Some("core"));
-        assert_eq!(registry.owner("uml"), Some("uml"));
+        assert_eq!(registry.owner("uml"), None);
         assert_eq!(registry.owner("nonexistent"), None);
 
         let owners = registry.owners();
@@ -2303,8 +2304,8 @@ mod tests {
             .collect();
         assert_eq!(
             shape,
-            vec![("core", vec!["hide", "index"]), ("uml", vec!["uml"])],
-            "owners() is the ONE source the editor's popup is built from",
+            vec![("core", vec!["hide", "index"])],
+            "owners() is the ONE source the editor's popup is built from; uml owns no stage now",
         );
     }
 

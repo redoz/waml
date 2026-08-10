@@ -1826,7 +1826,7 @@ mod tests {
         }
 
         #[test]
-        fn uml_domain_profile_default_reaches_the_surface_end_to_end() {
+        fn a_uml_domain_folder_row_draws_the_box_glyph() {
             use crate::extension::{CoreExt, UmlExt};
             use crate::view::row::{IconId, RowTarget};
 
@@ -1850,7 +1850,7 @@ mod tests {
             );
             assert!(
                 diags.is_empty(),
-                "the uml-domain profile default resolves the [\"uml\"] chain cleanly"
+                "a uml-domain folder with no view: resolves the root-only chain cleanly"
             );
 
             let dir = bundle.directory("/").unwrap().clone();
@@ -1869,6 +1869,7 @@ mod tests {
                 .iter()
                 .find(|row| matches!(&row.target, RowTarget::Folder(addr) if addr == "/pkg"))
                 .expect("pkg folder row present");
+            // `folder_row` stamps the box from the child's declared uml-domain profile.
             assert_eq!(pkg_row.icon.as_ref().map(IconId::as_str), Some("box"));
         }
     }

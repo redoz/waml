@@ -146,8 +146,8 @@ fn every_core_extension_has_a_paired_editor_extension_by_name() {
 /// Task 13: the icon-analogue of
 /// `every_surface_id_resolvable_by_a_registered_chain_has_a_registered_factory`
 /// -- every `IconId` name a registered middleware can stamp on a row
-/// (`RowKind::as_icon_name`'s ten shipped names, `RootView`'s `"book"`, and
-/// `UmlView`'s `"box"`) has a registered `Icon` in `icon_table()`. A stage
+/// (`RowKind::as_icon_name`'s ten shipped names, and `RootView::folder_row`'s
+/// `"book"` and `"box"`) has a registered `Icon` in `icon_table()`. A stage
 /// stamping a name nothing resolves must fail the gate, not degrade silently
 /// (as an `UnknownIcon` warning) in front of a reader.
 #[test]

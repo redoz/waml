@@ -49,14 +49,12 @@ impl CoreExtension for CoreExt {
     }
 }
 
-/// The `uml` extension: the `uml` decorator middleware, plus the shipped
-/// `uml-domain` profile. Kept out of `CoreExt::profiles` so that ownership is
-/// legible -- a profile is declared by the extension that also registers the
-/// middleware its default chain names. Note this is *not* a runtime gate:
-/// [`crate::profile::profile`] name-checks against the whole
-/// [`SHIPPED_EXTENSIONS`] union, so `uml-domain` resolves wherever waml is
-/// compiled in. Gating it on a per-registry basis would need the registry
-/// threaded through the parse path, which no caller does today.
+/// The `uml` extension: contributes the shipped `uml-domain` profile. It
+/// registers NO view middleware -- a `uml-domain` folder's box glyph is a
+/// property of the profile (`ProfileDef::folder_icon`) that
+/// `RootView::folder_row` stamps directly, so no decorator stage is needed.
+/// `profile()` still name-checks `uml-domain` against the whole
+/// `SHIPPED_EXTENSIONS` union.
 pub struct UmlExt;
 
 impl CoreExtension for UmlExt {
@@ -65,10 +63,7 @@ impl CoreExtension for UmlExt {
     }
 
     fn middleware(&self) -> Vec<(&'static str, MiddlewareFactory)> {
-        vec![(
-            "uml",
-            Arc::new(|| Box::new(crate::view::uml::UmlView) as Box<dyn Projection>),
-        )]
+        Vec::new()
     }
 
     fn profiles(&self) -> Vec<ProfileDef> {
@@ -177,35 +172,26 @@ mod tests {
     }
 
     #[test]
-    fn core_and_uml_extensions_register_with_no_duplicate_names() {
+    fn core_and_uml_extensions_register_with_no_duplicate_names_and_uml_adds_no_middleware() {
         let registry = MiddlewareRegistry::from_extensions(&[&CoreExt, &UmlExt])
             .expect("core and uml share no middleware names");
 
         let index_rows = run_ids(&registry);
         assert!(index_rows.is_empty());
 
-        let (chain, diagnostics) = Chain::build(
-            &decl_one("uml"),
-            &registry,
-            &index(),
-            &crate::view::mask::ProjectionMask::default(),
+        assert!(
+            UmlExt.middleware().is_empty(),
+            "the uml extension registers no view middleware anymore",
+        );
+        assert_eq!(
+            registry.owner("uml"),
+            None,
+            "no `uml` middleware name is registered",
         );
         assert!(
-            diagnostics.is_empty(),
-            "the `uml` name must resolve through a registry built from UmlExt"
+            crate::profile::profile("uml-domain").is_some(),
+            "the uml-domain profile still ships",
         );
-        let directory = dir();
-        let bundle = okf::Bundle::default();
-        let params = Frontmatter::default();
-        let descend = |_: &okf::Directory| Chain::default();
-        let ctx = ProjectionCtx {
-            dir: &directory,
-            bundle: &bundle,
-            params: &params,
-            descend: &descend,
-        };
-        // Empty directory: the chain runs, nothing decorates.
-        assert!(chain.run(&ctx, ChainLimits::default()).rows.is_empty());
     }
 
     struct DupA;

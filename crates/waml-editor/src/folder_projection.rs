@@ -50,7 +50,6 @@ pub fn maskable_names(registry: &MiddlewareRegistry) -> Vec<(&str, Vec<&str>)> {
 pub fn extension_label(owner: &str) -> String {
     match owner {
         "core" => "Built-in".to_string(),
-        "uml" => "UML".to_string(),
         _ => capitalise(owner),
     }
 }
@@ -64,7 +63,6 @@ pub fn extension_label(owner: &str) -> String {
 pub fn stage_label(name: &str) -> String {
     match name {
         "hide" => "Hide marked items".to_string(),
-        "uml" => "Package icons".to_string(),
         // Never offered (`maskable_names` filters it), listed so the mapping
         // covers every stage the core registry declares.
         "index" => "Folder listing".to_string(),
@@ -374,7 +372,7 @@ mod tests {
             "`index` is the terminal stage; masking it cannot remove the listing",
         );
         assert!(offered.contains(&"hide"));
-        assert!(offered.contains(&"uml"));
+        // `uml` is no longer a middleware stage -- the box glyph is a profile property.
     }
 
     #[test]

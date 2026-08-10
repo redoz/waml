@@ -11,6 +11,5 @@ pub mod projection;
 pub(crate) mod root;
 pub mod row;
 pub mod surface;
-pub mod uml;
 
 pub use root::{ROOT_VIEW_NAME, ROOT_VIEW_OWNER};
