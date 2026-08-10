@@ -188,7 +188,11 @@ source toggle already has for markdown.
   projection; depth cap honored; each surface maps to the expected `SectionBody`; an
   unknown declared surface degrades to `Link` and emits the `UnknownSurface` warning; a
   concept whose presentation fails to compile becomes a `Link`, not a blank.
-- **Typed UI scenarios** (`waml-ui-test`, the existing harness): opening a `view: book`
+- **Headless typed shell tests** (`crates/waml-editor/src/app/tests/`, which run inside
+  `cargo test --workspace`) carry the behavior below. The GPU `waml-ui-test` harness is
+  feature-gated and Linux-headless-only, so it cannot gate work done on the Windows dev
+  host; journey scenarios there are a follow-up for a session with a Linux runner, not a
+  Phase 1 deliverable. What must be pinned either way: opening a `view: book`
   folder shows `book_surface` and hides its siblings; a tree click on a section scrolls the
   book and opens no tab; a tree click outside the book still opens a tab; scrolling the
   book marks the tree; "open full" on a diagram embed opens that concept's tab.
