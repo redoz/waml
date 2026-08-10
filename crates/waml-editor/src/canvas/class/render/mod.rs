@@ -1,7 +1,6 @@
 mod edges;
 mod groups;
 mod labels;
-mod metrics;
 mod nodes;
 mod overlays;
 mod primitives;
@@ -13,8 +12,14 @@ use super::{placement::PlacementSnapshot, selection::SelectionSnapshot};
 use crate::{canvas::viewport::ViewportSnapshot, scene::Scene};
 use makepad_widgets::Cx2d;
 
-pub(super) use metrics::LineworkMetrics;
 pub(super) use primitives::ClassDrawResources;
+
+/// Glyph extents, in lpx at zoom 1. These are LENGTHS, not stroke weights, so
+/// they are not on the pen ladder (spec, "Decisions"): they keep the values the
+/// deleted `LineworkMetrics` carried.
+pub(super) const MARKER_SIZE: f64 = 10.0;
+pub(super) const NUB_SIZE: f64 = 6.0;
+pub(super) const GROUP_DASH_PERIOD: f32 = 6.0;
 
 /// Cached per-node card measurements. `card::measure` runs a full taffy tree
 /// build + layout, so re-measuring every node every frame dominated draw cost
@@ -43,7 +48,6 @@ impl CardMeasureCache {
 
 pub(super) struct RenderSnapshot<'a> {
     pub(super) scene: &'a Scene,
-    pub(super) linework: LineworkMetrics,
     pub(super) viewport: ViewportSnapshot,
     pub(super) selection: SelectionSnapshot,
     pub(super) placement: PlacementSnapshot,

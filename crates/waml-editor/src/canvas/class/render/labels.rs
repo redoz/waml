@@ -77,7 +77,7 @@ pub(super) fn draw_edge_labels(
                     edge,
                     label.slot,
                     viewport.camera.zoom,
-                    snapshot.linework.marker_size,
+                    super::MARKER_SIZE,
                 )
             })
             .unwrap_or_default();

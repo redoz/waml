@@ -114,11 +114,9 @@ pub(super) fn draw_groups(
                 draws.group_border.draw_abs(cx, framed);
             }
             GroupDraw::Dashed => {
-                draws.group_dashed.set_uniform(
-                    cx,
-                    live_id!(dash_px),
-                    &[snapshot.linework.group_dash_period],
-                );
+                draws
+                    .group_dashed
+                    .set_uniform(cx, live_id!(dash_px), &[super::GROUP_DASH_PERIOD]);
                 draws.group_dashed.set_uniform(
                     cx,
                     live_id!(pen_w),

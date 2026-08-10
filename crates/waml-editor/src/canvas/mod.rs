@@ -11,7 +11,6 @@ pub use class::visual::{
     StructuralVisualPolicy,
 };
 mod geometry;
-mod linework;
 // `pub`: `crates/waml-editor/src/bin/node_editor_harness.rs` registers
 // `canvas::pen::script_mod` directly (see `lib.rs`'s `pub mod canvas`).
 pub mod pen;

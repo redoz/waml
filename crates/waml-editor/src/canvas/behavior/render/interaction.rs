@@ -7,7 +7,6 @@ use super::super::hit::BehaviorTarget;
 use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
 use super::{fill_band, BehaviorPalette, Emphasis, ARROW_HEAD};
 use crate::accent;
-use crate::canvas::linework::BehaviorLineworkMetrics;
 use crate::canvas::pen::{self, Pen};
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
@@ -52,7 +51,6 @@ pub(in crate::canvas::behavior) struct InteractionDrawResources<'a> {
     pub(super) text: &'a mut DrawText,
     pub(super) text_heading: &'a mut DrawText,
     pub(super) palette: BehaviorPalette,
-    pub(super) linework: BehaviorLineworkMetrics,
 }
 
 /// Destroyed-lifeline X extent, in lpx at zoom 1. A glyph size, not a stroke
@@ -182,9 +180,9 @@ fn draw_dashed_segment(
     pen: Pen,
 ) {
     // CAD hatching: the dash pattern is stepped in SCREEN space, so its period
-    // stays put at any zoom -- exactly as `BehaviorLineworkMetrics` holds the
-    // stroke width. Stepping in world space instead stretched the dashes with
-    // the camera and turned the lifelines solid when zoomed in.
+    // stays put at any zoom -- exactly as the pen ladder holds the stroke
+    // width. Stepping in world space instead stretched the dashes with the
+    // camera and turned the lifelines solid when zoomed in.
     let sa = edge_point_to_screen(camera, rect_pos, a);
     let sb = edge_point_to_screen(camera, rect_pos, b);
     let dx = sb.x - sa.x;
@@ -235,7 +233,7 @@ fn draw_stem(
     draw_dashed_segment(cx, &camera, rect_pos, draws.fill, top, bottom, pen);
 
     if lifeline.destroyed {
-        let size = draws.linework.glyph(X_MARK_SIZE);
+        let size = X_MARK_SIZE;
         let center = edge_point_to_screen(&camera, rect_pos, bottom);
         let screen = Rect {
             pos: dvec2(center.x - size * 0.5, center.y - size * 0.5),
@@ -270,13 +268,11 @@ fn draw_head(
     draws.head.set_uniform(
         cx,
         live_id!(stroke_scale),
-        &[draws.linework.frame_stroke_scale * HEAD_FRAME_WEIGHT],
+        &[viewport.camera.stroke_scale() * HEAD_FRAME_WEIGHT],
     );
-    draws.head.set_uniform(
-        cx,
-        live_id!(screen_space),
-        &[draws.linework.frame_screen_space],
-    );
+    // Always 1.0 on a canvas: drops the zoom-driven stroke-alpha lift and
+    // shadow floor that only the non-canvas `AccentFrame` consumers want.
+    draws.head.set_uniform(cx, live_id!(screen_space), &[1.0]);
     let hi = accent_with_alpha(head_accent, HEAD_BORDER_HI_ALPHA);
     let lo = accent_with_alpha(head_accent, HEAD_BORDER_LO_ALPHA);
     draws
@@ -455,7 +451,7 @@ fn draw_arrowhead(
     }
     let unit = dvec2(dir.x / len, dir.y / len);
     let perp = dvec2(-unit.y, unit.x);
-    let head = draws.linework.glyph(ARROW_HEAD);
+    let head = ARROW_HEAD;
     let back = dvec2(tip.x - unit.x * head, tip.y - unit.y * head);
     let left = dvec2(back.x + perp.x * head * 0.5, back.y + perp.y * head * 0.5);
     let right = dvec2(back.x - perp.x * head * 0.5, back.y - perp.y * head * 0.5);

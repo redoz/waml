@@ -369,6 +369,44 @@ mod tests {
         assert_derives_from_cad_pen(src, "AccentFrame");
     }
 
+    /// Nothing in either canvas may declare a pen on the old base. This catches
+    /// the regression the per-name lists above cannot: a NEW pen, added later,
+    /// on `DrawColor`, that this plan's per-name lists have no way to know
+    /// about. `ConstraintVeil` is a sanctioned exception (a wash-and-hatch
+    /// fill, not a stroke) and is pinned by its own test. `EdgeDashed`,
+    /// `UseCaseEllipse` and `ActorLine` are the Use Case notation's pens,
+    /// added on `origin/main` after this plan was authored: each computes its
+    /// own CONTINUOUS distance-to-shape antialiasing (a fractional stroke_w
+    /// blend, no `pen_dev` device-pixel quantisation), which is a different
+    /// rendering policy than CadPen's, not a forgotten migration -- so they
+    /// are out of this plan's scope, not a regression this guard should trip
+    /// on.
+    #[test]
+    fn no_canvas_pen_is_left_on_draw_color() {
+        const OUT_OF_SCOPE: [&str; 4] = [
+            "ConstraintVeil ",
+            "EdgeDashed ",
+            "UseCaseEllipse ",
+            "ActorLine ",
+        ];
+        for (label, src) in [
+            ("class/widget.rs", include_str!("class/widget.rs")),
+            ("behavior/mod.rs", include_str!("behavior/mod.rs")),
+        ] {
+            for line in src.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("mod.draw.") {
+                    if rest.contains("= mod.draw.DrawColor{") {
+                        assert!(
+                            OUT_OF_SCOPE.iter().any(|name| rest.starts_with(name)),
+                            "{label}: `{line}` must derive from CadPen"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     use makepad_widgets::dvec2;
 
     /// `band` is a CANVAS, never the ink: it must be at least one device pixel

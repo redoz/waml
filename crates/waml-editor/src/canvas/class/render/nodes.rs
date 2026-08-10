@@ -1,6 +1,6 @@
 use super::{
     primitives::ClassDrawResources, relations::relations_for_visibility, CardMeasureCache,
-    LineworkMetrics, RenderSnapshot,
+    RenderSnapshot,
 };
 use crate::canvas::pen::{self, Pen};
 use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
@@ -72,13 +72,11 @@ pub(super) fn draw_nodes(
     draws.node.set_uniform(
         cx,
         live_id!(stroke_scale),
-        &[snapshot.linework.frame_stroke_scale],
+        &[snapshot.viewport.camera.stroke_scale()],
     );
-    draws.node.set_uniform(
-        cx,
-        live_id!(screen_space),
-        &[snapshot.linework.frame_screen_space],
-    );
+    // Always 1.0 on a canvas: drops the zoom-driven stroke-alpha lift and
+    // shadow floor that only the non-canvas `AccentFrame` consumers want.
+    draws.node.set_uniform(cx, live_id!(screen_space), &[1.0]);
 
     let focus_keys: HashSet<&str> = relations_for_visibility(
         &snapshot.scene.relations,
@@ -128,16 +126,7 @@ pub(super) fn draw_nodes(
             .node
             .set_uniform(cx, live_id!(grey), &[if muted { 1.0 } else { 0.0 }]);
         draws.node.draw_surface_abs(cx, screen);
-        draw_card(
-            cx,
-            screen,
-            node,
-            zoom,
-            snapshot.linework,
-            muted,
-            draws,
-            cards,
-        );
+        draw_card(cx, screen, node, zoom, muted, draws, cards);
     }
 }
 
@@ -147,7 +136,6 @@ fn draw_card(
     screen: Rect,
     node: &crate::scene::SceneNode,
     zoom: f64,
-    linework: LineworkMetrics,
     grey: bool,
     draws: &mut ClassDrawResources<'_>,
     cards: &mut CardMeasureCache,
@@ -250,7 +238,7 @@ fn draw_card(
     }
 
     if node.ports {
-        let nub = linework.nub_size;
+        let nub = super::NUB_SIZE;
         let cy = screen.pos.y + placed.size.1 * 0.5 * zoom - nub * 0.5;
         // Same grid rule as the dividers: a screen-space nub on a fractional
         // edge renders soft and a half pixel wider than its neighbour's.

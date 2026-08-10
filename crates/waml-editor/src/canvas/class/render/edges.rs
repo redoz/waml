@@ -49,12 +49,14 @@ pub(super) fn draw_edges(
     let camera = snapshot.viewport.camera;
     let rect = snapshot.viewport.view_rect;
     let pen = Pen::REGULAR;
+    // `edge_thickness` (deleted with `LineworkMetrics`) was always exactly
+    // `Pen::REGULAR.width()`, so `pen.width()` is the identical value here.
     let thickness = if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase {
         0.75
     } else {
-        snapshot.linework.edge_thickness
+        pen.width()
     };
-    let marker_size = snapshot.linework.marker_size;
+    let marker_size = super::MARKER_SIZE;
     let r_base = pen.width() * 2.0;
     let dpi = cx.current_dpi_factor();
     let elbow_min = ELBOW_MIN_DEVICE_PX / dpi;

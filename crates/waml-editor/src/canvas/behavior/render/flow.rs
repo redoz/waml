@@ -5,7 +5,6 @@
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
 use super::{fill_band, BehaviorPalette, Emphasis, ARROW_HEAD};
-use crate::canvas::linework::BehaviorLineworkMetrics;
 use crate::canvas::pen::Pen;
 use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
@@ -36,7 +35,6 @@ pub(in crate::canvas::behavior) struct FlowDrawResources<'a> {
     pub(super) text_heading: &'a mut DrawText,
     pub(super) text_body: &'a mut DrawText,
     pub(super) palette: BehaviorPalette,
-    pub(super) linework: BehaviorLineworkMetrics,
 }
 
 fn node_emphasis(
@@ -184,7 +182,7 @@ fn draw_route(
     }
     let unit = dvec2(dir.x / len, dir.y / len);
     let perp = dvec2(-unit.y, unit.x);
-    let head = draws.linework.glyph(ARROW_HEAD);
+    let head = ARROW_HEAD;
     let back = dvec2(tip.x - unit.x * head, tip.y - unit.y * head);
     let left = dvec2(back.x + perp.x * head * 0.5, back.y + perp.y * head * 0.5);
     let right = dvec2(back.x - perp.x * head * 0.5, back.y - perp.y * head * 0.5);

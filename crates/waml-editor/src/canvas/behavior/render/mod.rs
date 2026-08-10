@@ -7,7 +7,6 @@ mod interaction;
 
 use super::hit::BehaviorTarget;
 use super::scene::BehaviorScene;
-use crate::canvas::linework::BehaviorLineworkMetrics;
 use crate::canvas::pen::Pen;
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
@@ -161,9 +160,6 @@ pub(super) fn draw(
 ) {
     let rect = viewport.view_rect;
     draws.bg.draw_abs(cx, rect);
-    // One policy for every stroke in this pass: linework holds in screen space
-    // at any zoom.
-    let linework = BehaviorLineworkMetrics::for_zoom(viewport.camera.zoom);
     if !matches!(scene, BehaviorScene::Empty { .. }) {
         // The empty-state message is chrome, not scene content: it stays at its
         // DSL size. Everything else is world-space and scales with the camera.
@@ -187,7 +183,6 @@ pub(super) fn draw(
                 text_heading: &mut *draws.text_heading,
                 text_body: &mut *draws.text,
                 palette: draws.palette,
-                linework,
             };
             flow::draw(
                 cx,
@@ -219,7 +214,6 @@ pub(super) fn draw(
                 text: &mut *draws.text,
                 text_heading: &mut *draws.text_heading,
                 palette: draws.palette,
-                linework,
             };
             interaction::draw(
                 cx,
