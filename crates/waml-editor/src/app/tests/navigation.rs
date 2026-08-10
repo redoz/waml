@@ -2597,3 +2597,93 @@ fn exhausted_mouse_back_button_reports_the_same_problem_as_the_chrome_button() {
         (Some("No previous view"), None)
     );
 }
+
+fn rebuilt_search_app() -> (Cx, App) {
+    let (cx, mut app) = navigation_app();
+    let snapshot = app.session.snapshot();
+    app.search.rebuild(
+        &snapshot.source,
+        &snapshot.okf_analysis,
+        &snapshot.uml_analysis,
+    );
+    (cx, app)
+}
+
+#[test]
+fn open_search_results_opens_a_titled_tab_and_reactivates_on_a_rerun() {
+    let (mut cx, mut app) = rebuilt_search_app();
+
+    app.open_search_results(&mut cx, "order");
+
+    let tab_id = app.documents.active_id();
+    assert_eq!(app.documents.active_tab().unwrap().title, "Search: order");
+
+    // Switch away, then re-run the SAME query: it must re-activate the
+    // existing tab, never open a second one (decision 7).
+    assert!(app.transition_document(&mut cx, "sales/customer", false));
+    assert_ne!(app.documents.active_id(), tab_id);
+
+    app.open_search_results(&mut cx, "order");
+
+    assert_eq!(app.documents.active_id(), tab_id);
+    assert_eq!(
+        app.documents
+            .tabs()
+            .iter()
+            .filter(|tab| tab.title == "Search: order")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn open_search_results_for_two_queries_opens_two_distinct_tabs() {
+    let (mut cx, mut app) = rebuilt_search_app();
+
+    app.open_search_results(&mut cx, "order");
+    let order_tab = app.documents.active_id();
+    app.open_search_results(&mut cx, "customer");
+    let customer_tab = app.documents.active_id();
+
+    assert_ne!(order_tab, customer_tab);
+    assert_eq!(app.documents.tabs().len(), 2);
+}
+
+#[test]
+fn activating_a_search_result_row_navigates_to_the_hit_document_and_stashes_a_pending_reveal() {
+    let (mut cx, mut app) = rebuilt_search_app();
+    app.open_search_results(&mut cx, "order");
+
+    // What `SearchResultsView::handle` returns for a row click on a hit in
+    // "sales/order" -- exercised through `apply_view_outcome` the same way
+    // the shell's action-observer applies it.
+    let outcome = crate::doc_view::ViewOutcome {
+        navigation: Some(crate::navigation::NavigationIntent::Resolved {
+            target: crate::navigation::NavigationTarget::Document {
+                concept_id: "sales/order".to_string(),
+                surface: Some(waml::view::surface::SurfaceId::markdown()),
+                fragment: None,
+            },
+            disposition: crate::navigation::OpenDisposition::Preview,
+        }),
+        reveal: Some((
+            "sales/order".to_string(),
+            crate::doc_view::RevealTarget::TextSpan { start: 0, end: 4 },
+        )),
+        ..Default::default()
+    };
+
+    app.apply_view_outcome(&mut cx, outcome);
+
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some("sales/order")
+    );
+    assert_eq!(
+        app.pending_reveal,
+        Some(PendingReveal {
+            concept_id: "sales/order".to_string(),
+            target: crate::doc_view::RevealTarget::TextSpan { start: 0, end: 4 },
+        })
+    );
+}

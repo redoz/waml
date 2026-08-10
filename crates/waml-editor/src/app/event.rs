@@ -184,6 +184,7 @@ impl App {
     pub(super) fn handle_draw_restores(&mut self, cx: &mut Cx, event: &Event) {
         if matches!(event, Event::Draw(_)) {
             self.apply_pending_fragment(cx);
+            self.apply_pending_reveal(cx);
             self.apply_pending_anchor_restore(cx);
         }
     }

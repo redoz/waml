@@ -1,5 +1,7 @@
 use crate::doc_tabs::{DocTab, DocTabs, OpenTabs};
-use crate::doc_view::{BodyChrome, BodyWidgets, DocView, ViewOutcome, ViewReconcilePolicy};
+use crate::doc_view::{
+    BodyChrome, BodyWidgets, DocView, RevealTarget, ViewOutcome, ViewReconcilePolicy,
+};
 use crate::document::{NavCategory, OpenDocument};
 use crate::editor_session::{EditorSession, SessionChange};
 use crate::popup::base::PopupResult;
@@ -238,6 +240,61 @@ impl DocumentHost {
         }
         let _ = self.restore_active_anchor(cx, ui, session, &location.anchor);
         true
+    }
+
+    /// The search-results counterpart to `restore_location_with_asset_host`:
+    /// `document` is already built (a live-query result, not something the
+    /// surface table can produce for a `Virtual` target) so this only
+    /// activates-or-opens it, the same tab-identity rule as the generic path
+    /// (same locator -> same tab id -> `Activate`, never a duplicate).
+    /// `App::transition_to_location` calls this instead of
+    /// `restore_location_with_asset_host` for a search locator (decision 7),
+    /// so a search tab shares every other bookkeeping step (view history,
+    /// chrome sync, pending-anchor restore) with an ordinary document.
+    ///
+    /// Opens PERSISTENT, unlike the shared classifier/diagram/source preview
+    /// slot: decision 7 says "two queries are two tabs", and a preview open
+    /// would replace one query's tab with the next the moment a second query
+    /// runs (`open_preview_twice_replaces_the_single_preview_slot`) -- search
+    /// results are never a fly-by preview the way a tree-panel click is.
+    pub fn restore_location_with_document(
+        &mut self,
+        cx: &mut Cx,
+        ui: &WidgetRef,
+        session: &EditorSession,
+        location: &ViewLocation,
+        document: OpenDocument,
+    ) -> bool {
+        if let Some(id) = self.tab_id_for_locator(&location.document) {
+            self.transition(cx, ui, session, DocumentCommand::Activate(id));
+        } else {
+            self.transition(
+                cx,
+                ui,
+                session,
+                DocumentCommand::Open {
+                    document,
+                    persistent: true,
+                },
+            );
+        }
+        let _ = self.restore_active_anchor(cx, ui, session, &location.anchor);
+        true
+    }
+
+    /// Apply a search-hit reveal to the ACTIVE view (Task 9's `pending_reveal`
+    /// consumer, `App::apply_pending_reveal`). `false` when nothing is active
+    /// to reveal on -- the caller checks the active tab's identity first, so
+    /// this is a defensive fallback, not the primary guard.
+    pub fn reveal_active(&mut self, cx: &mut Cx, ui: &WidgetRef, target: &RevealTarget) -> bool {
+        let body = BodyWidgets::new(cx, ui);
+        match self.views.get_mut(&self.tabs.active) {
+            Some(view) => {
+                view.reveal(cx, &body, target);
+                true
+            }
+            None => false,
+        }
     }
 
     #[cfg(test)]

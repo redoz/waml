@@ -6,6 +6,16 @@ pub(super) struct PendingFragment {
     pub(super) fragment: String,
 }
 
+/// A search-hit reveal awaiting its target document's tab (`ViewOutcome.reveal`,
+/// spec §DocView::reveal), applied by `App::apply_pending_reveal` once the
+/// active tab's concept matches -- the same deferred-apply shape as
+/// `PendingFragment`.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PendingReveal {
+    pub(super) concept_id: String,
+    pub(super) target: crate::doc_view::RevealTarget,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PendingAnchorRestore {
     pub(super) document: crate::navigation::DocumentLocator,
@@ -33,6 +43,60 @@ impl App {
             &waml::view::row::RowTarget::Concept(concept_id.to_string()),
         );
         crate::navigation::DocumentLocator::concept(concept_id.to_string(), surface)
+    }
+
+    /// Runs `query` against the bundle-wide text index (`SearchState`) and
+    /// builds the results-tab `OpenDocument` for it (decision 7's
+    /// `documents::open_search` factory), snippet width 80 (spec §Results
+    /// tab) and `hidden` from `SearchState::hidden_documents`. Called both
+    /// by `open_search_results` (a fresh query) and by
+    /// `transition_to_location`'s search-locator arm (re-running the query
+    /// on reopen).
+    pub(super) fn build_search_document(&self, query: &str) -> crate::document::OpenDocument {
+        let hits = self
+            .search
+            .query(query, &waml::search::QueryScope::default());
+        let hidden = self
+            .search
+            .hidden_documents(self.session.okf_analysis(), self.session.uml_analysis());
+        let rows = hits
+            .into_iter()
+            .map(|hit| {
+                let snippet = self.search.snippet(&hit, 80);
+                let hidden_flag = hidden.contains(&hit.document);
+                crate::search_results_view::ResultRow {
+                    label: crate::search_results_view::label_for(&hit),
+                    hit,
+                    snippet,
+                    hidden: hidden_flag,
+                }
+            })
+            .collect();
+        crate::documents::open_search(query, rows)
+    }
+
+    /// Opens (or re-activates) `query`'s results tab through the shared
+    /// history-aware transition path (spec §Results tab; decision 7). Same
+    /// query -> same locator -> same tab id, so a re-run activates rather
+    /// than duplicates, and the tab participates in view history like any
+    /// other (Back/Forward re-runs the query via the same locator).
+    ///
+    /// Unused outside this module's own tests until the Ctrl+K palette's
+    /// escalate row and the shortcut wiring call it (Task 11).
+    #[allow(dead_code)]
+    pub(crate) fn open_search_results(&mut self, cx: &mut Cx, query: &str) {
+        let locator = crate::navigation::DocumentLocator::new(
+            waml::view::row::RowTarget::Virtual,
+            waml::view::surface::SurfaceId(format!("search:{query}")),
+        );
+        self.transition_to_location(
+            cx,
+            ViewLocation {
+                document: locator,
+                anchor: ViewAnchor::None,
+            },
+            TransitionCause::UserNavigation,
+        );
     }
 
     pub(super) fn set_navigation_message(&mut self, cx: &mut Cx, message: Option<&str>) {
@@ -398,6 +462,24 @@ impl App {
         }
     }
 
+    /// Apply a search-hit reveal once its target document's tab is active
+    /// AND drawn (`handle_draw_restores`, the same `Event::Draw` gate
+    /// `apply_pending_fragment` uses). Cleared unconditionally once checked,
+    /// same as `apply_pending_fragment` -- a reveal that lands on the wrong
+    /// tab (the user navigated away before the draw) is simply dropped, not
+    /// retried against whatever opened next.
+    pub(super) fn apply_pending_reveal(&mut self, cx: &mut Cx) {
+        let Some(pending) = self.pending_reveal.take() else {
+            return;
+        };
+        if self.documents.active_tab().map_or(true, |tab| {
+            tab.concept_id() != Some(pending.concept_id.as_str())
+        }) {
+            return;
+        }
+        self.documents.reveal_active(cx, &self.ui, &pending.target);
+    }
+
     pub(super) fn apply_pending_anchor_restore(&mut self, cx: &mut Cx) {
         let Some(pending) = self.pending_anchor_restore.take() else {
             return;
@@ -513,18 +595,39 @@ impl App {
                 }
             }
         }
-        let assets = self
-            .ensure_markdown_asset_host(crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle);
-        if !self.documents.restore_location_with_asset_host(
-            cx,
-            &self.ui,
-            &self.session,
-            &location,
-            &assets,
-            self.markdown_emphasis,
-            self.chain_limits,
-            &self.projection_mask,
-        ) {
+        // A search-results locator (decision 7) has no factory in the
+        // surface table -- `Virtual` never resolves through
+        // `open_locator_with_asset_host` -- so it is rebuilt by re-running
+        // the query, not by the generic asset-host restore path. This is
+        // also how tab history traversal reopens a search tab: Back/Forward
+        // reaches this same `transition_to_location`.
+        let restored = if let Some(query) =
+            crate::documents::search_query_from_locator(&location.document).map(str::to_string)
+        {
+            let document = self.build_search_document(&query);
+            self.documents.restore_location_with_document(
+                cx,
+                &self.ui,
+                &self.session,
+                &location,
+                document,
+            )
+        } else {
+            let assets = self.ensure_markdown_asset_host(
+                crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle,
+            );
+            self.documents.restore_location_with_asset_host(
+                cx,
+                &self.ui,
+                &self.session,
+                &location,
+                &assets,
+                self.markdown_emphasis,
+                self.chain_limits,
+                &self.projection_mask,
+            )
+        };
+        if !restored {
             return false;
         }
         if matches!(

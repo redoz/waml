@@ -4,6 +4,8 @@
 //! `query`/`snippet` and never sees the backend (`MemSearchIndex`) directly
 //! (spec §Engine boundary).
 
+use std::collections::HashSet;
+
 use waml::analysis::OkfAnalysis;
 use waml::search::extract::extract_bundle;
 use waml::search::{Hit, MemSearchIndex, QueryScope, SearchIndex, Snippet};
@@ -63,23 +65,60 @@ impl SearchState {
         self.status = TextIndexStatus::Ready;
     }
 
-    // `status`/`query`/`snippet` are this task's lib-crate seam: the results
-    // tab (Task 8/9), palette (Task 10/11) and find strip (Task 12/13) all
-    // call them, but none of those surfaces exist yet, so nothing in-crate
-    // reaches these today besides the unit tests below.
+    // `status` is this task's lib-crate seam for the palette's `indexing…`
+    // row (Task 10/11); nothing in-crate reaches it yet besides the unit
+    // test below. `query`/`snippet` are reached by `App::open_search_results`
+    // (Task 9) now.
     #[allow(dead_code)]
     pub fn status(&self) -> TextIndexStatus {
         self.status
     }
 
-    #[allow(dead_code)]
     pub fn query(&self, query: &str, scope: &QueryScope) -> Vec<Hit> {
         self.index.query(query, scope)
     }
 
-    #[allow(dead_code)]
     pub fn snippet(&self, hit: &Hit, width: usize) -> Snippet {
         self.index.snippet(hit, width)
+    }
+
+    /// Concepts present in the bundle but absent from the projected tree
+    /// (decision 9): the same document-level hiding a folder-view middleware
+    /// chain performs today (element-level masking is not modelled in v1).
+    /// Built the way `tree_panel.rs` composes its own tree
+    /// (`crate::tree::build_tree`), under the DEFAULT projection mask and
+    /// chain-descent cap -- `SearchState` carries neither the session's live
+    /// mask nor its cap, so this is a best-effort badge, not an exhaustive
+    /// one: a hit hidden only under a non-default mask is not caught here.
+    pub fn hidden_documents(
+        &self,
+        okf: &OkfAnalysis,
+        uml: &waml::uml::Analysis,
+    ) -> HashSet<String> {
+        let tree = crate::tree::build_tree(
+            okf,
+            uml,
+            "",
+            &waml::view::mask::ProjectionMask::default(),
+            waml::view::chain::ChainLimits::default(),
+        );
+        let mut visible = HashSet::new();
+        collect_concept_ids(&tree.roots, &mut visible);
+        okf.bundle
+            .concepts()
+            .iter()
+            .filter(|concept| !visible.contains(&concept.id))
+            .map(|concept| format!("{}.md", concept.id))
+            .collect()
+    }
+}
+
+fn collect_concept_ids(nodes: &[crate::tree::TreeNode], out: &mut HashSet<String>) {
+    for node in nodes {
+        if let Some(id) = &node.concept_id {
+            out.insert(id.clone());
+        }
+        collect_concept_ids(&node.children, out);
     }
 }
 
@@ -177,5 +216,25 @@ mod tests {
             &snapshot.uml_analysis,
         );
         assert_eq!(state.status(), TextIndexStatus::Ready);
+    }
+
+    #[test]
+    fn hidden_documents_reports_concepts_the_projected_tree_declines_to_list() {
+        let session = session_for(&[
+            ("index.md", "# Root\n\n* [Shop](shop/)\n"),
+            (
+                "shop/index.md",
+                "---\nview: hide\nhide: [\"shop/secret\"]\n---\n# Shop\n\n* [Order](order.md)\n* [Secret](secret.md)\n",
+            ),
+            ("shop/order.md", "---\ntype: Runbook\n---\n# Order\n"),
+            ("shop/secret.md", "---\ntype: Runbook\n---\n# Secret\n"),
+        ]);
+        let snapshot = session.snapshot();
+        let state = SearchState::empty();
+
+        let hidden = state.hidden_documents(&snapshot.okf_analysis, &snapshot.uml_analysis);
+
+        assert!(hidden.contains("shop/secret.md"));
+        assert!(!hidden.contains("shop/order.md"));
     }
 }

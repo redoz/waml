@@ -14,17 +14,25 @@ use makepad_widgets::*;
 use waml::search::{FieldGroup, Hit as SearchHit, HitTarget, Snippet};
 
 use crate::cursor;
-use crate::doc_view::{BodyChrome, BodyWidgets, DocView, DocViewIdentity, ViewData, ViewOutcome};
+use crate::doc_view::{
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, PopupRequest, RevealTarget, ViewData,
+    ViewOutcome,
+};
 use crate::icons::{Icon, IconSet};
+use crate::navigation::{NavigationIntent, NavigationTarget, OpenDisposition};
+use crate::popup::base::PopupResult;
+
+/// Tag on the confirm popup a hidden-row activation opens (decision 8, spec
+/// §States). Relayed to `on_popup_result` regardless of which tag closed --
+/// checked there so a different popup's close event is a no-op here.
+fn hidden_row_confirm_tag() -> LiveId {
+    live_id!(search_hidden_confirm)
+}
 
 /// What a result row's match is shown as, next to the snippet (spec
 /// §Results tab row shapes). `Line` carries the 1-based source line a prose
-/// hit landed on.
-///
-/// Constructed by `label_for`, which `ResultRow`-building code calls once
-/// `SearchResultsView::new` has a producer (Task 9, `App::open_search_results`).
-/// This task's own unit tests already exercise every variant.
-#[allow(dead_code)]
+/// hit landed on. Constructed by `label_for`, which `App::open_search_results`
+/// (Task 9) calls to build each `ResultRow`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowLabel {
     Name,
@@ -58,8 +66,6 @@ pub struct DocumentGroup {
     pub rows: Vec<ResultRow>,
 }
 
-/// Unused outside tests until `group_hits` gets a non-test caller (Task 9).
-#[allow(dead_code)]
 fn split_document_path(document: &str) -> (String, String) {
     match document.rfind('/') {
         Some(i) => (document[i + 1..].to_string(), document[..=i].to_string()),
@@ -76,7 +82,6 @@ fn split_document_path(document: &str) -> (String, String) {
 /// `Structure` hits split on target shape too: an `id:` value resolves to
 /// the element it names (`ModelElement`) -> `Id`; a frontmatter key or link
 /// target is raw source text (`TextSpan`) -> `Link`.
-#[allow(dead_code)]
 pub fn label_for(hit: &SearchHit) -> RowLabel {
     match hit.group {
         FieldGroup::Names => match hit.target {
@@ -98,9 +103,8 @@ pub fn label_for(hit: &SearchHit) -> RowLabel {
 /// Group `rows` by document, groups ordered by their best hit (the order the
 /// first row for that document appears in `rows`, which callers hand in
 /// already rank-ordered), rows within a group kept in rank order (spec
-/// §Results tab). Unused outside tests until `SearchResultsView::new` gets a
-/// non-test caller (Task 9, `App::open_search_results`).
-#[allow(dead_code)]
+/// §Results tab). Called by `SearchResultsView::new`, itself called by
+/// `documents::open_search` (Task 9).
 pub fn group_hits(rows: Vec<ResultRow>) -> Vec<DocumentGroup> {
     let mut groups: Vec<DocumentGroup> = Vec::new();
     let mut index_by_document: std::collections::HashMap<String, usize> =
@@ -144,17 +148,19 @@ pub struct SearchResultsView {
     /// F3 traversal marks the current row here (Task 14).
     #[allow(dead_code)]
     cursor: Option<(usize, usize)>,
+    /// The `(group_index, row_index)` awaiting the hidden-row confirm popup's
+    /// answer (decision 8) -- stashed by `handle` when a hidden row is
+    /// clicked, consumed by `on_popup_result` once the popup closes.
+    pending_hidden_row: Option<(usize, usize)>,
 }
 
 impl SearchResultsView {
-    /// Unused outside tests until `App::open_search_results` calls it
-    /// (Task 9).
-    #[allow(dead_code)]
     pub fn new(query: String, rows: Vec<ResultRow>) -> Self {
         SearchResultsView {
             query,
             groups: group_hits(rows),
             cursor: None,
+            pending_hidden_row: None,
         }
     }
 
@@ -206,7 +212,7 @@ impl DocView for SearchResultsView {
         actions: &Actions,
         _data: ViewData<'_>,
     ) -> ViewOutcome {
-        let outcome = ViewOutcome::default();
+        let mut outcome = ViewOutcome::default();
         if let Some(index) = body.search_results().header_toggled(actions) {
             if let Some(group) = self.groups.get_mut(index) {
                 group.collapsed = !group.collapsed;
@@ -215,15 +221,103 @@ impl DocView for SearchResultsView {
                     .set_groups(cx, &header, self.groups.clone());
             }
         }
-        // Row activation -> `ViewOutcome.navigation` (plus the `reveal` field
-        // it needs to carry a hit's span/model element) lands in Task 9,
-        // which is also what wires this view into the document open path.
+        if let Some((group_index, row_index)) = body.search_results().row_opened(actions) {
+            if let Some(row) = self
+                .groups
+                .get(group_index)
+                .and_then(|group| group.rows.get(row_index))
+            {
+                if row.hidden {
+                    // Projection-hidden hit (spec §States, decision 8): stash
+                    // the row and ask the shell for a one-item confirm
+                    // popup; the actual navigation lands from
+                    // `on_popup_result` once the user commits it.
+                    self.pending_hidden_row = Some((group_index, row_index));
+                    outcome.popup = Some(PopupRequest::Confirm {
+                        anchor: DVec2::default(),
+                        title: "Show hidden match".to_string(),
+                        tag: hidden_row_confirm_tag(),
+                    });
+                } else {
+                    let (navigation, reveal) = navigation_for_row(row);
+                    outcome.navigation = Some(navigation);
+                    outcome.reveal = reveal;
+                }
+            }
+        }
+        outcome
+    }
+
+    fn on_popup_result(
+        &mut self,
+        _cx: &mut Cx,
+        _body: &BodyWidgets,
+        _data: ViewData<'_>,
+        tag: LiveId,
+        result: PopupResult,
+    ) -> ViewOutcome {
+        let mut outcome = ViewOutcome::default();
+        if tag != hidden_row_confirm_tag() {
+            return outcome;
+        }
+        let Some((group_index, row_index)) = self.pending_hidden_row.take() else {
+            return outcome;
+        };
+        if matches!(result, PopupResult::Invoked(_)) {
+            if let Some(row) = self
+                .groups
+                .get(group_index)
+                .and_then(|group| group.rows.get(row_index))
+            {
+                let (navigation, reveal) = navigation_for_row(row);
+                outcome.navigation = Some(navigation);
+                outcome.reveal = reveal;
+            }
+        }
         outcome
     }
 
     fn chrome(&self) -> BodyChrome {
         BodyChrome::HIDDEN
     }
+}
+
+/// The navigation + reveal a row's hit resolves to (spec §Activation per
+/// document kind): a model hit opens on the canvas and reveals its element;
+/// a prose/structure hit opens on the markdown surface and reveals its
+/// span. `SearchResultsView::handle` and `on_popup_result` both funnel
+/// through here, so a hidden row confirmed via the popup lands on exactly
+/// the same outcome an ordinary row activates directly.
+fn navigation_for_row(row: &ResultRow) -> (NavigationIntent, Option<(String, RevealTarget)>) {
+    let hit = &row.hit;
+    let concept_id = hit.concept_id.clone().unwrap_or_else(|| {
+        hit.document
+            .strip_suffix(".md")
+            .unwrap_or(&hit.document)
+            .to_string()
+    });
+    let (surface, reveal) = match &hit.target {
+        HitTarget::ModelElement { key } => (
+            waml::view::surface::SurfaceId::canvas(),
+            RevealTarget::ModelElement { key: key.clone() },
+        ),
+        HitTarget::TextSpan { start, end, .. } => (
+            waml::view::surface::SurfaceId::markdown(),
+            RevealTarget::TextSpan {
+                start: *start,
+                end: *end,
+            },
+        ),
+    };
+    let navigation = NavigationIntent::Resolved {
+        target: NavigationTarget::Document {
+            concept_id: concept_id.clone(),
+            surface: Some(surface),
+            fragment: None,
+        },
+        disposition: OpenDisposition::Preview,
+    };
+    (navigation, Some((concept_id, reveal)))
 }
 
 // ---------------------------------------------------------------------
@@ -602,10 +696,8 @@ fn row_index_for(groups: &[DocumentGroup], item_id: LiveId) -> Option<(usize, us
 pub enum SearchResultsListAction {
     #[default]
     None,
-    /// `(group_index, row_index)` of the clicked result row. Unused outside
-    /// tests until `SearchResultsView::handle` routes it to a navigation
-    /// outcome (Task 9).
-    #[allow(dead_code)]
+    /// `(group_index, row_index)` of the clicked result row. Routed by
+    /// `SearchResultsView::handle` to a navigation outcome (Task 9).
     RowOpened(usize, usize),
     /// The group index whose header was clicked.
     HeaderToggled(usize),
@@ -684,9 +776,6 @@ impl SearchResultsListView {
     }
 
     /// `(group_index, row_index)` of the row clicked in `actions`, if any.
-    /// Unused outside tests until `SearchResultsView::handle` calls it
-    /// (Task 9).
-    #[allow(dead_code)]
     pub fn row_opened(&self, actions: &Actions) -> Option<(usize, usize)> {
         match self.actions_action(actions) {
             SearchResultsListAction::RowOpened(group_index, row_index) => {
@@ -718,9 +807,6 @@ impl SearchResultsListViewRef {
             inner.set_groups(cx, header_text, groups);
         }
     }
-    /// Unused outside tests until `SearchResultsView::handle` calls it
-    /// (Task 9).
-    #[allow(dead_code)]
     pub fn row_opened(&self, actions: &Actions) -> Option<(usize, usize)> {
         self.borrow().and_then(|inner| inner.row_opened(actions))
     }
@@ -733,6 +819,7 @@ impl SearchResultsListViewRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use waml::source::SourceBundle;
 
     fn hit(document: &str, group: FieldGroup, target: HitTarget) -> SearchHit {
         SearchHit {
@@ -906,5 +993,199 @@ mod tests {
         }
         assert_eq!(header_index_for(&groups, LiveId::from_str("unknown")), None);
         assert_eq!(row_index_for(&groups, LiveId::from_str("unknown")), None);
+    }
+
+    #[test]
+    fn navigation_for_row_maps_a_model_hit_to_canvas_and_a_model_element_reveal() {
+        let row = row("billing/order.md", FieldGroup::Names, model("order"));
+
+        let (navigation, reveal) = navigation_for_row(&row);
+
+        assert_eq!(
+            navigation,
+            NavigationIntent::Resolved {
+                target: NavigationTarget::Document {
+                    concept_id: "billing/order".to_string(),
+                    surface: Some(waml::view::surface::SurfaceId::canvas()),
+                    fragment: None,
+                },
+                disposition: OpenDisposition::Preview,
+            }
+        );
+        assert_eq!(
+            reveal,
+            Some((
+                "billing/order".to_string(),
+                RevealTarget::ModelElement {
+                    key: "order".to_string()
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn navigation_for_row_maps_a_text_span_hit_to_markdown_and_a_text_span_reveal() {
+        let row = row("guides/checkout.md", FieldGroup::Prose, span(12));
+
+        let (navigation, reveal) = navigation_for_row(&row);
+
+        assert_eq!(
+            navigation,
+            NavigationIntent::Resolved {
+                target: NavigationTarget::Document {
+                    concept_id: "guides/checkout".to_string(),
+                    surface: Some(waml::view::surface::SurfaceId::markdown()),
+                    fragment: None,
+                },
+                disposition: OpenDisposition::Preview,
+            }
+        );
+        assert_eq!(
+            reveal,
+            Some((
+                "guides/checkout".to_string(),
+                RevealTarget::TextSpan { start: 0, end: 1 }
+            ))
+        );
+    }
+
+    #[test]
+    fn navigation_for_row_prefers_the_hits_own_concept_id_over_the_derived_one() {
+        let hit = SearchHit {
+            document: "billing/order.md".to_string(),
+            concept_id: Some("billing/order-alias".to_string()),
+            group: FieldGroup::Names,
+            target: model("order"),
+            score: 1.0,
+        };
+        let row = ResultRow {
+            label: label_for(&hit),
+            hit,
+            snippet: Snippet {
+                text: String::new(),
+                highlights: Vec::new(),
+            },
+            hidden: false,
+        };
+
+        let (navigation, _reveal) = navigation_for_row(&row);
+
+        let NavigationIntent::Resolved {
+            target: NavigationTarget::Document { concept_id, .. },
+            ..
+        } = navigation
+        else {
+            panic!("expected a resolved document navigation");
+        };
+        assert_eq!(concept_id, "billing/order-alias");
+    }
+
+    fn empty_body(cx: &mut Cx) -> WidgetRef {
+        let root = cx.with_vm(View::script_new_with_default);
+        WidgetRef::new_with_inner(Box::new(root))
+    }
+
+    fn empty_view_data() -> (
+        SourceBundle,
+        waml::analysis::OkfAnalysis,
+        waml::uml::Analysis,
+        u64,
+    ) {
+        waml::analysis::prepare_candidate(
+            SourceBundle::try_from_pairs([("a.md", "# A\n")]).unwrap(),
+            None,
+            1,
+        )
+        .unwrap()
+        .into_parts()
+    }
+
+    #[test]
+    fn on_popup_result_invoked_completes_the_pending_hidden_row_navigation() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = empty_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let (source, okf_analysis, uml_analysis, revision) = empty_view_data();
+        let data = ViewData {
+            source: &source,
+            okf_analysis: &okf_analysis,
+            uml_analysis: &uml_analysis,
+            revision,
+        };
+        let mut hidden_row = row("a.md", FieldGroup::Names, model("a"));
+        hidden_row.hidden = true;
+        let mut view = SearchResultsView::new("q".to_string(), vec![hidden_row]);
+        view.pending_hidden_row = Some((0, 0));
+
+        let outcome = view.on_popup_result(
+            &mut cx,
+            &body,
+            data,
+            hidden_row_confirm_tag(),
+            PopupResult::Invoked(live_id!(confirm)),
+        );
+
+        assert!(view.pending_hidden_row.is_none());
+        assert!(outcome.navigation.is_some());
+        assert!(outcome.reveal.is_some());
+    }
+
+    #[test]
+    fn on_popup_result_dismissed_clears_the_pending_row_without_navigating() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = empty_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let (source, okf_analysis, uml_analysis, revision) = empty_view_data();
+        let data = ViewData {
+            source: &source,
+            okf_analysis: &okf_analysis,
+            uml_analysis: &uml_analysis,
+            revision,
+        };
+        let mut hidden_row = row("a.md", FieldGroup::Names, model("a"));
+        hidden_row.hidden = true;
+        let mut view = SearchResultsView::new("q".to_string(), vec![hidden_row]);
+        view.pending_hidden_row = Some((0, 0));
+
+        let outcome = view.on_popup_result(
+            &mut cx,
+            &body,
+            data,
+            hidden_row_confirm_tag(),
+            PopupResult::Dismissed,
+        );
+
+        assert!(view.pending_hidden_row.is_none());
+        assert!(outcome.navigation.is_none());
+        assert!(outcome.reveal.is_none());
+    }
+
+    #[test]
+    fn on_popup_result_ignores_an_unrelated_tag() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = empty_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let (source, okf_analysis, uml_analysis, revision) = empty_view_data();
+        let data = ViewData {
+            source: &source,
+            okf_analysis: &okf_analysis,
+            uml_analysis: &uml_analysis,
+            revision,
+        };
+        let mut hidden_row = row("a.md", FieldGroup::Names, model("a"));
+        hidden_row.hidden = true;
+        let mut view = SearchResultsView::new("q".to_string(), vec![hidden_row]);
+        view.pending_hidden_row = Some((0, 0));
+
+        let outcome = view.on_popup_result(
+            &mut cx,
+            &body,
+            data,
+            live_id!(some_unrelated_popup),
+            PopupResult::Invoked(live_id!(confirm)),
+        );
+
+        assert!(outcome.navigation.is_none());
+        assert_eq!(view.pending_hidden_row, Some((0, 0)));
     }
 }

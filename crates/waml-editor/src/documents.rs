@@ -1,4 +1,4 @@
-use crate::document::{DocumentDescriptor, OpenDocument};
+use crate::document::{DocumentDescriptor, DocumentPresentation, NavCategory, OpenDocument};
 use crate::view_history::DocumentLocator;
 #[cfg(test)]
 use waml::view::row::Row;
@@ -113,6 +113,14 @@ pub fn locator_opens(
     uml: &waml::uml::Analysis,
     locator: &DocumentLocator,
 ) -> bool {
+    // A search-results locator (decision 7) has no factory in the surface
+    // table -- it is rebuilt by re-running the query, not by resolving a
+    // concept/folder/source surface -- so it must be recognized before the
+    // claims-based resolution below, which would otherwise degrade its
+    // unknown `search:{query}` surface to the target's ordinary default.
+    if search_query_from_locator(locator).is_some() {
+        return matches!(locator.target, RowTarget::Virtual);
+    }
     let (surface, _diagnostic) = resolve_surface_for(
         okf,
         uml,
@@ -214,6 +222,49 @@ pub fn open_folder(
     mask: &waml::view::mask::ProjectionMask,
 ) -> Option<OpenDocument> {
     crate::folder_documents::open(okf, directory, limits, mask)
+}
+
+/// The query string baked into a search-results locator's surface
+/// (`"search:{query}"`, decision 7), or `None` for any other locator. A
+/// search tab's target is always `RowTarget::Virtual` -- `Virtual` has no
+/// default surface (`default_surface_for`), so an unrecognized `search:`
+/// prefix must never reach the claims-based resolution the other surfaces
+/// go through.
+pub fn search_query_from_locator(locator: &DocumentLocator) -> Option<&str> {
+    if !matches!(locator.target, RowTarget::Virtual) {
+        return None;
+    }
+    locator.surface.as_str().strip_prefix("search:")
+}
+
+/// Builds the results-tab `OpenDocument` for `query`'s already-computed rows
+/// (decision 7): a `RowTarget::Virtual` locator whose surface bakes the
+/// query in, so `tab_id_for` gives the same tab id to a re-run of the same
+/// query -- re-activating its tab rather than duplicating it. Sits beside
+/// `open_folder` as the results-tab counterpart: keyed on a query string
+/// rather than a directory address or concept id, so it cannot collide with
+/// either. Called by `App::open_search_results` and by the locator-driven
+/// reopen path (history traversal) that re-runs the query off the surface
+/// string.
+pub fn open_search(query: &str, rows: Vec<crate::search_results_view::ResultRow>) -> OpenDocument {
+    let locator = DocumentLocator::new(
+        RowTarget::Virtual,
+        waml::view::surface::SurfaceId(format!("search:{query}")),
+    );
+    OpenDocument {
+        tab_id: tab_id_for(&locator),
+        locator,
+        title: format!("Search: {query}"),
+        presentation: DocumentPresentation {
+            icon: crate::icons::Icon::Search,
+            accent: None,
+            category: NavCategory::Note,
+        },
+        view: Box::new(crate::search_results_view::SearchResultsView::new(
+            query.to_string(),
+            rows,
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -1010,6 +1061,88 @@ mod tests {
                 "order",
                 waml::view::surface::SurfaceId::canvas()
             ))
+        );
+    }
+
+    fn search_locator(query: &str) -> DocumentLocator {
+        DocumentLocator::new(
+            RowTarget::Virtual,
+            waml::view::surface::SurfaceId(format!("search:{query}")),
+        )
+    }
+
+    #[test]
+    fn tab_id_for_gives_distinct_stable_ids_for_two_queries() {
+        let payment = tab_id_for(&search_locator("payment"));
+        let payment_again = tab_id_for(&search_locator("payment"));
+        let capture = tab_id_for(&search_locator("capture"));
+        assert_eq!(payment, payment_again);
+        assert_ne!(payment, capture);
+    }
+
+    #[test]
+    fn locator_opens_accepts_a_search_locator() {
+        let source =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 71).unwrap();
+
+        assert!(locator_opens(
+            prepared.okf(),
+            prepared.uml(),
+            &search_locator("payment")
+        ));
+        assert!(locator_opens(
+            prepared.okf(),
+            prepared.uml(),
+            &search_locator("")
+        ));
+    }
+
+    #[test]
+    fn a_search_shaped_surface_on_a_non_virtual_target_is_not_the_search_arm() {
+        // A `search:`-prefixed surface only means something on a `Virtual`
+        // target (decision 7) -- on any other target it is just an
+        // unrecognized surface string, falling through the ordinary
+        // claims-based degrade like any other unknown surface.
+        let source =
+            SourceBundle::try_from_pairs([("order.md", "---\ntype: uml.Class\n---\n# Order\n")])
+                .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 73).unwrap();
+
+        assert!(!locator_opens(
+            prepared.okf(),
+            prepared.uml(),
+            &DocumentLocator::new(
+                RowTarget::Concept("no-such-concept".to_string()),
+                waml::view::surface::SurfaceId("search:payment".to_string()),
+            )
+        ));
+    }
+
+    #[test]
+    fn search_query_from_locator_extracts_the_query_and_rejects_other_locators() {
+        assert_eq!(
+            search_query_from_locator(&search_locator("payment")),
+            Some("payment")
+        );
+        assert_eq!(
+            search_query_from_locator(&DocumentLocator::concept(
+                "order",
+                waml::view::surface::SurfaceId::markdown()
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn open_search_bakes_the_query_into_the_locator_and_title() {
+        let document = open_search("payment", Vec::new());
+        assert_eq!(document.title, "Search: payment");
+        assert_eq!(document.tab_id, tab_id_for(&search_locator("payment")));
+        assert_eq!(
+            search_query_from_locator(&document.locator),
+            Some("payment")
         );
     }
 }

@@ -377,6 +377,12 @@ pub struct ViewOutcome {
     /// only surfaces without a context menu (the behavior canvas) reach this
     /// path from their own selection affordance instead.
     pub view_source: Option<String>,
+    /// A search-hit reveal to apply once `navigation` (if any) has landed on
+    /// its target document -- `(concept_id, target)`. The shell stashes this
+    /// as a pending reveal and applies it through `DocView::reveal` once the
+    /// arriving tab has drawn (Task 9, spec §DocView::reveal /
+    /// §Activation per document kind).
+    pub reveal: Option<(String, RevealTarget)>,
 }
 
 /// A popup a view wants placed. The view describes it; the shell computes window
@@ -404,6 +410,14 @@ pub enum PopupRequest {
     PlaceDial {
         center: DVec2,
         items: Vec<PopupItem>,
+    },
+    /// A one-item confirm menu (spec §States, activating a projection-hidden
+    /// hit -- decision 8). The opener's `tag` comes back on `on_popup_result`
+    /// so it can tell a commit from a light-dismiss; `Invoked` means "yes".
+    Confirm {
+        anchor: DVec2,
+        title: String,
+        tag: LiveId,
     },
     /// Dismiss whatever popup is open, without opening a replacement.
     Dismiss,
@@ -511,9 +525,7 @@ pub enum ViewReconcilePolicy {
 /// call: text-surface views (source, markdown) map `TextSpan` onto their own
 /// scroll/highlight and ignore `ModelElement`; canvas views do the opposite.
 /// Both variants have a `DocView::reveal` consumer already (`SourceView`,
-/// Task 6); no PRODUCER exists yet -- the results tab (Task 8+), find strip,
-/// and F3 traversal construct these in later plan tasks.
-#[allow(dead_code)]
+/// Task 6); `SearchResultsView` (Task 9) is the first producer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RevealTarget {
     TextSpan { start: u32, end: u32 },
@@ -701,6 +713,7 @@ mod tests {
         assert!(!o.break_merge_group);
         assert!(o.navigation.is_none());
         assert!(o.view_source.is_none());
+        assert!(o.reveal.is_none());
     }
 
     #[test]

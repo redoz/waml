@@ -1089,6 +1089,28 @@ impl App {
                         },
                     );
                 }
+                crate::doc_view::PopupRequest::Confirm { anchor, title, tag } => {
+                    popup.show_at(
+                        cx,
+                        PopupSpec::Menu {
+                            tag,
+                            anchor,
+                            bounds,
+                            items: vec![crate::popup::base::PopupItem {
+                                id: live_id!(confirm),
+                                label: title,
+                                icon: None,
+                                danger: false,
+                                enabled: true,
+                                checked: None,
+                            }],
+                            open: MenuOpen::Popup {
+                                open_marking: None,
+                                max_height: None,
+                            },
+                        },
+                    );
+                }
                 crate::doc_view::PopupRequest::Dismiss => popup.close(cx),
             }
         }
@@ -1146,6 +1168,10 @@ impl App {
                     flow = ActionFlow::Consumed;
                 }
             }
+        }
+
+        if let Some((concept_id, target)) = outcome.reveal {
+            self.pending_reveal = Some(PendingReveal { concept_id, target });
         }
 
         if let Some(intent) = outcome.navigation {

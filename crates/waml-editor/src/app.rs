@@ -5,7 +5,7 @@ mod navigation;
 mod shell;
 mod workspace;
 
-use self::navigation::{PendingAnchorRestore, PendingFragment, TransitionCause};
+use self::navigation::{PendingAnchorRestore, PendingFragment, PendingReveal, TransitionCause};
 #[cfg(target_arch = "wasm32")]
 use self::workspace::web_location_query;
 use self::workspace::{prevent_quit_after_failed_save, should_flush_save, SaveFeedback};
@@ -804,6 +804,10 @@ pub struct App {
     agent_row_w: f64,
     #[rust]
     pending_fragment: Option<PendingFragment>,
+    /// A search-hit reveal waiting on its target document's tab to draw; see
+    /// `apply_pending_reveal` (Task 9, spec §DocView::reveal).
+    #[rust]
+    pending_reveal: Option<PendingReveal>,
     #[rust]
     pending_anchor_restore: Option<PendingAnchorRestore>,
     /// Monotonic counter stamped onto each `PendingAnchorRestore` so a second
