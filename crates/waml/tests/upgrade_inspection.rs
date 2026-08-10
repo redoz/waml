@@ -76,6 +76,26 @@ fn legacy_diagram_with_only_use_cases_and_neutral_members_becomes_use_case() {
 }
 
 #[test]
+fn quoted_type_key_legacy_diagram_with_a_use_case_becomes_use_case() {
+    let source = bundle([
+        (
+            "context.md",
+            "---\n'type': Diagram\n---\n# Context\n\n## Members\n- [Checkout](./checkout.md)\n",
+        ),
+        ("checkout.md", "---\ntype: uml.UseCase\n---\n# Checkout\n"),
+    ]);
+
+    assert_eq!(
+        inspect_legacy_diagram_types(&source).unwrap(),
+        vec![LegacyDiagramTypeUse {
+            path: "context.md".into(),
+            legacy: LegacyDiagramType::Diagram,
+            replacement: DiagramKind::UseCase,
+        }]
+    );
+}
+
+#[test]
 fn legacy_er_profile_diagram_becomes_class() {
     let source = bundle([
         (
@@ -132,6 +152,86 @@ fn mixed_use_case_and_classifier_members_are_ambiguous_and_sorted() {
             incompatible_members: vec!["alpha".into(), "zeta".into()],
         })
     );
+}
+
+#[test]
+fn unresolved_only_legacy_diagram_is_invalid_for_inspection() {
+    let source = bundle([(
+        "context.md",
+        "---\ntype: Diagram\n---\n# Context\n\n## Members\n- [Missing](./missing.md)\n",
+    )]);
+
+    let Err(UpgradeInspectionError::InvalidLegacyBundle(diagnostics)) =
+        inspect_legacy_diagram_types(&source)
+    else {
+        panic!("unresolved legacy member must make inspection invalid");
+    };
+    assert!(!diagnostics.is_empty());
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::UnresolvedTarget
+            && diagnostic.file == "context.md"
+            && diagnostic.message.contains("unresolved UML member")
+    }));
+}
+
+#[test]
+fn unresolved_member_with_a_use_case_is_invalid_instead_of_use_case() {
+    let source = bundle([
+        (
+            "context.md",
+            "---\ntype: Diagram\n---\n# Context\n\n## Members\n- [Checkout](./checkout.md)\n- [Missing](./missing.md)\n",
+        ),
+        (
+            "checkout.md",
+            "---\ntype: uml.UseCase\n---\n# Checkout\n",
+        ),
+    ]);
+
+    let Err(UpgradeInspectionError::InvalidLegacyBundle(diagnostics)) =
+        inspect_legacy_diagram_types(&source)
+    else {
+        panic!("partial member resolution must not select a diagram kind");
+    };
+    assert!(!diagnostics.is_empty());
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::UnresolvedTarget));
+}
+
+#[test]
+fn malformed_frontmatter_returns_a_non_empty_path_diagnostic() {
+    let source = bundle([(
+        "broken.md",
+        "---\ntype: Diagram\n# The closing fence is missing.\n",
+    )]);
+
+    let Err(UpgradeInspectionError::InvalidLegacyBundle(diagnostics)) =
+        inspect_legacy_diagram_types(&source)
+    else {
+        panic!("malformed frontmatter must make inspection invalid");
+    };
+    assert!(!diagnostics.is_empty());
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.file == "broken.md" && !diagnostic.message.is_empty()));
+}
+
+#[test]
+fn non_string_type_returns_a_non_empty_path_diagnostic() {
+    let source = bundle([(
+        "structured.md",
+        "---\ntype: [Diagram]\n---\n# Structured type\n",
+    )]);
+
+    let Err(UpgradeInspectionError::InvalidLegacyBundle(diagnostics)) =
+        inspect_legacy_diagram_types(&source)
+    else {
+        panic!("a structured type value must make inspection invalid");
+    };
+    assert!(!diagnostics.is_empty());
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.file == "structured.md" && diagnostic.message.contains("string")
+    }));
 }
 
 #[test]

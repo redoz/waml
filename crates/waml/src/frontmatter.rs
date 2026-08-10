@@ -496,20 +496,28 @@ pub fn replace_frontmatter_string_scalar(
         let Some(key_token) = tokens.first() else {
             continue;
         };
-        if key_token.kind() != OkfMarkdownSyntaxKind::FrontmatterKey {
-            continue;
-        }
-        let authored_key = key_token.text().write_to_string();
+        let authored_key = match key_token.kind() {
+            OkfMarkdownSyntaxKind::FrontmatterKey => key_token.text().write_to_string(),
+            OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken => {
+                waml_syntax::decode_quoted_scalar(&key_token.text().write_to_string())
+            }
+            _ => continue,
+        };
         if authored_key != key {
             continue;
         }
-        let Some(value_token) = tokens.iter().find(|token| {
-            matches!(
-                token.kind(),
-                OkfMarkdownSyntaxKind::FrontmatterValue
-                    | OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken
-            )
-        }) else {
+        let Some(value_token) = tokens
+            .iter()
+            .skip_while(|token| token.kind() != OkfMarkdownSyntaxKind::ColonToken)
+            .skip(1)
+            .find(|token| {
+                matches!(
+                    token.kind(),
+                    OkfMarkdownSyntaxKind::FrontmatterValue
+                        | OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken
+                )
+            })
+        else {
             return Err(FrontmatterRewriteError::NonStringScalar { key: key.into() });
         };
         let raw = value_token.text().write_to_string();

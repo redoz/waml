@@ -1,6 +1,6 @@
 use crate::{
-    diagnostic::{Diagnostic, Severity},
-    frontmatter::{parse_frontmatter_source, replace_frontmatter_string_scalar},
+    diagnostic::{DiagCode, Diagnostic, Severity},
+    frontmatter::{parse_frontmatter_source, replace_frontmatter_string_scalar, FmValue},
     model::{DiagramKind, ElementType, UmlMetaclass},
     source::SourceBundle,
 };
@@ -31,6 +31,15 @@ impl LegacyDiagramType {
             Self::Activity => "uml.ActivityDiagram",
             Self::StateMachine => "uml.StateMachineDiagram",
             Self::Sequence => "uml.SequenceDiagram",
+        }
+    }
+
+    fn authored_type(self) -> &'static str {
+        match self {
+            Self::Diagram => "Diagram",
+            Self::Activity => "uml.Activity",
+            Self::StateMachine => "uml.StateMachine",
+            Self::Sequence => "uml.Sequence",
         }
     }
 
@@ -71,52 +80,78 @@ struct LegacyDocument {
 pub fn inspect_legacy_diagram_types(
     source: &SourceBundle,
 ) -> Result<Vec<LegacyDiagramTypeUse>, UpgradeInspectionError> {
-    let mut legacy_documents = source
-        .documents()
-        .iter()
-        .filter_map(|document| {
-            let legacy = parse_frontmatter_source(document.text())?
-                .get_str("type")
-                .and_then(LegacyDiagramType::parse)?;
-            Some(LegacyDocument {
+    let mut legacy_documents = Vec::new();
+    for document in source.documents() {
+        let frontmatter = match parse_frontmatter_source(document.text()) {
+            Some(frontmatter) => frontmatter,
+            None if waml_syntax::has_leading_frontmatter_fence(document.text()) => {
+                return Err(invalid_legacy_bundle(
+                    document.path().as_str(),
+                    "frontmatter is malformed or has no closing fence",
+                ));
+            }
+            None => continue,
+        };
+        let Some(value) = frontmatter.get("type") else {
+            continue;
+        };
+        let FmValue::Str(authored_type) = value else {
+            return Err(invalid_legacy_bundle(
+                document.path().as_str(),
+                "frontmatter key 'type' must be a string scalar",
+            ));
+        };
+        if let Some(legacy) = LegacyDiagramType::parse(authored_type) {
+            legacy_documents.push(LegacyDocument {
                 path: document.path().as_str().to_string(),
                 concept_id: crate::okf::id_of(document.path().as_str()),
                 legacy,
-            })
-        })
-        .collect::<Vec<_>>();
+            });
+        }
+    }
     legacy_documents.sort_by(|left, right| left.path.cmp(&right.path));
 
-    let migrated = SourceBundle::try_from_pairs(source.documents().iter().map(|document| {
-        let text = legacy_documents
-            .iter()
-            .find(|legacy| legacy.path == document.path().as_str())
-            .and_then(|legacy| {
-                replace_frontmatter_string_scalar(
-                    document.text(),
-                    "type",
-                    match legacy.legacy {
-                        LegacyDiagramType::Diagram => "Diagram",
-                        LegacyDiagramType::Activity => "uml.Activity",
-                        LegacyDiagramType::StateMachine => "uml.StateMachine",
-                        LegacyDiagramType::Sequence => "uml.Sequence",
-                    },
-                    legacy.legacy.provisional_type(),
-                )
-                .ok()
-                .flatten()
-            })
-            .unwrap_or_else(|| document.text().to_string());
-        (document.path().as_str().to_string(), text)
-    }))
-    .map_err(|_| UpgradeInspectionError::InvalidLegacyBundle(Vec::new()))?;
+    let mut migrated_documents = Vec::with_capacity(source.len());
+    for document in source.documents() {
+        let path = document.path().as_str();
+        let text = match legacy_documents.iter().find(|legacy| legacy.path == path) {
+            Some(legacy) => replace_frontmatter_string_scalar(
+                document.text(),
+                "type",
+                legacy.legacy.authored_type(),
+                legacy.legacy.provisional_type(),
+            )
+            .map_err(|error| invalid_legacy_bundle(path, error.to_string()))?
+            .ok_or_else(|| {
+                invalid_legacy_bundle(path, "detected legacy type could not be rewritten")
+            })?,
+            None => document.text().to_string(),
+        };
+        migrated_documents.push((path.to_string(), text));
+    }
+    let failure_path = legacy_documents
+        .first()
+        .map(|document| document.path.as_str())
+        .or_else(|| {
+            source
+                .documents()
+                .first()
+                .map(|document| document.path().as_str())
+        })
+        .unwrap_or("<bundle>");
+    let migrated = SourceBundle::try_from_pairs(migrated_documents)
+        .map_err(|error| invalid_legacy_bundle(failure_path, error.to_string()))?;
     let prepared = crate::analysis::prepare_candidate(migrated, None, 0)
-        .map_err(|_| UpgradeInspectionError::InvalidLegacyBundle(Vec::new()))?;
+        .map_err(|error| invalid_legacy_bundle(failure_path, error.to_string()))?;
     let diagnostics = prepared
         .uml()
         .diagnostics
         .iter()
-        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .filter(|diagnostic| {
+            diagnostic.severity == Severity::Error
+                || (diagnostic.code == crate::diagnostic::DiagCode::UnresolvedTarget
+                    && diagnostic.message.starts_with("unresolved UML member '"))
+        })
         .cloned()
         .collect::<Vec<_>>();
     if !diagnostics.is_empty() {
@@ -136,6 +171,18 @@ pub fn inspect_legacy_diagram_types(
         });
     }
     Ok(uses)
+}
+
+fn invalid_legacy_bundle(
+    path: impl Into<String>,
+    cause: impl Into<String>,
+) -> UpgradeInspectionError {
+    UpgradeInspectionError::InvalidLegacyBundle(vec![Diagnostic::new(
+        DiagCode::FrontmatterNotClean,
+        format!("cannot inspect legacy diagram types: {}", cause.into()),
+        path,
+        1,
+    )])
 }
 
 fn classify_legacy_diagram(
