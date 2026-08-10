@@ -86,6 +86,7 @@ mod reading_view;
 mod recent_row;
 mod ref_card;
 mod scene;
+mod search_state;
 mod section_heading;
 mod select_box;
 mod selection_toolbar;

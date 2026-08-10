@@ -256,6 +256,33 @@ fn reopening_after_a_close_shows_the_new_model_in_the_tree() {
     assert!(!titles.iter().any(|t| t == "Sales"), "{titles:?}");
 }
 
+/// `open_bundle` must rebuild the text index, not just the tree/tabs -- a
+/// term from the freshly-opened bundle should be findable immediately, with
+/// no separate "build the index" step a caller could forget.
+#[test]
+fn opening_a_bundle_rebuilds_the_search_index() {
+    let (mut cx, mut app) = navigation_app();
+
+    let next = waml::source::SourceBundle::try_from_pairs([
+        ("index.md", "# Root\n\n* [Ops](ops/)\n"),
+        ("ops/index.md", "# Ops\n\n* [Incident](incident.md)\n"),
+        (
+            "ops/incident.md",
+            "---\ntype: Runbook\ntitle: Incident\n---\n# Incident\n\nA fire drill happened.\n",
+        ),
+    ])
+    .unwrap();
+    assert!(app.open_bundle(&mut cx, next, "ops".to_string(), None));
+
+    let hits = app
+        .search
+        .query("fire", &waml::search::QueryScope::default());
+    assert!(
+        !hits.is_empty(),
+        "expected a hit for a term in the freshly-opened bundle"
+    );
+}
+
 fn tree_row_titles(cx: &Cx, app: &App) -> Vec<String> {
     app.ui
         .widget(cx, ids!(project_tree))

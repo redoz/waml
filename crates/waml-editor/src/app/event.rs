@@ -135,9 +135,31 @@ impl App {
             // a final best-effort write for forced/platform teardown paths.
             let retry_on_error = matches!(event, Event::QuitRequested(_));
             let result = self.save_or_retry(cx, retry_on_error);
+            if result.is_ok() {
+                self.refresh_search_after_save();
+            }
             prevent_quit_after_failed_save(event, &result);
-        } else if self.save_timer.is_event(event).is_some() {
-            let _ = self.save_or_retry(cx, true);
+        } else if self.save_timer.is_event(event).is_some() && self.save_or_retry(cx, true).is_ok()
+        {
+            self.refresh_search_after_save();
+        }
+    }
+
+    /// After a successful save flush, refresh the text index for exactly the
+    /// documents the current snapshot names as affected -- spec §Index
+    /// lifecycle's per-document update, not a full rebuild.
+    fn refresh_search_after_save(&mut self) {
+        let snapshot = self.session.snapshot();
+        for &document in snapshot.affected_documents.iter() {
+            let Some(path) = self.session.document_path(document) else {
+                continue;
+            };
+            self.search.refresh_document(
+                path.as_str(),
+                &snapshot.source,
+                &snapshot.okf_analysis,
+                &snapshot.uml_analysis,
+            );
         }
     }
 

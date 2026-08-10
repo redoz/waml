@@ -27,6 +27,7 @@ use crate::platform_browser::{ExternalUrlAdapter, PlatformBrowser};
 use crate::popup::base::PopupResult;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::project_settings::DockWidths;
+use crate::search_state::SearchState;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
 use makepad_widgets::*;
 use std::path::{Path, PathBuf};
@@ -666,6 +667,12 @@ pub struct App {
     open_name: String,
     #[rust]
     documents: DocumentHost,
+    /// The bundle-wide text index: built on open, refreshed per document on
+    /// save. Every search surface reads it through `query`/`snippet`; nothing
+    /// outside this module sees the `MemSearchIndex` backend (spec §Engine
+    /// boundary).
+    #[rust]
+    search: SearchState,
     #[rust]
     markdown_assets: Option<crate::markdown_hosts::SharedMarkdownAssetHost>,
     #[rust]

@@ -716,6 +716,13 @@ impl EditorSession {
         &self.current.uml_analysis.projection
     }
 
+    /// Bundle-relative path for a document id, as of the current snapshot.
+    /// Used to resolve `affected_documents` into paths a text index can key
+    /// on (see `search_state::SearchState::refresh_document`).
+    pub fn document_path(&self, document: DocumentId) -> Option<&BundlePath> {
+        self.current.document_paths.get(&document)
+    }
+
     #[cfg(test)]
     fn model(&self) -> &waml::uml::Projection {
         self.uml_projection()

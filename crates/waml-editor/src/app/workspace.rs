@@ -621,6 +621,14 @@ impl App {
         debug_assert_eq!(change.revision, self.session.revision());
         self.save_feedback.opened_replacement_bundle();
         self.sync_save_error(cx);
+        {
+            let snapshot = self.session.snapshot();
+            self.search.rebuild(
+                &snapshot.source,
+                &snapshot.okf_analysis,
+                &snapshot.uml_analysis,
+            );
+        }
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it
         // against this bundle and rebuilds the model (see `handle_actions`).
