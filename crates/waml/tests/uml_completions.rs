@@ -407,3 +407,71 @@ fn an_empty_slot_offers_the_instance_of_classifiers_attributes() {
     assert!(fields.contains(&"status"), "{fields:?}");
     assert!(fields.contains(&"total"), "{fields:?}");
 }
+
+#[test]
+fn a_lifeline_alias_is_derived_from_the_link_title() {
+    let bundle = concat!(
+        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+        "## Lifelines\n\n- [Source Bundle](./a.md) as |\n"
+    );
+    let offered = labels(bundle);
+    let names = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Name)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"source-bundle"), "{names:?}");
+    assert!(names.contains(&"source"), "{names:?}");
+    assert!(names.contains(&"sb"), "{names:?}");
+}
+
+#[test]
+fn a_name_already_taken_in_the_document_is_not_offered_again() {
+    let offered = labels(concat!(
+        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+        "## Lifelines\n\n- [Source Bundle](./b.md) as source\n",
+        "- [Source Bundle](./a.md) as |\n"
+    ));
+    let names = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Name)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(!names.contains(&"source"), "already taken: {names:?}");
+    assert!(names.contains(&"source-bundle"), "{names:?}");
+}
+
+#[test]
+fn with_no_link_to_derive_from_nothing_is_offered_rather_than_a_guess() {
+    let offered = labels(concat!(
+        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+        "## Lifelines\n\n- [](./a.md) as |\n"
+    ));
+    assert!(
+        !offered
+            .iter()
+            .any(|(_, kind)| *kind == CompletionKind::Name),
+        "{offered:?}"
+    );
+}
+
+#[test]
+fn an_inline_instance_name_is_derived_from_its_classifier_link_title() {
+    // The instance name's IdentifierToken is a direct child of the
+    // InlineInstance node itself (no wrapping slot node, unlike
+    // LifelineAlias/InteractionUseAlias/MessageCallId), so this exercises
+    // `sibling_link_title` starting its walk at `expectation.node` itself,
+    // not only at its parent.
+    let offered = labels(concat!(
+        "---\ntype: uml.Class\ntitle: C\n---\n# C\n\n",
+        "## Members\n\n- instance of [Source Bundle](./a.md) as |\n"
+    ));
+    let names = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Name)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"source-bundle"), "{names:?}");
+    assert!(names.contains(&"source"), "{names:?}");
+    assert!(names.contains(&"sb"), "{names:?}");
+}

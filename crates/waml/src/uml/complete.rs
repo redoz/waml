@@ -200,6 +200,7 @@ pub fn completions(
     if let Some(concept) = context.uml().declared.concept(&concept_id) {
         candidates.extend(in_document_refs(&expectation, concept));
         candidates.extend(type_driven(&expectation, &context, concept, version.path()));
+        candidates.extend(derived_names(&expectation, concept));
     }
     candidates.extend(link_targets(&expectation, &context, version.path()));
     // Later slices append further providers here; each is selected on the slot
@@ -660,4 +661,126 @@ fn type_driven(
             replace,
         })
         .collect()
+}
+
+/// The three name shapes a link title suggests: the kebab form, the lower-cased
+/// first word, and the initials. Order is the order they are offered in.
+fn name_shapes(title: &str) -> Vec<String> {
+    let words = title
+        .split_whitespace()
+        .map(|word| {
+            word.chars()
+                .filter(|character| character.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let mut shapes = vec![words.join("-")];
+    shapes.push(words[0].clone());
+    if words.len() > 1 {
+        shapes.push(
+            words
+                .iter()
+                .filter_map(|word| word.chars().next())
+                .collect::<String>(),
+        );
+    }
+    shapes.dedup();
+    shapes
+}
+
+/// Positions where the author invents a name rather than referencing one.
+fn derived_names(expectation: &Expectation, concept: &DeclaredConcept) -> Vec<Completion> {
+    let detail = match expectation.slot {
+        UmlSyntaxKind::LifelineAlias => "lifeline handle",
+        UmlSyntaxKind::InteractionUseAlias => "interaction use alias",
+        UmlSyntaxKind::MessageCallId => "call id",
+        UmlSyntaxKind::InlineInstance => "instance name",
+        _ => return Vec::new(),
+    };
+    let Some(title) = sibling_link_title(&expectation.node) else {
+        // Nothing to derive from: offer nothing rather than guess.
+        return Vec::new();
+    };
+    let taken = concept
+        .lifelines
+        .iter()
+        .filter_map(|lifeline| declared_name(&lifeline.alias))
+        .chain(
+            concept
+                .interaction_uses
+                .iter()
+                .filter_map(|use_| declared_name(&use_.alias)),
+        )
+        .chain(
+            concept
+                .messages
+                .iter()
+                .filter_map(|message| declared_name(&message.call_id)),
+        )
+        .chain(
+            concept
+                .inline_instances
+                .iter()
+                .filter_map(|instance| declared_name(&instance.name)),
+        )
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    name_shapes(&title)
+        .into_iter()
+        .filter(|shape| !taken.contains(shape))
+        .map(|shape| Completion {
+            label: Arc::from(shape.as_str()),
+            insert: Arc::from(shape.as_str()),
+            kind: CompletionKind::Name,
+            detail: Some(Arc::from(detail)),
+            replace: expectation.prefix,
+        })
+        .collect()
+}
+
+/// The title text of the link on the same bullet as `node`: walk up to the
+/// bullet, find its `Link` child, and read the `LinkTextToken`. `None` when
+/// the token is missing or empty -- with nothing to derive from, the caller
+/// offers nothing rather than a guess.
+///
+/// The walk starts at `node` itself, not `node.parent()`: for
+/// `LifelineAlias`/`InteractionUseAlias`/`MessageCallId` the operand token
+/// sits in its own wrapping slot node, so the bullet is one level up -- but
+/// for `InlineInstance` there is no such wrapping slot (the instance name's
+/// `IdentifierToken` is a direct child of `InlineInstance` itself, unlike the
+/// other three; see `inline_instance` in parser.rs), so `expectation.node` at
+/// that position already *is* the bullet. Starting one level too high would
+/// walk straight past it and never match.
+fn sibling_link_title(node: &SyntaxNode<UmlLanguage>) -> Option<String> {
+    let mut current = Some(node.clone());
+    while let Some(bullet) = current {
+        if matches!(
+            bullet.kind(),
+            UmlSyntaxKind::Lifeline
+                | UmlSyntaxKind::InteractionUse
+                | UmlSyntaxKind::Message
+                | UmlSyntaxKind::InlineInstance
+        ) {
+            let link = bullet
+                .children()
+                .filter_map(SyntaxElement::into_node)
+                .find(|child| child.kind() == UmlSyntaxKind::Link)?;
+            let text = link
+                .children()
+                .filter_map(SyntaxElement::into_token)
+                .find(|token| token.kind() == UmlSyntaxKind::LinkTextToken)?;
+            if text.flags().is_missing() {
+                return None;
+            }
+            let title = text.text().write_to_string();
+            return (!title.trim().is_empty()).then_some(title);
+        }
+        current = bullet.parent();
+    }
+    None
 }
