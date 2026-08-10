@@ -350,7 +350,9 @@ impl App {
             .hidden_documents(self.session.okf_analysis(), self.session.uml_analysis());
         let sections = self.build_palette_sections("");
         self.palette_query.clear();
-        self.palette_sections = sections.clone();
+        // Fallback only: if the popup is not there to trim, the model we
+        // built is what a commit would have to resolve against.
+        let mut kept = sections.clone();
         if let Some(mut popup) = self
             .ui
             .widget(cx, ids!(popup_root))
@@ -364,7 +366,11 @@ impl App {
                     sections,
                 },
             );
+            if let Some(trimmed) = popup.palette_sections(cx, live_id!(palette)) {
+                kept = trimmed;
+            }
         }
+        self.palette_sections = kept;
     }
 
     /// A keystroke inside the still-open palette (`PaletteAction::QueryChanged`):
@@ -372,14 +378,18 @@ impl App {
     fn push_palette_query(&mut self, cx: &mut Cx, query: String) {
         let sections = self.build_palette_sections(&query);
         self.palette_query = query;
-        self.palette_sections = sections.clone();
+        let mut kept = sections.clone();
         if let Some(mut popup) = self
             .ui
             .widget(cx, ids!(popup_root))
             .borrow_mut::<PopupRoot>()
         {
             popup.set_palette_sections(cx, live_id!(palette), sections);
+            if let Some(trimmed) = popup.palette_sections(cx, live_id!(palette)) {
+                kept = trimmed;
+            }
         }
+        self.palette_sections = kept;
     }
 
     /// The blended, sectioned palette model for `query` (spec §Palette):
@@ -436,10 +446,11 @@ impl App {
     }
 
     /// Resolve a palette commit's opaque `p:{section}:{row}` id back to the
-    /// `PaletteRow` it was built from (`palette_sections` is the SAME `Vec`
-    /// the widget was last handed -- see the field's doc comment). The
-    /// widget is reset before the close action is readable, so this is the
-    /// only place left to recover which row committed.
+    /// `PaletteRow` it was built from. `palette_sections` mirrors what the
+    /// card KEPT after trimming, not what it was handed, because the ids are
+    /// positional over the trimmed model. The widget is reset before the
+    /// close action is readable, so this is the only place left to recover
+    /// which row committed.
     fn resolve_palette_commit(&self, id: LiveId) -> Option<crate::popup::palette::PaletteRow> {
         for (section_index, section) in self.palette_sections.iter().enumerate() {
             for (row_index, row) in section.rows.iter().enumerate() {

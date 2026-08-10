@@ -105,3 +105,41 @@ fn enter_on_the_armed_concept_row_opens_that_documents_tab() {
         Some("order")
     );
 }
+
+/// A commit id is `p:{section}:{row}` over the model the CARD kept, and the
+/// card trims to the window -- dropping rows out of the middle of a capped
+/// section and deleting emptied sections outright, which shifts every later
+/// index. So `App::palette_sections`, the mirror a commit resolves against,
+/// has to be what the widget kept and not the model App handed it. Mirroring
+/// the pushed model made `+ N more` and the trailing escalate row invoke a
+/// different row's action on any window short enough to trim.
+#[test]
+fn the_apps_palette_mirror_is_the_rows_the_card_actually_kept() {
+    let (mut cx, mut app) = production_app_with_order_concept();
+    app.handle_event(&mut cx, &ctrl_k());
+
+    let typed = text_input("order");
+    let actions = cx.capture_actions(|cx| {
+        <App as AppMain>::handle_event(&mut app, cx, &typed);
+    });
+    app.handle_action_batch(&mut cx, &actions);
+
+    let widget_titles = {
+        let popup_root = app.ui.widget(&cx, ids!(popup_root));
+        let popup = popup_root
+            .borrow::<PopupRoot>()
+            .expect("production shell mounts popup_root");
+        popup.test_palette_row_titles(&mut cx)
+    };
+    let mirror_titles: Vec<String> = app
+        .palette_sections
+        .iter()
+        .flat_map(|section| section.rows.iter().map(|row| row.title.clone()))
+        .collect();
+
+    assert_eq!(
+        mirror_titles, widget_titles,
+        "App's commit-resolution mirror must match the card's kept rows, \
+         in order -- otherwise p:{{section}}:{{row}} resolves to the wrong row"
+    );
+}

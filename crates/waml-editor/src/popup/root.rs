@@ -754,6 +754,19 @@ impl PopupRoot {
         }
     }
 
+    /// The palette's sections as the card kept them, post-trim. The opener
+    /// mirrors these for commit resolution -- see `PalettePopup::kept_sections`
+    /// for why the handed-in model is the wrong thing to mirror. `None` when
+    /// `tag` is not the open palette.
+    pub fn palette_sections(&self, cx: &mut Cx, tag: LiveId) -> Option<Vec<PaletteSectionModel>> {
+        if !active_tag_is(self.active, tag) {
+            return None;
+        }
+        let palette = self.body.widget(cx, ids!(palette));
+        let kept = palette.borrow::<PalettePopup>()?.kept_sections().to_vec();
+        Some(kept)
+    }
+
     /// Every row title the live palette widget is currently holding, via the
     /// SAME `self.body.widget(cx, ids!(palette))` lookup every other
     /// `PopupRoot` method uses -- for App-level tests asserting a re-query

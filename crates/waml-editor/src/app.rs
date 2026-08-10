@@ -861,11 +861,16 @@ pub struct App {
     /// a palette commit), which still locates itself by target.
     #[rust]
     stepped_session_index: Option<usize>,
-    /// The Ctrl+K palette's last-pushed sections (Task 11), retained so a row
+    /// The Ctrl+K palette's sections AS THE CARD KEPT THEM (Task 11), read
+    /// back via `PopupRoot::palette_sections` after every push, so a row
     /// commit's opaque `p:{section}:{row}` id (`popup::palette::PalettePopup::commit`)
     /// can be resolved back to the `PaletteRow` it was built from -- the
     /// widget itself is `reset()` (rows dropped) before the close action is
     /// readable.
+    ///
+    /// This is deliberately NOT the model we handed the widget: the card
+    /// trims to the window (`trim_sections_to_fit`), which shifts row and
+    /// section indices, and the ids are positional over the trimmed model.
     #[rust]
     palette_sections: Vec<PaletteSectionModel>,
     /// The query text `palette_sections` was last built for. Read by the

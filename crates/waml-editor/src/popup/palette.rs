@@ -701,6 +701,18 @@ impl PalettePopup {
         self.draw_frame.redraw(cx);
     }
 
+    /// The sections the card actually KEPT, after `trim_sections_to_fit`.
+    ///
+    /// The opener must mirror THIS, never the model it handed in: commit ids
+    /// are `p:{section}:{row}` over these indices, and trimming both removes
+    /// rows (`drop_one_row` takes `rows[len - 2]` when a section ends in a
+    /// `+ N more` row) and deletes emptied sections, shifting every later
+    /// index. Resolving a commit against the untrimmed model therefore
+    /// invokes a different row's action on any window short enough to trim.
+    pub fn kept_sections(&self) -> &[PaletteSectionModel] {
+        &self.sections
+    }
+
     /// Height the row list has inside the card, below the query row and
     /// between the list paddings. `PopupRoot::show_at` clamps the card to the
     /// window, so this is what actually fits -- not what the model wants.
@@ -1664,6 +1676,76 @@ mod tests {
             palette.test_armed_row_title().as_deref(),
             Some("Search all text for \"term\" \u{2014} 48 results"),
             "ArrowUp must wrap onto the escalate row"
+        );
+    }
+
+    /// Commit ids are positional over `kept_sections`, which is NOT the model
+    /// the opener pushed: a card too short to paint everything drops rows out
+    /// of the middle of a capped section (crediting them to its `+ N more`
+    /// row) and deletes emptied sections outright. An opener mirroring the
+    /// pushed model resolves `p:{section}:{row}` to a different row.
+    #[test]
+    fn kept_sections_drop_rows_the_pushed_model_still_has() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let mut palette = cx.with_vm(PalettePopup::script_new_with_default);
+
+        let empty = build_palette_model(
+            "",
+            &[],
+            &no_snippet,
+            &HashSet::new(),
+            &[],
+            TextIndexStatus::Ready,
+        );
+        // Room for the query row, the paddings, and exactly four rows.
+        let max_height = PALETTE_QUERY_H + PALETTE_PAD_V * 2.0 + PALETTE_ROW_H * 4.0;
+        palette.open_palette(
+            &mut cx,
+            Rect {
+                pos: dvec2(0.0, 80.0),
+                size: dvec2(560.0, content_height(&empty)),
+            },
+            max_height,
+            empty,
+        );
+
+        let hits: Vec<SearchHit> = (0..12)
+            .map(|i| hit("a.md", FieldGroup::Names, model(&format!("c{i}"))))
+            .chain((0..12).map(|i| hit("a.md", FieldGroup::Names, span(i))))
+            .chain((0..12).map(|i| hit("a.md", FieldGroup::Prose, span(i))))
+            .chain((0..12).map(|i| hit("a.md", FieldGroup::Structure, span(i))))
+            .collect();
+        let pushed = build_palette_model(
+            "term",
+            &hits,
+            &no_snippet,
+            &HashSet::new(),
+            &[],
+            TextIndexStatus::Ready,
+        );
+        palette.set_sections(&mut cx, pushed.clone());
+
+        let titles = |sections: &[PaletteSectionModel]| -> Vec<String> {
+            sections
+                .iter()
+                .flat_map(|section| section.rows.iter().map(|row| row.title.clone()))
+                .collect()
+        };
+        let pushed_titles = titles(&pushed);
+        let kept_titles = titles(palette.kept_sections());
+
+        assert!(
+            kept_titles.len() < pushed_titles.len(),
+            "a four-row budget must trim a four-section model; kept {kept_titles:?}"
+        );
+        assert_ne!(
+            kept_titles, pushed_titles,
+            "kept rows must differ from the pushed model, or the mirror bug is untestable"
+        );
+        assert_eq!(
+            kept_titles.last(),
+            pushed_titles.last(),
+            "trimming must still leave the escalate row last"
         );
     }
 
