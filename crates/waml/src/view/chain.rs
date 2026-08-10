@@ -205,6 +205,10 @@ enum Resolution {
     /// `view: member:<href>` -- the folder's own tab resolves to the named
     /// member's target, at that member's own resolved surface.
     Member(String),
+    /// `view: book` -- the folder's own tab renders the book surface (one
+    /// continuous scroll of the projected rows), rows unchanged. Same
+    /// category as `Markdown`: a resolution, never a middleware stage.
+    Book,
 }
 
 /// A resolved sequence of [`Projection`] stages for one folder, built from a
@@ -281,6 +285,10 @@ impl Chain {
                 // its own mask.)
                 "markdown" => {
                     resolution = Some(Resolution::Markdown);
+                    continue;
+                }
+                "book" => {
+                    resolution = Some(Resolution::Book);
                     continue;
                 }
                 "member" => {
@@ -380,6 +388,21 @@ impl Chain {
         &self.ids
     }
 
+    /// The surface this chain's declared RESOLUTION names, when that answer
+    /// is static. `markdown` and `book` are decided at declaration time;
+    /// `member:<href>` needs a projection run to resolve the member's own
+    /// surface, so it (and a chain with no resolution) answers `None` -- a
+    /// caller that needs the member answer runs the chain. Exists so a click
+    /// site can ask "does this folder open as a book?" without projecting
+    /// rows (the editor's `App::primary_folder_locator`).
+    pub fn resolution_surface(&self) -> Option<SurfaceId> {
+        match &self.resolution {
+            Some(Resolution::Markdown) => Some(SurfaceId::markdown()),
+            Some(Resolution::Book) => Some(SurfaceId::book()),
+            Some(Resolution::Member(_)) | None => None,
+        }
+    }
+
     fn next(&self) -> Next<'_> {
         Next {
             remaining: &self.stages,
@@ -421,6 +444,7 @@ impl Chain {
                 let (surface, diagnostics) = match &self.resolution {
                     None => (stage_surface, Vec::new()),
                     Some(Resolution::Markdown) => (SurfaceId("markdown".to_string()), Vec::new()),
+                    Some(Resolution::Book) => (SurfaceId("book".to_string()), Vec::new()),
                     Some(Resolution::Member(href)) => {
                         match Self::resolve_member_surface(&guarded_ctx, href, &rows, limits) {
                             Some(surface) => (surface, Vec::new()),
@@ -1073,6 +1097,16 @@ mod tests {
         );
         assert!(diags.is_empty(), "{diags:?}");
         assert_eq!(chain.resolution, Some(Resolution::Member("Thing".into())));
+
+        let (chain, diags) = Chain::build(
+            &decl(&["book"]),
+            &registry,
+            &idx,
+            &ProjectionMask::from_names(["book"]),
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(chain.resolution, Some(Resolution::Book));
+        assert_eq!(chain.resolution_surface(), Some(SurfaceId::book()));
     }
 
     #[test]
@@ -1821,6 +1855,94 @@ mod tests {
                 identity_rows.len(),
                 "rows unchanged vs identity chain"
             );
+        }
+
+        #[test]
+        fn view_book_resolves_the_folder_target_to_the_book_surface() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: book\n---\n# Root\n\n* [Orders](orders.md)\n",
+                    ),
+                    ("orders.md", "# Orders\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = MiddlewareRegistry::new();
+
+            let identity_bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    ("index.md", "# Root\n\n* [Orders](orders.md)\n"),
+                    ("orders.md", "# Orders\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+
+            let (rows, surface, diagnostics) = run_root(&bundle, &registry);
+            let (identity_rows, identity_surface, identity_diags) =
+                run_root(&identity_bundle, &registry);
+
+            assert!(diagnostics.is_empty());
+            assert!(identity_diags.is_empty());
+            assert_eq!(surface.as_str(), "book");
+            assert_ne!(identity_surface.as_str(), "book");
+            // A resolution never changes the projection, only the folder's
+            // own surface.
+            assert_eq!(
+                rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+                identity_rows
+                    .iter()
+                    .map(|r| r.label.as_str())
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        #[test]
+        fn view_book_after_middleware_keeps_the_projection_and_resolves_book() {
+            let bundle = Bundle::parse(
+                &SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "---\nview: [hide, book]\nhide: [\"secret\"]\n---\n# Root\n\n* [Orders](orders.md)\n* [Secret](secret.md)\n",
+                    ),
+                    ("orders.md", "# Orders\n"),
+                    ("secret.md", "# Secret\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+            let registry = core_registry_for_tests();
+
+            let (rows, surface, diagnostics) = run_root(&bundle, &registry);
+            assert!(diagnostics.is_empty());
+            assert_eq!(surface.as_str(), "book");
+            assert_eq!(
+                rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+                vec!["Orders"],
+            );
+        }
+
+        #[test]
+        fn resolution_surface_reports_statically_declared_resolutions() {
+            let registry = core_registry_for_tests();
+            for (entries, expected) in [
+                (vec!["book"], Some(SurfaceId::book())),
+                (vec!["markdown"], Some(SurfaceId::markdown())),
+                (vec!["member:./orders"], None),
+                (vec![], None),
+            ] {
+                let (chain, diags) = Chain::build(
+                    &decl(&entries),
+                    &registry,
+                    &index(),
+                    &ProjectionMask::default(),
+                );
+                assert!(diags.is_empty(), "{entries:?}");
+                assert_eq!(chain.resolution_surface(), expected, "{entries:?}");
+            }
         }
 
         #[test]

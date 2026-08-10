@@ -3,9 +3,9 @@
 //! middleware names — an unknown name is a declaration-level chain-build
 //! failure, not a parse-time silent skip and not a parse error.
 //!
-//! `markdown` and `member:<href>` are surface-resolution entries, not
-//! middleware (spec: "The chain resolves surfaces too"); this layer records
-//! them as ordinary entries and a later layer interprets them.
+//! `markdown`, `book`, and `member:<href>` are surface-resolution entries,
+//! not middleware (spec: "The chain resolves surfaces too"); this layer
+//! records them as ordinary entries and a later layer interprets them.
 
 use crate::frontmatter::FmValue;
 

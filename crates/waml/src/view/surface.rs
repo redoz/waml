@@ -30,6 +30,13 @@ impl SurfaceId {
     pub fn folder() -> Self {
         SurfaceId("folder".into())
     }
+
+    /// The book surface (spec 2026-08-11-book-mode-design): a folder read as
+    /// one continuous scroll. Declared per folder via `view: book`; never a
+    /// type default, so it does not appear in [`default_surface`].
+    pub fn book() -> Self {
+        SurfaceId("book".into())
+    }
 }
 
 /// Document-type default surfaces, by convention with `crate::model::ElementType`:
