@@ -282,20 +282,29 @@ impl DocView for SearchResultsView {
     }
 }
 
-/// The navigation + reveal a row's hit resolves to (spec §Activation per
-/// document kind): a model hit opens on the canvas and reveals its element;
-/// a prose/structure hit opens on the markdown surface and reveals its
-/// span. `SearchResultsView::handle` and `on_popup_result` both funnel
-/// through here, so a hidden row confirmed via the popup lands on exactly
-/// the same outcome an ordinary row activates directly.
-fn navigation_for_row(row: &ResultRow) -> (NavigationIntent, Option<(String, RevealTarget)>) {
-    let hit = &row.hit;
-    let concept_id = hit.concept_id.clone().unwrap_or_else(|| {
+/// The hit's concept id: its own, when the extractor resolved one, else the
+/// document path with its `.md` suffix stripped. Shared by `navigation_for_hit`
+/// and the palette's `Document`/`Recent` row commits (Task 11), which open a
+/// concept without a reveal.
+pub(crate) fn concept_id_for_hit(hit: &SearchHit) -> String {
+    hit.concept_id.clone().unwrap_or_else(|| {
         hit.document
             .strip_suffix(".md")
             .unwrap_or(&hit.document)
             .to_string()
-    });
+    })
+}
+
+/// The navigation + reveal a hit resolves to (spec §Activation per document
+/// kind): a model hit opens on the canvas and reveals its element; a
+/// prose/structure hit opens on the markdown surface and reveals its span.
+/// `SearchResultsView::handle`/`on_popup_result` and the palette's
+/// `Concept`/`Text`/`Structure` row commits (Task 11) all funnel through
+/// here -- one reveal mapping, no second copy to drift out of sync.
+pub(crate) fn navigation_for_hit(
+    hit: &SearchHit,
+) -> (NavigationIntent, Option<(String, RevealTarget)>) {
+    let concept_id = concept_id_for_hit(hit);
     let (surface, reveal) = match &hit.target {
         HitTarget::ModelElement { key } => (
             waml::view::surface::SurfaceId::canvas(),
@@ -318,6 +327,11 @@ fn navigation_for_row(row: &ResultRow) -> (NavigationIntent, Option<(String, Rev
         disposition: OpenDisposition::Preview,
     };
     (navigation, Some((concept_id, reveal)))
+}
+
+/// The navigation + reveal a row's hit resolves to; see `navigation_for_hit`.
+fn navigation_for_row(row: &ResultRow) -> (NavigationIntent, Option<(String, RevealTarget)>) {
+    navigation_for_hit(&row.hit)
 }
 
 // ---------------------------------------------------------------------

@@ -25,6 +25,7 @@ use crate::nav::NavState;
 use crate::panel_splitter::PanelSplitterWidgetRefExt;
 use crate::platform_browser::{ExternalUrlAdapter, PlatformBrowser};
 use crate::popup::base::PopupResult;
+use crate::popup::palette::PaletteSectionModel;
 use crate::popup::root::{MenuOpen, PopupRoot, PopupSpec};
 use crate::project_settings::DockWidths;
 use crate::search_state::SearchState;
@@ -808,6 +809,19 @@ pub struct App {
     /// `apply_pending_reveal` (Task 9, spec §DocView::reveal).
     #[rust]
     pending_reveal: Option<PendingReveal>,
+    /// The Ctrl+K palette's last-pushed sections (Task 11), retained so a row
+    /// commit's opaque `p:{section}:{row}` id (`popup::palette::PalettePopup::commit`)
+    /// can be resolved back to the `PaletteRow` it was built from -- the
+    /// widget itself is `reset()` (rows dropped) before the close action is
+    /// readable.
+    #[rust]
+    palette_sections: Vec<PaletteSectionModel>,
+    /// The query text `palette_sections` was last built for. Read by the
+    /// `MoreText`/`Escalate` row commit to reach `open_search_results` with
+    /// the SAME query the palette showed -- `MoreText` carries no query of
+    /// its own (`PaletteRowKind::MoreText { omitted }`).
+    #[rust]
+    palette_query: String,
     #[rust]
     pending_anchor_restore: Option<PendingAnchorRestore>,
     /// Monotonic counter stamped onto each `PendingAnchorRestore` so a second
@@ -1206,6 +1220,13 @@ impl AppMain for App {
         crate::popup::radial::script_mod(vm);
         crate::popup::select::script_mod(vm);
         crate::popup::conflict_list::script_mod(vm);
+        // `PalettePopup` must register before `PopupRoot`'s own DSL, which
+        // mounts it as a child (`palette := PalettePopup{ ... }`) -- the same
+        // eager `mod.widgets.*` resolution order every other `PopupRoot`
+        // surface above already obeys. Missing here, the palette widget
+        // silently becomes a dead, unhittable node (Task 10 registered its
+        // own `script_mod` block but never wired the call in).
+        crate::popup::palette::script_mod(vm);
         crate::popup::root::script_mod(vm);
         crate::canvas::script_mod(vm);
         // `IconButton` must register before EVERY consumer that mounts it as a

@@ -79,11 +79,8 @@ impl App {
     /// history-aware transition path (spec §Results tab; decision 7). Same
     /// query -> same locator -> same tab id, so a re-run activates rather
     /// than duplicates, and the tab participates in view history like any
-    /// other (Back/Forward re-runs the query via the same locator).
-    ///
-    /// Unused outside this module's own tests until the Ctrl+K palette's
-    /// escalate row and the shortcut wiring call it (Task 11).
-    #[allow(dead_code)]
+    /// other (Back/Forward re-runs the query via the same locator). Called
+    /// by the Ctrl+K palette's `MoreText`/`Escalate` row commit (Task 11).
     pub(crate) fn open_search_results(&mut self, cx: &mut Cx, query: &str) {
         let locator = crate::navigation::DocumentLocator::new(
             waml::view::row::RowTarget::Virtual,

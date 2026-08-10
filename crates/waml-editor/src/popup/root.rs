@@ -753,6 +753,19 @@ impl PopupRoot {
             p.set_sections(cx, sections);
         }
     }
+
+    /// Every row title the live palette widget is currently holding, via the
+    /// SAME `self.body.widget(cx, ids!(palette))` lookup every other
+    /// `PopupRoot` method uses -- for App-level tests asserting a re-query
+    /// reached the actual widget, not just `App`'s own mirror (Task 11).
+    #[cfg(test)]
+    pub(crate) fn test_palette_row_titles(&self, cx: &mut Cx) -> Vec<String> {
+        self.body
+            .widget(cx, ids!(palette))
+            .borrow::<PalettePopup>()
+            .map(|p| p.test_row_titles())
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]

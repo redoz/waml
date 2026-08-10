@@ -6,6 +6,47 @@ pub(crate) enum HistoryCommand {
     Redo,
 }
 
+/// Ctrl+K / Cmd+K palette; Ctrl+F / Cmd+F find strip; F3 / Shift+F3 hits
+/// (Task 11, spec §Shortcuts).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SearchCommand {
+    OpenPalette,
+    OpenFindStrip,
+    NextHit,
+    PreviousHit,
+}
+
+/// Alt always disqualifies; F3 needs NO primary modifier. These four chords
+/// are checked here, in one function, against everything the editor already
+/// claims (Ctrl+Z/Y, V/N/C, ?, T) -- the collision audit the spec's risk
+/// section asks for IS this function's test module.
+pub(crate) fn search_command_for(
+    key: KeyCode,
+    modifiers: KeyModifiers,
+    macos: bool,
+) -> Option<SearchCommand> {
+    if modifiers.alt {
+        return None;
+    }
+    let primary = if macos {
+        modifiers.logo && !modifiers.control
+    } else {
+        modifiers.control && !modifiers.logo
+    };
+    match key {
+        KeyCode::KeyK if primary => Some(SearchCommand::OpenPalette),
+        KeyCode::KeyF if primary => Some(SearchCommand::OpenFindStrip),
+        KeyCode::F3 if !modifiers.control && !modifiers.logo => {
+            if modifiers.shift {
+                Some(SearchCommand::PreviousHit)
+            } else {
+                Some(SearchCommand::NextHit)
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn history_command_for(
     key: KeyCode,
     modifiers: KeyModifiers,
@@ -97,5 +138,102 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn macos_uses_command_k_and_command_f() {
+        assert_eq!(
+            search_command_for(KeyCode::KeyK, modifiers(false, true, false), true),
+            Some(SearchCommand::OpenPalette)
+        );
+        assert_eq!(
+            search_command_for(KeyCode::KeyF, modifiers(false, true, false), true),
+            Some(SearchCommand::OpenFindStrip)
+        );
+    }
+
+    #[test]
+    fn other_platforms_use_control_k_and_control_f() {
+        assert_eq!(
+            search_command_for(KeyCode::KeyK, modifiers(true, false, false), false),
+            Some(SearchCommand::OpenPalette)
+        );
+        assert_eq!(
+            search_command_for(KeyCode::KeyF, modifiers(true, false, false), false),
+            Some(SearchCommand::OpenFindStrip)
+        );
+    }
+
+    #[test]
+    fn f3_needs_no_primary_modifier_and_shift_reverses_direction() {
+        assert_eq!(
+            search_command_for(KeyCode::F3, modifiers(false, false, false), false),
+            Some(SearchCommand::NextHit)
+        );
+        assert_eq!(
+            search_command_for(KeyCode::F3, modifiers(false, false, true), false),
+            Some(SearchCommand::PreviousHit)
+        );
+        // A primary modifier held alongside F3 is not a search command --
+        // some other chord's territory.
+        assert_eq!(
+            search_command_for(KeyCode::F3, modifiers(true, false, false), false),
+            None
+        );
+        assert_eq!(
+            search_command_for(KeyCode::F3, modifiers(false, true, false), true),
+            None
+        );
+    }
+
+    #[test]
+    fn wrong_platform_modifier_and_extra_alt_are_not_search_commands() {
+        assert_eq!(
+            search_command_for(KeyCode::KeyK, modifiers(true, false, false), true),
+            None
+        );
+        assert_eq!(
+            search_command_for(KeyCode::KeyF, modifiers(false, true, false), false),
+            None
+        );
+        assert_eq!(
+            search_command_for(
+                KeyCode::KeyK,
+                KeyModifiers {
+                    control: true,
+                    alt: true,
+                    ..Default::default()
+                },
+                false,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn every_already_claimed_chord_is_not_a_search_command() {
+        // Ctrl+Z / Ctrl+Y (history), plain V/N/C (tool dock), plain T (theme
+        // toggle), plain `?` (shortcuts overlay) -- the collision audit the
+        // spec's risk section asks for.
+        assert_eq!(
+            search_command_for(KeyCode::KeyZ, modifiers(true, false, false), false),
+            None
+        );
+        assert_eq!(
+            search_command_for(KeyCode::KeyY, modifiers(true, false, false), false),
+            None
+        );
+        for key in [
+            KeyCode::KeyV,
+            KeyCode::KeyN,
+            KeyCode::KeyC,
+            KeyCode::KeyT,
+            KeyCode::Slash,
+        ] {
+            assert_eq!(
+                search_command_for(key, modifiers(false, false, false), false),
+                None
+            );
+        }
     }
 }

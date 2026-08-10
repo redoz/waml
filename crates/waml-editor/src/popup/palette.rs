@@ -506,6 +506,17 @@ impl PalettePopup {
         &self.query
     }
 
+    /// Every row title currently rendered, in draw order -- for App-level
+    /// tests asserting a live re-query reached the widget (Task 11), the
+    /// same shape as `tree_panel.rs`'s `test_row_titles`.
+    #[cfg(test)]
+    pub(crate) fn test_row_titles(&self) -> Vec<String> {
+        self.sections
+            .iter()
+            .flat_map(|section| section.rows.iter().map(|row| row.title.clone()))
+            .collect()
+    }
+
     /// Open at `rect` (already placed + sized by the opener) with `sections`.
     pub fn open_palette(&mut self, cx: &mut Cx, rect: Rect, sections: Vec<PaletteSectionModel>) {
         self.open = true;

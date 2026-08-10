@@ -104,18 +104,6 @@ fn dock_toggle_glyphs_show_the_next_action() {
     );
 }
 
-fn mounted_production_shell() -> (Cx, App) {
-    let mut cx = Cx::new(Box::new(|_, _| {}));
-    cx.init_cx_os();
-    let app = cx.with_vm(|vm| {
-        let value = <App as AppMain>::script_mod(vm);
-        let mut app = <App as ScriptNew>::script_from_value(vm, value);
-        <App as AppMain>::after_new_from_script(vm, &mut app);
-        app
-    });
-    (cx, app)
-}
-
 /// Closing the last document tab has to take the document surface down with
 /// it. Nothing else does: every surface is shown by the view that owns it and
 /// hidden by whichever view takes over next, so with no next view the closed

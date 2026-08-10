@@ -231,6 +231,8 @@ impl App {
         let burger_closed = result_for(live_id!(burger));
         let doc_switcher_closed = result_for(live_id!(doc_switcher));
         let node_closed = result_for(live_id!(node_menu));
+        let palette_closed = result_for(live_id!(palette));
+        let palette_query = popup.palette_query_changed(cx, live_id!(palette), actions);
         let mut document_armed = popup.armed_event(actions);
         drop(popup);
 
@@ -306,6 +308,17 @@ impl App {
                 }
             }
         }
+        // Live re-query (Task 11): a keystroke inside the open palette
+        // re-runs `SearchState` and pushes fresh sections back in place --
+        // the palette never closes for this, so it rides its own branch
+        // rather than `DOCUMENT_POPUP_RELAY_ORDER` below (that loop only
+        // fires on Armed/Closed).
+        if let Some(query) = palette_query {
+            self.push_palette_query(cx, query);
+        }
+        if let Some(result) = palette_closed {
+            self.handle_palette_closed(cx, result);
+        }
         for relay in DOCUMENT_POPUP_RELAY_ORDER {
             let outcome = match relay {
                 PopupRelay::Armed => document_armed.take().and_then(|(tag, id)| {
@@ -320,6 +333,168 @@ impl App {
             if let Some(outcome) = outcome {
                 let _ = self.apply_view_outcome(cx, outcome);
             }
+        }
+    }
+
+    /// Ctrl+K (`shortcuts::SearchCommand::OpenPalette`, Task 11): show the
+    /// palette centred-top over the window, seeded with the empty-query
+    /// RECENT section (spec §Palette).
+    pub(super) fn open_palette(&mut self, cx: &mut Cx) {
+        let bounds = self.window_bounds(cx);
+        let sections = self.build_palette_sections("");
+        self.palette_query.clear();
+        self.palette_sections = sections.clone();
+        if let Some(mut popup) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            popup.show_at(
+                cx,
+                PopupSpec::Palette {
+                    tag: live_id!(palette),
+                    bounds,
+                    sections,
+                },
+            );
+        }
+    }
+
+    /// A keystroke inside the still-open palette (`PaletteAction::QueryChanged`):
+    /// re-run `SearchState` for `query` and push fresh sections back in place.
+    fn push_palette_query(&mut self, cx: &mut Cx, query: String) {
+        let sections = self.build_palette_sections(&query);
+        self.palette_query = query;
+        self.palette_sections = sections.clone();
+        if let Some(mut popup) = self
+            .ui
+            .widget(cx, ids!(popup_root))
+            .borrow_mut::<PopupRoot>()
+        {
+            popup.set_palette_sections(cx, live_id!(palette), sections);
+        }
+    }
+
+    /// The blended, sectioned palette model for `query` (spec §Palette):
+    /// live hits from `SearchState`, the projection's hidden-document set,
+    /// and the empty-query RECENT fallback.
+    fn build_palette_sections(&self, query: &str) -> Vec<PaletteSectionModel> {
+        let scope = waml::search::QueryScope::default();
+        let hits = self.search.query(query, &scope);
+        let hidden = self
+            .search
+            .hidden_documents(self.session.okf_analysis(), self.session.uml_analysis());
+        let recents = self.palette_recents();
+        crate::popup::palette::build_palette_model(
+            query,
+            &hits,
+            &|hit| self.search.snippet(hit, 80),
+            &hidden,
+            &recents,
+            self.search.status(),
+        )
+    }
+
+    /// Most recent distinct concept documents from `view_history`, newest
+    /// first, capped at 8 (decision 2) -- the palette's empty-query RECENT
+    /// section.
+    fn palette_recents(&self) -> Vec<(String, String)> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for index in (0..self.view_history.len()).rev() {
+            let Some(location) = self.view_history.entry_at(index) else {
+                continue;
+            };
+            let Some(concept_id) = location.document.concept_id() else {
+                continue;
+            };
+            if !seen.insert(concept_id.to_string()) {
+                continue;
+            }
+            let title = self
+                .session
+                .okf()
+                .concept(concept_id)
+                .and_then(|concept| concept.title.clone())
+                .unwrap_or_else(|| {
+                    concept_id
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(concept_id)
+                        .to_string()
+                });
+            out.push((concept_id.to_string(), title));
+            if out.len() >= 8 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Resolve a palette commit's opaque `p:{section}:{row}` id back to the
+    /// `PaletteRow` it was built from (`palette_sections` is the SAME `Vec`
+    /// the widget was last handed -- see the field's doc comment). The
+    /// widget is reset before the close action is readable, so this is the
+    /// only place left to recover which row committed.
+    fn resolve_palette_commit(&self, id: LiveId) -> Option<crate::popup::palette::PaletteRow> {
+        for (section_index, section) in self.palette_sections.iter().enumerate() {
+            for (row_index, row) in section.rows.iter().enumerate() {
+                if LiveId::from_str(&format!("p:{section_index}:{row_index}")) == id {
+                    return Some(row.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn handle_palette_closed(&mut self, cx: &mut Cx, result: PopupResult) {
+        let PopupResult::Invoked(id) = result else {
+            return;
+        };
+        if let Some(row) = self.resolve_palette_commit(id) {
+            self.apply_palette_row(cx, &row);
+        }
+    }
+
+    /// Palette commit routing (spec §Palette, Task 11): a `Concept`/`Text`/
+    /// `Structure` row opens on the surface its hit maps to and reveals it;
+    /// a `Document`/`Recent` row opens normally, with no reveal; a
+    /// `MoreText`/`Escalate` row escalates to the full results tab.
+    /// `NoResults`/`Indexing` rows are never activatable (see
+    /// `popup::palette::is_activatable`), so they never reach here.
+    fn apply_palette_row(&mut self, cx: &mut Cx, row: &crate::popup::palette::PaletteRow) {
+        use crate::popup::palette::PaletteRowKind;
+        match &row.kind {
+            PaletteRowKind::Concept { .. }
+            | PaletteRowKind::Text { .. }
+            | PaletteRowKind::Structure { .. } => {
+                if let Some(hit) = &row.hit {
+                    let (navigation, reveal) = crate::search_results_view::navigation_for_hit(hit);
+                    let outcome = crate::doc_view::ViewOutcome {
+                        navigation: Some(navigation),
+                        reveal,
+                        ..Default::default()
+                    };
+                    let _ = self.apply_view_outcome(cx, outcome);
+                }
+            }
+            PaletteRowKind::Document => {
+                if let Some(hit) = &row.hit {
+                    let concept_id = crate::search_results_view::concept_id_for_hit(hit);
+                    self.transition_document(cx, &concept_id, false);
+                }
+            }
+            PaletteRowKind::Recent { concept_id } => {
+                self.transition_document(cx, concept_id, false);
+            }
+            PaletteRowKind::Escalate { query, .. } => {
+                self.open_search_results(cx, query);
+            }
+            PaletteRowKind::MoreText { .. } => {
+                let query = self.palette_query.clone();
+                self.open_search_results(cx, &query);
+            }
+            PaletteRowKind::NoResults { .. } | PaletteRowKind::Indexing => {}
         }
     }
 

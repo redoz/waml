@@ -61,11 +61,8 @@ impl SearchState {
         self.status = TextIndexStatus::Ready;
     }
 
-    // `status` is this task's lib-crate seam for the palette's `indexing…`
-    // row (Task 10/11); nothing in-crate reaches it yet besides the unit
-    // test below. `query`/`snippet` are reached by `App::open_search_results`
-    // (Task 9) now.
-    #[allow(dead_code)]
+    /// The palette's `indexing…` row (Task 10/11: `build_palette_model`'s
+    /// `text_status` parameter) reads this.
     pub fn status(&self) -> TextIndexStatus {
         self.status
     }

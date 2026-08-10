@@ -19,8 +19,28 @@ use waml_syntax::{SourceText, TextChange, TextRange, TextSize};
 mod completion;
 mod menus;
 mod navigation;
+mod palette;
 mod shell;
 mod workspace;
+
+/// The full production widget tree, built through the real
+/// `AppMain::script_mod` registration chain -- `main_window`, `popup_root`
+/// (and every surface it hosts, including the Ctrl+K palette), the dock, and
+/// every panel. Heavier than `navigation_app`'s hand-assembled fixture, but
+/// required whenever a test exercises something the lightweight fixture
+/// doesn't mount (a real `Window` for `window_bounds`, a real `PopupRoot` for
+/// `show_at`).
+fn mounted_production_shell() -> (Cx, App) {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let app = cx.with_vm(|vm| {
+        let value = <App as AppMain>::script_mod(vm);
+        let mut app = <App as ScriptNew>::script_from_value(vm, value);
+        <App as AppMain>::after_new_from_script(vm, &mut app);
+        app
+    });
+    (cx, app)
+}
 
 fn navigation_app() -> (Cx, App) {
     let mut cx = Cx::new(Box::new(|_, _| {}));

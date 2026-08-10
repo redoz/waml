@@ -73,6 +73,28 @@ impl App {
             }
         }
 
+        // Search commands (Task 11) own their chords app-wide too, the same
+        // as history above -- a command palette has to be reachable even
+        // while an editor has focus.
+        if let Event::KeyDown(ke) = event {
+            let macos = matches!(cx.os_type(), OsType::Macos);
+            if let Some(command) =
+                crate::shortcuts::search_command_for(ke.key_code, ke.modifiers, macos)
+            {
+                match command {
+                    crate::shortcuts::SearchCommand::OpenPalette => {
+                        self.open_palette(cx);
+                    }
+                    // Task 13: Ctrl+F wiring lands there.
+                    crate::shortcuts::SearchCommand::OpenFindStrip => {}
+                    // Task 14: F3/Shift+F3 session traversal lands there.
+                    crate::shortcuts::SearchCommand::NextHit
+                    | crate::shortcuts::SearchCommand::PreviousHit => {}
+                }
+                return true;
+            }
+        }
+
         // Tool-dock hotkeys (V/N/C): global, visual-only mode switch. Only
         // live while nothing holds key focus, so they don't fight with the
         // inspector's inline-edit text entry.
