@@ -5,7 +5,13 @@
 //! answering *where am I*, and candidate providers answering *what goes here*.
 //! Neither reads diagnostics; both read the parser's fixed slot kinds.
 
+use std::sync::Arc;
+
 use waml_syntax::{SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize};
+
+use crate::action::ActionError;
+use crate::analysis::DocumentId;
+use crate::uml::{vocabulary, ActionContext};
 
 use super::syntax::{UmlLanguage, UmlSyntaxKind};
 
@@ -106,5 +112,123 @@ fn collect_tokens(node: &SyntaxNode<UmlLanguage>, out: &mut Vec<SyntaxToken<UmlL
             SyntaxElement::Token(token) => out.push(token),
             SyntaxElement::Node(child) => collect_tokens(&child, out),
         }
+    }
+}
+
+/// What family a candidate came from. Consumers map this onto their own icon
+/// vocabulary; `waml` must not gain an LSP dependency, so nothing here names
+/// an LSP type.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum CompletionKind {
+    /// A closed grammar word.
+    Keyword,
+    /// A handle or id declared elsewhere in this document.
+    Reference,
+    /// A slot or attribute name from a classifier.
+    Field,
+    /// An enum member or other value.
+    Value,
+    /// A document from the catalog.
+    Link,
+    /// A name the author is inventing.
+    Name,
+}
+
+/// One candidate. `insert` is what goes into the document; `label` is what the
+/// client shows; `replace` is the range the insertion covers, so a client
+/// replaces a half-typed word rather than appending to it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Completion {
+    pub label: Arc<str>,
+    pub insert: Arc<str>,
+    pub kind: CompletionKind,
+    pub detail: Option<Arc<str>>,
+    pub replace: TextRange,
+}
+
+/// Candidates for `offset` in `document`.
+///
+/// Mirrors `repair_actions`: an unknown document is an error, a catalog or
+/// revision mismatch is an error (`ActionContext::new` already made that
+/// check), and everything else -- an offset past the end, an incomplete tree,
+/// a position in prose -- is an empty list. An unfinished document is the
+/// expected input, not a failure.
+pub fn completions(
+    context: ActionContext<'_>,
+    document: DocumentId,
+    offset: TextSize,
+) -> Result<Vec<Completion>, ActionError> {
+    let version = context
+        .okf()
+        .catalog
+        .document(document)
+        .ok_or(ActionError::UnknownDocument { document })?;
+    let Some(snapshot) = context.uml().syntax.document(document) else {
+        return Ok(Vec::new());
+    };
+    if !Arc::ptr_eq(version, snapshot.document()) {
+        return Err(ActionError::MismatchedCatalog);
+    }
+    let source = snapshot.syntax().write_to_string();
+    let Some(expectation) = expectation_at(snapshot.syntax(), offset) else {
+        return Ok(Vec::new());
+    };
+    let mut candidates = fixed_vocabulary(&expectation);
+    // Later slices append further providers here; each is selected on the slot
+    // and token kinds alone, so adding a family is a new function and a match
+    // arm and the locator never changes.
+    let prefix = source
+        .get(expectation.prefix.start().to_usize()..expectation.prefix.end().to_usize())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    candidates.retain(|candidate| candidate.label.to_ascii_lowercase().starts_with(&prefix));
+    candidates.sort_by(|left, right| {
+        (left.kind, left.label.as_ref()).cmp(&(right.kind, right.label.as_ref()))
+    });
+    candidates.dedup_by(|left, right| left.kind == right.kind && left.label == right.label);
+    Ok(candidates)
+}
+
+fn keyword(word: &str, replace: TextRange, detail: &str) -> Completion {
+    Completion {
+        label: Arc::from(word),
+        insert: Arc::from(word),
+        kind: CompletionKind::Keyword,
+        detail: Some(Arc::from(detail)),
+        replace,
+    }
+}
+
+/// Closed grammar words: message verbs, relationship kinds, flow node kinds,
+/// fragment kinds, layout directions and hints. Requires no analysis. Every
+/// word comes from `uml::vocabulary`; none is retyped here.
+fn fixed_vocabulary(expectation: &Expectation) -> Vec<Completion> {
+    let replace = expectation.prefix;
+    match expectation.token {
+        UmlSyntaxKind::VerbToken => vocabulary::MESSAGE_VERBS
+            .iter()
+            .map(|word| keyword(word, replace, "message verb"))
+            .collect(),
+        UmlSyntaxKind::RelationshipKindToken => vocabulary::relationship_keywords()
+            .map(|word| keyword(word, replace, "relationship kind"))
+            .collect(),
+        UmlSyntaxKind::NodeKindToken => vocabulary::flow_node_keywords()
+            .map(|word| keyword(word, replace, "flow node kind"))
+            .collect(),
+        UmlSyntaxKind::FragmentKindToken => vocabulary::fragment_keywords()
+            .map(|word| keyword(word, replace, "combined fragment"))
+            .collect(),
+        UmlSyntaxKind::LayoutWordToken | UmlSyntaxKind::LayoutKeywordToken => {
+            vocabulary::LAYOUT_DIRECTION_PHRASES
+                .iter()
+                .map(|word| keyword(word, replace, "layout direction"))
+                .chain(
+                    vocabulary::LAYOUT_HINT_PHRASES
+                        .iter()
+                        .map(|word| keyword(word, replace, "layout hint")),
+                )
+                .collect()
+        }
+        _ => Vec::new(),
     }
 }

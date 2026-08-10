@@ -130,3 +130,21 @@ fn an_offset_past_the_end_of_the_document_is_silence_not_an_error() {
     let past_end = waml::analysis::TextSize::try_from_usize(10_000).unwrap();
     assert!(expectation_at(snapshot.syntax(), past_end).is_none());
 }
+
+#[test]
+fn an_empty_bullet_in_messages_locates_the_message_source_not_the_fragment_kind() {
+    let located = locate(&sequence(
+        "## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- |\n",
+    ));
+    // KNOWN GAP: an empty bullet under `## Messages` is ambiguous between a
+    // message (missing source) and a combined fragment (missing kind). The
+    // parser's primary continuation there is the message parse, so the
+    // locator's unfiltered "first missing token in document order" rule
+    // finds MessageSource/SourceToken; the fragment-kind alternative is not
+    // reachable through this locator, only through the message-parse branch.
+    // See Task 4 in the plan.
+    assert_eq!(
+        located.map(|(slot, token, _)| (slot, token)),
+        Some((UmlSyntaxKind::MessageSource, UmlSyntaxKind::SourceToken))
+    );
+}
