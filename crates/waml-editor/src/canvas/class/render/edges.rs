@@ -173,7 +173,7 @@ pub(super) fn draw_edges(
                     .set_uniform(cx, live_id!(radius), &[fillet.radius as f32]);
                 draws
                     .elbow
-                    .set_uniform(cx, live_id!(hw), &[fillet.hw as f32]);
+                    .set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);
                 draws.elbow.draw_abs(cx, fillet.quad);
             }
         }
@@ -208,7 +208,7 @@ pub(super) fn draw_edges(
                         .set_uniform(cx, live_id!(filled), &[geometry.filled]);
                     draws
                         .marker
-                        .set_uniform(cx, live_id!(stroke_w), &[(pen.width() * 0.5) as f32]);
+                        .set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);
                     draws.marker.draw_abs(cx, geometry.quad);
                 }
             }

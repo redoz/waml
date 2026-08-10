@@ -182,10 +182,11 @@ mod tests {
 
     #[test]
     fn class_pens_derive_from_cad_pen() {
-        // One pen so far: the spike migrated `EdgeLine` alone. Later tasks add
-        // `EdgeElbow`, `EdgeMarker`, `GroupBorder` and `GroupDashed` here.
+        // Task 5 adds `GroupBorder` and `GroupDashed` here.
         let src = include_str!("class/widget.rs");
-        assert_derives_from_cad_pen(src, "EdgeLine");
+        for name in ["EdgeLine", "EdgeElbow", "EdgeMarker"] {
+            assert_derives_from_cad_pen(src, name);
+        }
     }
 
     /// `ConstraintVeil` is a wash-and-hatch FILL, not a stroke: it has no

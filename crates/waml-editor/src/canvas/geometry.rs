@@ -15,7 +15,6 @@ pub(crate) struct CornerFillet {
     pub(crate) gate: [f32; 4],
     pub(crate) center: DVec2,
     pub(crate) radius: f64,
-    pub(crate) hw: f64,
 }
 
 /// Draw-ready polygon geometry for a relationship terminal marker.
@@ -160,7 +159,6 @@ pub(crate) fn corner_fillet(
         gate: [gate_x as f32, gate_y as f32, big as f32, big as f32],
         center: center_local,
         radius: r,
-        hw,
     })
 }
 
@@ -291,7 +289,11 @@ mod tests {
         let out_bar = segment_quad(v, b, thickness);
         let f = corner_fillet(a, v, b, in_bar, out_bar, 4.0).unwrap();
         assert_eq!(f.radius, 4.0);
-        assert_eq!(f.hw, thickness * 0.5);
+        // `CornerFillet` no longer carries `hw` (Task 4: the renderer derives the
+        // arc band's half-width from the pen's quantised width, not this field,
+        // so it became dead code). The bar half-width is still `thickness / 2`
+        // here, so the test recomputes it locally.
+        let hw = thickness * 0.5;
         let to_local = |p: DVec2| dvec2(p.x - f.quad.pos.x, p.y - f.quad.pos.y);
         let p1 = to_local(dvec2(6.0, 0.0));
         let p2 = to_local(dvec2(10.0, -4.0));
@@ -303,13 +305,13 @@ mod tests {
         let bx1 = bx0 + f.bar_in[2] as f64;
         let by0 = f.bar_in[1] as f64;
         let by1 = by0 + f.bar_in[3] as f64;
-        assert!((by0 - (p1.y - f.hw)).abs() < 1e-9 && (by1 - (p1.y + f.hw)).abs() < 1e-9);
-        let seal = f.hw * CORNER_STUB_SEAL;
+        assert!((by0 - (p1.y - hw)).abs() < 1e-9 && (by1 - (p1.y + hw)).abs() < 1e-9);
+        let seal = hw * CORNER_STUB_SEAL;
         assert!(bx0 < p1.x && p1.x < bx1);
         assert!((bx1 - (p1.x + seal)).abs() < 1e-9);
         let ox0 = f.bar_out[0] as f64;
         let ox1 = ox0 + f.bar_out[2] as f64;
-        assert!((ox0 - (p2.x - f.hw)).abs() < 1e-9 && (ox1 - (p2.x + f.hw)).abs() < 1e-9);
+        assert!((ox0 - (p2.x - hw)).abs() < 1e-9 && (ox1 - (p2.x + hw)).abs() < 1e-9);
     }
 
     #[test]

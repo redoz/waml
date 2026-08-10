@@ -82,12 +82,9 @@ script_mod! {
     // interior to one filled shape: solid, with AA only on the outer boundary.
     // Shares `EdgeLine`'s single zoom-independent ink so a corner never reads
     // brighter or darker than the bars it joins.
-    mod.draw.EdgeElbow = mod.draw.DrawColor{
+    mod.draw.EdgeElbow = mod.draw.CadPen{
         center: uniform(vec2(0.0, 0.0))
         radius: uniform(0.0)
-        // Arc band HALF-width (= snapped bar thickness / 2), so the band matches the
-        // bars it unions with.
-        hw: uniform(1.0)
         // Axis-aligned quadrant that gates the annulus to the quarter facing the
         // corner vertex: (x, y, w, h) in quad-local pixels, anchored at the arc
         // center and extending toward the vertex.
@@ -96,17 +93,22 @@ script_mod! {
         bar_in: uniform(vec4(0.0, 0.0, 0.0, 0.0))
         bar_out: uniform(vec4(0.0, 0.0, 0.0, 0.0))
         pixel: fn() {
+            let dpi = max(1.0, self.draw_pass.dpi_factor)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             // Same coverage correction as `EdgeLine`: restore the sqrt(2) the
             // fork's `antialias()` drops, and grow every shape by the half pixel
             // Sdf2d's ramp is missing, so a corner inks as solidly as the bars it
             // joins instead of reading a shade lighter.
-            sdf.aa = sdf.aa * 1.4142136
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
+            // The arc band's half-width is the QUANTISED bar half-width, not the
+            // raw `thickness * 0.5` the CPU used to hand over: a fractional lpx
+            // half-width drew a soft 1.5px corner into a crisp 3px bar.
+            let hw = self.pen_dev(self.pen_w) * 0.5 / dpi
             // Fillet arc band = annulus (outer disc minus inner disc). Built with
             // shape METHODS only -- assigning sdf.shape/dist directly from a pixel fn
             // silently fails this fork's shader VM, so there's no manual `min`.
-            sdf.circle(self.center.x, self.center.y, self.radius + self.hw + 0.5)
-            sdf.circle(self.center.x, self.center.y, self.radius - self.hw - 0.5)
+            sdf.circle(self.center.x, self.center.y, self.radius + hw + 0.5)
+            sdf.circle(self.center.x, self.center.y, self.radius - hw - 0.5)
             sdf.subtract()
             // Gate to the quarter facing the vertex: intersect with the quadrant
             // rect. Both bounding rays are axis-aligned for an orthogonal bend, so a
@@ -130,7 +132,7 @@ script_mod! {
     // fill vs hollow vs open is selected by the `hollow`/`filled` flags
     // multiplying colors -- open (both 0) -> transparent interior + stroke,
     // hollow -> `bg` interior + stroke, filled -> `color` interior + stroke.
-    mod.draw.EdgeMarker = mod.draw.DrawColor{
+    mod.draw.EdgeMarker = mod.draw.CadPen{
         // Packed path vertices: v01 = (v0.xy, v1.xy), v23 = (v2.xy, v3.xy).
         v01: uniform(vec4(0.0, 0.0, 0.0, 0.0))
         v23: uniform(vec4(0.0, 0.0, 0.0, 0.0))
@@ -138,16 +140,15 @@ script_mod! {
         hollow: uniform(0.0)
         // 1.0 -> solid interior (composition diamond, generalization if ever filled).
         filled: uniform(0.0)
-        stroke_w: uniform(1.2)
         // Interior wash for a hollow glyph: the card field so the edge line behind
         // it doesn't bleed through the triangle/diamond.
         bg: uniform(atlas.field_bg)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             // Coverage correction, as in `EdgeLine`. The half-pixel bias rides
-            // the stroke width below rather than the path, which a polygon
-            // cannot be grown by.
-            sdf.aa = sdf.aa * 1.4142136
+            // the stroke width `pen_sw` returns, rather than the path, which a
+            // polygon cannot be grown by.
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
             sdf.move_to(self.v01.x, self.v01.y)
             sdf.line_to(self.v01.z, self.v01.w)
             sdf.line_to(self.v23.x, self.v23.y)
@@ -157,7 +158,7 @@ script_mod! {
             // (both flags 0). The flags are mutually exclusive so the sum is clean.
             let fill = self.bg * self.hollow + self.color * self.filled
             sdf.fill_keep(fill)
-            sdf.stroke(self.color, self.stroke_w + 0.5)
+            sdf.stroke(self.color, self.pen_sw(self.pen_w * 0.5))
             return sdf.result
         }
     }
