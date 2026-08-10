@@ -182,31 +182,31 @@ impl App {
             // after surfacing an error. Shutdown cannot be cancelled and remains
             // a final best-effort write for forced/platform teardown paths.
             let retry_on_error = matches!(event, Event::QuitRequested(_));
+            // BEFORE the save: a completed flush marks the whole bundle
+            // persisted, which is exactly the difference this reads.
+            let flushed = flushed_document_paths(&self.session.snapshot());
             let result = self.save_or_retry(cx, retry_on_error);
             if result.is_ok() {
-                self.refresh_search_after_save();
+                self.refresh_search_after_save(&flushed);
             }
             prevent_quit_after_failed_save(event, &result);
-        } else if self.save_timer.is_event(event).is_some() && self.save_or_retry(cx, true).is_ok()
-        {
-            self.refresh_search_after_save();
+        } else if self.save_timer.is_event(event).is_some() {
+            let flushed = flushed_document_paths(&self.session.snapshot());
+            if self.save_or_retry(cx, true).is_ok() {
+                self.refresh_search_after_save(&flushed);
+            }
         }
     }
 
     /// After a successful save flush, refresh the text index for exactly the
-    /// documents the current snapshot names as affected -- spec §Index
-    /// lifecycle's per-document update, not a full rebuild.
-    fn refresh_search_after_save(&mut self) {
+    /// documents that flush wrote -- spec §Index lifecycle's per-document
+    /// update, not a full rebuild.
+    fn refresh_search_after_save(&mut self, flushed: &[String]) {
         let snapshot = self.session.snapshot();
         // ONE batched call: each per-document refresh re-extracts the whole
         // bundle and rebuilds every posting list, so a save touching N
         // documents must not run N of them.
-        let paths: Vec<_> = snapshot
-            .affected_documents
-            .iter()
-            .filter_map(|&document| self.session.document_path(document))
-            .collect();
-        let paths: Vec<&str> = paths.iter().map(|path| path.as_str()).collect();
+        let paths: Vec<&str> = flushed.iter().map(String::as_str).collect();
         self.search.refresh_documents(
             &paths,
             &snapshot.source,
@@ -357,4 +357,32 @@ impl App {
         // `App` is the only thing that knows how wide the title row is.
         self.sync_agent_row(cx);
     }
+}
+
+/// Every document a flush would write: those whose text differs from what is
+/// already persisted, plus those the persisted bundle still has and the live
+/// one no longer does (a delete the index must forget).
+///
+/// NOT `snapshot.affected_documents`, which names only the LAST edit's
+/// documents while `save()` flushes the whole dirty bundle -- editing A and
+/// then B before the debounce fires would leave A's index entry stale.
+pub(super) fn flushed_document_paths(
+    snapshot: &crate::editor_session::EditorSessionSnapshot,
+) -> Vec<String> {
+    let mut paths = Vec::new();
+    for document in snapshot.source.documents() {
+        let persisted = snapshot
+            .persisted_source
+            .document(document.path())
+            .map(|persisted| persisted.text());
+        if persisted != Some(document.text()) {
+            paths.push(document.path().to_string());
+        }
+    }
+    for document in snapshot.persisted_source.documents() {
+        if snapshot.source.document(document.path()).is_none() {
+            paths.push(document.path().to_string());
+        }
+    }
+    paths
 }

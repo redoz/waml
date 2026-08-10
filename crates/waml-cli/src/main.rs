@@ -1057,10 +1057,14 @@ fn run_export_site(dir: &PathBuf, out: &Path, force: bool) -> i32 {
             return 2;
         }
     };
-    // Built from exactly `files` -- the same pairs `bundle` above encodes --
-    // so search on the exported site can never see more than the export
-    // shipped (spec §Export-time index boundary rule).
-    let search_index = match commands::build_search_index_asset(&files) {
+    // Built from `bundle` itself, not from `files`: the site's boot path
+    // hashes the bundle it DECODES, and a hash disagreement is swallowed
+    // there (the asset is dropped and the index rebuilt locally), so the two
+    // must come from the same bytes -- see
+    // `build_search_index_asset_for_envelope`. Search on the exported site
+    // still sees exactly what the export shipped, no more (spec
+    // §Export-time index boundary rule).
+    let search_index = match commands::build_search_index_asset_for_envelope(&bundle) {
         Ok(bytes) => bytes,
         Err(error) => {
             eprintln!("waml: {error}");

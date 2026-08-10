@@ -952,6 +952,7 @@ mod tests {
             concept_id: None,
             group,
             target,
+            entry: 0,
             score: 1.0,
         }
     }
@@ -1204,6 +1205,7 @@ mod tests {
             concept_id: Some("billing/order-alias".to_string()),
             group: FieldGroup::Names,
             target: model("order"),
+            entry: 0,
             score: 1.0,
         };
         let row = ResultRow {

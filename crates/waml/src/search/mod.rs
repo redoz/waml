@@ -33,6 +33,13 @@ pub struct Hit {
     pub concept_id: Option<String>,
     pub group: FieldGroup,
     pub target: HitTarget,
+    /// Which of the document's extracted entries matched, as an index into
+    /// [`extract::DocumentFields::entries`]. `target` does NOT identify one:
+    /// extraction gives every Names/Model/Structure entry of a concept the
+    /// same `HitTarget::ModelElement { key }`, so without this a snippet
+    /// resolves to the first entry sharing the target and several matching
+    /// entries collapse into indistinguishable rows.
+    pub entry: u32,
     pub score: f32,
 }
 

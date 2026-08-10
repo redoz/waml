@@ -851,6 +851,16 @@ pub struct App {
     /// (`end_session_search`) ends it.
     #[rust]
     session_search: Option<SearchSession>,
+    /// The session index `step_session` (F3/Shift+F3) just moved to, handed
+    /// forward to the landing it triggers. `mark_session_landing` cannot
+    /// re-derive it: hits routinely share a `(concept_id, RevealTarget)`
+    /// pair (every Names/Model/Structure entry of one concept carries the
+    /// same `HitTarget::ModelElement`), so locating one by target alone
+    /// snaps the cursor back to the first of them. Taken by the landing;
+    /// `None` for any other producer of a reveal (a results-tab row click,
+    /// a palette commit), which still locates itself by target.
+    #[rust]
+    stepped_session_index: Option<usize>,
     /// The Ctrl+K palette's last-pushed sections (Task 11), retained so a row
     /// commit's opaque `p:{section}:{row}` id (`popup::palette::PalettePopup::commit`)
     /// can be resolved back to the `PaletteRow` it was built from -- the
@@ -1153,17 +1163,33 @@ impl MatchEvent for App {
         // A boot-time search-index asset fetch (spec §Export-time index),
         // started right after the boot bundle above decoded. ANY failure --
         // non-2xx, non-UTF-8, wrong version, or a hash that does not match
-        // the bundle just opened -- leaves `self.search` exactly as
-        // `open_bundle`'s own `rebuild` already left it (decision 10): there
-        // is nothing to undo, so every early return here is silent.
+        // the bundle just opened -- falls back to the local rebuild below,
+        // which leaves the bundle just as searchable (decision 10). It is
+        // never user-facing, but it IS logged: an export whose asset never
+        // matches is a real fault that would otherwise show no signal at all.
         if request_id == live_id!(boot_search_index) {
             let Some(expected_hash) = self.pending_boot_index_hash.take() else {
                 return;
             };
             let decoded = if ok {
-                std::str::from_utf8(body)
-                    .ok()
-                    .and_then(|text| waml::search::asset::decode(text, expected_hash).ok())
+                match std::str::from_utf8(body) {
+                    Ok(text) => match waml::search::asset::decode(text, expected_hash) {
+                        Ok(index) => Some(index),
+                        Err(error) => {
+                            tracing::warn!(
+                                ?error,
+                                "the exported search index does not match this bundle; rebuilding locally"
+                            );
+                            None
+                        }
+                    },
+                    Err(_) => {
+                        tracing::warn!(
+                            "the exported search index is not UTF-8; rebuilding locally"
+                        );
+                        None
+                    }
+                }
             } else {
                 None
             };

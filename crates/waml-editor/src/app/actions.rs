@@ -743,15 +743,24 @@ impl App {
         concept_id: &str,
         target: &crate::doc_view::RevealTarget,
     ) {
+        let stepped = self.stepped_session_index.take();
         let Some(session) = self.session_search.as_mut() else {
             return;
         };
-        let index = session.hits.iter().position(|hit| {
-            crate::search_results_view::navigation_for_hit(hit)
-                .1
-                .as_ref()
-                .is_some_and(|(cid, t)| cid == concept_id && t == target)
-        });
+        // An F3/Shift+F3 step already chose the index; only a landing from
+        // somewhere else (a results-tab row click, a palette commit) has to
+        // locate itself, and it can only do so by target -- which several
+        // hits of one concept share, so it lands on the first of them.
+        let index = stepped
+            .filter(|&index| index < session.hits.len())
+            .or_else(|| {
+                session.hits.iter().position(|hit| {
+                    crate::search_results_view::navigation_for_hit(hit)
+                        .1
+                        .as_ref()
+                        .is_some_and(|(cid, t)| cid == concept_id && t == target)
+                })
+            });
         session.cursor = index;
         if let Some(tab_id) = self.session_search_tab_id() {
             self.documents
@@ -800,13 +809,19 @@ impl App {
     /// of which `apply_view_outcome`'s `outcome.reveal` handling already
     /// does. A no-op with no live session or no hits.
     pub(super) fn step_session(&mut self, cx: &mut Cx, forward: bool) {
-        let hit = match self.session_search.as_mut() {
-            Some(session) => session.advance(forward).cloned(),
+        let stepped = match self.session_search.as_mut() {
+            Some(session) => session
+                .advance(forward)
+                .cloned()
+                .map(|hit| (session.cursor, hit)),
             None => None,
         };
-        let Some(hit) = hit else {
+        let Some((index, hit)) = stepped else {
             return;
         };
+        // The landing this outcome triggers must keep THIS index; it cannot
+        // recover it from the reveal (see `stepped_session_index`).
+        self.stepped_session_index = index;
         let (navigation, reveal) = crate::search_results_view::navigation_for_hit(&hit);
         let outcome = crate::doc_view::ViewOutcome {
             navigation: Some(navigation),

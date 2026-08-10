@@ -480,11 +480,19 @@ pub struct PalettePopup {
 
     #[rust]
     open: bool,
-    /// Card rect, computed by the opener (`PopupRoot::show_at`) and handed in
-    /// whole -- unlike `MenuPopup`/`SelectFlyout` this surface has no
-    /// clamp-on-measured-width step (decision: fixed max width).
+    /// Card rect. The opener (`PopupRoot::show_at`) places it and fixes its
+    /// width -- unlike `MenuPopup`/`SelectFlyout` this surface has no
+    /// clamp-on-measured-width step (decision: fixed max width). The HEIGHT
+    /// is re-derived from the live row model on every `set_sections`, since
+    /// the model the palette opens on (empty-query recents) is not the one it
+    /// spends its life showing.
     #[rust]
     rect: Rect,
+    /// Vertical space the opener measured for the card. `0.0` means it had
+    /// none to give (an opener with no window bounds), in which case the
+    /// height it handed in stands.
+    #[rust]
+    max_height: f64,
     #[rust]
     query: String,
     #[rust]
@@ -593,10 +601,20 @@ impl PalettePopup {
             .collect()
     }
 
-    /// Open at `rect` (already placed + sized by the opener) with `sections`.
-    pub fn open_palette(&mut self, cx: &mut Cx, rect: Rect, sections: Vec<PaletteSectionModel>) {
+    /// Open at `rect` (already placed by the opener) with `sections`, never
+    /// taller than `max_height` -- the vertical space the opener measured, so
+    /// a later `set_sections` can regrow the card without re-consulting the
+    /// window.
+    pub fn open_palette(
+        &mut self,
+        cx: &mut Cx,
+        rect: Rect,
+        max_height: f64,
+        sections: Vec<PaletteSectionModel>,
+    ) {
         self.open = true;
         self.rect = rect;
+        self.max_height = max_height;
         self.query.clear();
         self.pressed = None;
         self.set_sections_inner(sections);
@@ -628,8 +646,27 @@ impl PalettePopup {
         }
     }
 
+    /// Rows currently reachable by keyboard/mouse selection.
+    #[cfg(test)]
+    pub(crate) fn test_activatable_len(&self) -> usize {
+        self.activatable.len()
+    }
+
+    /// The card's live height, after the row model resized it.
+    #[cfg(test)]
+    pub(crate) fn test_card_height(&self) -> f64 {
+        self.rect.size.y
+    }
+
     fn set_sections_inner(&mut self, sections: Vec<PaletteSectionModel>) {
         self.layout_rows = palette_layout(&sections);
+        // Resize to THIS model before deriving the row budget from the rect:
+        // the card the opener sized is the empty-query recents card, and
+        // `list_height` (draw + hit-test + keyboard) reads the rect, so
+        // leaving it frozen clips every later query to the recents' height.
+        if self.max_height > 0.0 {
+            self.rect.size.y = content_height(&sections).min(self.max_height);
+        }
         self.activatable = activatable_positions(&sections, &self.layout_rows, self.list_height());
         self.armed = if self.activatable.is_empty() {
             None
@@ -875,6 +912,7 @@ mod tests {
             concept_id: None,
             group,
             target,
+            entry: 0,
             score: 1.0,
         }
     }
@@ -1278,6 +1316,105 @@ mod tests {
         let positions = activatable_positions(&sections, &layout, list_height);
 
         assert_eq!(positions, vec![(0, 0), (0, 1), (0, 2)]);
+    }
+
+    fn filler_rows(count: usize) -> Vec<PaletteRow> {
+        (0..count)
+            .map(|i| PaletteRow {
+                kind: PaletteRowKind::Concept {
+                    kind: String::new(),
+                },
+                title: format!("row {i}"),
+                detail: String::new(),
+                hit: None,
+                hidden: false,
+            })
+            .collect()
+    }
+
+    /// Ctrl+K on a fresh session opens over the EMPTY-QUERY recents model,
+    /// which with no recents is a bare header -- a 78px card. Typing must
+    /// regrow it: the frozen card's row budget is otherwise the draw and arm
+    /// budget for every later query, so typed rows are neither painted nor
+    /// activatable.
+    #[test]
+    fn a_live_query_regrows_the_card_the_empty_recents_open_sized() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let mut palette = cx.with_vm(PalettePopup::script_new_with_default);
+
+        let empty = build_palette_model(
+            "",
+            &[],
+            &no_snippet,
+            &HashSet::new(),
+            &[],
+            TextIndexStatus::Ready,
+        );
+        let rect = Rect {
+            pos: dvec2(0.0, 80.0),
+            size: dvec2(560.0, content_height(&empty)),
+        };
+        palette.open_palette(&mut cx, rect, 900.0, empty);
+        assert_eq!(palette.test_activatable_len(), 0, "no recents to arm");
+
+        let typed = vec![PaletteSectionModel {
+            title: String::new(),
+            count: 10,
+            rows: filler_rows(10),
+        }];
+        let wanted = content_height(&typed);
+        palette.set_sections(&mut cx, typed);
+
+        assert_eq!(palette.test_card_height(), wanted);
+        assert_eq!(
+            palette.test_activatable_len(),
+            10,
+            "every typed row must be paintable and armable"
+        );
+    }
+
+    /// The regrow stops at the space the opener measured, and clearing the
+    /// query shrinks the card back rather than leaving it at its high-water
+    /// mark.
+    #[test]
+    fn the_card_never_grows_past_the_openers_bounds_and_shrinks_back() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let mut palette = cx.with_vm(PalettePopup::script_new_with_default);
+
+        let small = vec![PaletteSectionModel {
+            title: String::new(),
+            count: 1,
+            rows: filler_rows(1),
+        }];
+        let small_height = content_height(&small);
+        palette.open_palette(
+            &mut cx,
+            Rect {
+                pos: dvec2(0.0, 80.0),
+                size: dvec2(560.0, small_height),
+            },
+            // Room for the query row, the paddings, and exactly three rows.
+            PALETTE_QUERY_H + PALETTE_PAD_V * 2.0 + PALETTE_ROW_H * 3.0,
+            small.clone(),
+        );
+
+        palette.set_sections(
+            &mut cx,
+            vec![PaletteSectionModel {
+                title: String::new(),
+                count: 10,
+                rows: filler_rows(10),
+            }],
+        );
+        assert_eq!(
+            palette.test_card_height(),
+            PALETTE_QUERY_H + PALETTE_PAD_V * 2.0 + PALETTE_ROW_H * 3.0
+        );
+        assert_eq!(palette.test_activatable_len(), 3);
+
+        palette.set_sections(&mut cx, small);
+        assert_eq!(palette.test_card_height(), small_height);
+        assert_eq!(palette.test_activatable_len(), 1);
     }
 
     /// The snippet callback is a per-hit scan of the hit's document, so it

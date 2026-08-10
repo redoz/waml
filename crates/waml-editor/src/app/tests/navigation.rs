@@ -2767,6 +2767,48 @@ fn f3_advances_the_live_session_across_document_boundaries_and_wraps() {
     );
 }
 
+/// Every Names/Model/Structure entry of one concept carries the same
+/// `HitTarget::ModelElement`, so two hits routinely resolve to the SAME
+/// `(concept_id, RevealTarget)`. The landing must keep the index the step
+/// chose rather than re-deriving it from the target, or F3 oscillates
+/// between the first two and never reaches the rest.
+#[test]
+fn f3_advances_past_hits_that_share_one_reveal_target() {
+    let (mut cx, mut app) = rebuilt_search_app();
+    let hit = |entry: u32| waml::search::Hit {
+        document: "sales/customer.md".to_string(),
+        concept_id: Some("sales/customer".to_string()),
+        group: waml::search::FieldGroup::Model,
+        target: waml::search::HitTarget::ModelElement {
+            key: "sales/customer".to_string(),
+        },
+        entry,
+        score: 1.0,
+    };
+    app.session_search = Some(crate::search_session::SearchSession::new(
+        "customer".to_string(),
+        vec![hit(0), hit(1), hit(2)],
+        waml::search::QueryScope::default(),
+    ));
+
+    app.step_session(&mut cx, true);
+    assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(0));
+
+    app.step_session(&mut cx, true);
+    assert_eq!(
+        app.session_search.as_ref().unwrap().cursor,
+        Some(1),
+        "F3 must not fall back to the first hit sharing the target"
+    );
+
+    app.step_session(&mut cx, true);
+    assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(2));
+
+    // Shift+F3 walks back down the same list.
+    app.step_session(&mut cx, false);
+    assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(1));
+}
+
 #[test]
 fn esc_ends_the_live_session_and_further_f3_is_a_no_op() {
     let (mut cx, mut app) = rebuilt_search_app();

@@ -58,6 +58,7 @@ mod tests {
             target: HitTarget::ModelElement {
                 key: document.to_string(),
             },
+            entry: 0,
             score: 1.0,
         }
     }

@@ -212,6 +212,7 @@ impl MemSearchIndex {
             concept_id: doc.concept_id.clone(),
             group: entry.group,
             target: entry.target.clone(),
+            entry: meta.entry_idx,
             score,
         }
     }
@@ -310,6 +311,10 @@ impl SearchIndex for MemSearchIndex {
                 })
                 .then_with(|| a.document.cmp(&b.document))
                 .then_with(|| target_sort_key(&a.target).cmp(&target_sort_key(&b.target)))
+                // Entries of one concept share a target, and `scores` is a
+                // HashMap: without this last key their relative order is
+                // whatever the map happened to iterate.
+                .then_with(|| a.entry.cmp(&b.entry))
         });
 
         hits
@@ -323,7 +328,10 @@ impl SearchIndex for MemSearchIndex {
             };
         };
         let doc = &self.docs[doc_idx];
-        let Some(entry) = doc.entries.iter().find(|entry| entry.target == hit.target) else {
+        // By ENTRY INDEX, not by target: `hit.target` is shared by every
+        // Names/Model/Structure entry of one concept, so matching on it
+        // would always report the first of them.
+        let Some(entry) = doc.entries.get(hit.entry as usize) else {
             return Snippet {
                 text: String::new(),
                 highlights: Vec::new(),
@@ -516,6 +524,55 @@ mod tests {
         // Never splits a multi-byte char: re-encoding the windowed chars
         // must round-trip through String without loss.
         assert_eq!(windowed.text.chars().collect::<Vec<_>>().len(), 10);
+    }
+
+    /// `extract` gives every Names/Model/Structure entry of one concept the
+    /// SAME `HitTarget::ModelElement { key }`, so a snippet resolved by
+    /// target alone always reports the first such entry's text. A hit must
+    /// carry which entry matched.
+    #[test]
+    fn a_snippet_reports_the_matched_entry_not_the_first_sharing_its_target() {
+        let index = MemSearchIndex::build(vec![doc(
+            "order.md",
+            Some("class"),
+            vec![
+                (FieldGroup::Names, "Order", model("order")),
+                (FieldGroup::Model, "tag checkout", model("order")),
+                (FieldGroup::Structure, "depends on payment", model("order")),
+            ],
+        )]);
+
+        let checkout = index.query("checkout", &QueryScope::default());
+        assert_eq!(checkout.len(), 1);
+        assert_eq!(index.snippet(&checkout[0], 100).text, "tag checkout");
+
+        let depends = index.query("depends", &QueryScope::default());
+        assert_eq!(depends.len(), 1);
+        assert_eq!(index.snippet(&depends[0], 100).text, "depends on payment");
+    }
+
+    /// Several entries of one concept matching the same term must stay
+    /// distinguishable -- otherwise the palette and the results tab show N
+    /// rows nothing can tell apart.
+    #[test]
+    fn entries_of_one_concept_matching_the_same_term_are_distinct_hits() {
+        let index = MemSearchIndex::build(vec![doc(
+            "order.md",
+            Some("class"),
+            vec![
+                (FieldGroup::Names, "Order", model("order")),
+                (FieldGroup::Model, "order total", model("order")),
+            ],
+        )]);
+
+        let hits = index.query("order", &QueryScope::default());
+        assert_eq!(hits.len(), 2);
+        assert_ne!(hits[0], hits[1], "two hits must not be identical rows");
+        let snippets: Vec<String> = hits
+            .iter()
+            .map(|hit| index.snippet(hit, 100).text)
+            .collect();
+        assert_eq!(snippets, vec!["Order", "order total"]);
     }
 
     #[test]

@@ -31,6 +31,58 @@ fn conflict_reload_detects_server_side_creates_and_deletes() {
     ));
 }
 
+/// `save()` flushes the WHOLE dirty bundle, so the post-save index refresh
+/// has to cover every document it wrote. `affected_documents` names only the
+/// last edit's documents: editing A and then B before the debounce fires
+/// would leave A's index entry stale until A was edited again.
+#[test]
+fn a_flush_names_every_dirty_document_not_only_the_last_edited_one() {
+    fn rewrite(session: &mut crate::editor_session::EditorSession, path: &str, text: &str) {
+        let path = waml::source::BundlePath::parse(path).unwrap();
+        let before = session.snapshot();
+        let document = before.okf_analysis.catalog.id_for_path(&path).unwrap();
+        let syntax = before.markdown_snapshot(document).unwrap();
+        session
+            .apply(waml::edit::ExactSourceEdit {
+                document,
+                base_revision: syntax.revision(),
+                changes: Arc::from([TextChange {
+                    old_range: TextRange::new(TextSize::new(0), syntax.text().len()).unwrap(),
+                    replacement: Arc::from(text),
+                }]),
+                expected_text: SourceText::new(text.to_string()).unwrap(),
+            })
+            .unwrap();
+    }
+
+    let mut session = crate::editor_session::EditorSession::default();
+    session
+        .replace(
+            waml::source::SourceBundle::try_from_pairs([("a.md", "# A\n"), ("b.md", "# B\n")])
+                .unwrap(),
+        )
+        .unwrap();
+    rewrite(&mut session, "a.md", "# A edited\n");
+    rewrite(&mut session, "b.md", "# B edited\n");
+    let snapshot = session.snapshot();
+
+    let b = snapshot
+        .okf_analysis
+        .catalog
+        .id_for_path(&waml::source::BundlePath::parse("b.md").unwrap())
+        .unwrap();
+    assert_eq!(
+        snapshot.affected_documents.as_ref(),
+        [b],
+        "the LAST edit's set, not the dirty set"
+    );
+
+    assert_eq!(
+        crate::app::event::flushed_document_paths(&snapshot),
+        vec!["a.md".to_string(), "b.md".to_string()],
+    );
+}
+
 #[test]
 fn failed_open_restores_the_previous_markdown_asset_root() {
     let previous = crate::markdown_hosts::EditorMarkdownAssetHost::shared(

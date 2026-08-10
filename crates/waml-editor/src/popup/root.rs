@@ -460,7 +460,7 @@ impl PopupRoot {
                     .widget(cx, ids!(palette))
                     .borrow_mut::<PalettePopup>()
                 {
-                    p.open_palette(cx, rect, sections);
+                    p.open_palette(cx, rect, available_h, sections);
                 }
                 self.active = Some((ActiveKind::Palette, tag));
             }
