@@ -19,9 +19,12 @@ not a deliverable.
   assume UML. The core includes the bundle, the syntax, the model, the editor
   shell, the navigation, the search, and the sharing. UML is a layer above
   them.
+- Bundle search has landed: a command palette, a search results tab, and
+  in-document find, scoped to one bundle and identical on the exported static
+  site. It is no longer future work.
 - This direction can need these functions later. None of them is scheduled:
-  full-text search in a bundle, links between bundles, a typed projection that
-  is not UML such as a decision record or a procedure, more than one author at
+  search across bundles, links between bundles, a typed projection that is
+  not UML such as a decision record or a procedure, more than one author at
   the same time, and comments.
 - If the MVP bar needs one of these functions, make it a separate goal. Do not
   start work from this page.

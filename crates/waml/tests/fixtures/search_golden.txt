@@ -51,6 +51,7 @@ in:goals/ scope | 2 | Prose | goals/mvp.md | text-span
 in:goals/ scope | 3 | Prose | goals/mvp.md | text-span
 in:goals/ scope | 4 | Prose | goals/root-goal.md | text-span
 in:goals/ scope | 5 | Prose | goals/root-goal.md | text-span
+in:goals/ scope | 6 | Prose | goals/beyond-uml.md | text-span
 sequence lifeline | 1 | Names | goals/uml/sequence/language.md | text-span
 sequence lifeline | 2 | Names | use-cases/workflows/sequence-language.md | text-span
 sequence lifeline | 3 | Names | use-cases/workflows/sequence-language.md | model-element
@@ -68,6 +69,6 @@ markdown editor | 6 | Names | architecture/concepts/implementation/markdown-synt
 markdown editor | 7 | Names | architecture/concepts/workflows/editor.md | text-span
 markdown editor | 8 | Names | architecture/concepts/workflows/editor.md | model-element
 search | 1 | Prose | goals/mvp.md | text-span
-search | 2 | Prose | goals/mvp.md | text-span
+search | 2 | Prose | goals/beyond-uml.md | text-span
 search | 3 | Prose | goals/beyond-uml.md | text-span
 search | 4 | Prose | goals/beyond-uml.md | text-span

@@ -22,6 +22,8 @@ The MVP includes:
 - Class, sequence, and activity diagrams with their shared layout, routing,
   label, selection, and theme behavior.
 - Diagnostics, references, indexes, sharing, and publication.
+- Bundle search: a command palette, a search results tab, and in-document
+  find, identical on the exported static site.
 
 The MVP does not require:
 
@@ -31,7 +33,7 @@ The MVP does not require:
 - Canvas-authored layout overrides, keyboard-only authoring, more templates,
   or effort budgets.
 - The language server, the VS Code extension, or marketplace publication.
-- Multi-user editing, comments, search, cross-bundle links, or non-UML typed
+- Multi-user editing, comments, cross-bundle links, or non-UML typed
   projections.
 
 ## Aggregate status
@@ -95,7 +97,7 @@ The order follows the dependencies in the goal tree.
 | Local serve and browser save-to-disk | [Serve Locally](share-and-publish/serve-locally.md) | The product can serve and write a local directory, but the MVP does not require that workflow. |
 | Image export | [Export a Bundle](share-and-publish/export-a-bundle.md) | This output is a post-MVP function. |
 | LSP completion and extension publication | [Language Server](tooling-around-the-repo/language-server.md), [Text Editor Integration](tooling-around-the-repo/text-editor-integration.md) | Tooling is outside the MVP bar. |
-| Search, collaboration, and non-UML projections | [Beyond UML](./beyond-uml.md) | These functions are horizon work. |
+| Collaboration and non-UML projections | [Beyond UML](./beyond-uml.md) | These functions are horizon work. |
 
 ## Definition of done
 
