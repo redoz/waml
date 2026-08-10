@@ -1066,6 +1066,7 @@ pub fn build_scene(
     // straight center-to-center polyline WITHOUT advancing the cursor, so later
     // edges stay aligned.
     let mut edges: Vec<SceneEdge> = Vec::new();
+    let mut edge_endpoint_keys: Vec<(String, String)> = Vec::new();
     let mut route_cursor = 0usize;
     for e in drawable_edges(model) {
         if let (Some(&source), Some(&target)) =
@@ -1087,6 +1088,7 @@ pub fn build_scene(
                 to_end: e.to_end.clone(),
                 points,
             });
+            edge_endpoint_keys.push((e.source.clone(), e.target.clone()));
             if let Some(edge) = edges.last_mut() {
                 let source_toward = (target.x + target.w / 2.0, target.y + target.h / 2.0);
                 let target_toward = (source.x + source.w / 2.0, source.y + source.h / 2.0);
@@ -1125,16 +1127,16 @@ pub fn build_scene(
     for (edge, points) in edges.iter_mut().zip(routes) {
         edge.points = points;
     }
-    for (edge, model_edge) in edges.iter_mut().zip(&model_edges) {
+    for (edge, (source_key, target_key)) in edges.iter_mut().zip(&edge_endpoint_keys) {
         if edge.points.len() < 2 {
             continue;
         }
         let source_toward = edge.points[1];
         let target_toward = edge.points[edge.points.len() - 2];
-        if let Some(port) = ports.get(&model_edge.source) {
+        if let Some(port) = ports.get(source_key) {
             edge.points[0] = waml::solve::route::boundary_port(port, source_toward);
         }
-        if let Some(port) = ports.get(&model_edge.target) {
+        if let Some(port) = ports.get(target_key) {
             let last = edge.points.len() - 1;
             edge.points[last] = waml::solve::route::boundary_port(port, target_toward);
         }
