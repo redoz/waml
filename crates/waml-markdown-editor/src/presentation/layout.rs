@@ -483,7 +483,7 @@ fn block_spec(
                 ..EdgeInsets::default()
             };
         }
-        PresentationBlockKind::Code => {
+        PresentationBlockKind::Code { .. } => {
             spec.flow = BlockFlow::Code;
             spec.insets = EdgeInsets {
                 top: spacing.code_padding,

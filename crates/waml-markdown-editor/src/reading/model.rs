@@ -226,7 +226,7 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
                 }
             }
             PresentationBlockKind::Quote => ReadingBlockKind::Quote,
-            PresentationBlockKind::Code => ReadingBlockKind::Code,
+            PresentationBlockKind::Code { .. } => ReadingBlockKind::Code,
             PresentationBlockKind::Table { columns } => ReadingBlockKind::Table { columns },
             PresentationBlockKind::TableRow => ReadingBlockKind::TableRow,
             PresentationBlockKind::TableCell { column, .. } => {

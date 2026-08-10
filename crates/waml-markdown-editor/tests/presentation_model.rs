@@ -1,11 +1,15 @@
 use std::{ops::Range, sync::Arc};
 
 use waml_markdown_editor::presentation::{
-    BlockDecorationKind, ColorRole, EmbeddedBlockKind, FontRole, FontSizeRole, FontWeightRole,
-    PresentationError, PresentationItem, PresentationItemId, PresentationPlan, PresentationRole,
+    compile_presentation, BlockDecorationKind, ColorRole, EmbeddedBlockKind, FontRole,
+    FontSizeRole, FontWeightRole, HighlighterRegistry, PresentationBlockKind, PresentationError,
+    PresentationItem, PresentationItemId, PresentationPlan, PresentationRole, PresentationStyles,
     TextRole, TextStyle,
 };
-use waml_syntax::{DocumentRevision, SyntaxIdentity, TextRange, TextSize};
+use waml_syntax::{
+    parse_markdown, DocumentRevision, MarkdownDialect, SourceText, SyntaxIdentity, TextRange,
+    TextSize,
+};
 
 fn owner(value: u64) -> SyntaxIdentity {
     SyntaxIdentity::from_raw_for_test(value)
@@ -194,6 +198,68 @@ fn active_owners_report_every_owner_touching_the_caret() {
     );
     assert_eq!(plan.active_owners(t(2)).as_ref(), &[owner(1), owner(7)]);
     assert_eq!(plan.active_owners(t(6)).as_ref(), &[owner(2)]);
+}
+
+#[test]
+fn fenced_code_preserves_language_and_content_range() {
+    let source = "```MeRmAiD\nflowchart TD\nA-->B\n```";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).expect("the test source is valid"),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("the test source parses");
+    let plan = compile_presentation(
+        &snapshot,
+        &PresentationStyles::balanced(),
+        &HighlighterRegistry::default(),
+    )
+    .expect("the parsed document compiles");
+
+    let code = plan
+        .blocks
+        .iter()
+        .find(|block| matches!(block.kind, PresentationBlockKind::Code { .. }))
+        .expect("the document has one code block");
+    let PresentationBlockKind::Code { fence: Some(fence) } = &code.kind else {
+        panic!("fenced metadata")
+    };
+    assert_eq!(code.source_range, range(0..source.len()));
+    assert_eq!(fence.language.as_deref(), Some("MeRmAiD"));
+    assert_eq!(
+        &source[fence.content_range.start().to_usize()..fence.content_range.end().to_usize()],
+        "flowchart TD\nA-->B\n"
+    );
+    plan.validate_source_partition().unwrap();
+}
+
+#[test]
+fn indented_code_has_no_fence_metadata() {
+    let source = "    plain indented code\n";
+    let snapshot = parse_markdown(
+        DocumentRevision::INITIAL,
+        SourceText::new(source).expect("the test source is valid"),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("the test source parses");
+    let plan = compile_presentation(
+        &snapshot,
+        &PresentationStyles::balanced(),
+        &HighlighterRegistry::default(),
+    )
+    .expect("the parsed document compiles");
+
+    let code = plan
+        .blocks
+        .iter()
+        .find(|block| matches!(block.kind, PresentationBlockKind::Code { .. }))
+        .expect("the document has one code block");
+    assert_eq!(code.source_range, range(0..source.len()));
+    assert!(matches!(
+        code.kind,
+        PresentationBlockKind::Code { fence: None }
+    ));
+    plan.validate_source_partition().unwrap();
 }
 
 mod diagnostic_message_emission {

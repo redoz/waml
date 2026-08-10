@@ -289,7 +289,7 @@ pub struct PresentedLink {
 }
 
 /// A parsed block, taken from the syntax tree rather than from the text.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PresentationBlock {
     pub owner: SyntaxIdentity,
     pub source_range: TextRange,
@@ -298,7 +298,7 @@ pub struct PresentationBlock {
     pub kind: PresentationBlockKind,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PresentationBlockKind {
     Paragraph,
     Heading(u8),
@@ -306,7 +306,9 @@ pub enum PresentationBlockKind {
         marker_range: TextRange,
     },
     Quote,
-    Code,
+    Code {
+        fence: Option<PresentationFence>,
+    },
     Table {
         columns: u32,
     },
@@ -316,6 +318,13 @@ pub enum PresentationBlockKind {
         alignment: TableAlignment,
     },
     Image,
+}
+
+/// Metadata preserved from a fenced Markdown code block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PresentationFence {
+    pub language: Option<Arc<str>>,
+    pub content_range: TextRange,
 }
 
 /// A non-fatal problem kept next to the block it affects. Presentation stays

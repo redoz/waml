@@ -21,8 +21,8 @@ use super::{
     },
     style::PresentationStyles,
     BlockDecorationKind, EmbeddedBlockKind, PresentationBlock, PresentationBlockKind,
-    PresentationDiagnostic, PresentationError, PresentationItem, PresentationItemId,
-    PresentationPlan, PresentationRole, PresentedLink, TextRole,
+    PresentationDiagnostic, PresentationError, PresentationFence, PresentationItem,
+    PresentationItemId, PresentationPlan, PresentationRole, PresentedLink, TextRole,
 };
 
 /// Compiles one syntax snapshot into a validated presentation plan.
@@ -720,9 +720,13 @@ fn block_kind(
                 .unwrap_or(TextRange::new(node.range().start(), node.range().start()).ok()?);
             PresentationBlockKind::ListItem { marker_range }
         }
-        Kind::FencedCodeBlock | Kind::IndentedCodeBlock | Kind::Frontmatter => {
-            PresentationBlockKind::Code
-        }
+        Kind::FencedCodeBlock => PresentationBlockKind::Code {
+            fence: queries.fenced_code(owner).map(|fence| PresentationFence {
+                language: fence.language.clone(),
+                content_range: fence.content_range,
+            }),
+        },
+        Kind::IndentedCodeBlock | Kind::Frontmatter => PresentationBlockKind::Code { fence: None },
         Kind::Table => PresentationBlockKind::Table {
             columns: table_columns(node),
         },
