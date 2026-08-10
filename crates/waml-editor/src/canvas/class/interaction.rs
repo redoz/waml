@@ -31,12 +31,13 @@ pub(super) fn node_at(
     abs: DVec2,
 ) -> Option<usize> {
     nodes.iter().enumerate().rev().find_map(|(index, node)| {
-        let (local_x, local_y) = viewport.camera.world_to_local(node.rect.x, node.rect.y);
+        let bounds = node.geometry.hit_bounds(node.rect);
+        let (local_x, local_y) = viewport.camera.world_to_local(bounds.x, bounds.y);
         let screen = Rect {
             pos: viewport.view_rect.pos + makepad_widgets::dvec2(local_x, local_y),
             size: makepad_widgets::dvec2(
-                node.rect.w * viewport.camera.zoom,
-                node.rect.h * viewport.camera.zoom,
+                bounds.w * viewport.camera.zoom,
+                bounds.h * viewport.camera.zoom,
             ),
         };
         screen.contains(abs).then_some(index)
@@ -44,6 +45,12 @@ pub(super) fn node_at(
 }
 
 pub(super) fn footer_screen_rect(node: &SceneNode, screen: Rect, zoom: f64) -> Option<Rect> {
+    if matches!(
+        node.geometry,
+        crate::MeasuredNodeGeometry::Actor(_) | crate::MeasuredNodeGeometry::UseCase(_)
+    ) {
+        return None;
+    }
     use crate::card::{self, Block};
     let placed = card::measure(&card::class_shape(node, &card::mono_sheet()));
     let footer = placed
@@ -337,6 +344,96 @@ mod tests {
         assert_eq!(node_at(&nodes, viewport, dvec2(50.0, 30.0)), Some(0));
         assert_eq!(node_at(&nodes, viewport, dvec2(250.0, 30.0)), Some(1));
         assert_eq!(node_at(&nodes, viewport, dvec2(150.0, 30.0)), None);
+    }
+
+    #[test]
+    fn actor_figure_and_title_use_complete_measured_hit_bounds() {
+        let mut actor = test_node(
+            "actor",
+            waml::solve::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            },
+        );
+        actor.geometry = crate::MeasuredNodeGeometry::Actor(crate::ActorGeometry {
+            bounds: waml::solve::Rect {
+                x: 200.0,
+                y: 40.0,
+                w: 60.0,
+                h: 100.0,
+            },
+            head_center: crate::Point { x: 230.0, y: 52.0 },
+            head_radius: 10.0,
+            body: crate::Segment {
+                from: crate::Point { x: 230.0, y: 64.0 },
+                to: crate::Point { x: 230.0, y: 90.0 },
+            },
+            arms: [crate::Segment {
+                from: crate::Point { x: 230.0, y: 70.0 },
+                to: crate::Point { x: 210.0, y: 82.0 },
+            }; 2],
+            legs: [crate::Segment {
+                from: crate::Point { x: 230.0, y: 90.0 },
+                to: crate::Point { x: 210.0, y: 112.0 },
+            }; 2],
+            title_bounds: waml::solve::Rect {
+                x: 205.0,
+                y: 120.0,
+                w: 50.0,
+                h: 16.0,
+            },
+        });
+        let viewport = test_viewport().snapshot();
+        assert_eq!(
+            node_at(std::slice::from_ref(&actor), viewport, dvec2(230.0, 52.0)),
+            Some(0)
+        );
+        assert_eq!(node_at(&[actor], viewport, dvec2(230.0, 130.0)), Some(0));
+    }
+
+    #[test]
+    fn ellipse_edge_uses_measured_hit_bounds() {
+        let mut use_case = test_node(
+            "use-case",
+            waml::solve::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            },
+        );
+        let bounds = waml::solve::Rect {
+            x: 300.0,
+            y: 50.0,
+            w: 160.0,
+            h: 72.0,
+        };
+        use_case.geometry = crate::MeasuredNodeGeometry::UseCase(crate::UseCaseGeometry {
+            bounds,
+            title_bounds: waml::solve::Rect {
+                x: 330.0,
+                y: 78.0,
+                w: 100.0,
+                h: 16.0,
+            },
+            title_lines: vec!["Place order".into()],
+            title_line_bounds: vec![waml::solve::Rect {
+                x: 330.0,
+                y: 78.0,
+                w: 100.0,
+                h: 16.0,
+            }],
+        });
+        assert_eq!(
+            node_at(
+                &[use_case],
+                test_viewport().snapshot(),
+                dvec2(bounds.x + bounds.w - 1.0, bounds.y + bounds.h / 2.0)
+            ),
+            Some(0)
+        );
     }
 
     #[test]

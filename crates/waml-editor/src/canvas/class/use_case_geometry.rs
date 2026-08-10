@@ -76,6 +76,10 @@ impl MeasuredNodeGeometry {
         }
     }
 
+    pub fn hit_bounds(&self, fallback: Rect) -> Rect {
+        self.bounds().unwrap_or(fallback)
+    }
+
     pub fn translated(&self, x: f64, y: f64) -> Self {
         match self {
             Self::Actor(geometry) => Self::Actor(geometry.translated(x, y)),
