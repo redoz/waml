@@ -338,12 +338,18 @@ mod tests {
     #[test]
     fn the_card_border_is_the_light_rung() {
         let src = include_str!("../frame.rs");
-        let expected = format!("floor({} * self.zoom", Pen::LIGHT.width());
+        let expected = format!("self.pen_dev({} * self.zoom", Pen::LIGHT.width());
         assert!(
             src.contains(&expected),
             "AccentFrame's border literal must track Pen::LIGHT ({})",
             Pen::LIGHT.width()
         );
+    }
+
+    #[test]
+    fn the_accent_frame_derives_from_cad_pen() {
+        let src = include_str!("../frame.rs");
+        assert_derives_from_cad_pen(src, "AccentFrame");
     }
 
     use makepad_widgets::dvec2;

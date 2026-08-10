@@ -34,6 +34,20 @@ impl Camera {
         self.pan_y = wy - local_y / self.zoom;
     }
 
+    /// The inverse zoom a frame multiplies its stroke by to cancel the camera,
+    /// so linework holds one screen-space weight. `1/zoom` is a CAMERA fact --
+    /// a pen never sees it. Lived on the deleted `*LineworkMetrics` types,
+    /// which carried it as their one real field.
+    ///
+    /// `#[allow(dead_code)]`: unused until the plan's Task 9 rewires
+    /// `LineworkMetrics`/`BehaviorLineworkMetrics`'s `frame_stroke_scale`
+    /// callers onto this method and deletes those types -- remove the allow
+    /// there, in the same commit that adds the real caller.
+    #[allow(dead_code)]
+    pub(crate) fn stroke_scale(&self) -> f32 {
+        (1.0 / self.zoom) as f32
+    }
+
     /// Fit `bbox` centered in a `viewport_w` x `viewport_h` canvas with `pad` px inset.
     pub(crate) fn fit(bbox: Rect, viewport_w: f64, viewport_h: f64, pad: f64) -> Camera {
         let avail_w = (viewport_w - 2.0 * pad).max(1.0);
