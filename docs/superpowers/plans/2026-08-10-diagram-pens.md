@@ -4,7 +4,7 @@
 
 **Goal:** Replace three unrelated stroke-width vocabularies and three device-pixel snapping implementations with one `Pen` ladder plus one `mod.draw.CadPen` shader base, so every stroke on both diagram canvases is quantised, biased and antialiased the same way.
 
-**Architecture:** A new module `crates/waml-editor/src/canvas/pen.rs` holds two halves that never mix. The **Rust half** is a pure `Pen` value type (four rungs, an `emphasized` multiplier, one `width()` accessor) plus two `Cx2d` helpers that size the quad a pen inks inside — `pen::band` and `pen::outline`. The **shader half** is `mod.draw.CadPen`, a base draw type carrying the device quantiser (`floor(w * dpi + 0.501)`), the half-pixel stroke bias, and the `sqrt(2)` antialias correction. Every canvas pen derives from `CadPen` instead of `DrawColor`. Width stops crossing the CPU/GPU boundary as a snapped number and starts crossing as a raw logical width the shader quantises itself.
+**Architecture:** A new module `crates/waml-editor/src/canvas/pen.rs` holds two halves that never mix. The **Rust half** is a pure `Pen` value type (three rungs, one `width()` accessor) plus two `Cx2d` helpers that size the quad a pen inks inside — `pen::band` and `pen::outline`. The **shader half** is `mod.draw.CadPen`, a base draw type carrying the device quantiser (`floor(w * dpi + 0.501)`), the half-pixel stroke bias, and the `sqrt(2)` antialias correction. Every canvas pen derives from `CadPen` instead of `DrawColor`. Width stops crossing the CPU/GPU boundary as a snapped number and starts crossing as a raw logical width the shader quantises itself.
 
 **Tech Stack:** Rust, makepad (redoz fork at `C:\dev\makepad`), makepad `script_mod!` shader DSL, Sdf2d.
 
@@ -23,7 +23,9 @@
   | `HAIRLINE` | 1.0 | card compartment dividers, group hulls, label leaders, behavior dividers |
   | `LIGHT` | 1.5 | card border, interaction frames, lifeline stems, origin overlay |
   | `REGULAR` | 2.0 | every connector: class edges, behavior routes, messages, ghost overlay |
-  | `HEAVY` | 3.0 | no resting element; the weight an emphasised connector lands on |
+  | `HEAVY` | 3.0 | **NOT implemented by this plan** — see below |
+
+- **`HEAVY` and `emphasized` are deliberately NOT built.** The spec documents a 3.0 rung and an emphasis multiplier, but nothing in the codebase uses either: `HEAVY` has no resting element, and the only 1.5x that ships is `AccentFrame`'s in-shader `mix(1.0, 1.5, self.selected)`, which stays in the shader. Shipping them would mean a `#[allow(dead_code)]` on a brand-new API — a dead item guarded by an allow on day one, which never gets removed. Ship three rungs; add the fourth and the multiplier when an element actually needs them. `Pen` therefore has no `emphasis` field: `width()` returns `lpx`.
 
 - **Glyph extents are NOT on the ladder** and keep their current values: `marker_size` 10.0, `nub_size` 6.0, `group_dash_period` 6.0, `ARROW_HEAD` 9.0, `X_MARK_SIZE` 10.0, dash `DASH_LEN` 5.0 / `DASH_GAP` 4.0.
 - **Two migrations are intended visible changes:** class edges 3.0 -> 2.0, and lifeline stems (1.4) plus interaction frames (1.2) -> 1.5 (a doubling in device pixels at dpi 1). The behavior canvas's own divider drops 1.4 -> 1.0. Do not "fix" these back.
@@ -40,7 +42,7 @@
 
 | File | Responsibility |
 | --- | --- |
-| `crates/waml-editor/src/canvas/pen.rs` | **NEW.** `mod.draw.CadPen` (shader half); `Pen` + rungs + `emphasized`/`width` (Rust half); `pen::band` / `pen::outline` (quad sizing); all pen unit tests and shader-source guards. |
+| `crates/waml-editor/src/canvas/pen.rs` | **NEW.** `mod.draw.CadPen` (shader half); `Pen` + three rungs + `width` (Rust half); `pen::band` / `pen::outline` (quad sizing); all pen unit tests and shader-source guards. |
 | `crates/waml-editor/src/canvas/mod.rs` | Declares `pub(crate) mod pen;`. |
 | `crates/waml-editor/src/app.rs` | Registers `crate::canvas::pen::script_mod(vm)` **before** `crate::frame::script_mod(vm)`. |
 | `crates/waml-editor/src/bin/node_editor_harness.rs` | Same registration, before its own `frame::script_mod(vm)`. |
@@ -60,7 +62,7 @@ The spec is precise about intent and deliberately loose about three mechanics. T
 
 1. **`pen_setup()` becomes `pen_aa(gate) -> float`.** The spec writes `pen_setup() -> sdf.aa = sdf.aa * 1.4142136`, but `sdf` is a pixel-fn local and a shader fn cannot mutate it. `CadPen` instead exposes `pen_aa(gate: float) -> float` returning `mix(1.0, 1.4142136, gate)`, and each pen writes `sdf.aa = sdf.aa * self.pen_aa(1.0)`. The `gate` argument exists because `AccentFrame` must keep the correction gated on `screen_space` — non-canvas consumers were tuned against the soft ramp and must not change.
 2. **`pen::band` is only for quads a `CadPen` inks inside; everything else uses `pen::outline`.** `band` returns the GROWN quad the spec describes (one device pixel of slack on each side of the centreline), which is only correct when a shader inks the quantised band within it — that is class edge bars and label leaders, both drawn with `EdgeLine`. Behavior routes, messages, lifeline stems, card dividers, port nubs and placement-overlay bars are drawn as flat `DrawColor` fills where the quad IS the ink; those size their rect from `pen.width()` and pass it through `pen::outline`, which is the direct successor of `snap_rect`. A flat fill needs no antialias correction, which is why the spec's pen list excludes `draw_rule` and `draw_fill`.
-3. **`Pen::HEAVY` and `Pen::emphasized` get `#[allow(dead_code)]`.** The spec names both as part of the ladder's API, and states outright that `HEAVY` has "no resting element". The only 1.5x emphasis that ships is `AccentFrame`'s in-shader `mix(1.0, 1.5, self.selected)`, so neither has a production Rust call site. Under `-D warnings` they must be annotated or the gate goes red. Annotate exactly those two items with a comment citing the spec; do NOT delete them and do NOT blanket-allow the module.
+3. **`Pen::HEAVY` and `Pen::emphasized` are not built at all.** They were originally planned with `#[allow(dead_code)]`, since the spec names both and neither has a production call site. Ruled out by redoz@: a brand-new API guarded by an allow on day one never gets removed. The plan ships three rungs and no multiplier, and `Pen` carries no `emphasis` field. The spec's 3.0 rung stands as documentation of the intended weight; add it, and `emphasized`, in the change that first needs one. Do NOT add either speculatively, and do NOT add a module-wide allow.
 
 ---
 
@@ -342,7 +344,7 @@ This is where the two intended visual changes land. It touches only NUMBERS — 
 
 **Interfaces:**
 - Consumes: nothing from Task 1 (the Rust half is independent of the shader half).
-- Produces: `pub(in crate::canvas) struct Pen`, `Pen::HAIRLINE`/`LIGHT`/`REGULAR`/`HEAVY`, `Pen::emphasized(self, f64) -> Pen`, `Pen::width(self) -> f64`.
+- Produces: `pub(in crate::canvas) struct Pen`, `Pen::HAIRLINE`/`LIGHT`/`REGULAR`, `Pen::width(self) -> f64`. No `HEAVY`, no `emphasized` — see the judgment calls above.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -378,7 +380,7 @@ Append to `crates/waml-editor/src/canvas/pen.rs`'s `mod tests` (keep the guards 
 
     #[test]
     fn the_ladder_climbs() {
-        let rungs = [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR, Pen::HEAVY];
+        let rungs = [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR];
         for rung in rungs {
             assert!(rung.width().is_finite() && rung.width() > 0.0);
         }
@@ -393,20 +395,12 @@ Append to `crates/waml-editor/src/canvas/pen.rs`'s `mod tests` (keep the guards 
         assert_eq!(Pen::HAIRLINE.width(), 1.0);
         assert_eq!(Pen::LIGHT.width(), 1.5);
         assert_eq!(Pen::REGULAR.width(), 2.0);
-        assert_eq!(Pen::HEAVY.width(), 3.0);
-    }
-
-    #[test]
-    fn emphasis_composes_and_names_the_heavy_rung() {
-        assert_eq!(Pen::REGULAR.emphasized(1.5).width(), Pen::HEAVY.width());
-        assert_eq!(Pen::REGULAR.emphasized(1.0).width(), Pen::REGULAR.width());
-        assert_eq!(Pen::HAIRLINE.emphasized(1.5).width(), Pen::LIGHT.width());
     }
 
     /// The CAD contract: one fixed device width at EVERY zoom, for every rung.
     #[test]
     fn a_rung_holds_one_device_width_across_the_whole_zoom_range() {
-        for pen in [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR, Pen::HEAVY] {
+        for pen in [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR] {
             let w = pen.width() as f32;
             for dpi in [1.0_f32, 1.25, 1.5, 2.0] {
                 let expected = (w * dpi + 0.5).floor().max(1.0);
@@ -453,7 +447,6 @@ Append to `crates/waml-editor/src/canvas/pen.rs`'s `mod tests` (keep the guards 
             (Pen::HAIRLINE, 1.0, 2.0),
             (Pen::LIGHT, 2.0, 3.0),
             (Pen::REGULAR, 2.0, 4.0),
-            (Pen::HEAVY, 3.0, 6.0),
         ];
         for (pen, at_dpi_1, at_dpi_2) in table {
             let w = pen.width() as f32;
@@ -498,15 +491,11 @@ Insert into `crates/waml-editor/src/canvas/pen.rs`, above the `script_mod!` bloc
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::canvas) struct Pen {
     lpx: f64,
-    emphasis: f64,
 }
 
 impl Pen {
     const fn new(lpx: f64) -> Pen {
-        Pen {
-            lpx,
-            emphasis: 1.0,
-        }
+        Pen { lpx }
     }
 
     /// Card compartment dividers, group hulls, label leaders, behavior dividers.
@@ -515,30 +504,16 @@ impl Pen {
     pub(in crate::canvas) const LIGHT: Pen = Pen::new(1.5);
     /// Every connector: class edges, behavior routes, messages, ghost overlay.
     pub(in crate::canvas) const REGULAR: Pen = Pen::new(2.0);
-    /// No resting element -- the weight an emphasised connector lands on. Named
-    /// rather than left as an implicit product so the emphasised weight has a
-    /// place in the ladder instead of being a number that only appears at
-    /// runtime (spec, "The ladder").
-    #[allow(dead_code)]
-    pub(in crate::canvas) const HEAVY: Pen = Pen::new(3.0);
-
-    /// Compose an emphasis multiplier onto a rung, as the card border already
-    /// does in-shader. No production Rust call site yet: the only emphasis that
-    /// ships is `AccentFrame`'s `mix(1.0, 1.5, self.selected)`, and the behavior
-    /// canvas deliberately calls emphasis out with colour and wash rather than
-    /// weight. The spec names it as part of the ladder's API, so it stays.
-    #[allow(dead_code)]
-    pub(in crate::canvas) fn emphasized(self, factor: f64) -> Pen {
-        Pen {
-            lpx: self.lpx,
-            emphasis: self.emphasis * factor,
-        }
-    }
+    // The spec's fourth rung (HEAVY, 3.0) and an `emphasized(factor)`
+    // multiplier are deliberately absent: nothing needs either yet, and the
+    // only 1.5x that ships is `AccentFrame`'s in-shader
+    // `mix(1.0, 1.5, self.selected)`. Add them in the change that first needs
+    // one rather than shipping an API under `#[allow(dead_code)]`.
 
     /// The finished logical width a shader quantises. The ONLY number that
     /// crosses the CPU/GPU boundary.
     pub(in crate::canvas) fn width(self) -> f64 {
-        self.lpx * self.emphasis
+        self.lpx
     }
 }
 ```
@@ -627,9 +602,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 git add -A
 git commit -m "feat(canvas): put every stroke on one weight ladder
 
-Introduce Pen: four rungs, an emphasis multiplier, one width(). Every
-authored stroke width on both canvases now names a rung instead of
-restating a number.
+Introduce Pen: three rungs and one width(). Every authored stroke width
+on both canvases now names a rung instead of restating a number.
 
 Two intended visual changes land here: class edges drop 3.0 -> 2.0, and
 lifeline stems (1.4) plus interaction frames (1.2) rise to 1.5, which
@@ -1600,4 +1574,4 @@ Use `pwsh -File scripts/capture-window.ps1 -Out shot.png -ProcessId <pid>` again
 
 - **Spec coverage.** Problem §widths -> Task 2. §snapping -> Tasks 3, 5, 8. §partial quantisation -> Tasks 3, 4. §antialiasing by hand -> Tasks 1, 4, 5, 6, 7. Architecture §Rust half -> Task 2. §shader half -> Task 1. §what the CPU keeps -> Task 3. §what folds away -> Tasks 6, 9. Migration steps 1-7 -> Tasks 1, 2, 3+4, 5, 6, 7+8, 9. Testing §unit -> Task 2. §shader-source -> Tasks 1, 4, 5, 6, 7, 9. §visual -> the sign-off section. Risks §helper-fn inheritance -> Task 1. §hit testing -> resolved above. §double emphasis -> resolved above.
 - **Independently shippable.** Spec steps 3-6 map to Tasks 3+4 (class edges), 5 (class chrome), 6 (`AccentFrame`), 7+8 (behavior). Each ends green and can ship alone; only Task 9's deletions require all of them.
-- **Naming consistency.** `Pen::width()`, `Pen::emphasized()`, `pen::band()`, `pen::band_is_horizontal()`, `pen::outline()`, `fill_band()`, `Camera::stroke_scale()`, and the shader members `pen_w`, `thin_y`, `pen_dev`, `pen_sw`, `pen_aa` are used identically in every task above.
+- **Naming consistency.** `Pen::width()`, `pen::band()`, `pen::band_is_horizontal()`, `pen::outline()`, `fill_band()`, `Camera::stroke_scale()`, and the shader members `pen_w`, `thin_y`, `pen_dev`, `pen_sw`, `pen_aa` are used identically in every task above.
