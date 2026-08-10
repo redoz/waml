@@ -71,6 +71,43 @@ pub(crate) fn history_command_for(
     }
 }
 
+/// Ctrl/Cmd + '='/'+' | '-' | '0' (spec §Inputs). Alt always disqualifies,
+/// matching the two functions above; shift is legal only on Equals because
+/// '+' IS Shift+'='. Dispatched by `App::handle_global_shortcuts`, consumed
+/// only while a zoomable view is active.
+#[cfg_attr(not(test), allow(dead_code))] // wired by Task 9
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ZoomCommand {
+    In,
+    Out,
+    Reset,
+}
+
+#[cfg_attr(not(test), allow(dead_code))] // wired by Task 9
+pub(crate) fn zoom_command_for(
+    key: KeyCode,
+    modifiers: KeyModifiers,
+    macos: bool,
+) -> Option<ZoomCommand> {
+    if modifiers.alt {
+        return None;
+    }
+    let primary = if macos {
+        modifiers.logo && !modifiers.control
+    } else {
+        modifiers.control && !modifiers.logo
+    };
+    if !primary {
+        return None;
+    }
+    match key {
+        KeyCode::Equals => Some(ZoomCommand::In),
+        KeyCode::Minus if !modifiers.shift => Some(ZoomCommand::Out),
+        KeyCode::Key0 if !modifiers.shift => Some(ZoomCommand::Reset),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +272,93 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn zoom_chords_map_on_both_platforms() {
+        // Ctrl+= / Ctrl+Shift+= (i.e. +) / Ctrl+- / Ctrl+0 on non-mac
+        assert_eq!(
+            zoom_command_for(KeyCode::Equals, modifiers(true, false, false), false),
+            Some(ZoomCommand::In)
+        );
+        assert_eq!(
+            zoom_command_for(KeyCode::Equals, modifiers(true, false, true), false),
+            Some(ZoomCommand::In)
+        );
+        assert_eq!(
+            zoom_command_for(KeyCode::Minus, modifiers(true, false, false), false),
+            Some(ZoomCommand::Out)
+        );
+        assert_eq!(
+            zoom_command_for(KeyCode::Key0, modifiers(true, false, false), false),
+            Some(ZoomCommand::Reset)
+        );
+        // Cmd on mac
+        assert_eq!(
+            zoom_command_for(KeyCode::Equals, modifiers(false, true, false), true),
+            Some(ZoomCommand::In)
+        );
+        assert_eq!(
+            zoom_command_for(KeyCode::Minus, modifiers(false, true, false), true),
+            Some(ZoomCommand::Out)
+        );
+        assert_eq!(
+            zoom_command_for(KeyCode::Key0, modifiers(false, true, false), true),
+            Some(ZoomCommand::Reset)
+        );
+    }
+
+    #[test]
+    fn wrong_platform_modifier_extra_alt_and_bare_keys_are_not_zoom_commands() {
+        assert_eq!(
+            zoom_command_for(KeyCode::Equals, modifiers(true, false, false), true),
+            None
+        );
+        assert_eq!(
+            zoom_command_for(KeyCode::Minus, modifiers(false, true, false), false),
+            None
+        );
+        assert_eq!(
+            zoom_command_for(KeyCode::Minus, modifiers(false, false, false), false),
+            None
+        );
+        assert_eq!(
+            zoom_command_for(
+                KeyCode::Equals,
+                KeyModifiers {
+                    control: true,
+                    alt: true,
+                    ..Default::default()
+                },
+                false,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn zoom_chords_collide_with_nothing_already_claimed() {
+        // The new chords are not history or search commands, and the claimed
+        // chords are not zoom commands -- extends the existing audit.
+        for key in [KeyCode::Equals, KeyCode::Minus, KeyCode::Key0] {
+            assert_eq!(
+                search_command_for(key, modifiers(true, false, false), false),
+                None
+            );
+            assert_eq!(
+                history_command_for(key, modifiers(true, false, false), false),
+                None
+            );
+        }
+        for key in [KeyCode::KeyZ, KeyCode::KeyY, KeyCode::KeyK, KeyCode::KeyF] {
+            assert_eq!(
+                zoom_command_for(key, modifiers(true, false, false), false),
+                None
+            );
+        }
+        assert_eq!(
+            zoom_command_for(KeyCode::F3, modifiers(false, false, false), false),
+            None
+        );
     }
 }
