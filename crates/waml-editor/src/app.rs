@@ -68,7 +68,6 @@ script_mod! {
     use mod.widgets.MarkdownEditor
     use mod.widgets.MarkdownViewer
     use mod.widgets.FolderListView
-    use mod.widgets.CalloutTooltip
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -632,7 +631,6 @@ script_mod! {
                     // paints nothing while closed. Replaces the old `radial` + `app_menu`
                     // children.
                     popup_root := PopupRoot{ width: Fill height: Fill }
-                    tooltip := CalloutTooltip{}
                     }
                 }
             }

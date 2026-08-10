@@ -120,15 +120,6 @@ pub struct IconButton {
     /// until set -- nothing draws (an empty, unlit button).
     #[rust]
     icon: Option<Icon>,
-    /// Text shown by the application tooltip overlay while this button is
-    /// hovered. `None` keeps the button silent.
-    #[rust]
-    tooltip: Option<String>,
-    /// Whether this button has emitted `HoverIn` without a matching
-    /// `HoverOut`. This state is separate from configured text so clearing the
-    /// text can still close the application overlay.
-    #[rust]
-    tooltip_open: bool,
     /// Persistent lit state (e.g. an active tool / a pinned panel). Tints the
     /// glyph `atlas.accent` on its own; it does NOT paint the hover wash (see
     /// `wash_and_ink`), so resting-on and hovered are distinguishable states.
@@ -182,9 +173,6 @@ impl Widget for IconButton {
                 if !self.dim {
                     cursor::hover_in(cx, MouseCursor::Hand);
                 }
-                if let Some(text) = self.tooltip.clone() {
-                    self.open_tooltip(cx, uid, text);
-                }
                 self.hovered = true;
                 self.view.redraw(cx);
             }
@@ -192,7 +180,6 @@ impl Widget for IconButton {
                 if !self.dim {
                     cursor::hover_out(cx);
                 }
-                self.close_tooltip(cx, uid);
                 self.hovered = false;
                 self.view.redraw(cx);
             }
@@ -237,48 +224,11 @@ impl Widget for IconButton {
 }
 
 impl IconButton {
-    fn open_tooltip(&mut self, cx: &mut Cx, uid: WidgetUid, text: String) {
-        cx.widget_action(
-            uid,
-            TooltipAction::HoverIn {
-                text,
-                widget_rect: self.view.area().rect(cx),
-                options: CalloutTooltipOptions::default(),
-            },
-        );
-        self.tooltip_open = true;
-    }
-
-    fn close_tooltip(&mut self, cx: &mut Cx, uid: WidgetUid) {
-        if self.tooltip_open {
-            cx.widget_action(uid, TooltipAction::HoverOut);
-            self.tooltip_open = false;
-        }
-    }
-
     /// Set the glyph, redrawing only on a change.
     pub fn set_icon(&mut self, cx: &mut Cx, icon: Icon) {
         if self.icon != Some(icon) {
             self.icon = Some(icon);
             self.view.redraw(cx);
-        }
-    }
-
-    /// Set the text shown while the pointer is over this button.
-    pub fn set_tooltip(&mut self, cx: &mut Cx, tooltip: Option<&str>) {
-        let tooltip = tooltip.map(str::to_owned);
-        if self.tooltip == tooltip {
-            return;
-        }
-        self.tooltip = tooltip;
-
-        let uid = self.widget_uid();
-        if self.tooltip_open || self.hovered {
-            if let Some(text) = self.tooltip.clone() {
-                self.open_tooltip(cx, uid, text);
-            } else {
-                self.close_tooltip(cx, uid);
-            }
         }
     }
 
@@ -362,13 +312,6 @@ impl IconButtonRef {
         }
     }
 
-    /// See [`IconButton::set_tooltip`].
-    pub fn set_tooltip(&self, cx: &mut Cx, tooltip: Option<&str>) {
-        if let Some(mut inner) = self.borrow_mut() {
-            inner.set_tooltip(cx, tooltip);
-        }
-    }
-
     /// See [`IconButton::set_active`].
     pub fn set_active(&self, cx: &mut Cx, active: bool) {
         if let Some(mut inner) = self.borrow_mut() {
@@ -423,50 +366,6 @@ impl IconButtonRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn tooltip_actions(actions: &Actions) -> Vec<TooltipAction> {
-        actions
-            .iter()
-            .filter_map(|action| match action.as_widget_action().cast() {
-                TooltipAction::None => None,
-                action => Some(action),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn changing_tooltip_while_hovered_updates_the_open_overlay() {
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        let mut button = cx.with_vm(IconButton::script_new_with_default);
-        button.hovered = true;
-        button.set_tooltip(&mut cx, Some("View source"));
-
-        let actions = cx.capture_actions(|cx| {
-            button.set_tooltip(cx, Some("View rendered"));
-        });
-
-        assert!(matches!(
-            tooltip_actions(&actions).as_slice(),
-            [TooltipAction::HoverIn { text, .. }] if text == "View rendered"
-        ));
-    }
-
-    #[test]
-    fn clearing_tooltip_while_hovered_closes_the_open_overlay() {
-        let mut cx = Cx::new(Box::new(|_, _| {}));
-        let mut button = cx.with_vm(IconButton::script_new_with_default);
-        button.hovered = true;
-        button.set_tooltip(&mut cx, Some("View source"));
-
-        let actions = cx.capture_actions(|cx| {
-            button.set_tooltip(cx, None);
-        });
-
-        assert!(matches!(
-            tooltip_actions(&actions).as_slice(),
-            [TooltipAction::HoverOut]
-        ));
-    }
 
     // The whole point of the split: an active-but-unhovered toggle reads as a
     // bare accent glyph, so "on" no longer looks identical to "hovered".

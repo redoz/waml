@@ -465,17 +465,20 @@ impl DocumentHeader {
         button.set_visible(cx, action.is_some());
         if let Some(action) = action {
             button.as_icon_button().set_icon(cx, action.icon);
-            button
-                .as_icon_button()
-                .set_tooltip(cx, Some(action.tooltip));
-        } else {
-            button.as_icon_button().set_tooltip(cx, None);
         }
+        // `action.tooltip` is deliberately NOT wired to the button: this is the
+        // only production caller of `IconButton::set_tooltip`, and the shared
+        // `CalloutTooltip` defaults to `TooltipPosition::Right`, which for a
+        // button flush against the window's right edge collapses to a 24px
+        // stub with a bare callout arrow. The text stays on `HeaderViewAction`
+        // for the chrome-wide tooltip sweep that will give buttons a per-site
+        // position.
         self.sync_content_layout(cx);
     }
 
     /// The active document's view action button, for click detection. Chrome
-    /// projection owns its icon and tooltip.
+    /// projection owns its icon; the tooltip text it carries is currently
+    /// unrendered (see `set_view_toggle`).
     pub fn view_action_button(&self, cx: &mut Cx) -> WidgetRef {
         self.view.widget(cx, ids!(view_button))
     }
