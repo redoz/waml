@@ -973,8 +973,10 @@ pub struct SequenceDoc {
 /// An element's `type`. Graceful degradation is a type-level guarantee: any
 /// unrecognized token becomes `Unknown` and renders as a generic labelled box.
 ///
-/// Serializes as a flat `type` string (`"uml.Class"` / `"Diagram"` / opaque);
-/// `parse` is total, so `From<String>` (not `TryFrom`) drives Deserialize.
+/// Serializes as a flat `type` string. Diagram documents use a canonical type
+/// such as `"uml.ClassDiagram"`. Semantic behavior classifiers use types such
+/// as `"uml.Activity"`. Other values stay opaque. `parse` is total, so
+/// `From<String>` (not `TryFrom`) drives Deserialize.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(into = "String", from = "String"))]
@@ -1054,12 +1056,11 @@ impl ElementType {
         }
     }
 
-    /// True for element types that are **views / notation**, not pooled
-    /// classifiers: `Diagram` (a class-diagram view) and every behavior kind
-    /// (activity / state machine / interaction — each a view over pooled
-    /// behavior elements, design spec §4). A view never contributes a
-    /// classifier `Node` to `Model.nodes` and is never a relationship/link
-    /// target. Distinct from `is_classifier()`, which is `true` for behaviors.
+    /// True only for canonical diagram document types. These types describe
+    /// views or notation. They do not add classifier nodes to `Model.nodes`,
+    /// and they are not relationship targets. Semantic behavior classifiers,
+    /// such as `uml.Activity`, are not views. `is_classifier()` is true for
+    /// those behavior classifiers.
     pub fn is_view(&self) -> bool {
         matches!(self, ElementType::Diagram(_))
     }

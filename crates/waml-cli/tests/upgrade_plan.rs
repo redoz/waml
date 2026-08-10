@@ -276,6 +276,20 @@ fn valid_structured_frontmatter_does_not_block_detection() {
 }
 
 #[test]
+fn valid_top_level_flow_maps_do_not_trigger_migration() {
+    let files = vec![(
+        "documentation-contract.md".to_string(),
+        "---\ntype: Reference\ngenerated: { by: process:docs-audit, at: 2026-08-08T00:00:00Z }\nverified: { by: process:docs-contract-check, at: 2026-08-08T00:00:00Z }\n---\n# Documentation Contract\n"
+            .to_string(),
+    )];
+
+    let plan = plan_upgrade(&files).expect("valid flow maps must remain inspectable");
+
+    assert_eq!(plan.files, files);
+    assert!(plan.applied.is_empty());
+}
+
+#[test]
 fn legacy_type_with_valid_structured_frontmatter_is_rewritten() {
     let files = vec![(
         "activity.md".to_string(),

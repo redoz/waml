@@ -571,24 +571,31 @@ fn flat_flow_map_is_valid(value: &str) -> bool {
     quote.is_none() && flow_map_field_is_valid(&inner[field_start..])
 }
 
-fn is_inline_map_sequence_recovery(source: &str, at: waml_syntax::TextSize) -> bool {
+fn flow_map_value(line: &str) -> Option<&str> {
+    let line = line.trim();
+    let value = if let Some(value) = line.strip_prefix('-') {
+        value.trim_start()
+    } else {
+        line.split_once(':')?.1.trim_start()
+    };
+    value.starts_with('{').then_some(value)
+}
+
+fn is_flow_map_recovery(source: &str, at: waml_syntax::TextSize) -> bool {
     let at = at.to_usize().min(source.len());
     let line_start = source[..at].rfind('\n').map_or(0, |newline| newline + 1);
     let line_end = source[at..]
         .find('\n')
         .map_or(source.len(), |newline| at + newline);
-    let line = source[line_start..line_end].trim();
-    line.strip_prefix('-')
-        .map(str::trim_start)
-        .is_some_and(flat_flow_map_is_valid)
+    flow_map_value(&source[line_start..line_end]).is_some_and(flat_flow_map_is_valid)
 }
 
-fn inline_map_sequences_are_valid(source: &str) -> bool {
+fn flow_maps_are_valid(source: &str) -> bool {
     source.lines().all(|line| {
-        let Some(value) = line.trim().strip_prefix('-').map(str::trim_start) else {
+        let Some(value) = flow_map_value(line) else {
             return true;
         };
-        !value.starts_with('{') || flat_flow_map_is_valid(value)
+        flat_flow_map_is_valid(value)
     })
 }
 
@@ -624,7 +631,7 @@ fn validated_frontmatter_syntax(
 
     let range = frontmatter.range();
     let frontmatter_source = &source[range.start().to_usize()..range.end().to_usize()];
-    if !inline_map_sequences_are_valid(frontmatter_source) {
+    if !flow_maps_are_valid(frontmatter_source) {
         return Err(FrontmatterRewriteError::InvalidFrontmatter);
     }
     let recovery_only = snapshot
@@ -636,7 +643,7 @@ fn validated_frontmatter_syntax(
         .all(|diagnostic| match diagnostic.code {
             OkfSyntaxDiagnosticCode::FrontmatterNotClean => true,
             OkfSyntaxDiagnosticCode::MalformedFrontmatterEntry => {
-                is_inline_map_sequence_recovery(source, diagnostic.range.start())
+                is_flow_map_recovery(source, diagnostic.range.start())
             }
             _ => false,
         });
