@@ -31,10 +31,11 @@ script_mod! {
     // sharp rect (`Object`, radius pushed to 0) (spec §4.1). The two need
     // different SDF calls: `sdf.box` DEGENERATES at radius 0 and draws nothing,
     // which is why an object node used to render as bare text with no box.
-    mod.draw.FlowBox = mod.draw.DrawColor{
+    mod.draw.FlowBox = mod.draw.CadPen{
         radius: uniform(6.0)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
             if self.radius <= 0.0 {
                 sdf.rect(0.0, 0.0, self.rect_size.x, self.rect_size.y)
             } else {
@@ -47,9 +48,10 @@ script_mod! {
 
     // `Decision`/`Merge` diamond: an explicit 4-point SDF path, never a
     // zero-radius box (spec §4.1).
-    mod.draw.FlowDiamond = mod.draw.DrawColor{
+    mod.draw.FlowDiamond = mod.draw.CadPen{
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
             let w = self.rect_size.x
             let h = self.rect_size.y
             sdf.move_to(w * 0.5, 0.0)
@@ -69,10 +71,11 @@ script_mod! {
     // rather than three separately-composited instances of this pen (which
     // do not visually layer -- each `draw_abs` call is its own instanced
     // quad, not a persistent framebuffer the next call paints over).
-    mod.draw.FlowCircle = mod.draw.DrawColor{
+    mod.draw.FlowCircle = mod.draw.CadPen{
         bullseye: uniform(0.0)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
             let cx_ = self.rect_size.x * 0.5
             let cy_ = self.rect_size.y * 0.5
             let r = min(self.rect_size.x, self.rect_size.y) * 0.5
@@ -87,12 +90,13 @@ script_mod! {
 
     // Route arrowhead pen: an explicit 3-point SDF path in quad-local pixels
     // (mirrors `EdgeMarker`'s `v01`/`v23` convention, one vertex pair short).
-    mod.draw.FlowTriangle = mod.draw.DrawColor{
+    mod.draw.FlowTriangle = mod.draw.CadPen{
         v0: uniform(vec2(0.0, 0.0))
         v1: uniform(vec2(0.0, 0.0))
         v2: uniform(vec2(0.0, 0.0))
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
             sdf.move_to(self.v0.x, self.v0.y)
             sdf.line_to(self.v1.x, self.v1.y)
             sdf.line_to(self.v2.x, self.v2.y)
@@ -105,17 +109,17 @@ script_mod! {
 // Open message-head pen (`signals`/`returns`, spec §4.2): two open strokes
     // from the apex `v0` out to wing tips `v1`/`v2` -- no closing base, no
     // fill, so it reads as a caret rather than `FlowTriangle`'s solid head.
-    mod.draw.InteractionOpenHead = mod.draw.DrawColor{
+    mod.draw.InteractionOpenHead = mod.draw.CadPen{
         v0: uniform(vec2(0.0, 0.0))
         v1: uniform(vec2(0.0, 0.0))
         v2: uniform(vec2(0.0, 0.0))
-        stroke_w: uniform(1.4)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
             sdf.move_to(self.v1.x, self.v1.y)
             sdf.line_to(self.v0.x, self.v0.y)
             sdf.line_to(self.v2.x, self.v2.y)
-            sdf.stroke(self.color, self.stroke_w)
+            sdf.stroke(self.color, self.pen_sw(self.pen_w))
             return sdf.result
         }
     }
@@ -123,31 +127,31 @@ script_mod! {
     // Destroyed-lifeline X pen (spec §4.2): two crossing SDF strokes, built as
     // ONE draw (per the Task 7 handoff gotcha -- layering separate draw_abs
     // calls on one shader does not visually composite).
-    mod.draw.InteractionXMark = mod.draw.DrawColor{
-        stroke_w: uniform(1.6)
+    mod.draw.InteractionXMark = mod.draw.CadPen{
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
             let w = self.rect_size.x
             let h = self.rect_size.y
             sdf.move_to(0.0, 0.0)
             sdf.line_to(w, h)
-            sdf.stroke(self.color, self.stroke_w)
+            sdf.stroke(self.color, self.pen_sw(self.pen_w))
             sdf.move_to(w, 0.0)
             sdf.line_to(0.0, h)
-            sdf.stroke(self.color, self.stroke_w)
+            sdf.stroke(self.color, self.pen_sw(self.pen_w))
             return sdf.result
         }
     }
 
     // Combined-fragment frame border (spec §4.2): a stroked outline, no fill,
     // so nested frames and messages inside remain visible.
-    mod.draw.InteractionFrameBorder = mod.draw.DrawColor{
-        stroke_w: uniform(1.2)
+    mod.draw.InteractionFrameBorder = mod.draw.CadPen{
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            let inset = self.stroke_w * 0.5
-            sdf.rect(inset, inset, self.rect_size.x - inset * 2.0, self.rect_size.y - inset * 2.0)
-            sdf.stroke(self.color, self.stroke_w)
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
+            let sw = self.pen_sw(self.pen_w)
+            sdf.rect(sw, sw, self.rect_size.x - sw * 2.0, self.rect_size.y - sw * 2.0)
+            sdf.stroke(self.color, sw)
             return sdf.result
         }
     }
@@ -160,12 +164,12 @@ script_mod! {
     //
     // The bevel is a fixed fraction of the plate height, so it stays a corner
     // cut at every label width instead of growing into the text.
-    mod.draw.InteractionTab = mod.draw.DrawColor{
+    mod.draw.InteractionTab = mod.draw.CadPen{
         border_col: uniform(#x00000000)
-        stroke_w: uniform(1.0)
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            let inset = self.stroke_w * 0.5
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
+            let inset = self.pen_sw(self.pen_w)
             let w = self.rect_size.x - inset
             let h = self.rect_size.y - inset
             let notch = min(h * 0.45, w * 0.5)
@@ -176,7 +180,7 @@ script_mod! {
             sdf.line_to(inset, h)
             sdf.close_path()
             sdf.fill_keep(self.color)
-            sdf.stroke(self.border_col, self.stroke_w)
+            sdf.stroke(self.border_col, inset)
             return sdf.result
         }
     }

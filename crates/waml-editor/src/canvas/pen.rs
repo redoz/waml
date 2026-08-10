@@ -219,6 +219,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn behavior_pens_derive_from_cad_pen() {
+        let src = include_str!("behavior/mod.rs");
+        for name in [
+            "FlowBox",
+            "FlowDiamond",
+            "FlowCircle",
+            "FlowTriangle",
+            "InteractionOpenHead",
+            "InteractionXMark",
+            "InteractionFrameBorder",
+            "InteractionTab",
+        ] {
+            assert_derives_from_cad_pen(src, name);
+        }
+    }
+
     /// `ConstraintVeil` is a wash-and-hatch FILL, not a stroke: it has no
     /// coverage to correct and no width to quantise, and the spec keeps it on
     /// `DrawColor` deliberately. Pin that so a future sweep does not "fix" it.
