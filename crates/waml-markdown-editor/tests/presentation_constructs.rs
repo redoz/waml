@@ -269,7 +269,7 @@ fn frontmatter_compiles_to_its_own_code_block() {
     let frontmatter_len = "---\ntype: uml.Class\n---\n".len();
     assert!(
         plan.blocks.iter().any(|block| {
-            block.kind == PresentationBlockKind::Code
+            matches!(block.kind, PresentationBlockKind::Code { fence: None })
                 && block.source_range.start().to_usize() == 0
                 && block.source_range.end().to_usize() == frontmatter_len
         }),
