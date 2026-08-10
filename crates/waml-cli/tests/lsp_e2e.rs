@@ -204,7 +204,7 @@ fn publishes_diagnostics_for_unresolved_target_over_stdio() {
 /// `validate()` regardless of `ElementType`, so a behavioral-substrate
 /// (flow/activity) diagnostic needs zero LSP-specific wiring to surface —
 /// this mirrors `publishes_diagnostics_for_unresolved_target_over_stdio`
-/// above but drives a `uml.Activity` doc with a malformed flow bullet.
+/// above but drives a `uml.ActivityDiagram` doc with a malformed flow bullet.
 #[test]
 fn publishes_diagnostics_for_a_malformed_flow_bullet_with_no_extra_wiring() {
     let exe = env!("CARGO_BIN_EXE_waml");

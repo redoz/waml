@@ -27,8 +27,8 @@ structurally, not by a free-text label:
 | role | how identified | is it a pool element? |
 |---|---|---|
 | **index** | filename is `index.md` | no — navigation only, generated (see [Packages and indexes](#packages-and-indexes)) |
-| **diagram** | `type: uml.ClassDiagram` **and** a `## Members` list | no — it is a *view* over pooled nodes |
-| **behavior** | `type: uml.ActivityDiagram`, `uml.StateMachine`, or `uml.Sequence` | no — a self-rendering view (see [Behavioral substrates](#behavioral-substrates)) |
+| **diagram** | `type: uml.ClassDiagram` or `uml.UseCaseDiagram` **and** a `## Members` list | no — it is a *view* over pooled nodes |
+| **behavior** | `type: uml.ActivityDiagram`, `uml.StateMachineDiagram`, or `uml.SequenceDiagram` | no — a self-rendering view (see [Behavioral substrates](#behavioral-substrates)) |
 | **node** | anything else | yes |
 
 - **Index** documents provide navigation and are not part of any model graph.
@@ -73,10 +73,10 @@ defined rendering; a conforming renderer has explicit handling per entry:
 | `uml.InstanceSpecification` | object box — underlined `name : Classifier` header over a slot list |
 | `uml.Note` | dog-eared comment box; markdown body; dashed anchor(s) to the annotated element(s) |
 
-Three further `uml.*` tokens select the behavior substrates rather than node
-metaclasses: `uml.Activity`, `uml.StateMachine`, and `uml.Sequence` (see
-[Behavioral substrates](#behavioral-substrates)). A diagram's dispatch key is
-the bare token `Diagram` (no family prefix).
+Five further `uml.*` tokens select diagram documents rather than node
+metaclasses: `uml.ClassDiagram`, `uml.UseCaseDiagram`, `uml.ActivityDiagram`,
+`uml.StateMachineDiagram`, and `uml.SequenceDiagram`. The last three select
+the behavior substrates (see [Behavioral substrates](#behavioral-substrates)).
 
 The metaclass set is *closed*: authors do not invent new metaclasses. All
 domain-specific meaning is expressed through **stereotypes** instead.
@@ -413,7 +413,7 @@ A slot **value** is one of:
 
 ### Inline instance (in a diagram's `## Members`)
 
-For sketching an object diagram without one file per object, a Diagram's
+For sketching an object diagram without one file per object, a diagram's
 `## Members` list accepts an inline-instance bullet:
 
 ```markdown
@@ -447,10 +447,10 @@ Full rationale and worked examples:
 The structure tier participates through the `uml.Actor` and `uml.UseCase`
 metaclasses and the `includes` / `extends` dependency verbs (all part of the
 core sets above). A bare `associates` between an actor and a use case is a
-communication link. A system boundary is a `frame` group in a Diagram's
+communication link. A system boundary is a `frame` group in a diagram's
 `## Members` section — no new metaclass.
 
-### Flow substrate (`uml.Activity`, `uml.StateMachine`)
+### Flow substrate (`uml.ActivityDiagram`, `uml.StateMachineDiagram`)
 
 One document is one directed graph — self-rendering, no `## Layout`. Optional
 frontmatter `describes: [Title](./slug.md)` links the flow to the entity it
@@ -489,7 +489,7 @@ branch. A link target is a cross-document transition into another behavior. A
 trailing `#### Notes` under a node is a plain bulleted list, same grammar as a
 classifier's `## Notes`.
 
-### Interaction substrate (`uml.Sequence`)
+### Interaction substrate (`uml.SequenceDiagram`)
 
 One document is one ordered interaction — self-rendering. Optional
 `describes:` as above. `## Lifelines` declares participants, `## Gates`
@@ -561,7 +561,7 @@ An endpoint has one of four forms:
 The same lifeline at both ends creates self-message loopback geometry. This
 rule also applies to a self-delete: the delete row ends that lifeline.
 
-An interaction use references another `uml.Sequence` without copying its
+An interaction use references another `uml.SequenceDiagram` without copying its
 messages. Its `bind` lines map local lifelines to target lifelines. A target
 gate must exist and must have an inner connection. More than one outer message
 can use the same gate. For example, a call and its return can share one gate:

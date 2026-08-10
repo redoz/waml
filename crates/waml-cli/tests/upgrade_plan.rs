@@ -147,6 +147,83 @@ fn no_op_plan_does_not_validate_unrelated_model_errors() {
 }
 
 #[test]
+fn closed_malformed_frontmatter_with_legacy_type_is_not_a_no_op() {
+    let files = vec![(
+        "malformed.md".to_string(),
+        "---\ntype: Diagram\n- stray sequence item\n---\n# Malformed\n".to_string(),
+    )];
+
+    let error = plan_upgrade(&files).err();
+    assert!(
+        matches!(error, Some(UpgradeError::Inspection(_))),
+        "unexpected result: {error:?}"
+    );
+}
+
+#[test]
+fn legacy_document_beside_closed_malformed_frontmatter_is_rejected_during_detection() {
+    let files = vec![
+        (
+            "legacy.md".to_string(),
+            "---\ntype: uml.Activity\n---\n# Activity\n".to_string(),
+        ),
+        (
+            "malformed.md".to_string(),
+            "---\ntype: uml.Class\nbroken: value: extra\n---\n# Malformed\n".to_string(),
+        ),
+    ];
+
+    let error = plan_upgrade(&files).err();
+    assert!(
+        matches!(error, Some(UpgradeError::Inspection(_))),
+        "unexpected result: {error:?}"
+    );
+}
+
+#[test]
+fn valid_structured_frontmatter_does_not_block_detection() {
+    let files = vec![
+        (
+            "activity.md".to_string(),
+            "---\ntype: uml.Activity\n---\n# Activity\n".to_string(),
+        ),
+        (
+            "affected-analysis.md".to_string(),
+            "---\ntype: uml.Class\nsources:\n  - { id: affected-analysis, resource: analysis.rs, title: AffectedAnalysis }\n---\n# Affected Analysis\n"
+                .to_string(),
+        ),
+    ];
+
+    let plan = plan_upgrade(&files).expect("valid structured frontmatter must remain inspectable");
+
+    assert_eq!(
+        plan.files[0].1,
+        "---\ntype: uml.ActivityDiagram\n---\n# Activity\n"
+    );
+    assert_eq!(plan.files[1], files[1]);
+}
+
+#[test]
+fn legacy_type_with_valid_structured_frontmatter_is_rewritten() {
+    let files = vec![(
+        "activity.md".to_string(),
+        "---\ntype: uml.Activity\nsources:\n  - { id: affected-analysis, resource: analysis.rs, title: AffectedAnalysis }\n---\n# Activity\n"
+            .to_string(),
+    )];
+
+    let plan = plan_upgrade(&files).expect("structured frontmatter is valid");
+
+    assert_eq!(
+        plan.files,
+        vec![(
+            "activity.md".to_string(),
+            "---\ntype: uml.ActivityDiagram\nsources:\n  - { id: affected-analysis, resource: analysis.rs, title: AffectedAnalysis }\n---\n# Activity\n"
+                .to_string(),
+        )]
+    );
+}
+
+#[test]
 fn later_migration_repairs_temporary_error_before_full_validation() {
     let migrations = [
         Migration {

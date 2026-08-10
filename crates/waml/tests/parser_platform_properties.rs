@@ -545,7 +545,7 @@ fn one_thousand_host_replacements_retain_two_touched_and_one_untouched_allocatio
 proptest! {
     #[test]
     fn only_supported_uml_type_strings_are_claimed(ty in "[^\\r\\n]{0,48}") {
-        const SUPPORTED: &[&str] = &["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Package", "uml.Note", "uml.Association", "uml.Actor", "uml.UseCase", "uml.InstanceSpecification", "uml.Activity", "uml.StateMachine", "uml.Sequence", "Diagram"];
+        const SUPPORTED: &[&str] = &["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Package", "uml.Note", "uml.Association", "uml.Actor", "uml.UseCase", "uml.InstanceSpecification", "uml.ClassDiagram", "uml.UseCaseDiagram", "uml.ActivityDiagram", "uml.StateMachineDiagram", "uml.SequenceDiagram"];
         let concept = waml::okf::project("x.md", &format!("---\ntype: {ty}\n---\n# X\n")).unwrap();
         prop_assert_eq!(waml::uml::recognizes(&concept), SUPPORTED.contains(&ty.as_str()));
     }
@@ -751,7 +751,7 @@ proptest! {
         let unclaimed = prepared.okf().catalog.id_for_path(&BundlePath::parse("unclaimed.md").unwrap()).unwrap();
         prop_assert!(prepared.okf().bundle.concept("index").is_none());
         prop_assert!(prepared.uml().syntax.document(claimed).is_some());
-        prop_assert_eq!(prepared.uml().syntax.document(unclaimed).is_some(), ["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Package", "uml.Note", "uml.Association", "uml.Actor", "uml.UseCase", "uml.InstanceSpecification", "uml.Activity", "uml.StateMachine", "uml.Sequence", "Diagram"].contains(&ty.as_str()));
+        prop_assert_eq!(prepared.uml().syntax.document(unclaimed).is_some(), ["uml.Class", "uml.Interface", "uml.Enum", "uml.DataType", "uml.Package", "uml.Note", "uml.Association", "uml.Actor", "uml.UseCase", "uml.InstanceSpecification", "uml.ClassDiagram", "uml.UseCaseDiagram", "uml.ActivityDiagram", "uml.StateMachineDiagram", "uml.SequenceDiagram"].contains(&ty.as_str()));
         prop_assert!(prepared.uml().declared.concept("claimed").is_some());
     }
 }

@@ -33,12 +33,13 @@ UML elements split cleanly by whether they have independent identity:
 
 - **Entity tier** — elements that exist on their own and are *curated* into
   views: classes, interfaces, enums, actors, use cases. These keep UAML's
-  existing rule: **one node = one document**, assembled into `Diagram` views.
+  existing rule: **one node = one document**, assembled into canonical diagram
+  views (`uml.ClassDiagram` or `uml.UseCaseDiagram`).
 - **Behavior tier** — elements that exist only inside one ordered behavior: a
   state, an action, a message. These do **not** get their own document. A
   behavior is authored as **one self-contained document** whose body *is* the
   ordered behavior. The document is **both model and view** (there is no
-  separate `Diagram` curation step — ordering and time cannot be re-curated).
+  separate diagram curation step — ordering and time cannot be re-curated).
 
 Behavior documents **link into** the entity tier: a lifeline *is* a Class or
 Actor; a state machine *describes* a Class; a call-behavior action *refines*
@@ -54,7 +55,7 @@ profile keep their existing open/closed roles.
 
 | substrate | tier | document shape | UML families |
 |---|---|---|---|
-| **structure** | entity | frontmatter + sections; node=doc; curated into `Diagram` | class, use case |
+| **structure** | entity | frontmatter + sections; node=doc; curated into `uml.ClassDiagram` or `uml.UseCaseDiagram` | class, use case |
 | **flow** | behavior | one doc = one directed graph; self-rendering | activity, state machine |
 | **interaction** | behavior | one doc = one ordered interaction; self-rendering | sequence |
 
@@ -64,7 +65,8 @@ that tunes rendering (labels, final-node shape, swimlanes vs orthogonal
 regions).
 
 Document `type` for a behavior doc names the whole behavior and selects the
-flavor: `uml.Activity`, `uml.StateMachine`, `uml.Sequence`. Structure-tier docs
+flavor: `uml.ActivityDiagram`, `uml.StateMachineDiagram`,
+`uml.SequenceDiagram`. Structure-tier docs
 keep per-node `type: uml.Class`, `uml.Actor`, etc.
 
 ## Surface grammar — one sentence, three markers
@@ -113,7 +115,7 @@ adds two:
 | `uml.UseCase` | ellipse; node; may `includes` / `extends` / `specializes` other use cases |
 
 **System boundary** introduces no metaclass. It is a `frame` group in the
-use-case `Diagram`'s `## Members` — the existing layout frame supplies the
+use-case `uml.UseCaseDiagram` document's `## Members` — the existing layout frame supplies the
 titled box, and group membership already means "inside the system."
 
 Relationship vocabulary extends the existing table with two dependency verbs.
@@ -136,7 +138,8 @@ not a contradiction of the structural requirement.
 
 Actor and use-case
 documents are ordinary node documents (frontmatter + optional `## Attributes` +
-`## Relationships` + `## Notes`) curated into a `Diagram` exactly like classes.
+`## Relationships` + `## Notes`) curated into a canonical diagram document
+exactly like classes.
 **Class and use case diagrams share one substrate and one renderer path** — they
 differ only in which metaclasses appear.
 
@@ -155,7 +158,7 @@ title: Place Order
 
 ## Substrate 2 — flow (activity + state machine)
 
-One directed graph per document. `type: uml.ActivityDiagram` or `uml.StateMachine`
+One directed graph per document. `type: uml.ActivityDiagram` or `uml.StateMachineDiagram`
 selects the flavor; both parse identically. One frontmatter field, `describes:`,
 links the behavior to the entity it belongs to for both flavors — a state
 machine describes a Class, an activity describes (realizes) the use case or

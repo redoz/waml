@@ -1,6 +1,9 @@
 use crate::{
     diagnostic::{DiagCode, Diagnostic, Severity},
-    frontmatter::{parse_frontmatter_source, replace_frontmatter_string_scalar, FmValue},
+    frontmatter::{
+        inspect_frontmatter_string_scalar, parse_frontmatter_source,
+        replace_frontmatter_string_scalar, FmValue, FrontmatterStringScalar,
+    },
     model::{DiagramKind, ElementType, UmlMetaclass},
     source::SourceBundle,
 };
@@ -77,36 +80,82 @@ struct LegacyDocument {
     legacy: LegacyDiagramType,
 }
 
+enum LegacyTypeInspection {
+    NoLegacy,
+    Legacy(LegacyDiagramType),
+    Malformed {
+        legacy: Option<LegacyDiagramType>,
+        error: UpgradeInspectionError,
+    },
+}
+
+fn inspect_document_legacy_type(path: &str, source: &str) -> LegacyTypeInspection {
+    let tolerant_legacy =
+        parse_frontmatter_source(source).and_then(|frontmatter| match frontmatter.get("type") {
+            Some(FmValue::Str(authored_type)) => LegacyDiagramType::parse(authored_type),
+            _ => None,
+        });
+    match inspect_frontmatter_string_scalar(source, "type") {
+        Ok(FrontmatterStringScalar::String(authored_type)) => {
+            LegacyDiagramType::parse(&authored_type)
+                .map_or(LegacyTypeInspection::NoLegacy, LegacyTypeInspection::Legacy)
+        }
+        Ok(FrontmatterStringScalar::NoFrontmatter | FrontmatterStringScalar::NoScalar) => {
+            LegacyTypeInspection::NoLegacy
+        }
+        Err(error) => LegacyTypeInspection::Malformed {
+            legacy: tolerant_legacy,
+            error: invalid_legacy_bundle(path, error.to_string()),
+        },
+    }
+}
+
+pub fn detect_legacy_diagram_types(source: &SourceBundle) -> Result<bool, UpgradeInspectionError> {
+    let inspections = source
+        .documents()
+        .iter()
+        .map(|document| inspect_document_legacy_type(document.path().as_str(), document.text()))
+        .collect::<Vec<_>>();
+    let legacy_detected = inspections.iter().any(|inspection| {
+        matches!(
+            inspection,
+            LegacyTypeInspection::Legacy(_)
+                | LegacyTypeInspection::Malformed {
+                    legacy: Some(_),
+                    ..
+                }
+        )
+    });
+    if !legacy_detected {
+        return Ok(false);
+    }
+    if let Some(error) = inspections
+        .into_iter()
+        .find_map(|inspection| match inspection {
+            LegacyTypeInspection::Malformed { error, .. } => Some(error),
+            LegacyTypeInspection::NoLegacy | LegacyTypeInspection::Legacy(_) => None,
+        })
+    {
+        return Err(error);
+    }
+    Ok(true)
+}
+
 pub fn inspect_legacy_diagram_types(
     source: &SourceBundle,
 ) -> Result<Vec<LegacyDiagramTypeUse>, UpgradeInspectionError> {
     let mut legacy_documents = Vec::new();
     for document in source.documents() {
-        let frontmatter = match parse_frontmatter_source(document.text()) {
-            Some(frontmatter) => frontmatter,
-            None if waml_syntax::has_leading_frontmatter_fence(document.text()) => {
-                return Err(invalid_legacy_bundle(
-                    document.path().as_str(),
-                    "frontmatter is malformed or has no closing fence",
-                ));
+        match inspect_document_legacy_type(document.path().as_str(), document.text()) {
+            LegacyTypeInspection::NoLegacy => {}
+            LegacyTypeInspection::Legacy(legacy) => {
+                legacy_documents.push(LegacyDocument {
+                    path: document.path().as_str().to_string(),
+                    concept_id: crate::okf::id_of(document.path().as_str()),
+                    legacy,
+                });
             }
-            None => continue,
-        };
-        let Some(value) = frontmatter.get("type") else {
-            continue;
-        };
-        let FmValue::Str(authored_type) = value else {
-            return Err(invalid_legacy_bundle(
-                document.path().as_str(),
-                "frontmatter key 'type' must be a string scalar",
-            ));
-        };
-        if let Some(legacy) = LegacyDiagramType::parse(authored_type) {
-            legacy_documents.push(LegacyDocument {
-                path: document.path().as_str().to_string(),
-                concept_id: crate::okf::id_of(document.path().as_str()),
-                legacy,
-            });
+            LegacyTypeInspection::Malformed { error, .. } => return Err(error),
         }
     }
     legacy_documents.sort_by(|left, right| left.path.cmp(&right.path));

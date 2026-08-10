@@ -5,7 +5,10 @@ use waml::{
     diagnostic::{Diagnostic, Severity},
     frontmatter::{replace_frontmatter_string_scalar, FrontmatterRewriteError},
     source::SourceBundle,
-    upgrade::{inspect_legacy_diagram_types, LegacyDiagramType, UpgradeInspectionError},
+    upgrade::{
+        detect_legacy_diagram_types, inspect_legacy_diagram_types, LegacyDiagramType,
+        UpgradeInspectionError,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -115,23 +118,7 @@ pub(crate) fn plan_upgrade_with_migrations(
 }
 
 fn detect_canonical_uml_diagram_types(source: &SourceBundle) -> Result<bool, UpgradeError> {
-    const LEGACY_TYPES: &[&str] = &[
-        "Diagram",
-        "uml.Activity",
-        "uml.StateMachine",
-        "uml.Sequence",
-    ];
-
-    for document in source.documents() {
-        for legacy_type in LEGACY_TYPES {
-            if replace_frontmatter_string_scalar(document.text(), "type", legacy_type, legacy_type)
-                .is_ok_and(|replacement| replacement.is_some())
-            {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
+    detect_legacy_diagram_types(source).map_err(UpgradeError::Inspection)
 }
 
 fn transform_canonical_uml_diagram_types(
