@@ -1374,6 +1374,7 @@ mod tests {
             is_else: false,
             effect: None,
             carries: None,
+            traces: Vec::new(),
         });
         model.flows.push(FlowDoc {
             key: "flow".into(),

@@ -144,6 +144,22 @@ pub struct AssocRow {
     pub target_kind: ElementKind, // the far endpoint's kind (Node for associations)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraceStatus {
+    ResolvedInternal,
+    ResolvedExternal,
+    Unresolved,
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceRow {
+    pub label: String,
+    pub href: String,
+    pub status: TraceStatus,
+    pub navigation: Option<crate::navigation::NavigationTarget>,
+}
+
 /// The flattened read model the panel renders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectorView {
@@ -159,6 +175,8 @@ pub struct InspectorView {
     /// Group member references; empty for every non-group subject.
     pub members: Vec<ElementRef>,
     pub associations: Vec<AssocRow>,
+    /// Ordered typed traceability relationships. Empty for non-transition subjects.
+    pub traces: Vec<TraceRow>,
 }
 
 /// Human label for a classifier's element type: `uml.Class` -> `Class`.
@@ -431,6 +449,7 @@ fn behavior_element_view(title: String, kind_label: &str) -> InspectorView {
         attributes: Vec::new(),
         members: Vec::new(),
         associations: Vec::new(),
+        traces: Vec::new(),
     }
 }
 
@@ -453,6 +472,7 @@ pub fn build_view_from_analysis(
             attributes: Vec::new(),
             members: Vec::new(),
             associations: Vec::new(),
+            traces: Vec::new(),
         });
     view.attributes = declared
         .attributes
@@ -512,6 +532,7 @@ fn build_diagram_view(model: &Model, key: &str) -> Option<InspectorView> {
         attributes: Vec::new(),
         members: Vec::new(),
         associations: Vec::new(),
+        traces: Vec::new(),
     })
 }
 
@@ -595,6 +616,7 @@ fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
         attributes,
         members: Vec::new(),
         associations,
+        traces: Vec::new(),
     })
 }
 
@@ -631,10 +653,78 @@ fn build_group_view(model: &Model, name: &str) -> Option<InspectorView> {
         attributes: Vec::new(),
         members,
         associations: Vec::new(),
+        traces: Vec::new(),
     })
 }
 
 fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
+    if let Some(edge) = model.flow_edges.iter().find(|edge| edge.key == id) {
+        let node_label = |key: &str| {
+            model
+                .activity_nodes
+                .iter()
+                .find(|node| node.key == key)
+                .map(|node| node.id.clone())
+                .unwrap_or_else(|| key.to_string())
+        };
+        let kind_label = match edge.kind {
+            waml::model::FlowEdgeKind::ControlFlow => "Control flow",
+            waml::model::FlowEdgeKind::ObjectFlow => "Object flow",
+        };
+        let traces = edge
+            .traces
+            .iter()
+            .map(|trace| {
+                let (status, navigation) = match &trace.target {
+                    waml::model::TraceTarget::InternalDocument { concept_id } => (
+                        TraceStatus::ResolvedInternal,
+                        Some(crate::navigation::NavigationTarget::Document {
+                            concept_id: concept_id.clone(),
+                            surface: None,
+                            fragment: None,
+                        }),
+                    ),
+                    waml::model::TraceTarget::InternalFragment {
+                        concept_id,
+                        fragment,
+                    } => (
+                        TraceStatus::ResolvedInternal,
+                        Some(crate::navigation::NavigationTarget::Document {
+                            concept_id: concept_id.clone(),
+                            surface: None,
+                            fragment: Some(fragment.clone()),
+                        }),
+                    ),
+                    waml::model::TraceTarget::Https { url } => (
+                        TraceStatus::ResolvedExternal,
+                        Some(crate::navigation::NavigationTarget::ExternalUrl(
+                            url.clone(),
+                        )),
+                    ),
+                    waml::model::TraceTarget::Unresolved { .. } => (TraceStatus::Unresolved, None),
+                    waml::model::TraceTarget::Invalid { .. } => (TraceStatus::Invalid, None),
+                };
+                TraceRow {
+                    label: trace.label.clone(),
+                    href: trace.href.clone(),
+                    status,
+                    navigation,
+                }
+            })
+            .collect();
+        return Some(InspectorView {
+            title: format!("{} → {}", node_label(&edge.from), node_label(&edge.to)),
+            kind_label: kind_label.to_string(),
+            profile: String::new(),
+            abstract_flag: false,
+            stereotypes: Vec::new(),
+            description: None,
+            attributes: Vec::new(),
+            members: Vec::new(),
+            associations: Vec::new(),
+            traces,
+        });
+    }
     // Split an optional `#N` occurrence ordinal off the tail (see `edge_key`);
     // its absence means the first (occurrence 0) edge of the pair.
     let (pair, occ) = match id.rsplit_once('#') {
@@ -661,6 +751,7 @@ fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
         attributes: Vec::new(),
         members: Vec::new(),
         associations: Vec::new(),
+        traces: Vec::new(),
     })
 }
 
@@ -1218,6 +1309,49 @@ mod tests {
         // Kind is the relationship kind string.
         assert_eq!(view.kind_label, "associates");
         assert!(view.members.is_empty());
+    }
+
+    #[test]
+    fn transition_trace_rows_keep_order_status_and_navigation() {
+        let source = waml::source::SourceBundle::try_from_pairs([
+            (
+                "sign-in.md",
+                "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `authenticated` transitions to SignedIn traces [AUTH](./contract.md#auth) traces [OIDC](https://openid.net/specs/openid-connect-core-1_0.html) traces [Missing](./missing.md)\n\n### SignedIn\n",
+            ),
+            ("contract.md", "# Contract\n\n## AUTH\n"),
+        ])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let model = &prepared.uml().projection;
+        let edge = &model.flow_edges[0];
+
+        let view = build_view(model, &Subject::Edge(edge.key.clone())).unwrap();
+
+        assert_eq!(view.title, "SignedOut → SignedIn");
+        assert_eq!(view.kind_label, "Control flow");
+        assert_eq!(
+            view.traces
+                .iter()
+                .map(|trace| trace.label.as_str())
+                .collect::<Vec<_>>(),
+            ["AUTH", "OIDC", "Missing"]
+        );
+        assert_eq!(view.traces[0].status, TraceStatus::ResolvedInternal);
+        assert_eq!(
+            view.traces[0].navigation,
+            Some(crate::navigation::NavigationTarget::Document {
+                concept_id: "contract".into(),
+                surface: None,
+                fragment: Some("auth".into()),
+            })
+        );
+        assert_eq!(view.traces[1].status, TraceStatus::ResolvedExternal);
+        assert!(matches!(
+            view.traces[1].navigation,
+            Some(crate::navigation::NavigationTarget::ExternalUrl(_))
+        ));
+        assert_eq!(view.traces[2].status, TraceStatus::Unresolved);
+        assert_eq!(view.traces[2].navigation, None);
     }
 
     #[test]
