@@ -2,6 +2,27 @@ use waml_syntax::{
     FrontmatterScalarKind, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxElement, SyntaxNode,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrontmatterRewriteError {
+    InvalidFrontmatter,
+    NonStringScalar { key: String },
+    InvalidReplacement,
+}
+
+impl std::fmt::Display for FrontmatterRewriteError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidFrontmatter => formatter.write_str("frontmatter is invalid"),
+            Self::NonStringScalar { key } => {
+                write!(formatter, "frontmatter key '{key}' is not a string scalar")
+            }
+            Self::InvalidReplacement => formatter.write_str("replacement is not a scalar string"),
+        }
+    }
+}
+
+impl std::error::Error for FrontmatterRewriteError {}
+
 /// Maximum `List`/`Map` nesting depth accepted from any input path (authored
 /// frontmatter text and the serde wire form alike). Frontmatter is untrusted —
 /// a hostile `[[[[…]]]]` or deeply nested `{"a":{"a":…}}` value must produce a
@@ -416,6 +437,121 @@ pub(crate) fn parse_frontmatter_source(source: &str) -> Option<Frontmatter> {
         .children()
         .filter_map(SyntaxElement::into_node)
         .find_map(|node| parse_closed_syntax(&node))
+}
+
+/// Replaces one top-level frontmatter string scalar without re-rendering the
+/// document. The returned text differs only in the scalar token range.
+pub fn replace_frontmatter_string_scalar(
+    source: &str,
+    key: &str,
+    expected: &str,
+    replacement: &str,
+) -> Result<Option<String>, FrontmatterRewriteError> {
+    let text = waml_syntax::SourceText::from_shared(std::sync::Arc::new(source.into()))
+        .map_err(|_| FrontmatterRewriteError::InvalidFrontmatter)?;
+    let snapshot = waml_syntax::parse_markdown(
+        waml_syntax::DocumentRevision::INITIAL,
+        text,
+        waml_syntax::MarkdownDialect::WAML_DEFAULT,
+    )
+    .map_err(|_| FrontmatterRewriteError::InvalidFrontmatter)?;
+    if !snapshot.diagnostics().is_empty() {
+        return Err(FrontmatterRewriteError::InvalidFrontmatter);
+    }
+    let Some(frontmatter) = snapshot
+        .tree()
+        .root()
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .find(|node| node.kind() == OkfMarkdownSyntaxKind::Frontmatter)
+    else {
+        return Ok(None);
+    };
+    let closed = frontmatter.children().any(|element| {
+        element.into_token().is_some_and(|token| {
+            token.kind() == OkfMarkdownSyntaxKind::FrontmatterCloseFence
+                && !token.flags().is_missing()
+        })
+    });
+    if !closed {
+        return Err(FrontmatterRewriteError::InvalidFrontmatter);
+    }
+    let Some(mapping) = frontmatter
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .find(|node| node.kind() == OkfMarkdownSyntaxKind::FrontmatterMapping)
+    else {
+        return Ok(None);
+    };
+
+    for entry in mapping
+        .children()
+        .filter_map(SyntaxElement::into_node)
+        .filter(|node| node.kind() == OkfMarkdownSyntaxKind::FrontmatterEntry)
+    {
+        let tokens: Vec<_> = entry
+            .children()
+            .filter_map(SyntaxElement::into_token)
+            .collect();
+        let Some(key_token) = tokens.first() else {
+            continue;
+        };
+        if key_token.kind() != OkfMarkdownSyntaxKind::FrontmatterKey {
+            continue;
+        }
+        let authored_key = key_token.text().write_to_string();
+        if authored_key != key {
+            continue;
+        }
+        let Some(value_token) = tokens.iter().find(|token| {
+            matches!(
+                token.kind(),
+                OkfMarkdownSyntaxKind::FrontmatterValue
+                    | OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken
+            )
+        }) else {
+            return Err(FrontmatterRewriteError::NonStringScalar { key: key.into() });
+        };
+        let raw = value_token.text().write_to_string();
+        let (value, rendered) = match value_token.kind() {
+            OkfMarkdownSyntaxKind::FrontmatterQuotedValueToken => {
+                let quote =
+                    raw.as_bytes().first().copied().ok_or_else(|| {
+                        FrontmatterRewriteError::NonStringScalar { key: key.into() }
+                    })?;
+                if replacement.contains(['\r', '\n']) {
+                    return Err(FrontmatterRewriteError::InvalidReplacement);
+                }
+                let rendered = match quote {
+                    b'\'' => format!("'{}'", replacement.replace('\'', "''")),
+                    b'\"' => format!(
+                        "\"{}\"",
+                        replacement.replace('\\', "\\\\").replace('\"', "\\\"")
+                    ),
+                    _ => return Err(FrontmatterRewriteError::NonStringScalar { key: key.into() }),
+                };
+                (waml_syntax::decode_quoted_scalar(&raw), rendered)
+            }
+            OkfMarkdownSyntaxKind::FrontmatterValue => {
+                if waml_syntax::classify_bare_scalar(&raw) != FrontmatterScalarKind::Str {
+                    return Err(FrontmatterRewriteError::NonStringScalar { key: key.into() });
+                }
+                if scalar_needs_quote(replacement) {
+                    return Err(FrontmatterRewriteError::InvalidReplacement);
+                }
+                (raw, replacement.to_string())
+            }
+            _ => unreachable!("value token kind was filtered"),
+        };
+        if value != expected {
+            return Ok(None);
+        }
+        let range = value_token.trimmed_range();
+        let mut rewritten = source.to_string();
+        rewritten.replace_range(range.start().to_usize()..range.end().to_usize(), &rendered);
+        return Ok(Some(rewritten));
+    }
+    Ok(None)
 }
 
 pub(crate) fn parse_closed_syntax(node: &SyntaxNode<OkfMarkdownLanguage>) -> Option<Frontmatter> {

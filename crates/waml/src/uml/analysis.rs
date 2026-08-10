@@ -182,6 +182,23 @@ impl Analysis {
         self.diagram_projections.get(key)
     }
 
+    pub(crate) fn resolved_diagram_member_keys(&self, key: &str) -> Vec<String> {
+        fn collect(group: &crate::model::DiagramGroup, members: &mut BTreeSet<String>) {
+            members.extend(group.members.iter().cloned());
+            for child in &group.children {
+                collect(child, members);
+            }
+        }
+
+        let mut members = BTreeSet::new();
+        if let Some(diagram) = self.diagram(key) {
+            for group in &diagram.groups {
+                collect(group, &mut members);
+            }
+        }
+        members.into_iter().collect()
+    }
+
     pub fn revisioned_diagnostics(&self) -> &[RevisionedDiagnostic] {
         &self.revisioned_diagnostics
     }

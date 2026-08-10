@@ -23,6 +23,7 @@ pub mod slug;
 pub mod solve;
 pub mod source;
 pub mod uml;
+pub mod upgrade;
 pub mod validate;
 pub mod view;
 
