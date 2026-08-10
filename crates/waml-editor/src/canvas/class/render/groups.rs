@@ -61,7 +61,6 @@ pub(super) fn draw_groups(
 ) {
     if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase {
         super::use_case_groups::draw(cx, snapshot, draws);
-        return;
     }
     let zoom = snapshot.viewport.camera.zoom;
     let plan = group_plan(
@@ -72,8 +71,18 @@ pub(super) fn draw_groups(
         .scene
         .groups
         .iter()
+        .enumerate()
         .zip(plan)
-        .filter_map(|(group, (mode, label))| {
+        .filter_map(|((index, group), (mode, label))| {
+            if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase
+                && snapshot
+                    .scene
+                    .use_case_groups
+                    .get(index)
+                    .is_some_and(|group| group.role != waml::model::DiagramGroupRole::Generic)
+            {
+                return None;
+            }
             if mode == GroupDraw::Skip {
                 return None;
             }

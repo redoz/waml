@@ -1,11 +1,10 @@
 use super::{ClassDrawResources, RenderSnapshot};
 use crate::canvas::primitives::{font_raster_size, snap_rect, world_rect_to_screen};
-use crate::scene::SceneGroup;
+use crate::{scene::SceneGroup, GroupVisualKind, StructuralVisualKind, StructuralVisualPolicy};
 use makepad_widgets::*;
-use waml::model::DiagramGroupRole;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum UseCaseGroupCommand {
+pub(super) enum UseCaseGroupCommand {
     Frame {
         bounds: waml::solve::Rect,
     },
@@ -15,8 +14,12 @@ pub enum UseCaseGroupCommand {
     },
 }
 
-pub fn commands(group: &SceneGroup) -> Vec<UseCaseGroupCommand> {
-    if group.role == DiagramGroupRole::ExternalActors {
+pub(super) fn commands(group: &SceneGroup) -> Vec<UseCaseGroupCommand> {
+    let kind = StructuralVisualPolicy {
+        kind: StructuralVisualKind::UseCase,
+    }
+    .group_kind(group.role);
+    if matches!(kind, GroupVisualKind::ActorRail | GroupVisualKind::Generic) {
         return Vec::new();
     }
     let mut result = vec![UseCaseGroupCommand::Frame {
@@ -60,5 +63,39 @@ pub(super) fn draw(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use waml::model::DiagramGroupRole;
+
+    fn group(role: DiagramGroupRole) -> SceneGroup {
+        SceneGroup {
+            role,
+            bounds: waml::solve::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            },
+            heading_bounds: waml::solve::Rect {
+                x: 1.0,
+                y: 1.0,
+                w: 8.0,
+                h: 2.0,
+            },
+            title: Some("Group".into()),
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn policy_frames_only_boundaries_and_bands() {
+        assert!(commands(&group(DiagramGroupRole::ExternalActors)).is_empty());
+        assert!(commands(&group(DiagramGroupRole::Generic)).is_empty());
+        assert!(!commands(&group(DiagramGroupRole::SystemBoundary)).is_empty());
+        assert!(!commands(&group(DiagramGroupRole::Band)).is_empty());
     }
 }

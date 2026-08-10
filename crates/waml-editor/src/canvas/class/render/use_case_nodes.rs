@@ -4,7 +4,7 @@ use crate::{ActorGeometry, MeasuredNodeGeometry, Point, UseCaseGeometry};
 use makepad_widgets::*;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum UseCaseNodeCommand {
+pub(super) enum UseCaseNodeCommand {
     Head {
         center: Point,
         radius: f64,
@@ -22,7 +22,7 @@ pub enum UseCaseNodeCommand {
     },
 }
 
-pub fn commands(title: &str, geometry: &MeasuredNodeGeometry) -> Vec<UseCaseNodeCommand> {
+pub(super) fn commands(title: &str, geometry: &MeasuredNodeGeometry) -> Vec<UseCaseNodeCommand> {
     match geometry {
         MeasuredNodeGeometry::Actor(actor) => actor_commands(title, actor),
         MeasuredNodeGeometry::UseCase(use_case) => use_case_commands(use_case),
@@ -56,18 +56,13 @@ fn use_case_commands(use_case: &UseCaseGeometry) -> Vec<UseCaseNodeCommand> {
     let mut result = vec![UseCaseNodeCommand::Ellipse {
         bounds: use_case.bounds,
     }];
-    let line_height = use_case.title_bounds.h / use_case.title_lines.len().max(1) as f64;
     result.extend(
         use_case
             .title_lines
             .iter()
-            .enumerate()
-            .map(|(index, line)| UseCaseNodeCommand::Title {
-                bounds: waml::solve::Rect {
-                    y: use_case.title_bounds.y + line_height * index as f64,
-                    h: line_height,
-                    ..use_case.title_bounds
-                },
+            .zip(&use_case.title_line_bounds)
+            .map(|(line, bounds)| UseCaseNodeCommand::Title {
+                bounds: *bounds,
                 text: line.clone(),
             }),
     );
@@ -79,9 +74,29 @@ pub(super) fn draw(
     snapshot: &RenderSnapshot<'_>,
     draws: &mut ClassDrawResources<'_>,
     node: &crate::scene::SceneNode,
+    interaction: InteractionInk,
 ) {
     let zoom = snapshot.viewport.camera.zoom;
     let to_screen = |bounds: waml::solve::Rect| world_rect_to_screen(snapshot.viewport, bounds);
+    let old_shape = draws.use_case_ellipse.color;
+    let old_line = draws.actor_line.color;
+    let old_text = draws.text.color;
+    let treatment = interaction_treatment(interaction);
+    let ink = match treatment.colour {
+        InkColour::Muted => draws.group_title_dim.color,
+        InkColour::Accent => draws.mono_accent.color,
+        InkColour::Normal => old_text,
+    };
+    draws.use_case_ellipse.color = ink;
+    draws.actor_line.color = ink;
+    draws.text.color = ink;
+    let stroke = treatment.stroke_width as f32;
+    draws
+        .use_case_ellipse
+        .set_uniform(cx, live_id!(stroke_w), &[stroke]);
+    draws
+        .actor_line
+        .set_uniform(cx, live_id!(stroke_w), &[stroke]);
     for command in commands(&node.title, &node.geometry) {
         match command {
             UseCaseNodeCommand::Ellipse { bounds } => {
@@ -135,5 +150,120 @@ pub(super) fn draw(
                 draws.text.draw_abs(cx, screen.pos, &text);
             }
         }
+    }
+    draws.use_case_ellipse.color = old_shape;
+    draws.actor_line.color = old_line;
+    draws.text.color = old_text;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct InteractionInk {
+    pub selected: bool,
+    pub related: bool,
+    pub muted: bool,
+    pub lift: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InkColour {
+    Normal,
+    Accent,
+    Muted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct InkTreatment {
+    colour: InkColour,
+    stroke_width: f64,
+}
+
+fn interaction_treatment(interaction: InteractionInk) -> InkTreatment {
+    InkTreatment {
+        colour: if interaction.muted {
+            InkColour::Muted
+        } else if interaction.selected || interaction.related {
+            InkColour::Accent
+        } else {
+            InkColour::Normal
+        },
+        stroke_width: 1.4 + interaction.lift * 1.2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(selected: bool, related: bool, muted: bool, lift: f64) -> InteractionInk {
+        InteractionInk {
+            selected,
+            related,
+            muted,
+            lift,
+        }
+    }
+
+    #[test]
+    fn interaction_treatment_covers_selection_hover_focus_and_muting() {
+        let selected = interaction_treatment(state(true, false, false, 1.0));
+        assert_eq!(selected.colour, InkColour::Accent);
+        assert!((selected.stroke_width - 2.6).abs() < 1e-9);
+        assert_eq!(
+            interaction_treatment(state(false, false, false, 0.5)),
+            InkTreatment {
+                colour: InkColour::Normal,
+                stroke_width: 2.0
+            }
+        );
+        assert_eq!(
+            interaction_treatment(state(false, true, false, 0.0)).colour,
+            InkColour::Accent
+        );
+        assert_eq!(
+            interaction_treatment(state(false, false, true, 0.0)).colour,
+            InkColour::Muted
+        );
+    }
+
+    #[test]
+    fn unequal_title_lines_keep_individual_centered_bounds() {
+        let geometry = UseCaseGeometry {
+            bounds: waml::solve::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 160.0,
+                h: 72.0,
+            },
+            title_bounds: waml::solve::Rect {
+                x: 20.0,
+                y: 20.0,
+                w: 120.0,
+                h: 32.0,
+            },
+            title_lines: vec!["A much longer line".into(), "short".into()],
+            title_line_bounds: vec![
+                waml::solve::Rect {
+                    x: 20.0,
+                    y: 20.0,
+                    w: 120.0,
+                    h: 16.0,
+                },
+                waml::solve::Rect {
+                    x: 62.0,
+                    y: 36.0,
+                    w: 36.0,
+                    h: 16.0,
+                },
+            ],
+        };
+        let titles: Vec<_> = use_case_commands(&geometry)
+            .into_iter()
+            .filter_map(|command| match command {
+                UseCaseNodeCommand::Title { bounds, .. } => Some(bounds),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles[0].x, 20.0);
+        assert_eq!(titles[1].x, 62.0);
     }
 }

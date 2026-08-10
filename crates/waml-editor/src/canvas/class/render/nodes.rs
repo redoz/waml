@@ -96,13 +96,27 @@ pub(super) fn draw_nodes(
         if !on_screen(screen, snapshot.viewport.view_rect) {
             continue;
         }
+        let focus = node_focus_state(&node.key, selected_key, &focus_keys);
+        let muted = (focus_active && !focus.coloured())
+            || node_spotlight_dimmed(&node.key, snapshot.selection.search_spotlight.as_ref());
         if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase
             && matches!(
                 node.geometry,
                 crate::MeasuredNodeGeometry::Actor(_) | crate::MeasuredNodeGeometry::UseCase(_)
             )
         {
-            super::use_case_nodes::draw(cx, snapshot, draws, node);
+            super::use_case_nodes::draw(
+                cx,
+                snapshot,
+                draws,
+                node,
+                super::use_case_nodes::InteractionInk {
+                    selected: focus.selected,
+                    related: focus.related,
+                    muted,
+                    lift: snapshot.selection.lift_for(&node.key),
+                },
+            );
             continue;
         }
         draws.node.set_uniform(
@@ -110,9 +124,6 @@ pub(super) fn draw_nodes(
             live_id!(selected),
             &[snapshot.selection.lift_for(&node.key) as f32],
         );
-        let focus = node_focus_state(&node.key, selected_key, &focus_keys);
-        let muted = (focus_active && !focus.coloured())
-            || node_spotlight_dimmed(&node.key, snapshot.selection.search_spotlight.as_ref());
         draws
             .node
             .set_uniform(cx, live_id!(grey), &[if muted { 1.0 } else { 0.0 }]);

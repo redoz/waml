@@ -51,6 +51,7 @@ pub struct UseCaseGeometry {
     pub bounds: Rect,
     pub title_bounds: Rect,
     pub title_lines: Vec<String>,
+    pub title_line_bounds: Vec<Rect>,
 }
 
 pub trait TextMeasurer {
@@ -112,6 +113,11 @@ impl UseCaseGeometry {
             bounds: translate_rect(self.bounds, x, y),
             title_bounds: translate_rect(self.title_bounds, x, y),
             title_lines: self.title_lines.clone(),
+            title_line_bounds: self
+                .title_line_bounds
+                .iter()
+                .map(|rect| translate_rect(*rect, x, y))
+                .collect(),
         }
     }
 }
@@ -233,6 +239,21 @@ fn measure_use_case(title: &str, text: &dyn TextMeasurer) -> UseCaseGeometry {
     let title_height = line_height * lines.len().max(1) as f64;
     let width = ELLIPSE_MIN_WIDTH.max(title_width + ELLIPSE_PADDING_X * 2.0);
     let height = ELLIPSE_MIN_HEIGHT.max(title_height + ELLIPSE_PADDING_Y * 2.0);
+    let title_x = (width - title_width) / 2.0;
+    let title_y = (height - title_height) / 2.0;
+    let title_line_bounds = lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let line_width = text.measure(line).0;
+            Rect {
+                x: (width - line_width) / 2.0,
+                y: title_y + line_height * index as f64,
+                w: line_width,
+                h: line_height,
+            }
+        })
+        .collect();
     UseCaseGeometry {
         bounds: Rect {
             x: 0.0,
@@ -241,12 +262,13 @@ fn measure_use_case(title: &str, text: &dyn TextMeasurer) -> UseCaseGeometry {
             h: height,
         },
         title_bounds: Rect {
-            x: (width - title_width) / 2.0,
-            y: (height - title_height) / 2.0,
+            x: title_x,
+            y: title_y,
             w: title_width,
             h: title_height,
         },
         title_lines: lines,
+        title_line_bounds,
     }
 }
 
