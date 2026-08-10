@@ -51,33 +51,41 @@ fn transition_trace_sets_select_parallel_transitions_and_reparse_between_ops() {
     let changed = lower(
         &source,
         vec![
-            uml::Op::TransitionTracesSet {
+            uml::Op::EditTransitionTraces {
                 selector: uml::TransitionSelector {
                     behavior: "sign-in".into(),
                     source_node: "SignedOut".into(),
                     occurrence: 1,
                 },
-                traces: vec![
-                    uml::TraceSpec {
-                        label: "AUTH-OIDC-004".into(),
-                        href: "./sign-in-behavior.md#auth-oidc-004".into(),
-                    },
-                    uml::TraceSpec {
-                        label: "OIDC Core".into(),
-                        href: "https://openid.net/specs/openid-connect-core-1_0.html".into(),
-                    },
-                ],
+                edit: uml::TraceEdit::Insert {
+                    index: 0,
+                    label: "AUTH-OIDC-004".into(),
+                    href: "./sign-in-behavior.md#auth-oidc-004".into(),
+                },
             },
-            uml::Op::TransitionTracesSet {
+            uml::Op::EditTransitionTraces {
+                selector: uml::TransitionSelector {
+                    behavior: "sign-in".into(),
+                    source_node: "SignedOut".into(),
+                    occurrence: 1,
+                },
+                edit: uml::TraceEdit::Insert {
+                    index: 1,
+                    label: "OIDC Core".into(),
+                    href: "https://openid.net/specs/openid-connect-core-1_0.html".into(),
+                },
+            },
+            uml::Op::EditTransitionTraces {
                 selector: uml::TransitionSelector {
                     behavior: "sign-in".into(),
                     source_node: "SignedOut".into(),
                     occurrence: 0,
                 },
-                traces: vec![uml::TraceSpec {
+                edit: uml::TraceEdit::Update {
+                    index: 0,
                     label: "AUTH-PASSWORD".into(),
                     href: "./requirements.md#auth-password".into(),
-                }],
+                },
             },
         ],
     )

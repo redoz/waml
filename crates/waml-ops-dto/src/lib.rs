@@ -237,6 +237,16 @@ pub enum OpDto {
         subject_slug: String,
         reference_slug: String,
     },
+    #[serde(rename = "transition.trace.edit")]
+    TransitionTraceEdit {
+        #[serde(default = "one")]
+        v: u32,
+        behavior: String,
+        #[serde(rename = "sourceNode")]
+        source_node: String,
+        occurrence: usize,
+        edit: TraceEditDto,
+    },
     #[serde(rename = "concept.new")]
     ConceptNew {
         #[serde(default = "one")]
@@ -280,6 +290,68 @@ pub enum OpDto {
         #[serde(default)]
         display: Option<DisplayDto>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TraceEditDto {
+    Insert {
+        index: usize,
+        label: String,
+        href: String,
+    },
+    Update {
+        index: usize,
+        label: String,
+        href: String,
+    },
+    Remove {
+        index: usize,
+    },
+    Move {
+        from: usize,
+        to: usize,
+    },
+}
+
+fn trace_edit_to_core(edit: &TraceEditDto) -> uml::TraceEdit {
+    match edit {
+        TraceEditDto::Insert { index, label, href } => uml::TraceEdit::Insert {
+            index: *index,
+            label: label.clone(),
+            href: href.clone(),
+        },
+        TraceEditDto::Update { index, label, href } => uml::TraceEdit::Update {
+            index: *index,
+            label: label.clone(),
+            href: href.clone(),
+        },
+        TraceEditDto::Remove { index } => uml::TraceEdit::Remove { index: *index },
+        TraceEditDto::Move { from, to } => uml::TraceEdit::Move {
+            from: *from,
+            to: *to,
+        },
+    }
+}
+
+fn trace_edit_from_core(edit: &uml::TraceEdit) -> TraceEditDto {
+    match edit {
+        uml::TraceEdit::Insert { index, label, href } => TraceEditDto::Insert {
+            index: *index,
+            label: label.clone(),
+            href: href.clone(),
+        },
+        uml::TraceEdit::Update { index, label, href } => TraceEditDto::Update {
+            index: *index,
+            label: label.clone(),
+            href: href.clone(),
+        },
+        uml::TraceEdit::Remove { index } => TraceEditDto::Remove { index: *index },
+        uml::TraceEdit::Move { from, to } => TraceEditDto::Move {
+            from: *from,
+            to: *to,
+        },
+    }
 }
 
 /// A fully-specified display block on the wire. Attribute cardinality uses the
@@ -712,6 +784,23 @@ impl OpDto {
                     reference_slug: reference_slug.clone(),
                 })
             }
+            OpDto::TransitionTraceEdit {
+                v,
+                behavior,
+                source_node,
+                occurrence,
+                edit,
+            } => {
+                check_v(*v, "transition.trace.edit")?;
+                Step::Uml(uml::Op::EditTransitionTraces {
+                    selector: uml::TransitionSelector {
+                        behavior: behavior.clone(),
+                        source_node: source_node.clone(),
+                        occurrence: *occurrence,
+                    },
+                    edit: trace_edit_to_core(edit),
+                })
+            }
             OpDto::DiagramSet {
                 v,
                 key,
@@ -1014,6 +1103,13 @@ impl OpDto {
                     subject_slug: subject_slug.clone(),
                     reference_slug: reference_slug.clone(),
                 },
+                uml::Op::EditTransitionTraces { selector, edit } => OpDto::TransitionTraceEdit {
+                    v: 1,
+                    behavior: selector.behavior.clone(),
+                    source_node: selector.source_node.clone(),
+                    occurrence: selector.occurrence,
+                    edit: trace_edit_from_core(edit),
+                },
             },
         }
     }
@@ -1166,6 +1262,29 @@ mod tests {
             dto.to_step().unwrap()
         };
         assert_eq!(step, back);
+    }
+
+    #[test]
+    fn transition_trace_edit_round_trips_through_wire() {
+        let step = Step::Uml(uml::Op::EditTransitionTraces {
+            selector: uml::TransitionSelector {
+                behavior: "sign-in".into(),
+                source_node: "SignedOut".into(),
+                occurrence: 1,
+            },
+            edit: uml::TraceEdit::Update {
+                index: 0,
+                label: "AUTH-OIDC-004".into(),
+                href: "./contract.md#auth-oidc-004".into(),
+            },
+        });
+
+        let value = serde_json::to_value(OpDto::from_step(&step)).unwrap();
+        assert_eq!(value["op"], "transition.trace.edit");
+        assert_eq!(value["sourceNode"], "SignedOut");
+        assert_eq!(value["edit"]["kind"], "update");
+        let dto: OpDto = serde_json::from_value(value).unwrap();
+        assert_eq!(dto.to_step().unwrap(), step);
     }
 
     #[test]

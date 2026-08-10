@@ -430,7 +430,6 @@ fn op_name(op: &super::Op) -> &'static str {
         super::Op::DiagramSet { .. } => "diagram.set",
         super::Op::PlacementSet { .. } => "place.set",
         super::Op::PlacementRemove { .. } => "place.rm",
-        super::Op::TransitionTracesSet { .. } => "transition.traces.set",
         super::Op::EditTransitionTraces { .. } => "transition.traces.edit",
     }
 }
@@ -507,17 +506,6 @@ pub(crate) fn op_transition_traces_edit(
         }
     }
     replace_transition_traces(work, &path, &transition, &traces, OP)
-}
-
-pub(crate) fn op_transition_traces_set(
-    work: &mut SourceBundle,
-    state: &mut UmlLoweringState,
-    selector: &TransitionSelector,
-    traces: &[TraceSpec],
-) -> Result<(), EditError> {
-    const OP: &str = "transition.traces.set";
-    let (path, transition) = selected_transition(work, state, selector, OP)?;
-    replace_transition_traces(work, &path, &transition, traces, OP)
 }
 
 fn selected_transition(
