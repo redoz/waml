@@ -136,6 +136,22 @@ fn corpus() -> Vec<String> {
             "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- \n"
         )
         .to_owned(),
+        // A complete layout statement -- an alignment, which admits no trailing
+        // word at all. Nothing but a complete statement reaches the locator's
+        // `layout_continuation` rule, so without a case like this one the sweep
+        // never visits the position that rule answers.
+        concat!(
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A aligned with B\n"
+        )
+        .to_owned(),
+        // An inline group left open after its separator: `,` is an atom of the
+        // shape grammar, so the position after it wants another operand.
+        concat!(
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- row of A, \n"
+        )
+        .to_owned(),
         // A layout hint slot, where only a hint phrase parses.
         concat!(
             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",

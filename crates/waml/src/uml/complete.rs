@@ -137,15 +137,8 @@ fn layout_continuation(
     if offset.to_usize() <= anchor {
         return None;
     }
-    let is_atom = |token: &SyntaxToken<UmlLanguage>| {
-        !token.flags().is_missing()
-            && matches!(
-                token.kind(),
-                UmlSyntaxKind::LayoutWordToken
-                    | UmlSyntaxKind::LayoutLinkToken
-                    | UmlSyntaxKind::LayoutQuoteToken
-            )
-    };
+    let is_atom =
+        |token: &SyntaxToken<UmlLanguage>| !token.flags().is_missing() && is_layout_atom(token);
     let last = tokens
         .iter()
         .find(|token| is_atom(token) && token.trimmed_range().end().to_usize() == anchor)?;
@@ -279,9 +272,16 @@ pub fn completions(
         }
     }
     candidates.sort_by(|left, right| {
-        (left.kind, left.label.as_ref()).cmp(&(right.kind, right.label.as_ref()))
+        (left.kind, left.label.as_ref(), left.insert.as_ref()).cmp(&(
+            right.kind,
+            right.label.as_ref(),
+            right.insert.as_ref(),
+        ))
     });
-    candidates.dedup_by(|left, right| left.kind == right.kind && left.label == right.label);
+    // Dedup on what is authored, not on what is shown: two catalog documents
+    // may carry the same title, and collapsing them by label would make one of
+    // them unreachable through completion.
+    candidates.dedup_by(|left, right| left.kind == right.kind && left.insert == right.insert);
     Ok(candidates)
 }
 
@@ -396,19 +396,35 @@ fn layout_statement(node: &SyntaxNode<UmlLanguage>) -> Option<SyntaxNode<UmlLang
     None
 }
 
+/// Whether `token` is one of the atoms the `## Layout` shape parser consumes.
+///
+/// Exactly the kinds `layout_statement` (parser.rs) pushes onto its
+/// `atom_words`: the punctuation that opens, closes and separates an inline
+/// group is an atom of that grammar just as a word is (`reference` matches on
+/// the spellings `"("`, `")"` and `","`), so a reconstruction that drops it
+/// asks the grammar about a different statement than the author wrote.
+fn is_layout_atom(token: &SyntaxToken<UmlLanguage>) -> bool {
+    matches!(
+        token.kind(),
+        UmlSyntaxKind::LayoutWordToken
+            | UmlSyntaxKind::LayoutLinkToken
+            | UmlSyntaxKind::LayoutQuoteToken
+            | UmlSyntaxKind::LayoutOpenParenToken
+            | UmlSyntaxKind::LayoutCloseParenToken
+            | UmlSyntaxKind::LayoutCommaToken
+    )
+}
+
 /// Every authored layout atom in `node` that ends at or before `cutoff`,
 /// lower-cased and trimmed exactly as the parser's own atom lexer records them.
 fn collect_layout_words(node: &SyntaxNode<UmlLanguage>, cutoff: TextSize, out: &mut Vec<String>) {
     for child in node.children() {
         match child {
             SyntaxElement::Token(token) => {
-                let is_atom = matches!(
-                    token.kind(),
-                    UmlSyntaxKind::LayoutWordToken
-                        | UmlSyntaxKind::LayoutLinkToken
-                        | UmlSyntaxKind::LayoutQuoteToken
-                );
-                if is_atom && !token.flags().is_missing() && token.trimmed_range().end() <= cutoff {
+                if is_layout_atom(&token)
+                    && !token.flags().is_missing()
+                    && token.trimmed_range().end() <= cutoff
+                {
                     out.push(token.text().write_to_string().trim().to_ascii_lowercase());
                 }
             }
@@ -421,12 +437,8 @@ fn collect_layout_words(node: &SyntaxNode<UmlLanguage>, cutoff: TextSize, out: &
 fn has_layout_atom_after(node: &SyntaxNode<UmlLanguage>, offset: TextSize) -> bool {
     node.children().any(|child| match child {
         SyntaxElement::Token(token) => {
-            matches!(
-                token.kind(),
-                UmlSyntaxKind::LayoutWordToken
-                    | UmlSyntaxKind::LayoutLinkToken
-                    | UmlSyntaxKind::LayoutQuoteToken
-            ) && !token.flags().is_missing()
+            is_layout_atom(&token)
+                && !token.flags().is_missing()
                 && token.trimmed_range().end() > offset
         }
         SyntaxElement::Node(child) => has_layout_atom_after(&child, offset),
@@ -669,7 +681,7 @@ fn link_targets(
         if wants_classifier && !element_type.is_classifier() {
             continue;
         }
-        let href = relative_href(from, path);
+        let href = crate::okf::relative_href(from.as_str(), path.as_str());
         // Round-trip guard: only offer a path that resolves back to this
         // document, so a candidate can never produce UnresolvedTarget.
         if crate::okf::resolve_href(from.as_str(), &href) != crate::okf::id_of(path.as_str()) {
@@ -713,22 +725,6 @@ fn section_of(node: &SyntaxNode<UmlLanguage>) -> Option<UmlSyntaxKind> {
         current = candidate.parent();
     }
     None
-}
-
-/// A bundle-relative href from `from` to `to`, in the `./name.md` form the
-/// corpus already uses.
-fn relative_href(from: &crate::source::BundlePath, to: &crate::source::BundlePath) -> String {
-    let depth = from.as_str().matches('/').count();
-    let mut href = String::new();
-    if depth == 0 {
-        href.push_str("./");
-    } else {
-        for _ in 0..depth {
-            href.push_str("../");
-        }
-    }
-    href.push_str(to.as_str());
-    href
 }
 
 /// Whether `expectation`'s operand sits in a `Slot`'s name half rather than

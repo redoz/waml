@@ -438,6 +438,24 @@ fn a_layout_operand_after_a_direction_offers_members_only() {
 }
 
 #[test]
+fn an_inline_group_separator_offers_members_not_directions() {
+    // `(`, `)` and `,` are atoms of the shape grammar just as words are, so a
+    // reconstruction that drops them asks about a different statement: after
+    // `row of A,` the grammar wants another operand, never a direction.
+    let offered = words(&diagram("## Layout\n\n- row of A, |\n"));
+    assert!(offered.contains(&"b".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"above".to_owned()), "{offered:?}");
+}
+
+#[test]
+fn a_complete_alignment_offers_nothing_because_no_direction_may_follow() {
+    // An alignment admits no trailing words at all, so every direction phrase
+    // offered here would be an outright `MalformedLayout`.
+    let offered = words(&diagram("## Layout\n\n- A aligned with B |\n"));
+    assert!(offered.is_empty(), "{offered:?}");
+}
+
+#[test]
 fn a_link_target_offers_catalog_documents_labelled_by_title() {
     let offered = labels(&sequence("## Lifelines\n\n- [Buyer](|)\n"));
     let links = offered
@@ -523,6 +541,67 @@ fn a_link_target_inserts_a_bundle_relative_path_that_round_trips() {
         "{:?} in {applied}",
         reanalyzed.uml().diagnostics
     );
+}
+
+#[test]
+fn two_documents_sharing_a_title_are_both_offered() {
+    // Dedup keys on the inserted path: two catalog documents may carry the same
+    // title, and collapsing them by label makes one of them unreachable.
+    let support = [
+        ("a.md", "---\ntype: uml.Class\ntitle: Same\n---\n# Same\n"),
+        ("b.md", "---\ntype: uml.Class\ntitle: Same\n---\n# Same\n"),
+    ];
+    let marked = sequence("## Lifelines\n\n- [Buyer](|)\n");
+    let offset = marked.find('|').unwrap();
+    let text = marked.replacen('|', "", 1);
+    let mut pairs = vec![("doc.md", text.as_str())];
+    pairs.extend(support);
+    let candidate =
+        prepare_candidate(SourceBundle::try_from_pairs(pairs).unwrap(), None, 7).unwrap();
+    let inserted = completions(
+        ActionContext::from_prepared(&candidate).unwrap(),
+        document(&candidate),
+        TextSize::try_from_usize(offset).unwrap(),
+    )
+    .unwrap()
+    .into_iter()
+    .map(|completion| completion.insert.to_string())
+    .collect::<Vec<_>>();
+    assert!(inserted.contains(&"./a.md".to_owned()), "{inserted:?}");
+    assert!(inserted.contains(&"./b.md".to_owned()), "{inserted:?}");
+}
+
+#[test]
+fn a_sibling_in_the_same_subdirectory_is_offered_as_a_plain_sibling_href() {
+    // The href is relative to the *source* document's directory, so a document
+    // next to it is `./c.md` -- not a walk out to the bundle root and back in.
+    let text = sequence("## Lifelines\n\n- [Buyer]()\n");
+    let offset = text.find("]()").unwrap() + 2;
+    let candidate = prepare_candidate(
+        SourceBundle::try_from_pairs(vec![
+            ("sub/doc.md", text.as_str()),
+            ("sub/c.md", "---\ntype: uml.Class\ntitle: C\n---\n# C\n"),
+        ])
+        .unwrap(),
+        None,
+        8,
+    )
+    .unwrap();
+    let id = candidate
+        .okf()
+        .catalog
+        .id_for_path(&BundlePath::parse("sub/doc.md").unwrap())
+        .unwrap();
+    let inserted = completions(
+        ActionContext::from_prepared(&candidate).unwrap(),
+        id,
+        TextSize::try_from_usize(offset).unwrap(),
+    )
+    .unwrap()
+    .into_iter()
+    .map(|completion| completion.insert.to_string())
+    .collect::<Vec<_>>();
+    assert_eq!(inserted, vec!["./c.md".to_owned()]);
 }
 
 #[test]

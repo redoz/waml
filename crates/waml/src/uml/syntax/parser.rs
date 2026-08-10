@@ -3544,13 +3544,18 @@ pub(in crate::uml) enum LayoutRole {
 }
 
 /// What may follow `words`, by running the shape parser over them and reading
-/// what it ran out of input expecting. Words that parse as a whole statement
-/// may be continued with a direction; anything else -- a keyword the grammar
+/// what it ran out of input expecting. A placement or standalone that parses as
+/// a whole statement may be continued with a direction; an alignment may not be
+/// continued at all (`parse_layout_shape` rejects anything after its right-hand
+/// operand with `TrailingWords`), and anything else -- a keyword the grammar
 /// demands, a malformed prefix, an error before the end -- is `None`, which is
 /// how a position with no single answer offers nothing rather than a guess.
 pub(in crate::uml) fn expected_layout_role(words: &[String]) -> Option<LayoutRole> {
     match parse_layout_shape(words) {
-        Ok(_) => Some(LayoutRole::Direction),
+        Ok(LayoutShape::Alignment { .. }) => None,
+        Ok(LayoutShape::Placement { .. } | LayoutShape::Standalone(_)) => {
+            Some(LayoutRole::Direction)
+        }
         Err(error) if error.missing_at == words.len() => match error.expected {
             LayoutExpectation::Reference => Some(LayoutRole::Reference),
             LayoutExpectation::Hint => Some(LayoutRole::Hint),
