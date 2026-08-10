@@ -53,3 +53,39 @@ fn rectangle_port_remains_on_measured_bounds() {
         (100.0, 50.0)
     );
 }
+
+#[test]
+fn coincident_targets_choose_deterministic_shape_boundaries() {
+    let rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 100.0,
+        h: 50.0,
+    };
+    assert_eq!(
+        boundary_port(&PortGeometry::Rectangle(rect), (50.0, 25.0)),
+        (100.0, 25.0)
+    );
+    assert_eq!(
+        boundary_port(&PortGeometry::Ellipse(rect), (50.0, 25.0)),
+        (100.0, 25.0)
+    );
+
+    let head = PortGeometry::Actor {
+        bounds: rect,
+        head_center: (50.0, 10.0),
+        head_radius: 8.0,
+        stroke_radius: 2.0,
+        segments: vec![],
+    };
+    assert_eq!(boundary_port(&head, (50.0, 10.0)), (60.0, 10.0));
+
+    let segment = PortGeometry::Actor {
+        bounds: rect,
+        head_center: (10.0, 10.0),
+        head_radius: 1.0,
+        stroke_radius: 2.0,
+        segments: vec![((20.0, 25.0), (80.0, 25.0))],
+    };
+    assert_eq!(boundary_port(&segment, (50.0, 25.0)), (50.0, 27.0));
+}

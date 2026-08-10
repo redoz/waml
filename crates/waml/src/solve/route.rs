@@ -22,7 +22,10 @@ pub fn boundary_port(geometry: &PortGeometry, toward: (f64, f64)) -> (f64, f64) 
         PortGeometry::Rectangle(rect) => rectangle_port(*rect, toward),
         PortGeometry::Ellipse(rect) => {
             let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
-            let delta = (toward.0 - center.0, toward.1 - center.1);
+            let mut delta = (toward.0 - center.0, toward.1 - center.1);
+            if delta.0.abs() <= f64::EPSILON && delta.1.abs() <= f64::EPSILON {
+                delta = (1.0, 0.0);
+            }
             let scale = 1.0
                 / ((delta.0 / (rect.w / 2.0)).powi(2) + (delta.1 / (rect.h / 2.0)).powi(2))
                     .sqrt()
@@ -37,29 +40,49 @@ pub fn boundary_port(geometry: &PortGeometry, toward: (f64, f64)) -> (f64, f64) 
             ..
         } => {
             let mut candidates = Vec::new();
-            let delta = (toward.0 - head_center.0, toward.1 - head_center.1);
+            let mut delta = (toward.0 - head_center.0, toward.1 - head_center.1);
+            let head_coincident = delta.0.abs() <= f64::EPSILON && delta.1.abs() <= f64::EPSILON;
+            if head_coincident {
+                delta = (1.0, 0.0);
+            }
             let length = delta.0.hypot(delta.1).max(f64::EPSILON);
             candidates.push((
-                head_center.0 + delta.0 / length * head_radius,
-                head_center.1 + delta.1 / length * head_radius,
+                (
+                    head_center.0 + delta.0 / length * head_radius,
+                    head_center.1 + delta.1 / length * head_radius,
+                ),
+                (delta.0 / length, delta.1 / length),
+                head_coincident,
             ));
             for (from, to) in segments {
-                candidates.push(closest_point_on_segment(toward, *from, *to));
+                let point = closest_point_on_segment(toward, *from, *to);
+                let segment = (to.0 - from.0, to.1 - from.1);
+                let segment_length = segment.0.hypot(segment.1).max(f64::EPSILON);
+                candidates.push((
+                    point,
+                    (-segment.1 / segment_length, segment.0 / segment_length),
+                    distance(point, toward) <= f64::EPSILON,
+                ));
             }
             candidates
                 .into_iter()
                 .min_by(|a, b| {
-                    distance(*a, toward)
-                        .partial_cmp(&distance(*b, toward))
+                    distance(a.0, toward)
+                        .partial_cmp(&distance(b.0, toward))
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
-                .map(|point| {
+                .map(|(point, fallback, force_fallback)| {
                     let dx = toward.0 - point.0;
                     let dy = toward.1 - point.1;
-                    let length = dx.hypot(dy).max(f64::EPSILON);
+                    let length = dx.hypot(dy);
+                    let direction = if force_fallback || length <= f64::EPSILON {
+                        fallback
+                    } else {
+                        (dx / length, dy / length)
+                    };
                     (
-                        point.0 + dx / length * stroke_radius,
-                        point.1 + dy / length * stroke_radius,
+                        point.0 + direction.0 * stroke_radius,
+                        point.1 + direction.1 * stroke_radius,
                     )
                 })
                 .unwrap_or(*head_center)
@@ -69,7 +92,10 @@ pub fn boundary_port(geometry: &PortGeometry, toward: (f64, f64)) -> (f64, f64) 
 
 fn rectangle_port(rect: Rect, toward: (f64, f64)) -> (f64, f64) {
     let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
-    let delta = (toward.0 - center.0, toward.1 - center.1);
+    let mut delta = (toward.0 - center.0, toward.1 - center.1);
+    if delta.0.abs() <= f64::EPSILON && delta.1.abs() <= f64::EPSILON {
+        delta = (1.0, 0.0);
+    }
     let scale = 1.0
         / (delta.0.abs() / (rect.w / 2.0))
             .max(delta.1.abs() / (rect.h / 2.0))

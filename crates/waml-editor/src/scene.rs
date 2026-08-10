@@ -1125,6 +1125,20 @@ pub fn build_scene(
     for (edge, points) in edges.iter_mut().zip(routes) {
         edge.points = points;
     }
+    for (edge, model_edge) in edges.iter_mut().zip(&model_edges) {
+        if edge.points.len() < 2 {
+            continue;
+        }
+        let source_toward = edge.points[1];
+        let target_toward = edge.points[edge.points.len() - 2];
+        if let Some(port) = ports.get(&model_edge.source) {
+            edge.points[0] = waml::solve::route::boundary_port(port, source_toward);
+        }
+        if let Some(port) = ports.get(&model_edge.target) {
+            let last = edge.points.len() - 1;
+            edge.points[last] = waml::solve::route::boundary_port(port, target_toward);
+        }
+    }
     debug_assert!(
         unresolved.is_empty(),
         "edge labels with no position at all: {unresolved:?}"
