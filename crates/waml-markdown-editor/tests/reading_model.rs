@@ -250,3 +250,13 @@ fn a_deep_nesting_of_quotes_does_not_overflow_the_stack() {
     doc.validate_source_partition()
         .expect("a deep nesting still covers its source");
 }
+
+#[test]
+fn a_thematic_break_becomes_a_thematic_break_block() {
+    let doc = document("before\n\n---\n\nafter\n");
+    let all = kinds(&doc);
+    assert!(
+        all.contains(&ReadingBlockKind::ThematicBreak),
+        "expected a ThematicBreak block, got {all:?}"
+    );
+}

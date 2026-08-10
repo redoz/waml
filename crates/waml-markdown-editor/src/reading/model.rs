@@ -172,6 +172,7 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
     //    per-run and per-block "is this a bullet?" checks are set lookups
     //    rather than rescans of the whole item list.
     let bullet_ranges = collect_bullet_ranges(plan);
+    let rule_ranges = collect_rule_ranges(plan);
 
     // 1. Turn the plan's flat block list into reading kinds, keeping the
     //    parent indices. Levels come from ancestor list-item depth.
@@ -184,7 +185,16 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
         }
         let level = list_depth(plan, index);
         kinds.push(match block.kind {
-            PresentationBlockKind::Paragraph => ReadingBlockKind::Paragraph,
+            // The compiler models a `---` as a Paragraph block carrying a
+            // ThematicRule decoration; the reading view re-types it so the
+            // rule is drawn instead of an invisible suppressed paragraph.
+            PresentationBlockKind::Paragraph => {
+                if covers_rule(&rule_ranges, block.source_range) {
+                    ReadingBlockKind::ThematicBreak
+                } else {
+                    ReadingBlockKind::Paragraph
+                }
+            }
             PresentationBlockKind::Heading(level) => ReadingBlockKind::Heading(level),
             PresentationBlockKind::ListItem { marker_range } => {
                 let is_bullet = bullet_ranges.contains(&range_key(marker_range));
@@ -297,6 +307,13 @@ fn gap_block(piece: ReadingPiece) -> ReadingBlock {
     }
 }
 
+/// Whether a plan block's range contains a thematic rule decoration.
+fn covers_rule(rule_ranges: &[TextRange], block: TextRange) -> bool {
+    rule_ranges
+        .iter()
+        .any(|rule| block.start() <= rule.start() && rule.end() <= block.end())
+}
+
 /// Whether a run is drawn. Markdown punctuation is suppressed; an ordered list
 /// number is content, an unordered bullet character is not.
 fn emits(bullet_ranges: &HashSet<(usize, usize)>, role: TextRole, range: TextRange) -> bool {
@@ -336,6 +353,25 @@ fn collect_bullet_ranges(plan: &PresentationPlan) -> HashSet<(usize, usize)> {
                 kind: BlockDecorationKind::ListBullet { .. },
                 ..
             } => Some(range_key(*source_range)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A thematic break is a DECORATION in the plan, not a block, so its `---`
+/// run arrives as a suppressed orphan and would otherwise become an invisible
+/// gap paragraph. Reading the rule ranges back lets `gap_block` type those
+/// orphans as `ThematicBreak` instead. (A rule nested inside a quote or list
+/// buckets into that block's pieces and stays undrawn — accepted for now.)
+fn collect_rule_ranges(plan: &PresentationPlan) -> Vec<TextRange> {
+    plan.items
+        .iter()
+        .filter_map(|item| match item {
+            PresentationItem::BlockDecoration {
+                source_range,
+                kind: BlockDecorationKind::ThematicRule,
+                ..
+            } => Some(*source_range),
             _ => None,
         })
         .collect()
