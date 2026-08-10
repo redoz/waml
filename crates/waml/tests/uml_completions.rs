@@ -748,3 +748,105 @@ fn a_frontmatter_key_that_is_not_type_offers_nothing() {
     assert!(labels("---\ntitle: |\n---\n# D\n").is_empty());
     assert!(labels("---\n|\n---\n# D\n").is_empty());
 }
+
+#[test]
+fn a_lone_bracket_offers_whole_links_filtered_by_the_section() {
+    // A lifeline admits classifiers, so a Runbook in the bundle is not offered.
+    let support: &[(&str, &str)] = &[
+        ("a.md", "---\ntype: uml.Class\ntitle: Alpha\n---\n# Alpha\n"),
+        ("b.md", "---\ntype: uml.Actor\ntitle: Beta\n---\n# Beta\n"),
+        (
+            "notes.md",
+            "---\ntype: Runbook\ntitle: Notes\n---\n# Notes\n",
+        ),
+    ];
+    let offered = labels_with(
+        support,
+        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n",
+    );
+    let links = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Link)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(links.contains(&"Alpha"), "{links:?}");
+    assert!(links.contains(&"Beta"), "{links:?}");
+    assert!(!links.contains(&"Notes"), "classifier filter: {links:?}");
+}
+
+#[test]
+fn the_bracket_candidate_inserts_the_whole_link_replacing_the_bracket() {
+    let marked = "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n";
+    let offset = marked.find('|').unwrap();
+    let text = marked.replacen('|', "", 1);
+    let candidate = prepared(&text, 3);
+    let chosen = completions(
+        ActionContext::from_prepared(&candidate).unwrap(),
+        document(&candidate),
+        TextSize::try_from_usize(offset).unwrap(),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|completion| completion.label.as_ref() == "A")
+    .expect("A is offered");
+    assert_eq!(chosen.insert.as_ref(), "[A](./a.md)");
+    // The replace range starts ON the authored bracket, so accepting yields
+    // exactly one link, not `[[A](./a.md)`.
+    assert_eq!(
+        chosen.replace.start().to_usize(),
+        text.find("- [").unwrap() + 2
+    );
+    assert_eq!(chosen.replace.end().to_usize(), offset);
+}
+
+#[test]
+fn a_partial_after_the_bracket_filters_on_the_title() {
+    let support: &[(&str, &str)] = &[
+        ("a.md", "---\ntype: uml.Class\ntitle: Alpha\n---\n# Alpha\n"),
+        ("b.md", "---\ntype: uml.Class\ntitle: Beta\n---\n# Beta\n"),
+    ];
+    let offered = labels_with(
+        support,
+        "---\ntype: uml.Class\ntitle: C\n---\n# C\n\n## Members\n\n- [Al|\n",
+    );
+    let links = offered
+        .iter()
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(links, ["Alpha"], "{links:?}");
+}
+
+#[test]
+fn a_bracket_in_prose_offers_every_document() {
+    // Prose admits any link, so the Runbook is offered alongside classifiers.
+    let support: &[(&str, &str)] = &[
+        ("a.md", "---\ntype: uml.Class\ntitle: Alpha\n---\n# Alpha\n"),
+        (
+            "notes.md",
+            "---\ntype: Runbook\ntitle: Notes\n---\n# Notes\n",
+        ),
+    ];
+    let offered = labels_with(
+        support,
+        "---\ntype: uml.Class\ntitle: C\n---\n# C\n\nSee [|\n",
+    );
+    let links = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Link)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(links.contains(&"Alpha"), "{links:?}");
+    assert!(links.contains(&"Notes"), "{links:?}");
+}
+
+#[test]
+fn a_prose_bracket_stays_silent_where_a_link_cannot_go() {
+    // Inside a fenced code block.
+    assert!(
+        labels("---\ntype: uml.Class\ntitle: C\n---\n# C\n\n```\nlet x = a[|\n```\n").is_empty()
+    );
+    // Editing the text of a complete link: the tail would be stranded.
+    assert!(
+        labels("---\ntype: uml.Class\ntitle: C\n---\n# C\n\nSee [Al|pha](./a.md) now\n").is_empty()
+    );
+}

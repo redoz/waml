@@ -105,6 +105,18 @@ pub fn expectation_at(tree: &SyntaxTree<UmlLanguage>, offset: TextSize) -> Optio
         return expectation(token.clone(), token.trimmed_range());
     }
 
+    // An authored `[` with nothing balancing it: the parser lays down a full
+    // Link node -- six missing tokens -- around the bracket in every context
+    // that admits a link, so "an unfinished link starts here" is already in
+    // the tree. This runs before the missing-token rule: at `- [` the first
+    // missing token in document order is the production's NEXT keyword (e.g.
+    // a lifeline's `as`), which is not a completion position and would end
+    // the search. The report is the missing link-text slot; the bracket
+    // provider answers it with whole links.
+    if let Some(expectation) = bracket_expectation(&source, &tokens, offset) {
+        return Some(expectation);
+    }
+
     // After the keyword: a zero-width missing token marks the empty slot. The
     // parser can lay down several alternative missing tokens at the same
     // position (e.g. an optional trailing `as <call id>` after a complete
@@ -153,6 +165,78 @@ fn layout_continuation(
         node: statement,
         prefix: TextRange::new(offset, offset).ok()?,
         operand: last.clone(),
+    })
+}
+
+/// How far left of the cursor the bracket scan looks. A link text is short;
+/// a `[` forty characters back on the same line is prose punctuation, not the
+/// start of what the author is typing.
+const BRACKET_SCAN_LIMIT: usize = 40;
+
+/// The `(bracket, partial_start)` of an open link text the cursor sits in:
+/// scan left over the partial to an adjacent `[`. Spaces stay in -- titles
+/// have them -- but crossing `]`, `)`, another `[`, or a line start means the
+/// cursor is not in an open link text.
+fn bracket_prefix(source: &str, at: usize) -> Option<(usize, usize)> {
+    let mut start = at;
+    while start > 0 && at - start < BRACKET_SCAN_LIMIT {
+        let byte = source.as_bytes()[start - 1];
+        if matches!(byte, b'[' | b']' | b'(' | b')' | b'\n' | b'\r') {
+            break;
+        }
+        start -= 1;
+    }
+    if start == 0 || source.as_bytes()[start - 1] != b'[' {
+        return None;
+    }
+    Some((start - 1, start))
+}
+
+/// The position right after `[partial`, reported through the unfinished Link
+/// node the parser built around the bracket.
+///
+/// The guard against corruption is structural: the Link's closing tokens must
+/// be MISSING. Editing the text of a complete link finds a Link whose close
+/// bracket is real, and replacing `[partial` there would strand its
+/// `](...)` tail -- so that position reports nothing.
+fn bracket_expectation(
+    source: &str,
+    tokens: &[SyntaxToken<UmlLanguage>],
+    offset: TextSize,
+) -> Option<Expectation> {
+    let at = offset.to_usize();
+    let (bracket, start) = bracket_prefix(source, at)?;
+    // The parser keeps the authored `[` as a bad token inside the Link node
+    // it recovered. Prose brackets sit in a RawMarkdownToken instead, which
+    // has no Link ancestor -- the markdown-side provider owns those.
+    let bad = tokens.iter().find(|token| {
+        !token.flags().is_missing()
+            && token.range().start().to_usize() <= bracket
+            && bracket < token.range().end().to_usize()
+    })?;
+    let mut node = bad.parent()?;
+    while node.kind() != UmlSyntaxKind::Link {
+        node = node.parent()?;
+    }
+    let unfinished = node
+        .children()
+        .filter_map(SyntaxElement::into_token)
+        .any(|token| {
+            token.kind() == UmlSyntaxKind::CloseBracketToken && token.flags().is_missing()
+        });
+    if !unfinished {
+        return None;
+    }
+    let text_token = node
+        .children()
+        .filter_map(SyntaxElement::into_token)
+        .find(|token| token.kind() == UmlSyntaxKind::LinkTextToken)?;
+    Some(Expectation {
+        slot: node.kind(),
+        token: UmlSyntaxKind::LinkTextToken,
+        node,
+        prefix: TextRange::new(TextSize::try_from_usize(start).ok()?, offset).ok()?,
+        operand: text_token,
     })
 }
 
@@ -242,7 +326,15 @@ pub fn completions(
     }
     let source = snapshot.syntax().write_to_string();
     let Some(expectation) = expectation_at(snapshot.syntax(), offset) else {
-        return Ok(Vec::new());
+        // No UML slot: prose. A `[` there admits a link to anything, which the
+        // markdown tree -- not the UML tree -- is the authority on.
+        return Ok(prose_bracket_links(
+            &context,
+            document,
+            version.revision(),
+            version.path(),
+            offset,
+        ));
     };
     let mut candidates = fixed_vocabulary(&expectation);
     let concept_id = crate::okf::id_of(version.path().as_str());
@@ -257,6 +349,7 @@ pub fn completions(
         candidates.extend(derived_names(&expectation, concept));
     }
     candidates.extend(link_targets(&expectation, &context, version.path()));
+    candidates.extend(bracket_links(&expectation, &context, version.path()));
     // Later slices append further providers here; each is selected on the slot
     // and token kinds alone, so adding a family is a new function and a match
     // arm and the locator never changes.
@@ -272,9 +365,13 @@ pub fn completions(
         candidate.label.to_ascii_lowercase().starts_with(&prefix)
             || candidate.insert.to_ascii_lowercase().starts_with(&prefix)
     });
-    // A link target is already delimited by its own parentheses, so padding it
-    // would author `[Buyer]( ./a.md )` rather than the canonical form.
-    if expectation.token != UmlSyntaxKind::LinkTargetToken {
+    // A link target is already delimited by its own parentheses, and a whole
+    // link by its brackets, so padding either would author `( ./a.md )` or
+    // ` [Buyer](./a.md)` rather than the canonical form.
+    if !matches!(
+        expectation.token,
+        UmlSyntaxKind::LinkTargetToken | UmlSyntaxKind::LinkTextToken
+    ) {
         for candidate in &mut candidates {
             pad_for_adjacency(candidate, &source);
         }
@@ -672,43 +769,106 @@ fn link_targets(
         section_of(&expectation.node),
         Some(UmlSyntaxKind::LifelinesSection) | Some(UmlSyntaxKind::MembersSection)
     );
-    let mut out = Vec::new();
-    for document in context.okf().catalog.documents().values() {
-        let path = document.path();
-        if path == from {
-            continue;
-        }
-        let Some(concept) = context
-            .okf()
-            .bundle
-            .concept(&crate::okf::id_of(path.as_str()))
-        else {
-            continue;
-        };
-        let element_type = crate::model::ElementType::parse(&concept.ty);
-        if wants_classifier && !element_type.is_classifier() {
-            continue;
-        }
-        let href = crate::okf::relative_href(from.as_str(), path.as_str());
-        // Round-trip guard: only offer a path that resolves back to this
-        // document, so a candidate can never produce UnresolvedTarget.
-        if crate::okf::resolve_href(from.as_str(), &href) != crate::okf::id_of(path.as_str()) {
-            continue;
-        }
-        let label = concept
-            .title
-            .as_deref()
-            .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| path.as_str());
-        out.push(Completion {
-            label: Arc::from(label),
-            insert: Arc::from(href.as_str()),
+    catalog_links(context, from, wants_classifier)
+        .map(|target| Completion {
+            label: target.label,
+            insert: target.href,
             kind: CompletionKind::Link,
-            detail: Some(Arc::from(path.as_str())),
+            detail: Some(target.path),
             replace: expectation.prefix,
-        });
+        })
+        .collect()
+}
+
+/// An authored `[` in a typed slot: the whole link, in one accept. The insert
+/// carries its own brackets, so the replace range starts ON the bracket the
+/// author typed -- `expectation.prefix` covers only the partial text, and the
+/// locator guarantees the byte before it is `[`.
+fn bracket_links(
+    expectation: &Expectation,
+    context: &ActionContext<'_>,
+    from: &crate::source::BundlePath,
+) -> Vec<Completion> {
+    if expectation.token != UmlSyntaxKind::LinkTextToken {
+        return Vec::new();
     }
-    out
+    let Some(bracket) = expectation.prefix.start().to_usize().checked_sub(1) else {
+        return Vec::new();
+    };
+    let Some(replace) = TextSize::try_from_usize(bracket)
+        .ok()
+        .and_then(|start| TextRange::new(start, expectation.prefix.end()).ok())
+    else {
+        return Vec::new();
+    };
+    let wants_classifier = matches!(
+        section_of(&expectation.node),
+        Some(UmlSyntaxKind::LifelinesSection) | Some(UmlSyntaxKind::MembersSection)
+    );
+    catalog_links(context, from, wants_classifier)
+        .map(|target| whole_link(target, replace))
+        .collect()
+}
+
+struct LinkTarget {
+    label: Arc<str>,
+    href: Arc<str>,
+    path: Arc<str>,
+}
+
+/// Every catalog document `from` can link to, with a round-trip-safe relative
+/// href and the title as label. The one filter grammar contexts add is
+/// `wants_classifier`.
+fn catalog_links<'a>(
+    context: &'a ActionContext<'_>,
+    from: &'a crate::source::BundlePath,
+    wants_classifier: bool,
+) -> impl Iterator<Item = LinkTarget> + 'a {
+    context
+        .okf()
+        .catalog
+        .documents()
+        .values()
+        .filter_map(move |document| {
+            let path = document.path();
+            if path == from {
+                return None;
+            }
+            let concept = context
+                .okf()
+                .bundle
+                .concept(&crate::okf::id_of(path.as_str()))?;
+            let element_type = crate::model::ElementType::parse(&concept.ty);
+            if wants_classifier && !element_type.is_classifier() {
+                return None;
+            }
+            let href = crate::okf::relative_href(from.as_str(), path.as_str());
+            // Round-trip guard: only offer a path that resolves back to this
+            // document, so a candidate can never produce UnresolvedTarget.
+            if crate::okf::resolve_href(from.as_str(), &href) != crate::okf::id_of(path.as_str()) {
+                return None;
+            }
+            let label = concept
+                .title
+                .as_deref()
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| path.as_str());
+            Some(LinkTarget {
+                label: Arc::from(label),
+                href: Arc::from(href.as_str()),
+                path: Arc::from(path.as_str()),
+            })
+        })
+}
+
+fn whole_link(target: LinkTarget, replace: TextRange) -> Completion {
+    Completion {
+        insert: Arc::from(format!("[{}]({})", target.label, target.href).as_str()),
+        label: target.label,
+        kind: CompletionKind::Link,
+        detail: Some(target.path),
+        replace,
+    }
 }
 
 /// The WAML section a node sits in, or `None` for a node outside one.
@@ -1040,4 +1200,107 @@ fn collect_frontmatter_entries(
     for child in node.children().filter_map(SyntaxElement::into_node) {
         collect_frontmatter_entries(&child, out);
     }
+}
+
+/// A `[` in prose: any document in the catalog, as a whole link. The UML tree
+/// keeps prose opaque on purpose, so this is the markdown parser's call --
+/// the same move `frontmatter_type_candidates` makes, aimed at running text.
+///
+/// Two structural guards. The innermost markdown node holding the bracket
+/// must be a paragraph or a list item -- a bracket inside a code fence, a
+/// code span, frontmatter or an already-parsed Link (whose tail a whole-link
+/// replace would strand) offers nothing. And a `]` between the cursor and the
+/// end of the line means the author is editing something closed, which the
+/// href completion inside `(...)` already serves.
+fn prose_bracket_links(
+    context: &ActionContext<'_>,
+    document: DocumentId,
+    revision: waml_syntax::DocumentRevision,
+    from: &crate::source::BundlePath,
+    offset: TextSize,
+) -> Vec<Completion> {
+    let Some(markdown) = context.okf().markdown_snapshot(document) else {
+        return Vec::new();
+    };
+    if markdown.revision() != revision {
+        return Vec::new();
+    }
+    let source = markdown.text().shared().as_str();
+    let at = offset.to_usize();
+    if at > source.len() {
+        return Vec::new();
+    }
+    let Some((bracket, start)) = bracket_prefix(source, at) else {
+        return Vec::new();
+    };
+    if source[at..]
+        .bytes()
+        .take_while(|byte| !matches!(byte, b'\n' | b'\r'))
+        .any(|byte| byte == b']')
+    {
+        return Vec::new();
+    }
+    // Climb from the innermost node to the first DECISIVE ancestor. Running
+    // prose decides Paragraph or ListItem -- allowed. A code fence, code
+    // span, frontmatter, heading, or an already-parsed Link (whose tail a
+    // whole-link replace would strand) decides against. Inline wrappers like
+    // `Text` or emphasis are not decisions; keep climbing.
+    let mut decisive = innermost_markdown_node(&markdown.tree().root(), bracket);
+    let allowed = loop {
+        let Some(node) = decisive else {
+            break false;
+        };
+        match node.kind() {
+            OkfMarkdownSyntaxKind::Paragraph | OkfMarkdownSyntaxKind::ListItem => break true,
+            OkfMarkdownSyntaxKind::FencedCodeBlock
+            | OkfMarkdownSyntaxKind::IndentedCodeBlock
+            | OkfMarkdownSyntaxKind::CodeSpan
+            | OkfMarkdownSyntaxKind::HtmlBlock
+            | OkfMarkdownSyntaxKind::Frontmatter
+            | OkfMarkdownSyntaxKind::AtxHeading
+            | OkfMarkdownSyntaxKind::SetextHeading
+            | OkfMarkdownSyntaxKind::Link
+            | OkfMarkdownSyntaxKind::Image => break false,
+            _ => decisive = node.parent(),
+        }
+    };
+    if !allowed {
+        return Vec::new();
+    }
+    let Some(replace) = TextSize::try_from_usize(bracket)
+        .ok()
+        .and_then(|bracket_start| TextRange::new(bracket_start, offset).ok())
+    else {
+        return Vec::new();
+    };
+    let prefix = source.get(start..at).unwrap_or("").to_ascii_lowercase();
+    let mut out = catalog_links(context, from, false)
+        .filter(|target| {
+            target.label.to_ascii_lowercase().starts_with(&prefix)
+                || target.href.to_ascii_lowercase().starts_with(&prefix)
+        })
+        .map(|target| whole_link(target, replace))
+        .collect::<Vec<_>>();
+    out.sort_by(|left, right| {
+        (left.label.as_ref(), left.insert.as_ref())
+            .cmp(&(right.label.as_ref(), right.insert.as_ref()))
+    });
+    out
+}
+
+/// The innermost node whose range contains `offset`, by depth-first descent.
+fn innermost_markdown_node(
+    node: &SyntaxNode<OkfMarkdownLanguage>,
+    offset: usize,
+) -> Option<SyntaxNode<OkfMarkdownLanguage>> {
+    let range = node.range();
+    if !(range.start().to_usize() <= offset && offset < range.end().to_usize()) {
+        return None;
+    }
+    for child in node.children().filter_map(SyntaxElement::into_node) {
+        if let Some(inner) = innermost_markdown_node(&child, offset) {
+            return Some(inner);
+        }
+    }
+    Some(node.clone())
 }

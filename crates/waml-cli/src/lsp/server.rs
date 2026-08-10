@@ -85,7 +85,7 @@ fn server_capabilities() -> ServerCapabilities {
             resolve_provider: Some(false),
             // A space commits the previous word, which is exactly when an empty
             // operand slot appears; `(` opens a link target.
-            trigger_characters: Some(vec![" ".to_string(), "(".to_string()]),
+            trigger_characters: Some(vec![" ".to_string(), "(".to_string(), "[".to_string()]),
             ..Default::default()
         }),
         ..Default::default()
@@ -418,7 +418,7 @@ mod tests {
             .expect("completion is advertised");
         assert_eq!(
             completion.trigger_characters,
-            Some(vec![" ".to_string(), "(".to_string()])
+            Some(vec![" ".to_string(), "(".to_string(), "[".to_string()])
         );
         assert_eq!(completion.resolve_provider, Some(false));
         let Some(TextDocumentSyncCapability::Options(sync)) = capabilities.text_document_sync

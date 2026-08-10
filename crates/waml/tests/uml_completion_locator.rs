@@ -178,3 +178,56 @@ fn an_empty_slot_bullet_locates_the_slot_name() {
         Some((UmlSyntaxKind::Slot, UmlSyntaxKind::IdentifierToken))
     );
 }
+
+#[test]
+fn a_lone_bracket_is_the_unfinished_link_position() {
+    // The parser lays down a full Link node -- six missing tokens -- around a
+    // bare `[`, in every context that admits a link. The locator reports the
+    // missing link-text slot so the bracket provider can offer whole links.
+    for (marked, expected_slot) in [
+        (
+            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [|\n",
+            UmlSyntaxKind::Link,
+        ),
+        (
+            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|\n",
+            UmlSyntaxKind::Link,
+        ),
+        (
+            "---\ntype: uml.Class\ntitle: C\n---\n# C\n\n## Members\n\n- [Bu|\n",
+            UmlSyntaxKind::Link,
+        ),
+        (
+            "---\ntype: uml.Class\ntitle: C\n---\n# C\n\n## Attributes\n\n- id: [|\n",
+            UmlSyntaxKind::Link,
+        ),
+    ] {
+        let (slot, token, _) = locate(marked).unwrap_or_else(|| panic!("None for {marked:?}"));
+        assert_eq!(slot, expected_slot, "{marked:?}");
+        assert_eq!(token, UmlSyntaxKind::LinkTextToken, "{marked:?}");
+    }
+}
+
+#[test]
+fn the_partial_after_the_bracket_is_the_prefix() {
+    let (_, _, prefix) =
+        locate("---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|\n").unwrap();
+    assert_eq!(prefix, "Bu");
+}
+
+#[test]
+fn a_bracket_position_is_not_reported_where_it_would_corrupt() {
+    // Editing the text of a COMPLETE link: replacing `[Buyer` with a fresh
+    // whole link would strand the existing `](./a.md)` tail.
+    assert_eq!(
+        locate(
+            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [Bu|yer](./a.md)\n"
+        ),
+        None
+    );
+    // Prose is not the typed path's business; the markdown-side provider owns it.
+    assert_eq!(
+        locate("---\ntype: uml.Class\ntitle: C\n---\n# C\n\nSee [Bu|\n"),
+        None
+    );
+}
