@@ -499,6 +499,29 @@ mod tests {
     }
 
     #[test]
+    fn the_frontmatter_type_value_completes_before_the_document_has_a_type() {
+        // The document has no `type:` yet, so it has no UML tree and nothing
+        // downstream knows what it is. That is exactly when the author needs
+        // to be told what a type: value can be, so this must not be silence.
+        let physical = PathBuf::from("C:/outside/new.md");
+        let text = "---\ntype: \n---\n# New\n";
+        let state = LspAnalysisState::empty()
+            .unwrap()
+            .open(physical.clone(), 1, text.into())
+            .unwrap();
+        let items = state
+            .completion(&physical, Position::new(1, 6))
+            .expect("completion returns a list");
+        let labels = items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+        for expected in ["uml.Class", "uml.Sequence", "Diagram"] {
+            assert!(labels.contains(&expected), "{expected} missing: {labels:?}");
+        }
+    }
+
+    #[test]
     fn completion_in_prose_is_an_empty_list_not_an_absent_response() {
         let physical = PathBuf::from("C:/outside/prose.md");
         let state = LspAnalysisState::empty()
