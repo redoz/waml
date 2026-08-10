@@ -43,8 +43,9 @@ pub struct AppliedMigration {
 
 pub struct UpgradePlan {
     pub files: Vec<(String, String)>,
-    /// One report per changed path. The first migration that changes a path
-    /// supplies its stable ID and description.
+    /// One report per path whose final bytes differ from its original bytes.
+    /// The first migration that changes the path supplies its stable ID and
+    /// description.
     pub applied: Vec<AppliedMigration>,
 }
 
@@ -58,6 +59,7 @@ pub(crate) fn plan_upgrade_with_migrations(
 ) -> Result<UpgradePlan, UpgradeError> {
     let mut candidate = SourceBundle::try_from_pairs(files.iter().cloned())
         .map_err(|error| UpgradeError::InvalidSource(error.to_string()))?;
+    let original = candidate.to_pairs().into_iter().collect::<BTreeMap<_, _>>();
     let mut applied = BTreeMap::new();
 
     for migration in migrations {
@@ -93,9 +95,12 @@ pub(crate) fn plan_upgrade_with_migrations(
     if !diagnostics.is_empty() {
         return Err(UpgradeError::InvalidCandidate(diagnostics));
     }
+    let files = prepared.source().to_pairs();
+    let final_files = files.iter().cloned().collect::<BTreeMap<_, _>>();
+    applied.retain(|path, _| original.get(path) != final_files.get(path));
 
     Ok(UpgradePlan {
-        files: prepared.source().to_pairs(),
+        files,
         applied: applied.into_values().collect(),
     })
 }

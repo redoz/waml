@@ -56,6 +56,10 @@ fn second_change(source: &SourceBundle) -> Result<SourceBundle, UpgradeError> {
     replace_text(source, "# First", "# Second")
 }
 
+fn revert_first_change(source: &SourceBundle) -> Result<SourceBundle, UpgradeError> {
+    replace_text(source, "# First", "# Stable")
+}
+
 #[test]
 fn registry_has_the_stable_canonical_diagram_migration_in_order() {
     assert_eq!(MIGRATIONS.len(), 1);
@@ -196,4 +200,31 @@ fn two_migrations_touching_one_path_keep_first_report_metadata() {
     assert_eq!(plan.applied[0].path, "stable.md");
     assert_eq!(plan.applied[0].id, "first-change");
     assert_eq!(plan.applied[0].description, "Apply the first change");
+}
+
+#[test]
+fn later_migration_revert_removes_report_for_final_unchanged_path() {
+    let migrations = [
+        Migration {
+            id: "first-change",
+            description: "Apply the first change",
+            detect: always_detect,
+            transform: first_change,
+        },
+        Migration {
+            id: "revert-change",
+            description: "Restore the original bytes",
+            detect: always_detect,
+            transform: revert_first_change,
+        },
+    ];
+    let files = vec![(
+        "stable.md".into(),
+        "---\ntype: uml.Class\n---\n# Stable\n".into(),
+    )];
+
+    let plan = plan_upgrade_with_migrations(&files, &migrations).expect("ordered revert");
+
+    assert_eq!(plan.files, files);
+    assert!(plan.applied.is_empty());
 }
