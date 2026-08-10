@@ -50,6 +50,7 @@ script_mod! {
         draw_text_mono_semibold +: {text_style: theme.font_code}
         draw_text_mono_semibold_italic +: {text_style: theme.font_code}
         draw_text_scratch +: {text_style: theme.font_regular}
+        draw_popup_text +: {text_style: theme.font_regular}
         motion_duration: 0.100
         motion_ease: OutCubic
         body_color: #202124
@@ -696,6 +697,22 @@ pub struct MarkdownEditor {
     draw_embedded: DrawColor,
     #[live]
     draw_caret: DrawColor,
+    /// The completion popup's own draw list, drawn into the WINDOW OVERLAY
+    /// (`begin_overlay_reuse`) -- the fork's `PopupMenu`/tooltip idiom. In-list
+    /// draw order is not enough: text renders in a later stage than color
+    /// quads, so a fill painted "after" the document in the same list still
+    /// ends up under its glyphs. The overlay list renders after the whole
+    /// pass, which is what "on top" actually means here.
+    #[live]
+    popup_draw_list: DrawList2d,
+    /// The popup's own draw objects, so its batches never merge into the
+    /// document's.
+    #[live]
+    draw_popup_fill: DrawColor,
+    #[live]
+    draw_popup_selection: DrawColor,
+    #[live]
+    draw_popup_text: DrawText,
     #[live]
     motion_duration: f64,
     #[live]
@@ -1337,6 +1354,12 @@ impl MarkdownEditor {
             self.completion = Some(open);
             return;
         };
+        // Window overlay: renders after the whole pass, above every document
+        // layer. Coordinates below are absolute window coords, which is the
+        // space `viewport.pos` already lives in.
+        self.popup_draw_list.begin_overlay_reuse(cx);
+        let pass_size = cx.current_pass_size();
+        cx.begin_root_turtle(pass_size, Layout::flow_overlay());
         let content_origin = viewport.pos + dvec2(gutter, 0.0) - self.scroll_bars.get_scroll_pos();
 
         // The visible window slides so the selected row is always in it.
@@ -1369,16 +1392,16 @@ impl MarkdownEditor {
             .max(viewport.pos.x);
 
         // A hairline border drawn as an outer rect under an inset fill.
-        self.draw_background.color = self.block_rule_color;
-        self.draw_background.draw_abs(
+        self.draw_popup_fill.color = self.block_rule_color;
+        self.draw_popup_fill.draw_abs(
             cx,
             Rect {
                 pos: pos - dvec2(1.0, 1.0),
                 size: size + dvec2(2.0, 2.0),
             },
         );
-        self.draw_background.color = self.quote_fill;
-        self.draw_background.draw_abs(cx, Rect { pos, size });
+        self.draw_popup_fill.color = self.quote_fill;
+        self.draw_popup_fill.draw_abs(cx, Rect { pos, size });
 
         let mut row_pos = pos + dvec2(COMPLETION_PADDING, COMPLETION_PADDING);
         for (index, candidate) in open
@@ -1389,8 +1412,8 @@ impl MarkdownEditor {
             .take(visible)
         {
             if index == open.selected_index() {
-                self.draw_selection.color = self.selection_color;
-                self.draw_selection.draw_abs(
+                self.draw_popup_selection.color = self.selection_color;
+                self.draw_popup_selection.draw_abs(
                     cx,
                     Rect {
                         pos: dvec2(pos.x + 1.0, row_pos.y - COMPLETION_PADDING * 0.5),
@@ -1398,11 +1421,11 @@ impl MarkdownEditor {
                     },
                 );
             }
-            self.draw_text_sans.color = self.body_color;
-            self.draw_text_sans.draw_abs(cx, row_pos, &candidate.label);
+            self.draw_popup_text.color = self.body_color;
+            self.draw_popup_text.draw_abs(cx, row_pos, &candidate.label);
             if let Some(detail) = candidate.detail.as_deref() {
-                self.draw_text_sans.color = self.marker_color;
-                self.draw_text_sans.draw_abs(
+                self.draw_popup_text.color = self.marker_color;
+                self.draw_popup_text.draw_abs(
                     cx,
                     dvec2(
                         pos.x + COMPLETION_PADDING + metrics.label_width + COMPLETION_COLUMN_GAP,
@@ -1413,6 +1436,8 @@ impl MarkdownEditor {
             }
             row_pos.y += row_height;
         }
+        cx.end_pass_sized_turtle();
+        self.popup_draw_list.end(cx);
         self.completion = Some(open);
     }
 
@@ -2096,7 +2121,7 @@ impl MarkdownEditor {
         let Some(row) = laid_out.rows.first() else {
             return DVec2::default();
         };
-        let scale = self.draw_text_sans.font_scale as f64;
+        let scale = self.draw_popup_text.font_scale as f64;
         let width = row.width_in_lpxs as f64 * scale;
         let height = (row.ascender_in_lpxs - row.descender_in_lpxs) as f64 * scale;
         if width.is_finite() && height.is_finite() && height > 0.0 {
