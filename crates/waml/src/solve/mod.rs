@@ -14,6 +14,7 @@ pub mod resolve;
 pub mod route;
 pub mod sizing;
 pub mod stress;
+pub mod use_case;
 pub mod vpsc;
 
 // Wire (solver IO) types live in a nested module so that the `Tsify` derive's

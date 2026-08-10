@@ -984,7 +984,12 @@ pub fn build_scene(
     // hard separation/alignment constraints projected inside the stress
     // solve, instead of switching the whole diagram onto the edge-blind
     // rigid-offset strip packer the moment any `place` statement is authored.
-    let (scene, resolve_diags) = resolve::resolve(diagram);
+    let relationship_pairs = edges.clone();
+    let (scene, resolve_diags) = if diagram.kind == waml::model::DiagramKind::UseCase {
+        waml::solve::use_case::resolve_use_case(diagram, &relationship_pairs)
+    } else {
+        resolve::resolve(diagram)
+    };
     let connected = connected_pairs(&edges);
     let label_widths = waml::solve::connected_label_widths(&edges, &sizing_requests);
     let compiled = constrain::compile(
