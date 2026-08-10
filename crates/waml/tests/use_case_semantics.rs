@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use waml::{
     analysis::{prepare_candidate, PreviousAnalyses},
-    diagnostic::DiagCode,
+    diagnostic::{DiagCode, Severity},
     model::DiagramGroupRole,
     source::SourceBundle,
 };
+use waml_syntax::{TextRange, TextSize};
 
 fn document(ty: &str, title: &str, body: &str) -> String {
     format!("---\ntype: {ty}\n---\n# {title}\n{body}")
@@ -58,6 +59,56 @@ fn assert_rejected(candidate: &waml::analysis::PreparedCandidate) {
             .iter()
             .all(|diagram| diagram.key != "diagram"),
         "invalid use-case diagram was projected"
+    );
+}
+
+fn use_case_diagnostics(
+    candidate: &waml::analysis::PreparedCandidate,
+) -> Vec<&waml::diagnostic::Diagnostic> {
+    candidate
+        .uml()
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            matches!(
+                diagnostic.code,
+                DiagCode::InvalidUseCaseGroup
+                    | DiagCode::ActorInsideSystemBoundary
+                    | DiagCode::UseCaseOutsideSystemBoundary
+                    | DiagCode::UseCaseInMultipleSystemBoundaries
+                    | DiagCode::EmptyUseCaseBand
+            )
+        })
+        .collect()
+}
+
+fn assert_diagnostic_provenance(
+    diagnostic: &waml::diagnostic::Diagnostic,
+    source: &str,
+    code: DiagCode,
+    message: &str,
+    line: usize,
+    span: (usize, usize),
+    ranged: &str,
+) {
+    let start = source.find(ranged).expect("unique diagnostic source text");
+    assert_eq!(diagnostic.severity, Severity::Error);
+    assert_eq!(diagnostic.code, code);
+    assert_eq!(diagnostic.message, message);
+    assert_eq!(diagnostic.file, "diagram.md");
+    assert_eq!(diagnostic.line, line);
+    assert_eq!(diagnostic.span, Some(span));
+    assert!(diagnostic.document.is_some());
+    assert!(diagnostic.document_revision.is_some());
+    assert_eq!(
+        diagnostic.range,
+        Some(
+            TextRange::new(
+                TextSize::new(start as u32),
+                TextSize::new((start + ranged.len()) as u32),
+            )
+            .unwrap()
+        )
     );
 }
 
@@ -203,6 +254,26 @@ fn actor_group_cannot_have_child_group() {
 }
 
 #[test]
+fn actor_with_use_case_only_in_band_is_boundary_candidate() {
+    let found = candidate(
+        "\n## Members\n\n### Checkout\n- [Buyer](./buyer.md)\n\n#### Purchase\n- [Pay](./pay.md)\n",
+        &[
+            ("buyer.md", "uml.Actor", "Buyer"),
+            ("pay.md", "uml.UseCase", "Pay"),
+        ],
+    );
+
+    assert_eq!(
+        use_case_diagnostics(&found)
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [DiagCode::ActorInsideSystemBoundary]
+    );
+    assert_rejected(&found);
+}
+
+#[test]
 fn band_cannot_have_child_group() {
     let found = candidate(
         "\n## Members\n\n### Checkout\n\n#### Purchase\n- [Pay](./pay.md)\n\n##### Details\n- [Reminder](./reminder.md)\n",
@@ -227,6 +298,49 @@ fn actor_inside_system_boundary_is_rejected() {
     );
 
     assert_code(&found, DiagCode::ActorInsideSystemBoundary);
+    assert_rejected(&found);
+}
+
+#[test]
+fn invalid_boundary_member_does_not_report_contained_use_case_as_outside() {
+    let found = candidate(
+        "\n## Members\n\n### Checkout\n- [Account](./account.md)\n- [Pay](./pay.md)\n",
+        &[
+            ("account.md", "uml.Class", "Account"),
+            ("pay.md", "uml.UseCase", "Pay"),
+        ],
+    );
+
+    assert_eq!(
+        use_case_diagnostics(&found)
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [DiagCode::InvalidUseCaseGroup]
+    );
+    assert_rejected(&found);
+}
+
+#[test]
+fn invalid_boundary_still_counts_toward_duplicate_use_case_membership() {
+    let found = candidate(
+        "\n## Members\n\n### Valid\n- [Pay](./pay.md)\n\n### Invalid\n- [Account](./account.md)\n- [Pay](./pay.md)\n",
+        &[
+            ("account.md", "uml.Class", "Account"),
+            ("pay.md", "uml.UseCase", "Pay"),
+        ],
+    );
+
+    assert_eq!(
+        use_case_diagnostics(&found)
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [
+            DiagCode::InvalidUseCaseGroup,
+            DiagCode::UseCaseInMultipleSystemBoundaries,
+        ]
+    );
     assert_rejected(&found);
 }
 
@@ -388,4 +502,136 @@ fn invalid_edit_rejects_projection_and_retains_last_valid_scene() {
         invalid.uml().diagram("diagram").expect("retained diagram"),
         &retained
     ));
+
+    let second_invalid_source = SourceBundle::try_from_pairs([
+        (
+            "diagram.md",
+            document(
+                "uml.UseCaseDiagram",
+                "Use cases",
+                "\n## Members\n\n### Empty\n",
+            ),
+        ),
+        ("pay.md", document("uml.UseCase", "Pay", "")),
+        ("reminder.md", document("uml.Note", "Reminder", "")),
+    ])
+    .unwrap();
+    let second_invalid = prepare_candidate(
+        second_invalid_source,
+        Some(PreviousAnalyses {
+            okf: invalid.okf(),
+            uml: invalid.uml(),
+        }),
+        3,
+    )
+    .unwrap();
+
+    assert_rejected(&second_invalid);
+    assert!(Arc::ptr_eq(
+        second_invalid
+            .uml()
+            .diagram("diagram")
+            .expect("retained diagram after the second invalid edit"),
+        &retained
+    ));
+}
+
+#[test]
+fn empty_band_diagnostic_points_to_the_band_heading() {
+    let body = "\n## Members\n\n### Checkout\n- [Pay](./pay.md)\n\n#### Empty band\n- [Reminder](./reminder.md)\n";
+    let source = document("uml.UseCaseDiagram", "Use cases", body);
+    let found = candidate(
+        body,
+        &[
+            ("pay.md", "uml.UseCase", "Pay"),
+            ("reminder.md", "uml.Note", "Reminder"),
+        ],
+    );
+    let diagnostics = use_case_diagnostics(&found);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_diagnostic_provenance(
+        diagnostics[0],
+        &source,
+        DiagCode::EmptyUseCaseBand,
+        "use-case band 'Empty band' has no use case",
+        11,
+        (4, 15),
+        " Empty band",
+    );
+}
+
+#[test]
+fn nested_band_diagnostic_points_to_the_nested_heading() {
+    let body = "\n## Members\n\n### Checkout\n\n#### Purchase\n- [Pay](./pay.md)\n\n##### Details\n- [Reminder](./reminder.md)\n";
+    let source = document("uml.UseCaseDiagram", "Use cases", body);
+    let found = candidate(
+        body,
+        &[
+            ("pay.md", "uml.UseCase", "Pay"),
+            ("reminder.md", "uml.Note", "Reminder"),
+        ],
+    );
+    let diagnostics = use_case_diagnostics(&found);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_diagnostic_provenance(
+        diagnostics[0],
+        &source,
+        DiagCode::InvalidUseCaseGroup,
+        "use-case group 'Details' is invalid: a use-case band cannot have a child group",
+        13,
+        (5, 13),
+        " Details",
+    );
+}
+
+#[test]
+fn actor_diagnostic_points_to_the_member_target() {
+    let body = "\n## Members\n\n### Checkout\n- [Buyer](./buyer.md)\n- [Pay](./pay.md)\n";
+    let source = document("uml.UseCaseDiagram", "Use cases", body);
+    let found = candidate(
+        body,
+        &[
+            ("buyer.md", "uml.Actor", "Buyer"),
+            ("pay.md", "uml.UseCase", "Pay"),
+        ],
+    );
+    let diagnostics = use_case_diagnostics(&found);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_diagnostic_provenance(
+        diagnostics[0],
+        &source,
+        DiagCode::ActorInsideSystemBoundary,
+        "actor 'buyer' is inside system boundary 'Checkout'",
+        9,
+        (10, 20),
+        "./buyer.md",
+    );
+}
+
+#[test]
+fn incompatible_member_diagnostic_points_to_the_member_target() {
+    let body = "\n## Members\n\n### People\n- [Buyer](./buyer.md)\n- [Account](./account.md)\n";
+    let source = document("uml.UseCaseDiagram", "Use cases", body);
+    let found = candidate(
+        body,
+        &[
+            ("buyer.md", "uml.Actor", "Buyer"),
+            ("account.md", "uml.Class", "Account"),
+        ],
+    );
+    let diagnostics = use_case_diagnostics(&found);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_diagnostic_provenance(
+        diagnostics[0],
+        &source,
+        DiagCode::InvalidUseCaseGroup,
+        "use-case group 'People' has incompatible member 'account'",
+        10,
+        (12, 24),
+        "./account.md",
+    );
 }

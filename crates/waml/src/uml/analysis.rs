@@ -765,7 +765,7 @@ fn analysis_metadata(
     for diagram in projection.diagrams.iter().chain(
         previous
             .into_iter()
-            .flat_map(|analysis| analysis.projection.diagrams.iter()),
+            .flat_map(|analysis| analysis.diagram_projections.values().map(Arc::as_ref)),
     ) {
         if diagram_depends_on(diagram, &affected_concepts) {
             affected_diagrams.insert(diagram.key.clone());
@@ -775,7 +775,7 @@ fn analysis_metadata(
     for diagram in projection.diagrams.iter().chain(
         previous
             .into_iter()
-            .flat_map(|analysis| analysis.projection.diagrams.iter()),
+            .flat_map(|analysis| analysis.diagram_projections.values().map(Arc::as_ref)),
     ) {
         if diagram_depends_on(diagram, &failed_concepts) {
             stale_diagrams.insert(diagram.key.clone());
@@ -793,14 +793,11 @@ fn analysis_metadata(
         diagram_projections.insert(Arc::<str>::from(diagram.key.as_str()), projection);
     }
     if let Some(previous) = previous {
-        for diagram in &previous.projection.diagrams {
+        for (key, diagram) in &previous.diagram_projections {
             if stale_diagrams.contains(&diagram.key)
                 && !diagram_projections.contains_key(diagram.key.as_str())
             {
-                if let Some(retained) = previous.diagram(&diagram.key) {
-                    diagram_projections
-                        .insert(Arc::<str>::from(diagram.key.as_str()), retained.clone());
-                }
+                diagram_projections.insert(key.clone(), diagram.clone());
             }
         }
     }
@@ -1769,8 +1766,9 @@ fn use_case_group_input(
     group: &crate::uml::DeclaredMemberGroup,
     path: &str,
     claimed: &BTreeSet<&str>,
-    depth: usize,
+    group_path: Vec<usize>,
 ) -> Option<super::use_case::UseCaseGroupInput> {
+    let depth = group_path.len().saturating_sub(1);
     let name = match &group.name {
         crate::uml::DeclaredField::Absent if depth == 0 => return None,
         crate::uml::DeclaredField::Absent => String::new(),
@@ -1803,12 +1801,16 @@ fn use_case_group_input(
     ));
     Some(super::use_case::UseCaseGroupInput {
         name,
+        path: group_path.clone(),
         depth,
         members,
         children: group
             .children
             .iter()
-            .filter_map(|child| {
+            .enumerate()
+            .filter_map(|(index, child)| {
+                let mut child_path = group_path.clone();
+                child_path.push(index);
                 use_case_group_input(
                     declared,
                     concept_paths,
@@ -1816,7 +1818,7 @@ fn use_case_group_input(
                     child,
                     path,
                     claimed,
-                    depth + 1,
+                    child_path,
                 )
             })
             .collect(),
@@ -1837,26 +1839,93 @@ fn apply_use_case_roles(
 
 fn report_use_case_violation(
     context: &DomainAnalysisContext<'_>,
-    path: &str,
-    syntax: &SyntaxNode<UmlLanguage>,
+    concept: &crate::uml::DeclaredConcept,
+    authored_path: &str,
     violation: &super::use_case::UseCaseViolation,
 ) -> Result<Diagnostic, AnalysisError> {
     use super::use_case::UseCaseViolation;
-    let (code, message) = match violation {
-        UseCaseViolation::InvalidGroup { group, reason } => (
+    let group_path = match violation {
+        UseCaseViolation::InvalidGroup { path, .. }
+        | UseCaseViolation::IncompatibleMember { path, .. }
+        | UseCaseViolation::ActorInsideBoundary { path, .. }
+        | UseCaseViolation::EmptyBand { path, .. } => path,
+    };
+    let declared_group = declared_group_at_path(concept, group_path).ok_or_else(|| {
+        AnalysisError::CatalogInvariant {
+            reason: "use-case violation points to no declared group".into(),
+        }
+    })?;
+    let heading_range = declared_group
+        .syntax
+        .heading_token()
+        .map(|token| token.range())
+        .unwrap_or_else(|| declared_group.syntax.syntax().range());
+    let (code, message, range) = match violation {
+        UseCaseViolation::InvalidGroup {
+            group: group_name,
+            reason,
+            ..
+        } => (
             crate::diagnostic::DiagCode::InvalidUseCaseGroup,
-            format!("use-case group '{group}' is invalid: {reason}"),
+            format!("use-case group '{group_name}' is invalid: {reason}"),
+            heading_range,
         ),
-        UseCaseViolation::ActorInsideBoundary { group, member } => (
+        UseCaseViolation::IncompatibleMember {
+            group: group_name,
+            member,
+            ..
+        } => (
+            crate::diagnostic::DiagCode::InvalidUseCaseGroup,
+            format!("use-case group '{group_name}' has incompatible member '{member}'"),
+            declared_member_target_range(declared_group, authored_path, member)
+                .unwrap_or(heading_range),
+        ),
+        UseCaseViolation::ActorInsideBoundary {
+            group: group_name,
+            member,
+            ..
+        } => (
             crate::diagnostic::DiagCode::ActorInsideSystemBoundary,
-            format!("actor '{member}' is inside system boundary '{group}'"),
+            format!("actor '{member}' is inside system boundary '{group_name}'"),
+            declared_member_target_range(declared_group, authored_path, member)
+                .unwrap_or(heading_range),
         ),
-        UseCaseViolation::EmptyBand { group } => (
+        UseCaseViolation::EmptyBand {
+            group: group_name, ..
+        } => (
             crate::diagnostic::DiagCode::EmptyUseCaseBand,
-            format!("use-case band '{group}' has no use case"),
+            format!("use-case band '{group_name}' has no use case"),
+            heading_range,
         ),
     };
-    declared_diagnostic(context, path, syntax, code, message, false)
+    declared_diagnostic_range(context, authored_path, range, code, message, false)
+}
+
+fn declared_group_at_path<'a>(
+    concept: &'a crate::uml::DeclaredConcept,
+    path: &[usize],
+) -> Option<&'a crate::uml::DeclaredMemberGroup> {
+    let (first, rest) = path.split_first()?;
+    let mut group = concept.member_groups.get(*first)?;
+    for index in rest {
+        group = group.children.get(*index)?;
+    }
+    Some(group)
+}
+
+fn declared_member_target_range(
+    group: &crate::uml::DeclaredMemberGroup,
+    authored_path: &str,
+    target: &str,
+) -> Option<TextRange> {
+    group.members.iter().find_map(|member| {
+        let crate::uml::DeclaredField::Valid { value, .. } = &member.target else {
+            return None;
+        };
+        (crate::okf::resolve_href(authored_path, value) == target)
+            .then(|| member.syntax.target_token().map(|token| token.range()))
+            .flatten()
+    })
 }
 
 fn collect_group_members(
@@ -1881,26 +1950,20 @@ fn project_use_case_groups(
     let mut valid = true;
     let mut projected = Vec::new();
     let mut boundary_counts = BTreeMap::<String, usize>::new();
-    for group in concept.member_groups.iter() {
-        let Some(input) =
-            use_case_group_input(declared, concept_paths, context, group, path, claimed, 0)
-        else {
+    for (group_index, group) in concept.member_groups.iter().enumerate() {
+        let Some(input) = use_case_group_input(
+            declared,
+            concept_paths,
+            context,
+            group,
+            path,
+            claimed,
+            vec![group_index],
+        ) else {
             continue;
         };
         let verdict = super::use_case::classify_group(&input);
-        if !verdict.violations.is_empty() {
-            valid = false;
-            for violation in &verdict.violations {
-                diagnostics.push(report_use_case_violation(
-                    context,
-                    path,
-                    group.syntax.syntax(),
-                    violation,
-                )?);
-            }
-            continue;
-        }
-        if verdict.role == Some(crate::model::DiagramGroupRole::SystemBoundary) {
+        if verdict.is_system_boundary_candidate {
             let mut members = BTreeSet::new();
             collect_group_members(&input, &mut members);
             for member in members {
@@ -1910,6 +1973,15 @@ fn project_use_case_groups(
                     *boundary_counts.entry(member).or_default() += 1;
                 }
             }
+        }
+        if !verdict.violations.is_empty() {
+            valid = false;
+            for violation in &verdict.violations {
+                diagnostics.push(report_use_case_violation(
+                    context, concept, path, violation,
+                )?);
+            }
+            continue;
         }
         if let Some(mut group) = lower_member_group(group, path, claimed, &concept.concept_id) {
             apply_use_case_roles(&mut group, &input);
