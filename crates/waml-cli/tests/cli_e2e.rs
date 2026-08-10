@@ -429,7 +429,7 @@ fn apply_late_collision_rolls_back_earlier_okf_change() {
 }
 
 #[test]
-fn check_accepts_generic_okf_without_uml_diagnostics() {
+fn check_reports_generic_okf_unknown_type_warning() {
     let d = tmp();
     let generic = d.join("notes.md");
     std::fs::write(
@@ -446,7 +446,18 @@ fn check_accepts_generic_okf_without_uml_diagnostics() {
         .unwrap();
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "[]");
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        diagnostics,
+        serde_json::json!([{
+            "severity": "warning",
+            "code": "unknown-type",
+            "message": "unknown UML type 'notes.Decision'",
+            "file": generic.to_string_lossy().into_owned(),
+            "line": 2,
+            "span": [6, 20],
+        }])
+    );
 }
 
 // Scenario: CLI-001
