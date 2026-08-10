@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Recovery
 ---
 # Recovery

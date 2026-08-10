@@ -428,9 +428,6 @@ pub(crate) fn parse_frontmatter_source(source: &str) -> Option<Frontmatter> {
         waml_syntax::MarkdownDialect::WAML_DEFAULT,
     )
     .ok()?;
-    if !snapshot.diagnostics().is_empty() {
-        return None;
-    }
     snapshot
         .tree()
         .root()

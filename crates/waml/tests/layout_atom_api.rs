@@ -30,7 +30,7 @@ fn token_of(atom: &LayoutAtomSyntax) -> (&'static str, &SyntaxToken<uml::syntax:
 
 #[test]
 fn public_layout_atom_views_preserve_leaf_kind_range_and_authored_order() {
-    let diagram = "---\r\ntype: Diagram\r\n---\r\n# D\r\n\r\n## Layout\r\n- column of \"Café\", ([Order](../domain/order.md)) as row with frame, small margins left of Ghost\r\n";
+    let diagram = "---\r\ntype: uml.ClassDiagram\r\n---\r\n# D\r\n\r\n## Layout\r\n- column of \"Café\", ([Order](../domain/order.md)) as row with frame, small margins left of Ghost\r\n";
     let source = SourceBundle::try_from_pairs([
         ("views/d.md", diagram),
         ("domain/order.md", "---\ntype: uml.Class\n---\n# Order\n"),

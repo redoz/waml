@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.UseCaseDiagram
 title: Browser and Publishing Workflows
 description: External roles and shipped workflows at the WAML browser and publishing boundary.
 profile: uml-domain

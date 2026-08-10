@@ -27,8 +27,8 @@ structurally, not by a free-text label:
 | role | how identified | is it a pool element? |
 |---|---|---|
 | **index** | filename is `index.md` | no — navigation only, generated (see [Packages and indexes](#packages-and-indexes)) |
-| **diagram** | `type: Diagram` **and** a `## Members` list | no — it is a *view* over pooled nodes |
-| **behavior** | `type: uml.Activity`, `uml.StateMachine`, or `uml.Sequence` | no — a self-rendering view (see [Behavioral substrates](#behavioral-substrates)) |
+| **diagram** | `type: uml.ClassDiagram` **and** a `## Members` list | no — it is a *view* over pooled nodes |
+| **behavior** | `type: uml.ActivityDiagram`, `uml.StateMachine`, or `uml.Sequence` | no — a self-rendering view (see [Behavioral substrates](#behavioral-substrates)) |
 | **node** | anything else | yes |
 
 - **Index** documents provide navigation and are not part of any model graph.
@@ -678,14 +678,14 @@ back to a `## Notes` bullet.
 ## Diagram documents
 
 A diagram is a curated, profiled **view** over nodes — not a classifier. It is
-identified by `type: Diagram` together with a `## Members` list. It carries three
+identified by `type: uml.ClassDiagram` together with a `## Members` list. It carries three
 deliberately separate concerns: **membership** (`## Members`, optionally organised
 into groups), **presentation lens** (`profile`, plus per-diagram display
 switches), and **arrangement** (`## Layout`).
 
 ```markdown
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Orders Domain Model
 profile: uml-domain
 ---
@@ -984,7 +984,7 @@ zero-or-more, `[ … ]` optional; `<link>`, `<quoted>`, and `<ident>` are as in 
 
 ```markdown
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Orders Domain Model
 profile: uml-domain
 ---

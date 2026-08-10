@@ -1,5 +1,5 @@
 ---
-type: uml.Sequence
+type: uml.SequenceDiagram
 title: Authoring and Validation
 description: An interaction that evaluates authored content and presents its derived view and diagnostics.
 ---

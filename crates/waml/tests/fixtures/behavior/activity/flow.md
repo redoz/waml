@@ -1,5 +1,5 @@
 ---
-type: uml.Activity
+type: uml.ActivityDiagram
 title: Order Flow
 ---
 # Order Flow

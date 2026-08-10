@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.UseCaseDiagram
 title: Tooling Workflows
 description: External roles and shipped workflows at the WAML tooling boundary.
 profile: uml-domain

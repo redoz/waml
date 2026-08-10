@@ -12,7 +12,7 @@ document is unreachable from the editor.
 
 Folders are also structurally untyped. `profile` exists only on concept
 document frontmatter (`crates/waml/src/model.rs:950`, `crates/waml/src/seed.rs`
-emits `type: Diagram` + `profile: uml-domain`). A directory cannot say what it
+emits `type: uml.ClassDiagram` + `profile: uml-domain`). A directory cannot say what it
 is, so it cannot say how it should be shown.
 
 Goal: a folder declares what it is (`profile`) and how it is shown (`view`),

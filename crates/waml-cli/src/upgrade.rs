@@ -61,11 +61,13 @@ pub(crate) fn plan_upgrade_with_migrations(
         .map_err(|error| UpgradeError::InvalidSource(error.to_string()))?;
     let original = candidate.to_pairs().into_iter().collect::<BTreeMap<_, _>>();
     let mut applied = BTreeMap::new();
+    let mut migration_ran = false;
 
     for migration in migrations {
         if !(migration.detect)(&candidate)? {
             continue;
         }
+        migration_ran = true;
         let before = candidate.to_pairs().into_iter().collect::<BTreeMap<_, _>>();
         candidate = (migration.transform)(&candidate)?;
         let after = candidate.to_pairs().into_iter().collect::<BTreeMap<_, _>>();
@@ -81,6 +83,13 @@ pub(crate) fn plan_upgrade_with_migrations(
                     });
             }
         }
+    }
+
+    if !migration_ran {
+        return Ok(UpgradePlan {
+            files: candidate.to_pairs(),
+            applied: Vec::new(),
+        });
     }
 
     let prepared = prepare_candidate(candidate, None, 0)

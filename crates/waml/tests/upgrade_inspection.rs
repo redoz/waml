@@ -44,6 +44,26 @@ fn direct_legacy_behavior_types_map_to_canonical_diagram_kinds() {
 }
 
 #[test]
+fn unrelated_structured_frontmatter_does_not_block_legacy_inspection() {
+    let source = bundle([
+        ("activity.md", "---\ntype: uml.Activity\n---\n# Activity\n"),
+        (
+            "affected-analysis.md",
+            "---\ntype: uml.Class\nsources:\n  - { id: affected-analysis, resource: analysis.rs, title: AffectedAnalysis }\n---\n# Affected Analysis\n",
+        ),
+    ]);
+
+    assert_eq!(
+        inspect_legacy_diagram_types(&source).unwrap(),
+        vec![LegacyDiagramTypeUse {
+            path: "activity.md".into(),
+            legacy: LegacyDiagramType::Activity,
+            replacement: DiagramKind::Activity,
+        }]
+    );
+}
+
+#[test]
 fn legacy_diagram_with_only_use_cases_and_neutral_members_becomes_use_case() {
     let source = bundle([
         (

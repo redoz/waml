@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: System Context
 description: Structural view of the author, the bundle, and the four product surfaces that read or change it.
 profile: uml-domain

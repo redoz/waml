@@ -291,7 +291,7 @@ fn flow_doc_json_matches_ts_field_names() {
     let b = vec![
         ("m/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
         ("m/lifecycle.md".to_string(),
-         "---\ntype: uml.StateMachine\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed: `reserve`\n- else transitions to Cancelled\n\n### Placed\n- entry: `reserveStock`\n\n### Cancelled\n\n### final\n".to_string()),
+         "---\ntype: uml.StateMachineDiagram\ntitle: Order Lifecycle\ndescribes: [Order](./order.md)\n---\n# Order Lifecycle\n\n## Nodes\n\n### initial\n- transitions to Draft\n\n### Draft\n- on `place` when `items > 0` transitions to Placed: `reserve`\n- else transitions to Cancelled\n\n### Placed\n- entry: `reserveStock`\n\n### Cancelled\n\n### final\n".to_string()),
     ];
     let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
@@ -365,9 +365,9 @@ fn sequence_doc_json_matches_ts_field_names() {
     let b = vec![
         ("s/buyer.md".to_string(), "---\ntype: uml.Class\ntitle: Buyer\n---\n# Buyer\n".to_string()),
         ("s/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
-        ("s/use.md".to_string(), "---\ntype: uml.Sequence\ntitle: Use\n---\n# Use\n".to_string()),
+        ("s/use.md".to_string(), "---\ntype: uml.SequenceDiagram\ntitle: Use\n---\n# Use\n".to_string()),
         ("s/seq.md".to_string(),
-         "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n- [Buyer](./buyer.md) as buyer\n- [Order](./order.md) as order\n\n## Gates\n- request\n\n## Messages\n- buyer calls order `submit()` as submission\n- order returns `accepted` for submission\n- par\n  - branch `left`\n    - buyer signals order `go`\n  - branch `right`\n    - order signals buyer `done`\n- ref [Use](./use.md) as auth\n".to_string()),
+         "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n- [Buyer](./buyer.md) as buyer\n- [Order](./order.md) as order\n\n## Gates\n- request\n\n## Messages\n- buyer calls order `submit()` as submission\n- order returns `accepted` for submission\n- par\n  - branch `left`\n    - buyer signals order `go`\n  - branch `right`\n    - order signals buyer `done`\n- ref [Use](./use.md) as auth\n".to_string()),
     ];
     let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();
@@ -592,7 +592,7 @@ fn inline_instance_is_promoted_to_a_pool_node_with_edge_and_membership() {
     let b = vec![
         ("m/order.md".into(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".into()),
         ("m/objects.md".into(),
-         "---\ntype: Diagram\ntitle: Objects\nprofile: uml-domain\n---\n# Objects\n\n## Members\n- [Order](./order.md)\n- instance of [Order](./order.md) as order42 with id set to \"ORD-42\" and status set to PLACED\n".into()),
+         "---\ntype: uml.ClassDiagram\ntitle: Objects\nprofile: uml-domain\n---\n# Objects\n\n## Members\n- [Order](./order.md)\n- instance of [Order](./order.md) as order42 with id set to \"ORD-42\" and status set to PLACED\n".into()),
     ];
     let m = projection(&b);
     let v = serde_json::to_value(&m).unwrap();

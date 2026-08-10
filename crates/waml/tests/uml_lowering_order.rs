@@ -326,7 +326,7 @@ fn placement_set_then_remove_resolves_the_reparsed_layout() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "diagram.md",
-            "---\ntype: Diagram\nprofile: uml-domain\n---\n# Diagram\n\n## Notes\nProtected prose.\n",
+            "---\ntype: uml.ClassDiagram\nprofile: uml-domain\n---\n# Diagram\n\n## Notes\nProtected prose.\n",
         ),
     ])
     .unwrap();
@@ -351,7 +351,7 @@ fn placement_set_then_remove_resolves_the_reparsed_layout() {
     .unwrap();
     assert_eq!(
         changed.document_by_concept_id("diagram").unwrap().text(),
-        "---\ntype: Diagram\nprofile: uml-domain\n---\n# Diagram\n\n## Notes\nProtected prose.\n"
+        "---\ntype: uml.ClassDiagram\nprofile: uml-domain\n---\n# Diagram\n\n## Notes\nProtected prose.\n"
     );
 }
 
@@ -458,7 +458,7 @@ fn diagram_and_layout_edits_preserve_unowned_bytes() {
         (
             "diagram.md",
             concat!(
-                "---\ntype: Diagram\nprofile: uml-domain\ntitle: Old\n---\n# Old\n\n",
+                "---\ntype: uml.ClassDiagram\nprofile: uml-domain\ntitle: Old\n---\n# Old\n\n",
                 "## Layout\n- malformed layout ???\n\n",
                 "## Notes\nkeep  \n",
             ),
@@ -494,7 +494,7 @@ fn diagram_and_layout_edits_preserve_unowned_bytes() {
     assert_eq!(
         changed.document_by_concept_id("diagram").unwrap().text(),
         concat!(
-            "---\ntype: Diagram\nprofile: uml-domain\ntitle: New\n---\n# New\n\n",
+            "---\ntype: uml.ClassDiagram\nprofile: uml-domain\ntitle: New\n---\n# New\n\n",
             "## Layout\n- malformed layout ???\n\n",
             "## Notes\nkeep  \n",
         )
@@ -625,7 +625,7 @@ fn rename_rewrites_exact_typed_hrefs_from_each_referrers_path() {
         ),
         (
             "views/deep/report.md",
-            "---\ntype: Diagram\ntitle: Report\nprofile: uml-domain\n---\n# Report\n\n## Members\n- [Order](..\\..\\domain\\order.md)\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Report\nprofile: uml-domain\n---\n# Report\n\n## Members\n- [Order](..\\..\\domain\\order.md)\n",
         ),
         (
             "other/order.md",

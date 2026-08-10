@@ -183,8 +183,8 @@ fn syntax_fingerprint(candidate: &PreparedCandidate) -> Vec<String> {
 
 #[test]
 fn canonical_sequence_format_is_idempotent_and_semantic() {
-    let source = "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Messages\n- ref [Authorize](authorize.md)  as auth\n  - bind order  to caller\n- alt\n  - when `ready`\n  - else\n- opt\n- loop\n- par\n  - branch `payment`\n  - branch\n- break\n- critical\n- assert\n- neg\n- order   calls payment async `charge( as, to, for )`  as charge\n- payment returns `approved`  to order  for charge\n\n## Gates\n- request\n\n## Lifelines\n- [Order](order.md)  as order\n- [Payment](payment.md) as payment\n";
-    let expected = "---\ntype: uml.Sequence\n---\n\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as order\n- [Payment](./payment.md) as payment\n\n## Gates\n- request\n\n## Messages\n- ref [Authorize](./authorize.md) as auth\n  - bind order to caller\n- alt\n  - when `ready`\n  - else\n- opt\n- loop\n- par\n  - branch `payment`\n  - branch\n- break\n- critical\n- assert\n- neg\n- order calls payment async `charge( as, to, for )` as charge\n- payment returns `approved` to order for charge\n";
+    let source = "---\ntype: uml.SequenceDiagram\n---\n# Checkout\n\n## Messages\n- ref [Authorize](authorize.md)  as auth\n  - bind order  to caller\n- alt\n  - when `ready`\n  - else\n- opt\n- loop\n- par\n  - branch `payment`\n  - branch\n- break\n- critical\n- assert\n- neg\n- order   calls payment async `charge( as, to, for )`  as charge\n- payment returns `approved`  to order  for charge\n\n## Gates\n- request\n\n## Lifelines\n- [Order](order.md)  as order\n- [Payment](payment.md) as payment\n";
+    let expected = "---\ntype: uml.SequenceDiagram\n---\n\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as order\n- [Payment](./payment.md) as payment\n\n## Gates\n- request\n\n## Messages\n- ref [Authorize](./authorize.md) as auth\n  - bind order to caller\n- alt\n  - when `ready`\n  - else\n- opt\n- loop\n- par\n  - branch `payment`\n  - branch\n- break\n- critical\n- assert\n- neg\n- order calls payment async `charge( as, to, for )` as charge\n- payment returns `approved` to order for charge\n";
     let candidate = prepared(source, 80);
     let before = declared_fingerprint(&candidate);
     let syntax_before = syntax_fingerprint(&candidate);
@@ -238,9 +238,9 @@ fn canonical_sequence_format_is_idempotent_and_semantic() {
 #[test]
 fn malformed_canonical_sequence_line_prevents_all_formatter_edits() {
     let cases = [
-        "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- order calls payment `charge()` as\n",
-        "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Messages\nalt\n- sender signals receiver `Ready`\n",
-        "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Messages\n- alt\n  when `ready`\n  - else\n",
+        "---\ntype: uml.SequenceDiagram\n---\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as order\n\n## Messages\n- order calls payment `charge()` as\n",
+        "---\ntype: uml.SequenceDiagram\n---\n# Checkout\n\n## Messages\nalt\n- sender signals receiver `Ready`\n",
+        "---\ntype: uml.SequenceDiagram\n---\n# Checkout\n\n## Messages\n- alt\n  when `ready`\n  - else\n",
     ];
     for (index, source) in cases.into_iter().enumerate() {
         let candidate = prepared(source, 82 + index as u64);
@@ -264,7 +264,7 @@ fn malformed_canonical_sequence_line_prevents_all_formatter_edits() {
 
 #[test]
 fn mixed_tab_sequence_indentation_prevents_all_formatter_edits() {
-    let source = "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Messages\n- alt\n  \t- branch `mixed`\n- ref [Authorize](./authorize.md) as auth\n  \t- bind order to caller\n";
+    let source = "---\ntype: uml.SequenceDiagram\n---\n# Checkout\n\n## Messages\n- alt\n  \t- branch `mixed`\n- ref [Authorize](./authorize.md) as auth\n  \t- bind order to caller\n";
     let candidate = prepared(source, 85);
     let action = Formatter
         .format(

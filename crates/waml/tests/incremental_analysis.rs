@@ -149,11 +149,11 @@ fn task5_diagram_fixture() -> SourceBundle {
     SourceBundle::try_from_pairs([
         (
             "order.md",
-            "---\ntype: Diagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- [Order](order-node.md)\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- [Order](order-node.md)\n",
         ),
         (
             "customer.md",
-            "---\ntype: Diagram\ntitle: Customer\nprofile: uml-domain\n---\n# Customer\n\n## Layout\n- [Customer](customer-node.md)\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Customer\nprofile: uml-domain\n---\n# Customer\n\n## Layout\n- [Customer](customer-node.md)\n",
         ),
         ("order-node.md", "---\ntype: uml.Class\n---\n# Order\n"),
         (
@@ -242,7 +242,7 @@ fn shared_waml_code_spans_use_exact_island_tokens_and_absolute_ranges() {
 
 #[test]
 fn shared_waml_code_roles_cover_layout_strings_keywords_and_recovery() {
-    let authored = "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- column of \"Café\", ([Order](order.md)) as row with frame, small margins left of Ghost\n";
+    let authored = "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- column of \"Café\", ([Order](order.md)) as row with frame, small margins left of Ghost\n";
     let candidate = prepared(
         SourceBundle::try_from_pairs([("diagram.md", authored)]).unwrap(),
         None,
@@ -464,7 +464,7 @@ fn invalid_edited_island_keeps_unrelated_projection_current() {
         &source,
         SourceDocument::new(
             path("order.md"),
-            "---\ntype: Diagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- left of\n".into(),
+            "---\ntype: uml.ClassDiagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- left of\n".into(),
         ),
     )
     .unwrap();
@@ -517,7 +517,7 @@ fn affected_analysis_is_sorted_deduplicated_and_includes_semantic_dependents() {
         ),
         (
             "overview.md",
-            "---\ntype: Diagram\n---\n# Overview\n\n## Members\n- [Order](order.md)\n- [Customer](customer.md)\n",
+            "---\ntype: uml.ClassDiagram\n---\n# Overview\n\n## Members\n- [Order](order.md)\n- [Customer](customer.md)\n",
         ),
     ])
     .unwrap();
@@ -571,7 +571,7 @@ fn valid_recovery_replaces_stale_projection_and_clears_diagnostic() {
         &source,
         SourceDocument::new(
             path("order.md"),
-            "---\ntype: Diagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- left of\n".into(),
+            "---\ntype: uml.ClassDiagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- left of\n".into(),
         ),
     )
     .unwrap();
@@ -588,7 +588,7 @@ fn valid_recovery_replaces_stale_projection_and_clears_diagnostic() {
         &invalid,
         SourceDocument::new(
             path("order.md"),
-            "---\ntype: Diagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- [Order](order-node.md)\n".into(),
+            "---\ntype: uml.ClassDiagram\ntitle: Order\nprofile: uml-domain\n---\n# Order\n\n## Layout\n- [Order](order-node.md)\n".into(),
         ),
     )
     .unwrap();

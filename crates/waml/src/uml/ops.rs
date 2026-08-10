@@ -607,8 +607,9 @@ mod tests {
             "---\ntype: uml.Enum\ntitle: Status\n---\n# Status\n\n## Values\n- DRAFT\n- PLACED\n";
         let customer = "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n";
         let relationship = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Relationships\n- depends [Customer](./customer.md)\n";
-        let diagram = "---\ntype: Diagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n";
-        let placed = "---\ntype: Diagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n\n## Layout\n- [Order](./order.md) left of [Customer](./customer.md)\n";
+        let diagram =
+            "---\ntype: uml.ClassDiagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n";
+        let placed = "---\ntype: uml.ClassDiagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n\n## Layout\n- [Order](./order.md) left of [Customer](./customer.md)\n";
 
         assert_reversible(
             SourceBundle::try_from_pairs([("order.md", class)]).unwrap(),

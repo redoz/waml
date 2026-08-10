@@ -1,5 +1,5 @@
 ---
-type: uml.Sequence
+type: uml.SequenceDiagram
 title: Revisioned Edit Transaction
 description: The document-revision, session-revision, preparation, commit, and stale-completion paths for edits.
 ---

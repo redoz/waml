@@ -37,7 +37,7 @@ A doc's role is structural, not a free-text `type`:
 | role | how identified | is a canvas node? |
 |---|---|---|
 | **index** | filename `index.md` | no — navigation only (unchanged from prior spec) |
-| **diagram** | `type: Diagram` + a `## Members` list | no — it's a *view* over nodes |
+| **diagram** | `type: uml.ClassDiagram` + a `## Members` list | no — it's a *view* over nodes |
 | **classifier (node)** | anything else | yes |
 
 ### `type` = `family.Metaclass` (structured dispatch key)
@@ -358,7 +358,7 @@ A diagram is a curated, profiled **view** over nodes — not a classifier.
 
 ```markdown
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Orders Domain Model
 profile: uml-domain
 ---

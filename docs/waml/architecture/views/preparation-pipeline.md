@@ -1,5 +1,5 @@
 ---
-type: uml.Sequence
+type: uml.SequenceDiagram
 title: Preparation Pipeline
 description: The immutable pipeline that prepares source, Markdown, OKF, UML, affected, and revision state for installation.
 ---

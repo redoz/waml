@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: WAML Domain Model
 description: Structural view of WAML's authored bundle, resolved model, model elements, views, and diagnostics.
 profile: uml-domain

@@ -1,5 +1,5 @@
 ---
-type: uml.Activity
+type: uml.ActivityDiagram
 title: Web Delivery
 description: An activity that builds the native editor for a browser and publishes it as a static artifact.
 ---

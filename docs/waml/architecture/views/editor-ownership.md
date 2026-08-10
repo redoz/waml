@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Editor Ownership
 description: The current ownership boundaries of the editor composition root, state, documents, views, and platform effects.
 profile: uml-domain

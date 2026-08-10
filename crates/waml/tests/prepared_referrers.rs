@@ -14,7 +14,7 @@ fn prepared_referrers_query_uses_the_existing_immutable_snapshot() {
         ),
         (
             "domain/diagram.md",
-            "---\ntype: Diagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n\n## Layout\n- order left of customer\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n\n## Layout\n- order left of customer\n",
         ),
     ])
     .unwrap();

@@ -1,5 +1,5 @@
 ---
-type: uml.Activity
+type: uml.ActivityDiagram
 title: Deployment Surfaces
 description: The read, write, and editor-host boundaries of the desktop, browser, command-line, language-server, and VS Code surfaces.
 ---

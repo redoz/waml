@@ -1,5 +1,5 @@
 ---
-type: uml.Activity
+type: uml.ActivityDiagram
 title: Incremental Analysis
 description: The document-local edit, source promotion, and semantic analysis flow for an incremental Markdown change.
 ---

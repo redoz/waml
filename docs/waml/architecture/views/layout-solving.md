@@ -1,5 +1,5 @@
 ---
-type: uml.Activity
+type: uml.ActivityDiagram
 title: Layout Solving
 description: An activity that validates layout inputs and produces view geometry or diagnostics.
 ---

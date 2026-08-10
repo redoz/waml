@@ -79,11 +79,11 @@ fn endpoint_kinds_resolve() {
         ),
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [B](./b.md) as b\n\n## Gates\n- request\n\n## Messages\n- @request signals b `inside`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Target\n\n## Lifelines\n- [B](./b.md) as b\n\n## Gates\n- request\n\n## Messages\n- @request signals b `inside`\n",
         ),
         (
             "s.md",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Gates\n- frame\n\n## Messages\n- ref [Target](./target.md) as auth\n  - bind b to b\n- a calls b `one()`\n- outside signals b `two`\n- @frame signals b `three`\n- auth@request signals b `four`\n- a calls b async `five()`\n- a returns `six` to b\n- a creates b: `B`\n- a destroys b\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Gates\n- frame\n\n## Messages\n- ref [Target](./target.md) as auth\n  - bind b to b\n- a calls b `one()`\n- outside signals b `two`\n- @frame signals b `three`\n- auth@request signals b `four`\n- a calls b async `five()`\n- a returns `six` to b\n- a creates b: `B`\n- a destroys b\n",
         ),
     ]);
     let doc = analysis
@@ -129,7 +129,7 @@ fn outside_to_outside_is_diagnosed_and_excluded_from_runtime_projection() {
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         (
             "s.md",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- outside signals outside `invalid`\n- outside signals a `valid`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- outside signals outside `invalid`\n- outside signals a `valid`\n",
         ),
     ]);
     let doc = analysis
@@ -159,7 +159,7 @@ fn returns_follow_the_locked_candidate_algorithm() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "s.md",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `first()` as first\n- b returns `ok` to a for first\n- a calls b async `second()` as second\n- b returns `ok` for second\n- a calls b `third()`\n- a calls b `fourth()`\n- b returns `ambiguous`\n- b returns `unknown` for missing\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `first()` as first\n- b returns `ok` to a for first\n- a calls b async `second()` as second\n- b returns `ok` for second\n- a calls b `third()`\n- a calls b `fourth()`\n- b returns `ambiguous`\n- b returns `unknown` for missing\n",
         ),
     ]);
     let doc = analysis
@@ -190,7 +190,7 @@ fn return_diagnostics_pin_the_exact_authored_message() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "returns.md",
-            "---\ntype: uml.Sequence\n---\n# Returns\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `one()` as duplicate\n- a calls b `two()` as duplicate\n- b returns `ambiguous explicit` for duplicate\n- b returns `unknown` for missing\n- a returns `unmatched`\n- a calls b `three()`\n- a calls b `four()`\n- b returns `ambiguous inferred`\n- a calls b `done()` as done\n- b returns `done` for done\n- b returns `completed` for done\n- a calls b `conflict()` as conflict\n- a returns `conflicting` for conflict\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Returns\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `one()` as duplicate\n- a calls b `two()` as duplicate\n- b returns `ambiguous explicit` for duplicate\n- b returns `unknown` for missing\n- a returns `unmatched`\n- a calls b `three()`\n- a calls b `four()`\n- b returns `ambiguous inferred`\n- a calls b `done()` as done\n- b returns `done` for done\n- b returns `completed` for done\n- a calls b `conflict()` as conflict\n- a returns `conflicting` for conflict\n",
         ),
     ]);
     let declared = analysis.declared.concept("returns").unwrap();
@@ -219,8 +219,8 @@ fn return_diagnostics_pin_the_exact_authored_message() {
 
 #[test]
 fn fragment_operand_rules_are_exact() {
-    let valid = "---\ntype: uml.Sequence\n---\n# Valid\n\n## Messages\n- alt\n  - when `a`\n  - else\n- opt\n  - when `a`\n- loop\n  - when `a`\n- break\n  - when `a`\n- par\n  - branch `a`\n  - branch\n- critical\n  - branch\n- assert\n  - branch\n- neg\n  - branch\n";
-    let invalid = "---\ntype: uml.Sequence\n---\n# Invalid\n\n## Messages\n- alt\n  - else\n  - when `late`\n  - else\n- opt\n  - else\n- loop\n  - branch\n- break\n  - when `a`\n  - when `b`\n- par\n  - branch\n- critical\n  - branch\n  - branch\n- assert\n  - when `a`\n- neg\n  - else\n";
+    let valid = "---\ntype: uml.SequenceDiagram\n---\n# Valid\n\n## Messages\n- alt\n  - when `a`\n  - else\n- opt\n  - when `a`\n- loop\n  - when `a`\n- break\n  - when `a`\n- par\n  - branch `a`\n  - branch\n- critical\n  - branch\n- assert\n  - branch\n- neg\n  - branch\n";
+    let invalid = "---\ntype: uml.SequenceDiagram\n---\n# Invalid\n\n## Messages\n- alt\n  - else\n  - when `late`\n  - else\n- opt\n  - else\n- loop\n  - branch\n- break\n  - when `a`\n  - when `b`\n- par\n  - branch\n- critical\n  - branch\n  - branch\n- assert\n  - when `a`\n- neg\n  - else\n";
     let analysis = analyze([("valid.md", valid), ("invalid.md", invalid)]);
     let invalid_count = analysis
         .diagnostics
@@ -268,7 +268,7 @@ fn nested_fragments_keep_order_and_branch_boundaries() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "nested.md",
-            "---\ntype: uml.Sequence\n---\n# Nested\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `ready`\n    - a calls b `outer()`\n    - par\n      - branch `left`\n        - a signals b `left`\n      - branch `right`\n        - b signals a `right`\n  - else\n    - b returns `fallback` to a\n- a signals b `after`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Nested\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `ready`\n    - a calls b `outer()`\n    - par\n      - branch `left`\n        - a signals b `left`\n      - branch `right`\n        - b signals a `right`\n  - else\n    - b returns `fallback` to a\n- a signals b `after`\n",
         ),
     ]);
     let doc = analysis
@@ -323,7 +323,7 @@ fn parallel_branches_do_not_infer_returns_from_siblings() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "branches.md",
-            "---\ntype: uml.Sequence\n---\n# Branches\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `call`\n    - a calls b `work()` as work\n  - branch `return`\n    - b returns `wrong sibling` to a\n- b returns `after join` for work\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Branches\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `call`\n    - a calls b `work()` as work\n  - branch `return`\n    - b returns `wrong sibling` to a\n- b returns `after join` for work\n",
         ),
     ]);
     let doc = analysis
@@ -343,7 +343,7 @@ fn conditional_join_keeps_calls_that_can_remain_open() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "conditional.md",
-            "---\ntype: uml.Sequence\n---\n# Conditional\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()` as work\n- opt\n  - when `early`\n    - b returns `early` for work\n- b returns `later` for work\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Conditional\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()` as work\n- opt\n  - when `early`\n    - b returns `early` for work\n- b returns `later` for work\n",
         ),
     ]);
     let doc = analysis
@@ -368,7 +368,7 @@ fn a_multi_operand_opt_does_not_readmit_the_incoming_open_calls() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "multi.md",
-            "---\ntype: uml.Sequence\n---\n# Multi\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()`\n- opt\n  - when `x`\n    - b returns `first`\n  - when `y`\n    - b returns `second`\n- b returns `third`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Multi\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()`\n- opt\n  - when `x`\n    - b returns `first`\n  - when `y`\n    - b returns `second`\n- b returns `third`\n",
         ),
     ]);
     diagnostic(
@@ -388,7 +388,7 @@ fn an_operand_less_fragment_wipes_the_open_calls() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "empty.md",
-            "---\ntype: uml.Sequence\n---\n# Empty\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()`\n- critical\n- b returns `late`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Empty\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `work()`\n- critical\n- b returns `late`\n",
         ),
     ]);
     diagnostic(
@@ -405,15 +405,15 @@ fn interaction_use_resolves_without_flattening() {
         ("payment.md", "---\ntype: uml.Class\n---\n# Payment\n"),
         (
             "audit.md",
-            "---\ntype: uml.Sequence\n---\n# Audit\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Audit\n",
         ),
         (
             "authorize-payment.md",
-            "---\ntype: uml.Sequence\n---\n# Authorize\n\n## Lifelines\n- [Order](./order.md) as caller\n- [Payment](./payment.md) as payment\n\n## Gates\n- request\n\n## Messages\n- ref [Audit](./audit.md) as audit\n- @request calls payment `authorize()` as authorization\n- payment returns `approved` for authorization\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Authorize\n\n## Lifelines\n- [Order](./order.md) as caller\n- [Payment](./payment.md) as payment\n\n## Gates\n- request\n\n## Messages\n- ref [Audit](./audit.md) as audit\n- @request calls payment `authorize()` as authorization\n- payment returns `approved` for authorization\n",
         ),
         (
             "checkout.md",
-            "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as order\n- [Payment](./payment.md) as payment\n\n## Messages\n- ref [Authorize](./authorize-payment.md) as auth\n  - bind order to caller\n  - bind payment to payment\n- order calls auth@request `authorize()` as authorization\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as order\n- [Payment](./payment.md) as payment\n\n## Messages\n- ref [Authorize](./authorize-payment.md) as auth\n  - bind order to caller\n  - bind payment to payment\n- order calls auth@request `authorize()` as authorization\n",
         ),
     ]);
     let checkout = analysis
@@ -462,11 +462,11 @@ fn invalid_interaction_uses_keep_declared_siblings() {
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         (
             "good.md",
-            "---\ntype: uml.Sequence\n---\n# Good\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Good\n",
         ),
         (
             "parent.md",
-            "---\ntype: uml.Sequence\n---\n# Parent\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- ref [Missing](./missing.md) as missing\n- ref [Good](./good.md) as good\n- a signals outside `later`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Parent\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- ref [Missing](./missing.md) as missing\n- ref [Good](./good.md) as good\n- a signals outside `later`\n",
         ),
     ]);
     let declared = analysis.declared.concept("parent").unwrap();
@@ -502,12 +502,12 @@ fn invalid_reference_validation_never_silently_removes_later_valid_uses() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [B](./b.md) as target_b\n\n## Messages\n- target_b signals outside `participates`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Target\n\n## Lifelines\n- [B](./b.md) as target_b\n\n## Messages\n- target_b signals outside `participates`\n",
         ),
-        ("empty.md", "---\ntype: uml.Sequence\n---\n# Empty\n"),
+        ("empty.md", "---\ntype: uml.SequenceDiagram\n---\n# Empty\n"),
         (
             "uses.md",
-            "---\ntype: uml.Sequence\n---\n# Uses\n\n## Lifelines\n- [A](./a.md) as local_a\n\n## Messages\n- ref [Missing](./missing.md) as invalid_link\n- ref [Target](./target.md) as mismatch\n  - bind local_a to target_b\n- ref [Empty](./empty.md) as valid\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Uses\n\n## Lifelines\n- [A](./a.md) as local_a\n\n## Messages\n- ref [Missing](./missing.md) as invalid_link\n- ref [Target](./target.md) as mismatch\n  - bind local_a to target_b\n- ref [Empty](./empty.md) as valid\n",
         ),
     ]);
     let doc = interaction(&analysis, "uses");
@@ -537,17 +537,17 @@ fn interaction_use_cycles_and_binding_errors_are_diagnosed() {
         ("b-class.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [A](./a-class.md) as ta\n- [B](./b-class.md) as tb\n\n## Gates\n- idle\n- idle\n\n## Messages\n- ta calls tb `work()`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Target\n\n## Lifelines\n- [A](./a-class.md) as ta\n- [B](./b-class.md) as tb\n\n## Gates\n- idle\n- idle\n\n## Messages\n- ta calls tb `work()`\n",
         ),
         (
             "bindings.md",
-            "---\ntype: uml.Sequence\n---\n# Bindings\n\n## Lifelines\n- [A](./a-class.md) as pa\n- [B](./b-class.md) as pb\n\n## Messages\n- ref [Target](./target.md) as duplicate-local\n  - bind pa to ta\n  - bind pa to tb\n- ref [Target](./target.md) as duplicate-target\n  - bind pa to ta\n  - bind pb to ta\n- ref [Target](./target.md) as mismatch\n  - bind pa to tb\n  - bind pb to ta\n- ref [Target](./target.md) as missing-binding\n  - bind pa to ta\n- ref [Target](./target.md) as pa\n  - bind pa to ta\n  - bind pb to tb\n- ref [Target](./target.md) as gate-use\n  - bind pa to ta\n  - bind pb to tb\n- pa calls gate-use@idle `outer()`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Bindings\n\n## Lifelines\n- [A](./a-class.md) as pa\n- [B](./b-class.md) as pb\n\n## Messages\n- ref [Target](./target.md) as duplicate-local\n  - bind pa to ta\n  - bind pa to tb\n- ref [Target](./target.md) as duplicate-target\n  - bind pa to ta\n  - bind pb to ta\n- ref [Target](./target.md) as mismatch\n  - bind pa to tb\n  - bind pb to ta\n- ref [Target](./target.md) as missing-binding\n  - bind pa to ta\n- ref [Target](./target.md) as pa\n  - bind pa to ta\n  - bind pb to tb\n- ref [Target](./target.md) as gate-use\n  - bind pa to ta\n  - bind pb to tb\n- pa calls gate-use@idle `outer()`\n",
         ),
-        ("cycle-a.md", "---\ntype: uml.Sequence\n---\n# A\n\n## Messages\n- ref [B](./cycle-b.md) as b\n"),
-        ("cycle-b.md", "---\ntype: uml.Sequence\n---\n# B\n\n## Messages\n- ref [A](./cycle-a.md) as a\n"),
-        ("cycle-x.md", "---\ntype: uml.Sequence\n---\n# X\n\n## Messages\n- ref [Y](./cycle-y.md) as y\n"),
-        ("cycle-y.md", "---\ntype: uml.Sequence\n---\n# Y\n\n## Messages\n- ref [Z](./cycle-z.md) as z\n"),
-        ("cycle-z.md", "---\ntype: uml.Sequence\n---\n# Z\n\n## Messages\n- ref [X](./cycle-x.md) as x\n"),
+        ("cycle-a.md", "---\ntype: uml.SequenceDiagram\n---\n# A\n\n## Messages\n- ref [B](./cycle-b.md) as b\n"),
+        ("cycle-b.md", "---\ntype: uml.SequenceDiagram\n---\n# B\n\n## Messages\n- ref [A](./cycle-a.md) as a\n"),
+        ("cycle-x.md", "---\ntype: uml.SequenceDiagram\n---\n# X\n\n## Messages\n- ref [Y](./cycle-y.md) as y\n"),
+        ("cycle-y.md", "---\ntype: uml.SequenceDiagram\n---\n# Y\n\n## Messages\n- ref [Z](./cycle-z.md) as z\n"),
+        ("cycle-z.md", "---\ntype: uml.SequenceDiagram\n---\n# Z\n\n## Messages\n- ref [X](./cycle-x.md) as x\n"),
     ]);
     assert!(analysis
         .diagnostics
@@ -580,7 +580,7 @@ fn every_binding_issue_drops_the_use_and_reports_it() {
     macro_rules! uses_source {
         ($binds:literal) => {
             concat!(
-                "---\ntype: uml.Sequence\n---\n# Uses\n\n## Lifelines\n",
+                "---\ntype: uml.SequenceDiagram\n---\n# Uses\n\n## Lifelines\n",
                 "- [A](./a.md) as pa\n- [A](./a.md) as pb\n- [A](./a.md) as pc\n\n",
                 "## Messages\n- ref [Target](./target.md) as bad\n",
                 $binds,
@@ -615,7 +615,7 @@ fn every_binding_issue_drops_the_use_and_reports_it() {
             ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
             (
                 "target.md",
-                "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [A](./a.md) as ta\n- [A](./a.md) as tb\n- [B](./b.md) as tc\n\n## Messages\n- ta calls tb `work()`\n",
+                "---\ntype: uml.SequenceDiagram\n---\n# Target\n\n## Lifelines\n- [A](./a.md) as ta\n- [A](./a.md) as tb\n- [B](./b.md) as tc\n\n## Messages\n- ta calls tb `work()`\n",
             ),
             ("uses.md", source),
         ]);
@@ -646,13 +646,13 @@ fn every_binding_issue_drops_the_use_and_reports_it() {
 
 #[test]
 fn binding_diagnostics_pin_the_exact_bind_or_ref() {
-    let source = "---\ntype: uml.Sequence\n---\n# Bindings\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- ref [Target](./target.md) as duplicate\n  - bind a to ta\n  - bind a to tb\n- ref [Target](./target.md) as unknown\n  - bind missing to ta\n  - bind b to tb\n- ref [Target](./target.md) as mismatch\n  - bind a to tb\n  - bind b to ta\n- ref [Target](./target.md) as missing\n  - bind a to ta\n";
+    let source = "---\ntype: uml.SequenceDiagram\n---\n# Bindings\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- ref [Target](./target.md) as duplicate\n  - bind a to ta\n  - bind a to tb\n- ref [Target](./target.md) as unknown\n  - bind missing to ta\n  - bind b to tb\n- ref [Target](./target.md) as mismatch\n  - bind a to tb\n  - bind b to ta\n- ref [Target](./target.md) as missing\n  - bind a to ta\n";
     let analysis = analyze([
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Lifelines\n- [A](./a.md) as ta\n- [B](./b.md) as tb\n\n## Messages\n- ta signals tb `work`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Target\n\n## Lifelines\n- [A](./a.md) as ta\n- [B](./b.md) as tb\n\n## Messages\n- ta signals tb `work`\n",
         ),
         (
             "bindings-focused.md",
@@ -698,11 +698,11 @@ fn gate_diagnostics_pin_the_exact_gate_or_message() {
     let analysis = analyze([
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Gates\n- idle\n- idle\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Target\n\n## Gates\n- idle\n- idle\n",
         ),
         (
             "gates-focused.md",
-            "---\ntype: uml.Sequence\n---\n# Gates\n\n## Messages\n- ref [Target](./target.md) as target\n- target@missing signals outside `missing`\n- target@idle signals outside `disconnected`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Gates\n\n## Messages\n- ref [Target](./target.md) as target\n- target@missing signals outside `missing`\n- target@idle signals outside `disconnected`\n",
         ),
     ]);
     let target = analysis.declared.concept("target").unwrap();
@@ -732,11 +732,11 @@ fn call_and_return_can_share_one_interaction_use_gate() {
         ("client.md", "---\ntype: uml.Class\n---\n# Client\n"),
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Gates\n- request\n\n## Messages\n- @request signals outside `inside`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Target\n\n## Gates\n- request\n\n## Messages\n- @request signals outside `inside`\n",
         ),
         (
             "parent.md",
-            "---\ntype: uml.Sequence\n---\n# Parent\n\n## Lifelines\n- [Client](./client.md) as client\n\n## Messages\n- ref [Target](./target.md) as auth\n- client calls auth@request `authorize()` as authorization\n- auth@request returns `accepted` to client for authorization\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Parent\n\n## Lifelines\n- [Client](./client.md) as client\n\n## Messages\n- ref [Target](./target.md) as auth\n- client calls auth@request `authorize()` as authorization\n- auth@request returns `accepted` to client for authorization\n",
         ),
     ]);
     assert!(!analysis
@@ -765,7 +765,7 @@ fn call_and_return_can_share_one_interaction_use_gate() {
 #[test]
 fn direct_interaction_use_cycle_reports_each_valid_authored_ref() {
     let source =
-        "---\ntype: uml.Sequence\n---\n# Direct\n\n## Messages\n- ref [Missing](./missing.md) as invalid\n- ref [Direct](./direct.md) as self_ref\n";
+        "---\ntype: uml.SequenceDiagram\n---\n# Direct\n\n## Messages\n- ref [Missing](./missing.md) as invalid\n- ref [Direct](./direct.md) as self_ref\n";
     let analysis = analyze([("direct.md", source)]);
     let cycles = analysis
         .diagnostics
@@ -778,8 +778,9 @@ fn direct_interaction_use_cycle_reports_each_valid_authored_ref() {
 
 #[test]
 fn invalid_interaction_use_alias_is_excluded_from_cycle_graph() {
-    let a = "---\ntype: uml.Sequence\n---\n# A\n\n## Messages\n- ref [B](./b.md) as outside\n";
-    let b = "---\ntype: uml.Sequence\n---\n# B\n\n## Messages\n- ref [A](./a.md) as a\n";
+    let a =
+        "---\ntype: uml.SequenceDiagram\n---\n# A\n\n## Messages\n- ref [B](./b.md) as outside\n";
+    let b = "---\ntype: uml.SequenceDiagram\n---\n# B\n\n## Messages\n- ref [A](./a.md) as a\n";
     let analysis = analyze([("a.md", a), ("b.md", b)]);
 
     assert_eq!(
@@ -814,9 +815,9 @@ fn invalid_interaction_use_alias_is_excluded_from_cycle_graph() {
 
 #[test]
 fn indirect_three_document_cycle_reports_each_valid_authored_ref() {
-    let a = "---\ntype: uml.Sequence\n---\n# A\n\n## Messages\n- ref [Missing](./missing.md) as invalid\n- ref [B](./b.md) as b\n";
-    let b = "---\ntype: uml.Sequence\n---\n# B\n\n## Messages\n- ref [C](./c.md) as c\n";
-    let c = "---\ntype: uml.Sequence\n---\n# C\n\n## Messages\n- ref [A](./a.md) as a\n";
+    let a = "---\ntype: uml.SequenceDiagram\n---\n# A\n\n## Messages\n- ref [Missing](./missing.md) as invalid\n- ref [B](./b.md) as b\n";
+    let b = "---\ntype: uml.SequenceDiagram\n---\n# B\n\n## Messages\n- ref [C](./c.md) as c\n";
+    let c = "---\ntype: uml.SequenceDiagram\n---\n# C\n\n## Messages\n- ref [A](./a.md) as a\n";
     let analysis = analyze([("a.md", a), ("b.md", b), ("c.md", c)]);
     let cycles = analysis
         .diagnostics
@@ -840,19 +841,19 @@ fn invalid_runtime_entries_do_not_renumber_valid_siblings() {
     let bad = analyze([
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
-        ("target.md", "---\ntype: uml.Sequence\n---\n# Target\n"),
+        ("target.md", "---\ntype: uml.SequenceDiagram\n---\n# Target\n"),
         (
             "stable.md",
-            "---\ntype: uml.Sequence\n---\n# Stable\n\n## Lifelines\n- [A](./a.md) as outside\n- [A](./a.md) as a\n- [B](./b.md) as a\n- [B](./b.md) as b\n\n## Messages\n- missing signals b `invalid`\n- a signals b `valid`\n- ref [Missing](./missing.md) as missing\n- ref [Target](./target.md) as target\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Stable\n\n## Lifelines\n- [A](./a.md) as outside\n- [A](./a.md) as a\n- [B](./b.md) as a\n- [B](./b.md) as b\n\n## Messages\n- missing signals b `invalid`\n- a signals b `valid`\n- ref [Missing](./missing.md) as missing\n- ref [Target](./target.md) as target\n",
         ),
     ]);
     let fixed = analyze([
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
-        ("target.md", "---\ntype: uml.Sequence\n---\n# Target\n"),
+        ("target.md", "---\ntype: uml.SequenceDiagram\n---\n# Target\n"),
         (
             "stable.md",
-            "---\ntype: uml.Sequence\n---\n# Stable\n\n## Lifelines\n- [A](./a.md) as repaired\n- [A](./a.md) as a\n- [B](./b.md) as duplicate-repaired\n- [B](./b.md) as b\n\n## Messages\n- repaired signals b `repaired`\n- a signals b `valid`\n- ref [Target](./target.md) as repaired-use\n- ref [Target](./target.md) as target\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Stable\n\n## Lifelines\n- [A](./a.md) as repaired\n- [A](./a.md) as a\n- [B](./b.md) as duplicate-repaired\n- [B](./b.md) as b\n\n## Messages\n- repaired signals b `repaired`\n- a signals b `valid`\n- ref [Target](./target.md) as repaired-use\n- ref [Target](./target.md) as target\n",
         ),
     ]);
     let bad_doc = interaction(&bad, "stable");
@@ -884,7 +885,7 @@ fn future_duplicate_call_identity_does_not_ambiguous_match() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "future.md",
-            "---\ntype: uml.Sequence\n---\n# Future\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `first()` as duplicate\n- b returns `first` for duplicate\n- a calls b `later()` as duplicate\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Future\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a calls b `first()` as duplicate\n- b returns `first` for duplicate\n- a calls b `later()` as duplicate\n",
         ),
     ]);
     let doc = analysis
@@ -904,7 +905,7 @@ fn future_duplicate_call_identity_does_not_ambiguous_match() {
 fn alt_with_only_else_is_invalid() {
     let analysis = analyze([(
         "else-only.md",
-        "---\ntype: uml.Sequence\n---\n# Else only\n\n## Messages\n- alt\n  - else\n",
+        "---\ntype: uml.SequenceDiagram\n---\n# Else only\n\n## Messages\n- alt\n  - else\n",
     )]);
     assert!(analysis
         .diagnostics
@@ -919,7 +920,7 @@ fn parallel_sibling_branches_do_not_impose_lifetime_order() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "s.md",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `use`\n    - a signals b `use`\n  - branch `create`\n    - a creates b: `B`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `use`\n    - a signals b `use`\n  - branch `create`\n    - a creates b: `B`\n",
         ),
     ]);
 
@@ -936,7 +937,7 @@ fn lifetime_diagnostics_pin_the_exact_authored_message() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "lifetime.md",
-            "---\ntype: uml.Sequence\n---\n# Lifetime\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a signals b `before`\n- a creates b: `B`\n- a creates b: `B again`\n- a destroys outside\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Lifetime\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a signals b `before`\n- a creates b: `B`\n- a creates b: `B again`\n- a destroys outside\n",
         ),
     ]);
     let declared = analysis.declared.concept("lifetime").unwrap();
@@ -961,7 +962,7 @@ fn repeated_delete_reports_the_exact_second_delete() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "delete.md",
-            "---\ntype: uml.Sequence\n---\n# Delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a destroys b\n- a destroys b\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- a destroys b\n- a destroys b\n",
         ),
     ]);
     let declared = analysis.declared.concept("delete").unwrap();
@@ -983,7 +984,7 @@ fn repeated_delete_reports_the_exact_second_delete() {
 
 #[test]
 fn parallel_sibling_deletes_report_the_second_authored_delete() {
-    let source = "---\ntype: uml.Sequence\n---\n# Parallel delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `first`\n    - a destroys b\n  - branch `second`\n    - a destroys b\n";
+    let source = "---\ntype: uml.SequenceDiagram\n---\n# Parallel delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `first`\n    - a destroys b\n  - branch `second`\n    - a destroys b\n";
     let analysis = analyze([
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
@@ -1018,7 +1019,7 @@ fn delete_after_parallel_join_is_a_repeated_delete() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "post-join-delete.md",
-            "---\ntype: uml.Sequence\n---\n# Post-join delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `delete`\n    - a destroys b\n  - branch `work`\n    - a signals a `work`\n- a destroys b\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Post-join delete\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- par\n  - branch `delete`\n    - a destroys b\n  - branch `work`\n    - a signals a `work`\n- a destroys b\n",
         ),
     ]);
     let declared = analysis.declared.concept("post-join-delete").unwrap();
@@ -1044,10 +1045,10 @@ fn reserved_sequence_names_stay_declared_and_out_of_runtime() {
     let analysis = analyze([
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
-        ("target.md", "---\ntype: uml.Sequence\n---\n# Target\n"),
+        ("target.md", "---\ntype: uml.SequenceDiagram\n---\n# Target\n"),
         (
             "names.md",
-            "---\ntype: uml.Sequence\n---\n# Names\n\n## Lifelines\n- [A](./a.md) as outside\n- [A](./a.md) as bad@lifeline\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Gates\n- outside\n- bad@gate\n- good\n\n## Messages\n- ref [Target](./target.md) as outside\n- ref [Target](./target.md) as bad@use\n- a calls b `first()` as outside\n- a calls b `second()` as bad@call\n- b returns `first` to a for outside\n- b returns `second` to a for bad@call\n- a signals b `kept`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Names\n\n## Lifelines\n- [A](./a.md) as outside\n- [A](./a.md) as bad@lifeline\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Gates\n- outside\n- bad@gate\n- good\n\n## Messages\n- ref [Target](./target.md) as outside\n- ref [Target](./target.md) as bad@use\n- a calls b `first()` as outside\n- a calls b `second()` as bad@call\n- b returns `first` to a for outside\n- b returns `second` to a for bad@call\n- a signals b `kept`\n",
         ),
     ]);
     let declared = analysis.declared.concept("names").unwrap();
@@ -1101,11 +1102,11 @@ fn invalid_target_gate_name_cannot_resolve_through_an_interaction_use() {
         ("a.md", "---\ntype: uml.Class\n---\n# A\n"),
         (
             "target.md",
-            "---\ntype: uml.Sequence\n---\n# Target\n\n## Gates\n- outside\n\n## Messages\n- @outside signals outside `inside`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Target\n\n## Gates\n- outside\n\n## Messages\n- @outside signals outside `inside`\n",
         ),
         (
             "parent.md",
-            "---\ntype: uml.Sequence\n---\n# Parent\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- ref [Target](./target.md) as target\n- a signals target@outside `unsafe`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Parent\n\n## Lifelines\n- [A](./a.md) as a\n\n## Messages\n- ref [Target](./target.md) as target\n- a signals target@outside `unsafe`\n",
         ),
     ]);
 
@@ -1122,11 +1123,11 @@ fn invalid_target_gate_name_cannot_resolve_through_an_interaction_use() {
 fn repairing_an_earlier_operand_does_not_renumber_later_operands() {
     let bad = analyze([(
         "operands.md",
-        "---\ntype: uml.Sequence\n---\n# Operands\n\n## Messages\n- alt\n  - when\n  - when `later`\n",
+        "---\ntype: uml.SequenceDiagram\n---\n# Operands\n\n## Messages\n- alt\n  - when\n  - when `later`\n",
     )]);
     let fixed = analyze([(
         "operands.md",
-        "---\ntype: uml.Sequence\n---\n# Operands\n\n## Messages\n- alt\n  - when `fixed`\n  - when `later`\n",
+        "---\ntype: uml.SequenceDiagram\n---\n# Operands\n\n## Messages\n- alt\n  - when `fixed`\n  - when `later`\n",
     )]);
     let bad_fragment = interaction(&bad, "operands")
         .nodes
@@ -1155,15 +1156,15 @@ fn alt_lifetime_states_join_only_definitely_alive_lifelines() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "sibling.md",
-            "---\ntype: uml.Sequence\n---\n# Sibling\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `create`\n    - a creates b: `B`\n  - else\n    - a signals b `sibling use`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Sibling\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `create`\n    - a creates b: `B`\n  - else\n    - a signals b `sibling use`\n",
         ),
         (
             "implicit.md",
-            "---\ntype: uml.Sequence\n---\n# Implicit\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `create`\n    - a creates b: `B`\n- a signals b `after implicit path`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Implicit\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `create`\n    - a creates b: `B`\n- a signals b `after implicit path`\n",
         ),
         (
             "definite.md",
-            "---\ntype: uml.Sequence\n---\n# Definite\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `first`\n    - a creates b: `B`\n  - else\n    - a creates b: `B`\n- a signals b `after all branches`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Definite\n\n## Lifelines\n- [A](./a.md) as a\n- [B](./b.md) as b\n\n## Messages\n- alt\n  - when `first`\n    - a creates b: `B`\n  - else\n    - a creates b: `B`\n- a signals b `after all branches`\n",
         ),
     ]);
     for (concept_id, message_index) in [("sibling", 1), ("implicit", 1)] {
@@ -1193,7 +1194,7 @@ fn sequence_describes_resolves_through_the_shared_link_ref_parser() {
         ("m/order.md", "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n"),
         (
             "m/checkout.md",
-            "---\ntype: uml.Sequence\ndescribes: [Order](./order.md)\n---\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as o\n\n## Messages\n- outside calls o `place()`\n",
+            "---\ntype: uml.SequenceDiagram\ndescribes: [Order](./order.md)\n---\n# Checkout\n\n## Lifelines\n- [Order](./order.md) as o\n\n## Messages\n- outside calls o `place()`\n",
         ),
     ]);
 

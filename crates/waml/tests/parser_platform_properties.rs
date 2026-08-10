@@ -625,17 +625,21 @@ fn every_supported_literal_and_explicit_near_miss_has_exact_claim_state() {
         "uml.Actor",
         "uml.UseCase",
         "uml.InstanceSpecification",
-        "uml.Activity",
-        "uml.StateMachine",
-        "uml.Sequence",
-        "Diagram",
+        "uml.ClassDiagram",
+        "uml.UseCaseDiagram",
+        "uml.ActivityDiagram",
+        "uml.StateMachineDiagram",
+        "uml.SequenceDiagram",
     ];
     const NEAR_MISSES: &[&str] = &[
         "uml.class",
         "uml.Classx",
         "uml.Diagram",
         "diagram",
-        "uml.SequenceDiagram",
+        "Diagram",
+        "uml.Activity",
+        "uml.StateMachine",
+        "uml.Sequence",
         "uml.Instance",
     ];
     for ty in SUPPORTED {

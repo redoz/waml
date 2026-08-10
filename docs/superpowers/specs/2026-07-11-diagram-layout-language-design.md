@@ -246,7 +246,7 @@ parens to express "the large-margin column, left of Orders".
 
 ```markdown
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Orders Domain Model
 profile: uml-domain
 ---

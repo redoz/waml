@@ -134,6 +134,19 @@ fn second_plan_keeps_upgraded_bytes_and_has_no_applied_reports() {
 }
 
 #[test]
+fn no_op_plan_does_not_validate_unrelated_model_errors() {
+    let files = vec![(
+        "invalid.md".to_string(),
+        "---\ntype: uml.Class\n---\n# Invalid\n\n## Attributes\n- missing colon\n".to_string(),
+    )];
+
+    let plan = plan_upgrade(&files).expect("no migration is required");
+
+    assert_eq!(plan.files, files);
+    assert!(plan.applied.is_empty());
+}
+
+#[test]
 fn later_migration_repairs_temporary_error_before_full_validation() {
     let migrations = [
         Migration {

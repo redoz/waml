@@ -1,5 +1,5 @@
 ---
-type: uml.StateMachine
+type: uml.StateMachineDiagram
 title: Order State
 ---
 # Order State

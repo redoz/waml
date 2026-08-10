@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Crate Ownership
 description: The current dependency direction and ownership of the six production WAML crates.
 profile: uml-domain

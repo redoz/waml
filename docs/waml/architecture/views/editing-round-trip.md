@@ -1,5 +1,5 @@
 ---
-type: uml.Sequence
+type: uml.SequenceDiagram
 title: Editing Round Trip
 description: An interaction that serializes a semantic edit and returns its rebuilt derived view.
 ---

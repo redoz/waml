@@ -61,7 +61,7 @@ fn declared_value<T>(field: &uml::DeclaredField<uml::syntax::UmlLanguage, T>) ->
 fn declared_messages_preserve_authored_fields_without_matching() {
     let analysis = analyze([(
         "s.md",
-        "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- customer calls order `submit()` as submission\n- order returns `accepted` to intruder for submission\n",
+        "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- customer calls order `submit()` as submission\n- order returns `accepted` to intruder for submission\n",
     )]);
     let message = &analysis.declared.concept("s").unwrap().messages[1];
 
@@ -79,7 +79,7 @@ fn declared_messages_preserve_authored_fields_without_matching() {
 
 #[test]
 fn canonical_messages_have_fixed_lossless_slots() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- customer calls order `submit()` as submission\n- order calls worker async `run()` as work\n- order returns `accepted` to customer for submission\n- order signals bus `OrderPlaced`\n- order creates worker: `OrderWorker`\n- order destroys worker\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- customer calls order `submit()` as submission\n- order calls worker async `run()` as work\n- order returns `accepted` to customer for submission\n- order signals bus `OrderPlaced`\n- order creates worker: `OrderWorker`\n- order destroys worker\n";
     let analysis = analyze([("s.md", authored)]);
     let messages = typed::<uml::MessageSyntax>(root(&analysis, "s.md"));
     assert_eq!(messages.len(), 6);
@@ -174,7 +174,7 @@ fn canonical_messages_have_fixed_lossless_slots() {
 
 #[test]
 fn create_and_destroy_reject_async_as_the_target() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- a creates async: `Worker`\n- a destroys async\n- a creates worker: `Worker`\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- a creates async: `Worker`\n- a destroys async\n- a creates worker: `Worker`\n";
     let analysis = analyze([("s.md", authored)]);
     let messages = typed::<uml::MessageSyntax>(root(&analysis, "s.md"));
     assert_eq!(messages.len(), 3);
@@ -208,7 +208,7 @@ fn create_and_destroy_reject_async_as_the_target() {
 
 #[test]
 fn malformed_message_recovers_at_the_next_sibling() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- a calls b `work()` as\n- b returns `done` to\n- b returns `done` for\n- a calls\n- a signals\n- b returns `done` to for work\n- a returns async\n- a signals async b\n- a signals bus `Ready`\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- a calls b `work()` as\n- b returns `done` to\n- b returns `done` for\n- a calls\n- a signals\n- b returns `done` to for work\n- a returns async\n- a signals async b\n- a signals bus `Ready`\n";
     let analysis = analyze([("s.md", authored)]);
     let messages = typed::<uml::MessageSyntax>(root(&analysis, "s.md"));
     assert_eq!(messages.len(), 9);
@@ -251,7 +251,7 @@ fn malformed_message_recovers_at_the_next_sibling() {
 
 #[test]
 fn removed_message_spellings_are_not_messages() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- a replies b: `old`\n- a sends b: `old`\n- a calls b: `old`\n- a signals b `new`\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- a replies b: `old`\n- a sends b: `old`\n- a calls b: `old`\n- a signals b `new`\n";
     let analysis = analyze([("s.md", authored)]);
     let messages = typed::<uml::MessageSyntax>(root(&analysis, "s.md"));
     assert_eq!(messages.len(), 1);
@@ -282,7 +282,7 @@ fn removed_message_spellings_are_not_messages() {
 
 #[test]
 fn all_fragment_heads_and_operand_forms_are_typed() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- alt\n  - when `ready`\n  - else\n- opt\n- loop\n- par\n  - branch `payment`\n    - par\n  - branch\n- break\n- critical\n- assert\n- neg\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- alt\n  - when `ready`\n  - else\n- opt\n- loop\n- par\n  - branch `payment`\n    - par\n  - branch\n- break\n- critical\n- assert\n- neg\n";
     let analysis = analyze([("s.md", authored)]);
     let root = root(&analysis, "s.md");
     let fragments = typed::<uml::SequenceFragmentSyntax>(root.clone());
@@ -322,23 +322,23 @@ fn deferred_fragment_heads_recover_without_consuming_the_next_message() {
     let cases = [
         (
             "strict",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- strict\n- sender signals receiver `Ready`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- strict\n- sender signals receiver `Ready`\n",
         ),
         (
             "seq",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- seq\n- sender signals receiver `Ready`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- seq\n- sender signals receiver `Ready`\n",
         ),
         (
             "ignore",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- ignore\n- sender signals receiver `Ready`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- ignore\n- sender signals receiver `Ready`\n",
         ),
         (
             "consider",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- consider\n- sender signals receiver `Ready`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- consider\n- sender signals receiver `Ready`\n",
         ),
         (
             "coregion",
-            "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- coregion\n- sender signals receiver `Ready`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- coregion\n- sender signals receiver `Ready`\n",
         ),
     ];
 
@@ -376,7 +376,7 @@ fn deferred_fragment_heads_recover_without_consuming_the_next_message() {
 
 #[test]
 fn unknown_operand_words_recover_without_becoming_messages() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- alt\n  - otherwise `not-ready`\n  - sender signals receiver `Ready`\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- alt\n  - otherwise `not-ready`\n  - sender signals receiver `Ready`\n";
     let analysis = analyze([("s.md", authored)]);
     let root = root(&analysis, "s.md");
     assert_eq!(typed::<uml::SequenceFragmentSyntax>(root.clone()).len(), 1);
@@ -388,7 +388,7 @@ fn unknown_operand_words_recover_without_becoming_messages() {
 
 #[test]
 fn operands_require_exactly_one_more_indentation_level() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- alt\n    - when `too-deep`\n  - else\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- alt\n    - when `too-deep`\n  - else\n";
     let analysis = analyze([("s.md", authored)]);
     let document_id = analysis
         .syntax
@@ -412,8 +412,8 @@ fn operands_require_exactly_one_more_indentation_level() {
 
 #[test]
 fn gates_refs_and_bindings_have_fixed_lossless_slots() {
-    let authored = "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Gates\n- request\n\n## Messages\n- ref [Authorize payment](./authorize-payment.md) as auth\n  - bind order to caller\n  - bind payment to payment\n- order calls auth@request `authorize()` as authorization\n- auth@request returns `approved` for authorization\n";
-    let target = "---\ntype: uml.Sequence\n---\n# Authorize payment\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# Checkout\n\n## Gates\n- request\n\n## Messages\n- ref [Authorize payment](./authorize-payment.md) as auth\n  - bind order to caller\n  - bind payment to payment\n- order calls auth@request `authorize()` as authorization\n- auth@request returns `approved` for authorization\n";
+    let target = "---\ntype: uml.SequenceDiagram\n---\n# Authorize payment\n";
     let analysis = analyze([("checkout.md", authored), ("authorize-payment.md", target)]);
     let root = root(&analysis, "checkout.md");
 
@@ -464,8 +464,8 @@ fn gates_refs_and_bindings_have_fixed_lossless_slots() {
 
 #[test]
 fn sequence_reference_errors_recover_at_the_next_typed_line() {
-    let authored = "---\ntype: uml.Sequence\n---\n# Checkout\n\n## Messages\n- ref as missing-link\n- ref [Authorize](./authorize.md) as\n- ref [Authorize](./authorize.md) as auth\n  - bind order caller\n  - bind payment to payment\n- sender calls @ `bad()` as invalid_target\n- use@ signals receiver `bad`\n- sender signals receiver `Ready`\n- ref [Later](./later.md) as later\n";
-    let target = "---\ntype: uml.Sequence\n---\n# Target\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# Checkout\n\n## Messages\n- ref as missing-link\n- ref [Authorize](./authorize.md) as\n- ref [Authorize](./authorize.md) as auth\n  - bind order caller\n  - bind payment to payment\n- sender calls @ `bad()` as invalid_target\n- use@ signals receiver `bad`\n- sender signals receiver `Ready`\n- ref [Later](./later.md) as later\n";
+    let target = "---\ntype: uml.SequenceDiagram\n---\n# Target\n";
     let analysis = analyze([
         ("checkout.md", authored),
         ("authorize.md", target),
@@ -515,7 +515,7 @@ fn sequence_reference_errors_recover_at_the_next_typed_line() {
 
 #[test]
 fn bare_fragment_and_operand_keep_their_text_and_recover_locally() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- alt\n  when `ready`\n  - else\nalt\n- sender signals receiver `Ready`\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- alt\n  when `ready`\n  - else\nalt\n- sender signals receiver `Ready`\n";
     let analysis = analyze([("s.md", authored)]);
     let root = root(&analysis, "s.md");
     let fragments = typed::<uml::SequenceFragmentSyntax>(root.clone());
@@ -563,8 +563,8 @@ fn bare_fragment_and_operand_keep_their_text_and_recover_locally() {
 
 #[test]
 fn mixed_tab_indentation_recovers_before_operand_and_binding_ownership() {
-    let authored = "---\ntype: uml.Sequence\n---\n# S\n\n## Messages\n- alt\n  \t- branch `mixed`\n  - branch `valid`\n- ref [Use](./use.md) as used\n  \t- bind bad to bad\n  - bind good to good\n- sender signals receiver `Ready`\n";
-    let target = "---\ntype: uml.Sequence\n---\n# Use\n";
+    let authored = "---\ntype: uml.SequenceDiagram\n---\n# S\n\n## Messages\n- alt\n  \t- branch `mixed`\n  - branch `valid`\n- ref [Use](./use.md) as used\n  \t- bind bad to bad\n  - bind good to good\n- sender signals receiver `Ready`\n";
+    let target = "---\ntype: uml.SequenceDiagram\n---\n# Use\n";
     let analysis = analyze([("s.md", authored), ("use.md", target)]);
     let root = root(&analysis, "s.md");
     let operands = typed::<uml::SequenceOperandSyntax>(root.clone());
@@ -623,78 +623,78 @@ fn malformed_sequence_forms_recover_at_operand_heading_and_eof_boundaries() {
     let cases = [
         (
             "message-operand.md",
-            "---\ntype: uml.Sequence\n---\n# Message operand\n\n## Messages\n- alt\n  - branch `first`\n    - sender calls\n  - branch `next`\n    - sender signals receiver `kept`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Message operand\n\n## Messages\n- alt\n  - branch `first`\n    - sender calls\n  - branch `next`\n    - sender signals receiver `kept`\n",
             Form::Message,
             Boundary::Operand,
         ),
         (
             "operand-operand.md",
-            "---\ntype: uml.Sequence\n---\n# Operand operand\n\n## Messages\n- alt\n  - when\n  - branch `next`\n    - sender signals receiver `kept`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Operand operand\n\n## Messages\n- alt\n  - when\n  - branch `next`\n    - sender signals receiver `kept`\n",
             Form::Operand,
             Boundary::Operand,
         ),
         (
             "ref-operand.md",
-            "---\ntype: uml.Sequence\n---\n# Ref operand\n\n## Messages\n- alt\n  - branch `first`\n    - ref [Target](./target.md) as\n  - branch `next`\n    - sender signals receiver `kept`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Ref operand\n\n## Messages\n- alt\n  - branch `first`\n    - ref [Target](./target.md) as\n  - branch `next`\n    - sender signals receiver `kept`\n",
             Form::InteractionUse,
             Boundary::Operand,
         ),
         (
             "bind-operand.md",
-            "---\ntype: uml.Sequence\n---\n# Bind operand\n\n## Messages\n- alt\n  - branch `first`\n    - ref [Target](./target.md) as target\n      - bind local\n  - branch `next`\n    - sender signals receiver `kept`\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Bind operand\n\n## Messages\n- alt\n  - branch `first`\n    - ref [Target](./target.md) as target\n      - bind local\n  - branch `next`\n    - sender signals receiver `kept`\n",
             Form::Binding,
             Boundary::Operand,
         ),
         (
             "message-heading.md",
-            "---\ntype: uml.Sequence\n---\n# Message heading\n\n## Messages\n- sender calls\n\n## Gates\n- next\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Message heading\n\n## Messages\n- sender calls\n\n## Gates\n- next\n",
             Form::Message,
             Boundary::Heading,
         ),
         (
             "operand-heading.md",
-            "---\ntype: uml.Sequence\n---\n# Operand heading\n\n## Messages\n- alt\n  - when\n\n## Gates\n- next\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Operand heading\n\n## Messages\n- alt\n  - when\n\n## Gates\n- next\n",
             Form::Operand,
             Boundary::Heading,
         ),
         (
             "ref-heading.md",
-            "---\ntype: uml.Sequence\n---\n# Ref heading\n\n## Messages\n- ref [Target](./target.md) as\n\n## Gates\n- next\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Ref heading\n\n## Messages\n- ref [Target](./target.md) as\n\n## Gates\n- next\n",
             Form::InteractionUse,
             Boundary::Heading,
         ),
         (
             "bind-heading.md",
-            "---\ntype: uml.Sequence\n---\n# Bind heading\n\n## Messages\n- ref [Target](./target.md) as target\n  - bind local\n\n## Gates\n- next\n",
+            "---\ntype: uml.SequenceDiagram\n---\n# Bind heading\n\n## Messages\n- ref [Target](./target.md) as target\n  - bind local\n\n## Gates\n- next\n",
             Form::Binding,
             Boundary::Heading,
         ),
         (
             "message-eof.md",
-            "---\ntype: uml.Sequence\n---\n# Message EOF\n\n## Messages\n- sender calls",
+            "---\ntype: uml.SequenceDiagram\n---\n# Message EOF\n\n## Messages\n- sender calls",
             Form::Message,
             Boundary::Eof,
         ),
         (
             "operand-eof.md",
-            "---\ntype: uml.Sequence\n---\n# Operand EOF\n\n## Messages\n- alt\n  - when",
+            "---\ntype: uml.SequenceDiagram\n---\n# Operand EOF\n\n## Messages\n- alt\n  - when",
             Form::Operand,
             Boundary::Eof,
         ),
         (
             "ref-eof.md",
-            "---\ntype: uml.Sequence\n---\n# Ref EOF\n\n## Messages\n- ref [Target](./target.md) as",
+            "---\ntype: uml.SequenceDiagram\n---\n# Ref EOF\n\n## Messages\n- ref [Target](./target.md) as",
             Form::InteractionUse,
             Boundary::Eof,
         ),
         (
             "bind-eof.md",
-            "---\ntype: uml.Sequence\n---\n# Bind EOF\n\n## Messages\n- ref [Target](./target.md) as target\n  - bind local",
+            "---\ntype: uml.SequenceDiagram\n---\n# Bind EOF\n\n## Messages\n- ref [Target](./target.md) as target\n  - bind local",
             Form::Binding,
             Boundary::Eof,
         ),
     ];
-    let target = "---\ntype: uml.Sequence\n---\n# Target\n";
+    let target = "---\ntype: uml.SequenceDiagram\n---\n# Target\n";
 
     for (path, authored, form, boundary) in cases {
         let analysis = analyze([(path, authored), ("target.md", target)]);

@@ -263,7 +263,7 @@ fn publishes_diagnostics_for_a_malformed_flow_bullet_with_no_extra_wiring() {
     );
 
     let inited = r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#;
-    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/tmp/flow.md","languageId":"markdown","version":1,"text":"---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### Ship\n- goes to Deliver\n"}}}"#;
+    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///C:/tmp/flow.md","languageId":"markdown","version":1,"text":"---\ntype: uml.ActivityDiagram\ntitle: A\n---\n# A\n\n## Nodes\n\n### Ship\n- goes to Deliver\n"}}}"#;
     for msg in [inited, open] {
         stdin.write_all(frame(msg).as_bytes()).unwrap();
     }

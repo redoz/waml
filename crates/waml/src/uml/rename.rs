@@ -319,7 +319,7 @@ mod tests {
              "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n- first: [OrderLine](./order-line.md)\n\n## Relationships\n- composes [OrderLine](./order-line.md) as [OrderLine](./order-line.md): 1 to 1..* lines\n".to_string()),
             // a diagram referrer: member link
             ("shop/diagram.md".to_string(),
-             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [OrderLine](./order-line.md)\n".to_string()),
+             "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [OrderLine](./order-line.md)\n".to_string()),
         ]
     }
 
@@ -378,7 +378,7 @@ mod tests {
             ("shop/order.md".to_string(),
              "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
             ("shop/diagram.md".to_string(),
-             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n\n## Layout\n- [Order](./order.md) with collapsed\n".to_string()),
+             "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n\n## Layout\n- [Order](./order.md) with collapsed\n".to_string()),
         ];
         let out = apply(&b, vec![node_rename("order", "invoice")]).unwrap();
 
@@ -409,7 +409,7 @@ mod tests {
             ("shop/customer.md".to_string(),
              "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
             ("shop/diagram.md".to_string(),
-             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- order left of customer\n".to_string()),
+             "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Order](./order.md)\n- [Customer](./customer.md)\n\n## Layout\n- order left of customer\n".to_string()),
         ];
         let out = apply(&b, vec![node_rename("order", "invoice")]).unwrap();
 

@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Model Vocabulary
 description: Structural view of the element kinds, their labels, the presentation lens, and the solved geometry.
 profile: uml-domain

@@ -737,7 +737,7 @@ fn referrers_includes_layout_link_reference() {
     let b = vec![
         ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
         ("a/diagram.md".to_string(),
-         "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- [Order](./order.md) with collapsed\n".to_string()),
+         "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- [Order](./order.md) with collapsed\n".to_string()),
     ];
     let refs = crate::uml::lower::referrers(&b, "order");
     assert!(
@@ -752,7 +752,7 @@ fn referrers_includes_layout_bare_reference() {
         ("a/order.md".to_string(), "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n".to_string()),
         ("a/customer.md".to_string(), "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n".to_string()),
         ("a/diagram.md".to_string(),
-         "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- order left of customer\n".to_string()),
+         "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n- order left of customer\n".to_string()),
     ];
     let refs = crate::uml::lower::referrers(&b, "order");
     assert!(
@@ -931,7 +931,7 @@ fn rel_rm_resolves_endpoint_target_addressed_by_full_path_id() {
 fn diagram_doc() -> Bundle {
     vec![(
         "shop/dia.md".to_string(),
-        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n".to_string(),
+        "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n".to_string(),
     )]
 }
 
@@ -1181,7 +1181,7 @@ fn layout_diagram(layout_body: &str) -> Bundle {
     vec![(
         "shop/dia.md".to_string(),
         format!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n{layout_body}"
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n{layout_body}"
         ),
     )]
 }
@@ -1190,7 +1190,7 @@ fn layout_diagram(layout_body: &str) -> Bundle {
 fn diagram_no_layout() -> Bundle {
     vec![(
         "shop/dia.md".to_string(),
-        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n".to_string(),
+        "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n".to_string(),
     )]
 }
 

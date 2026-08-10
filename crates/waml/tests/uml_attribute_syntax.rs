@@ -94,10 +94,11 @@ fn catalog_claims_each_supported_uml_type_once_and_leaves_generic_types_unclaime
         ("uml.Actor", "classifier"),
         ("uml.UseCase", "classifier"),
         ("uml.InstanceSpecification", "concept"),
-        ("uml.Activity", "behavior"),
-        ("uml.StateMachine", "behavior"),
-        ("uml.Sequence", "behavior"),
-        ("Diagram", "diagram"),
+        ("uml.ActivityDiagram", "behavior"),
+        ("uml.StateMachineDiagram", "behavior"),
+        ("uml.SequenceDiagram", "behavior"),
+        ("uml.ClassDiagram", "diagram"),
+        ("uml.UseCaseDiagram", "diagram"),
     ];
     let source =
         SourceBundle::try_from_pairs(accepted.iter().enumerate().map(|(index, (ty, _))| {

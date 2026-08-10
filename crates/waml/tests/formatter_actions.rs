@@ -51,22 +51,22 @@ fn valid_fixtures_keep_exact_canonical_bytes_and_are_idempotent() {
         (
             "diagram.md",
             include_str!("fixtures/parser-platform/diagram.md"),
-            "---\ntype: Diagram\ntitle: Orders\nprofile: uml-domain\n---\n\n# Orders\n\n## Members\n- [Café Order](./class.md)\n- [Status](./enum.md)\n\n## Layout\n- class right of enum\n",
+            "---\ntype: uml.ClassDiagram\ntitle: Orders\nprofile: uml-domain\n---\n\n# Orders\n\n## Members\n- [Café Order](./class.md)\n- [Status](./enum.md)\n\n## Layout\n- class right of enum\n",
         ),
         (
             "activity.md",
             include_str!("fixtures/parser-platform/activity.md"),
-            "---\ntype: uml.Activity\ntitle: Fulfil\n---\n\n# Fulfil\n\n## Nodes\n\n### Start\n- transitions to Pack\n\n### Pack\n- transitions to Done\n\n### Done\n",
+            "---\ntype: uml.ActivityDiagram\ntitle: Fulfil\n---\n\n# Fulfil\n\n## Nodes\n\n### Start\n- transitions to Pack\n\n### Pack\n- transitions to Done\n\n### Done\n",
         ),
         (
             "state-machine.md",
             include_str!("fixtures/parser-platform/state-machine.md"),
-            "---\ntype: uml.StateMachine\ntitle: Order State\n---\n\n# Order State\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
+            "---\ntype: uml.StateMachineDiagram\ntitle: Order State\n---\n\n# Order State\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
         ),
         (
             "sequence.md",
-            "---\ntype: uml.Sequence\ntitle: Checkout\n---\n# Checkout\n\n## Lifelines\n\n- [Buyer](./object.md)\n- [Order](./class.md)\n\n## Messages\n\n- Buyer calls Order `submit()` as submission\n",
-            "---\ntype: uml.Sequence\ntitle: Checkout\n---\n\n# Checkout\n\n## Lifelines\n- [Buyer](./object.md)\n- [Order](./class.md)\n\n## Messages\n- Buyer calls Order `submit()` as submission\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: Checkout\n---\n# Checkout\n\n## Lifelines\n\n- [Buyer](./object.md)\n- [Order](./class.md)\n\n## Messages\n\n- Buyer calls Order `submit()` as submission\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: Checkout\n---\n\n# Checkout\n\n## Lifelines\n- [Buyer](./object.md)\n- [Order](./class.md)\n\n## Messages\n- Buyer calls Order `submit()` as submission\n",
         ),
     ];
     for (path, source, expected) in fixtures {
@@ -188,7 +188,7 @@ fn formatter_does_not_rewrite_orphan_or_recovery_traces() {
 
 #[test]
 fn removed_sequence_spellings_are_not_rewritten_as_canonical_messages() {
-    let source = "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Messages\n- a sends b: `old`\n- a replies b: `old`\n- a calls b: `old`\n";
+    let source = "---\ntype: uml.SequenceDiagram\n---\n# Sequence\n\n## Messages\n- a sends b: `old`\n- a replies b: `old`\n- a calls b: `old`\n";
     let candidate = prepared("sequence.md", source, 5);
     let snapshot = candidate
         .uml()
@@ -234,23 +234,23 @@ fn noncanonical_claimed_families_match_exact_canonical_bytes() {
         ),
         (
             "diagram.md",
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\n- Users with FRAME and LARGE margins\n\n## Members\n\n- [User](user.md)\n",
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n\n# D\n\n## Members\n- [User](user.md)\n\n## Layout\n- Users with frame, large margin\n",
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Layout\n\n- Users with FRAME and LARGE margins\n\n## Members\n\n- [User](user.md)\n",
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n\n# D\n\n## Members\n- [User](user.md)\n\n## Layout\n- Users with frame, large margin\n",
         ),
         (
             "activity.md",
-            "---\ntype: uml.Activity\ntitle: A\n---\n# A\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
-            "---\ntype: uml.Activity\ntitle: A\n---\n\n# A\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
+            "---\ntype: uml.ActivityDiagram\ntitle: A\n---\n# A\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
+            "---\ntype: uml.ActivityDiagram\ntitle: A\n---\n\n# A\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
         ),
         (
             "state.md",
-            "---\ntype: uml.StateMachine\ntitle: S\n---\n# S\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
-            "---\ntype: uml.StateMachine\ntitle: S\n---\n\n# S\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
+            "---\ntype: uml.StateMachineDiagram\ntitle: S\n---\n# S\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
+            "---\ntype: uml.StateMachineDiagram\ntitle: S\n---\n\n# S\n\n## Nodes\n\n### Draft\n- on `submit` transitions to Submitted\n\n### Submitted\n",
         ),
         (
             "sequence.md",
-            "---\ntype: uml.Sequence\ntitle: Q\n---\n# Q\n\n## Messages\n\n- Buyer  calls Order `submit()`  as submission\n\n## Lifelines\n\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n",
-            "---\ntype: uml.Sequence\ntitle: Q\n---\n\n# Q\n\n## Lifelines\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n\n## Messages\n- Buyer calls Order `submit()` as submission\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: Q\n---\n# Q\n\n## Messages\n\n- Buyer  calls Order `submit()`  as submission\n\n## Lifelines\n\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: Q\n---\n\n# Q\n\n## Lifelines\n- [Buyer](./buyer.md)\n- [Order](./order.md)\n\n## Messages\n- Buyer calls Order `submit()` as submission\n",
         ),
     ];
     for (path, source, expected) in fixtures {

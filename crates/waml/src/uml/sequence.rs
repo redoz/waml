@@ -465,7 +465,7 @@ fn interaction_use_graph(
             };
             let target_is_sequence = context.okf.concept(&target).is_some_and(|concept| {
                 crate::model::ElementType::parse(&concept.ty)
-                    == crate::model::ElementType::Behavior(crate::model::BehaviorKind::Sequence)
+                    == crate::model::ElementType::Diagram(crate::model::DiagramKind::Sequence)
             });
             if !target_is_sequence {
                 continue;
@@ -681,7 +681,7 @@ pub(crate) fn lower(
         let target_concept = declared.concept(&target);
         let target_is_sequence = context.okf.concept(&target).is_some_and(|concept| {
             crate::model::ElementType::parse(&concept.ty)
-                == crate::model::ElementType::Behavior(crate::model::BehaviorKind::Sequence)
+                == crate::model::ElementType::Diagram(crate::model::DiagramKind::Sequence)
         });
         let mut valid_use = target_concept.is_some() && target_is_sequence;
         if !valid_use {

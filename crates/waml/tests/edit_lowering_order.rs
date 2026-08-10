@@ -137,7 +137,7 @@ fn uml_rename_then_placement_set_rewrites_and_resolves_current_ids() {
         ("b.md", "---\ntype: uml.Class\n---\n# B\n"),
         (
             "diagram.md",
-            "---\ntype: Diagram\nprofile: uml-domain\n---\n# Diagram\n\n## Members\n- [A](./a.md)\n- [B](./b.md)\n",
+            "---\ntype: uml.ClassDiagram\nprofile: uml-domain\n---\n# Diagram\n\n## Members\n- [A](./a.md)\n- [B](./b.md)\n",
         ),
     ])
     .unwrap();

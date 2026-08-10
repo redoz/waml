@@ -1,5 +1,5 @@
 ---
-type: uml.Sequence
+type: uml.SequenceDiagram
 title: Share Round Trip
 description: An interaction that packs a bundle into a link and rebuilds that bundle in a browser.
 ---

@@ -5,7 +5,7 @@ fn diagram_display_frontmatter_projects_all_supported_fields() {
     let source = SourceBundle::try_from_pairs([(
         "domain.md",
         "---\n\
-         type: Diagram\n\
+         type: uml.ClassDiagram\n\
          title: Domain\n\
          profile: uml-domain\n\
          description: Notes\n\
@@ -60,7 +60,7 @@ fn diagram_display_uses_legacy_attribute_fields_when_newer_fields_are_absent() {
     let source = SourceBundle::try_from_pairs([(
         "domain.md",
         "---\n\
-         type: Diagram\n\
+         type: uml.ClassDiagram\n\
          title: Domain\n\
          profile: uml-domain\n\
          attributeDetail: name-type\n\
@@ -89,7 +89,7 @@ fn diagram_display_preserves_absent_empty_and_zero_frontmatter_states() {
         (
             "absent.md",
             "---\n\
-             type: Diagram\n\
+             type: uml.ClassDiagram\n\
              title: Absent\n\
              profile: uml-domain\n\
              ---\n\
@@ -98,7 +98,7 @@ fn diagram_display_preserves_absent_empty_and_zero_frontmatter_states() {
         (
             "empty.md",
             "---\n\
-             type: Diagram\n\
+             type: uml.ClassDiagram\n\
              title: Empty\n\
              profile: uml-domain\n\
              stereotypeFilter: []\n\

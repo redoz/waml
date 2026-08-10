@@ -19,7 +19,7 @@ fn authored_href_spelling_is_preserved_while_resolution_is_canonical() {
         ),
         (
             "shop/d.md",
-            "---\ntype: Diagram\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Money](money.md)\n\n## Layout\n- [Money](money.md?compact#value)\n",
+            "---\ntype: uml.ClassDiagram\nprofile: uml-domain\n---\n# D\n\n## Members\n- [Money](money.md)\n\n## Layout\n- [Money](money.md?compact#value)\n",
         ),
     ])
     .unwrap();

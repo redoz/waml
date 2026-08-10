@@ -155,7 +155,7 @@ title: Place Order
 
 ## Substrate 2 — flow (activity + state machine)
 
-One directed graph per document. `type: uml.Activity` or `uml.StateMachine`
+One directed graph per document. `type: uml.ActivityDiagram` or `uml.StateMachine`
 selects the flavor; both parse identically. One frontmatter field, `describes:`,
 links the behavior to the entity it belongs to for both flavors — a state
 machine describes a Class, an activity describes (realizes) the use case or
@@ -214,7 +214,7 @@ navigable), or a link when the target is a real element in another document.
 
 ```markdown
 ---
-type: uml.StateMachine
+type: uml.StateMachineDiagram
 title: Order Lifecycle
 describes: [Order](./order.md)
 ---
@@ -245,7 +245,7 @@ describes: [Order](./order.md)
 ### final
 ```
 
-The same document with `type: uml.Activity` reads the plain headings as
+The same document with `type: uml.ActivityDiagram` reads the plain headings as
 actions, uses `decision` nodes for branches, and renders an activity-final
 shape — identical grammar. Activity edges lean on guards rather than events, and
 `else` marks a decision's default branch:
@@ -269,7 +269,7 @@ this is deferred.
 
 ## Substrate 3 — interaction (sequence)
 
-`type: uml.Sequence` + optional `describes:`. Two sections.
+`type: uml.SequenceDiagram` + optional `describes:`. Two sections.
 
 ### `## Lifelines`
 

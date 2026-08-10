@@ -1,5 +1,5 @@
 ---
-type: Diagram
+type: uml.UseCaseDiagram
 title: Editor Workflows
 description: External roles and shipped workflows at the WAML editor boundary.
 profile: uml-domain

@@ -67,7 +67,7 @@ title: Money
 
 <!-- waml/1 part 7d91ac42f5e649c4a6cd939cfa60b920 shop/orders-domain.md -->
 ---
-type: Diagram
+type: uml.ClassDiagram
 title: Orders Domain
 profile: uml-domain
 ---
