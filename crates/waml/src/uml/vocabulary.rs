@@ -9,7 +9,9 @@
 //! retyped, so the enum stays the authority and this module stays the single
 //! lookup surface.
 
-use crate::model::{FlowNodeKind, FragmentKind, RelationshipKind};
+use crate::model::{
+    BehaviorKind, ElementType, FlowNodeKind, FragmentKind, RelationshipKind, UmlMetaclass,
+};
 
 /// Every word the `## Layout` grammar treats as a keyword rather than a name.
 /// Sorted, so the table is greppable and the sortedness test is meaningful.
@@ -153,4 +155,55 @@ pub fn canonical_layout_keyword(word: &str) -> Option<&'static str> {
         .iter()
         .copied()
         .find(|keyword| *keyword == lower.as_str())
+}
+
+/// Every spelling the frontmatter `type:` key accepts, in offer order.
+///
+/// Derived from [`UmlMetaclass::ALL`] and [`BehaviorKind::ALL`] rather than
+/// written out again: this module exists so a keyword has exactly one home, and
+/// the element types are no exception.
+pub fn element_type_names() -> impl Iterator<Item = String> {
+    UmlMetaclass::ALL
+        .iter()
+        .map(|metaclass| format!("uml.{}", metaclass.name()))
+        .chain(
+            BehaviorKind::ALL
+                .iter()
+                .map(|kind| format!("uml.{}", kind.name())),
+        )
+        .chain(std::iter::once(ElementType::Diagram.as_str()))
+}
+
+#[cfg(test)]
+mod element_type_tests {
+    use super::*;
+
+    /// The deliberate-update guard. Adding a variant forces the compiler to
+    /// extend `name()`, but nothing forces `ALL` to grow with it, so the counts
+    /// are pinned here: bump them in the same change that adds the variant.
+    #[test]
+    fn every_element_type_is_listed_exactly_once() {
+        assert_eq!(UmlMetaclass::ALL.len(), 10);
+        assert_eq!(BehaviorKind::ALL.len(), 3);
+        let names = element_type_names().collect::<Vec<_>>();
+        assert_eq!(names.len(), 14);
+        let mut sorted = names.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), names.len(), "duplicate spelling in {names:?}");
+    }
+
+    /// Every offered spelling must round-trip through the parser the guarding
+    /// code uses. An offer the analysis would call `Unknown` is a bug.
+    #[test]
+    fn every_offered_spelling_parses_back_to_itself() {
+        for name in element_type_names() {
+            let parsed = ElementType::parse(&name);
+            assert!(
+                !matches!(parsed, ElementType::Unknown(_)),
+                "{name} does not parse"
+            );
+            assert_eq!(parsed.as_str(), name);
+        }
+    }
 }

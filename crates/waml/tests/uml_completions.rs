@@ -713,3 +713,38 @@ fn an_inline_instance_name_is_derived_from_its_classifier_link_title() {
     assert!(names.contains(&"source"), "{names:?}");
     assert!(names.contains(&"sb"), "{names:?}");
 }
+
+#[test]
+fn the_frontmatter_type_value_offers_every_element_type() {
+    // The UML tree wraps frontmatter in a raw MarkdownRegion, so this position
+    // has no UML slot. The markdown tree does have one: a FrontmatterEntry
+    // keyed `type` whose value token is where the cursor sits.
+    let offered = labels("---\ntype: |\n---\n# D\n");
+    let words = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Keyword)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    for expected in ["uml.Class", "uml.Sequence", "uml.Actor", "Diagram"] {
+        assert!(
+            words.contains(&expected),
+            "{expected} missing from {words:?}"
+        );
+    }
+}
+
+#[test]
+fn a_half_typed_element_type_filters_to_the_matching_ones() {
+    let offered = labels("---\ntype: uml.Se|\n---\n# D\n");
+    let words = offered
+        .iter()
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(words, ["uml.Sequence"], "{words:?}");
+}
+
+#[test]
+fn a_frontmatter_key_that_is_not_type_offers_nothing() {
+    assert!(labels("---\ntitle: |\n---\n# D\n").is_empty());
+    assert!(labels("---\n|\n---\n# D\n").is_empty());
+}

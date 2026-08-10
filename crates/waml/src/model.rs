@@ -346,22 +346,30 @@ pub enum UmlMetaclass {
 }
 
 impl UmlMetaclass {
+    /// Every metaclass, in the order they are offered. This is the only list:
+    /// `parse` reads it rather than repeating the spellings, so a new variant
+    /// cannot be parseable and unofferable (or the reverse). `ALL_COUNT` below
+    /// is the deliberate-update guard.
+    pub const ALL: &'static [UmlMetaclass] = &[
+        UmlMetaclass::Class,
+        UmlMetaclass::Interface,
+        UmlMetaclass::Enum,
+        UmlMetaclass::DataType,
+        UmlMetaclass::Package,
+        UmlMetaclass::Note,
+        UmlMetaclass::Association,
+        UmlMetaclass::Actor,
+        UmlMetaclass::UseCase,
+        UmlMetaclass::InstanceSpecification,
+    ];
+
     fn parse(metaclass: &str) -> Option<UmlMetaclass> {
-        match metaclass {
-            "Class" => Some(UmlMetaclass::Class),
-            "Interface" => Some(UmlMetaclass::Interface),
-            "Enum" => Some(UmlMetaclass::Enum),
-            "DataType" => Some(UmlMetaclass::DataType),
-            "Package" => Some(UmlMetaclass::Package),
-            "Note" => Some(UmlMetaclass::Note),
-            "Association" => Some(UmlMetaclass::Association),
-            "Actor" => Some(UmlMetaclass::Actor),
-            "UseCase" => Some(UmlMetaclass::UseCase),
-            "InstanceSpecification" => Some(UmlMetaclass::InstanceSpecification),
-            _ => None,
-        }
+        UmlMetaclass::ALL
+            .iter()
+            .copied()
+            .find(|candidate| candidate.name() == metaclass)
     }
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             UmlMetaclass::Class => "Class",
             UmlMetaclass::Interface => "Interface",
@@ -388,13 +396,19 @@ pub enum BehaviorKind {
 }
 
 impl BehaviorKind {
+    /// Every behavior kind, in the order they are offered. As with
+    /// [`UmlMetaclass::ALL`], this is the only list and `parse` reads it.
+    pub const ALL: &'static [BehaviorKind] = &[
+        BehaviorKind::Activity,
+        BehaviorKind::StateMachine,
+        BehaviorKind::Sequence,
+    ];
+
     pub fn parse(s: &str) -> Option<BehaviorKind> {
-        match s {
-            "Activity" => Some(BehaviorKind::Activity),
-            "StateMachine" => Some(BehaviorKind::StateMachine),
-            "Sequence" => Some(BehaviorKind::Sequence),
-            _ => None,
-        }
+        BehaviorKind::ALL
+            .iter()
+            .copied()
+            .find(|candidate| candidate.name() == s)
     }
     pub fn name(self) -> &'static str {
         match self {

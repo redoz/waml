@@ -8,7 +8,8 @@
 use std::sync::Arc;
 
 use waml_syntax::{
-    AstNode, SyntaxElement, SyntaxNode, SyntaxToken, SyntaxTree, TextRange, TextSize,
+    AstNode, OkfMarkdownLanguage, OkfMarkdownSyntaxKind, SyntaxElement, SyntaxNode, SyntaxToken,
+    SyntaxTree, TextRange, TextSize,
 };
 
 use crate::action::ActionError;
@@ -226,6 +227,13 @@ pub fn completions(
         .catalog
         .document(document)
         .ok_or(ActionError::UnknownDocument { document })?;
+    // Frontmatter is checked before the UML tree is even looked up, and must
+    // stay that way: a document whose `type:` is still unwritten has no UML
+    // tree at all, and that is precisely when the author needs this list.
+    let frontmatter = frontmatter_type_candidates(&context, document, version.revision(), offset);
+    if !frontmatter.is_empty() {
+        return Ok(frontmatter);
+    }
     let Some(snapshot) = context.uml().syntax.document(document) else {
         return Ok(Vec::new());
     };
@@ -933,4 +941,103 @@ fn sibling_link_title(node: &SyntaxNode<UmlLanguage>) -> Option<String> {
         current = bullet.parent();
     }
     None
+}
+
+/// Candidates for the frontmatter `type:` value.
+///
+/// Every other completion position is a fixed slot in the UML tree. This one is
+/// not, and cannot be: the UML parser wraps the whole frontmatter block in a
+/// `MarkdownRegion` of raw tokens on purpose, so no amount of looking at that
+/// tree will find a `type:` value. The markdown parser *does* model it, as a
+/// `FrontmatterEntry` with a key token and a value token. So the move is the
+/// same one the rest of this module makes -- ask the parser that owns the
+/// grammar where the cursor is -- pointed at the other grammar.
+///
+/// Read the entry the way `crate::frontmatter` reads it, so there is one
+/// understanding of a frontmatter entry rather than two.
+fn frontmatter_type_candidates(
+    context: &ActionContext<'_>,
+    document: DocumentId,
+    revision: waml_syntax::DocumentRevision,
+    offset: TextSize,
+) -> Vec<Completion> {
+    let Some(markdown) = context.okf().markdown_snapshot(document) else {
+        return Vec::new();
+    };
+    // The UML path proves the snapshot and the catalog agree by pointer; this
+    // path reaches a different snapshot, so it makes the equivalent check
+    // rather than trusting that they moved together.
+    if markdown.revision() != revision {
+        return Vec::new();
+    }
+    let at = offset.to_usize();
+    let mut entries = Vec::new();
+    collect_frontmatter_entries(&markdown.tree().root(), &mut entries);
+    let Some(entry) = entries.into_iter().find(|entry| {
+        let range = entry.range();
+        range.start().to_usize() <= at && at <= range.end().to_usize()
+    }) else {
+        return Vec::new();
+    };
+    let tokens = entry
+        .children()
+        .filter_map(SyntaxElement::into_token)
+        .collect::<Vec<_>>();
+    let keyed_type = tokens
+        .iter()
+        .find(|token| token.kind() == OkfMarkdownSyntaxKind::FrontmatterKey)
+        .is_some_and(|key| key.text().write_to_string().trim() == "type");
+    if !keyed_type {
+        return Vec::new();
+    }
+    // The key half of the entry is not a value position: completing on
+    // `ty|pe:` would offer element types where a key belongs.
+    let after_colon = tokens
+        .iter()
+        .find(|token| token.kind() == OkfMarkdownSyntaxKind::ColonToken)
+        .map(|colon| colon.range().end().to_usize());
+    if !after_colon.is_some_and(|colon_end| at >= colon_end) {
+        return Vec::new();
+    }
+    let value = tokens.iter().find(|token| {
+        token.kind() == OkfMarkdownSyntaxKind::FrontmatterValue && !token.flags().is_missing()
+    });
+    // An empty value has no token to replace, so the candidate is inserted at
+    // the cursor; a half-typed one is replaced whole, exactly as a UML slot is.
+    let replace = match value {
+        Some(token) if token.trimmed_range().start() != token.trimmed_range().end() => {
+            token.trimmed_range()
+        }
+        _ => match TextRange::new(offset, offset) {
+            Ok(range) => range,
+            Err(_) => return Vec::new(),
+        },
+    };
+    let source = markdown.text().shared().as_str();
+    let prefix = source
+        .get(replace.start().to_usize()..at)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    vocabulary::element_type_names()
+        .filter(|name| name.to_ascii_lowercase().starts_with(&prefix))
+        .map(|name| Completion {
+            label: Arc::from(name.as_str()),
+            insert: Arc::from(name.as_str()),
+            detail: None,
+            kind: CompletionKind::Keyword,
+            replace,
+        })
+        .collect()
+}
+
+fn collect_frontmatter_entries(
+    node: &SyntaxNode<OkfMarkdownLanguage>,
+    out: &mut Vec<SyntaxNode<OkfMarkdownLanguage>>,
+) {
+    if node.kind() == OkfMarkdownSyntaxKind::FrontmatterEntry {
+        out.push(node.clone());
+    }
+    for child in node.children().filter_map(SyntaxElement::into_node) {
+        collect_frontmatter_entries(&child, out);
+    }
 }
