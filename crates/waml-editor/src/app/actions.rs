@@ -12,12 +12,14 @@ enum ObserverHandler {
     CaptionAndDocks,
     PopupResults,
     ConflictList,
+    Inspector,
 }
 
-const OBSERVER_ORDER: [ObserverHandler; 3] = [
+const OBSERVER_ORDER: [ObserverHandler; 4] = [
     ObserverHandler::CaptionAndDocks,
     ObserverHandler::PopupResults,
     ObserverHandler::ConflictList,
+    ObserverHandler::Inspector,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +95,7 @@ impl App {
                 ObserverHandler::CaptionAndDocks => self.observe_caption_and_docks(cx, actions),
                 ObserverHandler::PopupResults => self.observe_popup_results(cx, actions),
                 ObserverHandler::ConflictList => self.observe_conflict_list(cx, actions),
+                ObserverHandler::Inspector => self.observe_inspector(cx, actions),
             }
         }
 
@@ -379,6 +382,73 @@ impl App {
             }
             Some(crate::popup::conflict_list::ConflictListAction::None) | None => {}
         }
+    }
+
+    fn observe_inspector(&mut self, cx: &mut Cx, actions: &Actions) {
+        let action = self
+            .ui
+            .widget(cx, ids!(inspector))
+            .borrow::<crate::inspector_panel::Inspector>()
+            .and_then(|panel| panel.trace_action(actions));
+        let Some(action) = action else {
+            return;
+        };
+        use crate::inspector_panel::InspectorAction;
+        let (selector, edit, label) = match action {
+            InspectorAction::AddTrace {
+                selector,
+                index,
+                label,
+                href,
+            } => (
+                selector,
+                waml::uml::TraceEdit::Insert { index, label, href },
+                "Add transition trace",
+            ),
+            InspectorAction::UpdateTrace {
+                selector,
+                index,
+                label,
+                href,
+            } => (
+                selector,
+                waml::uml::TraceEdit::Update { index, label, href },
+                "Update transition trace",
+            ),
+            InspectorAction::RemoveTrace { selector, index } => (
+                selector,
+                waml::uml::TraceEdit::Remove { index },
+                "Remove transition trace",
+            ),
+            InspectorAction::MoveTrace { selector, from, to } => (
+                selector,
+                waml::uml::TraceEdit::Move { from, to },
+                "Move transition trace",
+            ),
+            InspectorAction::OpenTrace(target) => {
+                self.handle_navigation_intent(
+                    cx,
+                    crate::navigation::NavigationIntent::Resolved {
+                        target,
+                        disposition: crate::navigation::OpenDisposition::Preview,
+                    },
+                );
+                return;
+            }
+            InspectorAction::None | InspectorAction::Edited(_) => return,
+        };
+        self.apply_session_edit(
+            cx,
+            crate::document::EditIntent {
+                edit: waml::edit::PendingEdit::new(waml::uml::Batch(vec![
+                    waml::uml::Op::EditTransitionTraces { selector, edit },
+                ])),
+                label: label.into(),
+                merge_key: None,
+                after_location: None,
+            },
+            "transition trace edit failed",
+        );
     }
 
     fn handle_tree_context_menu(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
@@ -1275,6 +1345,7 @@ mod tests {
                 ObserverHandler::CaptionAndDocks,
                 ObserverHandler::PopupResults,
                 ObserverHandler::ConflictList,
+                ObserverHandler::Inspector,
             ]
         );
     }

@@ -177,6 +177,7 @@ pub struct InspectorView {
     pub associations: Vec<AssocRow>,
     /// Ordered typed traceability relationships. Empty for non-transition subjects.
     pub traces: Vec<TraceRow>,
+    pub transition_selector: Option<waml::uml::TransitionSelector>,
 }
 
 /// Human label for a classifier's element type: `uml.Class` -> `Class`.
@@ -450,6 +451,7 @@ fn behavior_element_view(title: String, kind_label: &str) -> InspectorView {
         members: Vec::new(),
         associations: Vec::new(),
         traces: Vec::new(),
+        transition_selector: None,
     }
 }
 
@@ -473,6 +475,7 @@ pub fn build_view_from_analysis(
             members: Vec::new(),
             associations: Vec::new(),
             traces: Vec::new(),
+            transition_selector: None,
         });
     view.attributes = declared
         .attributes
@@ -533,6 +536,7 @@ fn build_diagram_view(model: &Model, key: &str) -> Option<InspectorView> {
         members: Vec::new(),
         associations: Vec::new(),
         traces: Vec::new(),
+        transition_selector: None,
     })
 }
 
@@ -617,6 +621,7 @@ fn build_classifier_view(model: &Model, key: &str) -> Option<InspectorView> {
         members: Vec::new(),
         associations,
         traces: Vec::new(),
+        transition_selector: None,
     })
 }
 
@@ -654,6 +659,7 @@ fn build_group_view(model: &Model, name: &str) -> Option<InspectorView> {
         members,
         associations: Vec::new(),
         traces: Vec::new(),
+        transition_selector: None,
     })
 }
 
@@ -712,6 +718,12 @@ fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
                 }
             })
             .collect();
+        let source_node = model
+            .activity_nodes
+            .iter()
+            .find(|node| node.key == edge.from)
+            .map(|node| node.id.clone())
+            .unwrap_or_else(|| edge.from.clone());
         return Some(InspectorView {
             title: format!("{} → {}", node_label(&edge.from), node_label(&edge.to)),
             kind_label: kind_label.to_string(),
@@ -723,6 +735,11 @@ fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
             members: Vec::new(),
             associations: Vec::new(),
             traces,
+            transition_selector: Some(waml::uml::TransitionSelector {
+                behavior: edge.behavior.clone(),
+                source_node,
+                occurrence: edge.source_occurrence,
+            }),
         });
     }
     // Split an optional `#N` occurrence ordinal off the tail (see `edge_key`);
@@ -752,6 +769,7 @@ fn build_edge_view(model: &Model, id: &str) -> Option<InspectorView> {
         members: Vec::new(),
         associations: Vec::new(),
         traces: Vec::new(),
+        transition_selector: None,
     })
 }
 
@@ -1316,7 +1334,7 @@ mod tests {
         let source = waml::source::SourceBundle::try_from_pairs([
             (
                 "sign-in.md",
-                "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `authenticated` transitions to SignedIn traces [AUTH](./contract.md#auth) traces [OIDC](https://openid.net/specs/openid-connect-core-1_0.html) traces [Missing](./missing.md)\n\n### SignedIn\n",
+                "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `broken` transitions to MissingNode\n- on `authenticated` transitions to SignedIn traces [AUTH](./contract.md#auth) traces [OIDC](https://openid.net/specs/openid-connect-core-1_0.html) traces [Missing](./missing.md)\n\n### SignedIn\n",
             ),
             ("contract.md", "# Contract\n\n## AUTH\n"),
         ])
@@ -1352,6 +1370,7 @@ mod tests {
         ));
         assert_eq!(view.traces[2].status, TraceStatus::Unresolved);
         assert_eq!(view.traces[2].navigation, None);
+        assert_eq!(view.transition_selector.unwrap().occurrence, 1);
     }
 
     #[test]

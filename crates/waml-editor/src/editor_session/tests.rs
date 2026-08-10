@@ -1217,6 +1217,46 @@ fn request(edit: PendingEdit, label: &str) -> EditRequest {
 }
 
 #[test]
+fn transition_trace_edit_is_one_undoable_session_change() {
+    let source = SourceBundle::try_from_pairs([(
+        "flow.md",
+        "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
+    )])
+    .unwrap();
+    let mut session = EditorSession::default();
+    session.replace(source.clone()).unwrap();
+    let op = Op::EditTransitionTraces {
+        selector: waml::uml::TransitionSelector {
+            behavior: "flow".into(),
+            source_node: "Start".into(),
+            occurrence: 0,
+        },
+        edit: waml::uml::TraceEdit::Insert {
+            index: 0,
+            label: "Claim".into(),
+            href: "https://example.com/claim".into(),
+        },
+    };
+
+    session
+        .apply_edit(request(
+            PendingEdit::new(waml::uml::Batch(vec![op])),
+            "Add transition trace",
+        ))
+        .unwrap();
+    assert!(session
+        .source()
+        .document_by_concept_id("flow")
+        .unwrap()
+        .text()
+        .contains("traces [Claim](https://example.com/claim)"));
+
+    session.undo().unwrap().expect("one undo entry");
+    assert_eq!(session.source(), &source);
+    assert!(session.undo().unwrap().is_none());
+}
+
+#[test]
 fn replacement_owns_one_revision_scoped_analysis_snapshot() {
     let bundle = diagram_bundle("");
     let mut session = EditorSession::default();

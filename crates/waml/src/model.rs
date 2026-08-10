@@ -573,6 +573,12 @@ pub struct FlowEdge {
     pub behavior: String,
     /// Source activity-node pool key (always a node in `behavior`).
     pub from: String,
+    /// Zero-based authored transition occurrence within the source flow node.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "sourceOccurrence", default, skip_serializing_if = "is_zero")
+    )]
+    pub source_occurrence: usize,
     /// Target activity-node pool key for a LOCAL target; the link title for a
     /// cross-document target (matches no local node key → not drawn, mirroring
     /// the class-diagram edge rule).
@@ -616,6 +622,11 @@ pub struct FlowEdge {
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub traces: Vec<TransitionTrace>,
+}
+
+#[cfg(feature = "serde")]
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 /// One behavior document as a **view** (design spec §4): it no longer owns its

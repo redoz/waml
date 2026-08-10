@@ -35,6 +35,7 @@ use crate::inspector::{
     build_view, effective_field, subject_to_index, AssocDir, AssocRow, ElementKind, ElementRow,
     FieldId, InspectorView, Subject,
 };
+use crate::navigation::NavigationTarget;
 use crate::node_style::{accent_bucket, AccentBucket};
 use crate::popup::base::PopupResult;
 use crate::popup::select::{SelectItem, SelectLead};
@@ -220,6 +221,73 @@ script_mod! {
                 }
             }
 
+            trace_heading_row := View {
+                width: Fill
+                height: Fit
+                flow: Right
+                spacing: 8.0
+                visible: false
+                trace_heading := SectionHeading { width: Fill }
+                trace_add := Button { text: "Add" }
+            }
+            trace_editor := View {
+                width: Fill
+                height: Fit
+                flow: Down
+                spacing: 6.0
+                visible: false
+                trace_label := TextInput {
+                    width: Fill
+                    empty_text: "Trace label"
+                }
+                trace_href := TextInput {
+                    width: Fill
+                    empty_text: "Document, fragment, or HTTPS URL"
+                }
+                trace_editor_actions := View {
+                    width: Fill
+                    height: Fit
+                    flow: Right
+                    spacing: 6.0
+                    trace_save := Button { text: "Save" }
+                    trace_cancel := Button { text: "Cancel" }
+                }
+            }
+            trace_list_wrap := View {
+                width: Fill
+                height: Fit
+                flow: Down
+                visible: false
+                trace_list := FlatList {
+                    width: Fill
+                    height: Fit
+                    flow: Down
+                    spacing: 6.0
+                    Row := View {
+                        width: Fill
+                        height: Fit
+                        flow: Down
+                        spacing: 4.0
+                        trace_label := Label { text: "" }
+                        trace_href := Label {
+                            text: ""
+                            draw_text +: { color: atlas.text_dim text_style: fonts.text_label }
+                        }
+                        trace_actions := View {
+                            width: Fill
+                            height: Fit
+                            flow: Right
+                            spacing: 4.0
+                            trace_open := Button { text: "Open" }
+                            trace_edit := Button { text: "Edit" }
+                            trace_remove := Button { text: "Remove" }
+                            trace_up := Button { text: "Up" }
+                            trace_down := Button { text: "Down" }
+                        }
+                    }
+                }
+            }
+
             desc_heading := SectionHeading { }
             // Editable description body (click-to-edit rect captured in draw_walk).
             // A wrapper View carries the edit field-bg *behind* the label so the
@@ -302,6 +370,38 @@ pub enum InspectorAction {
     #[default]
     None,
     Edited(String),
+    AddTrace {
+        selector: waml::uml::TransitionSelector,
+        index: usize,
+        label: String,
+        href: String,
+    },
+    UpdateTrace {
+        selector: waml::uml::TransitionSelector,
+        index: usize,
+        label: String,
+        href: String,
+    },
+    RemoveTrace {
+        selector: waml::uml::TransitionSelector,
+        index: usize,
+    },
+    MoveTrace {
+        selector: waml::uml::TransitionSelector,
+        from: usize,
+        to: usize,
+    },
+    OpenTrace(NavigationTarget),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum TraceEditorState {
+    #[default]
+    Closed,
+    Adding,
+    Editing {
+        index: usize,
+    },
 }
 
 #[derive(Script, ScriptHook, Widget)]
@@ -353,6 +453,8 @@ pub struct Inspector {
     /// override write, no `Edited` action) unless the buffer actually changed.
     #[rust]
     edit_original: String,
+    #[rust]
+    trace_editor: TraceEditorState,
     #[rust]
     field_rects: Vec<(FieldId, Rect)>,
 
@@ -538,6 +640,9 @@ impl Widget for Inspector {
         self.view.handle_event(cx, event, scope);
 
         let uid = self.widget_uid();
+        if let Event::Actions(actions) = event {
+            self.handle_trace_actions(cx, actions, uid);
+        }
         // All hit rects (pin, caret, pencil, inline-edit fields) are recorded
         // in `draw_walk` off `self.view.area().rect(cx)`, which *during a
         // draw* reports the pre-alignment turtle origin. The panel used to live
@@ -666,6 +771,7 @@ impl Widget for Inspector {
         let attr_list_uid = self.view.widget(cx, ids!(body.attr_list)).widget_uid();
         let members_list_uid = self.view.widget(cx, ids!(body.members_list)).widget_uid();
         let rel_list_uid = self.view.widget(cx, ids!(body.rel_list)).widget_uid();
+        let trace_list_uid = self.view.widget(cx, ids!(body.trace_list)).widget_uid();
         while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
             if !show_body {
                 continue;
@@ -721,6 +827,24 @@ impl Widget for Inspector {
                                 &format!("{} {}", dir_glyph(assoc.dir), meta_line(assoc)),
                             );
                             rv.set_target(&assoc.target_key, assoc.target_kind);
+                            row.draw_all(cx, &mut Scope::empty());
+                        }
+                    }
+                }
+            }
+            if item.widget_uid() == trace_list_uid {
+                if let Some(view) = self.proj.clone() {
+                    if let Some(mut list) = item.as_flat_list().borrow_mut() {
+                        for (index, trace) in view.traces.iter().enumerate() {
+                            let item_id = LiveId::from_str(&format!("trace-{index}"));
+                            let row = list.item(cx, item_id, id!(Row)).unwrap();
+                            row.label(cx, ids!(trace_label)).set_text(cx, &trace.label);
+                            row.label(cx, ids!(trace_href)).set_text(cx, &trace.href);
+                            row.widget(cx, ids!(trace_open))
+                                .set_visible(cx, trace.navigation.is_some());
+                            row.widget(cx, ids!(trace_up)).set_visible(cx, index > 0);
+                            row.widget(cx, ids!(trace_down))
+                                .set_visible(cx, index + 1 < view.traces.len());
                             row.draw_all(cx, &mut Scope::empty());
                         }
                     }
@@ -871,6 +995,133 @@ impl Widget for Inspector {
 }
 
 impl Inspector {
+    fn begin_trace_edit(&mut self, cx: &mut Cx, state: TraceEditorState, label: &str, href: &str) {
+        self.trace_editor = state;
+        self.view
+            .text_input(cx, ids!(body.trace_editor.trace_label))
+            .set_text(cx, label);
+        self.view
+            .text_input(cx, ids!(body.trace_editor.trace_href))
+            .set_text(cx, href);
+        self.view.redraw(cx);
+    }
+
+    fn handle_trace_actions(&mut self, cx: &mut Cx, actions: &Actions, uid: WidgetUid) {
+        let Some(view) = self.proj.clone() else {
+            return;
+        };
+        let Some(selector) = view.transition_selector.clone() else {
+            return;
+        };
+        if self
+            .view
+            .button(cx, ids!(body.trace_heading_row.trace_add))
+            .clicked(actions)
+        {
+            self.begin_trace_edit(cx, TraceEditorState::Adding, "", "");
+            return;
+        }
+        if self
+            .view
+            .button(
+                cx,
+                ids!(body.trace_editor.trace_editor_actions.trace_cancel),
+            )
+            .clicked(actions)
+        {
+            self.trace_editor = TraceEditorState::Closed;
+            self.view.redraw(cx);
+            return;
+        }
+        if self
+            .view
+            .button(cx, ids!(body.trace_editor.trace_editor_actions.trace_save))
+            .clicked(actions)
+        {
+            let label = self
+                .view
+                .text_input(cx, ids!(body.trace_editor.trace_label))
+                .text();
+            let href = self
+                .view
+                .text_input(cx, ids!(body.trace_editor.trace_href))
+                .text();
+            if label.trim().is_empty() || href.trim().is_empty() {
+                return;
+            }
+            let action = match self.trace_editor.clone() {
+                TraceEditorState::Adding => Some(InspectorAction::AddTrace {
+                    selector,
+                    index: view.traces.len(),
+                    label,
+                    href,
+                }),
+                TraceEditorState::Editing { index } => Some(InspectorAction::UpdateTrace {
+                    selector,
+                    index,
+                    label,
+                    href,
+                }),
+                TraceEditorState::Closed => None,
+            };
+            if let Some(action) = action {
+                self.trace_editor = TraceEditorState::Closed;
+                cx.widget_action(uid, action);
+                self.view.redraw(cx);
+            }
+            return;
+        }
+
+        let list = self.view.flat_list(cx, ids!(body.trace_list));
+        for (item_id, item) in list.items_with_actions(actions) {
+            let Some(index) = view.traces.iter().enumerate().find_map(|(index, _)| {
+                (item_id == LiveId::from_str(&format!("trace-{index}"))).then_some(index)
+            }) else {
+                continue;
+            };
+            if item.button(cx, ids!(trace_open)).clicked(actions) {
+                if let Some(target) = view.traces[index].navigation.clone() {
+                    cx.widget_action(uid, InspectorAction::OpenTrace(target));
+                }
+            } else if item.button(cx, ids!(trace_edit)).clicked(actions) {
+                self.begin_trace_edit(
+                    cx,
+                    TraceEditorState::Editing { index },
+                    &view.traces[index].label,
+                    &view.traces[index].href,
+                );
+            } else if item.button(cx, ids!(trace_remove)).clicked(actions) {
+                cx.widget_action(
+                    uid,
+                    InspectorAction::RemoveTrace {
+                        selector: selector.clone(),
+                        index,
+                    },
+                );
+            } else if item.button(cx, ids!(trace_up)).clicked(actions) && index > 0 {
+                cx.widget_action(
+                    uid,
+                    InspectorAction::MoveTrace {
+                        selector: selector.clone(),
+                        from: index,
+                        to: index - 1,
+                    },
+                );
+            } else if item.button(cx, ids!(trace_down)).clicked(actions)
+                && index + 1 < view.traces.len()
+            {
+                cx.widget_action(
+                    uid,
+                    InspectorAction::MoveTrace {
+                        selector: selector.clone(),
+                        from: index,
+                        to: index + 1,
+                    },
+                );
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn elements_for_test(&self) -> &[ElementRow] {
         &self.elements
@@ -947,6 +1198,24 @@ impl Inspector {
                 .set_text(cx, "RELATIONSHIPS");
         }
 
+        let has_transition = view.transition_selector.is_some();
+        self.view
+            .widget(cx, ids!(body.trace_heading_row))
+            .set_visible(cx, has_transition);
+        self.view
+            .widget(cx, ids!(body.trace_list_wrap))
+            .set_visible(cx, has_transition && !view.traces.is_empty());
+        self.view.widget(cx, ids!(body.trace_editor)).set_visible(
+            cx,
+            has_transition && self.trace_editor != TraceEditorState::Closed,
+        );
+        if has_transition {
+            self.view
+                .widget(cx, ids!(body.trace_heading_row.trace_heading))
+                .as_section_heading()
+                .set_text(cx, "TRACES");
+        }
+
         // DESCRIPTION (always shown so there is an affordance to add one).
         self.view
             .widget(cx, ids!(body.desc_heading))
@@ -988,6 +1257,7 @@ impl Inspector {
     fn install_subject(&mut self, cx: &mut Cx, subject: Subject) {
         self.subject = subject;
         self.editing = None;
+        self.trace_editor = TraceEditorState::Closed;
         // Subject changes no longer force-unfold -- dock state is independent
         // of the selected subject.
         // Re-mark the box's selection so a pick made elsewhere (canvas/tree)
@@ -1259,6 +1529,18 @@ impl Inspector {
         }
     }
 
+    pub fn trace_action(&self, actions: &Actions) -> Option<InspectorAction> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        match item.cast() {
+            action @ (InspectorAction::AddTrace { .. }
+            | InspectorAction::UpdateTrace { .. }
+            | InspectorAction::RemoveTrace { .. }
+            | InspectorAction::MoveTrace { .. }
+            | InspectorAction::OpenTrace(_)) => Some(action),
+            InspectorAction::None | InspectorAction::Edited(_) => None,
+        }
+    }
+
     /// A member/association card was clicked this pass. Scans both section
     /// FlatLists' grouped actions and returns the clicked row's `(key, kind)`.
     /// `App`/`ClassDiagramView` repoints the inspector and selects the node.
@@ -1313,6 +1595,75 @@ impl Inspector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transition_subject_installs_trace_section_and_editor_fields() {
+        let mut vm = crate::script_gate::boot_test_vm();
+        crate::theme_atlas::script_mod(&mut vm);
+        crate::fonts::script_mod(&mut vm);
+        crate::icons::script_mod(&mut vm);
+        crate::icon_button::script_mod(&mut vm);
+        crate::select_box::script_mod(&mut vm);
+        crate::section_heading::script_mod(&mut vm);
+        crate::attr_row::script_mod(&mut vm);
+        crate::ref_card::script_mod(&mut vm);
+        crate::inspector_panel::script_mod(&mut vm);
+        let value = script_eval!(vm, { mod.widgets.Inspector {} });
+        let mut widget = WidgetRef::script_new(&mut vm);
+        widget.script_apply(&mut vm, &Apply::New, &mut Scope::empty(), value);
+        let cx = vm.cx_mut();
+        let mut inspector = widget.borrow_mut::<Inspector>().unwrap();
+        let source = waml::source::SourceBundle::try_from_pairs([(
+            "flow.md",
+            "---\ntype: uml.Activity\ntitle: Flow\n---\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [Claim](https://example.com/claim)\n\n### Done\n",
+        )])
+        .unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let edge_key = prepared.uml().projection.flow_edges[0].key.clone();
+
+        inspector.set_subject_analysis(cx, prepared.uml(), Subject::Edge(edge_key));
+        assert_eq!(inspector.proj.as_ref().unwrap().traces.len(), 1);
+        inspector.begin_trace_edit(
+            cx,
+            TraceEditorState::Editing { index: 0 },
+            "Updated",
+            "https://example.com/updated",
+        );
+
+        assert_eq!(
+            inspector.trace_editor,
+            TraceEditorState::Editing { index: 0 }
+        );
+        assert!(inspector
+            .view
+            .widget(cx, ids!(body.trace_heading_row))
+            .borrow::<View>()
+            .is_some());
+        assert!(inspector
+            .view
+            .widget(cx, ids!(body.trace_editor))
+            .borrow::<View>()
+            .is_some());
+        assert!(inspector
+            .view
+            .widget(cx, ids!(body.trace_editor.trace_label))
+            .borrow::<TextInput>()
+            .is_some());
+        assert_eq!(
+            inspector
+                .view
+                .text_input(cx, ids!(body.trace_editor.trace_label))
+                .text(),
+            "Updated"
+        );
+        assert_eq!(
+            inspector
+                .view
+                .text_input(cx, ids!(body.trace_editor.trace_href))
+                .text(),
+            "https://example.com/updated"
+        );
+    }
 
     #[test]
     fn picker_selection_keeps_declared_recovery_rows_and_revision_bound_actions() {

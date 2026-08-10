@@ -1366,6 +1366,7 @@ mod tests {
             kind: waml::model::FlowEdgeKind::ControlFlow,
             behavior: "flow".into(),
             from: "flow#Start".into(),
+            source_occurrence: 0,
             // No such local node, and no `to_ref`: one `UnknownFlowTarget`.
             to: "flow#Nope".into(),
             to_ref: None,

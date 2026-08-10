@@ -2264,7 +2264,7 @@ fn lower_flow_behavior(
             refines,
             notes: node.notes.iter().filter_map(field_value).cloned().collect(),
         });
-        for transition in node.transitions.iter() {
+        for (source_occurrence, transition) in node.transitions.iter().enumerate() {
             let Some(target) = field_value(&transition.target) else {
                 continue;
             };
@@ -2328,6 +2328,7 @@ fn lower_flow_behavior(
                 },
                 behavior: concept.concept_id.clone(),
                 from: format!("{}#{}", concept.concept_id, identity),
+                source_occurrence,
                 to,
                 to_ref,
                 trigger: field_value(&transition.trigger).cloned(),
