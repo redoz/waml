@@ -41,7 +41,7 @@ pub(crate) fn intersect_rect(a: Rect, b: Rect) -> Rect {
     }
 }
 
-pub(crate) fn segment_quad(a: DVec2, b: DVec2, thickness: f64) -> Rect {
+fn segment_quad(a: DVec2, b: DVec2, thickness: f64) -> Rect {
     let mut min = dvec2(a.x.min(b.x), a.y.min(b.y));
     let mut size = dvec2((a.x - b.x).abs(), (a.y - b.y).abs());
     if size.x < thickness {
@@ -53,15 +53,6 @@ pub(crate) fn segment_quad(a: DVec2, b: DVec2, thickness: f64) -> Rect {
         size.y = thickness;
     }
     Rect { pos: min, size }
-}
-
-pub(crate) fn snap_bar_to_device(rect: Rect, dpi: f64) -> Rect {
-    let snap = |v: f64| (v * dpi).round() / dpi;
-    let size = |v: f64| ((v * dpi).round().max(1.0)) / dpi;
-    Rect {
-        pos: dvec2(snap(rect.pos.x), snap(rect.pos.y)),
-        size: dvec2(size(rect.size.x), size(rect.size.y)),
-    }
 }
 
 pub(crate) fn elbow_radius(a: DVec2, v: DVec2, b: DVec2, r_base: f64) -> f64 {
@@ -252,19 +243,6 @@ mod tests {
     }
 
     #[test]
-    fn snapping_respects_hidpi_device_pixels() {
-        let snapped = snap_bar_to_device(
-            Rect {
-                pos: dvec2(10.3, 20.3),
-                size: dvec2(0.4, 12.2),
-            },
-            2.0,
-        );
-        assert_eq!(snapped.pos, dvec2(10.5, 20.5));
-        assert_eq!(snapped.size, dvec2(0.5, 12.0));
-    }
-
-    #[test]
     fn segment_quad_centers_the_stroke_on_the_routed_line() {
         let thickness = 2.0;
         let q = segment_quad(dvec2(10.0, 50.0), dvec2(30.0, 50.0), thickness);
@@ -380,44 +358,5 @@ mod tests {
         );
         assert!(marker_geometry(Marker::None, ep, d, 8.0).is_none());
         assert!(marker_geometry(Marker::OpenArrow, ep, dvec2(0.0, 0.0), 8.0).is_none());
-    }
-
-    #[test]
-    fn snap_bar_lands_on_the_device_grid() {
-        let q = snap_bar_to_device(
-            Rect {
-                pos: dvec2(10.3, 49.7),
-                size: dvec2(20.4, 0.6),
-            },
-            1.0,
-        );
-        assert_eq!(q.pos, dvec2(10.0, 50.0));
-        assert_eq!(q.size, dvec2(20.0, 1.0));
-        let a = snap_bar_to_device(
-            Rect {
-                pos: dvec2(0.0, 12.2),
-                size: dvec2(30.0, 1.0),
-            },
-            1.0,
-        );
-        let b = snap_bar_to_device(
-            Rect {
-                pos: dvec2(0.0, 12.7),
-                size: dvec2(30.0, 1.0),
-            },
-            1.0,
-        );
-        assert_eq!(a.size, b.size);
-        assert_eq!(a.pos.y.fract(), 0.0);
-        assert_eq!(b.pos.y.fract(), 0.0);
-        let q = snap_bar_to_device(
-            Rect {
-                pos: dvec2(4.1, 4.1),
-                size: dvec2(10.0, 0.5),
-            },
-            2.0,
-        );
-        assert_eq!(q.pos, dvec2(4.0, 4.0));
-        assert_eq!(q.size, dvec2(10.0, 0.5));
     }
 }

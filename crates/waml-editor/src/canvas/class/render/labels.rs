@@ -1,6 +1,5 @@
 use super::{primitives::ClassDrawResources, RenderSnapshot};
-use crate::canvas::geometry::segment_quad;
-use crate::canvas::pen::Pen;
+use crate::canvas::pen::{self, Pen};
 use crate::canvas::primitives::{
     edge_point_to_screen, fill_rect, font_raster_size, world_rect_to_screen,
 };
@@ -95,7 +94,13 @@ pub(super) fn draw_edge_labels(
         let (pos, leader_end) = nudged(screen.pos, leader_end, nudge);
         if let (Some(leader), Some(end)) = (label.leader, leader_end) {
             let start = edge_point_to_screen(&viewport.camera, viewport.view_rect.pos, leader[0]);
-            for bar in leader_bars(start, end, Pen::HAIRLINE.width()) {
+            draws
+                .edge
+                .set_uniform(cx, live_id!(pen_w), &[Pen::HAIRLINE.width() as f32]);
+            for (bar, horizontal) in leader_bars(cx, start, end, Pen::HAIRLINE) {
+                draws
+                    .edge
+                    .set_uniform(cx, live_id!(thin_y), &[if horizontal { 1.0 } else { 0.0 }]);
                 draws.edge.draw_abs(cx, bar);
             }
         }
@@ -123,12 +128,23 @@ pub(super) fn draw_edge_labels(
 /// placement stage exists to keep clear. Two axis-aligned legs are hairlines by
 /// construction, and match the orthogonal routing the edges themselves use.
 /// A degenerate leg is dropped, so an axis-aligned leader is a single bar.
-fn leader_bars(start: DVec2, end: DVec2, thickness: f64) -> Vec<Rect> {
+///
+/// The bars are `pen::band` quads, so `EdgeLine` inks a hairline inside each
+/// leg instead of filling it edge to edge; the `bool` is `thin_y` for that
+/// leg. A thin `Cx2d` wrapper around [`leader_legs`], which does the real
+/// work and stays unit-testable without a live `Cx2d` -- the same split
+/// `pen::band`/`pen::band_at` use.
+fn leader_bars(cx: &Cx2d, start: DVec2, end: DVec2, pen: Pen) -> Vec<(Rect, bool)> {
+    leader_legs(start, end, pen, cx.current_dpi_factor())
+}
+
+fn leader_legs(start: DVec2, end: DVec2, pen: Pen, dpi: f64) -> Vec<(Rect, bool)> {
     let corner = dvec2(end.x, start.y);
+    let thickness = pen.width();
     [(start, corner), (corner, end)]
         .into_iter()
         .filter(|(a, b)| (a.x - b.x).abs() > thickness || (a.y - b.y).abs() > thickness)
-        .map(|(a, b)| segment_quad(a, b, thickness))
+        .map(|(a, b)| (pen::band_at(a, b, pen, dpi), pen::band_is_horizontal(a, b)))
         .collect()
 }
 
@@ -476,29 +492,37 @@ mod tests {
     #[test]
     fn a_diagonal_leader_draws_hairlines_not_a_filled_block() {
         // The edge pen FILLS its quad, so a single AABB from anchor to label
-        // painted a solid opaque rectangle over everything between them.
+        // painted a solid opaque rectangle over everything between them. The
+        // bars are now `pen::band` CANVASES, grown a device pixel past the
+        // ink on each side, so a leg reads "a hairline" only up to that slack.
         let start = dvec2(100.0, 100.0);
         let end = dvec2(180.0, 40.0);
-        let bars = leader_bars(start, end, Pen::HAIRLINE.width());
-        assert_eq!(bars.len(), 2, "an L, not one quad: {bars:?}");
-        for bar in &bars {
+        let legs = leader_legs(start, end, Pen::HAIRLINE, 1.0);
+        assert_eq!(legs.len(), 2, "an L, not one quad: {legs:?}");
+        let max_thick = Pen::HAIRLINE.width() + 2.0;
+        for (bar, _horizontal) in &legs {
             assert!(
-                bar.size.x <= Pen::HAIRLINE.width() || bar.size.y <= Pen::HAIRLINE.width(),
-                "every leg must be a hairline: {bar:?}"
+                bar.size.x <= max_thick || bar.size.y <= max_thick,
+                "every leg must be a hairline canvas: {bar:?}"
             );
         }
+        // Axis pairing: the first leg runs along x (thin on y), the second
+        // along y (thin on x).
+        assert!(legs[0].1, "first leg is horizontal -> thin_y");
+        assert!(!legs[1].1, "second leg is vertical -> thin_x");
         // The L runs anchor -> corner -> label, so the legs meet and the far
         // leg reaches the label end.
-        assert!(bars[0].pos.x <= start.x.min(end.x) + Pen::HAIRLINE.width());
-        assert!(bars[1].pos.y <= end.y.max(start.y));
-        assert!(bars[1].pos.y + bars[1].size.y >= end.y.min(start.y));
+        assert!(legs[0].0.pos.x <= start.x.min(end.x) + max_thick);
+        assert!(legs[1].0.pos.y <= end.y.max(start.y));
+        assert!(legs[1].0.pos.y + legs[1].0.size.y >= end.y.min(start.y));
     }
 
     #[test]
     fn an_axis_aligned_leader_is_a_single_bar() {
-        let bars = leader_bars(dvec2(0.0, 10.0), dvec2(60.0, 10.0), Pen::HAIRLINE.width());
-        assert_eq!(bars.len(), 1, "no degenerate second leg: {bars:?}");
-        assert_eq!(bars[0].size.y, Pen::HAIRLINE.width());
+        let legs = leader_legs(dvec2(0.0, 10.0), dvec2(60.0, 10.0), Pen::HAIRLINE, 1.0);
+        assert_eq!(legs.len(), 1, "no degenerate second leg: {legs:?}");
+        assert!(legs[0].1, "a horizontal leg is thin_y");
+        assert_eq!(legs[0].0.size.y, Pen::HAIRLINE.width() + 2.0);
     }
 
     #[test]

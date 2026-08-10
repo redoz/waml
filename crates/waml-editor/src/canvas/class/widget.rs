@@ -35,7 +35,7 @@ script_mod! {
     mod.widgets.ClassDiagramSurfaceBase = #(ClassDiagramSurface::register_widget(vm))
 
     // Edge pen: fill the segment quad. Each routed segment is drawn as its own
-    // axis-aligned quad (`segment_quad`), already inflated to the stroke
+    // axis-aligned quad (`pen::band`), already inflated to the stroke
     // thickness on its degenerate axis and centered on the routed centerline.
     // Filling that quad IS the orthogonal bar -- no diagonal. The old pen
     // stroked the quad corner-to-corner (`move_to(0,0) line_to(w,h)`), which
@@ -43,12 +43,30 @@ script_mod! {
     // `thickness/2`; both scale with zoom and detonate when zoomed in. Fill is
     // exact because a per-segment AABB collapses to the bar itself (`sdf.rect`,
     // not `sdf.box`, for a sharp edge).
+    // The quad is now a canvas, not the stroke: `pen::band` grows it a device
+    // pixel past the widest band this pen can resolve to, and the pixel fn
+    // inks the quantised band centred inside it.
     mod.draw.EdgeLine = mod.draw.CadPen{
+        // 1.0 -> y is the thin axis (a horizontal bar); 0.0 -> x is.
+        // `pen::band_is_horizontal` decides it CPU-side, because the quad's own
+        // aspect cannot: a short bar can be wider than it is long.
+        thin_y: uniform(1.0)
         pixel: fn() {
+            let dpi = max(1.0, self.draw_pass.dpi_factor)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             // Coverage correction from the shared base -- see `canvas::pen`.
             sdf.aa = sdf.aa * self.pen_aa(1.0)
-            sdf.rect(-0.5, -0.5, self.rect_size.x + 1.0, self.rect_size.y + 1.0)
+            // Whole device pixels, in lpx, on the thin axis only.
+            let thick = self.pen_dev(self.pen_w) / dpi
+            let tx = mix(thick, self.rect_size.x, self.thin_y)
+            let ty = mix(self.rect_size.y, thick, self.thin_y)
+            // Centre the band in the quad, then round the offset to a whole
+            // device pixel: the quad's own origin is already on the grid, so a
+            // whole-pixel offset keeps the band there too.
+            let ox = floor((self.rect_size.x - tx) * 0.5 * dpi + 0.5) / dpi
+            let oy = floor((self.rect_size.y - ty) * 0.5 * dpi + 0.5) / dpi
+            // Grow by the half pixel Sdf2d's ramp is missing, exactly as before.
+            sdf.rect(ox - 0.5, oy - 0.5, tx + 1.0, ty + 1.0)
             // One ink at every zoom. CAD linework is defined by its weight, not
             // by the camera: an edge that darkened as you zoomed out made the
             // same relationship read as two different strokes, which is exactly

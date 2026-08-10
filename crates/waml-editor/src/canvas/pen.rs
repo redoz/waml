@@ -47,6 +47,54 @@ impl Pen {
     }
 }
 
+/// Whether a stroke from `a` to `b` runs along x. Routes, edges and messages
+/// are orthogonal, so the longer delta is the run and the shorter is the
+/// thickness axis. A degenerate pair reads as horizontal.
+pub(in crate::canvas) fn band_is_horizontal(a: DVec2, b: DVec2) -> bool {
+    (a.x - b.x).abs() >= (a.y - b.y).abs()
+}
+
+/// The quad a `CadPen` inks a stroke from `a` to `b` inside.
+///
+/// This is a CANVAS, not the stroke. It is grown one device pixel past the
+/// widest band the pen can resolve to on each side of the centreline, and the
+/// shader inks the quantised band within it -- the same arrangement
+/// `AccentFrame` already uses to ink a border inside a card rect. Growing here
+/// is what lets width stop being a CPU concern: the shader is free to disagree
+/// with this rounding by a pixel without its stroke being clipped.
+///
+/// Only for quads a `CadPen`-derived pen inks inside. A quad that IS the ink
+/// (a flat `DrawColor` fill) wants `outline` instead (added in the task that
+/// gives it its first caller -- see the plan's dead-code constraint).
+pub(in crate::canvas) fn band(cx: &Cx2d, a: DVec2, b: DVec2, pen: Pen) -> Rect {
+    band_at(a, b, pen, cx.current_dpi_factor())
+}
+
+/// The dpi-explicit core of [`band`], split out so callers that need to unit
+/// test the geometry they build ON TOP of a band (`labels.rs::leader_bars`)
+/// can do so without a live `Cx2d`, the same way `band` itself is tested
+/// here.
+pub(in crate::canvas) fn band_at(a: DVec2, b: DVec2, pen: Pen, dpi: f64) -> Rect {
+    let thick_px = (pen.width() * dpi + 0.501).floor().max(1.0) + 2.0;
+    if band_is_horizontal(a, b) {
+        let y0 = ((a.y + b.y) * 0.5 * dpi - thick_px * 0.5).round();
+        let x0 = (a.x.min(b.x) * dpi).round();
+        let x1 = (a.x.max(b.x) * dpi).round();
+        Rect {
+            pos: dvec2(x0 / dpi, y0 / dpi),
+            size: dvec2((x1 - x0).max(1.0) / dpi, thick_px / dpi),
+        }
+    } else {
+        let x0 = ((a.x + b.x) * 0.5 * dpi - thick_px * 0.5).round();
+        let y0 = (a.y.min(b.y) * dpi).round();
+        let y1 = (a.y.max(b.y) * dpi).round();
+        Rect {
+            pos: dvec2(x0 / dpi, y0 / dpi),
+            size: dvec2(thick_px / dpi, (y1 - y0).max(1.0) / dpi),
+        }
+    }
+}
+
 script_mod! {
     use mod.prelude.widgets_internal.*
 
@@ -266,4 +314,47 @@ mod tests {
             Pen::LIGHT.width()
         );
     }
+
+    use makepad_widgets::dvec2;
+
+    /// `band` is a CANVAS, never the ink: it must be at least one device pixel
+    /// wider on each side than the widest band the shader can resolve the pen
+    /// to, so a one-ULP disagreement between this f64 rounding and the shader's
+    /// f32 one cannot clip the stroke.
+    #[test]
+    fn a_band_quad_clears_the_widest_stroke_its_pen_can_resolve_to() {
+        for dpi in [1.0, 1.25, 1.5, 2.0] {
+            for pen in [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR] {
+                for center in [10.0, 10.2, 10.5, 10.7] {
+                    let quad = band_at(dvec2(4.0, center), dvec2(64.0, center), pen, dpi);
+                    let ink = pen_dev(pen.width() as f32, dpi as f32, 0.501) as f64;
+                    let thick_px = quad.size.y * dpi;
+                    assert!(
+                        (thick_px - thick_px.round()).abs() <= 1e-9,
+                        "quad must be a whole number of device pixels"
+                    );
+                    assert!(
+                        thick_px >= ink + 2.0 - 1e-9,
+                        "quad {thick_px} must clear ink {ink} by a device pixel each side"
+                    );
+                    let start_px = quad.pos.y * dpi;
+                    assert!((start_px - start_px.round()).abs() <= 1e-9);
+                    // Still centred on the band it was asked for, to within the
+                    // half device pixel the snap is allowed to move it.
+                    assert!((quad.pos.y + quad.size.y * 0.5 - center).abs() <= 0.5 / dpi + 1e-9);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_band_picks_the_axis_it_runs_longest_along() {
+        assert!(band_is_horizontal(dvec2(0.0, 0.0), dvec2(40.0, 2.0)));
+        assert!(!band_is_horizontal(dvec2(0.0, 0.0), dvec2(2.0, 40.0)));
+        // A degenerate pair is horizontal, matching the old `stroke_quad`.
+        assert!(band_is_horizontal(dvec2(5.0, 5.0), dvec2(5.0, 5.0)));
+    }
+    // `pen::outline` and its guard test land in the task that gives it its
+    // first production caller (class group hulls / dividers / overlays) --
+    // adding it here with no caller yet would trip -D warnings dead_code.
 }

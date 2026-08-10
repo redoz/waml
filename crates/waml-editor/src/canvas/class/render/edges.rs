@@ -1,8 +1,6 @@
 use super::{primitives::ClassDrawResources, RenderSnapshot};
-use crate::canvas::geometry::{
-    corner_fillet, elbow_radius, marker_geometry, segment_quad, snap_bar_to_device,
-    ELBOW_MIN_DEVICE_PX,
-};
+use crate::canvas::geometry::{corner_fillet, elbow_radius, marker_geometry, ELBOW_MIN_DEVICE_PX};
+use crate::canvas::pen::{self, Pen};
 use crate::canvas::primitives::edge_point_to_screen;
 use makepad_widgets::*;
 use waml::adornment::{end_marker, End};
@@ -14,9 +12,9 @@ pub(super) fn draw_edges(
 ) {
     let camera = snapshot.viewport.camera;
     let rect = snapshot.viewport.view_rect;
-    let thickness = snapshot.linework.edge_thickness;
+    let pen = Pen::REGULAR;
     let marker_size = snapshot.linework.marker_size;
-    let r_base = thickness * 2.0;
+    let r_base = pen.width() * 2.0;
     let dpi = cx.current_dpi_factor();
     let elbow_min = ELBOW_MIN_DEVICE_PX / dpi;
 
@@ -45,7 +43,7 @@ pub(super) fn draw_edges(
                 a = dvec2(a.x + unit.x * radius[i], a.y + unit.y * radius[i]);
                 b = dvec2(b.x - unit.x * radius[i + 1], b.y - unit.y * radius[i + 1]);
             }
-            bars.push(snap_bar_to_device(segment_quad(a, b, thickness), dpi));
+            bars.push(pen::band(cx, a, b, pen));
         }
 
         let mut vprime = vec![dvec2(0.0, 0.0); n];
@@ -114,6 +112,13 @@ pub(super) fn draw_edges(
                 }
             };
             bars[i] = quad;
+            draws
+                .edge
+                .set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);
+            let horizontal = pen::band_is_horizontal(screen[i], screen[i + 1]);
+            draws
+                .edge
+                .set_uniform(cx, live_id!(thin_y), &[if horizontal { 1.0 } else { 0.0 }]);
             draws.edge.draw_abs(cx, quad);
         }
 
@@ -121,12 +126,34 @@ pub(super) fn draw_edges(
             if radius[i] <= 0.0 {
                 continue;
             }
+            // `bars` now hold the pen's CANVAS, two device pixels wider than the
+            // ink. The fillet band has to match the ink, so shrink both bars
+            // back to the quantised width before handing them over.
+            let ink = (pen.width() * dpi + 0.501).floor().max(1.0) / dpi;
+            let deflate = |bar: Rect, horizontal: bool| -> Rect {
+                if horizontal {
+                    Rect {
+                        pos: dvec2(bar.pos.x, bar.pos.y + (bar.size.y - ink) * 0.5),
+                        size: dvec2(bar.size.x, ink),
+                    }
+                } else {
+                    Rect {
+                        pos: dvec2(bar.pos.x + (bar.size.x - ink) * 0.5, bar.pos.y),
+                        size: dvec2(ink, bar.size.y),
+                    }
+                }
+            };
+            let in_bar = deflate(
+                bars[i - 1],
+                pen::band_is_horizontal(screen[i - 1], screen[i]),
+            );
+            let out_bar = deflate(bars[i], pen::band_is_horizontal(screen[i], screen[i + 1]));
             if let Some(fillet) = corner_fillet(
                 screen[i - 1],
                 screen[i],
                 screen[i + 1],
-                bars[i - 1],
-                bars[i],
+                in_bar,
+                out_bar,
                 radius[i],
             ) {
                 draws
@@ -181,7 +208,7 @@ pub(super) fn draw_edges(
                         .set_uniform(cx, live_id!(filled), &[geometry.filled]);
                     draws
                         .marker
-                        .set_uniform(cx, live_id!(stroke_w), &[(thickness * 0.5) as f32]);
+                        .set_uniform(cx, live_id!(stroke_w), &[(pen.width() * 0.5) as f32]);
                     draws.marker.draw_abs(cx, geometry.quad);
                 }
             }
