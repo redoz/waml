@@ -209,6 +209,15 @@ impl LspAnalysisState {
                     label: candidate.label.to_string(),
                     kind: Some(completion_item_kind(candidate.kind)),
                     detail: candidate.detail.map(|detail| detail.to_string()),
+                    // The client re-filters what the server returns, against
+                    // `filterText` when it is set and the label otherwise. A
+                    // link candidate is labelled with the target document's
+                    // title while the author is typing its href, so a label-only
+                    // filter hides it the moment they type one character of the
+                    // path -- silently undoing the insert-side match the library
+                    // deliberately performs. Filter on the text that will
+                    // actually be inserted: it is what the author is typing.
+                    filter_text: Some(candidate.insert.to_string()),
                     text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                         range,
                         new_text: candidate.insert.to_string(),

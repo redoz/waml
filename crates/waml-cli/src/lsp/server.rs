@@ -456,6 +456,49 @@ mod tests {
     }
 
     #[test]
+    fn a_link_candidate_filters_on_its_href_not_its_title() {
+        // The library matches a candidate on its label OR its inserted text, so
+        // a half-typed href still offers the document. The client then filters
+        // the response again, against `filterText` when set and the label
+        // otherwise -- and a link candidate's label is the target's *title*. If
+        // the server leaves `filterText` unset, typing "./a" hides the very item
+        // the author is typing the path of.
+        let target = PathBuf::from("C:/outside/a.md");
+        let physical = PathBuf::from("C:/outside/seq.md");
+        let text = concat!(
+            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+            "## Lifelines\n\n- [X](./a)\n"
+        );
+        let state = LspAnalysisState::empty()
+            .unwrap()
+            .open(
+                target,
+                1,
+                "---\ntype: uml.Class\ntitle: Alpha Doc\n---\n# Alpha Doc\n".into(),
+            )
+            .unwrap()
+            .open(physical.clone(), 1, text.into())
+            .unwrap();
+        // The cursor sits just before the ")", at the end of the half-typed href.
+        let line = text.lines().count() as u32 - 1;
+        let character = "- [X](./a".len() as u32;
+        let items = state
+            .completion(&physical, Position::new(line, character))
+            .expect("completion returns a list");
+        let link = items
+            .iter()
+            .find(|item| item.filter_text.as_deref() == Some("./a.md"))
+            .unwrap_or_else(|| panic!("expected the a.md candidate, got {items:?}"));
+        // The label is the title, which is precisely why the filter cannot be
+        // left to default to it.
+        assert_eq!(link.label, "Alpha Doc");
+        assert!(
+            items.iter().all(|item| item.filter_text.is_some()),
+            "every item must carry a filter, got {items:?}"
+        );
+    }
+
+    #[test]
     fn completion_in_prose_is_an_empty_list_not_an_absent_response() {
         let physical = PathBuf::from("C:/outside/prose.md");
         let state = LspAnalysisState::empty()
