@@ -195,7 +195,7 @@ fn retained_property_widget_accepts_sequential_actions_after_session_refresh() {
     assert!(text.contains("description: Second edit"), "{text}");
 }
 
-fn mount_markdown_surface(cx: &mut Cx, app: &mut App) {
+pub(super) fn mount_markdown_surface(cx: &mut Cx, app: &mut App) {
     waml_markdown_editor::live_design(cx);
     let markdown = WidgetRef::new_with_inner(Box::new(
         cx.with_vm(waml_markdown_editor::widget::MarkdownEditor::script_new_with_default),

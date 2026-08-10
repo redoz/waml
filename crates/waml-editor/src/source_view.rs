@@ -3,6 +3,7 @@ use std::sync::Arc;
 use makepad_widgets::*;
 use waml::analysis::DocumentId;
 use waml_markdown_editor::{
+    completion::{CompletionCandidate, CompletionSession},
     document::MarkdownDocumentSnapshot,
     gutter::LineNumberMode,
     layout::LayoutInvalidation,
@@ -408,6 +409,69 @@ impl SourceView {
             editor.set_line_numbers(cx, self.line_numbers);
             editor.install_presentation(cx, installed, layout_cause);
         }
+        self.refresh_completions(
+            cx,
+            &editor,
+            &workspace.okf_analysis,
+            &workspace.uml_analysis,
+            workspace.revision,
+        );
+    }
+
+    /// Compute the completion list for the current caret and push it into the
+    /// widget. Pushing `None` on any bail-out closes the popup, so silence,
+    /// staleness and read-only all look the same to the widget: no list.
+    fn refresh_completions(
+        &self,
+        cx: &mut Cx,
+        editor: &MarkdownEditorRef,
+        okf: &waml::analysis::OkfAnalysis,
+        uml: &waml::uml::Analysis,
+        revision: u64,
+    ) {
+        editor.set_completions(cx, self.computed_completions(okf, uml, revision));
+    }
+
+    fn computed_completions(
+        &self,
+        okf: &waml::analysis::OkfAnalysis,
+        uml: &waml::uml::Analysis,
+        revision: u64,
+    ) -> Option<CompletionSession> {
+        let SourceViewState::Ready(ready) = &self.state else {
+            return None;
+        };
+        if self.read_only || ready.pending_changes.is_some() {
+            return None;
+        }
+        // A range selection is not a completion position; only a caret is.
+        let primary = ready.session.selections().primary();
+        if !primary.is_empty() {
+            return None;
+        }
+        // The candidates' byte ranges are only meaningful against the exact
+        // text the analysis saw. The session runs ahead of the analysis by
+        // one round after every keystroke; those rounds push None and the
+        // popup reopens when install_snapshot catches up.
+        let analyzed = okf.catalog.document(ready.document)?;
+        if analyzed.revision() != ready.session.local_revision() {
+            return None;
+        }
+        let context = waml::uml::ActionContext::new(okf, uml, revision).ok()?;
+        let candidates =
+            waml::uml::completions(context, ready.document, primary.cursor.offset).ok()?;
+        CompletionSession::open(
+            ready.session.local_revision(),
+            candidates
+                .into_iter()
+                .map(|candidate| CompletionCandidate {
+                    label: candidate.label,
+                    insert: candidate.insert,
+                    detail: candidate.detail,
+                    replace: candidate.replace,
+                })
+                .collect(),
+        )
     }
 
     fn apply_asset_events(&mut self, cx: &mut Cx, editor: &MarkdownEditorRef) {
@@ -549,7 +613,7 @@ impl DocView for SourceView {
         cx: &mut Cx,
         body: &BodyWidgets,
         actions: &Actions,
-        _data: ViewData<'_>,
+        data: ViewData<'_>,
     ) -> ViewOutcome {
         if body
             .header_view_action_button(cx)
@@ -577,6 +641,20 @@ impl DocView for SourceView {
                     });
                 }
             }
+        }
+        // A caret move without an edit -- arrows, a click -- lands here with
+        // the installed analysis still current, so the popup follows the
+        // caret in the same event pass. After an edit the revision guard in
+        // computed_completions pushes None instead, and install_snapshot
+        // re-runs this once the re-analysis catches up.
+        if MarkdownEditorRef::selection_changed(actions) {
+            self.refresh_completions(
+                cx,
+                &body.markdown_editor(),
+                data.okf_analysis,
+                data.uml_analysis,
+                data.revision,
+            );
         }
         outcome
     }

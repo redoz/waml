@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use waml_syntax::TextRange;
+use waml_syntax::{DocumentRevision, TextRange};
 
 /// One offer. `replace` is document-absolute, as every offset in this crate is.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +31,11 @@ pub struct CompletionCandidate {
 /// cannot disagree.
 #[derive(Clone, Debug)]
 pub struct CompletionSession {
+    /// The document revision every `replace` range was computed against. The
+    /// widget refuses to accept against any other revision: a candidate whose
+    /// byte range belongs to an older text is the one way this feature could
+    /// corrupt a document, so the check is carried in the value itself.
+    revision: DocumentRevision,
     candidates: Vec<CompletionCandidate>,
     selected: usize,
 }
@@ -38,14 +43,19 @@ pub struct CompletionSession {
 impl CompletionSession {
     /// `None` when nothing is offered. An empty popup is never a state: the
     /// caller drops the session rather than showing a list with no rows.
-    pub fn open(candidates: Vec<CompletionCandidate>) -> Option<Self> {
+    pub fn open(revision: DocumentRevision, candidates: Vec<CompletionCandidate>) -> Option<Self> {
         if candidates.is_empty() {
             return None;
         }
         Some(Self {
+            revision,
             candidates,
             selected: 0,
         })
+    }
+
+    pub fn revision(&self) -> DocumentRevision {
+        self.revision
     }
 
     pub fn candidates(&self) -> &[CompletionCandidate] {
@@ -93,6 +103,8 @@ mod tests {
     use super::*;
     use waml_syntax::TextSize;
 
+    const REVISION: DocumentRevision = DocumentRevision::new(7);
+
     fn at(start: usize, end: usize) -> TextRange {
         TextRange::new(
             TextSize::try_from_usize(start).unwrap(),
@@ -112,15 +124,21 @@ mod tests {
 
     #[test]
     fn an_empty_offer_list_opens_no_session() {
-        assert!(CompletionSession::open(Vec::new()).is_none());
+        assert!(CompletionSession::open(REVISION, Vec::new()).is_none());
+    }
+
+    #[test]
+    fn a_session_remembers_the_revision_its_ranges_belong_to() {
+        let session = CompletionSession::open(REVISION, vec![candidate("calls", "calls")]).unwrap();
+        assert_eq!(session.revision(), REVISION);
     }
 
     #[test]
     fn the_first_candidate_is_selected_to_begin_with() {
-        let session = CompletionSession::open(vec![
-            candidate("calls", "calls"),
-            candidate("returns", "returns"),
-        ])
+        let session = CompletionSession::open(
+            REVISION,
+            vec![candidate("calls", "calls"), candidate("returns", "returns")],
+        )
         .unwrap();
         assert_eq!(session.selected_index(), 0);
         assert_eq!(session.selected().label.as_ref(), "calls");
@@ -128,11 +146,14 @@ mod tests {
 
     #[test]
     fn arrowing_past_either_end_wraps_rather_than_dead_ending() {
-        let mut session = CompletionSession::open(vec![
-            candidate("a", "a"),
-            candidate("b", "b"),
-            candidate("c", "c"),
-        ])
+        let mut session = CompletionSession::open(
+            REVISION,
+            vec![
+                candidate("a", "a"),
+                candidate("b", "b"),
+                candidate("c", "c"),
+            ],
+        )
         .unwrap();
         session.move_selection(1);
         assert_eq!(session.selected().label.as_ref(), "b");
@@ -149,7 +170,8 @@ mod tests {
     #[test]
     fn a_click_that_misses_every_row_changes_nothing() {
         let mut session =
-            CompletionSession::open(vec![candidate("a", "a"), candidate("b", "b")]).unwrap();
+            CompletionSession::open(REVISION, vec![candidate("a", "a"), candidate("b", "b")])
+                .unwrap();
         session.select(1);
         assert_eq!(session.selected_index(), 1);
         session.select(9);
@@ -158,10 +180,10 @@ mod tests {
 
     #[test]
     fn accepting_yields_the_selected_candidates_range_and_text() {
-        let mut session = CompletionSession::open(vec![
-            candidate("calls", "calls"),
-            candidate("returns", "returns"),
-        ])
+        let mut session = CompletionSession::open(
+            REVISION,
+            vec![candidate("calls", "calls"), candidate("returns", "returns")],
+        )
         .unwrap();
         session.move_selection(1);
         let (range, text) = session.accept();

@@ -4,6 +4,7 @@ use makepad_widgets::*;
 use makepad_widgets::{animator::Ease, shader::draw_text::FontFamily, text::geom::Point};
 
 use crate::{
+    completion::CompletionSession,
     edit::ProposedMarkdownEdit,
     gutter::{current_line_bands, gutter_rows, gutter_width, LineNumberMode},
     input::{
@@ -22,7 +23,7 @@ use crate::{
         InstalledPresentation, PresentationError, PresentationFrame, PresentationStyles,
         PresentedDiagnosticSeverity,
     },
-    selection::TextPosition,
+    selection::{Affinity, Selection, SelectionSet, TextPosition},
     session::MarkdownDocumentSession,
     squiggle::DrawSquiggle,
 };
@@ -587,6 +588,16 @@ const GUTTER_GAP: f64 = 10.0;
 /// ratio the shaper uses for an empty row.
 const GUTTER_ASCENT: f64 = 0.8;
 
+/// Rows the completion popup shows at once; the selection scrolls the window.
+const COMPLETION_VISIBLE_ROWS: usize = 8;
+/// Row height when the shaper is unavailable (headless), matching the sans
+/// face's nominal line at the default document size.
+const COMPLETION_FALLBACK_ROW_HEIGHT: f64 = 18.0;
+/// Padding inside the popup: left/right of a row, and above/below the list.
+const COMPLETION_PADDING: f64 = 6.0;
+/// Gap between the label column and the detail column.
+const COMPLETION_COLUMN_GAP: f64 = 16.0;
+
 /// The layout/motion pipeline: everything a document swap or a full
 /// invalidation must reset together. Reset by whole-struct replacement
 /// (`LayoutPipeline::default()`) rather than by field enumeration, so a new
@@ -742,6 +753,23 @@ pub struct MarkdownEditor {
     /// presentation.
     #[rust]
     last_install_validation_error: Option<String>,
+    /// The open completion list, when the host pushed one. `Some` IS "the
+    /// popup is showing" -- there is no separate visibility flag to fall out
+    /// of step with it.
+    #[rust]
+    completion: Option<CompletionSession>,
+    /// Row geometry measured once when the list is set, not per frame: the
+    /// shaper is not free, and the list is immutable while it is open.
+    #[rust]
+    completion_metrics: Option<CompletionRowMetrics>,
+}
+
+/// Measured geometry for the completion popup, in logical pixels.
+#[derive(Clone, Copy)]
+struct CompletionRowMetrics {
+    row_height: f64,
+    label_width: f64,
+    detail_width: f64,
 }
 
 /// The draw layers in paint order -- the single sequence `draw_walk` runs.
@@ -902,6 +930,20 @@ impl MarkdownEditor {
                 };
                 return self.handle_input_with_session(cx, session, input);
             }
+            // Keys take the same focus fast path as text: the widget knowing
+            // it has focus is the signal, not the hit test. An open completion
+            // list gets first claim on its five keys; everything else falls
+            // through to the editor and keeps editing.
+            if let Event::KeyDown(event) = event {
+                if self.completion.is_some() {
+                    if let Some(action) = completion_key(event) {
+                        return self.apply_completion_key(cx, session, action);
+                    }
+                }
+                if let Some(input) = key_input(*event) {
+                    return self.handle_input_with_session(cx, session, input);
+                }
+            }
         }
         let scroll_actions = self
             .scroll_bars
@@ -949,7 +991,17 @@ impl MarkdownEditor {
                 *event.response.borrow_mut() = copied.clipboard;
                 return self.handle_input_with_session(cx, session, EditorInput::Cut);
             }
-            Hit::KeyDown(event) => key_input(event),
+            // Keys normally arrive through the has_focus fast path above; this
+            // arm only catches the inconsistent case where the platform holds
+            // key focus on the area but the widget flag lagged.
+            Hit::KeyDown(event) => {
+                if self.completion.is_some() {
+                    if let Some(action) = completion_key(&event) {
+                        return self.apply_completion_key(cx, session, action);
+                    }
+                }
+                key_input(event)
+            }
             // Makepad holds whatever cursor a widget last set until another one
             // speaks, so the text surface has to claim `Text` on entry AND hand
             // it back on exit -- otherwise the caret follows the pointer out
@@ -1020,6 +1072,7 @@ impl MarkdownEditor {
             }
             Hit::KeyFocusLost(_) => {
                 self.has_focus = false;
+                self.dismiss_completions(cx);
                 cx.hide_text_ime();
                 None
             }
@@ -1120,6 +1173,7 @@ impl MarkdownEditor {
             self.last_draw.set_last_primitive_count(primitive_count);
         }
         self.paint_gutter(cx, session, &layout, viewport.pos, gutter);
+        self.paint_completion(cx, session, &layout, viewport, gutter);
         cx.turtle_mut()
             .set_used(layout.content_size().x, layout.content_size().y);
         self.scroll_bars.end(cx);
@@ -1258,6 +1312,108 @@ impl MarkdownEditor {
                 },
             );
         }
+    }
+
+    /// The completion popup, anchored under the caret. Painted after every
+    /// document layer so nothing in the text can sit on top of it, and inside
+    /// the scroll area so it clips at the viewport like everything else.
+    fn paint_completion(
+        &mut self,
+        cx: &mut Cx2d,
+        session: &MarkdownDocumentSession,
+        layout: &LayoutSnapshot,
+        viewport: Rect,
+        gutter: f64,
+    ) {
+        let Some(open) = self.completion.take() else {
+            return;
+        };
+        let metrics = self.completion_metrics.unwrap_or(CompletionRowMetrics {
+            row_height: COMPLETION_FALLBACK_ROW_HEIGHT,
+            label_width: 0.0,
+            detail_width: 0.0,
+        });
+        let Some(caret) = layout.source_to_point(session.selections().primary().cursor) else {
+            self.completion = Some(open);
+            return;
+        };
+        let content_origin = viewport.pos + dvec2(gutter, 0.0) - self.scroll_bars.get_scroll_pos();
+
+        // The visible window slides so the selected row is always in it.
+        let total = open.candidates().len();
+        let visible = total.min(COMPLETION_VISIBLE_ROWS);
+        let first = open
+            .selected_index()
+            .saturating_sub(COMPLETION_VISIBLE_ROWS - 1)
+            .min(total - visible);
+
+        let row_height = metrics.row_height + COMPLETION_PADDING;
+        let detail_width = if metrics.detail_width > 0.0 {
+            COMPLETION_COLUMN_GAP + metrics.detail_width
+        } else {
+            0.0
+        };
+        let size = dvec2(
+            metrics.label_width + detail_width + COMPLETION_PADDING * 2.0,
+            visible as f64 * row_height + COMPLETION_PADDING * 2.0,
+        );
+        // Below the caret; above it when below would leave the viewport.
+        let caret_top = content_origin + caret.rect.pos;
+        let mut pos = caret_top + dvec2(0.0, caret.rect.size.y + 2.0);
+        if pos.y + size.y > viewport.pos.y + viewport.size.y {
+            pos.y = caret_top.y - size.y - 2.0;
+        }
+        pos.x = pos
+            .x
+            .min(viewport.pos.x + viewport.size.x - size.x)
+            .max(viewport.pos.x);
+
+        // A hairline border drawn as an outer rect under an inset fill.
+        self.draw_background.color = self.block_rule_color;
+        self.draw_background.draw_abs(
+            cx,
+            Rect {
+                pos: pos - dvec2(1.0, 1.0),
+                size: size + dvec2(2.0, 2.0),
+            },
+        );
+        self.draw_background.color = self.quote_fill;
+        self.draw_background.draw_abs(cx, Rect { pos, size });
+
+        let mut row_pos = pos + dvec2(COMPLETION_PADDING, COMPLETION_PADDING);
+        for (index, candidate) in open
+            .candidates()
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(visible)
+        {
+            if index == open.selected_index() {
+                self.draw_selection.color = self.selection_color;
+                self.draw_selection.draw_abs(
+                    cx,
+                    Rect {
+                        pos: dvec2(pos.x + 1.0, row_pos.y - COMPLETION_PADDING * 0.5),
+                        size: dvec2(size.x - 2.0, row_height),
+                    },
+                );
+            }
+            self.draw_text_sans.color = self.body_color;
+            self.draw_text_sans.draw_abs(cx, row_pos, &candidate.label);
+            if let Some(detail) = candidate.detail.as_deref() {
+                self.draw_text_sans.color = self.marker_color;
+                self.draw_text_sans.draw_abs(
+                    cx,
+                    dvec2(
+                        pos.x + COMPLETION_PADDING + metrics.label_width + COMPLETION_COLUMN_GAP,
+                        row_pos.y,
+                    ),
+                    detail,
+                );
+            }
+            row_pos.y += row_height;
+        }
+        self.completion = Some(open);
     }
 
     fn paint_gutter(
@@ -1789,6 +1945,13 @@ impl MarkdownEditor {
         if session.selections() != &old_selection {
             actions.push(self.make_action(MarkdownEditorAction::SelectionChanged));
         }
+        // Any edit or caret move invalidates the open list: its byte ranges
+        // belong to the text as it was. The host hears the same actions and
+        // pushes a fresh list, so dropping here never strands the author.
+        if !actions.is_empty() && self.completion.is_some() {
+            self.completion = None;
+            self.redraw(cx);
+        }
         if response.request_redraw {
             self.redraw(cx);
         }
@@ -1806,6 +1969,141 @@ impl MarkdownEditor {
             widget_uid: self.widget_uid(),
             group: None,
         })
+    }
+
+    /// Install (or clear) the completion list the host computed for the
+    /// current caret. Rows are measured here, once -- the list is immutable
+    /// while open, so the draw pass never touches the shaper.
+    pub fn set_completions(&mut self, cx: &mut Cx, completion: Option<CompletionSession>) {
+        self.completion_metrics = completion
+            .as_ref()
+            .map(|open| self.measure_completion_rows(cx, open));
+        self.completion = completion;
+        self.redraw(cx);
+    }
+
+    pub fn has_completions(&self) -> bool {
+        self.completion.is_some()
+    }
+
+    fn dismiss_completions(&mut self, cx: &mut Cx) {
+        if self.completion.take().is_some() {
+            self.redraw(cx);
+        }
+    }
+
+    /// One of the five claimed keys, applied to the open list.
+    fn apply_completion_key(
+        &mut self,
+        cx: &mut Cx,
+        session: &mut MarkdownDocumentSession,
+        action: CompletionKeyAction,
+    ) -> Result<Vec<Action>, MarkdownEditorError> {
+        match action {
+            CompletionKeyAction::Previous | CompletionKeyAction::Next => {
+                if let Some(open) = self.completion.as_mut() {
+                    open.move_selection(if action == CompletionKeyAction::Next {
+                        1
+                    } else {
+                        -1
+                    });
+                    self.redraw(cx);
+                }
+                Ok(Vec::new())
+            }
+            CompletionKeyAction::Dismiss => {
+                self.dismiss_completions(cx);
+                Ok(Vec::new())
+            }
+            CompletionKeyAction::Accept => {
+                let Some(open) = self.completion.take() else {
+                    return Ok(Vec::new());
+                };
+                self.redraw(cx);
+                // The one hard safety rule: a candidate's byte range belongs
+                // to the revision it was computed against. The host drops the
+                // list on every edit, so a mismatch here means a host bug --
+                // and the answer to that is to do nothing, not to write
+                // somewhere in a newer text.
+                if open.revision() != session.local_revision() {
+                    return Ok(Vec::new());
+                }
+                let (range, insert) = open.accept();
+                let selection = Selection::new(
+                    TextPosition::new(range.start(), Affinity::Before),
+                    TextPosition::new(range.end(), Affinity::After),
+                );
+                let selections = SelectionSet::single(session.snapshot(), selection)
+                    .map_err(|_| MarkdownEditorError::ControllerEdit)?;
+                session
+                    .set_selections(selections)
+                    .map_err(|_| MarkdownEditorError::ControllerEdit)?;
+                // Inserting over the selection IS the accept -- the proposal
+                // flows to the host through the same channel as typing, so
+                // undo, history grouping, and re-analysis all come for free.
+                self.handle_input_with_session(cx, session, EditorInput::Text(insert))
+            }
+        }
+    }
+
+    /// Row height and column widths for the open list, via the same shaper the
+    /// document itself is laid out with. Falls back to rough constants when
+    /// shaping is unavailable (headless), exactly as the gutter does.
+    fn measure_completion_rows(
+        &mut self,
+        cx: &mut Cx,
+        open: &CompletionSession,
+    ) -> CompletionRowMetrics {
+        let mut metrics = CompletionRowMetrics {
+            row_height: 0.0,
+            label_width: 0.0,
+            detail_width: 0.0,
+        };
+        for candidate in open.candidates() {
+            let label = self.measure_sans(cx, &candidate.label);
+            let detail = candidate
+                .detail
+                .as_deref()
+                .map(|detail| self.measure_sans(cx, detail))
+                .unwrap_or_default();
+            metrics.row_height = metrics.row_height.max(label.y).max(detail.y);
+            metrics.label_width = metrics.label_width.max(label.x);
+            metrics.detail_width = metrics.detail_width.max(detail.x);
+        }
+        if metrics.row_height <= 0.0 {
+            metrics.row_height = COMPLETION_FALLBACK_ROW_HEIGHT;
+        }
+        // Shaping came back degenerate (no font backend): estimate from the
+        // gutter's digit fallback so the popup still has a sane box.
+        if metrics.label_width <= 0.0 {
+            let longest = open
+                .candidates()
+                .iter()
+                .map(|candidate| candidate.label.chars().count())
+                .max()
+                .unwrap_or(0);
+            metrics.label_width = longest as f64 * GUTTER_DIGIT_WIDTH;
+        }
+        metrics
+    }
+
+    /// Width/height of `text` in the sans face, `(0, 0)` when the shaper has
+    /// nothing to say.
+    fn measure_sans(&mut self, cx: &mut Cx, text: &str) -> DVec2 {
+        let laid_out =
+            self.draw_text_sans
+                .layout_uncached(cx, 0.0, 0.0, None, true, Align::default(), text);
+        let Some(row) = laid_out.rows.first() else {
+            return DVec2::default();
+        };
+        let scale = self.draw_text_sans.font_scale as f64;
+        let width = row.width_in_lpxs as f64 * scale;
+        let height = (row.ascender_in_lpxs - row.descender_in_lpxs) as f64 * scale;
+        if width.is_finite() && height.is_finite() && height > 0.0 {
+            dvec2(width, height)
+        } else {
+            DVec2::default()
+        }
     }
 
     fn show_ime(&mut self, cx: &mut Cx, session: &MarkdownDocumentSession) {
@@ -1903,6 +2201,68 @@ mod abs_to_layout_point_tests {
         let gutter = gutter_width(100, GUTTER_DIGIT_WIDTH, GUTTER_GAP);
         let new = abs_to_layout_point(abs, origin, gutter, scroll_y);
         assert_eq!(new, abs - origin - dvec2(gutter, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod completion_key_tests {
+    use super::*;
+
+    fn key(key_code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            key_code,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_five_claimed_keys_map_and_nothing_else_does() {
+        let table = [
+            (KeyCode::ArrowUp, CompletionKeyAction::Previous),
+            (KeyCode::ArrowDown, CompletionKeyAction::Next),
+            (KeyCode::ReturnKey, CompletionKeyAction::Accept),
+            (KeyCode::NumpadEnter, CompletionKeyAction::Accept),
+            (KeyCode::Tab, CompletionKeyAction::Accept),
+            (KeyCode::Escape, CompletionKeyAction::Dismiss),
+        ];
+        for (code, expected) in table {
+            assert_eq!(completion_key(&key(code)), Some(expected), "{code:?}");
+        }
+        // The keys an author edits with must never be swallowed by the list.
+        for code in [
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::KeyA,
+            KeyCode::Space,
+        ] {
+            assert_eq!(completion_key(&key(code)), None, "{code:?}");
+        }
+    }
+
+    #[test]
+    fn any_held_modifier_releases_every_claimed_key() {
+        // Shift+Tab must stay BackTab, and a chorded Enter belongs to
+        // whoever binds it -- the list only claims bare keys.
+        for set in [
+            |modifiers: &mut KeyModifiers| modifiers.shift = true,
+            |modifiers: &mut KeyModifiers| modifiers.control = true,
+            |modifiers: &mut KeyModifiers| modifiers.alt = true,
+            |modifiers: &mut KeyModifiers| modifiers.logo = true,
+        ] {
+            for code in [
+                KeyCode::ArrowUp,
+                KeyCode::ArrowDown,
+                KeyCode::ReturnKey,
+                KeyCode::Tab,
+                KeyCode::Escape,
+            ] {
+                let mut event = key(code);
+                set(&mut event.modifiers);
+                assert_eq!(completion_key(&event), None, "{code:?}");
+            }
+        }
     }
 }
 
@@ -2133,6 +2493,35 @@ mod gutter_metrics_tests {
             editor.fonts.gutter_metrics.is_some(),
             "a painted run must not invalidate the measured gutter metrics",
         );
+    }
+}
+
+/// What a key does to an open completion list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompletionKeyAction {
+    Previous,
+    Next,
+    Accept,
+    Dismiss,
+}
+
+/// The keys an open completion list claims, and only those. Every other key
+/// falls through to the editor: typing keeps narrowing, Left/Right keep moving,
+/// and any held modifier releases even these five -- Shift+Tab must stay
+/// BackTab, and a chorded Enter belongs to whoever binds it.
+fn completion_key(event: &KeyEvent) -> Option<CompletionKeyAction> {
+    let modifiers = event.modifiers;
+    if modifiers.shift || modifiers.control || modifiers.alt || modifiers.logo {
+        return None;
+    }
+    match event.key_code {
+        KeyCode::ArrowUp => Some(CompletionKeyAction::Previous),
+        KeyCode::ArrowDown => Some(CompletionKeyAction::Next),
+        KeyCode::ReturnKey | KeyCode::NumpadEnter | KeyCode::Tab => {
+            Some(CompletionKeyAction::Accept)
+        }
+        KeyCode::Escape => Some(CompletionKeyAction::Dismiss),
+        _ => None,
     }
 }
 
@@ -2411,6 +2800,16 @@ impl MarkdownEditorRef {
             MarkdownEditorAction::NavigationRequested { position } => Some(*position),
             _ => None,
         })
+    }
+
+    pub fn set_completions(&self, cx: &mut Cx, completion: Option<CompletionSession>) {
+        if let Some(mut editor) = self.borrow_mut() {
+            editor.set_completions(cx, completion);
+        }
+    }
+
+    pub fn has_completions(&self) -> bool {
+        self.borrow().is_some_and(|editor| editor.has_completions())
     }
 
     pub fn embedded_block_event(

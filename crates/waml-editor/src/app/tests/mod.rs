@@ -16,6 +16,7 @@ use waml_markdown_editor::layout::LayoutSnapshot;
 use waml_markdown_editor::widget::MarkdownEditorWidgetRefExt;
 use waml_syntax::{SourceText, TextChange, TextRange, TextSize};
 
+mod completion;
 mod menus;
 mod navigation;
 mod shell;
