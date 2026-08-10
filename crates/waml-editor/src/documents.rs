@@ -63,12 +63,13 @@ pub fn default_surface_for(
     }
 }
 
-/// The four registered surface ids (Task E2), for `resolve_surface`'s
-/// `known` slice. Kept beside the call site so it cannot silently drift
-/// from `CoreEditorExtension::surfaces` -- `extension_editor`'s own gate
-/// test (`todays_four_surfaces_are_registered_by_the_core_editor_half`)
-/// asserts the other side of the same set.
-pub(crate) const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder"];
+/// The five registered surface ids (Task E2, widened by the book-mode
+/// spec), for `resolve_surface`'s `known` slice. Kept beside the call site
+/// so it cannot silently drift from `CoreEditorExtension::surfaces` --
+/// `extension_editor`'s own gate test
+/// (`todays_five_surfaces_are_registered_by_the_core_editor_half`) asserts
+/// the other side of the same set.
+pub(crate) const KNOWN_SURFACES: &[&str] = &["markdown", "source", "canvas", "folder", "book"];
 
 /// The editor's ONE surface resolution: `waml::view::surface::resolve_surface`
 /// itself (a `None` request or a registered id resolves silently; an unknown id
@@ -138,6 +139,9 @@ pub fn locator_opens(
         // directory that is not in the bundle (`FolderView::build` fails on
         // exactly the same missing directory).
         ("folder", RowTarget::Folder(directory)) => okf.bundle.directory(directory).is_some(),
+        // `open_book` -> `book_documents::open`, whose only `None` is a
+        // directory not in the bundle -- the same probe `folder` uses.
+        ("book", RowTarget::Folder(directory)) => okf.bundle.directory(directory).is_some(),
         ("source", target) => crate::okf_documents::source_opens_for_target(okf, target),
         _ => false,
     }
@@ -714,7 +718,14 @@ mod tests {
             RowTarget::Virtual,
         ];
         for target in targets {
-            for surface in ["markdown", "source", "canvas", "folder", "no-such-surface"] {
+            for surface in [
+                "markdown",
+                "source",
+                "canvas",
+                "folder",
+                "book",
+                "no-such-surface",
+            ] {
                 let locator = DocumentLocator::new(
                     target.clone(),
                     waml::view::surface::SurfaceId(surface.to_string()),

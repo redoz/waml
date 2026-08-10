@@ -53,9 +53,9 @@ pub trait EditorExtension {
     }
 }
 
-/// Today's four surfaces: markdown reading, source, canvas, and the folder
-/// listing itself. No speculative format registry -- only what the editor
-/// can already open.
+/// Today's five surfaces: markdown reading, source, canvas, the folder
+/// listing itself, and the book (a folder read as one continuous scroll). No
+/// speculative format registry -- only what the editor can already open.
 pub struct CoreEditorExtension;
 
 impl EditorExtension for CoreEditorExtension {
@@ -69,6 +69,7 @@ impl EditorExtension for CoreEditorExtension {
             ("source", Box::new(open_source)),
             ("canvas", Box::new(open_canvas)),
             ("folder", Box::new(open_folder)),
+            ("book", Box::new(open_book)),
         ]
     }
 
@@ -187,17 +188,24 @@ fn open_folder(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
     crate::documents::open_folder(ctx.analysis, directory, ctx.limits, ctx.mask)
 }
 
+fn open_book(ctx: &OpenCtx<'_>, target: &RowTarget) -> Option<OpenDocument> {
+    let RowTarget::Folder(directory) = target else {
+        return None;
+    };
+    crate::book_documents::open(ctx.analysis, directory, ctx.limits, ctx.mask)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
     #[test]
-    fn todays_four_surfaces_are_registered_by_the_core_editor_half() {
+    fn todays_five_surfaces_are_registered_by_the_core_editor_half() {
         let ext = CoreEditorExtension;
         let names: BTreeSet<&'static str> =
             ext.surfaces().into_iter().map(|(name, _)| name).collect();
-        let expected: BTreeSet<&'static str> = ["markdown", "source", "canvas", "folder"]
+        let expected: BTreeSet<&'static str> = ["markdown", "source", "canvas", "folder", "book"]
             .into_iter()
             .collect();
         assert_eq!(names, expected);

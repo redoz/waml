@@ -192,6 +192,9 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(search_results_surface))
             .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(book_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
         self.set_canvas_interaction_enabled(cx, true);
     }
@@ -208,6 +211,9 @@ impl BodyWidgets {
             .set_visible(cx, false);
         self.ui
             .widget(cx, ids!(search_results_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(book_surface))
             .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
@@ -229,6 +235,9 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(search_results_surface))
             .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(book_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
     }
@@ -247,6 +256,9 @@ impl BodyWidgets {
             .set_visible(cx, true);
         self.ui
             .widget(cx, ids!(search_results_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(book_surface))
             .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
@@ -268,7 +280,28 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(search_results_surface))
             .set_visible(cx, true);
+        self.ui
+            .widget(cx, ids!(book_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.set_canvas_interaction_enabled(cx, false);
+    }
+
+    /// Show the book surface (`book_surface`), mutually exclusive with every
+    /// sibling above. The widget itself arrives in a later task; until the
+    /// DSL mounts it, the lookup is an absent-widget no-op, which is also
+    /// what keeps every headless test green.
+    pub fn show_book_view(&self, cx: &mut Cx) {
+        for surface in [
+            ids!(markdown_surface),
+            ids!(markdown_viewer_surface),
+            ids!(folder_view_surface),
+            ids!(search_results_surface),
+            ids!(canvas_wrap),
+        ] {
+            self.ui.widget(cx, surface).set_visible(cx, false);
+        }
+        self.ui.widget(cx, ids!(book_surface)).set_visible(cx, true);
         self.set_canvas_interaction_enabled(cx, false);
     }
 
@@ -286,6 +319,7 @@ impl BodyWidgets {
             ids!(markdown_viewer_surface),
             ids!(folder_view_surface),
             ids!(search_results_surface),
+            ids!(book_surface),
         ] {
             self.ui.widget(cx, surface).set_visible(cx, false);
         }
@@ -525,6 +559,7 @@ pub enum DocViewIdentity {
     Source,
     Folder,
     SearchResults,
+    Book,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
