@@ -1,5 +1,6 @@
 use super::{ClassDrawResources, RenderSnapshot};
-use crate::canvas::primitives::{font_raster_size, snap_rect, world_rect_to_screen};
+use crate::canvas::pen::{self, Pen};
+use crate::canvas::primitives::{font_raster_size, world_rect_to_screen};
 use crate::{scene::SceneGroup, GroupVisualKind, StructuralVisualKind, StructuralVisualPolicy};
 use makepad_widgets::*;
 
@@ -57,13 +58,15 @@ pub(super) fn draw_frames(
     // heading while still putting child frames above their parent fill.
     for command in paint_commands(&snapshot.scene.use_case_groups) {
         if let UseCaseGroupCommand::Frame { bounds } = command {
-            let screen = snap_rect(cx, world_rect_to_screen(snapshot.viewport, bounds));
-            draws.group.draw_abs(cx, screen);
-            draws.group_border.set_uniform(
+            let screen = pen::outline(
                 cx,
-                live_id!(stroke_w),
-                &[snapshot.linework.group_stroke_width],
+                world_rect_to_screen(snapshot.viewport, bounds),
+                Pen::HAIRLINE,
             );
+            draws.group.draw_abs(cx, screen);
+            draws
+                .group_border
+                .set_uniform(cx, live_id!(pen_w), &[Pen::HAIRLINE.width() as f32]);
             draws.group_border.draw_abs(cx, screen);
         }
     }
