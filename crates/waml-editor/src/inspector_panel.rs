@@ -1615,7 +1615,7 @@ mod tests {
         let mut inspector = widget.borrow_mut::<Inspector>().unwrap();
         let source = waml::source::SourceBundle::try_from_pairs([(
             "flow.md",
-            "---\ntype: uml.Activity\ntitle: Flow\n---\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [Claim](https://example.com/claim)\n\n### Done\n",
+            "---\ntype: uml.ActivityDiagram\ntitle: Flow\n---\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [Claim](https://example.com/claim)\n\n### Done\n",
         )])
         .unwrap();
         let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();

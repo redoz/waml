@@ -44,7 +44,7 @@ fn new_class(slug: &str, title: &str) -> uml::Op {
 fn transition_trace_sets_select_parallel_transitions_and_reparse_between_ops() {
     let source = SourceBundle::try_from_pairs([(
         "sign-in.md",
-        "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [Old](./old.md)\n- on `oidc` transitions to SignedIn\n\n### SignedIn\n",
+        "---\ntype: uml.StateMachineDiagram\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [Old](./old.md)\n- on `oidc` transitions to SignedIn\n\n### SignedIn\n",
     )])
     .unwrap();
 
@@ -93,7 +93,7 @@ fn transition_trace_sets_select_parallel_transitions_and_reparse_between_ops() {
 
     assert_eq!(
         changed.document_by_concept_id("sign-in").unwrap().text(),
-        "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [AUTH-PASSWORD](./requirements.md#auth-password)\n- on `oidc` transitions to SignedIn traces [AUTH-OIDC-004](./sign-in-behavior.md#auth-oidc-004)\n  traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n"
+        "---\ntype: uml.StateMachineDiagram\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [AUTH-PASSWORD](./requirements.md#auth-password)\n- on `oidc` transitions to SignedIn traces [AUTH-OIDC-004](./sign-in-behavior.md#auth-oidc-004)\n  traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n"
     );
 }
 
@@ -101,7 +101,7 @@ fn transition_trace_sets_select_parallel_transitions_and_reparse_between_ops() {
 fn transition_trace_edits_add_update_remove_and_reorder() {
     let source = SourceBundle::try_from_pairs([(
         "flow.md",
-        "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A](#a) traces [B](#b)\n\n### Done\n",
+        "---\ntype: uml.ActivityDiagram\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A](#a) traces [B](#b)\n\n### Done\n",
     )])
     .unwrap();
     let selector = uml::TransitionSelector {
@@ -150,7 +150,7 @@ fn transition_trace_edits_add_update_remove_and_reorder() {
 
 #[test]
 fn transition_trace_edits_repair_malformed_rows_without_rewriting_siblings() {
-    let authored = "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)  traces broken\t traces [C](#c)\n\n### Done\n";
+    let authored = "---\ntype: uml.ActivityDiagram\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)  traces broken\t traces [C](#c)\n\n### Done\n";
     let source = SourceBundle::try_from_pairs([("flow.md", authored)]).unwrap();
     let selector = uml::TransitionSelector {
         behavior: "flow".into(),
@@ -179,7 +179,7 @@ fn transition_trace_edits_repair_malformed_rows_without_rewriting_siblings() {
 
 #[test]
 fn transition_trace_move_preserves_each_authored_clause() {
-    let authored = "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)   traces [Bee](#bee)\n\n### Done\n";
+    let authored = "---\ntype: uml.ActivityDiagram\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)   traces [Bee](#bee)\n\n### Done\n";
     let source = SourceBundle::try_from_pairs([("flow.md", authored)]).unwrap();
     let changed = lower(
         &source,
@@ -203,7 +203,7 @@ fn transition_trace_move_preserves_each_authored_clause() {
 
 #[test]
 fn transition_trace_update_preserves_unchanged_escaped_tokens() {
-    let authored = "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)\n\n### Done\n";
+    let authored = "---\ntype: uml.ActivityDiagram\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)\n\n### Done\n";
     let source = SourceBundle::try_from_pairs([("flow.md", authored)]).unwrap();
     let changed = lower(
         &source,

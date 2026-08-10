@@ -1335,7 +1335,7 @@ mod tests {
         let source = waml::source::SourceBundle::try_from_pairs([
             (
                 "sign-in.md",
-                "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `broken` transitions to MissingNode\n- on `authenticated` transitions to SignedIn traces [AUTH](./contract.md#auth) traces [OIDC](https://openid.net/specs/openid-connect-core-1_0.html) traces [Missing](./missing.md)\n\n### SignedIn\n",
+                "---\ntype: uml.StateMachineDiagram\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `broken` transitions to MissingNode\n- on `authenticated` transitions to SignedIn traces [AUTH](./contract.md#auth) traces [OIDC](https://openid.net/specs/openid-connect-core-1_0.html) traces [Missing](./missing.md)\n\n### SignedIn\n",
             ),
             ("contract.md", "# Contract\n\n## AUTH\n"),
         ])

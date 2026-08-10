@@ -47,7 +47,7 @@ fn labels(marked: &str) -> Vec<(String, CompletionKind)> {
 }
 
 fn sequence(body: &str) -> String {
-    format!("---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n{body}")
+    format!("---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n{body}")
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn for_offers_declared_call_ids_and_as_offers_none() {
 #[test]
 fn transitions_to_offers_declared_flow_node_identities() {
     let offered = labels(concat!(
-        "---\ntype: uml.Activity\ntitle: F\n---\n# F\n\n",
+        "---\ntype: uml.ActivityDiagram\ntitle: F\n---\n# F\n\n",
         "## Nodes\n\n",
         "### Receive\n\n- transitions to Check\n\n",
         "### Check\n\n- transitions to |\n"
@@ -283,7 +283,7 @@ const USED: [(&str, &str); 2] = [
     ("a.md", "---\ntype: uml.Class\ntitle: A\n---\n# A\n"),
     (
         "inner.md",
-        "---\ntype: uml.Sequence\ntitle: Inner\n---\n# Inner\n\n## Lifelines\n\n- [A](./a.md) as customer\n",
+        "---\ntype: uml.SequenceDiagram\ntitle: Inner\n---\n# Inner\n\n## Lifelines\n\n- [A](./a.md) as customer\n",
     ),
 ];
 
@@ -334,7 +334,7 @@ fn a_flow_node_heading_offers_no_declared_identity() {
     // one is a `DuplicateFlowNode` there, the same declaration-vs-reference
     // distinction `as <call id>` already honours.
     let offered = labels(concat!(
-        "---\ntype: uml.Activity\ntitle: F\n---\n# F\n\n",
+        "---\ntype: uml.ActivityDiagram\ntitle: F\n---\n# F\n\n",
         "## Nodes\n\n",
         "### Receive\n\n- transitions to Check\n\n",
         "### Check\n\n- transitions to Receive\n\n",
@@ -346,7 +346,7 @@ fn a_flow_node_heading_offers_no_declared_identity() {
 #[test]
 fn layout_offers_diagram_member_names() {
     let offered = labels(concat!(
-        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+        "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
         "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n",
         "## Layout\n\n- A above |\n"
     ));
@@ -364,7 +364,7 @@ fn a_layout_operand_offers_the_name_that_resolves_not_the_link_text() {
     // resolved id (`collect_unresolved_layout_refs`), so `[Status](./a.md)` is
     // reached as `a` -- offering `Status` there is an `UnresolvedLayoutRef`.
     let offered = words(concat!(
-        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+        "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
         "## Members\n\n- [Status](./a.md)\n\n## Layout\n\n- |\n"
     ));
     assert!(offered.contains(&"a".to_owned()), "{offered:?}");
@@ -376,7 +376,7 @@ fn a_multi_word_group_name_is_offered_quoted() {
     // The layout grammar is whitespace-separated: a two-word group name only
     // parses as one operand inside quotes.
     let offered = words(concat!(
-        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+        "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
         "## Members\n\n### Core People\n\n- [A](./a.md)\n\n## Layout\n\n- |\n"
     ));
     assert!(
@@ -388,7 +388,7 @@ fn a_multi_word_group_name_is_offered_quoted() {
 
 fn diagram(body: &str) -> String {
     format!(
-        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n{body}"
+        "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n{body}"
     )
 }
 
@@ -649,7 +649,7 @@ fn an_empty_slot_offers_the_instance_of_classifiers_attributes() {
 #[test]
 fn a_lifeline_alias_is_derived_from_the_link_title() {
     let bundle = concat!(
-        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+        "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n",
         "## Lifelines\n\n- [Source Bundle](./a.md) as |\n"
     );
     let offered = labels(bundle);
@@ -666,7 +666,7 @@ fn a_lifeline_alias_is_derived_from_the_link_title() {
 #[test]
 fn a_name_already_taken_in_the_document_is_not_offered_again() {
     let offered = labels(concat!(
-        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+        "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n",
         "## Lifelines\n\n- [Source Bundle](./b.md) as source\n",
         "- [Source Bundle](./a.md) as |\n"
     ));
@@ -682,7 +682,7 @@ fn a_name_already_taken_in_the_document_is_not_offered_again() {
 #[test]
 fn with_no_link_to_derive_from_nothing_is_offered_rather_than_a_guess() {
     let offered = labels(concat!(
-        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+        "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n",
         "## Lifelines\n\n- [](./a.md) as |\n"
     ));
     assert!(
@@ -725,7 +725,12 @@ fn the_frontmatter_type_value_offers_every_element_type() {
         .filter(|(_, kind)| *kind == CompletionKind::Keyword)
         .map(|(label, _)| label.as_str())
         .collect::<Vec<_>>();
-    for expected in ["uml.Class", "uml.Sequence", "uml.Actor", "Diagram"] {
+    for expected in [
+        "uml.Class",
+        "uml.SequenceDiagram",
+        "uml.Actor",
+        "uml.ClassDiagram",
+    ] {
         assert!(
             words.contains(&expected),
             "{expected} missing from {words:?}"
@@ -740,7 +745,7 @@ fn a_half_typed_element_type_filters_to_the_matching_ones() {
         .iter()
         .map(|(label, _)| label.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(words, ["uml.Sequence"], "{words:?}");
+    assert_eq!(words, ["uml.SequenceDiagram"], "{words:?}");
 }
 
 #[test]

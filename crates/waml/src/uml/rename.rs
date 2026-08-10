@@ -433,7 +433,7 @@ mod tests {
             ),
             (
                 "behavior/sign-in.md".to_string(),
-                "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `authenticated` transitions to SignedIn traces [AUTH-OIDC-004](../requirements/sign-in.md#auth-oidc-004)\n\n### SignedIn\n".to_string(),
+                "---\ntype: uml.StateMachineDiagram\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `authenticated` transitions to SignedIn traces [AUTH-OIDC-004](../requirements/sign-in.md#auth-oidc-004)\n\n### SignedIn\n".to_string(),
             ),
         ];
 

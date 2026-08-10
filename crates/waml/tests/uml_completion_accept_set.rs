@@ -32,6 +32,18 @@ const GUARDS: &[DiagCode] = &[
     DiagCode::MalformedFlowBullet,
 ];
 
+const TYPE_GUARDS: &[DiagCode] = &[DiagCode::UnknownType, DiagCode::ObsoleteDiagramType];
+
+fn replaces_type_value(text: &str, replace: &std::ops::Range<usize>) -> bool {
+    text.find("type: ").is_some_and(|start| {
+        let value_start = start + "type: ".len();
+        let value_end = text[value_start..]
+            .find('\n')
+            .map_or(text.len(), |end| value_start + end);
+        replace.start >= value_start && replace.end <= value_end
+    })
+}
+
 const SUPPORT: [(&str, &str); 3] = [
     (
         "a.md",
@@ -40,7 +52,7 @@ const SUPPORT: [(&str, &str); 3] = [
     ("b.md", "---\ntype: uml.Class\ntitle: B\n---\n# B\n"),
     (
         "inner.md",
-        "---\ntype: uml.Sequence\ntitle: Inner\n---\n# Inner\n\n## Lifelines\n\n- [A](./a.md) as customer\n",
+        "---\ntype: uml.SequenceDiagram\ntitle: Inner\n---\n# Inner\n\n## Lifelines\n\n- [A](./a.md) as customer\n",
     ),
 ];
 
@@ -112,27 +124,27 @@ fn corpus() -> Vec<String> {
     vec![
         // A sequence with a half-typed endpoint.
         concat!(
-            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n",
             "## Lifelines\n\n- [A](./a.md) as buyer\n- [B](./b.md) as order\n\n",
             "## Messages\n\n- buyer calls order `submit()` as submission\n- buyer calls \n"
         )
         .to_owned(),
         // An activity with an unfinished transition.
         concat!(
-            "---\ntype: uml.Activity\ntitle: F\n---\n# F\n\n",
+            "---\ntype: uml.ActivityDiagram\ntitle: F\n---\n# F\n\n",
             "## Nodes\n\n### Receive\n\n- transitions to Check\n\n### Check\n\n- transitions to \n"
         )
         .to_owned(),
         // A diagram with an unfinished layout statement.
         concat!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
             "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A above \n"
         )
         .to_owned(),
         // An empty layout bullet: the statement start, where the grammar wants
         // an operand and any plain word would parse as one.
         concat!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
             "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- \n"
         )
         .to_owned(),
@@ -141,20 +153,20 @@ fn corpus() -> Vec<String> {
         // `layout_continuation` rule, so without a case like this one the sweep
         // never visits the position that rule answers.
         concat!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
             "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A aligned with B\n"
         )
         .to_owned(),
         // An inline group left open after its separator: `,` is an atom of the
         // shape grammar, so the position after it wants another operand.
         concat!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
             "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- row of A, \n"
         )
         .to_owned(),
         // A layout hint slot, where only a hint phrase parses.
         concat!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
             "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A above B with \n"
         )
         .to_owned(),
@@ -167,7 +179,7 @@ fn corpus() -> Vec<String> {
         // An interaction use with an unfinished binding: both halves of a
         // binding are endpoints, but of different interactions.
         concat!(
-            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n",
             "## Lifelines\n\n- [A](./a.md) as buyer\n\n",
             "## Messages\n\n- ref [Inner](./inner.md) as inner\n  - bind buyer to \n"
         )
@@ -175,7 +187,7 @@ fn corpus() -> Vec<String> {
         // A flow node heading -- a declaration site, where an identity the
         // document already declares is a duplicate.
         concat!(
-            "---\ntype: uml.Activity\ntitle: F\n---\n# F\n\n",
+            "---\ntype: uml.ActivityDiagram\ntitle: F\n---\n# F\n\n",
             "## Nodes\n\n### Receive\n\n- transitions to Receive\n\n### decision \n"
         )
         .to_owned(),
@@ -189,7 +201,7 @@ fn corpus() -> Vec<String> {
         // names, plus a group whose name carries a space -- neither is
         // reachable as a layout operand the way it is written.
         concat!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
             "## Members\n\n- [Status](./a.md)\n\n### Core People\n\n- [B](./b.md)\n\n",
             "## Layout\n\n- \n"
         )
@@ -209,6 +221,9 @@ fn every_offered_candidate_is_accepted_by_the_diagnostic_that_guards_its_positio
                 let introduced = after
                     .iter()
                     .filter(|code| !baseline.contains(code))
+                    .filter(|(code, _)| {
+                        !replaces_type_value(&text, &replace) || TYPE_GUARDS.contains(code)
+                    })
                     .collect::<Vec<_>>();
                 assert!(
                     introduced.is_empty(),

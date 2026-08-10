@@ -14,7 +14,7 @@ fn diagnostics(
 
 #[test]
 fn transition_trace_targets_have_precise_diagnostics() {
-    let flow = "---\ntype: uml.StateMachine\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done\n  traces [Missing](./missing.md)\n  traces [Fragment](./claims.md#missing-fragment)\n  traces [HTTP](http://example.com/claim)\n  traces [HTTPS](https://example.com/claim)\n### final Done\n";
+    let flow = "---\ntype: uml.StateMachineDiagram\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done\n  traces [Missing](./missing.md)\n  traces [Fragment](./claims.md#missing-fragment)\n  traces [HTTP](http://example.com/claim)\n  traces [HTTPS](https://example.com/claim)\n### final Done\n";
     let claims = "---\ntype: okf.Behavior\n---\n# Claims\n\n## Existing fragment\n";
     let found = diagnostics([("flow.md", flow), ("claims.md", claims)]);
 
@@ -58,7 +58,7 @@ fn transition_trace_targets_have_precise_diagnostics() {
 
 #[test]
 fn transition_trace_normalizes_fragments_and_rejects_malformed_https_urls() {
-    let flow = "---\ntype: uml.StateMachine\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done traces [Claim](./claims.md#EXISTING-FRAGMENT) traces [No host](https://?query) traces [Bad port](https://example.com:bad/spec)\n### final Done\n";
+    let flow = "---\ntype: uml.StateMachineDiagram\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done traces [Claim](./claims.md#EXISTING-FRAGMENT) traces [No host](https://?query) traces [Bad port](https://example.com:bad/spec)\n### final Done\n";
     let claims = "---\ntype: okf.Behavior\n---\n# Claims\n\n## Existing fragment\n";
     let found = diagnostics([("flow.md", flow), ("claims.md", claims)]);
 

@@ -1220,7 +1220,7 @@ fn request(edit: PendingEdit, label: &str) -> EditRequest {
 fn transition_trace_edit_is_one_undoable_session_change() {
     let source = SourceBundle::try_from_pairs([(
         "flow.md",
-        "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
+        "---\ntype: uml.ActivityDiagram\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done\n\n### Done\n",
     )])
     .unwrap();
     let mut session = EditorSession::default();

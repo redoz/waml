@@ -330,7 +330,7 @@ fn transition_trace_json_shapes_are_stable() {
     let b = vec![
         (
             "flow.md".to_string(),
-            "---\ntype: uml.StateMachine\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done\n- on `go` transitions to Done traces [Contract](./contract.md) traces [Claim](./contract.md#CLAIM) traces [Web](https://example.com/spec) traces [Missing](./missing.md) traces [Invalid](https://?query)\n### final Done\n".to_string(),
+            "---\ntype: uml.StateMachineDiagram\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done\n- on `go` transitions to Done traces [Contract](./contract.md) traces [Claim](./contract.md#CLAIM) traces [Web](https://example.com/spec) traces [Missing](./missing.md) traces [Invalid](https://?query)\n### final Done\n".to_string(),
         ),
         (
             "contract.md".to_string(),

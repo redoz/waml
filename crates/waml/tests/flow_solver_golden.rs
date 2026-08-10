@@ -105,7 +105,7 @@ fn state_machine_fixture_smoke_loads_nodes_and_edges() {
 
 fn inline_flow(trace: &str) -> (FlowDoc, Vec<ActivityNode>, Vec<FlowEdge>) {
     let text = format!(
-        "---\ntype: uml.Activity\ntitle: Trace Isolation\n---\n\n# Trace Isolation\n\n## Nodes\n\n### Start\n- transitions to Done{trace}\n\n### Done\n"
+        "---\ntype: uml.ActivityDiagram\ntitle: Trace Isolation\n---\n\n# Trace Isolation\n\n## Nodes\n\n### Start\n- transitions to Done{trace}\n\n### Done\n"
     );
     let source = SourceBundle::try_from_pairs([("trace-isolation.md", text)]).unwrap();
     let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();

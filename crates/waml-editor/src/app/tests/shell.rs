@@ -113,7 +113,7 @@ fn closing_the_last_tab_hides_the_document_surfaces() {
     let (mut cx, mut app) = mounted_production_shell();
     let source = waml::source::SourceBundle::try_from_pairs([(
         "domain.md",
-        "---\ntype: Diagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n",
+        "---\ntype: uml.ClassDiagram\ntitle: Domain\nprofile: uml-domain\n---\n# Domain\n",
     )])
     .unwrap();
     app.session.replace(source).unwrap();

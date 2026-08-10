@@ -432,7 +432,7 @@ mod tests {
     fn completion_offers_message_verbs_at_an_empty_verb_slot() {
         let physical = PathBuf::from("C:/outside/seq.md");
         let text = concat!(
-            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n",
             "## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A \n"
         );
         let state = LspAnalysisState::empty()
@@ -466,7 +466,7 @@ mod tests {
         let target = PathBuf::from("C:/outside/a.md");
         let physical = PathBuf::from("C:/outside/seq.md");
         let text = concat!(
-            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n",
             "## Lifelines\n\n- [X](./a)\n"
         );
         let state = LspAnalysisState::empty()
@@ -516,7 +516,7 @@ mod tests {
             .iter()
             .map(|item| item.label.as_str())
             .collect::<Vec<_>>();
-        for expected in ["uml.Class", "uml.Sequence", "Diagram"] {
+        for expected in ["uml.Class", "uml.SequenceDiagram", "uml.ClassDiagram"] {
             assert!(labels.contains(&expected), "{expected} missing: {labels:?}");
         }
     }

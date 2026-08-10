@@ -6,7 +6,7 @@
 use super::navigation::mount_markdown_surface;
 use super::*;
 
-const SEQUENCE: &str = "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A \n";
+const SEQUENCE: &str = "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A \n";
 
 fn mounted_sequence_app() -> (Cx, App) {
     let (mut cx, mut app) = navigation_app();

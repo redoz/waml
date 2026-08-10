@@ -430,6 +430,14 @@ pub enum DiagramKind {
 }
 
 impl DiagramKind {
+    pub const ALL: &'static [Self] = &[
+        Self::Class,
+        Self::UseCase,
+        Self::Activity,
+        Self::StateMachine,
+        Self::Sequence,
+    ];
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "uml.ClassDiagram" => Some(Self::Class),

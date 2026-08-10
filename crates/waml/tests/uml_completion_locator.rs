@@ -8,8 +8,8 @@ use waml::source::{BundlePath, SourceBundle};
 use waml::uml::{expectation_at, syntax::UmlSyntaxKind};
 
 const SUPPORT: [(&str, &str); 2] = [
-    ("a.md", "---\ntype: uml.Class\ntitle: A\n---\n# A\n"),
-    ("b.md", "---\ntype: uml.Class\ntitle: B\n---\n# B\n"),
+    ("a.md", "---\ntype: uml.ClassDiagram\ntitle: A\n---\n# A\n"),
+    ("b.md", "---\ntype: uml.ClassDiagram\ntitle: B\n---\n# B\n"),
 ];
 
 /// Parse `marked` with the `|` removed and return the locator result at the
@@ -37,7 +37,7 @@ fn locate(marked: &str) -> Option<(UmlSyntaxKind, UmlSyntaxKind, String)> {
 }
 
 fn sequence(body: &str) -> String {
-    format!("---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n{body}")
+    format!("---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n{body}")
 }
 
 #[test]
@@ -110,16 +110,18 @@ fn silence_after_a_complete_construct_in_prose_and_in_a_raw_region() {
     );
     // Inside frontmatter.
     assert_eq!(
-        locate("---\ntype: uml.Seq|uence\ntitle: S\n---\n# S\n"),
+        locate("---\ntype: uml.SequenceDia|gram\ntitle: S\n---\n# S\n"),
         None
     );
 }
 
 #[test]
 fn an_offset_past_the_end_of_the_document_is_silence_not_an_error() {
-    let bundle =
-        SourceBundle::try_from_pairs([("doc.md", "---\ntype: uml.Class\ntitle: X\n---\n# X\n")])
-            .unwrap();
+    let bundle = SourceBundle::try_from_pairs([(
+        "doc.md",
+        "---\ntype: uml.ClassDiagram\ntitle: X\n---\n# X\n",
+    )])
+    .unwrap();
     let candidate = prepare_candidate(bundle, None, 1).unwrap();
     let id = candidate
         .okf()

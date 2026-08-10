@@ -144,8 +144,8 @@ fn malformed_recovery_and_unclaimed_generic_source_are_not_rewritten() {
 
 #[test]
 fn formatter_uses_inline_trace_for_one_target_and_lines_for_many() {
-    let source = "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn\n  traces [AUTH-PASSWORD](requirements.md#auth-password)\n- on `oidc` transitions to SignedIn traces [AUTH-OIDC-004](sign-in.md#auth-oidc-004) traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n";
-    let expected = "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [AUTH-PASSWORD](./requirements.md#auth-password)\n- on `oidc` transitions to SignedIn\n  traces [AUTH-OIDC-004](./sign-in.md#auth-oidc-004)\n  traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n";
+    let source = "---\ntype: uml.StateMachineDiagram\ntitle: Sign In\n---\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn\n  traces [AUTH-PASSWORD](requirements.md#auth-password)\n- on `oidc` transitions to SignedIn traces [AUTH-OIDC-004](sign-in.md#auth-oidc-004) traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n";
+    let expected = "---\ntype: uml.StateMachineDiagram\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [AUTH-PASSWORD](./requirements.md#auth-password)\n- on `oidc` transitions to SignedIn\n  traces [AUTH-OIDC-004](./sign-in.md#auth-oidc-004)\n  traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n";
     let candidate = prepared("sign-in.md", source, 21);
 
     let formatted = apply(
@@ -170,9 +170,9 @@ fn formatter_uses_inline_trace_for_one_target_and_lines_for_many() {
 #[test]
 fn formatter_does_not_rewrite_orphan_or_recovery_traces() {
     for source in [
-        "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### A\n  traces [Orphan](#orphan)\n- transitions to B\n### B\n",
-        "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B traces [Broken](\n### B\n",
-        "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B\n\n  traces [Orphan](#orphan)\n### B\n",
+        "---\ntype: uml.ActivityDiagram\n---\n# Flow\n\n## Nodes\n### A\n  traces [Orphan](#orphan)\n- transitions to B\n### B\n",
+        "---\ntype: uml.ActivityDiagram\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B traces [Broken](\n### B\n",
+        "---\ntype: uml.ActivityDiagram\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B\n\n  traces [Orphan](#orphan)\n### B\n",
     ] {
         let candidate = prepared("flow.md", source, 22);
         let action = Formatter

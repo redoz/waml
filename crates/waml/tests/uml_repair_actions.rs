@@ -280,7 +280,7 @@ fn sequence(text: &str) -> PreparedCandidate {
 #[test]
 fn a_missing_lifeline_alias_is_reported_as_an_alias_not_a_message_target() {
     let candidate = sequence(
-        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as\n",
+        "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as\n",
     );
     let concept = candidate.uml().declared.concept("class").unwrap();
     assert!(
@@ -298,7 +298,7 @@ fn a_missing_lifeline_alias_is_reported_as_an_alias_not_a_message_target() {
 #[test]
 fn a_missing_call_id_is_reported_as_a_call_id() {
     let candidate = sequence(
-        "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A calls A `x()` as\n",
+        "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A calls A `x()` as\n",
     );
     let concept = candidate.uml().declared.concept("class").unwrap();
     assert!(matches!(

@@ -88,7 +88,7 @@ fn flow_fixed_slots_project_every_current_node_and_transition_form_losslessly() 
 
 #[test]
 fn transition_traces_are_typed_and_lossless() {
-    let authored = "---\r\ntype: uml.StateMachine\r\n---\r\n# Sign in\r\n\r\n## Nodes\r\n### Idle\r\n- on `authenticated` transitions to SignedIn traces [AUTH-OIDC-004](./sign-in-behavior.md#auth-oidc-004)\r\n- on `retry` transitions to Idle traces [Retry](#retry) traces [Policy](https://example.com/policy)\r\n- on `fallback` transitions to SignedIn\r\n  traces [Local](#fallback)\r\n  traces [External](https://openid.net/specs/openid-connect-core-1_0.html)\r\n### final SignedIn\r\n";
+    let authored = "---\r\ntype: uml.StateMachineDiagram\r\n---\r\n# Sign in\r\n\r\n## Nodes\r\n### Idle\r\n- on `authenticated` transitions to SignedIn traces [AUTH-OIDC-004](./sign-in-behavior.md#auth-oidc-004)\r\n- on `retry` transitions to Idle traces [Retry](#retry) traces [Policy](https://example.com/policy)\r\n- on `fallback` transitions to SignedIn\r\n  traces [Local](#fallback)\r\n  traces [External](https://openid.net/specs/openid-connect-core-1_0.html)\r\n### final SignedIn\r\n";
     let analysis = analyze([
         ("sign-in.md", authored),
         (
@@ -147,7 +147,7 @@ fn transition_traces_are_typed_and_lossless() {
 
 #[test]
 fn malformed_transition_traces_recover_at_flow_boundaries_losslessly() {
-    let authored = "---\ntype: uml.StateMachine\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B traces\n- transitions to C traces [Broken](\n  traces []()\n### B\n  traces [Orphan](#orphan)\n- transitions to C traces [Valid](#valid)\n### final C\n\n## Notes\nkeep\n";
+    let authored = "---\ntype: uml.StateMachineDiagram\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B traces\n- transitions to C traces [Broken](\n  traces []()\n### B\n  traces [Orphan](#orphan)\n- transitions to C traces [Valid](#valid)\n### final C\n\n## Notes\nkeep\n";
     let analysis = analyze([("flow.md", authored)]);
     let syntax = root(&analysis, "flow.md");
     let transitions = typed::<uml::FlowTransitionSyntax>(syntax.clone());

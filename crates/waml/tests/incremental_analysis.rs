@@ -54,7 +54,7 @@ fn transition_trace_indexes_refresh_after_target_fragment_changes() {
     let baseline_source = SourceBundle::try_from_pairs([
         (
             "behavior.md",
-            "---\ntype: uml.StateMachine\ntitle: Behavior\n---\n# Behavior\n\n## Nodes\n\n### Idle\n- on `go` transitions to Done traces [CLAIM](./contract.md#claim) traces [External](https://example.com/spec)\n\n### Done\n",
+            "---\ntype: uml.StateMachineDiagram\ntitle: Behavior\n---\n# Behavior\n\n## Nodes\n\n### Idle\n- on `go` transitions to Done traces [CLAIM](./contract.md#claim) traces [External](https://example.com/spec)\n\n### Done\n",
         ),
         ("contract.md", "# Contract\n"),
     ])

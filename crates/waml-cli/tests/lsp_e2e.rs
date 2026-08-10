@@ -588,7 +588,7 @@ fn completion_is_advertised_and_returns_items_over_stdio() {
     );
     let uri = "file:///C:/tmp/completion-seq.md";
     // Line 9 (0-based) is "- A ", so character 4 is the empty verb slot.
-    let text = "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A \n";
+    let text = "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A \n";
     send(
         &mut stdin,
         serde_json::json!({

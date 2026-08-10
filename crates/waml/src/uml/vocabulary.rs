@@ -9,9 +9,7 @@
 //! retyped, so the enum stays the authority and this module stays the single
 //! lookup surface.
 
-use crate::model::{
-    BehaviorKind, ElementType, FlowNodeKind, FragmentKind, RelationshipKind, UmlMetaclass,
-};
+use crate::model::{FlowNodeKind, FragmentKind, RelationshipKind, UmlMetaclass};
 
 /// Every word the `## Layout` grammar treats as a keyword rather than a name.
 /// Sorted, so the table is greppable and the sortedness test is meaningful.
@@ -159,7 +157,7 @@ pub fn canonical_layout_keyword(word: &str) -> Option<&'static str> {
 
 /// Every spelling the frontmatter `type:` key accepts, in offer order.
 ///
-/// Derived from [`UmlMetaclass::ALL`] and [`BehaviorKind::ALL`] rather than
+/// Derived from [`UmlMetaclass::ALL`] and [`crate::model::DiagramKind::ALL`] rather than
 /// written out again: this module exists so a keyword has exactly one home, and
 /// the element types are no exception.
 pub fn element_type_names() -> impl Iterator<Item = String> {
@@ -167,16 +165,16 @@ pub fn element_type_names() -> impl Iterator<Item = String> {
         .iter()
         .map(|metaclass| format!("uml.{}", metaclass.name()))
         .chain(
-            BehaviorKind::ALL
+            crate::model::DiagramKind::ALL
                 .iter()
-                .map(|kind| format!("uml.{}", kind.name())),
+                .map(|kind| kind.as_str().to_owned()),
         )
-        .chain(std::iter::once(ElementType::Diagram.as_str()))
 }
 
 #[cfg(test)]
 mod element_type_tests {
     use super::*;
+    use crate::model::ElementType;
 
     /// The deliberate-update guard. Adding a variant forces the compiler to
     /// extend `name()`, but nothing forces `ALL` to grow with it, so the counts
@@ -184,9 +182,8 @@ mod element_type_tests {
     #[test]
     fn every_element_type_is_listed_exactly_once() {
         assert_eq!(UmlMetaclass::ALL.len(), 10);
-        assert_eq!(BehaviorKind::ALL.len(), 3);
         let names = element_type_names().collect::<Vec<_>>();
-        assert_eq!(names.len(), 14);
+        assert_eq!(names.len(), 15);
         let mut sorted = names.clone();
         sorted.sort();
         sorted.dedup();

@@ -22,7 +22,7 @@ where
 fn every_layout_hint_phrase_parses_without_a_diagnostic() {
     for phrase in vocabulary::LAYOUT_HINT_PHRASES {
         let text = format!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n### G\n- [A](./a.md)\n\n## Layout\n- A with {phrase}\n"
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n### G\n- [A](./a.md)\n\n## Layout\n- A with {phrase}\n"
         );
         let diagnostics = diagnostics_for([
             ("doc.md".to_string(), text),
@@ -48,7 +48,7 @@ fn every_layout_hint_phrase_parses_without_a_diagnostic() {
 fn every_layout_direction_phrase_parses_without_a_diagnostic() {
     for phrase in vocabulary::LAYOUT_DIRECTION_PHRASES {
         let text = format!(
-            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A {phrase} B\n"
+            "---\ntype: uml.ClassDiagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A {phrase} B\n"
         );
         let diagnostics = diagnostics_for([
             ("doc.md".to_string(), text),
@@ -82,7 +82,7 @@ fn every_message_verb_parses_without_a_malformed_message_diagnostic() {
             format!("A {verb} B")
         };
         let text = format!(
-            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n- [B](./b.md) as B\n\n## Messages\n\n- {message_line}\n"
+            "---\ntype: uml.SequenceDiagram\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n- [B](./b.md) as B\n\n## Messages\n\n- {message_line}\n"
         );
         let diagnostics = diagnostics_for([
             ("doc.md".to_string(), text),

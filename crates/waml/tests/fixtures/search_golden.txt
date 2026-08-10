@@ -57,9 +57,9 @@ sequence lifeline | 2 | Names | use-cases/workflows/sequence-language.md | text-
 sequence lifeline | 3 | Names | use-cases/workflows/sequence-language.md | model-element
 sequence lifeline | 4 | Names | goals/uml/sequence/feature-cut.md | text-span
 sequence lifeline | 5 | Names | goals/uml/sequence/interact-with-a-sequence-diagram.md | text-span
-sequence lifeline | 6 | Names | goals/uml/sequence/interact-with-a-sequence-diagram.md | text-span
-sequence lifeline | 7 | Names | use-cases/workflows/interact-with-a-sequence-diagram.md | text-span
-sequence lifeline | 8 | Names | use-cases/workflows/interact-with-a-sequence-diagram.md | model-element
+sequence lifeline | 6 | Names | use-cases/workflows/interact-with-a-sequence-diagram.md | text-span
+sequence lifeline | 7 | Names | use-cases/workflows/interact-with-a-sequence-diagram.md | model-element
+sequence lifeline | 8 | Names | goals/uml/sequence/interact-with-a-sequence-diagram.md | text-span
 markdown editor | 1 | Names | architecture/concepts/implementation/markdown-editor.md | text-span
 markdown editor | 2 | Names | architecture/concepts/implementation/markdown-editor.md | model-element
 markdown editor | 3 | Names | architecture/concepts/implementation/waml-markdown-editor-crate.md | text-span
