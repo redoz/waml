@@ -109,6 +109,14 @@ impl MemSearchIndex {
         self.tokens_sorted.sort();
     }
 
+    /// The source documents this index was built from, in build order.
+    /// `pub(crate)` for `asset.rs`'s encoder -- nothing outside this crate
+    /// (and nothing outside `search`, in spirit) should reach past the
+    /// `SearchIndex` trait to see these.
+    pub(crate) fn documents(&self) -> &[DocumentFields] {
+        &self.docs
+    }
+
     /// Every indexed token starting with `prefix`, via a sorted-slice range
     /// scan (`partition_point`, no linear scan of the vocabulary).
     fn matching_tokens(&self, prefix: &str) -> &[String] {

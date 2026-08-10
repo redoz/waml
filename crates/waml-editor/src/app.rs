@@ -876,6 +876,16 @@ pub struct App {
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     #[rust]
     pending_boot_bundle: Option<String>,
+    /// Expected `waml::search::asset::bundle_hash` of an in-flight boot-time
+    /// search-index-asset fetch (spec §Export-time index), started right
+    /// after a boot bundle decodes. `None` once the response (or error) is
+    /// handled -- on ANY failure to fetch/decode/hash-match, the
+    /// `SearchState` `open_bundle` already built locally is left as-is
+    /// (decision 10's fallback), so this field's absence is itself the
+    /// "nothing to do" case, not an error.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[rust]
+    pending_boot_index_hash: Option<u64>,
     /// `{ base, token }` of an in-flight `?api=` boot fetch, so its response
     /// can name the base URL in an error and, on success, commit both into
     /// the workspace's API backend (Task 9 consults it for saves).
@@ -1133,6 +1143,27 @@ impl MatchEvent for App {
             }
             return;
         }
+        // A boot-time search-index asset fetch (spec §Export-time index),
+        // started right after the boot bundle above decoded. ANY failure --
+        // non-2xx, non-UTF-8, wrong version, or a hash that does not match
+        // the bundle just opened -- leaves `self.search` exactly as
+        // `open_bundle`'s own `rebuild` already left it (decision 10): there
+        // is nothing to undo, so every early return here is silent.
+        if request_id == live_id!(boot_search_index) {
+            let Some(expected_hash) = self.pending_boot_index_hash.take() else {
+                return;
+            };
+            if !ok {
+                return;
+            }
+            let Ok(text) = std::str::from_utf8(body) else {
+                return;
+            };
+            if let Ok(index) = waml::search::asset::decode(text, expected_hash) {
+                self.search = SearchState::from_index(index);
+            }
+            return;
+        }
         if request_id != live_id!(boot_bundle) {
             return;
         }
@@ -1157,8 +1188,14 @@ impl MatchEvent for App {
         }
         match crate::browser_boot::decode_boot_bundle(body) {
             Ok(bundle) => {
+                // The bundle's own hash, computed BEFORE it moves into
+                // `open_bundle` -- what the index asset's decode must
+                // reproduce to be accepted as this bundle's index, never a
+                // literal or a hash of the asset itself.
+                let expected_hash = waml::search::asset::bundle_hash(&bundle.to_pairs());
                 self.open_bundle(cx, bundle, "exported".to_string(), None);
                 self.show_editor(cx);
+                self.start_boot_index_fetch(cx, &url, expected_hash);
             }
             Err(e) => {
                 let message = format!("could not open {url}: {e}");
@@ -1197,6 +1234,14 @@ impl MatchEvent for App {
             }
             return;
         }
+        // Silent, same as a non-2xx response above: the index asset is a
+        // best-effort optimization over the `rebuild` `open_bundle` already
+        // performed, never a requirement, so a request that never landed a
+        // response is not a fault to surface.
+        if request_id == live_id!(boot_search_index) {
+            self.pending_boot_index_hash = None;
+            return;
+        }
         if request_id != live_id!(boot_bundle) {
             return;
         }
@@ -1223,6 +1268,26 @@ impl App {
         cx.http_request(
             live_id!(boot_bundle),
             HttpRequest::new(url, HttpMethod::GET),
+        );
+    }
+
+    /// Start the fetch of `bundle_url`'s search-index asset (spec §Export-time
+    /// index), right after that bundle itself decoded. `expected_hash` is the
+    /// JUST-FETCHED bundle's own `bundle_hash` -- what the asset's embedded
+    /// hash must equal for `handle_http_response` to accept it. The editor is
+    /// already showing (via `open_bundle`'s own local rebuild) by the time
+    /// this fires, so unlike the other boot fetches this one never blocks
+    /// anything: on any failure `self.search` simply stays as `rebuild` left
+    /// it.
+    #[cfg(target_arch = "wasm32")]
+    fn start_boot_index_fetch(&mut self, cx: &mut Cx, bundle_url: &str, expected_hash: u64) {
+        self.pending_boot_index_hash = Some(expected_hash);
+        cx.http_request(
+            live_id!(boot_search_index),
+            HttpRequest::new(
+                crate::browser_boot::boot_index_url(bundle_url),
+                HttpMethod::GET,
+            ),
         );
     }
 

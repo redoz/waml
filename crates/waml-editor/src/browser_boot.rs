@@ -111,6 +111,17 @@ pub(crate) fn select_site_boot(config: &str) -> Result<BrowserBootSource, String
     select_browser_boot(query, "")
 }
 
+/// The index-asset URL to fetch alongside a fetched `?bundle=<url>`: the
+/// same name with `waml::search::asset::SEARCH_INDEX_SUFFIX` appended --
+/// never a fixed name, since `bundle_url` may not be `bundle.waml` (a
+/// hand-authored link, or a future non-default export name). Suffixing
+/// works unchanged whether `bundle_url` is a bare file name or an absolute
+/// URL, since it is pure string concatenation.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn boot_index_url(bundle_url: &str) -> String {
+    waml::search::asset::index_file_name(bundle_url)
+}
+
 /// Decode fetched bytes as a Bundle Envelope v1 model.
 ///
 /// A fetched `?bundle=` is required to be a real envelope: unlike the CLI,
@@ -311,6 +322,14 @@ mod tests {
                 token: None,
             }
         );
+    }
+
+    #[test]
+    fn a_bundle_url_names_its_own_index_asset() {
+        assert_eq!(boot_index_url("bundle.waml"), "bundle.waml.search-index");
+        // Booting `?bundle=orders.waml` must request `orders.waml.search-index`,
+        // never the default `bundle.waml.search-index`.
+        assert_eq!(boot_index_url("orders.waml"), "orders.waml.search-index");
     }
 
     #[test]

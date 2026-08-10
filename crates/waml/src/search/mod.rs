@@ -2,6 +2,7 @@
 //! in-memory `SearchIndex` backend. Surfaces depend only on the vocabulary
 //! re-exported from this module, never on a backend's internals.
 
+pub mod asset;
 pub mod extract;
 pub mod index;
 pub mod query;

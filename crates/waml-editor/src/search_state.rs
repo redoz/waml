@@ -35,6 +35,21 @@ impl SearchState {
         }
     }
 
+    /// Seed a ready `SearchState` from an index already built elsewhere --
+    /// the wasm boot path's decoded export-time asset (spec §Export-time
+    /// index), skipping a local `rebuild`. Native keeps building locally;
+    /// this is the one extra constructor the export-asset load path needs.
+    /// Its only production caller is wasm32-gated (`app.rs`'s boot-index
+    /// fetch), so a native `cargo clippy` build sees it as unused outside
+    /// tests -- same pattern as `App`'s `pending_boot_bundle` field.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn from_index(index: MemSearchIndex) -> Self {
+        SearchState {
+            index,
+            status: TextIndexStatus::Ready,
+        }
+    }
+
     /// Full rebuild from the live session (bundle open / session replace).
     pub fn rebuild(&mut self, source: &SourceBundle, okf: &OkfAnalysis, uml: &waml::uml::Analysis) {
         self.index = MemSearchIndex::build(extract_bundle(source, okf, uml));
@@ -197,6 +212,22 @@ mod tests {
 
         assert!(state.query("payments", &QueryScope::default()).is_empty());
         assert!(!state.query("shipping", &QueryScope::default()).is_empty());
+    }
+
+    #[test]
+    fn from_index_is_ready_and_queryable_immediately() {
+        let session = session_for(&[("order.md", "---\ntype: uml.Class\n---\n# Order\n")]);
+        let snapshot = session.snapshot();
+        let fields = extract_bundle(
+            &snapshot.source,
+            &snapshot.okf_analysis,
+            &snapshot.uml_analysis,
+        );
+
+        let state = SearchState::from_index(MemSearchIndex::build(fields));
+
+        assert_eq!(state.status(), TextIndexStatus::Ready);
+        assert!(!state.query("order", &QueryScope::default()).is_empty());
     }
 
     #[test]

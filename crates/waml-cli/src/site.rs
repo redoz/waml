@@ -30,8 +30,14 @@ pub(crate) use waml::site_boot::SITE_BOOT_CONFIG_FILE as BOOT_CONFIG_FILE;
 /// Where an assembled site gets its model from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SiteSource {
-    /// A `bundle.waml` written beside the editor, holding these bytes.
-    Static(Vec<u8>),
+    /// A `bundle.waml` written beside the editor, holding these bytes, plus
+    /// its export-time search-index asset (spec §Export-time index): built
+    /// from exactly the same pairs, so search on the exported site can never
+    /// see more than the export shipped.
+    Static {
+        bundle: Vec<u8>,
+        search_index: Vec<u8>,
+    },
     /// A model server mounted at `/api` on the same origin.
     Api,
 }
@@ -99,7 +105,7 @@ pub(crate) fn validate_manifest(artifact: &[EmbeddedAsset]) -> Result<(), SiteEr
 /// The boot-config query string a site with this source boots from.
 pub(crate) fn boot_query(source: &SiteSource) -> String {
     match source {
-        SiteSource::Static(_) => format!("?bundle={BUNDLE_FILE}"),
+        SiteSource::Static { .. } => format!("?bundle={BUNDLE_FILE}"),
         SiteSource::Api => "?api=/api".to_string(),
     }
 }
@@ -120,8 +126,18 @@ pub(crate) fn assemble_site(
     let boot_query = boot_query(&source);
     files.insert(BOOT_CONFIG_FILE.to_string(), boot_query.into_bytes());
 
-    if let SiteSource::Static(bundle) = source {
+    if let SiteSource::Static {
+        bundle,
+        search_index,
+    } = source
+    {
         files.insert(BUNDLE_FILE.to_string(), bundle);
+        // Derived from the same `BUNDLE_FILE` constant the bundle itself is
+        // keyed under, so the pair cannot drift (spec §Export-time index).
+        files.insert(
+            waml::search::asset::index_file_name(BUNDLE_FILE),
+            search_index,
+        );
     }
     Ok(files)
 }
@@ -234,16 +250,33 @@ mod tests {
             asset("waml-editor.wasm", "wasm bytes"),
         ]);
 
-        let site = assemble_site(&artifact, SiteSource::Static(b"bundle bytes".to_vec())).unwrap();
+        let site = assemble_site(
+            &artifact,
+            SiteSource::Static {
+                bundle: b"bundle bytes".to_vec(),
+                search_index: b"index bytes".to_vec(),
+            },
+        )
+        .unwrap();
 
         assert_eq!(site["waml-editor.wasm"], b"wasm bytes");
         assert_eq!(site[BUNDLE_FILE], b"bundle bytes");
+        assert_eq!(site["bundle.waml.search-index"], b"index bytes");
         assert_eq!(site[BOOT_CONFIG_FILE], b"?bundle=bundle.waml");
         // The address bar is the visitor's; the site says nothing in it.
         assert_eq!(
             String::from_utf8(site["index.html"].clone()).unwrap(),
             index_html()
         );
+    }
+
+    #[test]
+    fn an_api_site_has_no_search_index_asset() {
+        let artifact = artifact(vec![asset("index.html", &index_html())]);
+
+        let site = assemble_site(&artifact, SiteSource::Api).unwrap();
+
+        assert!(!site.contains_key("bundle.waml.search-index"));
     }
 
     #[test]

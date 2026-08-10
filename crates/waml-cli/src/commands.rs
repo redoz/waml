@@ -185,6 +185,21 @@ pub fn prepare(files: &[(String, String)]) -> Result<PreparedCandidate, String> 
     prepare_candidate(source, None, 0).map_err(|e| e.to_string())
 }
 
+/// Build the export-time search-index asset for `files` (spec: `waml export
+/// site`'s static bundle also ships its index). The index is built from
+/// exactly the pairs `files` holds -- the same pairs that go into
+/// `bundle.waml` -- so search on the exported site can never see more than
+/// the export shipped, and `bundle_hash(files)` is what a boot-time decode
+/// must reproduce to accept the asset.
+pub fn build_search_index_asset(files: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let prepared = prepare(files)?;
+    let fields =
+        waml::search::extract::extract_bundle(prepared.source(), prepared.okf(), prepared.uml());
+    let index = waml::search::MemSearchIndex::build(fields);
+    let hash = waml::search::asset::bundle_hash(files);
+    Ok(waml::search::asset::encode(&index, hash).into_bytes())
+}
+
 pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, String> {
     let mut original_index_paths = std::collections::BTreeMap::new();
     let mut planning_files = Vec::with_capacity(files.len());
@@ -410,6 +425,37 @@ pub fn plan_fmt(files: &[(String, String)]) -> Result<Vec<FmtResult>, String> {
 mod tests {
     use super::*;
     use waml::diagnostic::DiagCode;
+
+    #[test]
+    fn build_search_index_asset_carries_the_bundle_hash_and_finds_known_terms() {
+        let files = vec![(
+            "order.md".to_string(),
+            "---\ntype: uml.Class\n---\n# Order\n\nAbout payments.\n".to_string(),
+        )];
+
+        let bytes = build_search_index_asset(&files).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        let hash = waml::search::asset::bundle_hash(&files);
+        assert!(
+            text.starts_with(&format!(
+                "waml-search-index v{} {hash}",
+                waml::search::asset::FORMAT_VERSION
+            )),
+            "{text}"
+        );
+
+        let index = waml::search::asset::decode(&text, hash).unwrap();
+        use waml::search::SearchIndex;
+        assert!(!index
+            .query("payments", &waml::search::QueryScope::default())
+            .is_empty());
+
+        // A different bundle's hash must not decode this asset (spec: the
+        // export boundary is hash-checked, not merely versioned).
+        let other = vec![("order.md".to_string(), "# Order\n".to_string())];
+        let other_hash = waml::search::asset::bundle_hash(&other);
+        assert!(waml::search::asset::decode(&text, other_hash).is_err());
+    }
 
     #[test]
     fn plan_indexes_keeps_deep_ancestors_and_removes_an_orphan_index() {

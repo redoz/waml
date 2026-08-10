@@ -1057,7 +1057,23 @@ fn run_export_site(dir: &PathBuf, out: &Path, force: bool) -> i32 {
             return 2;
         }
     };
-    let site = match site::assemble_site(artifact, site::SiteSource::Static(bundle.into_bytes())) {
+    // Built from exactly `files` -- the same pairs `bundle` above encodes --
+    // so search on the exported site can never see more than the export
+    // shipped (spec §Export-time index boundary rule).
+    let search_index = match commands::build_search_index_asset(&files) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("waml: {error}");
+            return 2;
+        }
+    };
+    let site = match site::assemble_site(
+        artifact,
+        site::SiteSource::Static {
+            bundle: bundle.into_bytes(),
+            search_index,
+        },
+    ) {
         Ok(site) => site,
         Err(error) => {
             eprintln!("waml: {error}");
