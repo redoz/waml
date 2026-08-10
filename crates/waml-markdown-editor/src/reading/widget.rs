@@ -244,6 +244,11 @@ pub struct MarkdownViewer {
     /// `BookSurface` reads it to size a prose section to what actually drew.
     #[rust]
     content_height: f64,
+    /// Base body size captured before the first zoom, so repeated zooms
+    /// multiply the ORIGINAL 12pt, never each other (spec §Applying the
+    /// zoom).
+    #[rust]
+    base_font_size: Option<f32>,
 }
 
 impl MarkdownViewer {
@@ -291,6 +296,20 @@ impl MarkdownViewer {
 
     fn flow(&self, cx: &Cx) -> TextFlowRef {
         self.view.text_flow(cx, ids!(flow_body))
+    }
+
+    /// Scale the whole reading page: every other dimension is em-derived off
+    /// `TextFlow.font_size` (typesetting pass), so one multiplier is
+    /// coherent.
+    pub fn set_zoom(&mut self, cx: &mut Cx, scale: f64) {
+        let flow_ref = self.flow(cx);
+        let Some(mut flow) = flow_ref.borrow_mut() else {
+            return;
+        };
+        let base = *self.base_font_size.get_or_insert(flow.font_size);
+        flow.font_size = base * scale as f32;
+        drop(flow);
+        self.redraw(cx);
     }
 
     /// Paints the installed search highlights as a translucent fill over the
@@ -806,6 +825,12 @@ impl MarkdownViewerRef {
     pub fn clear_search_highlights(&self, cx: &mut Cx) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.clear_search_highlights(cx);
+        }
+    }
+
+    pub fn set_zoom(&self, cx: &mut Cx, scale: f64) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_zoom(cx, scale);
         }
     }
 

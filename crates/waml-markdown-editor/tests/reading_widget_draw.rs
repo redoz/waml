@@ -206,3 +206,41 @@ fn a_mounted_viewer_paints_a_rect_over_each_matched_run() {
     // And the reveal path's scroll target is derived from the same geometry.
     assert!(viewer.search_highlight_offset(&cx).is_some());
 }
+
+#[test]
+fn set_zoom_scales_the_flow_from_a_stable_base_without_compounding() {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_body(&mut cx);
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+
+    let flow = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer.flow_body))
+        .as_text_flow();
+    let base = flow
+        .borrow()
+        .expect("the flow_body child must exist")
+        .font_size;
+
+    viewer.set_zoom(&mut cx, 1.5);
+    assert_eq!(
+        flow.borrow().expect("flow still exists").font_size,
+        base * 1.5
+    );
+
+    viewer.set_zoom(&mut cx, 1.5);
+    assert_eq!(
+        flow.borrow().expect("flow still exists").font_size,
+        base * 1.5,
+        "two identical zooms must not compound"
+    );
+
+    viewer.set_zoom(&mut cx, 1.0);
+    assert_eq!(
+        flow.borrow().expect("flow still exists").font_size,
+        base,
+        "reset returns to the base"
+    );
+}
