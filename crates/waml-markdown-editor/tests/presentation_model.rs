@@ -267,6 +267,7 @@ mod diagnostic_message_emission {
                 revision: DocumentRevision::INITIAL,
                 items: Arc::from([]),
             }),
+            search_highlights: Arc::from([]),
         };
         let selections = SelectionSet::from_source(
             DocumentRevision::INITIAL,

@@ -14,14 +14,14 @@ use waml_markdown_editor::{
         PresentationStyles, PresentedDiagnostic, PresentedDiagnosticSeverity,
     },
     session::{HostSnapshotCause, MarkdownDocumentSession},
-    syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText},
+    syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange, TextSize},
     widget::MarkdownEditorRef,
     EditorEmphasis,
 };
 
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, HeaderViewAction,
-    ViewData, ViewOutcome, ViewReconcilePolicy,
+    RevealTarget, ViewData, ViewOutcome, ViewReconcilePolicy,
 };
 use crate::editor_session::{
     exact_replacement_change, EditorSessionSnapshot, ProposedSourceEdit, SessionChange,
@@ -676,6 +676,21 @@ impl DocView for SourceView {
         Some(crate::accent::bucket_color(
             crate::node_style::AccentBucket::None,
         ))
+    }
+
+    /// A search hit's `TextSpan` highlights and scrolls to the matched range
+    /// in the raw markdown; `ModelElement` is a canvas concept this text
+    /// surface ignores (spec §DocView::reveal).
+    fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &RevealTarget) {
+        let RevealTarget::TextSpan { start, end } = target else {
+            return;
+        };
+        let Ok(range) = TextRange::new(TextSize::new(*start), TextSize::new(*end)) else {
+            return;
+        };
+        let editor = body.markdown_editor();
+        editor.set_search_highlights(cx, vec![range]);
+        editor.reveal_range(cx, range);
     }
 
     fn capture_anchor(&self, _body: &BodyWidgets) -> ViewAnchor {
@@ -1368,6 +1383,50 @@ mod tests {
     }
 
     #[test]
+    fn reveal_text_span_installs_a_highlight_and_scrolls_the_editor() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let mut view = source_view("shop/order");
+        let ready = source_session().snapshot();
+        view.install_snapshot(&mut cx, &body, &ready, HostSnapshotCause::InitialLoad);
+
+        let editor = body.markdown_editor();
+        assert!(editor.test_search_highlights().is_empty());
+
+        let target = RevealTarget::TextSpan { start: 2, end: 7 };
+        view.reveal(&mut cx, &body, &target);
+
+        let expected = TextRange::new(TextSize::new(2), TextSize::new(7)).unwrap();
+        assert_eq!(editor.test_search_highlights(), vec![expected]);
+    }
+
+    #[test]
+    fn reveal_ignores_a_model_element_target() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let mut view = source_view("shop/order");
+        let ready = source_session().snapshot();
+        view.install_snapshot(&mut cx, &body, &ready, HostSnapshotCause::InitialLoad);
+
+        let editor = body.markdown_editor();
+        view.reveal(
+            &mut cx,
+            &body,
+            &RevealTarget::ModelElement {
+                key: "order".into(),
+            },
+        );
+        assert!(
+            editor.test_search_highlights().is_empty(),
+            "a text surface must ignore a model-element reveal target"
+        );
+    }
+
+    #[test]
     fn standard_widget_draw_paints_ready_and_missing_presentations() {
         let mut cx = Cx::new(Box::new(|_, _| {}));
         cx.init_cx_os();
@@ -1613,6 +1672,7 @@ mod tests {
                 .active_owners(ready.session.selections().primary().cursor.offset),
             diagnostics: ready.diagnostics.clone(),
             assets,
+            search_highlights: Arc::from([]),
         };
         let local_commands = build_draw_commands(
             &frame,

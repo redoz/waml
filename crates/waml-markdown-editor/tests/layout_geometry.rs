@@ -88,6 +88,7 @@ fn closing_fenced_code_marker_has_exact_geometry_and_a_text_paint_command() {
             revision: DocumentRevision::INITIAL,
             items: Arc::from([]),
         }),
+        search_highlights: Arc::from([]),
     };
     let commands = build_draw_commands(&frame, &plan, &styles, &selection, None).unwrap();
     let painted = commands

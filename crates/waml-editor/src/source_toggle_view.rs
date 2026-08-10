@@ -8,8 +8,8 @@ use makepad_widgets::*;
 use waml_markdown_editor::session::HostSnapshotCause;
 
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocViewIdentity, HeaderViewAction, ViewData, ViewOutcome,
-    ViewReconcilePolicy,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, HeaderViewAction, RevealTarget, ViewData,
+    ViewOutcome, ViewReconcilePolicy,
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icon_button::IconButtonWidgetRefExt;
@@ -242,6 +242,17 @@ impl<V: DocView> DocView for SourceToggleView<V> {
         }
     }
 
+    /// Delegates to whichever surface is currently showing (spec
+    /// §DocView::reveal) -- the raw-markdown surface while toggled to
+    /// source, the wrapped view otherwise.
+    fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &RevealTarget) {
+        if self.showing_source {
+            self.source.reveal(cx, body, target);
+        } else {
+            self.inner.reveal(cx, body, target);
+        }
+    }
+
     fn capture_anchor(&self, body: &BodyWidgets) -> ViewAnchor {
         self.inner.capture_anchor(body)
     }
@@ -261,6 +272,20 @@ impl<V: DocView> DocView for SourceToggleView<V> {
 mod tests {
     use super::*;
     use crate::doc_view::{DocumentHeaderChrome, HeaderViewAction};
+    use waml_markdown_editor::syntax::{TextRange, TextSize};
+
+    fn mounted_body(cx: &mut Cx) -> WidgetRef {
+        waml_markdown_editor::live_design(cx);
+        let markdown = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(waml_markdown_editor::widget::MarkdownEditor::script_new_with_default),
+        ));
+        let mut surface = cx.with_vm(View::script_new_with_default);
+        surface.children.push((live_id!(editor), markdown));
+        let surface = WidgetRef::new_with_inner(Box::new(surface));
+        let mut root = cx.with_vm(View::script_new_with_default);
+        root.children.push((live_id!(markdown_surface), surface));
+        WidgetRef::new_with_inner(Box::new(root))
+    }
 
     fn wrapped_preview() -> SourceToggleView<crate::classifier_preview_view::ClassifierPreviewView>
     {
@@ -345,6 +370,26 @@ mod tests {
                 icon: Icon::Code,
                 tooltip: "View source",
             })
+        );
+    }
+
+    #[test]
+    fn reveal_forwards_to_the_source_surface_while_toggled_to_source() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let mut view = wrapped_diagram();
+        view.toggle_for_test();
+        assert!(view.showing_source());
+
+        let target = RevealTarget::TextSpan { start: 1, end: 4 };
+        view.reveal(&mut cx, &body, &target);
+
+        let expected = TextRange::new(TextSize::new(1), TextSize::new(4)).unwrap();
+        assert_eq!(
+            body.markdown_editor().test_search_highlights(),
+            vec![expected]
         );
     }
 

@@ -662,6 +662,12 @@ pub struct MarkdownEditor {
     pending_scroll_reset: bool,
     #[rust]
     has_focus: bool,
+    /// Source ranges the active search query hit (spec §DocView::reveal),
+    /// installed by `set_search_highlights`. Compared by `Arc` identity in
+    /// `draw_commands_cache_reusable`, so every call installs a fresh `Arc`
+    /// even when the ranges happen to be unchanged.
+    #[rust]
+    search_highlights: Arc<[waml_syntax::TextRange]>,
     #[live]
     draw_text_sans: DrawText,
     #[live]
@@ -848,6 +854,9 @@ struct DrawCommandsCache {
     /// Mono advance the cached commands were ellipsized against; a font
     /// refresh or scale change that moves it must rebuild.
     message_advance: f64,
+    /// The search-highlight set the cached commands were built against;
+    /// compared by identity like `installed`/`layout` (P-6).
+    search_highlights: Arc<[waml_syntax::TextRange]>,
     commands: Arc<[DrawCommand]>,
     plan: Arc<[Vec<usize>; DRAW_LAYERS.len()]>,
 }
@@ -861,11 +870,13 @@ fn draw_commands_cache_reusable(
     layout: &Arc<LayoutSnapshot>,
     selections: &crate::selection::SelectionSet,
     message_advance: f64,
+    search_highlights: &Arc<[waml_syntax::TextRange]>,
 ) -> bool {
     Arc::ptr_eq(&cache.installed, installed)
         && Arc::ptr_eq(&cache.layout, layout)
         && cache.selections == *selections
         && cache.message_advance.to_bits() == message_advance.to_bits()
+        && Arc::ptr_eq(&cache.search_highlights, search_highlights)
 }
 
 impl Widget for MarkdownEditor {
@@ -915,6 +926,54 @@ impl MarkdownEditor {
     fn redraw(&mut self, cx: &mut Cx) {
         self.scroll_bars.redraw(cx);
         self.view.redraw(cx);
+    }
+
+    /// Install the active search query's hit ranges as a `SearchMatch`
+    /// decoration, replacing whatever set was installed before. An empty
+    /// `Vec` is the same as `clear_search_highlights`.
+    pub fn set_search_highlights(&mut self, cx: &mut Cx, ranges: Vec<waml_syntax::TextRange>) {
+        self.search_highlights = ranges.into();
+        self.redraw(cx);
+    }
+
+    /// Drop the installed search highlights. A no-op (no redraw) when
+    /// nothing is installed, so repeated clears from a debounced search
+    /// query do not force needless work.
+    pub fn clear_search_highlights(&mut self, cx: &mut Cx) {
+        if self.search_highlights.is_empty() {
+            return;
+        }
+        self.search_highlights = Arc::from([]);
+        self.redraw(cx);
+    }
+
+    /// Scroll `range` into view (spec §DocView::reveal). Uses the layout
+    /// snapshot installed for the CURRENT frame, since that is the one the
+    /// scrollbar's content coordinates agree with; before a first draw there
+    /// is nothing to scroll to yet, so this is a no-op.
+    pub fn reveal_range(&mut self, cx: &mut Cx, range: waml_syntax::TextRange) {
+        let Some(layout) = self.pipeline.frame_layout.as_ref() else {
+            return;
+        };
+        let selection = crate::selection::Selection::new(
+            crate::selection::TextPosition::new(range.start(), crate::selection::Affinity::Before),
+            crate::selection::TextPosition::new(range.end(), crate::selection::Affinity::After),
+        );
+        let Some(rect) = layout
+            .selection_rects(selection)
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+        else {
+            return;
+        };
+        self.scroll_bars.scroll_into_view_no_smooth(cx, rect);
+        // The scrollbar position just moved outside the normal draw prologue
+        // that keeps `scroll_y` (hit-testing) in sync with it (see the field
+        // doc); resync both halves now so a hit-test right after a reveal
+        // (no intervening draw) still lands correctly.
+        self.scroll_y = self.scroll_bars.get_scroll_pos().y;
+        self.redraw(cx);
     }
 
     pub fn handle_event_with_session(
@@ -1233,6 +1292,7 @@ impl MarkdownEditor {
                         layout,
                         session.selections(),
                         message_advance,
+                        &self.search_highlights,
                     )
                 });
         if !reusable {
@@ -1244,6 +1304,7 @@ impl MarkdownEditor {
                     .active_owners(session.selections().primary().cursor.offset),
                 diagnostics: installed.diagnostics.clone(),
                 assets: installed.assets.clone(),
+                search_highlights: self.search_highlights.clone(),
             };
             let styles = installed
                 .styles
@@ -1262,6 +1323,7 @@ impl MarkdownEditor {
                 layout: layout.clone(),
                 selections: session.selections().clone(),
                 message_advance,
+                search_highlights: self.search_highlights.clone(),
                 commands,
                 plan,
             });
@@ -1537,6 +1599,17 @@ impl MarkdownEditor {
                         let band = squiggle_rect(*rect);
                         self.draw_squiggle.phase_x = band.pos.x as f32;
                         self.draw_squiggle.draw_abs(cx, band);
+                    }
+                }
+                DecorationRole::SearchMatch => {
+                    // A fill-behind highlighter mark: painted after glyphs
+                    // (the Decoration layer runs after Text), so it must stay
+                    // translucent or it would blot the matched text out
+                    // rather than mark it. Reuses the selection channel
+                    // rather than inventing a new theming color.
+                    self.draw_decoration.color = self.selection_color;
+                    for rect in rects.iter() {
+                        self.draw_decoration.draw_abs(cx, *rect);
                     }
                 }
             },
@@ -2594,6 +2667,24 @@ impl MarkdownEditorRef {
         }
     }
 
+    pub fn set_search_highlights(&self, cx: &mut Cx, ranges: Vec<waml_syntax::TextRange>) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_search_highlights(cx, ranges);
+        }
+    }
+
+    pub fn clear_search_highlights(&self, cx: &mut Cx) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.clear_search_highlights(cx);
+        }
+    }
+
+    pub fn reveal_range(&self, cx: &mut Cx, range: waml_syntax::TextRange) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.reveal_range(cx, range);
+        }
+    }
+
     pub fn set_read_only(&self, cx: &mut Cx, read_only: bool) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.read_only = read_only;
@@ -2904,6 +2995,12 @@ impl MarkdownEditorRef {
     }
 
     #[doc(hidden)]
+    pub fn test_search_highlights(&self) -> Vec<waml_syntax::TextRange> {
+        self.borrow()
+            .map_or_else(Vec::new, |inner| inner.search_highlights.to_vec())
+    }
+
+    #[doc(hidden)]
     pub fn test_gutter_width(&self, cx: &mut Cx, session: &MarkdownDocumentSession) -> f64 {
         self.borrow_mut()
             .map_or(0.0, |mut inner| inner.gutter_width(cx, session))
@@ -3143,6 +3240,7 @@ mod layout_pipeline_tests {
                 )
                 .expect("empty caret selection"),
                 message_advance: 6.6,
+                search_highlights: Arc::from([]),
                 commands: Arc::from([]),
                 plan: Arc::new(Default::default()),
             }),
@@ -3226,11 +3324,13 @@ mod layout_pipeline_tests {
             TextSize::new(0),
         )
         .expect("empty caret selection");
+        let highlights: Arc<[waml_syntax::TextRange]> = Arc::from([]);
         let cache = DrawCommandsCache {
             installed: installed.clone(),
             layout: layout.clone(),
             selections: selections.clone(),
             message_advance: 6.6,
+            search_highlights: highlights.clone(),
             commands: Arc::from([]),
             plan: Arc::new(Default::default()),
         };
@@ -3239,11 +3339,59 @@ mod layout_pipeline_tests {
             &installed,
             &layout,
             &selections,
-            6.6
+            6.6,
+            &highlights
         ));
         assert!(
-            !draw_commands_cache_reusable(&cache, &installed, &layout, &selections, 7.0),
+            !draw_commands_cache_reusable(
+                &cache,
+                &installed,
+                &layout,
+                &selections,
+                7.0,
+                &highlights
+            ),
             "a font refresh that changes the mono advance must rebuild the commands"
+        );
+    }
+
+    #[test]
+    fn a_changed_search_highlight_set_invalidates_the_draw_command_cache() {
+        let installed = installed_presentation();
+        let layout = layout_snapshot();
+        let selections = SelectionSet::caret_in_text(
+            DocumentRevision::INITIAL,
+            &waml_syntax::SourceText::new(String::new()).unwrap(),
+            TextSize::new(0),
+        )
+        .expect("empty caret selection");
+        let original: Arc<[waml_syntax::TextRange]> = Arc::from([]);
+        let cache = DrawCommandsCache {
+            installed: installed.clone(),
+            layout: layout.clone(),
+            selections: selections.clone(),
+            message_advance: 6.6,
+            search_highlights: original.clone(),
+            commands: Arc::from([]),
+            plan: Arc::new(Default::default()),
+        };
+        assert!(draw_commands_cache_reusable(
+            &cache,
+            &installed,
+            &layout,
+            &selections,
+            6.6,
+            &original
+        ));
+
+        let changed: Arc<[waml_syntax::TextRange]> =
+            Arc::from([
+                waml_syntax::TextRange::new(TextSize::new(0), TextSize::new(1))
+                    .expect("ordered range"),
+            ]);
+        assert!(
+            !draw_commands_cache_reusable(&cache, &installed, &layout, &selections, 6.6, &changed),
+            "a new search-highlight set must rebuild the commands"
         );
     }
 }

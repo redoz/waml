@@ -226,6 +226,7 @@ fn plan_with_all_layers() -> (
         active_owners: Arc::from([]),
         diagnostics: Arc::from([]),
         assets,
+        search_highlights: Arc::from([]),
     };
     (
         plan,
@@ -408,6 +409,7 @@ fn quote_rule_stays_narrow_and_parent_owned_marker_keeps_a_text_command() {
             revision: DocumentRevision::INITIAL,
             items: Arc::from([]),
         }),
+        search_highlights: Arc::from([]),
     };
     let commands =
         build_draw_commands(&frame, &plan, &styles, &selection(source, 2, 2), None).unwrap();
@@ -476,6 +478,7 @@ fn thematic_rule_is_a_narrow_centered_background_and_keeps_literal_source_text()
             revision: DocumentRevision::INITIAL,
             items: Arc::from([]),
         }),
+        search_highlights: Arc::from([]),
     };
     let commands =
         build_draw_commands(&frame, &plan, &styles, &selection(source, 0, 0), None).unwrap();
@@ -529,6 +532,7 @@ fn active_markers_change_only_color_and_keep_semantic_content_metrics() {
         active_owners,
         diagnostics: Arc::from([]),
         assets: assets.clone(),
+        search_highlights: Arc::from([]),
     };
     let styles = PresentationStyles::balanced();
     let caret = selection(source, 3, 3);
@@ -621,6 +625,7 @@ fn every_interactive_rectangle_comes_from_the_frame_snapshot() {
             revision: DocumentRevision::INITIAL,
             items: Arc::from([(image_id, EmbeddedState::Loading)]),
         }),
+        search_highlights: Arc::from([range(0, 3)]),
     };
     let syntax = parse_markdown(
         DocumentRevision::INITIAL,
@@ -654,6 +659,10 @@ fn every_interactive_rectangle_comes_from_the_frame_snapshot() {
         .selection_rects(Selection::new(position(2), position(6)))
         .unwrap();
     assert!(commands.iter().any(|command| matches!(command, DrawCommand::Decoration { rects, role: DecorationRole::DiagnosticUnderline(PresentedDiagnosticSeverity::Warning), .. } if rects.as_ref() == diagnostic_rects)));
+    let search_match_rects = layout
+        .selection_rects(Selection::new(position(0), position(3)))
+        .unwrap();
+    assert!(commands.iter().any(|command| matches!(command, DrawCommand::Decoration { range, rects, role: DecorationRole::SearchMatch } if *range == self::range(0, 3) && rects.as_ref() == search_match_rects)));
     assert!(commands.iter().any(
         |command| matches!(command, DrawCommand::EmbeddedBlock { rect, .. } if *rect == image_rect)
     ));
@@ -912,6 +921,7 @@ fn the_editor_never_draws_the_list_bullet_decoration() {
             revision: DocumentRevision::INITIAL,
             items: Arc::from([]),
         }),
+        search_highlights: Arc::from([]),
     };
     let commands =
         build_draw_commands(&frame, &plan, &styles, &selection(source, 0, 0), None).unwrap();
@@ -1010,6 +1020,7 @@ fn message_commands(
             revision: DocumentRevision::INITIAL,
             items: Arc::from([]),
         }),
+        search_highlights: Arc::from([]),
     };
     build_draw_commands(
         &frame,

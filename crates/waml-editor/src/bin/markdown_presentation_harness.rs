@@ -500,6 +500,7 @@ impl App {
             active_owners: Arc::from([]),
             diagnostics: installed.diagnostics.clone(),
             assets: installed.assets.clone(),
+            search_highlights: Arc::from([]),
         };
         let commands = build_draw_commands(
             &frame,

@@ -95,6 +95,11 @@ pub struct PresentationFrame {
     pub active_owners: Arc<[SyntaxIdentity]>,
     pub diagnostics: Arc<[PresentedDiagnostic]>,
     pub assets: Arc<EmbeddedAssetFrame>,
+    /// Source ranges the active search query hit, painted as a fill-behind
+    /// decoration (spec §DocView::reveal). No revision guard: unlike
+    /// diagnostics this is set synchronously by whoever installs the reveal,
+    /// never produced by an async analysis pass that could lag the frame.
+    pub search_highlights: Arc<[TextRange]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,6 +115,9 @@ pub struct ResolvedTextStyle {
 pub enum DecorationRole {
     LinkUnderline,
     DiagnosticUnderline(PresentedDiagnosticSeverity),
+    /// A search-query hit: a translucent fill covering the matched text,
+    /// painted at the decoration layer (after glyphs) like a highlighter pen.
+    SearchMatch,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -326,6 +334,18 @@ pub fn build_draw_commands(
         });
     }
 
+    // Pushed before links/diagnostics so their underline/squiggle decorations
+    // paint on top of a search highlight's fill rather than under it.
+    for range in frame.search_highlights.iter() {
+        let rects = rects_for_range(&frame.layout, *range);
+        if !rects.is_empty() {
+            commands.push(DrawCommand::Decoration {
+                range: *range,
+                rects,
+                role: DecorationRole::SearchMatch,
+            });
+        }
+    }
     for link in plan.links.iter() {
         let rects = rects_for_range(&frame.layout, link.source_range);
         if !rects.is_empty() {

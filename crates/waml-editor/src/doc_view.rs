@@ -463,6 +463,20 @@ pub enum ViewReconcilePolicy {
     RetainLiveState,
 }
 
+/// What a search hit asks the active view to show (spec §DocView::reveal).
+/// The one reveal path the results tab, find strip, and F3 traversal all
+/// call: text-surface views (source, markdown) map `TextSpan` onto their own
+/// scroll/highlight and ignore `ModelElement`; canvas views do the opposite.
+/// Both variants have a `DocView::reveal` consumer already (`SourceView`,
+/// Task 6); no PRODUCER exists yet -- the results tab (Task 8+), find strip,
+/// and F3 traversal construct these in later plan tasks.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RevealTarget {
+    TextSpan { start: u32, end: u32 },
+    ModelElement { key: String },
+}
+
 #[allow(dead_code)]
 pub trait DocView {
     fn identity(&self) -> DocViewIdentity;
@@ -567,6 +581,14 @@ pub trait DocView {
 
     fn capture_anchor(&self, _body: &BodyWidgets) -> ViewAnchor {
         ViewAnchor::None
+    }
+
+    /// Show `target` on the body surface this view owns (spec
+    /// §DocView::reveal). No-op default so folder/generic views -- and any
+    /// view kind a reveal target does not apply to -- compile and behave
+    /// unchanged.
+    fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &RevealTarget) {
+        let _ = (cx, body, target);
     }
 
     fn restore_anchor(

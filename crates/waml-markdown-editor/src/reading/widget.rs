@@ -108,6 +108,29 @@ impl SourceMap {
         self.pieces.is_empty()
     }
 
+    /// The flow index ranges a source range covers, one per piece it
+    /// overlaps (never merged across a gap, so a caller gets exactly the
+    /// drawn runs a search hit touches). The inverse of `source_span`.
+    pub fn flow_ranges_for_source(&self, source: TextRange) -> Vec<Range<usize>> {
+        let mut ranges = Vec::new();
+        for piece in &self.pieces {
+            let Some(piece_source) = piece.source else {
+                continue;
+            };
+            if piece_source.end() <= source.start() || piece_source.start() >= source.end() {
+                continue;
+            }
+            let overlap_start = piece_source.start().max(source.start());
+            let overlap_end = piece_source.end().min(source.end());
+            let lead = overlap_start.to_usize() - piece_source.start().to_usize();
+            let trail = piece_source.end().to_usize() - overlap_end.to_usize();
+            let flow_start = piece.flow.start + lead;
+            let flow_end = piece.flow.end.saturating_sub(trail).max(flow_start);
+            ranges.push(flow_start..flow_end);
+        }
+        ranges
+    }
+
     /// The source offset a flow index points at. An index inside a structural
     /// gap falls FORWARD to the next real piece; an index past the end lands
     /// on the end of the last real piece.
@@ -204,6 +227,13 @@ pub struct MarkdownViewer {
     source: Option<Arc<str>>,
     #[rust]
     source_map: SourceMap,
+    /// Source ranges the active search query hit (spec §DocView::reveal),
+    /// installed by `set_search_highlights`. Mapped through `source_map` at
+    /// paint time -- stale once the document changes underneath them, same
+    /// as every other source-addressed overlay here, so a caller that swaps
+    /// documents is responsible for reissuing or clearing them.
+    #[rust]
+    search_highlights: Arc<[TextRange]>,
 }
 
 impl MarkdownViewer {
@@ -223,8 +253,46 @@ impl MarkdownViewer {
         &self.source_map
     }
 
+    /// Install the active search query's hit ranges, replacing whatever set
+    /// was installed before. An empty `Vec` is the same as
+    /// `clear_search_highlights`.
+    pub fn set_search_highlights(&mut self, cx: &mut Cx, ranges: Vec<TextRange>) {
+        self.search_highlights = ranges.into();
+        self.redraw(cx);
+    }
+
+    /// Drop the installed search highlights. A no-op (no redraw) when
+    /// nothing is installed.
+    pub fn clear_search_highlights(&mut self, cx: &mut Cx) {
+        if self.search_highlights.is_empty() {
+            return;
+        }
+        self.search_highlights = Arc::from([]);
+        self.redraw(cx);
+    }
+
     fn flow(&self, cx: &Cx) -> TextFlowRef {
         self.view.text_flow(cx, ids!(flow_body))
+    }
+
+    /// Paints the installed search highlights as a translucent fill over the
+    /// matched text -- would reuse `TextFlow`'s own selection color and
+    /// scratch draw shape, matching the raw editor's `SearchMatch`
+    /// decoration, rather than invent a new theming channel.
+    ///
+    /// STUBBED: painting an ARBITRARY flow range needs the rects
+    /// `SelectionTracker::selection_rects` computes, but on this makepad fork
+    /// pin (7bb5e50a) that method is private to `TextFlow` and the only
+    /// public selection mutator (`set_selection`) drives the reader's own
+    /// click-drag selection state -- reusing it here would fight the user's
+    /// real selection instead of decorating search hits. `search_highlights`
+    /// is tracked and redraw is requested on every change regardless, so a
+    /// small `pub` accessor added to the fork later needs only to fill this
+    /// function in; no caller-facing API changes. `flow_ranges_for_source`
+    /// (the source -> flow-range half of the work this needs) is already
+    /// implemented and tested on `SourceMap`.
+    fn draw_search_highlights(&self, cx: &mut Cx2d) {
+        let _ = (cx, &self.search_highlights);
     }
 
     /// Draws one piece and records its flow span. `TextFlow::draw_text` trims
@@ -608,6 +676,7 @@ impl Widget for MarkdownViewer {
         if let Some(mut flow) = flow_ref.borrow_mut() {
             flow.end(cx);
         }
+        self.draw_search_highlights(cx);
         DrawStep::done()
     }
 
@@ -643,5 +712,23 @@ impl MarkdownViewerRef {
     /// The caret a source handoff carries into the editor.
     pub fn caret_for_handoff(&self, cx: &Cx) -> TextSize {
         caret_for_span(self.selected_source_span(cx))
+    }
+
+    pub fn set_search_highlights(&self, cx: &mut Cx, ranges: Vec<TextRange>) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_search_highlights(cx, ranges);
+        }
+    }
+
+    pub fn clear_search_highlights(&self, cx: &mut Cx) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.clear_search_highlights(cx);
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn test_search_highlights(&self) -> Vec<TextRange> {
+        self.borrow()
+            .map_or_else(Vec::new, |inner| inner.search_highlights.to_vec())
     }
 }
