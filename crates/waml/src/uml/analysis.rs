@@ -2062,6 +2062,7 @@ fn trace_fragment_exists(
     concept_id: &str,
     fragment: &str,
 ) -> bool {
+    let fragment = crate::okf::fragment_slug(fragment);
     let Some((document_id, _)) = context
         .catalog
         .documents()
@@ -2086,19 +2087,21 @@ fn resolve_trace_target(
     path: &str,
     href: &str,
 ) -> Result<crate::model::TraceTarget, (crate::diagnostic::DiagCode, String)> {
-    if let Some((scheme, remainder)) = href.split_once(':') {
-        let scheme = scheme.to_ascii_lowercase();
-        if scheme != "https" {
+    if let Some((authored_scheme, _)) = href.split_once(':') {
+        let authored_scheme = authored_scheme.to_ascii_lowercase();
+        if authored_scheme != "https" {
             return Err((
                 crate::diagnostic::DiagCode::UnsupportedTraceScheme,
-                format!("unsupported transition trace scheme '{scheme}'"),
+                format!("unsupported transition trace scheme '{authored_scheme}'"),
             ));
         }
-        let host = remainder
-            .strip_prefix("//")
-            .and_then(|rest| rest.split('/').next())
-            .filter(|host| !host.is_empty() && !host.chars().any(char::is_whitespace));
-        if host.is_none() {
+        let Ok(url) = url::Url::parse(href) else {
+            return Err((
+                crate::diagnostic::DiagCode::MalformedTraceTarget,
+                format!("malformed HTTPS transition trace '{href}'"),
+            ));
+        };
+        if url.scheme() != "https" || url.host_str().is_none() {
             return Err((
                 crate::diagnostic::DiagCode::MalformedTraceTarget,
                 format!("malformed HTTPS transition trace '{href}'"),
@@ -2132,7 +2135,8 @@ fn resolve_trace_target(
         ));
     }
     if let Some(fragment) = fragment {
-        if !trace_fragment_exists(context, &concept_id, fragment) {
+        let normalized_fragment = crate::okf::fragment_slug(fragment);
+        if !trace_fragment_exists(context, &concept_id, &normalized_fragment) {
             return Err((
                 crate::diagnostic::DiagCode::UnresolvedTraceFragment,
                 format!("unresolved transition trace fragment '#{fragment}'"),
@@ -2140,7 +2144,7 @@ fn resolve_trace_target(
         }
         Ok(crate::model::TraceTarget::InternalFragment {
             concept_id,
-            fragment: fragment.to_string(),
+            fragment: normalized_fragment,
         })
     } else {
         Ok(crate::model::TraceTarget::InternalDocument { concept_id })
@@ -2170,7 +2174,18 @@ fn lower_transition_trace(
             }
         }
     };
-    let range = trace.syntax.0.range();
+    let range = trace
+        .syntax
+        .link()
+        .and_then(|link| {
+            link.children()
+                .find(|element| element.kind() == syntax::UmlSyntaxKind::LinkTargetToken)
+        })
+        .map(|element| match element {
+            SyntaxElement::Node(node) => node.range(),
+            SyntaxElement::Token(token) => token.range(),
+        })
+        .unwrap_or_else(|| trace.syntax.0.range());
     crate::model::TransitionTrace {
         label,
         href,

@@ -311,6 +311,41 @@ fn flow_doc_json_matches_ts_field_names() {
 }
 
 #[test]
+fn transition_trace_json_shapes_are_stable() {
+    let b = vec![
+        (
+            "flow.md".to_string(),
+            "---\ntype: uml.StateMachine\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done\n- on `go` transitions to Done traces [Contract](./contract.md) traces [Claim](./contract.md#CLAIM) traces [Web](https://example.com/spec) traces [Missing](./missing.md) traces [Invalid](https://?query)\n### final Done\n".to_string(),
+        ),
+        (
+            "contract.md".to_string(),
+            "---\ntype: okf.Behavior\n---\n# Contract\n\n## Claim\n".to_string(),
+        ),
+    ];
+    let value = serde_json::to_value(projection(&b)).unwrap();
+    assert!(value["flowEdges"][0].get("traces").is_none());
+    let traces = value["flowEdges"][1]["traces"].as_array().unwrap();
+
+    assert_eq!(
+        traces
+            .iter()
+            .map(|trace| trace["target"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            serde_json::json!({"InternalDocument": {"concept_id": "contract"}}),
+            serde_json::json!({"InternalFragment": {"concept_id": "contract", "fragment": "claim"}}),
+            serde_json::json!({"Https": {"url": "https://example.com/spec"}}),
+            serde_json::json!({"Unresolved": {"href": "./missing.md"}}),
+            serde_json::json!({"Invalid": {"href": "https://?query"}}),
+        ]
+    );
+    assert_eq!(traces[0]["source"]["path"], "flow.md");
+    assert!(traces.iter().all(|trace| {
+        trace["source"]["start"].as_u64().unwrap() < trace["source"]["end"].as_u64().unwrap()
+    }));
+}
+
+#[test]
 fn sequence_doc_json_matches_ts_field_names() {
     let b = vec![
         ("s/buyer.md".to_string(), "---\ntype: uml.Class\ntitle: Buyer\n---\n# Buyer\n".to_string()),

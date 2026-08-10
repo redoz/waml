@@ -93,7 +93,7 @@ fn transition_trace_sets_select_parallel_transitions_and_reparse_between_ops() {
 
     assert_eq!(
         changed.document_by_concept_id("sign-in").unwrap().text(),
-        "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [AUTH-PASSWORD](./requirements.md#auth-password)\n- on `oidc` transitions to SignedIn\n  traces [AUTH-OIDC-004](./sign-in-behavior.md#auth-oidc-004)\n  traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n"
+        "---\ntype: uml.StateMachine\ntitle: Sign In\n---\n\n# Sign In\n\n## Nodes\n\n### SignedOut\n- on `password` transitions to SignedIn traces [AUTH-PASSWORD](./requirements.md#auth-password)\n- on `oidc` transitions to SignedIn traces [AUTH-OIDC-004](./sign-in-behavior.md#auth-oidc-004)\n  traces [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)\n\n### SignedIn\n"
     );
 }
 
@@ -141,9 +141,92 @@ fn transition_trace_edits_add_update_remove_and_reorder() {
     )
     .unwrap();
 
-    assert!(changed.document_by_concept_id("flow").unwrap().text().contains(
-        "- transitions to Done\n  traces [Updated A](#updated-a)\n  traces [External](https://example.com/spec)"
-    ));
+    assert!(changed
+        .document_by_concept_id("flow")
+        .unwrap()
+        .text()
+        .contains("- transitions to Done traces [Updated A](#updated-a)\n  traces [External](https://example.com/spec)"));
+}
+
+#[test]
+fn transition_trace_edits_repair_malformed_rows_without_rewriting_siblings() {
+    let authored = "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)  traces broken\t traces [C](#c)\n\n### Done\n";
+    let source = SourceBundle::try_from_pairs([("flow.md", authored)]).unwrap();
+    let selector = uml::TransitionSelector {
+        behavior: "flow".into(),
+        source_node: "Start".into(),
+        occurrence: 0,
+    };
+
+    let changed = lower(
+        &source,
+        vec![uml::Op::EditTransitionTraces {
+            selector,
+            edit: uml::TraceEdit::Update {
+                index: 1,
+                label: "B".into(),
+                href: "#b".into(),
+            },
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(
+        changed.document_by_concept_id("flow").unwrap().text(),
+        authored.replace("traces broken", "traces [B](#b)")
+    );
+}
+
+#[test]
+fn transition_trace_move_preserves_each_authored_clause() {
+    let authored = "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)   traces [Bee](#bee)\n\n### Done\n";
+    let source = SourceBundle::try_from_pairs([("flow.md", authored)]).unwrap();
+    let changed = lower(
+        &source,
+        vec![uml::Op::EditTransitionTraces {
+            selector: uml::TransitionSelector {
+                behavior: "flow".into(),
+                source_node: "Start".into(),
+                occurrence: 0,
+            },
+            edit: uml::TraceEdit::Move { from: 1, to: 0 },
+        }],
+    )
+    .unwrap();
+    let text = changed.document_by_concept_id("flow").unwrap().text();
+
+    assert!(
+        text.contains("traces [Bee](#bee)   traces [A\\]](#a)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn transition_trace_update_preserves_unchanged_escaped_tokens() {
+    let authored = "---\ntype: uml.Activity\ntitle: Flow\n---\n\n# Flow\n\n## Nodes\n\n### Start\n- transitions to Done traces [A\\]](#a)\n\n### Done\n";
+    let source = SourceBundle::try_from_pairs([("flow.md", authored)]).unwrap();
+    let changed = lower(
+        &source,
+        vec![uml::Op::EditTransitionTraces {
+            selector: uml::TransitionSelector {
+                behavior: "flow".into(),
+                source_node: "Start".into(),
+                occurrence: 0,
+            },
+            edit: uml::TraceEdit::Update {
+                index: 0,
+                // The declared/model value is decoded; the authored token is `A\]`.
+                label: "A]".into(),
+                href: "#updated".into(),
+            },
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(
+        changed.document_by_concept_id("flow").unwrap().text(),
+        authored.replace("(#a)", "(#updated)")
+    );
 }
 
 #[test]

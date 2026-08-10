@@ -7,7 +7,7 @@ use super::syntax::{
     AttributeSyntax, FlowNodeSyntax, FlowTransitionSyntax, RelationshipSyntax, UmlLanguage,
     UmlSyntaxKind,
 };
-use super::{DiagramDisplaySet, FieldEdit, NameSpec, TraceEdit, TraceSpec, TransitionSelector};
+use super::{DiagramDisplaySet, FieldEdit, NameSpec, TraceEdit, TransitionSelector};
 use crate::edit::{EditContext, EditError};
 use crate::layout::Direction;
 use crate::model::{CardinalityVisibility, ElementType, RelEnd, RelationshipKind, Visibility};
@@ -442,27 +442,17 @@ pub(crate) fn op_transition_traces_edit(
 ) -> Result<(), EditError> {
     const OP: &str = "transition.traces.edit";
     let (path, transition) = selected_transition(work, state, selector, OP)?;
-    let mut traces = transition
-        .traces()
-        .map(|trace| {
-            let link = trace
-                .link()
-                .ok_or_else(|| EditError::at(OP, "selected transition has a malformed trace"))?;
-            let label = link
-                .child_at(1)
-                .and_then(SyntaxElement::into_token)
-                .ok_or_else(|| EditError::at(OP, "selected trace has no label"))?
-                .text()
-                .write_to_string();
-            let href = link
-                .child_at(4)
-                .and_then(SyntaxElement::into_token)
-                .ok_or_else(|| EditError::at(OP, "selected trace has no href"))?
-                .text()
-                .write_to_string();
-            Ok(TraceSpec { label, href })
-        })
-        .collect::<Result<Vec<_>, EditError>>()?;
+    let traces = transition.traces().collect::<Vec<_>>();
+    let traces_node = transition
+        .syntax()
+        .child_at(FlowTransitionSyntax::TRACES_SLOT)
+        .and_then(SyntaxElement::into_node)
+        .expect("flow transition has a fixed traces occurrence");
+    let source = work
+        .document(&path)
+        .expect("claimed document")
+        .text()
+        .to_owned();
     match edit {
         TraceEdit::Insert { index, label, href } => {
             if *index > traces.len() {
@@ -471,22 +461,80 @@ pub(crate) fn op_transition_traces_edit(
                     format!("trace index {index} is out of bounds"),
                 ));
             }
-            traces.insert(
-                *index,
-                TraceSpec {
-                    label: label.clone(),
-                    href: href.clone(),
-                },
-            );
+            let clause = render_transition_trace(label, href, OP)?;
+            if traces.is_empty() {
+                let at = node_range(&traces_node).start;
+                replace_range(work, &path, at..at, &format!(" traces {clause}"), OP)
+            } else if *index == 0 {
+                let at = node_content_range(&source, traces[0].syntax()).start;
+                replace_range(
+                    work,
+                    &path,
+                    at..at,
+                    &format!("traces {clause}{}  ", line_ending(&source)),
+                    OP,
+                )
+            } else {
+                let at = node_content_range(&source, traces[*index - 1].syntax()).end;
+                replace_range(
+                    work,
+                    &path,
+                    at..at,
+                    &format!("{}  traces {clause}", line_ending(&source)),
+                    OP,
+                )
+            }
         }
         TraceEdit::Update { index, label, href } => {
-            let trace = traces.get_mut(*index).ok_or_else(|| {
+            let trace = traces.get(*index).ok_or_else(|| {
                 EditError::at(OP, format!("trace index {index} is out of bounds"))
             })?;
-            *trace = TraceSpec {
-                label: label.clone(),
-                href: href.clone(),
-            };
+            validate_transition_trace(label, href, OP)?;
+            let tokens = trace.link().and_then(|link| {
+                let label = link
+                    .children()
+                    .find(|element| element.kind() == UmlSyntaxKind::LinkTextToken)?
+                    .into_token()?;
+                let href = link
+                    .children()
+                    .find(|element| element.kind() == UmlSyntaxKind::LinkTargetToken)?
+                    .into_token()?;
+                (!label.flags().is_missing() && !href.flags().is_missing()).then_some((label, href))
+            });
+            if let Some((label_token, href_token)) = tokens {
+                let label_range =
+                    label_token.range().start().to_usize()..label_token.range().end().to_usize();
+                let href_range =
+                    href_token.range().start().to_usize()..href_token.range().end().to_usize();
+                if source[href_range.clone()] != *href {
+                    replace_range(
+                        work,
+                        &path,
+                        href_range,
+                        &render_transition_trace_href(href),
+                        OP,
+                    )?;
+                }
+                if source[label_range.clone()] != *label {
+                    replace_range(
+                        work,
+                        &path,
+                        label_range,
+                        &render_transition_trace_label(label),
+                        OP,
+                    )?;
+                }
+                Ok(())
+            } else {
+                let clause = render_transition_trace(label, href, OP)?;
+                replace_range(
+                    work,
+                    &path,
+                    node_content_range(&source, trace.syntax()),
+                    &format!("traces {clause}"),
+                    OP,
+                )
+            }
         }
         TraceEdit::Remove { index } => {
             if *index >= traces.len() {
@@ -495,17 +543,42 @@ pub(crate) fn op_transition_traces_edit(
                     format!("trace index {index} is out of bounds"),
                 ));
             }
-            traces.remove(*index);
+            let range = if traces.len() == 1 {
+                node_range(&traces_node)
+            } else if *index == 0 {
+                node_range(&traces_node).start..node_range(traces[1].syntax()).start
+            } else {
+                node_range(traces[*index - 1].syntax()).end..node_range(traces[*index].syntax()).end
+            };
+            replace_range(work, &path, range, "", OP)
         }
         TraceEdit::Move { from, to } => {
             if *from >= traces.len() || *to >= traces.len() {
                 return Err(EditError::at(OP, "trace move index is out of bounds"));
             }
-            let trace = traces.remove(*from);
-            traces.insert(*to, trace);
+            if from == to {
+                return Ok(());
+            }
+            let mut clauses = traces
+                .iter()
+                .map(|trace| source[node_content_range(&source, trace.syntax())].to_owned())
+                .collect::<Vec<_>>();
+            let clause = clauses.remove(*from);
+            clauses.insert(*to, clause);
+            let collection_range = node_range(&traces_node);
+            let collection = &source[collection_range.clone()];
+            let mut replacement = String::with_capacity(collection.len());
+            let mut cursor = collection_range.start;
+            for (trace, clause) in traces.iter().zip(clauses) {
+                let range = node_content_range(&source, trace.syntax());
+                replacement.push_str(&source[cursor..range.start]);
+                replacement.push_str(&clause);
+                cursor = range.end;
+            }
+            replacement.push_str(&source[cursor..collection_range.end]);
+            replace_range(work, &path, collection_range, &replacement, OP)
         }
     }
-    replace_transition_traces(work, &path, &transition, &traces, OP)
 }
 
 fn selected_transition(
@@ -550,55 +623,36 @@ fn selected_transition(
     Ok((path, transition))
 }
 
-fn replace_transition_traces(
-    work: &mut SourceBundle,
-    path: &BundlePath,
-    transition: &FlowTransitionSyntax,
-    traces: &[TraceSpec],
-    op: &str,
-) -> Result<(), EditError> {
-    let traces_node = transition
-        .syntax()
-        .child_at(FlowTransitionSyntax::TRACES_SLOT)
-        .and_then(SyntaxElement::into_node)
-        .expect("flow transition has a fixed traces occurrence");
-    let source = work.document(path).expect("claimed document").text();
-    let replacement = render_transition_traces(traces, line_ending(source), op)?;
-    replace_range(work, path, node_range(&traces_node), &replacement, op)
+fn render_transition_trace(label: &str, href: &str, op: &str) -> Result<String, EditError> {
+    validate_transition_trace(label, href, op)?;
+    Ok(format!(
+        "[{}]({})",
+        render_transition_trace_label(label),
+        render_transition_trace_href(href)
+    ))
 }
 
-fn render_transition_traces(
-    traces: &[TraceSpec],
-    newline: &str,
-    op: &str,
-) -> Result<String, EditError> {
-    let mut rendered = Vec::with_capacity(traces.len());
-    for trace in traces {
-        if trace.label.trim().is_empty() || trace.href.trim().is_empty() {
-            return Err(EditError::at(op, "trace label and href must not be empty"));
-        }
-        if trace.label.contains(['\r', '\n']) || trace.href.contains(['\r', '\n']) {
-            return Err(EditError::at(
-                op,
-                "trace label and href must fit on one line",
-            ));
-        }
-        let label = trace.label.replace('\\', "\\\\").replace(']', "\\]");
-        let href = trace
-            .href
-            .replace('\\', "\\\\")
-            .replace('(', "\\(")
-            .replace(')', "\\)");
-        rendered.push(format!("[{label}]({href})"));
+fn validate_transition_trace(label: &str, href: &str, op: &str) -> Result<(), EditError> {
+    if label.trim().is_empty() || href.trim().is_empty() {
+        return Err(EditError::at(op, "trace label and href must not be empty"));
     }
-    Ok(match rendered.as_slice() {
-        [] => String::new(),
-        [trace] => format!(" traces {trace}"),
-        traces => traces
-            .iter()
-            .map(|trace| format!("{newline}  traces {trace}"))
-            .collect(),
-    })
+    if label.contains(['\r', '\n']) || href.contains(['\r', '\n']) {
+        return Err(EditError::at(
+            op,
+            "trace label and href must fit on one line",
+        ));
+    }
+    Ok(())
+}
+
+fn render_transition_trace_label(label: &str) -> String {
+    label.replace('\\', "\\\\").replace(']', "\\]")
+}
+
+fn render_transition_trace_href(href: &str) -> String {
+    href.replace('\\', "\\\\")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
 }
 
 pub(crate) fn slug_of(path: &str) -> String {

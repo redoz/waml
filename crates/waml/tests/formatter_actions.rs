@@ -168,6 +168,25 @@ fn formatter_uses_inline_trace_for_one_target_and_lines_for_many() {
 }
 
 #[test]
+fn formatter_does_not_rewrite_orphan_or_recovery_traces() {
+    for source in [
+        "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### A\n  traces [Orphan](#orphan)\n- transitions to B\n### B\n",
+        "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B traces [Broken](\n### B\n",
+        "---\ntype: uml.Activity\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B\n\n  traces [Orphan](#orphan)\n### B\n",
+    ] {
+        let candidate = prepared("flow.md", source, 22);
+        let action = Formatter
+            .format(
+                ActionContext::from_prepared(&candidate).unwrap(),
+                document(&candidate, "flow.md"),
+            )
+            .unwrap();
+
+        assert!(action.changes[0].edits.is_empty(), "{source}");
+    }
+}
+
+#[test]
 fn removed_sequence_spellings_are_not_rewritten_as_canonical_messages() {
     let source = "---\ntype: uml.Sequence\n---\n# Sequence\n\n## Messages\n- a sends b: `old`\n- a replies b: `old`\n- a calls b: `old`\n";
     let candidate = prepared("sequence.md", source, 5);

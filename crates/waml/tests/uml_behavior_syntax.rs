@@ -146,6 +146,29 @@ fn transition_traces_are_typed_and_lossless() {
 }
 
 #[test]
+fn malformed_transition_traces_recover_at_flow_boundaries_losslessly() {
+    let authored = "---\ntype: uml.StateMachine\n---\n# Flow\n\n## Nodes\n### A\n- transitions to B traces\n- transitions to C traces [Broken](\n  traces []()\n### B\n  traces [Orphan](#orphan)\n- transitions to C traces [Valid](#valid)\n### final C\n\n## Notes\nkeep\n";
+    let analysis = analyze([("flow.md", authored)]);
+    let syntax = root(&analysis, "flow.md");
+    let transitions = typed::<uml::FlowTransitionSyntax>(syntax.clone());
+    let traces = typed::<uml::FlowTraceSyntax>(syntax);
+
+    assert_eq!(written(&analysis, "flow.md"), authored);
+    assert_eq!(transitions.len(), 4);
+    assert_eq!(traces.len(), 3);
+    let trace_counts = transitions
+        .iter()
+        .map(|transition| transition.traces().count())
+        .collect::<Vec<_>>();
+    assert_eq!(trace_counts, vec![0, 2, 0, 1], "{trace_counts:?}");
+    assert!(transitions[3].traces().next().unwrap().link().is_some());
+    assert_eq!(
+        analysis.declared.concept("flow").unwrap().flow_nodes.len(),
+        3
+    );
+}
+
+#[test]
 fn sequence_nested_slots_project_current_forms_losslessly() {
     let authored = "---\r\ntype: uml.Sequence\r\ntitle: Checkout\r\n---\r\n# Checkout\r\n\r\n## Lifelines\r\n- [Buyer](./buyer.md) as buyer\r\n- [Order](./order.md)\r\n\r\n## Messages\r\n- buyer calls Order `place(é)`\r\n- alt\r\n  - when `valid`\r\n    - Order returns `ok` to buyer\r\n    - loop\r\n      - when `again`\r\n        - buyer signals Order\r\n  - else\r\n    - buyer destroys Order\r\n- par\r\n  - branch `self`\r\n    - buyer calls buyer\r\n  - branch `outside`\r\n    - outside signals Order `found`\r\n";
     let analysis = analyze([

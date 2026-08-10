@@ -43,6 +43,35 @@ fn transition_trace_targets_have_precise_diagnostics() {
     assert!(trace_diagnostics
         .iter()
         .all(|diagnostic| diagnostic.file == "flow.md" && diagnostic.span.is_some()));
+    for diagnostic in trace_diagnostics {
+        let range = diagnostic.range.expect("trace target range");
+        let target = &flow[range.start().to_usize()..range.end().to_usize()];
+        assert!(
+            matches!(
+                target,
+                "./missing.md" | "./claims.md#missing-fragment" | "http://example.com/claim"
+            ),
+            "unexpected diagnostic target {target:?}"
+        );
+    }
+}
+
+#[test]
+fn transition_trace_normalizes_fragments_and_rejects_malformed_https_urls() {
+    let flow = "---\ntype: uml.StateMachine\n---\n# Flow\n\n## Nodes\n### Idle\n- transitions to Done traces [Claim](./claims.md#EXISTING-FRAGMENT) traces [No host](https://?query) traces [Bad port](https://example.com:bad/spec)\n### final Done\n";
+    let claims = "---\ntype: okf.Behavior\n---\n# Claims\n\n## Existing fragment\n";
+    let found = diagnostics([("flow.md", flow), ("claims.md", claims)]);
+
+    assert!(!found
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagCode::UnresolvedTraceFragment));
+    assert_eq!(
+        found
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::MalformedTraceTarget)
+            .count(),
+        2
+    );
 }
 
 fn prepared(
