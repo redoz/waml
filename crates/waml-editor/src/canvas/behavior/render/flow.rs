@@ -4,12 +4,10 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{FlowEdgeGeo, FlowNodeGeo, FlowOffPageGeo};
-use super::{BehaviorPalette, Emphasis, ARROW_HEAD};
+use super::{fill_band, BehaviorPalette, Emphasis, ARROW_HEAD};
 use crate::canvas::linework::BehaviorLineworkMetrics;
 use crate::canvas::pen::Pen;
-use crate::canvas::primitives::{
-    edge_point_to_screen, fill_rect, stroke_quad, world_rect_to_screen,
-};
+use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
 use waml::model::FlowNodeKind;
@@ -169,13 +167,12 @@ fn draw_route(
         .iter()
         .map(|p| edge_point_to_screen(&camera, rect_pos, *p))
         .collect();
-    let thickness = draws
-        .linework
-        .thickness(emphasis.thickness(Pen::REGULAR.width()));
+    let pen = Pen::REGULAR;
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     for pair in screen.windows(2) {
-        let quad = stroke_quad(cx, pair[0], pair[1], thickness);
-        draws.fill.draw_abs(cx, quad);
+        draws
+            .fill
+            .draw_abs(cx, fill_band(cx, pair[0], pair[1], pen));
     }
 
     let tip = *screen.last().unwrap();
@@ -354,11 +351,6 @@ mod tests {
         assert_eq!(edge_emphasis(None, Some(&node), key), Emphasis::None);
 
         assert!(Emphasis::Selected.wash_boost() > Emphasis::Hovered.wash_boost());
-        // Emphasis is colour + wash only: every level strokes at the resting
-        // pen weight.
-        for e in [Emphasis::None, Emphasis::Hovered, Emphasis::Selected] {
-            assert_eq!(e.thickness(Pen::REGULAR.width()), Pen::REGULAR.width());
-        }
         let palette = BehaviorPalette {
             line: vec4(0.4, 0.4, 0.4, 1.0),
             hovered: vec4(0.1, 0.2, 0.3, 1.0),

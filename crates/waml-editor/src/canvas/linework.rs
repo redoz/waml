@@ -22,9 +22,6 @@
 /// call site -- owns the policy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::canvas) struct BehaviorLineworkMetrics {
-    /// Floor a stroke may not drop below. Guards a degenerate sub-pixel author,
-    /// never the camera.
-    min_thickness: f64,
     /// `AccentFrame::stroke_scale` for the lifeline-head surface -- the inverse
     /// zoom that cancels the shader's `zoom` term, so the frame holds one
     /// screen-space hairline.
@@ -39,16 +36,9 @@ impl BehaviorLineworkMetrics {
     pub(in crate::canvas) fn for_zoom(zoom: f64) -> Self {
         debug_assert!(zoom.is_finite() && zoom > 0.0);
         Self {
-            min_thickness: 1.0,
             frame_stroke_scale: (1.0 / zoom) as f32,
             frame_screen_space: 1.0,
         }
-    }
-
-    /// A stroke width: the authored value IS the drawn value, floored so a
-    /// route never vanishes.
-    pub(in crate::canvas) fn thickness(&self, authored: f64) -> f64 {
-        authored.max(self.min_thickness)
     }
 
     /// A marker or arrow-head extent. No floor -- these are sized off the
@@ -68,9 +58,6 @@ mod tests {
     fn behavior_linework_is_constant_across_zoom() {
         for zoom in [MIN_ZOOM, 0.25, 1.0, 4.0, MAX_ZOOM] {
             let metrics = BehaviorLineworkMetrics::for_zoom(zoom);
-            assert_eq!(metrics.thickness(2.0), 2.0);
-            assert_eq!(metrics.thickness(1.4), 1.4);
-            assert_eq!(metrics.thickness(1.2), 1.2);
             assert_eq!(metrics.glyph(9.0), 9.0);
             assert_eq!(metrics.glyph(10.0), 10.0);
         }
@@ -89,7 +76,6 @@ mod tests {
     fn metrics_are_positive_and_finite_at_zoom_bounds() {
         for zoom in [MIN_ZOOM, MAX_ZOOM] {
             let metrics = BehaviorLineworkMetrics::for_zoom(zoom);
-            assert!(metrics.thickness(1.4).is_finite() && metrics.thickness(1.4) > 0.0);
             assert!(metrics.glyph(9.0).is_finite() && metrics.glyph(9.0) > 0.0);
         }
     }

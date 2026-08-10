@@ -8,6 +8,7 @@ mod interaction;
 use super::hit::BehaviorTarget;
 use super::scene::BehaviorScene;
 use crate::canvas::linework::BehaviorLineworkMetrics;
+use crate::canvas::pen::Pen;
 use crate::canvas::viewport::ViewportSnapshot;
 use makepad_widgets::*;
 
@@ -63,6 +64,12 @@ pub(super) struct BehaviorPalette {
 
 /// How strongly one element is called out. A click's persistent selection
 /// reads stronger than a transient hover (spec §5.2).
+///
+/// Emphasis is colour and wash only, deliberately, at every level (redoz@): a
+/// CAD drawing keeps one pen weight per line role, and fattening a lifeline or
+/// route under the pointer would read as a different kind of line rather than
+/// the same line highlighted. Every call site therefore hands a bare `Pen`
+/// rung straight to a draw call with no thickness multiplier in between.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Emphasis {
     #[default]
@@ -99,15 +106,6 @@ impl Emphasis {
             Emphasis::Selected => palette.selected,
         }
     }
-
-    /// Stroke thickness at this emphasis -- deliberately the resting weight at
-    /// every level. Hover and selection are called out with colour and wash
-    /// only (redoz@): a CAD drawing keeps one pen weight per line role, and
-    /// fattening a lifeline or route under the pointer reads as a different
-    /// kind of line rather than the same line highlighted.
-    pub(super) fn thickness(self, resting: f64) -> f64 {
-        resting
-    }
 }
 
 pub(super) struct BehaviorDrawResources<'a> {
@@ -126,6 +124,31 @@ pub(super) struct BehaviorDrawResources<'a> {
     pub(super) head: &'a mut DrawColor,
     pub(super) accent: Vec4,
     pub(super) palette: BehaviorPalette,
+}
+
+/// The quad a flat fill inks a stroke from `a` to `b` inside. Whole device
+/// pixels on the thickness axis, starting on a boundary -- the invariant the
+/// deleted `primitives::snap_band` carried, restated against a rung. A diagonal
+/// pair is treated as whichever axis it runs longest along (routes and messages
+/// are orthogonal).
+pub(super) fn fill_band(cx: &Cx2d, a: DVec2, b: DVec2, pen: Pen) -> Rect {
+    let dpi = cx.current_dpi_factor();
+    let w = (pen.width() * dpi + 0.501).floor().max(1.0);
+    if crate::canvas::pen::band_is_horizontal(a, b) {
+        let y0 = ((a.y + b.y) * 0.5 * dpi - w * 0.5).round();
+        let (x0, x1) = ((a.x.min(b.x) * dpi).round(), (a.x.max(b.x) * dpi).round());
+        Rect {
+            pos: dvec2(x0 / dpi, y0 / dpi),
+            size: dvec2((x1 - x0).max(1.0) / dpi, w / dpi),
+        }
+    } else {
+        let x0 = ((a.x + b.x) * 0.5 * dpi - w * 0.5).round();
+        let (y0, y1) = ((a.y.min(b.y) * dpi).round(), (a.y.max(b.y) * dpi).round());
+        Rect {
+            pos: dvec2(x0 / dpi, y0 / dpi),
+            size: dvec2(w / dpi, (y1 - y0).max(1.0) / dpi),
+        }
+    }
 }
 
 pub(super) fn draw(
@@ -227,4 +250,25 @@ fn draw_message(cx: &mut Cx2d, viewport: ViewportSnapshot, message: &str, text: 
         rect.pos.y + (rect.size.y - size.height as f64) * 0.5,
     );
     text.draw_abs(cx, pos, message);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_filled_band_lands_on_whole_device_pixels() {
+        // Mirrors the invariant `primitives::snap_band` used to carry: whatever
+        // subpixel phase a stroke arrives at, it leaves on the grid.
+        for dpi in [1.0_f64, 1.5, 2.0] {
+            for center in [10.0, 10.2, 10.5, 10.7] {
+                for pen in [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR] {
+                    let w = (pen.width() * dpi + 0.501).floor().max(1.0);
+                    let y0 = (center * dpi - w * 0.5).round();
+                    assert!(w >= 1.0, "a stroke may never round away entirely");
+                    assert!((y0 / dpi + w / dpi * 0.5 - center).abs() <= 0.5 / dpi + 1e-9);
+                }
+            }
+        }
+    }
 }

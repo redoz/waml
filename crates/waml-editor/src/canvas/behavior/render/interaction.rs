@@ -5,14 +5,11 @@
 
 use super::super::hit::BehaviorTarget;
 use super::super::scene::{ActivationGeo, FragmentGeo, LifelineGeo, MessageGeo};
-use super::{BehaviorPalette, Emphasis, ARROW_HEAD};
+use super::{fill_band, BehaviorPalette, Emphasis, ARROW_HEAD};
 use crate::accent;
 use crate::canvas::linework::BehaviorLineworkMetrics;
-use crate::canvas::pen::Pen;
-use crate::canvas::primitives::{
-    edge_point_to_screen, fill_rect, snap_rect, snap_stroke_width, stroke_quad,
-    world_rect_to_screen,
-};
+use crate::canvas::pen::{self, Pen};
+use crate::canvas::primitives::{edge_point_to_screen, fill_rect, world_rect_to_screen};
 use crate::canvas::viewport::ViewportSnapshot;
 use crate::node_style::AccentBucket;
 use makepad_widgets::*;
@@ -182,7 +179,7 @@ fn draw_dashed_segment(
     fill: &mut DrawColor,
     a: (f64, f64),
     b: (f64, f64),
-    thickness: f64,
+    pen: Pen,
 ) {
     // CAD hatching: the dash pattern is stepped in SCREEN space, so its period
     // stays put at any zoom -- exactly as `BehaviorLineworkMetrics` holds the
@@ -203,7 +200,7 @@ fn draw_dashed_segment(
         let dash_end = (travelled + DASH_LEN).min(len);
         let p0 = dvec2(sa.x + ux * travelled, sa.y + uy * travelled);
         let p1 = dvec2(sa.x + ux * dash_end, sa.y + uy * dash_end);
-        fill.draw_abs(cx, stroke_quad(cx, p0, p1, thickness));
+        fill.draw_abs(cx, fill_band(cx, p0, p1, pen));
         travelled += period;
     }
 }
@@ -215,11 +212,11 @@ fn draw_solid_segment(
     fill: &mut DrawColor,
     a: (f64, f64),
     b: (f64, f64),
-    thickness: f64,
+    pen: Pen,
 ) {
     let sa = edge_point_to_screen(camera, rect_pos, a);
     let sb = edge_point_to_screen(camera, rect_pos, b);
-    fill.draw_abs(cx, stroke_quad(cx, sa, sb, thickness));
+    fill.draw_abs(cx, fill_band(cx, sa, sb, pen));
 }
 
 fn draw_stem(
@@ -231,13 +228,11 @@ fn draw_stem(
 ) {
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    let thickness = draws
-        .linework
-        .thickness(emphasis.thickness(Pen::LIGHT.width()));
+    let pen = Pen::LIGHT;
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let top = (lifeline.stem_x, lifeline.stem_top);
     let bottom = (lifeline.stem_x, lifeline.stem_bottom);
-    draw_dashed_segment(cx, &camera, rect_pos, draws.fill, top, bottom, thickness);
+    draw_dashed_segment(cx, &camera, rect_pos, draws.fill, top, bottom, pen);
 
     if lifeline.destroyed {
         let size = draws.linework.glyph(X_MARK_SIZE);
@@ -247,6 +242,9 @@ fn draw_stem(
             size: dvec2(size, size),
         };
         draws.x_mark.color = draws.palette.line;
+        draws
+            .x_mark
+            .set_uniform(cx, live_id!(pen_w), &[Pen::LIGHT.width() as f32]);
         draws.x_mark.draw_abs(cx, screen);
     }
 }
@@ -399,9 +397,7 @@ fn draw_message(
 ) {
     let camera = viewport.camera;
     let rect_pos = viewport.view_rect.pos;
-    let thickness = draws
-        .linework
-        .thickness(emphasis.thickness(Pen::REGULAR.width()));
+    let pen = Pen::REGULAR;
     draws.fill.color = emphasis.stroke(draws.palette.line, draws.palette);
     let (dashed, filled_head) = message_style(message.verb);
 
@@ -410,9 +406,9 @@ fn draw_message(
             let (sides, arrow) = self_loop_geometry(rect);
             for (a, b) in sides {
                 if dashed {
-                    draw_dashed_segment(cx, &camera, rect_pos, draws.fill, a, b, thickness);
+                    draw_dashed_segment(cx, &camera, rect_pos, draws.fill, a, b, pen);
                 } else {
-                    draw_solid_segment(cx, &camera, rect_pos, draws.fill, a, b, thickness);
+                    draw_solid_segment(cx, &camera, rect_pos, draws.fill, a, b, pen);
                 }
             }
             arrow
@@ -421,9 +417,9 @@ fn draw_message(
             let from = (message.from_x, message.y);
             let to = (message.to_x, message.y);
             if dashed {
-                draw_dashed_segment(cx, &camera, rect_pos, draws.fill, from, to, thickness);
+                draw_dashed_segment(cx, &camera, rect_pos, draws.fill, from, to, pen);
             } else {
-                draw_solid_segment(cx, &camera, rect_pos, draws.fill, from, to, thickness);
+                draw_solid_segment(cx, &camera, rect_pos, draws.fill, from, to, pen);
             }
             (from, to)
         }
@@ -508,6 +504,9 @@ fn draw_arrowhead(
             &[(right.x - min_x) as f32, (right.y - min_y) as f32],
         );
         draws.open_head.color = color;
+        draws
+            .open_head
+            .set_uniform(cx, live_id!(pen_w), &[Pen::REGULAR.width() as f32]);
         draws.open_head.draw_abs(cx, quad);
     }
 }
@@ -519,20 +518,12 @@ fn draw_fragment(
     emphasis: Emphasis,
     draws: &mut InteractionDrawResources<'_>,
 ) {
-    // The frame is stroked by an SDF pen, so both its rect and its width have to
-    // be snapped here -- `stroke_quad` only covers the quad-drawn linework.
-    let screen = snap_rect(cx, world_rect_to_screen(viewport, fragment.rect));
-    let border = snap_stroke_width(
-        cx,
-        draws
-            .linework
-            .thickness(emphasis.thickness(Pen::LIGHT.width())),
-    ) as f32;
-    let divider = draws.linework.thickness(Pen::HAIRLINE.width());
+    let pen = Pen::LIGHT;
+    let screen = pen::outline(cx, world_rect_to_screen(viewport, fragment.rect), pen);
     draws.frame_border.color = emphasis.stroke(draws.palette.line, draws.palette);
     draws
         .frame_border
-        .set_uniform(cx, live_id!(stroke_w), &[border]);
+        .set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);
     draws.frame_border.draw_abs(cx, screen);
 
     let camera = viewport.camera;
@@ -542,7 +533,15 @@ fn draw_fragment(
         if let Some(y) = operand.divider_y {
             let left = (fragment.rect.x, y);
             let right = (fragment.rect.x + fragment.rect.w, y);
-            draw_dashed_segment(cx, &camera, rect_pos, draws.fill, left, right, divider);
+            draw_dashed_segment(
+                cx,
+                &camera,
+                rect_pos,
+                draws.fill,
+                left,
+                right,
+                Pen::HAIRLINE,
+            );
         }
         let guard_screen = world_rect_to_screen(viewport, operand.guard_rect);
         draws.text.draw_abs(
@@ -564,7 +563,11 @@ fn draw_fragment_tab(
     emphasis: Emphasis,
     draws: &mut InteractionDrawResources<'_>,
 ) {
-    let screen = snap_rect(cx, world_rect_to_screen(viewport, fragment.rect));
+    let screen = pen::outline(
+        cx,
+        world_rect_to_screen(viewport, fragment.rect),
+        Pen::LIGHT,
+    );
     let zoom = viewport.camera.zoom;
     let label = fragment.kind.as_str();
     let text = measure_text(cx, draws.text_heading, label);
@@ -580,16 +583,10 @@ fn draw_fragment_tab(
     // The plate strokes its own outline in the frame's colour. Its top and left
     // edges sit ON the frame's border, so an unstroked plate erased that stretch
     // of border and left a white notch in the corner of the frame.
-    let border = snap_stroke_width(
-        cx,
-        draws
-            .linework
-            .thickness(emphasis.thickness(Pen::LIGHT.width())),
-    ) as f32;
     let stroke = emphasis.stroke(draws.palette.line, draws.palette);
     draws
         .pentagon
-        .set_uniform(cx, live_id!(stroke_w), &[border]);
+        .set_uniform(cx, live_id!(pen_w), &[Pen::LIGHT.width() as f32]);
     draws.pentagon.set_uniform(
         cx,
         live_id!(border_col),
