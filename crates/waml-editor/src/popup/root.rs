@@ -10,6 +10,7 @@ use crate::popup::base::{
 };
 use crate::popup::conflict_list::ConflictList;
 use crate::popup::menu::{MenuPopup, MENU_MAX_W, PAD_V, ROW_H};
+use crate::popup::palette::{PalettePopup, PaletteSectionModel};
 use crate::popup::presenter::Presenter;
 use crate::popup::radial::RadialPopup;
 use crate::popup::select::{
@@ -17,6 +18,14 @@ use crate::popup::select::{
 };
 use crate::scene::SceneConflict;
 use makepad_widgets::*;
+
+/// Palette card width cap (lpx) and its top offset from the popup bounds
+/// (decision: "PopupSpec::Palette ... opens it centred-top like a command
+/// palette", final look owed as a visual sign-off item).
+const PALETTE_MAX_W: f64 = 560.0;
+const PALETTE_TOP: f64 = 80.0;
+const PALETTE_SIDE_MARGIN: f64 = 16.0;
+const PALETTE_BOTTOM_MARGIN: f64 = 40.0;
 
 /// How to open the linear card.
 #[allow(dead_code)]
@@ -77,6 +86,14 @@ pub enum PopupSpec {
         bounds: Rect,
         conflicts: Vec<SceneConflict>,
     },
+    /// The Ctrl+K command palette (decision 1). Opens centred-top in
+    /// `bounds` -- unlike the other surfaces there is no button/press
+    /// anchor, the palette is a global overlay.
+    Palette {
+        tag: LiveId,
+        bounds: Rect,
+        sections: Vec<PaletteSectionModel>,
+    },
 }
 
 /// Emitted on every close. Openers filter for their own `tag`; `PopupRoot` never
@@ -114,6 +131,7 @@ enum ActiveKind {
     Radial,
     Select,
     Conflict,
+    Palette,
 }
 
 fn active_tag_is(active: Option<(ActiveKind, LiveId)>, tag: LiveId) -> bool {
@@ -163,6 +181,7 @@ script_mod! {
             radial := RadialPopup{ width: Fill height: Fill }
             select := SelectFlyout{ width: Fill height: Fill }
             conflict := ConflictList{ width: Fill height: Fill }
+            palette := PalettePopup{ width: Fill height: Fill }
         }
     }
 }
@@ -262,6 +281,15 @@ impl PopupRoot {
                         .borrow_mut::<ConflictList>()
                     {
                         c.reset();
+                    }
+                }
+                ActiveKind::Palette => {
+                    if let Some(mut p) = self
+                        .body
+                        .widget(cx, ids!(palette))
+                        .borrow_mut::<PalettePopup>()
+                    {
+                        p.reset();
                     }
                 }
             }
@@ -411,6 +439,31 @@ impl PopupRoot {
                 }
                 self.active = Some((ActiveKind::Conflict, tag));
             }
+            PopupSpec::Palette {
+                tag,
+                bounds,
+                sections,
+            } => {
+                let width = PALETTE_MAX_W
+                    .min((bounds.size.x - PALETTE_SIDE_MARGIN * 2.0).max(0.0))
+                    .max(0.0);
+                let available_h = (bounds.size.y - PALETTE_TOP - PALETTE_BOTTOM_MARGIN).max(0.0);
+                let height = crate::popup::palette::content_height(&sections).min(available_h);
+                let left = bounds.pos.x + (bounds.size.x - width) * 0.5;
+                let top = bounds.pos.y + PALETTE_TOP;
+                let rect = Rect {
+                    pos: dvec2(left, top),
+                    size: dvec2(width, height),
+                };
+                if let Some(mut p) = self
+                    .body
+                    .widget(cx, ids!(palette))
+                    .borrow_mut::<PalettePopup>()
+                {
+                    p.open_palette(cx, rect, sections);
+                }
+                self.active = Some((ActiveKind::Palette, tag));
+            }
         }
         // A session-first open: `menu`/`radial`'s own draw components (`draw_frame`
         // / `draw_wedge`) are `#[redraw]` but have never executed `draw_abs`
@@ -480,6 +533,12 @@ impl PopupRoot {
                     .borrow_mut::<ConflictList>()
                     .map(|mut c| c.handle(cx, ev))
                     .unwrap_or(PopupVerdict::Ignored),
+                ActiveKind::Palette => self
+                    .body
+                    .widget(cx, ids!(palette))
+                    .borrow_mut::<PalettePopup>()
+                    .map(|mut p| p.handle(cx, ev))
+                    .unwrap_or(PopupVerdict::Ignored),
             };
             // Cursor while a surface owns the screen. The widget the pointer
             // came from set the standing cursor (a canvas `Grab`, a button's
@@ -508,6 +567,11 @@ impl PopupRoot {
                         .widget(cx, ids!(conflict))
                         .borrow::<ConflictList>()
                         .is_some_and(|c| c.hovers_item()),
+                    ActiveKind::Palette => self
+                        .body
+                        .widget(cx, ids!(palette))
+                        .borrow::<PalettePopup>()
+                        .is_some_and(|p| p.hovers_item()),
                 };
                 if hovers {
                     cursor::hover_in(cx, MouseCursor::Hand);
@@ -580,6 +644,15 @@ impl PopupRoot {
                         c.reset();
                     }
                 }
+                ActiveKind::Palette => {
+                    if let Some(mut p) = self
+                        .body
+                        .widget(cx, ids!(palette))
+                        .borrow_mut::<PalettePopup>()
+                    {
+                        p.reset();
+                    }
+                }
             }
             // The surface's `Hand` dies with it: the widget underneath gets no
             // hover-in from a pointer that never moved, so nothing else would
@@ -640,6 +713,45 @@ impl PopupRoot {
             .widget(cx, ids!(conflict))
             .borrow::<ConflictList>()?
             .action(actions)
+    }
+
+    /// Read the palette's live query-text change, if `tag` matches the open
+    /// palette. The opener re-queries `SearchState` and pushes fresh rows
+    /// back via `set_palette_sections` (Task 11).
+    pub fn palette_query_changed(
+        &self,
+        cx: &mut Cx,
+        tag: LiveId,
+        actions: &Actions,
+    ) -> Option<String> {
+        if !active_tag_is(self.active, tag) {
+            return None;
+        }
+        self.body
+            .widget(cx, ids!(palette))
+            .borrow::<PalettePopup>()?
+            .query_changed(actions)
+    }
+
+    /// Re-seed an open palette's rows in place (a live-query re-run). A
+    /// no-op unless `tag` is the currently-open palette -- mirrors
+    /// `set_menu_items`.
+    pub fn set_palette_sections(
+        &mut self,
+        cx: &mut Cx,
+        tag: LiveId,
+        sections: Vec<PaletteSectionModel>,
+    ) {
+        if !active_tag_is(self.active, tag) {
+            return;
+        }
+        if let Some(mut p) = self
+            .body
+            .widget(cx, ids!(palette))
+            .borrow_mut::<PalettePopup>()
+        {
+            p.set_sections(cx, sections);
+        }
     }
 }
 

@@ -16,12 +16,8 @@ use waml::source::SourceBundle;
 /// always leave `status` at `Ready`; `Building` exists for the palette's
 /// `indexing…` row and a later async backend (decision 6).
 ///
-/// `Building` is unconstructed until the palette (spec Task 10) renders it --
-/// this lib-crate seam lands now so the surface tasks that consume it need no
-/// further `SearchState` changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextIndexStatus {
-    #[allow(dead_code)]
     Building,
     Ready,
 }

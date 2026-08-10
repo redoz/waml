@@ -9,6 +9,7 @@ pub mod conflict_list;
 pub mod marking;
 pub mod menu;
 pub mod node_menu;
+pub mod palette;
 pub mod presenter;
 pub mod radial;
 pub mod root;
