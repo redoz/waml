@@ -5,6 +5,42 @@ use crate::canvas::primitives::edge_point_to_screen;
 use crate::{EdgeLineStyle, StructuralVisualPolicy};
 use makepad_widgets::*;
 
+const DASH_DEVICE_PX: f64 = 8.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DashSegmentGeometry {
+    quad: Rect,
+    from: [f32; 2],
+    to: [f32; 2],
+    phase_device_px: f64,
+    next_phase_device_px: f64,
+}
+
+fn dash_segment_geometry(
+    from: DVec2,
+    to: DVec2,
+    stroke_width: f64,
+    dpi: f64,
+    phase_device_px: f64,
+) -> DashSegmentGeometry {
+    let pad = stroke_width * 0.5 + 1.0 / dpi;
+    let quad = Rect {
+        pos: dvec2(from.x.min(to.x) - pad, from.y.min(to.y) - pad),
+        size: dvec2(
+            (from.x - to.x).abs() + pad * 2.0,
+            (from.y - to.y).abs() + pad * 2.0,
+        ),
+    };
+    let local = |point: DVec2| [(point.x - quad.pos.x) as f32, (point.y - quad.pos.y) as f32];
+    DashSegmentGeometry {
+        quad,
+        from: local(from),
+        to: local(to),
+        phase_device_px,
+        next_phase_device_px: (phase_device_px + (to - from).length() * dpi) % DASH_DEVICE_PX,
+    }
+}
+
 pub(super) fn draw_edges(
     cx: &mut Cx2d,
     snapshot: &RenderSnapshot<'_>,
@@ -74,6 +110,7 @@ pub(super) fn draw_edges(
         }
 
         let snap = |value: f64| (value * dpi).round() / dpi;
+        let mut dash_phase_device_px = 0.0;
         for i in 0..n.saturating_sub(1) {
             let a_fillet = radius[i] > 0.0;
             let b_fillet = radius[i + 1] > 0.0;
@@ -131,8 +168,37 @@ pub(super) fn draw_edges(
                     draws.edge.draw_abs(cx, quad);
                 }
                 EdgeLineStyle::Dashed => {
-                    draws.edge_dashed.set_uniform(cx, live_id!(dash_px), &[8.0]);
-                    draws.edge_dashed.draw_abs(cx, quad);
+                    let geometry = dash_segment_geometry(
+                        screen[i],
+                        screen[i + 1],
+                        thickness,
+                        dpi,
+                        dash_phase_device_px,
+                    );
+                    draws
+                        .edge_dashed
+                        .set_uniform(cx, live_id!(from), &geometry.from);
+                    draws
+                        .edge_dashed
+                        .set_uniform(cx, live_id!(to), &geometry.to);
+                    draws.edge_dashed.set_uniform(
+                        cx,
+                        live_id!(phase_device_px),
+                        &[geometry.phase_device_px as f32],
+                    );
+                    draws
+                        .edge_dashed
+                        .set_uniform(cx, live_id!(dpi), &[dpi as f32]);
+                    draws
+                        .edge_dashed
+                        .set_uniform(cx, live_id!(stroke_w), &[thickness as f32]);
+                    draws.edge_dashed.set_uniform(
+                        cx,
+                        live_id!(dash_device_px),
+                        &[DASH_DEVICE_PX as f32],
+                    );
+                    draws.edge_dashed.draw_abs(cx, geometry.quad);
+                    dash_phase_device_px = geometry.next_phase_device_px;
                 }
             }
         }
@@ -228,5 +294,54 @@ pub(super) fn draw_edges(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod dash_tests {
+    use super::*;
+
+    #[test]
+    fn dash_geometry_follows_horizontal_vertical_and_diagonal_segments() {
+        for (from, to) in [
+            (dvec2(2.0, 3.0), dvec2(12.0, 3.0)),
+            (dvec2(2.0, 3.0), dvec2(2.0, 13.0)),
+            (dvec2(2.0, 3.0), dvec2(8.0, 11.0)),
+        ] {
+            let geometry = dash_segment_geometry(from, to, 2.0, 1.0, 0.0);
+            assert_eq!(geometry.from, [2.0, 2.0]);
+            assert_eq!(
+                geometry.to,
+                [
+                    (to.x - geometry.quad.pos.x) as f32,
+                    (to.y - geometry.quad.pos.y) as f32
+                ]
+            );
+            assert!(geometry.quad.contains(from));
+            assert!(geometry.quad.contains(to));
+        }
+    }
+
+    #[test]
+    fn dash_phase_is_continuous_across_bends() {
+        let first = dash_segment_geometry(dvec2(0.0, 0.0), dvec2(10.0, 0.0), 2.0, 1.0, 0.0);
+        let second = dash_segment_geometry(
+            dvec2(10.0, 0.0),
+            dvec2(10.0, 7.0),
+            2.0,
+            1.0,
+            first.next_phase_device_px,
+        );
+        assert_eq!(first.next_phase_device_px, 2.0);
+        assert_eq!(second.phase_device_px, first.next_phase_device_px);
+        assert_eq!(second.next_phase_device_px, 1.0);
+    }
+
+    #[test]
+    fn dash_period_is_defined_in_device_pixels_at_one_and_two_x_dpi() {
+        let one = dash_segment_geometry(dvec2(0.0, 0.0), dvec2(5.0, 0.0), 2.0, 1.0, 0.0);
+        let two = dash_segment_geometry(dvec2(0.0, 0.0), dvec2(5.0, 0.0), 2.0, 2.0, 0.0);
+        assert_eq!(one.next_phase_device_px, 5.0);
+        assert_eq!(two.next_phase_device_px, 2.0);
     }
 }

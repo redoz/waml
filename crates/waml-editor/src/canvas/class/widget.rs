@@ -77,11 +77,25 @@ script_mod! {
     }
 
     mod.draw.EdgeDashed = mod.draw.DrawColor{
-        dash_px: uniform(8.0)
+        from: uniform(vec2(0.0, 0.0))
+        to: uniform(vec2(1.0, 1.0))
+        phase_device_px: uniform(0.0)
+        dpi: uniform(1.0)
+        stroke_w: uniform(1.0)
+        dash_device_px: uniform(8.0)
         pixel: fn() {
-            let along = self.pos.x * self.rect_size.x + self.pos.y * self.rect_size.y
-            let mask = 1.0 - step(0.55, fract(along / self.dash_px))
-            return vec4(self.color.x, self.color.y, self.color.z, self.color.w * mask)
+            let p = self.pos * self.rect_size
+            let delta = self.to - self.from
+            let segment_length = max(length(delta), 0.0001)
+            let unit = delta / segment_length
+            let along = clamp(dot(p - self.from, unit), 0.0, segment_length)
+            let closest = self.from + unit * along
+            let cross_device = length(p - closest) * self.dpi
+            let line_alpha = clamp(self.stroke_w * self.dpi * 0.5 + 0.5 - cross_device, 0.0, 1.0)
+            let cycle = fract((self.phase_device_px + along * self.dpi) / self.dash_device_px)
+            let dash_distance_device = (0.275 - abs(cycle - 0.275)) * self.dash_device_px
+            let dash_alpha = clamp(dash_distance_device + 0.5, 0.0, 1.0)
+            return vec4(self.color.x, self.color.y, self.color.z, self.color.w * line_alpha * dash_alpha)
         }
     }
 
