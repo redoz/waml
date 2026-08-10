@@ -117,11 +117,24 @@ fn upgrade_check_reports_needed_changes_without_writing_then_reports_clean() {
     let needed = bin()
         .args(["upgrade", "--check"])
         .arg(temp.path())
+        .env("WAML_CLI_TEST_FAIL_RENAME_AT", "1")
         .output()
         .unwrap();
 
     assert_eq!(needed.status.code(), Some(1), "{needed:?}");
+    assert!(needed.stderr.is_empty(), "{needed:?}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), LEGACY_ACTIVITY);
+    let entries = std::fs::read_dir(temp.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(entries, ["activity.md"]);
+    assert!(
+        entries
+            .iter()
+            .all(|entry| !entry.starts_with(".waml-cli-") || !entry.ends_with(".txn")),
+        "check mode must not create a transaction directory: {entries:?}"
+    );
     assert_eq!(
         String::from_utf8(needed.stdout).unwrap(),
         "activity.md: canonical-uml-diagram-types - Use canonical UML diagram document types\n"
@@ -164,6 +177,11 @@ fn upgrade_ambiguous_bundle_writes_nothing() {
     let output = bin().arg("upgrade").arg(temp.path()).output().unwrap();
 
     assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "waml: upgrade failed: cannot select the diagram type for mixed.md: it contains use-case and classifier members (class)\n"
+    );
     for (path, text) in files {
         assert_eq!(
             std::fs::read_to_string(temp.path().join(path)).unwrap(),
@@ -183,6 +201,11 @@ fn upgrade_strict_validation_error_writes_nothing() {
     let output = bin().arg("upgrade").arg(temp.path()).output().unwrap();
 
     assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "waml: upgrade failed: the bundle does not pass strict validation\n"
+    );
     assert_eq!(
         std::fs::read_to_string(temp.path().join("activity.md")).unwrap(),
         LEGACY_ACTIVITY
@@ -212,6 +235,10 @@ fn upgrade_rolls_back_every_file_after_a_later_write_failure() {
     assert_eq!(std::fs::read_to_string(activity).unwrap(), LEGACY_ACTIVITY);
     assert_eq!(std::fs::read_to_string(class).unwrap(), LEGACY_CLASS);
     assert!(output.stdout.is_empty(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "waml: could not write upgrade: failed to write class.md: injected rename failure at call 4\n"
+    );
 }
 
 #[test]

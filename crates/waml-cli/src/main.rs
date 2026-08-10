@@ -545,7 +545,7 @@ fn run_upgrade(path: &Path, check: bool) -> i32 {
     let plan = match upgrade::plan_upgrade(&bundle.files) {
         Ok(plan) => plan,
         Err(error) => {
-            eprintln!("waml: upgrade failed: {error:?}");
+            eprintln!("waml: upgrade failed: {}", render_upgrade_error(&error));
             return 1;
         }
     };
@@ -570,6 +570,36 @@ fn run_upgrade(path: &Path, check: bool) -> i32 {
         eprintln!("{warning}");
     }
     0
+}
+
+fn render_upgrade_error(error: &upgrade::UpgradeError) -> String {
+    use upgrade::UpgradeError;
+    use waml::upgrade::UpgradeInspectionError;
+
+    match error {
+        UpgradeError::InvalidSource(message) => {
+            format!("the source bundle is not valid: {message}")
+        }
+        UpgradeError::Inspection(UpgradeInspectionError::AmbiguousLegacyDiagram {
+            path,
+            incompatible_members,
+        }) => format!(
+            "cannot select the diagram type for {path}: it contains use-case and classifier members ({})",
+            incompatible_members.join(", ")
+        ),
+        UpgradeError::Inspection(UpgradeInspectionError::InvalidLegacyBundle(_)) => {
+            "the bundle does not pass strict validation".to_string()
+        }
+        UpgradeError::Rewrite { path, .. } => {
+            format!("cannot rewrite the diagram type in {path}")
+        }
+        UpgradeError::Preparation(message) => {
+            format!("cannot prepare the upgraded bundle: {message}")
+        }
+        UpgradeError::InvalidCandidate(_) => {
+            "the upgraded bundle does not pass strict validation".to_string()
+        }
+    }
 }
 
 fn print_upgrade_reports(applied: &[upgrade::AppliedMigration]) {
