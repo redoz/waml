@@ -81,6 +81,13 @@ fn server_capabilities() -> ServerCapabilities {
                 full: Some(SemanticTokensFullOptions::Bool(true)),
             },
         )),
+        completion_provider: Some(CompletionOptions {
+            resolve_provider: Some(false),
+            // A space commits the previous word, which is exactly when an empty
+            // operand slot appears; `(` opens a link target.
+            trigger_characters: Some(vec![" ".to_string(), "(".to_string()]),
+            ..Default::default()
+        }),
         ..Default::default()
     }
 }
@@ -318,6 +325,23 @@ impl LanguageServer for Backend {
             .map(GotoDefinitionResponse::Scalar))
     }
 
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let Some(physical) = params
+            .text_document_position
+            .text_document
+            .uri
+            .to_file_path()
+            .map(|p| p.into_owned())
+        else {
+            return Ok(None);
+        };
+        let position = params.text_document_position.position;
+        Ok(self
+            .current_query(|snapshot| snapshot.completion(&physical, position))
+            .await
+            .map(CompletionResponse::Array))
+    }
+
     async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
         let Some(physical) = params
             .text_document
@@ -385,12 +409,63 @@ mod tests {
         };
         assert_eq!(options.legend.token_types.len(), 11);
         assert_eq!(options.full, Some(SemanticTokensFullOptions::Bool(true)));
-        assert!(capabilities.completion_provider.is_none());
+        // Reversed by docs/superpowers/specs/2026-08-10-completion-suggestions-design.md.
+        // The previous assertion recorded a deliberate decision not to offer
+        // completions; the spec supersedes it, so this is updated rather than
+        // deleted.
+        let completion = capabilities
+            .completion_provider
+            .expect("completion is advertised");
+        assert_eq!(
+            completion.trigger_characters,
+            Some(vec![" ".to_string(), "(".to_string()])
+        );
+        assert_eq!(completion.resolve_provider, Some(false));
         let Some(TextDocumentSyncCapability::Options(sync)) = capabilities.text_document_sync
         else {
             panic!("full text sync options");
         };
         assert_eq!(sync.change, Some(TextDocumentSyncKind::FULL));
+    }
+
+    #[test]
+    fn completion_offers_message_verbs_at_an_empty_verb_slot() {
+        let physical = PathBuf::from("C:/outside/seq.md");
+        let text = concat!(
+            "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n",
+            "## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A \n"
+        );
+        let state = LspAnalysisState::empty()
+            .unwrap()
+            .open(physical.clone(), 1, text.into())
+            .unwrap();
+        // The cursor sits at the end of the "- A " line.
+        let line = text.lines().count() as u32 - 1;
+        let items = state
+            .completion(&physical, Position::new(line, 4))
+            .expect("completion returns a list");
+        let labels = items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+        assert!(labels.contains(&"calls"), "{labels:?}");
+        assert!(labels.contains(&"returns"), "{labels:?}");
+        assert!(items
+            .iter()
+            .all(|item| item.text_edit.is_some() || item.insert_text.is_some()));
+    }
+
+    #[test]
+    fn completion_in_prose_is_an_empty_list_not_an_absent_response() {
+        let physical = PathBuf::from("C:/outside/prose.md");
+        let state = LspAnalysisState::empty()
+            .unwrap()
+            .open(physical.clone(), 1, "# Title\n\nJust prose here.\n".into())
+            .unwrap();
+        assert_eq!(
+            state.completion(&physical, Position::new(2, 5)),
+            Some(Vec::new())
+        );
     }
 
     #[tokio::test]

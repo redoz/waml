@@ -5,9 +5,10 @@ use std::{
 
 use tower_lsp_server::ls_types as lsp;
 use waml::{
-    analysis::{DocumentId, DocumentVersion, MarkdownTokenRole, WamlCodeRole},
+    analysis::{DocumentId, DocumentVersion, MarkdownTokenRole, TextSize, WamlCodeRole},
     okf,
     source::BundlePath,
+    uml::{completions, ActionContext, CompletionKind},
 };
 
 use crate::lsp::{
@@ -181,6 +182,42 @@ impl LspAnalysisState {
             lsp::Uri::from_file_path(target_physical)?,
             range,
         ))
+    }
+
+    /// Candidates at `position`. `None` means "not a document I know"; an
+    /// empty `Vec` means "nothing is expected here", which is a normal result
+    /// and must stay distinguishable from the former.
+    pub fn completion(
+        &self,
+        physical: &Path,
+        position: lsp::Position,
+    ) -> Option<Vec<lsp::CompletionItem>> {
+        let (_, document_id, document) = self.query_document(physical)?;
+        let offset = from_lsp_position(position, document).ok()?;
+        let offset = TextSize::try_from_usize(offset).ok()?;
+        let context = ActionContext::new(&self.okf, &self.uml, self.revision).ok()?;
+        let candidates = completions(context, document_id, offset).ok()?;
+        let items = candidates
+            .into_iter()
+            .filter_map(|candidate| {
+                let range = to_lsp_range(
+                    candidate.replace.start().to_usize()..candidate.replace.end().to_usize(),
+                    document,
+                )
+                .ok()?;
+                Some(lsp::CompletionItem {
+                    label: candidate.label.to_string(),
+                    kind: Some(completion_item_kind(candidate.kind)),
+                    detail: candidate.detail.map(|detail| detail.to_string()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range,
+                        new_text: candidate.insert.to_string(),
+                    })),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        Some(items)
     }
 
     pub fn semantic_tokens(&self, physical: &Path) -> Option<lsp::SemanticTokens> {
@@ -413,6 +450,17 @@ fn heading_slug(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join("-")
+}
+
+fn completion_item_kind(kind: CompletionKind) -> lsp::CompletionItemKind {
+    match kind {
+        CompletionKind::Keyword => lsp::CompletionItemKind::KEYWORD,
+        CompletionKind::Reference => lsp::CompletionItemKind::REFERENCE,
+        CompletionKind::Field => lsp::CompletionItemKind::FIELD,
+        CompletionKind::Value => lsp::CompletionItemKind::ENUM_MEMBER,
+        CompletionKind::Link => lsp::CompletionItemKind::FILE,
+        CompletionKind::Name => lsp::CompletionItemKind::VARIABLE,
+    }
 }
 
 #[cfg(test)]
