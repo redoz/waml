@@ -187,9 +187,11 @@ pub(super) fn draw_edges(
                         .edge
                         .set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);
                     let horizontal = pen::band_is_horizontal(screen[i], screen[i + 1]);
-                    draws
-                        .edge
-                        .set_uniform(cx, live_id!(thin_y), &[if horizontal { 1.0 } else { 0.0 }]);
+                    draws.edge.set_uniform(
+                        cx,
+                        live_id!(thin_y),
+                        &[if horizontal { 1.0 } else { 0.0 }],
+                    );
                     draws.edge.draw_abs(cx, quad);
                 }
                 EdgeLineStyle::Dashed => {
