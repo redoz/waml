@@ -17,6 +17,7 @@ pub(in crate::canvas::class) struct ClassDrawResources<'a> {
     pub(in crate::canvas::class) group_dashed: &'a mut DrawColor,
     pub(in crate::canvas::class) group_title_dim: &'a mut DrawColor,
     pub(in crate::canvas::class) edge: &'a mut DrawColor,
+    pub(in crate::canvas::class) edge_dashed: &'a mut DrawColor,
     pub(in crate::canvas::class) elbow: &'a mut DrawColor,
     pub(in crate::canvas::class) marker: &'a mut DrawColor,
     pub(in crate::canvas::class) edge_label_bg: &'a mut DrawColor,

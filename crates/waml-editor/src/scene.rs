@@ -987,7 +987,8 @@ pub fn build_scene(
     // Label text is known before any geometry is, so the connected-gap floor can
     // be sized to hold each pair's terminal labels. These requests index into
     // `model_edges`, which is the same list (same order) as `edges`.
-    let sizing_requests = crate::edge_labels::model_label_requests(&model_edges, &display);
+    let sizing_requests =
+        crate::edge_labels::model_label_requests_with_policy(&model_edges, &display, policy);
 
     // Every diagram -- hinted or not, grouped or not -- goes through the one
     // unified placement path: authored `## Layout` statements compile into
@@ -1113,7 +1114,7 @@ pub fn build_scene(
     // router for a path that leaves room for it. `place_labels_with_reroute`
     // disables the reroute when this list and the router's own route list have
     // desynced, degrading to a plain placement pass.
-    let requests = crate::edge_labels::label_requests(&edges, &display);
+    let requests = crate::edge_labels::label_requests_with_policy(&edges, &display, policy);
     let mut routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
     let unresolved = waml::solve::place_labels_with_reroute(
         &mut solved,

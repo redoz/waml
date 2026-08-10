@@ -2,8 +2,8 @@ use super::{primitives::ClassDrawResources, RenderSnapshot};
 use crate::canvas::geometry::{corner_fillet, elbow_radius, marker_geometry, ELBOW_MIN_DEVICE_PX};
 use crate::canvas::pen::{self, Pen};
 use crate::canvas::primitives::edge_point_to_screen;
+use crate::{EdgeLineStyle, StructuralVisualPolicy};
 use makepad_widgets::*;
-use waml::adornment::{end_marker, End};
 
 pub(super) fn draw_edges(
     cx: &mut Cx2d,
@@ -19,6 +19,10 @@ pub(super) fn draw_edges(
     let elbow_min = ELBOW_MIN_DEVICE_PX / dpi;
 
     for edge in &snapshot.scene.edges {
+        let notation = StructuralVisualPolicy {
+            kind: snapshot.scene.visual_kind,
+        }
+        .edge_notation(edge.kind, edge.from_end.navigable, edge.to_end.navigable);
         let n = edge.points.len();
         let screen: Vec<DVec2> = edge
             .points
@@ -29,6 +33,9 @@ pub(super) fn draw_edges(
         for i in 1..n.saturating_sub(1) {
             let r = elbow_radius(screen[i - 1], screen[i], screen[i + 1], r_base);
             radius[i] = if r >= elbow_min { r } else { 0.0 };
+        }
+        if notation.line == EdgeLineStyle::Dashed {
+            radius.fill(0.0);
         }
 
         let mut bars: Vec<Rect> = Vec::with_capacity(n.saturating_sub(1));
@@ -112,18 +119,26 @@ pub(super) fn draw_edges(
                 }
             };
             bars[i] = quad;
-            draws
-                .edge
-                .set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);
-            let horizontal = pen::band_is_horizontal(screen[i], screen[i + 1]);
-            draws
-                .edge
-                .set_uniform(cx, live_id!(thin_y), &[if horizontal { 1.0 } else { 0.0 }]);
-            draws.edge.draw_abs(cx, quad);
+            match notation.line {
+                EdgeLineStyle::Solid => {
+                    draws
+                        .edge
+                        .set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);
+                    let horizontal = pen::band_is_horizontal(screen[i], screen[i + 1]);
+                    draws
+                        .edge
+                        .set_uniform(cx, live_id!(thin_y), &[if horizontal { 1.0 } else { 0.0 }]);
+                    draws.edge.draw_abs(cx, quad);
+                }
+                EdgeLineStyle::Dashed => {
+                    draws.edge_dashed.set_uniform(cx, live_id!(dash_px), &[8.0]);
+                    draws.edge_dashed.draw_abs(cx, quad);
+                }
+            }
         }
 
         for i in 1..n.saturating_sub(1) {
-            if radius[i] <= 0.0 {
+            if radius[i] <= 0.0 || notation.line == EdgeLineStyle::Dashed {
                 continue;
             }
             // `bars` now hold the pen's CANVAS, two device pixels wider than the
@@ -186,12 +201,12 @@ pub(super) fn draw_edges(
             let next = edge_point_to_screen(&camera, rect.pos, points[1]);
             let ends = [
                 (
-                    end_marker(edge.kind, End::To, edge.to_end.navigable),
+                    notation.to_marker,
                     ep_to,
                     dvec2(ep_to.x - previous.x, ep_to.y - previous.y),
                 ),
                 (
-                    end_marker(edge.kind, End::From, edge.from_end.navigable),
+                    notation.from_marker,
                     ep_from,
                     dvec2(ep_from.x - next.x, ep_from.y - next.y),
                 ),

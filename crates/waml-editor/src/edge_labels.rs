@@ -71,31 +71,21 @@ pub struct EdgeLabel {
 /// which candidates it can slide to, what it must avoid — is the solver's job
 /// (`waml::solve::label::place`); this only decides WHAT text exists and which
 /// slot it belongs to.
+#[cfg(test)]
 pub fn label_requests(edges: &[SceneEdge], display: &ResolvedDiagramDisplay) -> Vec<LabelRequest> {
-    let mut requests = Vec::new();
-    for (index, edge) in edges.iter().enumerate() {
-        push_requests(
-            index,
-            edge.kind,
-            edge.name.as_ref(),
-            &edge.from_end,
-            &edge.to_end,
-            display,
-            &mut requests,
-        );
-    }
-    requests
+    label_requests_with_policy(
+        edges,
+        display,
+        crate::StructuralVisualPolicy {
+            kind: crate::StructuralVisualKind::Class,
+        },
+    )
 }
 
-/// The same requests, composed from MODEL edges instead of scene edges, so the
-/// pre-solve pass that sizes connected gaps to hold their terminal labels
-/// (`connected_label_widths` -> `constrain::compile`) can be fed before any
-/// geometry exists.
-/// `edge` indexes into the slice given here, matching the `(BoxId, BoxId)` edge
-/// list the solver is handed.
-pub fn model_label_requests(
-    edges: &[&waml::model::Edge],
+pub(crate) fn label_requests_with_policy(
+    edges: &[SceneEdge],
     display: &ResolvedDiagramDisplay,
+    policy: crate::StructuralVisualPolicy,
 ) -> Vec<LabelRequest> {
     let mut requests = Vec::new();
     for (index, edge) in edges.iter().enumerate() {
@@ -108,8 +98,59 @@ pub fn model_label_requests(
             display,
             &mut requests,
         );
+        push_forced_middle(
+            index,
+            policy
+                .edge_notation(edge.kind, edge.from_end.navigable, edge.to_end.navigable)
+                .middle_label,
+            &mut requests,
+        );
     }
     requests
+}
+
+/// The same requests, composed from MODEL edges instead of scene edges, so the
+/// pre-solve pass that sizes connected gaps to hold their terminal labels
+/// (`connected_label_widths` -> `constrain::compile`) can be fed before any
+/// geometry exists.
+/// `edge` indexes into the slice given here, matching the `(BoxId, BoxId)` edge
+/// list the solver is handed.
+pub(crate) fn model_label_requests_with_policy(
+    edges: &[&waml::model::Edge],
+    display: &ResolvedDiagramDisplay,
+    policy: crate::StructuralVisualPolicy,
+) -> Vec<LabelRequest> {
+    let mut requests = Vec::new();
+    for (index, edge) in edges.iter().enumerate() {
+        push_requests(
+            index,
+            edge.kind,
+            edge.name.as_ref(),
+            &edge.from_end,
+            &edge.to_end,
+            display,
+            &mut requests,
+        );
+        push_forced_middle(
+            index,
+            policy
+                .edge_notation(edge.kind, edge.from_end.navigable, edge.to_end.navigable)
+                .middle_label,
+            &mut requests,
+        );
+    }
+    requests
+}
+
+fn push_forced_middle(index: usize, text: Option<&'static str>, requests: &mut Vec<LabelRequest>) {
+    if let Some(text) = text {
+        requests.retain(|request| request.edge != index || request.slot != LabelSlot::MidRoute);
+        requests.push(LabelRequest {
+            edge: index,
+            slot: LabelSlot::MidRoute,
+            text: text.to_string(),
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -386,6 +427,25 @@ mod tests {
         display.show_labels = true;
 
         assert!(label_requests(&[edge], &display).is_empty());
+    }
+
+    #[test]
+    fn use_case_dependency_label_is_forced_through_mid_route_placement() {
+        let mut edge = edge(vec![(20.0, 10.0), (100.0, 10.0)]);
+        edge.kind = RelationshipKind::Includes;
+        edge.name = Some(AssocName::Label("authored".into()));
+        let mut display = display(CardinalityVisibility::Off);
+        display.show_labels = false;
+        let requests = label_requests_with_policy(
+            &[edge],
+            &display,
+            crate::StructuralVisualPolicy {
+                kind: crate::StructuralVisualKind::UseCase,
+            },
+        );
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].slot, LabelSlot::MidRoute);
+        assert_eq!(requests[0].text, "«include»");
     }
 
     #[test]

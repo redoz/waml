@@ -76,6 +76,15 @@ script_mod! {
         }
     }
 
+    mod.draw.EdgeDashed = mod.draw.DrawColor{
+        dash_px: uniform(8.0)
+        pixel: fn() {
+            let along = self.pos.x * self.rect_size.x + self.pos.y * self.rect_size.y
+            let mask = 1.0 - step(0.55, fract(along / self.dash_px))
+            return vec4(self.color.x, self.color.y, self.color.z, self.color.w * mask)
+        }
+    }
+
     // Edge corner shader: rasterizes the quad-local geometry from
     // `corner_fillet` as ONE combined SDF. The pixel fn UNIONS the two short bar
     // stubs (`bar_in`/`bar_out`) and quarter-arc band, so their joints are
@@ -306,6 +315,7 @@ script_mod! {
         draw_use_case_ellipse: mod.draw.UseCaseEllipse{ color: atlas.text }
         draw_actor_line: mod.draw.ActorLine{ color: atlas.text }
         draw_edge_down: mod.draw.EdgeLine{ color: atlas.text_dim }
+        draw_edge_dashed: mod.draw.EdgeDashed{ color: atlas.text_dim }
         // Rounded-corner pen; shares the edge line color so a fillet reads as part
         // of the same stroke.
         draw_elbow: mod.draw.EdgeElbow{ color: atlas.text_dim }
@@ -442,6 +452,9 @@ pub struct ClassDiagramSurface {
     #[redraw]
     #[live]
     draw_edge_down: DrawColor,
+    #[redraw]
+    #[live]
+    draw_edge_dashed: DrawColor,
     #[redraw]
     #[live]
     draw_elbow: DrawColor,
@@ -729,6 +742,7 @@ impl Widget for ClassDiagramSurface {
             draw_group_dashed,
             draw_group_title_dim,
             draw_edge_down,
+            draw_edge_dashed,
             draw_elbow,
             draw_marker,
             draw_edge_label_bg,
@@ -767,6 +781,7 @@ impl Widget for ClassDiagramSurface {
             group_dashed: draw_group_dashed,
             group_title_dim: draw_group_title_dim,
             edge: draw_edge_down,
+            edge_dashed: draw_edge_dashed,
             elbow: draw_elbow,
             marker: draw_marker,
             edge_label_bg: draw_edge_label_bg,

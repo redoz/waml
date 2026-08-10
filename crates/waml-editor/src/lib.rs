@@ -24,9 +24,9 @@ mod bundle_export;
 // crate; every other item in `canvas` keeps its existing `pub(crate)` grain.
 pub mod canvas;
 pub use canvas::{
-    measure_node, ActorGeometry, GroupVisualKind, MeasuredNodeGeometry, MonoTextMeasurer,
-    NodeVisualKind, Point, Segment, StructuralVisualKind, StructuralVisualPolicy, TextMeasurer,
-    UseCaseGeometry,
+    measure_node, ActorGeometry, EdgeLineStyle, EdgeNotation, GroupVisualKind,
+    MeasuredNodeGeometry, MonoTextMeasurer, NodeVisualKind, Point, Segment, StructuralVisualKind,
+    StructuralVisualPolicy, TextMeasurer, UseCaseGeometry,
 };
 mod card;
 mod chrome_seam;

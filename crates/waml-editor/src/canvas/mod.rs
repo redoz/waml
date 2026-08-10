@@ -7,7 +7,8 @@ pub use class::use_case_geometry::{
     TextMeasurer, UseCaseGeometry,
 };
 pub use class::visual::{
-    GroupVisualKind, NodeVisualKind, StructuralVisualKind, StructuralVisualPolicy,
+    EdgeLineStyle, EdgeNotation, GroupVisualKind, NodeVisualKind, StructuralVisualKind,
+    StructuralVisualPolicy,
 };
 mod geometry;
 mod linework;
