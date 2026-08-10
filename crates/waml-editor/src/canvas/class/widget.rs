@@ -43,18 +43,11 @@ script_mod! {
     // `thickness/2`; both scale with zoom and detonate when zoomed in. Fill is
     // exact because a per-segment AABB collapses to the bar itself (`sdf.rect`,
     // not `sdf.box`, for a sharp edge).
-    mod.draw.EdgeLine = mod.draw.DrawColor{
+    mod.draw.EdgeLine = mod.draw.CadPen{
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            // Sdf2d coverage is `clamp(-dist * aa)` with `aa = 1 /
-            // length(vec2(|dFdx|, |dFdy|))` = 1/sqrt(2) for a pixel-unit quad,
-            // and it carries no half-pixel bias -- so a bar snapped exactly onto
-            // the device grid still rasterized 0.35 / 1.0 / 0.35 instead of
-            // solid, i.e. a 3px CAD bar read as a grey-fringed hairline. Restore
-            // the sqrt(2) AND grow the box by the missing half pixel, which
-            // together give true box coverage: interior pixels fully inked, a
-            // fractional end still antialiased.
-            sdf.aa = sdf.aa * 1.4142136
+            // Coverage correction from the shared base -- see `canvas::pen`.
+            sdf.aa = sdf.aa * self.pen_aa(1.0)
             sdf.rect(-0.5, -0.5, self.rect_size.x + 1.0, self.rect_size.y + 1.0)
             // One ink at every zoom. CAD linework is defined by its weight, not
             // by the camera: an edge that darkened as you zoomed out made the

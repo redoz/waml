@@ -18,7 +18,11 @@ mod attr_row;
 mod behavior_doc_view;
 mod browser_boot;
 mod bundle_export;
-mod canvas;
+// `pub`: `crates/waml-editor/src/bin/node_editor_harness.rs` must register
+// `canvas::pen::script_mod` in its own DSL chain (it does not go through
+// `App::script_mod`). Only `pen` inside stays reachable from outside the
+// crate; every other item in `canvas` keeps its existing `pub(crate)` grain.
+pub mod canvas;
 mod card;
 mod chrome_seam;
 mod class_diagram_view;

@@ -14,7 +14,7 @@ use makepad_widgets::*;
 // `diagram_display`, `edge_labels`, `inspector`, `load`, `node_style`,
 // `scene`, `sizing`) through the lib, so this bin needs only what it names
 // directly.
-use waml_editor::{frame, node_design_editor, theme_atlas};
+use waml_editor::{canvas, frame, node_design_editor, theme_atlas};
 
 app_main!(App);
 
@@ -65,6 +65,11 @@ impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         makepad_widgets::script_mod(vm);
         theme_atlas::script_mod(vm);
+        // `CadPen` is the base every canvas pen -- and `AccentFrame` itself --
+        // derives from, so it must register before `frame` and before `canvas`.
+        // A `mod.draw.X = mod.draw.CadPen{...}` whose base has not registered is
+        // a hard script error at first draw, not a silent downgrade.
+        canvas::pen::script_mod(vm);
         frame::script_mod(vm);
         node_design_editor::script_mod(vm);
         self::script_mod(vm)

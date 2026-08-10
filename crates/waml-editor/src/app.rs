@@ -1401,6 +1401,11 @@ impl AppMain for App {
         }
         crate::fonts::script_mod(vm);
         crate::icons::script_mod(vm);
+        // `CadPen` is the base every canvas pen -- and `AccentFrame` itself --
+        // derives from, so it must register before `frame` and before `canvas`.
+        // A `mod.draw.X = mod.draw.CadPen{...}` whose base has not registered is
+        // a hard script error at first draw, not a silent downgrade.
+        crate::canvas::pen::script_mod(vm);
         crate::frame::script_mod(vm);
         crate::popup::menu::script_mod(vm);
         crate::popup::radial::script_mod(vm);
