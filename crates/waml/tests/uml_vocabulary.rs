@@ -40,6 +40,36 @@ fn every_layout_hint_phrase_parses_without_a_diagnostic() {
     }
 }
 
+/// The direction tables are the parser's own vocabulary, not a copy of it: a
+/// word added to `LAYOUT_DIRECTION_VERTICALS`/`_LATERALS` (and so to
+/// `LAYOUT_DIRECTION_PHRASES`) must parse. A one-way `debug_assert!` inside the
+/// parser could not catch a table that grew past the match arms.
+#[test]
+fn every_layout_direction_phrase_parses_without_a_diagnostic() {
+    for phrase in vocabulary::LAYOUT_DIRECTION_PHRASES {
+        let text = format!(
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A {phrase} B\n"
+        );
+        let diagnostics = diagnostics_for([
+            ("doc.md".to_string(), text),
+            (
+                "a.md".to_string(),
+                "---\ntype: uml.Class\ntitle: A\n---\n# A\n".to_string(),
+            ),
+            (
+                "b.md".to_string(),
+                "---\ntype: uml.Class\ntitle: B\n---\n# B\n".to_string(),
+            ),
+        ]);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|message| !message.contains("layout")),
+            "{phrase:?} produced {diagnostics:?}"
+        );
+    }
+}
+
 #[test]
 fn every_message_verb_parses_without_a_malformed_message_diagnostic() {
     for verb in vocabulary::MESSAGE_VERBS {
@@ -97,7 +127,8 @@ fn layout_keywords_are_sorted_unique_and_cover_every_phrase_word() {
     for word in vocabulary::LAYOUT_EDGE_WORDS
         .iter()
         .chain(vocabulary::LAYOUT_AXIS_WORDS)
-        .chain(vocabulary::LAYOUT_DIRECTION_HEADS)
+        .chain(vocabulary::LAYOUT_DIRECTION_VERTICALS)
+        .chain(vocabulary::LAYOUT_DIRECTION_LATERALS)
         .chain(vocabulary::LAYOUT_SHAPE_HINTS)
         .chain(vocabulary::LAYOUT_MARGIN_SIZES)
     {

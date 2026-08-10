@@ -66,8 +66,13 @@ pub const LAYOUT_EDGE_WORDS: &[&str] = &["top", "bottom", "left", "right", "cent
 /// Words that open an inline group; always followed by `of`.
 pub const LAYOUT_AXIS_WORDS: &[&str] = &["row", "column"];
 
-/// Words that open a direction clause.
-pub const LAYOUT_DIRECTION_HEADS: &[&str] = &["above", "below", "left", "right"];
+/// Words that open a direction clause and may take an optional lateral word
+/// before `of` (`above left of`).
+pub const LAYOUT_DIRECTION_VERTICALS: &[&str] = &["above", "below"];
+
+/// Words that open a direction clause on their own and must be followed by
+/// `of`; they are also the optional second word of a vertical direction.
+pub const LAYOUT_DIRECTION_LATERALS: &[&str] = &["left", "right"];
 
 /// Complete direction phrases, exactly as a completion inserts them.
 pub const LAYOUT_DIRECTION_PHRASES: &[&str] = &[

@@ -3489,10 +3489,12 @@ impl<'a> LayoutShapeCursor<'a> {
     fn direction(&mut self) -> Result<Option<std::ops::Range<usize>>, LayoutShapeError> {
         let start = self.pos;
         match self.word() {
-            Some(word) if matches!(word, "above" | "below") => {
-                debug_assert!(vocabulary::LAYOUT_DIRECTION_HEADS.contains(&word));
+            Some(word) if vocabulary::LAYOUT_DIRECTION_VERTICALS.contains(&word) => {
                 self.pos += 1;
-                if matches!(self.word(), Some("left") | Some("right")) {
+                if self
+                    .word()
+                    .is_some_and(|next| vocabulary::LAYOUT_DIRECTION_LATERALS.contains(&next))
+                {
                     self.pos += 1;
                     if !self.eat("of") {
                         return Err(self.error(
@@ -3508,8 +3510,7 @@ impl<'a> LayoutShapeCursor<'a> {
                 }
                 Ok(Some(start..self.pos))
             }
-            Some(word) if matches!(word, "left" | "right") => {
-                debug_assert!(vocabulary::LAYOUT_DIRECTION_HEADS.contains(&word));
+            Some(word) if vocabulary::LAYOUT_DIRECTION_LATERALS.contains(&word) => {
                 self.pos += 1;
                 if !self.eat("of") {
                     return Err(self.error(
@@ -3526,6 +3527,36 @@ impl<'a> LayoutShapeCursor<'a> {
             }
             _ => Ok(None),
         }
+    }
+}
+
+/// The role the `## Layout` grammar expects at the position just past a prefix
+/// of authored atoms. `uml::complete` selects a candidate family with this, so
+/// the grammar stays the single authority on what may follow what.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::uml) enum LayoutRole {
+    /// A member reference -- a name, a link, a quoted name or a group.
+    Reference,
+    /// A direction clause (`above`, `left of`, ...).
+    Direction,
+    /// A hint word after `with`, `and` or `,`.
+    Hint,
+}
+
+/// What may follow `words`, by running the shape parser over them and reading
+/// what it ran out of input expecting. Words that parse as a whole statement
+/// may be continued with a direction; anything else -- a keyword the grammar
+/// demands, a malformed prefix, an error before the end -- is `None`, which is
+/// how a position with no single answer offers nothing rather than a guess.
+pub(in crate::uml) fn expected_layout_role(words: &[String]) -> Option<LayoutRole> {
+    match parse_layout_shape(words) {
+        Ok(_) => Some(LayoutRole::Direction),
+        Err(error) if error.missing_at == words.len() => match error.expected {
+            LayoutExpectation::Reference => Some(LayoutRole::Reference),
+            LayoutExpectation::Hint => Some(LayoutRole::Hint),
+            _ => None,
+        },
+        Err(_) => None,
     }
 }
 

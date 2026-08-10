@@ -298,6 +298,57 @@ fn layout_offers_diagram_member_names() {
     assert!(references.contains(&"B"), "{references:?}");
 }
 
+fn diagram(body: &str) -> String {
+    format!(
+        "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n{body}"
+    )
+}
+
+/// The words offered at `marked`, whatever their kind.
+fn words(marked: &str) -> Vec<String> {
+    labels(marked).into_iter().map(|(label, _)| label).collect()
+}
+
+#[test]
+fn an_empty_layout_bullet_offers_member_names_not_direction_words() {
+    // A statement starts with an operand. The shape parser accepts any plain
+    // word as one, so `above` typed here would parse as the member reference
+    // and raise `UnresolvedLayoutRef`.
+    let offered = words(&diagram("## Layout\n\n- |\n"));
+    assert!(offered.contains(&"A".to_owned()), "{offered:?}");
+    assert!(offered.contains(&"B".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"above".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"box".to_owned()), "{offered:?}");
+}
+
+#[test]
+fn after_a_layout_member_the_direction_phrases_are_offered() {
+    let offered = words(&diagram("## Layout\n\n- A |\n"));
+    assert!(offered.contains(&"above".to_owned()), "{offered:?}");
+    assert!(offered.contains(&"left of".to_owned()), "{offered:?}");
+    // A hint needs `with` first, and a second operand needs a direction first.
+    assert!(!offered.contains(&"frame".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"B".to_owned()), "{offered:?}");
+}
+
+#[test]
+fn a_layout_hint_slot_offers_hint_phrases_not_member_names() {
+    // `with` may only be followed by a hint; a member name there is an
+    // outright `MalformedLayout`.
+    let offered = words(&diagram("## Layout\n\n- A above B with |\n"));
+    assert!(offered.contains(&"frame".to_owned()), "{offered:?}");
+    assert!(offered.contains(&"no margin".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"A".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"above".to_owned()), "{offered:?}");
+}
+
+#[test]
+fn a_layout_operand_after_a_direction_offers_members_only() {
+    let offered = words(&diagram("## Layout\n\n- A above |\n"));
+    assert!(offered.contains(&"B".to_owned()), "{offered:?}");
+    assert!(!offered.contains(&"below".to_owned()), "{offered:?}");
+}
+
 #[test]
 fn a_link_target_offers_catalog_documents_labelled_by_title() {
     let offered = labels(&sequence("## Lifelines\n\n- [Buyer](|)\n"));
@@ -312,6 +363,45 @@ fn a_link_target_offers_catalog_documents_labelled_by_title() {
         !links.contains(&"S"),
         "a document must not link to itself: {links:?}"
     );
+}
+
+#[test]
+fn a_half_typed_link_target_still_offers_the_matching_documents() {
+    // The candidate is labelled with the target's title but the author is
+    // typing its href, so the prefix filter has to see the inserted path.
+    for marked in [
+        "## Lifelines\n\n- [Buyer](.|)\n",
+        "## Lifelines\n\n- [Buyer](./|)\n",
+        "## Lifelines\n\n- [Buyer](./a|)\n",
+    ] {
+        let offered = labels(&sequence(marked));
+        let links = offered
+            .iter()
+            .filter(|(_, kind)| *kind == CompletionKind::Link)
+            .map(|(label, _)| label.as_str())
+            .collect::<Vec<_>>();
+        assert!(links.contains(&"A"), "{marked:?} offered {links:?}");
+    }
+    // A prefix no href starts with still filters everything out.
+    assert!(labels(&sequence("## Lifelines\n\n- [Buyer](zz|)\n")).is_empty());
+}
+
+#[test]
+fn a_link_target_candidate_inserts_the_bare_path_without_padding() {
+    let marked = sequence("## Lifelines\n\n- [Buyer](|)\n");
+    let offset = marked.find('|').unwrap();
+    let text = marked.replacen('|', "", 1);
+    let candidate = prepared(&text, 3);
+    let chosen = completions(
+        ActionContext::from_prepared(&candidate).unwrap(),
+        document(&candidate),
+        TextSize::try_from_usize(offset).unwrap(),
+    )
+    .unwrap()
+    .into_iter()
+    .find(|completion| completion.label.as_ref() == "A")
+    .expect("A is offered");
+    assert_eq!(chosen.insert.as_ref(), "./a.md");
 }
 
 #[test]

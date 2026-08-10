@@ -10,6 +10,8 @@ mod ast;
 mod kind;
 mod parser;
 
+pub(in crate::uml) use parser::{expected_layout_role, LayoutRole};
+
 #[allow(dead_code)]
 pub(crate) fn parse_full(
     text: SourceText,

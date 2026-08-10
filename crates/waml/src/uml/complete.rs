@@ -13,7 +13,7 @@ use crate::action::ActionError;
 use crate::analysis::DocumentId;
 use crate::uml::{vocabulary, ActionContext};
 
-use super::syntax::{UmlLanguage, UmlSyntaxKind};
+use super::syntax::{expected_layout_role, LayoutRole, UmlLanguage, UmlSyntaxKind};
 
 /// Token kinds that name an operand the author supplies. A token outside this
 /// table -- prose, a newline, a bullet, end-of-file -- is never a completion
@@ -108,10 +108,56 @@ pub fn expectation_at(tree: &SyntaxTree<UmlLanguage>, offset: TextSize) -> Optio
     // message); the first one in document order is the primary continuation
     // the grammar expects there, so the search is deliberately unfiltered --
     // `expectation` below is what applies the COMPLETION_TOKENS gate.
-    let missing = tokens
+    if let Some(missing) = tokens
         .iter()
-        .find(|token| token.flags().is_missing() && token.range().start().to_usize() == anchor)?;
-    expectation(missing.clone(), TextRange::new(offset, offset).ok()?)
+        .find(|token| token.flags().is_missing() && token.range().start().to_usize() == anchor)
+    {
+        return expectation(missing.clone(), TextRange::new(offset, offset).ok()?);
+    }
+
+    // A `## Layout` statement that already parses can still be continued -- a
+    // direction clause may follow a complete operand -- so the grammar expects
+    // an operand after `- A `, but nothing is missing there and the two rules
+    // above find nothing. The statement node itself is the position; the atom
+    // it trails is carried as `operand` so the slot has a real token.
+    layout_continuation(&tokens, offset, anchor)
+}
+
+/// The position just past the last atom of a complete `## Layout` statement,
+/// with whitespace between it and the cursor. Requiring the *last* atom keeps
+/// this from firing with the cursor parked in front of later words, where the
+/// grammar's next expectation is not the one the trailing text will meet.
+fn layout_continuation(
+    tokens: &[SyntaxToken<UmlLanguage>],
+    offset: TextSize,
+    anchor: usize,
+) -> Option<Expectation> {
+    if offset.to_usize() <= anchor {
+        return None;
+    }
+    let is_atom = |token: &SyntaxToken<UmlLanguage>| {
+        !token.flags().is_missing()
+            && matches!(
+                token.kind(),
+                UmlSyntaxKind::LayoutWordToken
+                    | UmlSyntaxKind::LayoutLinkToken
+                    | UmlSyntaxKind::LayoutQuoteToken
+            )
+    };
+    let last = tokens
+        .iter()
+        .find(|token| is_atom(token) && token.trimmed_range().end().to_usize() == anchor)?;
+    let statement = layout_statement(&last.parent()?)?;
+    if has_layout_atom_after(&statement, last.trimmed_range().end()) {
+        return None;
+    }
+    Some(Expectation {
+        slot: statement.kind(),
+        token: UmlSyntaxKind::LayoutWordToken,
+        node: statement,
+        prefix: TextRange::new(offset, offset).ok()?,
+        operand: last.clone(),
+    })
 }
 
 fn expectation(token: SyntaxToken<UmlLanguage>, prefix: TextRange) -> Option<Expectation> {
@@ -206,14 +252,25 @@ pub fn completions(
     // Later slices append further providers here; each is selected on the slot
     // and token kinds alone, so adding a family is a new function and a match
     // arm and the locator never changes.
-    for candidate in &mut candidates {
-        pad_for_adjacency(candidate, &source);
-    }
+    // Filter before padding, and against the inserted text as well as the
+    // label: a link candidate is *labelled* with the target document's title
+    // while the author is typing its href, so a label-only filter answers
+    // nothing the moment `(` is followed by a single character.
     let prefix = source
         .get(expectation.prefix.start().to_usize()..expectation.prefix.end().to_usize())
         .unwrap_or("")
         .to_ascii_lowercase();
-    candidates.retain(|candidate| candidate.label.to_ascii_lowercase().starts_with(&prefix));
+    candidates.retain(|candidate| {
+        candidate.label.to_ascii_lowercase().starts_with(&prefix)
+            || candidate.insert.to_ascii_lowercase().starts_with(&prefix)
+    });
+    // A link target is already delimited by its own parentheses, so padding it
+    // would author `[Buyer]( ./a.md )` rather than the canonical form.
+    if expectation.token != UmlSyntaxKind::LinkTargetToken {
+        for candidate in &mut candidates {
+            pad_for_adjacency(candidate, &source);
+        }
+    }
     candidates.sort_by(|left, right| {
         (left.kind, left.label.as_ref()).cmp(&(right.kind, right.label.as_ref()))
     });
@@ -282,67 +339,91 @@ fn fixed_vocabulary(expectation: &Expectation) -> Vec<Completion> {
         UmlSyntaxKind::FragmentKindToken => vocabulary::fragment_keywords()
             .map(|word| keyword(word, replace, "combined fragment"))
             .collect(),
+        // A direction and a hint are never both admissible: the grammar takes
+        // a direction only after a complete operand and a hint only after
+        // `with`/`and`/`,`. Offering the other family would corrupt the
+        // statement's shape while still satisfying `UnresolvedLayoutRef`.
         UmlSyntaxKind::LayoutWordToken | UmlSyntaxKind::LayoutKeywordToken => {
-            if layout_reference_position(expectation) == Some(true) {
-                // This atom occupies a reference/operand position (see
-                // `layout_reference_position`); a direction or hint word
-                // there would parse as the operand, not silence -- offering
-                // it would let a candidate satisfy `UnresolvedLayoutRef`
-                // while still corrupting the statement's shape.
-                return Vec::new();
+            match layout_role(expectation) {
+                Some(LayoutRole::Direction) => vocabulary::LAYOUT_DIRECTION_PHRASES
+                    .iter()
+                    .map(|word| keyword(word, replace, "layout direction"))
+                    .collect(),
+                Some(LayoutRole::Hint) => vocabulary::LAYOUT_HINT_PHRASES
+                    .iter()
+                    .map(|word| keyword(word, replace, "layout hint"))
+                    .collect(),
+                Some(LayoutRole::Reference) | None => Vec::new(),
             }
-            vocabulary::LAYOUT_DIRECTION_PHRASES
-                .iter()
-                .map(|word| keyword(word, replace, "layout direction"))
-                .chain(
-                    vocabulary::LAYOUT_HINT_PHRASES
-                        .iter()
-                        .map(|word| keyword(word, replace, "layout hint")),
-                )
-                .collect()
         }
         _ => Vec::new(),
     }
 }
 
-/// Whether the atom `expectation` points at occupies a reference (operand)
-/// position, for the flat error-recovery shape only. A cleanly parsed layout
-/// statement wraps each role in its own node (`NameRef` for a reference,
-/// `DirectionClause` for a direction, `HintClause` for a hint), so
-/// `expectation.slot` already tells them apart there. When the shape parser
-/// recovers from a malformed statement, `append_layout_recovery` instead lays
-/// every remaining atom down as a flat sibling of `LayoutStatement`,
-/// alternating operand, direction, operand, ... in document order (the
-/// grammar's own shape, mirrored by `LayoutShapeCursor` in parser.rs) -- so
-/// this walks that sibling list by hand and returns `Some(true)` on an even
-/// atom index (a reference), `Some(false)` on an odd one (a direction or
-/// hint), and `None` when `expectation` did not come from this flat shape at
-/// all.
-fn layout_reference_position(expectation: &Expectation) -> Option<bool> {
-    if expectation.slot != UmlSyntaxKind::LayoutStatement {
-        return None;
-    }
-    let mut atom_index = 0usize;
-    for child in expectation.node.children() {
-        let is_target =
-            matches!(&child, SyntaxElement::Token(token) if *token == expectation.operand);
-        if is_target {
-            return Some(atom_index % 2 == 0);
+/// Which role the `## Layout` grammar expects at `expectation`'s position.
+///
+/// The recovery shape cannot be read off positionally: `SkippedTokensSyntax`
+/// wraps a whole run of atoms in one node, and on an empty bullet it wraps the
+/// bullet's own `-`, so counting siblings misreads both. The grammar is asked
+/// directly instead -- gather the atom words authored before the cursor,
+/// wherever the recovery shape happens to have put them, and let the shape
+/// parser say what may follow. Offsets, not node identity, decide what counts
+/// as "before", so a clean parse, a recovered parse and a half-typed word all
+/// read the same way.
+fn layout_role(expectation: &Expectation) -> Option<LayoutRole> {
+    let statement = layout_statement(&expectation.node)?;
+    let mut words = Vec::new();
+    collect_layout_words(&statement, expectation.prefix.start(), &mut words);
+    expected_layout_role(&words)
+}
+
+/// The `LayoutStatement` at or above `node`.
+fn layout_statement(node: &SyntaxNode<UmlLanguage>) -> Option<SyntaxNode<UmlLanguage>> {
+    let mut current = Some(node.clone());
+    while let Some(candidate) = current {
+        if candidate.kind() == UmlSyntaxKind::LayoutStatement {
+            return Some(candidate);
         }
-        let is_atom = match &child {
-            SyntaxElement::Token(token) => matches!(
+        current = candidate.parent();
+    }
+    None
+}
+
+/// Every authored layout atom in `node` that ends at or before `cutoff`,
+/// lower-cased and trimmed exactly as the parser's own atom lexer records them.
+fn collect_layout_words(node: &SyntaxNode<UmlLanguage>, cutoff: TextSize, out: &mut Vec<String>) {
+    for child in node.children() {
+        match child {
+            SyntaxElement::Token(token) => {
+                let is_atom = matches!(
+                    token.kind(),
+                    UmlSyntaxKind::LayoutWordToken
+                        | UmlSyntaxKind::LayoutLinkToken
+                        | UmlSyntaxKind::LayoutQuoteToken
+                );
+                if is_atom && !token.flags().is_missing() && token.trimmed_range().end() <= cutoff {
+                    out.push(token.text().write_to_string().trim().to_ascii_lowercase());
+                }
+            }
+            SyntaxElement::Node(child) => collect_layout_words(&child, cutoff, out),
+        }
+    }
+}
+
+/// Whether `node` still holds an authored layout atom past `offset`.
+fn has_layout_atom_after(node: &SyntaxNode<UmlLanguage>, offset: TextSize) -> bool {
+    node.children().any(|child| match child {
+        SyntaxElement::Token(token) => {
+            matches!(
                 token.kind(),
                 UmlSyntaxKind::LayoutWordToken
                     | UmlSyntaxKind::LayoutLinkToken
                     | UmlSyntaxKind::LayoutQuoteToken
-            ),
-            SyntaxElement::Node(node) => node.kind() == UmlSyntaxKind::SkippedTokensSyntax,
-        };
-        if is_atom {
-            atom_index += 1;
+            ) && !token.flags().is_missing()
+                && token.trimmed_range().end() > offset
         }
-    }
-    None
+        SyntaxElement::Node(child) => has_layout_atom_after(&child, offset),
+    })
 }
 
 use crate::uml::{DeclaredConcept, DeclaredField};
@@ -449,12 +530,12 @@ fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec
             .map(|alias| reference(alias, replace, "lifeline handle"))
             .collect(),
         UmlSyntaxKind::LayoutWordToken => {
-            if layout_reference_position(expectation) == Some(false) {
-                // A direction or hint position (see `layout_reference_position`):
-                // the shape parser's fallback accepts any plain word as a
-                // reference, so a member name inserted here parses cleanly as
-                // a *second* operand rather than the direction the statement
-                // still needs -- wrong shape, no diagnostic to catch it.
+            if layout_role(expectation) != Some(LayoutRole::Reference) {
+                // A direction or hint position: the shape parser's fallback
+                // accepts any plain word as a reference, so a member name
+                // inserted here parses as a *second* operand rather than the
+                // direction the statement still needs -- wrong shape, and at a
+                // hint position an outright `MalformedLayout`.
                 return Vec::new();
             }
             let mut out = Vec::new();

@@ -19,6 +19,10 @@ const GUARDS: &[DiagCode] = &[
     DiagCode::UnresolvedLayoutRef,
     DiagCode::UnresolvedTarget,
     DiagCode::SlotUnknownAttribute,
+    // A candidate that satisfies a reference check but wrecks the construct's
+    // shape is just as wrong, so the shape codes guard too.
+    DiagCode::MalformedLayout,
+    DiagCode::MalformedAttribute,
 ];
 
 const SUPPORT: [(&str, &str); 2] = [
@@ -32,13 +36,20 @@ fn candidate_for(text: &str, revision: u64) -> PreparedCandidate {
     prepare_candidate(SourceBundle::try_from_pairs(pairs).unwrap(), None, revision).unwrap()
 }
 
-fn guard_codes(text: &str) -> Vec<DiagCode> {
+/// A guarding diagnostic, identified by code *and* message. The message is what
+/// keeps an already-incomplete construct from masking a wrong candidate: a
+/// half-authored `- A above B with ` already carries `MalformedLayout` for the
+/// hint it is missing, so a candidate that swaps that for `MalformedLayout` on
+/// an unknown hint is only visible if the reason is compared too.
+type Guard = (DiagCode, String);
+
+fn guard_codes(text: &str) -> Vec<Guard> {
     candidate_for(text, 2)
         .uml()
         .diagnostics
         .iter()
-        .map(|diagnostic| diagnostic.code)
-        .filter(|code| GUARDS.contains(code))
+        .filter(|diagnostic| GUARDS.contains(&diagnostic.code))
+        .map(|diagnostic| (diagnostic.code, diagnostic.message.clone()))
         .collect()
 }
 
@@ -102,6 +113,19 @@ fn corpus() -> Vec<String> {
         concat!(
             "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
             "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A above \n"
+        )
+        .to_owned(),
+        // An empty layout bullet: the statement start, where the grammar wants
+        // an operand and any plain word would parse as one.
+        concat!(
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- \n"
+        )
+        .to_owned(),
+        // A layout hint slot, where only a hint phrase parses.
+        concat!(
+            "---\ntype: Diagram\ntitle: D\nprofile: uml-domain\n---\n# D\n\n",
+            "## Members\n\n- [A](./a.md)\n- [B](./b.md)\n\n## Layout\n\n- A above B with \n"
         )
         .to_owned(),
         // A class with an unfinished relationship.
