@@ -513,3 +513,113 @@ fn snapshot_queries_are_advertised_unicode_exact_and_revision_current_over_stdio
     drop(rx);
     let _ = reader.join();
 }
+
+// Scenario: LSP-006
+#[test]
+fn completion_is_advertised_and_returns_items_over_stdio() {
+    let exe = env!("CARGO_BIN_EXE_waml");
+    let mut child = Command::new(exe)
+        .args(["lsp", "--stdio"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn waml lsp");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel::<String>();
+    let reader = std::thread::spawn(move || {
+        let mut out = String::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    out.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if tx.send(out.clone()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    let wait_for = |marker: &str| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut out = String::new();
+        while Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_secs(20)) {
+                Ok(latest) => {
+                    out = latest;
+                    if out.contains(marker) {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        out
+    };
+    let send = |stdin: &mut std::process::ChildStdin, value: serde_json::Value| {
+        stdin
+            .write_all(frame(&value.to_string()).as_bytes())
+            .unwrap();
+        stdin.flush().unwrap();
+    };
+
+    send(
+        &mut stdin,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"capabilities": {}}
+        }),
+    );
+    let initialized = framed_json(&wait_for("\"id\":1"))
+        .into_iter()
+        .find(|value| value["id"] == 1)
+        .unwrap();
+    assert!(
+        initialized["result"]["capabilities"]["completionProvider"].is_object(),
+        "{initialized}"
+    );
+
+    send(
+        &mut stdin,
+        serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+    );
+    let uri = "file:///C:/tmp/completion-seq.md";
+    // Line 9 (0-based) is "- A ", so character 4 is the empty verb slot.
+    let text = "---\ntype: uml.Sequence\ntitle: S\n---\n# S\n\n## Lifelines\n\n- [A](./a.md) as A\n\n## Messages\n\n- A \n";
+    send(
+        &mut stdin,
+        serde_json::json!({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": {"textDocument": {
+                "uri": uri, "languageId": "markdown", "version": 1, "text": text
+            }}
+        }),
+    );
+    let line = text.lines().count() as u32 - 1;
+    send(
+        &mut stdin,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "textDocument/completion",
+            "params": {"textDocument": {"uri": uri}, "position": {"line": line, "character": 4}}
+        }),
+    );
+    let response = framed_json(&wait_for("\"id\":2"))
+        .into_iter()
+        .find(|value| value["id"] == 2)
+        .unwrap();
+    let labels = response["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected an array of items, got {response}"))
+        .iter()
+        .map(|item| item["label"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"calls".to_string()), "{labels:?}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    drop(rx);
+    let _ = reader.join();
+}
