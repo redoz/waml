@@ -455,6 +455,17 @@ fn quoted_flow_scalar_is_valid(value: &str) -> bool {
     false
 }
 
+fn plain_flow_scalar_is_valid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes
+        .iter()
+        .any(|byte| matches!(byte, b'\'' | b'"' | b'{' | b'}' | b'[' | b']'))
+        && !bytes.ends_with(b":")
+        && !bytes
+            .windows(2)
+            .any(|pair| pair[0] == b':' && pair[1].is_ascii_whitespace())
+}
+
 fn flow_map_field_is_valid(field: &str) -> bool {
     let field = field.trim();
     if field.is_empty() {
@@ -510,9 +521,7 @@ fn flow_map_field_is_valid(field: &str) -> bool {
     if matches!(value.as_bytes().first(), Some(b'\'' | b'"')) {
         quoted_flow_scalar_is_valid(value)
     } else {
-        !value
-            .bytes()
-            .any(|byte| matches!(byte, b'\'' | b'"' | b'{' | b'}' | b'[' | b']'))
+        plain_flow_scalar_is_valid(value)
     }
 }
 

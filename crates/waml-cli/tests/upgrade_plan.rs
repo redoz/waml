@@ -217,6 +217,42 @@ fn legacy_document_beside_brace_wrapped_malformed_map_is_rejected() {
 }
 
 #[test]
+fn extra_colon_in_plain_flow_value_without_legacy_is_rejected() {
+    let files = vec![(
+        "malformed.md".to_string(),
+        "---\ntype: uml.Class\nsources:\n  - { id: affected-analysis, resource: analysis.rs: bogus }\n---\n# Malformed\n"
+            .to_string(),
+    )];
+
+    let error = plan_upgrade(&files).err();
+    assert!(
+        matches!(error, Some(UpgradeError::Inspection(_))),
+        "unexpected result: {error:?}"
+    );
+}
+
+#[test]
+fn legacy_document_beside_extra_colon_in_plain_flow_value_is_rejected() {
+    let files = vec![
+        (
+            "legacy.md".to_string(),
+            "---\ntype: uml.Activity\n---\n# Activity\n".to_string(),
+        ),
+        (
+            "malformed.md".to_string(),
+            "---\ntype: uml.Class\nsources:\n  - { id: affected-analysis, resource: analysis.rs: bogus }\n---\n# Malformed\n"
+                .to_string(),
+        ),
+    ];
+
+    let error = plan_upgrade(&files).err();
+    assert!(
+        matches!(error, Some(UpgradeError::Inspection(_))),
+        "unexpected result: {error:?}"
+    );
+}
+
+#[test]
 fn valid_structured_frontmatter_does_not_block_detection() {
     let files = vec![
         (

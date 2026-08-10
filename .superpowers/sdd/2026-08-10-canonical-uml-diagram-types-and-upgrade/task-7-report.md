@@ -465,3 +465,48 @@ The exact stale type-literal inventory across `docs/waml` returned exit 1 with n
 - `docs/waml/goals/uml/sequence/language.md`: replaces the active stale sequence type.
 - The approved 2026-08-09 design did not change.
 - No new concern remains.
+
+## Fix Round 3: Plain Flow-Scalar Colon Validation
+
+Date: 2026-08-10
+
+### Result
+
+- Recovered inline flow maps now reject an unquoted plain value that contains a colon followed by whitespace or ends with a colon.
+- The narrow check rejects `resource: analysis.rs: bogus` without adding a general YAML parser or changing parser grammar.
+- Valid structured `sources:` maps remain supported.
+
+### RED and GREEN Evidence
+
+```text
+rtk cargo test -p waml-cli --test upgrade_plan extra_colon_in_plain_flow_value -- --nocapture
+```
+
+RED result: 0 passed and 2 failed. Both malformed plans incorrectly succeeded.
+
+GREEN result: 2 passed and 14 filtered out.
+
+```text
+rtk cargo test -p waml --test frontmatter_rewrite --test upgrade_inspection -j 1
+rtk cargo test -p waml-cli --test upgrade_plan -j 1
+rtk cargo test -p waml-cli --test cli_e2e upgrade_ -j 1
+```
+
+Result: 17 passed in 2 suites, 16 passed, and 7 passed with 27 filtered out.
+
+```text
+rtk cargo fmt --all -- --check
+rtk cargo check -p waml -p waml-cli --all-targets -j 1
+rtk cargo clippy -p waml -p waml-cli --all-targets -j 1 -- -D warnings
+rtk git diff --check
+```
+
+Result: all exit 0. Cargo reports only the two existing duplicate Makepad dependency warnings.
+
+### Files and Self-review
+
+- `crates/waml/src/frontmatter.rs`: adds the narrow plain flow-scalar colon rule.
+- `crates/waml-cli/tests/upgrade_plan.rs`: covers the malformed value alone and beside a legacy document.
+- The valid structured-source tests remain green.
+- The approved 2026-08-09 design did not change.
+- No new concern remains.
