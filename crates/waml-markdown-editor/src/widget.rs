@@ -952,6 +952,44 @@ impl MarkdownEditor {
         self.redraw(cx);
     }
 
+    /// Stamp `scale` onto every `DrawText` painter the widget carries --
+    /// the shaping path keys on `font_scale` (layout divides the wrap width
+    /// by it, `configure_face` multiplies glyph metrics back) and the
+    /// gutter-metrics cache is rekeyed on it, so a painter left behind draws
+    /// unscaled runs against a layout sized for the new scale. Returns
+    /// whether anything changed, so a repeated `set_font_scale` with the
+    /// same value can skip the relayout below.
+    pub(crate) fn apply_font_scale(&mut self, scale: f32) -> bool {
+        if self.draw_text_sans.font_scale == scale {
+            return false;
+        }
+        self.draw_text_sans.font_scale = scale;
+        self.draw_text_sans_italic.font_scale = scale;
+        self.draw_text_sans_semibold.font_scale = scale;
+        self.draw_text_sans_semibold_italic.font_scale = scale;
+        self.draw_text_mono.font_scale = scale;
+        self.draw_text_mono_italic.font_scale = scale;
+        self.draw_text_mono_semibold.font_scale = scale;
+        self.draw_text_mono_semibold_italic.font_scale = scale;
+        self.draw_text_scratch.font_scale = scale;
+        self.draw_popup_text.font_scale = scale;
+        true
+    }
+
+    /// Scale the source editor's type (plan
+    /// 2026-08-11-viewer-font-size-control, Task 5). The painters' font_scale
+    /// is already the shaping key and the gutter cache is rekeyed on it, so
+    /// painters + a forced relayout is the whole mechanism.
+    pub fn set_font_scale(&mut self, cx: &mut Cx, scale: f64) {
+        if !self.apply_font_scale(scale as f32) {
+            return;
+        }
+        self.pipeline.target_layout = None;
+        self.pipeline.pending_cause = Some(LayoutChangeCause::ViewportResize);
+        self.pipeline.pending_invalidation = Some(LayoutInvalidation::ViewportWidth);
+        self.redraw(cx);
+    }
+
     /// Scroll `range` into view (spec §DocView::reveal). Uses the layout
     /// snapshot installed for the CURRENT frame, since that is the one the
     /// scrollbar's content coordinates agree with; before a first draw there
@@ -2428,6 +2466,53 @@ mod squiggle_rect_tests {
 }
 
 #[cfg(test)]
+mod font_scale_tests {
+    use super::*;
+
+    fn boot_editor() -> (Cx, MarkdownEditor) {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        crate::live_design(&mut cx);
+        let editor = cx.with_vm(MarkdownEditor::script_new_with_default);
+        (cx, editor)
+    }
+
+    #[test]
+    fn set_font_scale_updates_every_painter_and_forces_a_relayout() {
+        let (mut cx, mut editor) = boot_editor();
+        editor.set_font_scale(&mut cx, 1.5);
+        assert_eq!(editor.draw_text_sans.font_scale, 1.5);
+        assert_eq!(editor.draw_text_sans_italic.font_scale, 1.5);
+        assert_eq!(editor.draw_text_sans_semibold.font_scale, 1.5);
+        assert_eq!(editor.draw_text_sans_semibold_italic.font_scale, 1.5);
+        assert_eq!(editor.draw_text_mono.font_scale, 1.5);
+        assert_eq!(editor.draw_text_mono_italic.font_scale, 1.5);
+        assert_eq!(editor.draw_text_mono_semibold.font_scale, 1.5);
+        assert_eq!(editor.draw_text_mono_semibold_italic.font_scale, 1.5);
+        assert_eq!(editor.draw_text_scratch.font_scale, 1.5);
+        assert_eq!(editor.draw_popup_text.font_scale, 1.5);
+        assert!(editor.pipeline.target_layout.is_none());
+        assert!(matches!(
+            editor.pipeline.pending_invalidation,
+            Some(LayoutInvalidation::ViewportWidth)
+        ));
+
+        // idempotence: the same scale again must not re-invalidate.
+        editor.pipeline.pending_invalidation = None;
+        editor.set_font_scale(&mut cx, 1.5);
+        assert!(editor.pipeline.pending_invalidation.is_none());
+    }
+
+    #[test]
+    fn apply_font_scale_reports_whether_anything_changed() {
+        let (_cx, mut editor) = boot_editor();
+        assert!(editor.apply_font_scale(1.5));
+        assert!(!editor.apply_font_scale(1.5));
+        assert!(editor.apply_font_scale(1.0));
+    }
+}
+
+#[cfg(test)]
 mod gutter_metrics_tests {
     use super::*;
     use crate::layout::{FontKey, FontWeight};
@@ -2681,6 +2766,14 @@ impl MarkdownEditorRef {
     pub fn clear_search_highlights(&self, cx: &mut Cx) {
         if let Some(mut inner) = self.borrow_mut() {
             inner.clear_search_highlights(cx);
+        }
+    }
+
+    /// Scale the source editor's type (plan
+    /// 2026-08-11-viewer-font-size-control, Task 5).
+    pub fn set_font_scale(&self, cx: &mut Cx, scale: f64) {
+        if let Some(mut inner) = self.borrow_mut() {
+            inner.set_font_scale(cx, scale);
         }
     }
 
