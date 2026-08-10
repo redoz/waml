@@ -23,7 +23,7 @@ pub fn describe(
     })
 }
 
-fn title_for(analysis: &waml::analysis::OkfAnalysis, directory: &str) -> String {
+pub(crate) fn title_for(analysis: &waml::analysis::OkfAnalysis, directory: &str) -> String {
     analysis
         .bundle
         .index(directory)

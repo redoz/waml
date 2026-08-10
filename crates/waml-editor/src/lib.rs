@@ -28,6 +28,7 @@ pub use canvas::{
     MeasuredNodeGeometry, MonoTextMeasurer, NodeVisualKind, Point, Segment, StructuralVisualKind,
     StructuralVisualPolicy, TextMeasurer, UseCaseGeometry,
 };
+mod book_model;
 mod card;
 mod chrome_seam;
 mod class_diagram_view;
