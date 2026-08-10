@@ -299,6 +299,7 @@ impl App {
             // is dead.
             let over_row_btn = [
                 ids!(tree_btn),
+                ids!(search_btn),
                 ids!(history_back_btn),
                 ids!(history_forward_btn),
             ]

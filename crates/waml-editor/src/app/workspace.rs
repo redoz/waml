@@ -716,6 +716,13 @@ impl App {
             .widget(cx, ids!(menu_btn))
             .as_icon_button()
             .set_icon(cx, crate::icons::Icon::Menu);
+        // Search rides with the burger: both are model-scoped, and searching
+        // nothing from the start screen is meaningless.
+        self.ui.widget(cx, ids!(search_btn)).set_visible(cx, true);
+        self.ui
+            .widget(cx, ids!(search_btn))
+            .as_icon_button()
+            .set_icon(cx, crate::icons::Icon::Search);
         // Arms the toggle; `sync_dock_slots` seats it (panel corner while the
         // column is open, tab row while it is collapsed) and sets the real
         // glyph. The `PanelLeft` written here is only the first-frame reading,
@@ -895,6 +902,7 @@ impl App {
         // clean rather than inheriting the closed model's tabs (open_dir
         // rebuilds from scratch).
         self.ui.widget(cx, ids!(menu_btn)).set_visible(cx, false);
+        self.ui.widget(cx, ids!(search_btn)).set_visible(cx, false);
         self.tree_toggle_mounted = false;
         self.ui.widget(cx, ids!(tree_btn)).set_visible(cx, false);
         // Replacing the host with no tabs applies hidden chrome through the

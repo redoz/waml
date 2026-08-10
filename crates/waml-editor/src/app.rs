@@ -219,6 +219,19 @@ script_mod! {
                                 // anchors off the caption bottom (see the
                                 // burger-menu handler), so its row placement is free.
                                 menu_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
+                                // Search, the only VISIBLE way into the palette
+                                // (Ctrl+K is otherwise undiscoverable). A DIRECT
+                                // child of the tab row for the same reason the
+                                // toggle is a sibling of its slot: a caption
+                                // control nested in a sub-View, or shifted by an
+                                // alignment, draws at one x and dispatches at
+                                // another, and `override_caption_drag_query`
+                                // then answers `Caption` -- the click drags the
+                                // window instead, silently. It is named in that
+                                // handler's `over_row_btn` list; without that it
+                                // is dead the moment the gutter rule hands the
+                                // rest of the row back to the OS.
+                                search_btn := IconButton{ width: 30.0 height: 30.0 icon_size: 18.0 margin: Inset{right: 2.0} visible: false }
                                 // View history, on the ROW rather than inside the
                                 // document header: one pair for the whole shell,
                                 // so it does not blink in and out with the

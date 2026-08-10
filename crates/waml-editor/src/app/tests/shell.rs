@@ -637,3 +637,41 @@ fn mounted_tree_splitter_drag_past_collapse_flags_the_panel() {
     // Reopening releases the spring.
     assert_eq!(app.dock_rubber.0, 0.0);
 }
+
+/// The caption search button is the only VISIBLE route to the palette, and it
+/// sits in the tab row, where `override_caption_drag_query`'s gutter rule hands
+/// everything it does not name back to the OS as window chrome. Unless the
+/// button is in that handler's `over_row_btn` list, pressing it drags the
+/// window instead of opening the palette -- and nothing about that failure is
+/// visible to a gate: it draws, it highlights, it just never fires.
+#[test]
+fn the_caption_search_button_is_client_area_not_a_window_drag_handle() {
+    let (mut cx, mut app) = mounted_production_shell();
+    for id in [ids!(tree_btn), ids!(search_btn)] {
+        app.ui.widget(&cx, id).set_visible(&mut cx, true);
+    }
+
+    draw_tab_row(&mut cx, &app, dvec2(600.0, 32.0));
+
+    let rect = app.ui.widget(&cx, ids!(search_btn)).area().rect(&cx);
+    assert!(
+        rect.size.x > 0.0 && rect.size.y > 0.0,
+        "the search button must have drawn a real rect before this means anything"
+    );
+
+    let response = Rc::new(Cell::new(WindowDragQueryResponse::Caption));
+    AppMain::handle_event(
+        &mut app,
+        &mut cx,
+        &Event::WindowDragQuery(WindowDragQueryEvent {
+            window_id: WindowId(0, 0),
+            abs: rect.pos + rect.size * 0.5,
+            response: response.clone(),
+        }),
+    );
+
+    assert!(
+        matches!(response.get(), WindowDragQueryResponse::Client),
+        "the search button must be client area; as Caption its click drags the window"
+    );
+}

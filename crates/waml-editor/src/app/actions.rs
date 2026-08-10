@@ -168,6 +168,19 @@ impl App {
                 .set_active(cx, true);
         }
 
+        // The caption's search button: the one visible route to the palette,
+        // which is otherwise reachable only by knowing Ctrl+K. `clicked`, not
+        // `pressed` -- the palette is a latched popup, not a marking menu, so
+        // it opens on release like every other latched surface.
+        if self
+            .ui
+            .widget(cx, ids!(search_btn))
+            .as_icon_button()
+            .clicked(actions)
+        {
+            self.open_palette(cx);
+        }
+
         // The tree-column toggle, which lives in the caption's tab row at the
         // column's right edge (see `tree_toggle_layout`).
         let tree_toggled = self
