@@ -289,12 +289,23 @@ script_mod! {
     mod.draw.UseCaseEllipse = mod.draw.DrawColor{
         stroke_w: uniform(1.4)
         bg: uniform(atlas.field_bg)
+        center: uniform(vec2(0.0, 0.0))
+        radii: uniform(vec2(1.0, 1.0))
         pixel: fn() {
-            let p = (self.pos - vec2(0.5, 0.5)) * 2.0
-            let radius = length(p)
-            let width_scale = min(self.rect_size.x, self.rect_size.y)
-            let alpha = clamp((self.stroke_w * 2.0 / width_scale - abs(radius - 1.0)) * width_scale, 0.0, 1.0)
-            let inside = clamp((1.0 - radius) * width_scale + 0.5, 0.0, 1.0)
+            let pixel = self.pos * self.rect_size
+            let nx = (pixel.x - self.center.x) / self.radii.x
+            let ny = (pixel.y - self.center.y) / self.radii.y
+            let radial = length(vec2(nx, ny))
+            // Convert the ellipse level-set value to pixel distance with its
+            // local gradient. Scaling by only the short radius makes the side
+            // walls wider by the ellipse aspect ratio.
+            let gradient = length(vec2(
+                nx / self.radii.x,
+                ny / self.radii.y
+            )) / max(radial, 0.0001)
+            let distance = (radial - 1.0) / max(gradient, 0.0001)
+            let alpha = clamp(self.stroke_w * 0.5 + 0.5 - abs(distance), 0.0, 1.0)
+            let inside = clamp(0.5 - distance, 0.0, 1.0)
             return self.bg * inside * (1.0 - alpha) + self.color * alpha
         }
     }

@@ -100,17 +100,19 @@ pub(super) fn draw(
     for command in commands(&node.title, &node.geometry) {
         match command {
             UseCaseNodeCommand::Ellipse { bounds } => {
-                draws.use_case_ellipse.draw_abs(cx, to_screen(bounds));
+                draw_ellipse(cx, draws.use_case_ellipse, to_screen(bounds), stroke as f64);
             }
             UseCaseNodeCommand::Head { center, radius } => {
-                draws.use_case_ellipse.draw_abs(
+                draw_ellipse(
                     cx,
+                    draws.use_case_ellipse,
                     to_screen(waml::solve::Rect {
                         x: center.x - radius,
                         y: center.y - radius,
                         w: radius * 2.0,
                         h: radius * 2.0,
                     }),
+                    stroke as f64,
                 );
             }
             UseCaseNodeCommand::Segment { from, to } => {
@@ -157,6 +159,66 @@ pub(super) fn draw(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+struct EllipseSurfaceGeometry {
+    surface: waml::solve::Rect,
+    center: Point,
+    radii: Point,
+}
+
+fn ellipse_surface_geometry(
+    nominal: waml::solve::Rect,
+    stroke_width: f64,
+) -> EllipseSurfaceGeometry {
+    let padding = stroke_width * 0.5 + 1.0;
+    let surface = waml::solve::Rect {
+        x: nominal.x - padding,
+        y: nominal.y - padding,
+        w: nominal.w + padding * 2.0,
+        h: nominal.h + padding * 2.0,
+    };
+    EllipseSurfaceGeometry {
+        surface,
+        center: Point {
+            x: nominal.x + nominal.w * 0.5 - surface.x,
+            y: nominal.y + nominal.h * 0.5 - surface.y,
+        },
+        radii: Point {
+            x: nominal.w * 0.5,
+            y: nominal.h * 0.5,
+        },
+    }
+}
+
+fn draw_ellipse(cx: &mut Cx2d, draw: &mut DrawColor, nominal: Rect, stroke_width: f64) {
+    let geometry = ellipse_surface_geometry(
+        waml::solve::Rect {
+            x: nominal.pos.x,
+            y: nominal.pos.y,
+            w: nominal.size.x,
+            h: nominal.size.y,
+        },
+        stroke_width,
+    );
+    draw.set_uniform(
+        cx,
+        live_id!(center),
+        &[geometry.center.x as f32, geometry.center.y as f32],
+    );
+    draw.set_uniform(
+        cx,
+        live_id!(radii),
+        &[geometry.radii.x as f32, geometry.radii.y as f32],
+    );
+    draw.draw_abs(
+        cx,
+        Rect {
+            pos: dvec2(geometry.surface.x, geometry.surface.y),
+            size: dvec2(geometry.surface.w, geometry.surface.h),
+        },
+    );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct InteractionInk {
     pub selected: bool,
     pub related: bool,
@@ -188,6 +250,15 @@ fn interaction_treatment(interaction: InteractionInk) -> InkTreatment {
         },
         stroke_width: 1.4 + interaction.lift * 1.2,
     }
+}
+
+#[cfg(test)]
+fn ellipse_distance_px(point: Point, radii: Point) -> f64 {
+    let normalized_x = point.x / radii.x;
+    let normalized_y = point.y / radii.y;
+    let radial = normalized_x.hypot(normalized_y);
+    let gradient = (normalized_x / radii.x).hypot(normalized_y / radii.y) / radial.max(0.0001);
+    (radial - 1.0) / gradient.max(0.0001)
 }
 
 #[cfg(test)]
@@ -265,5 +336,46 @@ mod tests {
             .collect();
         assert_eq!(titles[0].x, 20.0);
         assert_eq!(titles[1].x, 62.0);
+    }
+
+    #[test]
+    fn ellipse_distance_is_uniform_at_the_tall_and_wide_axes() {
+        let radii = Point { x: 80.0, y: 26.0 };
+        let one_pixel_inside_side = ellipse_distance_px(
+            Point {
+                x: radii.x - 1.0,
+                y: 0.0,
+            },
+            radii,
+        );
+        let one_pixel_inside_top = ellipse_distance_px(
+            Point {
+                x: 0.0,
+                y: radii.y - 1.0,
+            },
+            radii,
+        );
+
+        assert!((one_pixel_inside_side + 1.0).abs() < 0.03);
+        assert!((one_pixel_inside_top + 1.0).abs() < 0.03);
+        assert!((one_pixel_inside_side - one_pixel_inside_top).abs() < 0.03);
+    }
+
+    #[test]
+    fn ellipse_surface_keeps_stroke_antialiasing_outside_the_nominal_bounds() {
+        let nominal = waml::solve::Rect {
+            x: 20.0,
+            y: 30.0,
+            w: 160.0,
+            h: 52.0,
+        };
+        let geometry = ellipse_surface_geometry(nominal, 1.4);
+        let required_margin = 1.4 * 0.5 + 0.5;
+
+        assert!(nominal.x - geometry.surface.x >= required_margin);
+        assert!(nominal.y - geometry.surface.y >= required_margin);
+        assert!(geometry.surface.x + geometry.surface.w - nominal.x - nominal.w >= required_margin);
+        assert!(geometry.surface.y + geometry.surface.h - nominal.y - nominal.h >= required_margin);
+        assert_eq!(geometry.radii, Point { x: 80.0, y: 26.0 });
     }
 }

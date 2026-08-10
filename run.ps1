@@ -55,6 +55,10 @@ if ($PidFile) {
     $childArgs += $markArgs
     $start = [Diagnostics.ProcessStartInfo]::new($exePath)
     $start.UseShellExecute = $false
+    # The screenshot harness hides this launcher window. Do not let that
+    # startup state hide the native editor child whose HWND it must capture.
+    $start.WindowStyle = [Diagnostics.ProcessWindowStyle]::Normal
+    $start.CreateNoWindow = $false
     foreach ($arg in $childArgs) { [void]$start.ArgumentList.Add($arg) }
     $child = [Diagnostics.Process]::Start($start)
     Set-Content -LiteralPath $PidFile -Value $child.Id -NoNewline

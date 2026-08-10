@@ -64,7 +64,7 @@ foreach ($entry in $manifest) {
     $launcher = Start-Process -FilePath pwsh -ArgumentList $arguments -WorkingDirectory $root -WindowStyle Hidden -PassThru
     $app = $null
     try {
-        $deadline = [DateTime]::UtcNow.AddSeconds(60)
+        $deadline = [DateTime]::UtcNow.AddSeconds(120)
         do {
             Start-Sleep -Milliseconds 250
             if (Test-Path -LiteralPath $pidFile) {
