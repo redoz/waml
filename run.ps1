@@ -8,6 +8,7 @@ param(
     [string]$Fixture,
     [switch]$Empty,
     [switch]$DebugBuild,
+    [string]$Diagram,
     # Per-agent window marker: badge text and wash colour, so several
     # concurrently-running editors can be told apart by eye.
     [string]$Title,
@@ -27,6 +28,7 @@ $useRelease = -not $DebugBuild
 [string[]]$markArgs = @()
 if ($Title) { $markArgs += @('--title', $Title) }
 if ($Color) { $markArgs += @('--color', $Color) }
+if ($Diagram) { $markArgs += @('--diagram', $Diagram) }
 
 # A still-running instance holds the target exe lock, so cargo would relink
 # against a stale binary (or fail) and the new window would show old code.

@@ -49,10 +49,18 @@ pub(super) fn draw_edges(
     let camera = snapshot.viewport.camera;
     let rect = snapshot.viewport.view_rect;
     let pen = Pen::REGULAR;
+    let thickness = if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase {
+        0.75
+    } else {
+        snapshot.linework.edge_thickness
+    };
     let marker_size = snapshot.linework.marker_size;
     let r_base = pen.width() * 2.0;
     let dpi = cx.current_dpi_factor();
     let elbow_min = ELBOW_MIN_DEVICE_PX / dpi;
+    let old_edge_color = draws.edge.color;
+    let old_dashed_color = draws.edge_dashed.color;
+    let old_actor_line_color = draws.actor_line.color;
 
     for edge in &snapshot.scene.edges {
         let notation = StructuralVisualPolicy {
@@ -65,6 +73,23 @@ pub(super) fn draw_edges(
             .iter()
             .map(|point| edge_point_to_screen(&camera, rect.pos, *point))
             .collect();
+        if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase
+            && edge.kind == waml::model::RelationshipKind::Associates
+            && screen.len() >= 2
+        {
+            let geometry =
+                dash_segment_geometry(screen[0], screen[screen.len() - 1], thickness, dpi, 0.0);
+            draws.actor_line.color = draws.edge.color;
+            draws
+                .actor_line
+                .set_uniform(cx, live_id!(from), &geometry.from);
+            draws.actor_line.set_uniform(cx, live_id!(to), &geometry.to);
+            draws
+                .actor_line
+                .set_uniform(cx, live_id!(stroke_w), &[thickness as f32]);
+            draws.actor_line.draw_abs(cx, geometry.quad);
+            continue;
+        }
         let mut radius = vec![0.0f64; n];
         for i in 1..n.saturating_sub(1) {
             let r = elbow_radius(screen[i - 1], screen[i], screen[i + 1], r_base);
@@ -295,6 +320,9 @@ pub(super) fn draw_edges(
             }
         }
     }
+    draws.edge.color = old_edge_color;
+    draws.edge_dashed.color = old_dashed_color;
+    draws.actor_line.color = old_actor_line_color;
 }
 
 #[cfg(test)]

@@ -132,6 +132,16 @@ fn large_band_uses_a_balanced_stable_grid() {
         &[("a.md", "uml.UseCase"), ("b.md", "uml.UseCase"), ("c.md", "uml.UseCase"), ("d.md", "uml.UseCase"), ("e.md", "uml.UseCase"), ("f.md", "uml.UseCase")],
     );
     let scene = resolve_use_case(&diagram, &[]).0;
+    assert_eq!(
+        scene
+            .boxes
+            .iter()
+            .find(|item| item.id == BoxId::Group(1))
+            .unwrap()
+            .axis,
+        None,
+        "a forced row axis would flatten the grid constraints into one strip"
+    );
     assert!(scene.constraints.contains(&Constraint::Place {
         a: BoxId::Node("a".into()),
         b: BoxId::Node("d".into()),
@@ -147,6 +157,24 @@ fn large_band_uses_a_balanced_stable_grid() {
         b: BoxId::Node("d".into()),
         dir: Direction::LeftOf,
     }));
+}
+
+#[test]
+fn large_boundary_does_not_override_its_grid_with_a_row_axis() {
+    let diagram = diagram(
+        "\n## Members\n\n### Boundary\n- [A](./a.md)\n- [B](./b.md)\n- [C](./c.md)\n- [D](./d.md)\n- [E](./e.md)\n- [F](./f.md)\n",
+        &[("a.md", "uml.UseCase"), ("b.md", "uml.UseCase"), ("c.md", "uml.UseCase"), ("d.md", "uml.UseCase"), ("e.md", "uml.UseCase"), ("f.md", "uml.UseCase")],
+    );
+    let scene = resolve_use_case(&diagram, &[]).0;
+    assert_eq!(
+        scene
+            .boxes
+            .iter()
+            .find(|item| item.id == BoxId::Group(0))
+            .unwrap()
+            .axis,
+        None
+    );
 }
 
 #[test]

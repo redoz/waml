@@ -95,7 +95,7 @@ script_mod! {
             let cycle = fract((self.phase_device_px + along * self.dpi) / self.dash_device_px)
             let dash_distance_device = (0.275 - abs(cycle - 0.275)) * self.dash_device_px
             let dash_alpha = clamp(dash_distance_device + 0.5, 0.0, 1.0)
-            return vec4(self.color.x, self.color.y, self.color.z, self.color.w * line_alpha * dash_alpha)
+            return self.color * (line_alpha * dash_alpha)
         }
     }
 
@@ -288,12 +288,14 @@ script_mod! {
 
     mod.draw.UseCaseEllipse = mod.draw.DrawColor{
         stroke_w: uniform(1.4)
+        bg: uniform(atlas.field_bg)
         pixel: fn() {
             let p = (self.pos - vec2(0.5, 0.5)) * 2.0
             let radius = length(p)
             let width_scale = min(self.rect_size.x, self.rect_size.y)
             let alpha = clamp((self.stroke_w * 2.0 / width_scale - abs(radius - 1.0)) * width_scale, 0.0, 1.0)
-            return vec4(self.color.x, self.color.y, self.color.z, self.color.w * alpha)
+            let inside = clamp((1.0 - radius) * width_scale + 0.5, 0.0, 1.0)
+            return self.bg * inside * (1.0 - alpha) + self.color * alpha
         }
     }
 
@@ -307,7 +309,7 @@ script_mod! {
             let t = clamp(dot(p - self.from, delta) / max(dot(delta, delta), 0.0001), 0.0, 1.0)
             let distance = length(p - (self.from + delta * t))
             let alpha = clamp(self.stroke_w + 0.5 - distance, 0.0, 1.0)
-            return vec4(self.color.x, self.color.y, self.color.z, self.color.w * alpha)
+            return self.color * alpha
         }
     }
 

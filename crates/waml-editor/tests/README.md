@@ -138,6 +138,20 @@ bounds, routed edges and terminal adornments, large/expanded cards, selection,
 constraint/conflict focus, hidden borders, and both font raster levels.
 
 The screenshots are not a substitute for temporal interaction verification.
+
+### Use-case diagram baselines
+
+The `screenshots/use-case` directory contains native, HiDPI-correct captures of
+the three shipped use-case views. Capture each diagram from `docs/waml` with an
+explicit `-Diagram` and `-Title` argument, then verify the committed PNG files:
+
+```powershell
+rtk pwsh -File scripts/check-use-case-diagram-screenshots.ps1
+```
+
+The check requires all three named 1280 x 840 PNG files and rejects missing,
+truncated, or likely blank captures. Review pixel changes visually before you
+update a baseline.
 In one native session, exercise pan, wheel zoom, pinch, scene/selection fits,
 selection/deselection, expansion, inspector selection, context menu, the full
 drag/dwell/retarget/preview/commit/cancel flow, scene refresh with camera

@@ -280,19 +280,29 @@ fn default_axis(diagram: &Diagram, id: &BoxId) -> Option<Axis> {
         return None;
     };
     let mut next = 0u32;
-    find_group(diagram.groups.as_slice(), *wanted, &mut next).map(|role| match role {
-        DiagramGroupRole::ExternalActors => Axis::Column,
-        DiagramGroupRole::SystemBoundary | DiagramGroupRole::Band => Axis::Row,
-        DiagramGroupRole::Generic => Axis::Row,
-    })
+    let group = find_group(diagram.groups.as_slice(), *wanted, &mut next)?;
+    match group.role {
+        DiagramGroupRole::ExternalActors => Some(Axis::Column),
+        DiagramGroupRole::SystemBoundary if !group.children.is_empty() => Some(Axis::Column),
+        DiagramGroupRole::SystemBoundary | DiagramGroupRole::Band if group.members.len() > 4 => {
+            None
+        }
+        DiagramGroupRole::SystemBoundary | DiagramGroupRole::Band | DiagramGroupRole::Generic => {
+            Some(Axis::Row)
+        }
+    }
 }
 
-fn find_group(groups: &[DiagramGroup], wanted: u32, next: &mut u32) -> Option<DiagramGroupRole> {
+fn find_group<'a>(
+    groups: &'a [DiagramGroup],
+    wanted: u32,
+    next: &mut u32,
+) -> Option<&'a DiagramGroup> {
     for group in groups {
         let current = *next;
         *next += 1;
         if current == wanted {
-            return Some(group.role);
+            return Some(group);
         }
         if let Some(role) = find_group(&group.children, wanted, next) {
             return Some(role);
