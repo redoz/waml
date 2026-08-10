@@ -6,6 +6,8 @@ abstract: true
 ---
 # Order
 
+An order is settled once payment is confirmed through the PaymentGateway.
+
 ## Attributes
 - id: OrderId {1}
 - total: Decimal {1}

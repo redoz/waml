@@ -495,6 +495,57 @@ impl Widget for PalettePopup {
         self.draw_list.end(cx);
         DrawStep::done()
     }
+
+    /// One `WamlPaletteSection` item per titled section header (CONCEPTS,
+    /// DOCUMENTS, TEXT, STRUCTURE, RECENT -- the title-less escalate/
+    /// no-results section never gets a `Header` layout row, see
+    /// `palette_layout`, so it never appears here). This is the only way a
+    /// UI test can read the blended section list: the row list itself is
+    /// hand-drawn (`draw`), not a tree of child widgets, the same reason
+    /// `ProjectTree` implements this hook (see the typed UI regression
+    /// testing design's "second framework gap").
+    fn semantic_items(&self, _cx: &Cx) -> Vec<WidgetSemanticItem> {
+        if !self.open {
+            return Vec::new();
+        }
+        palette_semantic_sections(&self.sections, &self.layout_rows, self.rect)
+    }
+}
+
+/// Pure half of `PalettePopup::semantic_items` (kept free so it is
+/// unit-testable without a live widget/`Cx`, the `project_tree_semantic_items`
+/// idiom). One item per titled section header, `text` = the section title,
+/// `value` = its row count -- `Task 16`'s `expect_palette_sections` DSL op
+/// reads exactly these two fields.
+fn palette_semantic_sections(
+    sections: &[PaletteSectionModel],
+    layout_rows: &[PaletteLayoutRow],
+    rect: Rect,
+) -> Vec<WidgetSemanticItem> {
+    let list_top = rect.pos.y + PALETTE_QUERY_H + PALETTE_PAD_V;
+    layout_rows
+        .iter()
+        .filter_map(|entry| {
+            let PaletteLayoutKind::Header(section_index) = entry.kind else {
+                return None;
+            };
+            let section = sections.get(section_index)?;
+            Some(WidgetSemanticItem {
+                id: format!("palette-section:{section_index}"),
+                widget_type: "WamlPaletteSection".to_string(),
+                rect: Rect {
+                    pos: dvec2(rect.pos.x, list_top + entry.top),
+                    size: dvec2(rect.size.x, entry.height),
+                },
+                visible: true,
+                enabled: true,
+                text: Some(section.title.clone()),
+                value: Some(section.count.to_string()),
+                checked: None,
+                selected: None,
+            })
+        })
+        .collect()
 }
 
 impl PalettePopup {
@@ -1027,6 +1078,64 @@ mod tests {
             content_height(&sections),
             PALETTE_QUERY_H + PALETTE_PAD_V * 2.0 + last.top + last.height
         );
+    }
+
+    #[test]
+    fn semantic_sections_expose_titled_headers_with_text_and_count() {
+        let hits = vec![
+            hit("billing.waml", FieldGroup::Names, model("payment")),
+            hit("guides/checkout.md", FieldGroup::Prose, span(4)),
+        ];
+        let hidden = HashSet::new();
+        let sections = build_palette_model(
+            "payment",
+            &hits,
+            &no_snippet,
+            &hidden,
+            &[],
+            TextIndexStatus::Ready,
+        );
+        let layout_rows = palette_layout(&sections);
+        let rect = Rect {
+            pos: dvec2(100.0, 40.0),
+            size: dvec2(360.0, content_height(&sections)),
+        };
+
+        let items = palette_semantic_sections(&sections, &layout_rows, rect);
+
+        // Two titled headers (CONCEPTS, TEXT) -- the trailing escalate
+        // section has no title and so no `Header` layout row.
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].widget_type, "WamlPaletteSection");
+        assert_eq!(items[0].text.as_deref(), Some("CONCEPTS"));
+        assert_eq!(items[0].value.as_deref(), Some("1"));
+        assert_eq!(items[1].text.as_deref(), Some("TEXT"));
+        assert_eq!(items[1].value.as_deref(), Some("1"));
+        // The first header sits right below the query row.
+        assert_eq!(items[0].rect.pos.x, rect.pos.x);
+        assert_eq!(
+            items[0].rect.pos.y,
+            rect.pos.y + PALETTE_QUERY_H + PALETTE_PAD_V
+        );
+    }
+
+    #[test]
+    fn semantic_sections_are_empty_for_an_empty_query_recent_only_when_no_recents() {
+        let hidden = HashSet::new();
+        let sections =
+            build_palette_model("", &[], &no_snippet, &hidden, &[], TextIndexStatus::Ready);
+        let layout_rows = palette_layout(&sections);
+        let rect = Rect {
+            pos: dvec2(0.0, 0.0),
+            size: dvec2(360.0, content_height(&sections)),
+        };
+
+        let items = palette_semantic_sections(&sections, &layout_rows, rect);
+
+        // RECENT is titled, so it still reports a header even with zero rows.
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text.as_deref(), Some("RECENT"));
+        assert_eq!(items[0].value.as_deref(), Some("0"));
     }
 
     #[test]

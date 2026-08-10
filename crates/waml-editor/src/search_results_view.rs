@@ -813,6 +813,40 @@ impl Widget for SearchResultsListView {
         }
         DrawStep::done()
     }
+
+    /// One `WamlSearchGroupHeader` item per document group, `text` = the
+    /// group's full document path (`directory` + `path`), `value` = its row
+    /// count -- Task 16's `expect_results_grouped_by_document` DSL op reads
+    /// exactly these two fields. Computed straight from `self.groups`
+    /// (unlike `flattened_items`, this ignores `FlatList` pooling/
+    /// virtualization entirely), same idiom `PalettePopup::semantic_items`
+    /// and `ProjectTree`'s `semantic_items` use for a hand-managed row list.
+    fn semantic_items(&self, _cx: &Cx) -> Vec<WidgetSemanticItem> {
+        if !self.view.visible() {
+            return Vec::new();
+        }
+        search_results_semantic_groups(&self.groups)
+    }
+}
+
+/// Pure half of `SearchResultsListView::semantic_items`, unit-testable
+/// without a live widget/`Cx`.
+fn search_results_semantic_groups(groups: &[DocumentGroup]) -> Vec<WidgetSemanticItem> {
+    groups
+        .iter()
+        .enumerate()
+        .map(|(index, group)| WidgetSemanticItem {
+            id: format!("search-group-header:{index}"),
+            widget_type: "WamlSearchGroupHeader".to_string(),
+            rect: Rect::default(),
+            visible: true,
+            enabled: true,
+            text: Some(format!("{}{}", group.directory, group.path)),
+            value: Some(group.rows.len().to_string()),
+            checked: None,
+            selected: None,
+        })
+        .collect()
 }
 
 impl WidgetMatchEvent for SearchResultsListView {
@@ -1041,6 +1075,29 @@ mod tests {
     fn chrome_hides_diagram_only_chrome_and_the_breadcrumb() {
         let view = SearchResultsView::new("q".to_string(), Vec::new());
         assert_eq!(view.chrome(), BodyChrome::HIDDEN);
+    }
+
+    #[test]
+    fn semantic_groups_expose_full_document_paths_and_row_counts() {
+        let groups = group_hits(vec![
+            row("billing.waml", FieldGroup::Names, model("payment")),
+            row("guides/checkout.md", FieldGroup::Names, span(1)),
+            row("guides/checkout.md", FieldGroup::Prose, span(4)),
+        ]);
+
+        let items = search_results_semantic_groups(&groups);
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].widget_type, "WamlSearchGroupHeader");
+        assert_eq!(items[0].text.as_deref(), Some("billing.waml"));
+        assert_eq!(items[0].value.as_deref(), Some("1"));
+        assert_eq!(items[1].text.as_deref(), Some("guides/checkout.md"));
+        assert_eq!(items[1].value.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn semantic_groups_are_empty_for_no_groups() {
+        assert!(search_results_semantic_groups(&[]).is_empty());
     }
 
     #[test]

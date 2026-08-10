@@ -1,4 +1,4 @@
-use crate::adapters::{documents, workspace};
+use crate::adapters::{documents, search, workspace};
 use crate::config::WorkspaceBinding;
 use crate::domain::{DiagramName, ViewKind};
 use crate::error::{OperationFailure, WamlUiError};
@@ -94,6 +94,92 @@ impl WamlApp {
             |driver| documents::expect_active_view(driver, view),
         )
     }
+
+    /// Ctrl+K (Cmd+K on macOS): open the search palette.
+    pub fn open_search_palette(&mut self) -> &mut Self {
+        self.execute(
+            "open search palette",
+            "the search palette is open",
+            search::open_search_palette,
+        )
+    }
+
+    /// Type `query` into whichever search surface currently owns keyboard
+    /// input (the palette or the find strip).
+    pub fn type_search_query(&mut self, query: &str) -> &mut Self {
+        let query = query.to_string();
+        self.execute(
+            format!("type search query \"{query}\""),
+            format!("the query is now \"{query}\""),
+            move |driver| search::type_search_query(driver, &query),
+        )
+    }
+
+    /// Assert the palette's currently-rendered titled sections, as
+    /// `(title, row count)` pairs in the blended list's own order (CONCEPTS,
+    /// DOCUMENTS, TEXT, STRUCTURE, RECENT).
+    pub fn expect_palette_sections(&mut self, sections: &[(&str, usize)]) -> &mut Self {
+        let sections = sections.to_vec();
+        self.execute(
+            format!("expect palette sections {}", describe_pairs(&sections)),
+            format!("palette sections are {}", describe_pairs(&sections)),
+            move |driver| search::expect_palette_sections(driver, &sections),
+        )
+    }
+
+    /// Commit the palette's trailing escalate row, opening the full results
+    /// tab for the current query.
+    pub fn escalate_to_results_tab(&mut self) -> &mut Self {
+        self.execute(
+            "escalate to results tab",
+            "the results tab is active",
+            search::escalate_to_results_tab,
+        )
+    }
+
+    /// Assert the results tab's document groups, as `(document path, row
+    /// count)` pairs in rank order.
+    pub fn expect_results_grouped_by_document(&mut self, groups: &[(&str, usize)]) -> &mut Self {
+        let groups = groups.to_vec();
+        self.execute(
+            format!(
+                "expect results grouped by document {}",
+                describe_pairs(&groups)
+            ),
+            format!("results are grouped as {}", describe_pairs(&groups)),
+            move |driver| search::expect_results_grouped_by_document(driver, &groups),
+        )
+    }
+
+    /// Ctrl+F (Cmd+F on macOS): open the find-in-document strip.
+    pub fn open_find_strip(&mut self) -> &mut Self {
+        self.execute(
+            "open find strip",
+            "the find strip is open",
+            search::open_find_strip,
+        )
+    }
+
+    /// Assert the find strip's `"{n} of {total}"` counter reading.
+    pub fn expect_find_counter(&mut self, text: &str) -> &mut Self {
+        let text = text.to_string();
+        self.execute(
+            format!("expect find counter \"{text}\""),
+            format!("the find counter reads \"{text}\""),
+            move |driver| search::expect_find_counter(driver, &text),
+        )
+    }
+}
+
+fn describe_pairs(pairs: &[(&str, usize)]) -> String {
+    if pairs.is_empty() {
+        return "<none>".to_string();
+    }
+    pairs
+        .iter()
+        .map(|(label, count)| format!("{label} \u{00B7} {count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn view_name(view: ViewKind) -> &'static str {
