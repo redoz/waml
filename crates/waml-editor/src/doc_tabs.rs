@@ -105,8 +105,13 @@ script_mod! {
         // Active preview tab: semibold italic -- a mid-weight between the bold
         // active persisted tab and plain regular, keeping the italic
         // "provisional" read. Renders clean at 10px with the glyph sharpening on.
+        //
+        // `text_mid`, not `text`: full ink at semibold makes the preview tab
+        // read as settled, the same weight the pinned active tab carries. One
+        // step down keeps it a rung below its own promoted form while staying
+        // clearly above the resting `text_dim` labels.
         draw_text_preview_active +: {
-            color: atlas.text
+            color: atlas.text_mid
             aa_2x2: 1.0
             stem_darken: 0.7
             stem_darken_max: 0.25
