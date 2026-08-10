@@ -15,6 +15,7 @@ use crate::navigation::NavigationIntent;
 use crate::popup::base::PopupItem;
 use crate::popup::base::PopupResult;
 use crate::popup::select::SelectItem;
+use crate::search_results_view::{SearchResultsListViewRef, SearchResultsListViewWidgetRefExt};
 use crate::view_history::ViewAnchor;
 use waml_markdown_editor::reading::{MarkdownViewerRef, MarkdownViewerWidgetRefExt};
 use waml_markdown_editor::widget::{MarkdownEditorRef, MarkdownEditorWidgetRefExt};
@@ -31,6 +32,7 @@ pub struct BodyWidgets {
     markdown_editor: MarkdownEditorRef,
     markdown_viewer: MarkdownViewerRef,
     folder_list: FolderListViewRef,
+    search_results: SearchResultsListViewRef,
 }
 
 impl BodyWidgets {
@@ -48,6 +50,9 @@ impl BodyWidgets {
             folder_list: ui
                 .widget(_cx, ids!(folder_view_surface.folder_list))
                 .as_folder_list_view(),
+            search_results: ui
+                .widget(_cx, ids!(search_results_surface.search_results_list))
+                .as_search_results_list_view(),
         }
     }
 
@@ -184,6 +189,9 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(folder_view_surface))
             .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(search_results_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, true);
         self.set_canvas_interaction_enabled(cx, true);
     }
@@ -197,6 +205,9 @@ impl BodyWidgets {
             .set_visible(cx, false);
         self.ui
             .widget(cx, ids!(folder_view_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(search_results_surface))
             .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
@@ -215,6 +226,9 @@ impl BodyWidgets {
         self.ui
             .widget(cx, ids!(folder_view_surface))
             .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(search_results_surface))
+            .set_visible(cx, false);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
     }
@@ -230,6 +244,29 @@ impl BodyWidgets {
             .set_visible(cx, false);
         self.ui
             .widget(cx, ids!(folder_view_surface))
+            .set_visible(cx, true);
+        self.ui
+            .widget(cx, ids!(search_results_surface))
+            .set_visible(cx, false);
+        self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
+        self.set_canvas_interaction_enabled(cx, false);
+    }
+
+    /// Show the search-results surface (`search_results_surface`), mutually
+    /// exclusive with the canvas, both markdown surfaces, and the folder
+    /// view above (`SearchResultsView::sync`, Task 8/9).
+    pub fn show_search_results(&self, cx: &mut Cx) {
+        self.ui
+            .widget(cx, ids!(markdown_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(markdown_viewer_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(folder_view_surface))
+            .set_visible(cx, false);
+        self.ui
+            .widget(cx, ids!(search_results_surface))
             .set_visible(cx, true);
         self.ui.widget(cx, ids!(canvas_wrap)).set_visible(cx, false);
         self.set_canvas_interaction_enabled(cx, false);
@@ -248,6 +285,7 @@ impl BodyWidgets {
             ids!(markdown_surface),
             ids!(markdown_viewer_surface),
             ids!(folder_view_surface),
+            ids!(search_results_surface),
         ] {
             self.ui.widget(cx, surface).set_visible(cx, false);
         }
@@ -257,6 +295,10 @@ impl BodyWidgets {
 
     pub fn folder_list(&self) -> FolderListViewRef {
         self.folder_list.clone()
+    }
+
+    pub fn search_results(&self) -> SearchResultsListViewRef {
+        self.search_results.clone()
     }
 
     pub fn markdown_editor(&self) -> MarkdownEditorRef {
@@ -455,6 +497,7 @@ pub enum DocViewIdentity {
     GenericOkf,
     Source,
     Folder,
+    SearchResults,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -69,6 +69,7 @@ script_mod! {
     use mod.widgets.MarkdownEditor
     use mod.widgets.MarkdownViewer
     use mod.widgets.FolderListView
+    use mod.widgets.SearchResultsListView
 
     startup() do #(App::script_component(vm)){
         ui: Root{
@@ -477,6 +478,28 @@ script_mod! {
                                     }
                                     flow: Down
                                     folder_list := FolderListView{
+                                        width: Fill
+                                        height: Fill
+                                    }
+                                }
+                                // A results tab's own view: the grouped hits for
+                                // one query. Mutually exclusive with the canvas,
+                                // both markdown surfaces, and the folder view
+                                // above (`SearchResultsView::sync` ->
+                                // `show_search_results`).
+                                search_results_surface := View{
+                                    width: Fill
+                                    height: Fill
+                                    visible: false
+                                    show_bg: true
+                                    draw_bg +: {
+                                        color: atlas.surface
+                                        pixel: fn() {
+                                            return vec4(self.color.rgb * self.color.a, self.color.a)
+                                        }
+                                    }
+                                    flow: Down
+                                    search_results_list := SearchResultsListView{
                                         width: Fill
                                         height: Fill
                                     }
@@ -1250,6 +1273,11 @@ impl AppMain for App {
         // mounts it as the `FlatList` row template -- an unregistered child
         // silently becomes a dead, invisible node.
         crate::folder_list::script_mod(vm);
+        // `SearchGroupHeader`/`SearchResultRow` must register before
+        // `SearchResultsListView`'s own DSL, which mounts them as the
+        // `FlatList`'s two row templates -- an unregistered child silently
+        // becomes a dead, invisible node.
+        crate::search_results_view::script_mod(vm);
         // Registered so the design surface compiles into the crate, but never
         // mounted in the live UI -- it is viewable only via the
         // `node_editor_harness` bin (see `node_design_editor.rs`).

@@ -141,6 +141,10 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
         ],
     ),
     (
+        "SEARCH RESULTS",
+        &[ie!(ArrowDown, "Expanded result group header (collapse)")],
+    ),
+    (
         "VIEW BAR",
         &[
             ie!(ZoomIn, "Zoom in"),
