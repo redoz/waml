@@ -1,6 +1,7 @@
 //! Selective UML projection over the domain-agnostic OKF bundle.
 
 pub mod analysis;
+mod complete;
 pub mod declared;
 mod format;
 pub(crate) mod highlight;
@@ -12,6 +13,7 @@ pub mod selector;
 pub(crate) mod sequence;
 pub mod syntax;
 pub mod vocabulary;
+pub use complete::{expectation_at, Expectation};
 pub use format::{ActionContext, FormatError, Formatter};
 pub use ops::{Batch, DiagramDisplaySet, FieldEdit, NameSpec, Op};
 pub use repair::repair_actions;

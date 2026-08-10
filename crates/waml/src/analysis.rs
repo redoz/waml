@@ -4,12 +4,12 @@ use std::{
     sync::Arc,
 };
 
-pub use waml_syntax::DocumentRevision;
 use waml_syntax::{
     parse_markdown, reparse_markdown, LineIndex, MarkdownDialect, MarkdownSemanticRole,
     MarkdownSourceRole, MarkdownSyntaxSnapshot, MarkdownSyntaxUpdate, ParseError, SourceText,
-    SyntaxIdentity, SyntaxLanguage, SyntaxTree, TextChange, TextRange, TextSize,
+    SyntaxIdentity, SyntaxLanguage, SyntaxTree, TextChange,
 };
+pub use waml_syntax::{DocumentRevision, TextRange, TextSize};
 
 use crate::{
     okf,
