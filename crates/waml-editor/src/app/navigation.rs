@@ -612,6 +612,17 @@ impl App {
                 }
             }
         }
+        // The markdown editor and reading viewer are ONE shared surface per
+        // shell, so a search highlight installed for the departing document
+        // is a set of byte ranges into text that is about to be replaced.
+        // Drop it here; the arriving landing (if any) installs its own after
+        // this transition (`apply_view_outcome`).
+        if departing
+            .as_ref()
+            .map_or(true, |current| current.document != location.document)
+        {
+            self.clear_search_highlights(cx);
+        }
         // A search-results locator (decision 7) has no factory in the
         // surface table -- `Virtual` never resolves through
         // `open_locator_with_asset_host` -- so it is rebuilt by re-running

@@ -255,7 +255,7 @@ impl DocView for SearchResultsView {
                     .set_groups(cx, &header, self.groups.clone());
             }
         }
-        if let Some((group_index, row_index)) = body.search_results().row_opened(actions) {
+        if let Some((group_index, row_index, anchor)) = body.search_results().row_opened(actions) {
             if let Some(row) = self
                 .groups
                 .get(group_index)
@@ -268,7 +268,7 @@ impl DocView for SearchResultsView {
                     // `on_popup_result` once the user commits it.
                     self.pending_hidden_row = Some((group_index, row_index));
                     outcome.popup = Some(PopupRequest::Confirm {
-                        anchor: DVec2::default(),
+                        anchor,
                         title: "Show hidden match".to_string(),
                         tag: hidden_row_confirm_tag(),
                     });
@@ -758,9 +758,11 @@ fn row_index_for(groups: &[DocumentGroup], item_id: LiveId) -> Option<(usize, us
 pub enum SearchResultsListAction {
     #[default]
     None,
-    /// `(group_index, row_index)` of the clicked result row. Routed by
-    /// `SearchResultsView::handle` to a navigation outcome (Task 9).
-    RowOpened(usize, usize),
+    /// `(group_index, row_index, anchor)` of the clicked result row. Routed by
+    /// `SearchResultsView::handle` to a navigation outcome (Task 9); `anchor`
+    /// is the row's own bottom-left in window space, so a hidden-row confirm
+    /// popup opens next to the row rather than at the window origin.
+    RowOpened(usize, usize, DVec2),
     /// The group index whose header was clicked.
     HeaderToggled(usize),
 }
@@ -860,9 +862,11 @@ impl WidgetMatchEvent for SearchResultsListView {
                 }
             } else if item.as_search_result_row().clicked(actions) {
                 if let Some((group_index, row_index)) = row_index_for(&self.groups, item_id) {
+                    let rect = item.area().rect(cx);
+                    let anchor = dvec2(rect.pos.x, rect.pos.y + rect.size.y);
                     cx.widget_action(
                         uid,
-                        SearchResultsListAction::RowOpened(group_index, row_index),
+                        SearchResultsListAction::RowOpened(group_index, row_index, anchor),
                     );
                 }
             }
@@ -890,11 +894,12 @@ impl SearchResultsListView {
         self.view.redraw(cx);
     }
 
-    /// `(group_index, row_index)` of the row clicked in `actions`, if any.
-    pub fn row_opened(&self, actions: &Actions) -> Option<(usize, usize)> {
+    /// `(group_index, row_index, anchor)` of the row clicked in `actions`, if
+    /// any.
+    pub fn row_opened(&self, actions: &Actions) -> Option<(usize, usize, DVec2)> {
         match self.actions_action(actions) {
-            SearchResultsListAction::RowOpened(group_index, row_index) => {
-                Some((group_index, row_index))
+            SearchResultsListAction::RowOpened(group_index, row_index, anchor) => {
+                Some((group_index, row_index, anchor))
             }
             SearchResultsListAction::None | SearchResultsListAction::HeaderToggled(_) => None,
         }
@@ -927,7 +932,7 @@ impl SearchResultsListViewRef {
             inner.set_cursor(cx, cursor);
         }
     }
-    pub fn row_opened(&self, actions: &Actions) -> Option<(usize, usize)> {
+    pub fn row_opened(&self, actions: &Actions) -> Option<(usize, usize, DVec2)> {
         self.borrow().and_then(|inner| inner.row_opened(actions))
     }
     pub fn header_toggled(&self, actions: &Actions) -> Option<usize> {
@@ -1241,6 +1246,57 @@ mod tests {
         )
         .unwrap()
         .into_parts()
+    }
+
+    /// A results list mounted where `BodyWidgets` looks for it, so
+    /// `SearchResultsView::handle` can read a synthetic row action.
+    fn body_with_results_list(cx: &mut Cx) -> WidgetRef {
+        let list = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(SearchResultsListView::script_new_with_default),
+        ));
+        let mut surface = cx.with_vm(View::script_new_with_default);
+        surface.children.push((live_id!(search_results_list), list));
+        let surface = WidgetRef::new_with_inner(Box::new(surface));
+        let mut root = cx.with_vm(View::script_new_with_default);
+        root.children
+            .push((live_id!(search_results_surface), surface));
+        WidgetRef::new_with_inner(Box::new(root))
+    }
+
+    /// The confirm menu for a projection-hidden row must open next to the row
+    /// that was clicked, not at the window origin.
+    #[test]
+    fn a_hidden_row_asks_for_its_confirm_popup_at_the_clicked_rows_anchor() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let ui = body_with_results_list(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let (source, okf_analysis, uml_analysis, revision) = empty_view_data();
+        let data = ViewData {
+            source: &source,
+            okf_analysis: &okf_analysis,
+            uml_analysis: &uml_analysis,
+            revision,
+        };
+        let mut hidden_row = row("a.md", FieldGroup::Names, model("a"));
+        hidden_row.hidden = true;
+        let mut view = SearchResultsView::new("q".to_string(), vec![hidden_row]);
+
+        let anchor = dvec2(140.0, 320.0);
+        let actions: ActionsBuf = vec![Box::new(WidgetAction {
+            data: None,
+            action: Box::new(SearchResultsListAction::RowOpened(0, 0, anchor)),
+            widget_uid: body.search_results().widget_uid(),
+            group: None,
+        })];
+
+        let outcome = view.handle(&mut cx, &body, &actions, data);
+
+        match outcome.popup {
+            Some(PopupRequest::Confirm {
+                anchor: requested, ..
+            }) => assert_eq!(requested, anchor),
+            _ => panic!("a hidden row must ask for a confirm popup"),
+        }
     }
 
     #[test]

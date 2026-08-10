@@ -309,6 +309,20 @@ impl BodyWidgets {
         self.markdown_viewer.clone()
     }
 
+    /// Scroll the reading surface's own scroller (`viewer_body`) so `offset`
+    /// logical pixels into the drawn document sit at the top. The viewer
+    /// widget cannot move its own parent, so a reveal on the reading surface
+    /// comes through here.
+    pub fn scroll_markdown_viewer_to(&self, cx: &mut Cx, offset: f64) {
+        if let Some(mut view) = self
+            .ui
+            .widget(cx, ids!(markdown_viewer_surface.viewer_body))
+            .borrow_mut::<View>()
+        {
+            view.set_scroll_pos(cx, dvec2(0.0, offset.max(0.0)));
+        }
+    }
+
     /// The active document's view action button in the breadcrumb header.
     /// Views use it for source/rendered or emphasis destination actions.
     pub fn header_view_action_button(&self, cx: &mut Cx) -> WidgetRef {

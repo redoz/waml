@@ -35,6 +35,18 @@ impl SearchState {
         }
     }
 
+    /// An empty index that reports `Building`: the bundle is open but its
+    /// index has deliberately NOT been built locally because an export-time
+    /// index asset is in flight (spec §Export-time index, decision 10). The
+    /// palette's `indexing…` row reads exactly this.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn building() -> Self {
+        SearchState {
+            index: MemSearchIndex::build(std::iter::empty()),
+            status: TextIndexStatus::Building,
+        }
+    }
+
     /// Seed a ready `SearchState` from an index already built elsewhere --
     /// the wasm boot path's decoded export-time asset (spec §Export-time
     /// index), skipping a local `rebuild`. Native keeps building locally;
@@ -59,6 +71,7 @@ impl SearchState {
     /// Per-document refresh (document save), spec §Index lifecycle. Recomputes
     /// fields for the whole bundle (cheap, decision 6) but only applies the
     /// entry for `path` -- every other document's postings are untouched.
+    #[cfg(test)]
     pub fn refresh_document(
         &mut self,
         path: &str,
@@ -66,13 +79,35 @@ impl SearchState {
         okf: &OkfAnalysis,
         uml: &waml::uml::Analysis,
     ) {
-        match extract_bundle(source, okf, uml)
-            .into_iter()
-            .find(|fields| fields.path == path)
-        {
-            Some(fields) => self.index.update_document(path, fields),
-            None => self.index.remove_document(path),
+        self.refresh_documents(std::slice::from_ref(&path), source, okf, uml);
+    }
+
+    /// The batch form of `refresh_document`: one save can touch several
+    /// documents, and extracting the bundle (and reindexing) once per touched
+    /// path makes an N-document save cost N full bundle extractions plus N
+    /// full reindexes. Extract once, apply every path, reindex once.
+    pub fn refresh_documents(
+        &mut self,
+        paths: &[&str],
+        source: &SourceBundle,
+        okf: &OkfAnalysis,
+        uml: &waml::uml::Analysis,
+    ) {
+        if paths.is_empty() {
+            return;
         }
+        let mut extracted = extract_bundle(source, okf, uml);
+        let updates: Vec<(String, Option<_>)> = paths
+            .iter()
+            .map(|path| {
+                let fields = extracted
+                    .iter()
+                    .position(|fields| fields.path == *path)
+                    .map(|index| extracted.swap_remove(index));
+                ((*path).to_string(), fields)
+            })
+            .collect();
+        self.index.apply_document_updates(updates);
         self.status = TextIndexStatus::Ready;
     }
 
@@ -212,6 +247,29 @@ mod tests {
 
         assert!(state.query("payments", &QueryScope::default()).is_empty());
         assert!(!state.query("shipping", &QueryScope::default()).is_empty());
+    }
+
+    /// A save can touch several documents at once; the batch refresh must
+    /// land every one of them (the loop it replaces re-extracted the whole
+    /// bundle and reindexed once per path).
+    #[test]
+    fn refresh_documents_applies_every_named_path_in_one_pass() {
+        let session = session_for(&[
+            ("order.md", "---\ntype: uml.Class\n---\n# Order\n"),
+            ("customer.md", "---\ntype: uml.Class\n---\n# Customer\n"),
+        ]);
+        let snapshot = session.snapshot();
+        let mut state = SearchState::empty();
+
+        state.refresh_documents(
+            &["order.md", "customer.md"],
+            &snapshot.source,
+            &snapshot.okf_analysis,
+            &snapshot.uml_analysis,
+        );
+
+        assert!(!state.query("order", &QueryScope::default()).is_empty());
+        assert!(!state.query("customer", &QueryScope::default()).is_empty());
     }
 
     #[test]

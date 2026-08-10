@@ -90,11 +90,19 @@ struct MapPiece {
 #[derive(Clone, Debug, Default)]
 pub struct SourceMap {
     pieces: Vec<MapPiece>,
+    /// Per drawn text run: the source range it came from, and the slot range
+    /// its per-row rects were tracked into (`TextFlow::areas_tracker.areas`).
+    /// `TextFlow`'s own `selection_rects` is behind a private field on the
+    /// current makepad pin, so this tracker is the one public route from a
+    /// source range to the pixels it occupies -- what
+    /// `MarkdownViewer::draw_search_highlights` paints over.
+    runs: Vec<(TextRange, Range<usize>)>,
 }
 
 impl SourceMap {
     pub fn clear(&mut self) {
         self.pieces.clear();
+        self.runs.clear();
     }
 
     pub fn push(&mut self, flow: Range<usize>, source: Option<TextRange>) {
@@ -104,31 +112,25 @@ impl SourceMap {
         self.pieces.push(MapPiece { flow, source });
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.pieces.is_empty()
+    /// `push`, plus the area slots this run's rows were tracked into.
+    pub fn push_run(&mut self, flow: Range<usize>, source: TextRange, areas: Range<usize>) {
+        self.push(flow, Some(source));
+        if !areas.is_empty() {
+            self.runs.push((source, areas));
+        }
     }
 
-    /// The flow index ranges a source range covers, one per piece it
-    /// overlaps (never merged across a gap, so a caller gets exactly the
-    /// drawn runs a search hit touches). The inverse of `source_span`.
-    pub fn flow_ranges_for_source(&self, source: TextRange) -> Vec<Range<usize>> {
-        let mut ranges = Vec::new();
-        for piece in &self.pieces {
-            let Some(piece_source) = piece.source else {
-                continue;
-            };
-            if piece_source.end() <= source.start() || piece_source.start() >= source.end() {
-                continue;
-            }
-            let overlap_start = piece_source.start().max(source.start());
-            let overlap_end = piece_source.end().min(source.end());
-            let lead = overlap_start.to_usize() - piece_source.start().to_usize();
-            let trail = piece_source.end().to_usize() - overlap_end.to_usize();
-            let flow_start = piece.flow.start + lead;
-            let flow_end = piece.flow.end.saturating_sub(trail).max(flow_start);
-            ranges.push(flow_start..flow_end);
-        }
-        ranges
+    /// Area slots of every drawn run overlapping `source`.
+    pub fn area_slots_for_source(&self, source: TextRange) -> Vec<Range<usize>> {
+        self.runs
+            .iter()
+            .filter(|(run, _)| run.end() > source.start() && run.start() < source.end())
+            .map(|(_, areas)| areas.clone())
+            .collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pieces.is_empty()
     }
 
     /// The source offset a flow index points at. An index inside a structural
@@ -276,23 +278,71 @@ impl MarkdownViewer {
     }
 
     /// Paints the installed search highlights as a translucent fill over the
-    /// matched text -- would reuse `TextFlow`'s own selection color and
-    /// scratch draw shape, matching the raw editor's `SearchMatch`
-    /// decoration, rather than invent a new theming channel.
+    /// matched text, reusing `TextFlow`'s own selection color and draw shape
+    /// -- the same channel the raw editor's `SearchMatch` decoration uses --
+    /// rather than inventing a new theming channel.
     ///
-    /// STUBBED: painting an ARBITRARY flow range needs the rects
-    /// `SelectionTracker::selection_rects` computes, but on this makepad fork
-    /// pin (7bb5e50a) that method is private to `TextFlow` and the only
-    /// public selection mutator (`set_selection`) drives the reader's own
-    /// click-drag selection state -- reusing it here would fight the user's
-    /// real selection instead of decorating search hits. `search_highlights`
-    /// is tracked and redraw is requested on every change regardless, so a
-    /// small `pub` accessor added to the fork later needs only to fill this
-    /// function in; no caller-facing API changes. `flow_ranges_for_source`
-    /// (the source -> flow-range half of the work this needs) is already
-    /// implemented and tested on `SourceMap`.
-    fn draw_search_highlights(&self, cx: &mut Cx2d) {
-        let _ = (cx, &self.search_highlights);
+    /// The rects come from the per-run area slots `draw_piece_wrapped`
+    /// recorded (`SourceMap::area_slots_for_source`): `TextFlow`'s own
+    /// `SelectionTracker::selection_rects` sits behind a private field on
+    /// this makepad pin (7bb5e50a), and the only public selection mutator
+    /// (`set_selection`) drives the reader's own click-drag selection, which
+    /// this must not fight. Granularity is therefore one rect per drawn ROW
+    /// of a matched run -- which is exactly the granularity of a search hit,
+    /// whose target span IS a text run.
+    fn draw_search_highlights(&mut self, cx: &mut Cx2d) {
+        if self.search_highlights.is_empty() {
+            return;
+        }
+        let rects = self.highlight_rects(cx);
+        if rects.is_empty() {
+            return;
+        }
+        let flow_ref = self.flow(cx);
+        let Some(mut flow) = flow_ref.borrow_mut() else {
+            return;
+        };
+        for rect in rects {
+            flow.draw_selection.draw_abs(cx, rect);
+        }
+    }
+
+    /// Window-space rects of every installed highlight, from the LAST draw's
+    /// recorded run areas. Empty before the first draw of a document.
+    fn highlight_rects(&self, cx: &Cx) -> Vec<Rect> {
+        let flow_ref = self.flow(cx);
+        let Some(flow) = flow_ref.borrow() else {
+            return Vec::new();
+        };
+        let mut rects = Vec::new();
+        for highlight in self.search_highlights.iter() {
+            for slots in self.source_map.area_slots_for_source(*highlight) {
+                for slot in slots {
+                    let Some(area) = flow.areas_tracker.areas.get(slot) else {
+                        continue;
+                    };
+                    let rect = area.rect(cx);
+                    if rect.size.x > 0.0 && rect.size.y > 0.0 {
+                        rects.push(rect);
+                    }
+                }
+            }
+        }
+        rects
+    }
+
+    /// Top of the drawn document, from the last draw's tracked run rects.
+    fn content_top(&self, cx: &Cx) -> Option<f64> {
+        let flow_ref = self.flow(cx);
+        let flow = flow_ref.borrow()?;
+        flow.areas_tracker
+            .areas
+            .iter()
+            .map(|area| area.rect(cx))
+            .filter(|rect| rect.size.y > 0.0)
+            .fold(None, |acc: Option<f64>, rect| {
+                Some(acc.map_or(rect.pos.y, |top| top.min(rect.pos.y)))
+            })
     }
 
     /// Draws one piece and records its flow span. `TextFlow::draw_text` trims
@@ -361,14 +411,19 @@ impl MarkdownViewer {
         };
 
         let before = flow.text_len();
+        // Bracket the run so `TextFlow` records one area per drawn ROW into
+        // its rect tracker: that is the only public handle on where this
+        // source range actually landed in pixels (search-highlight painting).
+        flow.areas_tracker.push_tracker();
         flow.draw_text(cx, drawn);
+        let (area_start, area_end) = flow.areas_tracker.pop_tracker();
         let after = flow.text_len();
         debug_assert_eq!(
             after - before,
             trimmed.len(),
             "TextFlow reshaped the run; the source map would drift"
         );
-        map.push(before..after, Some(range));
+        map.push_run(before..after, range, area_start..area_end);
         *first_on_line = false;
     }
 
@@ -724,6 +779,33 @@ impl MarkdownViewerRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.clear_search_highlights(cx);
         }
+    }
+
+    /// Distance, in logical pixels, from the top of the drawn document to the
+    /// first installed search highlight -- what a reveal scrolls the reading
+    /// surface's own scroller to. Measured against the drawn content rather
+    /// than the viewport, so it is independent of the current scroll offset.
+    /// `None` before the document has drawn, or when no highlight is
+    /// installed.
+    pub fn search_highlight_offset(&self, cx: &Cx) -> Option<f64> {
+        let inner = self.borrow()?;
+        let top = inner
+            .highlight_rects(cx)
+            .into_iter()
+            .map(|rect| rect.pos.y)
+            .fold(None, |acc: Option<f64>, y| {
+                Some(acc.map_or(y, |a| a.min(y)))
+            })?;
+        let content_top = inner.content_top(cx)?;
+        Some(top - content_top)
+    }
+
+    /// The window-space rects `draw_search_highlights` painted on the last
+    /// draw. Empty before the document has drawn.
+    #[doc(hidden)]
+    pub fn test_highlight_rects(&self, cx: &Cx) -> Vec<Rect> {
+        self.borrow()
+            .map_or_else(Vec::new, |inner| inner.highlight_rects(cx))
     }
 
     #[doc(hidden)]

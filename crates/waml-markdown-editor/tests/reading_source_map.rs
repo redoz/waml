@@ -101,43 +101,6 @@ fn a_handoff_caret_is_the_start_of_the_selection() {
 }
 
 #[test]
-fn a_source_range_covering_a_whole_piece_maps_to_its_whole_flow_range() {
-    let map = map();
-    assert_eq!(
-        map.flow_ranges_for_source(range(2, 7)),
-        vec![0..5],
-        "the whole of \"Title\" maps to the whole of its flow run"
-    );
-    assert_eq!(
-        map.flow_ranges_for_source(range(9, 13)),
-        vec![6..10],
-        "the whole of \"Body\" maps to the whole of its flow run"
-    );
-}
-
-#[test]
-fn a_source_range_covering_part_of_a_piece_maps_to_the_matching_flow_slice() {
-    let map = map();
-    // The last three bytes of "Title" (source 4..7, "tle") is flow 2..5.
-    assert_eq!(map.flow_ranges_for_source(range(4, 7)), vec![2..5]);
-}
-
-#[test]
-fn a_source_range_spanning_two_pieces_yields_one_flow_range_per_piece() {
-    let map = map();
-    // Source 6..11 touches the last byte of "Title" ("e", source 6..7) and
-    // the first two bytes of "Body" ("Bo", source 9..11) -- the punctuation
-    // between them (7..9) backs no piece at all.
-    assert_eq!(map.flow_ranges_for_source(range(6, 11)), vec![4..5, 6..8]);
-}
-
-#[test]
-fn a_source_range_touching_no_piece_yields_no_flow_ranges() {
-    let map = map();
-    assert!(map.flow_ranges_for_source(range(7, 9)).is_empty());
-}
-
-#[test]
 fn a_selection_that_spans_suppressed_punctuation_still_yields_one_source_span() {
     // Renders "**bold** tail" as "bold" + " tail": the two `**` runs never
     // reach the flow buffer, but a selection across the whole line must map

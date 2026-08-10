@@ -152,10 +152,10 @@ fn extract_document(
         });
     }
     for edge in &uml.projection.edges {
-        let (other, endpoint) = if edge.source == concept_id {
-            (&edge.target, &edge.target)
+        let other = if edge.source == concept_id {
+            &edge.target
         } else if edge.target == concept_id {
-            (&edge.source, &edge.source)
+            &edge.source
         } else {
             continue;
         };
@@ -167,8 +167,11 @@ fn extract_document(
         fields.entries.push(FieldEntry {
             group: FieldGroup::Model,
             text: format!("{} {}", edge.kind.as_str(), other_name),
+            // The entry is indexed under THIS document, so its hit must
+            // reveal THIS document's element -- the other endpoint only
+            // names the relationship in the indexed text.
             target: HitTarget::ModelElement {
-                key: endpoint.clone(),
+                key: concept_id.clone(),
             },
         });
     }
@@ -358,6 +361,33 @@ mod tests {
             if let HitTarget::TextSpan { start, end, .. } = entry.target {
                 assert!(seen.insert((start, end)), "duplicate span for {:?}", entry);
             }
+        }
+    }
+
+    #[test]
+    fn a_relationship_entry_reveals_its_own_document_not_the_other_endpoint() {
+        let all = extract(&[
+            (
+                "order.md",
+                "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- depends [Customer](./customer.md)\n",
+            ),
+            ("customer.md", "---\ntype: uml.Class\n---\n# Customer\n"),
+        ]);
+
+        for (path, own_key) in [("order.md", "order"), ("customer.md", "customer")] {
+            let fields = fields_for(&all, path);
+            let relationship = fields
+                .entries
+                .iter()
+                .find(|entry| entry.group == FieldGroup::Model && entry.text.starts_with("depends"))
+                .unwrap_or_else(|| panic!("{path} must index its relationship"));
+            assert_eq!(
+                relationship.target,
+                HitTarget::ModelElement {
+                    key: own_key.to_string()
+                },
+                "{path}'s relationship entry must reveal {path}'s own element"
+            );
         }
     }
 

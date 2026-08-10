@@ -37,6 +37,12 @@ pub const PALETTE_PAD_V: f64 = 8.0;
 /// TEXT section cap: at most this many real snippet rows before a
 /// `MoreText` row (spec §Palette).
 const TEXT_ROW_CAP: usize = 2;
+/// Cap for every OTHER hit section (CONCEPTS / DOCUMENTS / STRUCTURE). The
+/// card is a fixed-height, unscrolled, unclipped surface: an uncapped section
+/// paints rows past the card and arms keyboard selections on rows nobody can
+/// see. Overflow escalates to the results tab through the same `MoreText` row
+/// TEXT uses.
+const SECTION_ROW_CAP: usize = 5;
 /// `Recent` section row cap (decision 2).
 const RECENT_ROW_CAP: usize = 8;
 
@@ -55,7 +61,9 @@ pub enum PaletteRowKind {
     Text { line: u32 },
     /// An `id:`/link/frontmatter-key hit.
     Structure { label: RowLabel },
-    /// `"+ N more"` -- the TEXT section's overflow row.
+    /// `"+ N more"` -- a capped section's overflow row (TEXT, and every other
+    /// hit section under `SECTION_ROW_CAP`). Activating it escalates to the
+    /// full results tab.
     MoreText { omitted: usize },
     /// `"Search all text for \"q\" -- N results"` -- always the last row for
     /// a non-empty query (spec §Palette).
@@ -171,81 +179,45 @@ pub fn build_palette_model(
         }];
     }
 
-    let mut concepts = Vec::new();
-    let mut documents = Vec::new();
-    let mut text_rows = Vec::new();
-    let mut structure_rows = Vec::new();
+    // Bucket by section as REFERENCES first: `snippets` is a per-hit scan of
+    // the hit's document, so it must only run for the rows a cap actually
+    // keeps, never once per hit in the whole result set.
+    let mut concepts: Vec<&SearchHit> = Vec::new();
+    let mut documents: Vec<&SearchHit> = Vec::new();
+    let mut text_hits: Vec<&SearchHit> = Vec::new();
+    let mut structure_hits: Vec<&SearchHit> = Vec::new();
 
     for hit in hits {
-        let is_hidden = hidden.contains(&hit.document);
-        let snippet = snippets(hit);
         match (hit.group, &hit.target) {
             (FieldGroup::Names, HitTarget::ModelElement { .. }) | (FieldGroup::Model, _) => {
-                concepts.push(palette_row(
-                    PaletteRowKind::Concept {
-                        kind: String::new(),
-                    },
-                    snippet.text,
-                    hit.document.clone(),
-                    hit,
-                    is_hidden,
-                ));
+                concepts.push(hit)
             }
-            (FieldGroup::Names, HitTarget::TextSpan { .. }) => {
-                documents.push(palette_row(
-                    PaletteRowKind::Document,
-                    snippet.text,
-                    hit.document.clone(),
-                    hit,
-                    is_hidden,
-                ));
-            }
-            (FieldGroup::Prose, _) => {
-                let line = match hit.target {
-                    HitTarget::TextSpan { line, .. } => line,
-                    HitTarget::ModelElement { .. } => 0,
-                };
-                text_rows.push(palette_row(
-                    PaletteRowKind::Text { line },
-                    snippet.text,
-                    hit.document.clone(),
-                    hit,
-                    is_hidden,
-                ));
-            }
-            (FieldGroup::Structure, _) => {
-                let label = label_for(hit);
-                structure_rows.push(palette_row(
-                    PaletteRowKind::Structure { label },
-                    snippet.text,
-                    hit.document.clone(),
-                    hit,
-                    is_hidden,
-                ));
-            }
+            (FieldGroup::Names, HitTarget::TextSpan { .. }) => documents.push(hit),
+            (FieldGroup::Prose, _) => text_hits.push(hit),
+            (FieldGroup::Structure, _) => structure_hits.push(hit),
         }
     }
 
-    let mut sections = Vec::new();
-    if !concepts.is_empty() {
-        sections.push(PaletteSectionModel {
-            title: "CONCEPTS".to_string(),
-            count: concepts.len(),
-            rows: concepts,
-        });
-    }
-    if !documents.is_empty() {
-        sections.push(PaletteSectionModel {
-            title: "DOCUMENTS".to_string(),
-            count: documents.len(),
-            rows: documents,
-        });
-    }
-    {
-        let total = text_rows.len();
-        let mut rows: Vec<PaletteRow> = text_rows.into_iter().take(TEXT_ROW_CAP).collect();
-        if total > TEXT_ROW_CAP {
-            let omitted = total - TEXT_ROW_CAP;
+    let capped = |bucket: Vec<&SearchHit>,
+                  cap: usize,
+                  kind: &dyn Fn(&SearchHit) -> PaletteRowKind|
+     -> (usize, Vec<PaletteRow>) {
+        let total = bucket.len();
+        let mut rows: Vec<PaletteRow> = bucket
+            .into_iter()
+            .take(cap)
+            .map(|hit| {
+                palette_row(
+                    kind(hit),
+                    snippets(hit).text,
+                    hit.document.clone(),
+                    hit,
+                    hidden.contains(&hit.document),
+                )
+            })
+            .collect();
+        if total > cap {
+            let omitted = total - cap;
             rows.push(PaletteRow {
                 kind: PaletteRowKind::MoreText { omitted },
                 title: format!("+ {omitted} more"),
@@ -254,8 +226,46 @@ pub fn build_palette_model(
                 hidden: false,
             });
         }
+        (total, rows)
+    };
+
+    let (concept_total, concept_rows) =
+        capped(concepts, SECTION_ROW_CAP, &|_| PaletteRowKind::Concept {
+            kind: String::new(),
+        });
+    let (document_total, document_rows) =
+        capped(documents, SECTION_ROW_CAP, &|_| PaletteRowKind::Document);
+    let (text_total, mut text_rows) =
+        capped(text_hits, TEXT_ROW_CAP, &|hit| PaletteRowKind::Text {
+            line: match hit.target {
+                HitTarget::TextSpan { line, .. } => line,
+                HitTarget::ModelElement { .. } => 0,
+            },
+        });
+    let (structure_total, structure_rows) = capped(structure_hits, SECTION_ROW_CAP, &|hit| {
+        PaletteRowKind::Structure {
+            label: label_for(hit),
+        }
+    });
+
+    let mut sections = Vec::new();
+    if !concept_rows.is_empty() {
+        sections.push(PaletteSectionModel {
+            title: "CONCEPTS".to_string(),
+            count: concept_total,
+            rows: concept_rows,
+        });
+    }
+    if !document_rows.is_empty() {
+        sections.push(PaletteSectionModel {
+            title: "DOCUMENTS".to_string(),
+            count: document_total,
+            rows: document_rows,
+        });
+    }
+    {
         if text_status == TextIndexStatus::Building {
-            rows.push(PaletteRow {
+            text_rows.push(PaletteRow {
                 kind: PaletteRowKind::Indexing,
                 title: "indexing…".to_string(),
                 detail: String::new(),
@@ -263,18 +273,18 @@ pub fn build_palette_model(
                 hidden: false,
             });
         }
-        if !rows.is_empty() {
+        if !text_rows.is_empty() {
             sections.push(PaletteSectionModel {
                 title: "TEXT".to_string(),
-                count: total,
-                rows,
+                count: text_total,
+                rows: text_rows,
             });
         }
     }
     if !structure_rows.is_empty() {
         sections.push(PaletteSectionModel {
             title: "STRUCTURE".to_string(),
-            count: structure_rows.len(),
+            count: structure_total,
             rows: structure_rows,
         });
     }
@@ -350,16 +360,31 @@ fn palette_layout(sections: &[PaletteSectionModel]) -> Vec<PaletteLayoutRow> {
     rows
 }
 
-fn activatable_positions(sections: &[PaletteSectionModel]) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    for (section_index, section) in sections.iter().enumerate() {
-        for (row_index, row) in section.rows.iter().enumerate() {
-            if is_activatable(&row.kind) {
-                out.push((section_index, row_index));
-            }
-        }
-    }
-    out
+/// The `(section, row)` pairs a selection may land on, in layout order --
+/// restricted to rows that FIT inside `list_height` (the card's row-list
+/// budget). The card neither scrolls nor clips, so a row past that budget is
+/// not painted; arming one would move an invisible selection.
+fn activatable_positions(
+    sections: &[PaletteSectionModel],
+    layout_rows: &[PaletteLayoutRow],
+    list_height: f64,
+) -> Vec<(usize, usize)> {
+    layout_rows
+        .iter()
+        .filter(|entry| fits(entry, list_height))
+        .filter_map(|entry| {
+            let PaletteLayoutKind::Row(section_index, row_index) = entry.kind else {
+                return None;
+            };
+            let row = sections.get(section_index)?.rows.get(row_index)?;
+            is_activatable(&row.kind).then_some((section_index, row_index))
+        })
+        .collect()
+}
+
+/// Whether a laid-out row lands entirely inside the card's row-list budget.
+fn fits(entry: &PaletteLayoutRow, list_height: f64) -> bool {
+    entry.top + entry.height <= list_height
 }
 
 /// The full card height `sections` would take: the query row, top/bottom
@@ -588,9 +613,24 @@ impl PalettePopup {
         self.draw_frame.redraw(cx);
     }
 
+    /// Height the row list has inside the card, below the query row and
+    /// between the list paddings. `PopupRoot::show_at` clamps the card to the
+    /// window, so this is what actually fits -- not what the model wants.
+    fn list_height(&self) -> f64 {
+        let height = self.rect.size.y - PALETTE_QUERY_H - PALETTE_PAD_V * 2.0;
+        if height > 0.0 {
+            height
+        } else {
+            // The card has no measured height yet (an opener with no window
+            // bounds). Clipping every row away would leave nothing to arm;
+            // the clip only means something once there IS a card.
+            f64::INFINITY
+        }
+    }
+
     fn set_sections_inner(&mut self, sections: Vec<PaletteSectionModel>) {
         self.layout_rows = palette_layout(&sections);
-        self.activatable = activatable_positions(&sections);
+        self.activatable = activatable_positions(&sections, &self.layout_rows, self.list_height());
         self.armed = if self.activatable.is_empty() {
             None
         } else {
@@ -617,7 +657,11 @@ impl PalettePopup {
         if local_y < 0.0 {
             return None;
         }
+        let list_height = self.list_height();
         self.layout_rows.iter().find_map(|entry| {
+            if !fits(entry, list_height) {
+                return None;
+            }
             if local_y < entry.top || local_y >= entry.top + entry.height {
                 return None;
             }
@@ -689,7 +733,13 @@ impl PalettePopup {
         );
 
         let list_top = self.rect.pos.y + PALETTE_QUERY_H + PALETTE_PAD_V;
+        let list_height = self.list_height();
         for entry in self.layout_rows.clone() {
+            // The card has no scroll and no clip: a row past the budget would
+            // paint over the window behind the palette.
+            if !fits(&entry, list_height) {
+                break;
+            }
             let row_rect = Rect {
                 pos: dvec2(self.rect.pos.x, list_top + entry.top),
                 size: dvec2(self.rect.size.x, entry.height),
@@ -1160,6 +1210,99 @@ mod tests {
                 },
             ],
         }];
-        assert_eq!(activatable_positions(&sections), vec![(0, 0)]);
+        let layout = palette_layout(&sections);
+        assert_eq!(
+            activatable_positions(&sections, &layout, f64::MAX),
+            vec![(0, 0)]
+        );
+    }
+
+    #[test]
+    fn every_hit_section_caps_its_rows_so_the_card_stays_bounded() {
+        let hits: Vec<SearchHit> = (0..40)
+            .map(|i| hit("a.md", FieldGroup::Names, model(&format!("c{i}"))))
+            .chain((0..40).map(|i| hit("a.md", FieldGroup::Names, span(i))))
+            .chain((0..40).map(|i| hit("a.md", FieldGroup::Structure, span(i))))
+            .collect();
+        let hidden = HashSet::new();
+
+        let sections = build_palette_model(
+            "term",
+            &hits,
+            &no_snippet,
+            &hidden,
+            &[],
+            TextIndexStatus::Ready,
+        );
+
+        for title in ["CONCEPTS", "DOCUMENTS", "STRUCTURE"] {
+            let section = sections
+                .iter()
+                .find(|s| s.title == title)
+                .unwrap_or_else(|| panic!("a {title} section"));
+            assert_eq!(section.count, 40, "{title} still reports the real total");
+            assert_eq!(
+                section.rows.len(),
+                SECTION_ROW_CAP + 1,
+                "{title} must cap its rows and add one overflow row"
+            );
+            assert!(matches!(
+                section.rows[SECTION_ROW_CAP].kind,
+                PaletteRowKind::MoreText { omitted: 35 }
+            ));
+        }
+    }
+
+    #[test]
+    fn a_selection_never_arms_a_row_the_card_is_too_short_to_paint() {
+        let rows: Vec<PaletteRow> = (0..10)
+            .map(|i| PaletteRow {
+                kind: PaletteRowKind::Concept {
+                    kind: String::new(),
+                },
+                title: format!("row {i}"),
+                detail: String::new(),
+                hit: None,
+                hidden: false,
+            })
+            .collect();
+        let sections = vec![PaletteSectionModel {
+            title: String::new(),
+            count: rows.len(),
+            rows,
+        }];
+        let layout = palette_layout(&sections);
+
+        // A card with room for exactly three rows.
+        let list_height = PALETTE_ROW_H * 3.0;
+        let positions = activatable_positions(&sections, &layout, list_height);
+
+        assert_eq!(positions, vec![(0, 0), (0, 1), (0, 2)]);
+    }
+
+    /// The snippet callback is a per-hit scan of the hit's document, so it
+    /// must run only for rows a cap keeps -- never once per hit.
+    #[test]
+    fn snippets_are_only_taken_for_the_rows_a_cap_keeps() {
+        let hits: Vec<SearchHit> = (0..100)
+            .map(|i| hit("a.md", FieldGroup::Prose, span(i)))
+            .collect();
+        let hidden = HashSet::new();
+        let taken = std::cell::Cell::new(0usize);
+        let counting = |hit: &SearchHit| {
+            taken.set(taken.get() + 1);
+            no_snippet(hit)
+        };
+
+        build_palette_model(
+            "term",
+            &hits,
+            &counting,
+            &hidden,
+            &[],
+            TextIndexStatus::Ready,
+        );
+
+        assert_eq!(taken.get(), TEXT_ROW_CAP);
     }
 }

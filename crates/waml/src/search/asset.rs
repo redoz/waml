@@ -172,7 +172,11 @@ pub fn decode(text: &str, expected_bundle_hash: u64) -> Result<MemSearchIndex, A
         .parse()
         .map_err(|_| AssetError::Corrupt)?;
 
-    let mut docs = Vec::with_capacity(doc_count);
+    // NOT `Vec::with_capacity(doc_count)`: `doc_count` is untrusted asset
+    // text, and a bogus count would abort on a capacity overflow / OOM
+    // before a single field is validated. The vector grows as real,
+    // well-formed documents are decoded instead.
+    let mut docs = Vec::new();
     for _ in 0..doc_count {
         docs.push(decode_document(&mut lines)?);
     }
@@ -201,7 +205,8 @@ fn decode_document<'a>(
         return Err(AssetError::Corrupt);
     }
 
-    let mut entries = Vec::with_capacity(entry_count);
+    // Untrusted count: see `decode`'s note on `doc_count`.
+    let mut entries = Vec::new();
     for _ in 0..entry_count {
         entries.push(decode_entry(lines)?);
     }
@@ -458,6 +463,27 @@ mod tests {
         }
         assert_decode_err("", hash, AssetError::Corrupt);
         assert_decode_err("not an index at all", hash, AssetError::Corrupt);
+    }
+
+    /// A count is the ONE field the grammar reads before anything after it
+    /// is validated, so an absurd one must fall out as `Corrupt` rather than
+    /// reserving that many slots (a capacity overflow panic / OOM abort on a
+    /// path fed by an HTTP fetch at wasm boot).
+    #[test]
+    fn an_absurd_count_is_corrupt_never_an_allocation() {
+        let hash = bundle_hash(&pairs());
+        let header = format!("{MAGIC} v{FORMAT_VERSION} {hash}\n");
+
+        assert_decode_err(
+            &format!("{header}99999999999999\n"),
+            hash,
+            AssetError::Corrupt,
+        );
+        assert_decode_err(
+            &format!("{header}1\nD\tpayment.md\t0\t\tPayment\t0\t\t99999999999999\n"),
+            hash,
+            AssetError::Corrupt,
+        );
     }
 
     #[test]

@@ -344,6 +344,10 @@ impl App {
     /// RECENT section (spec §Palette).
     pub(super) fn open_palette(&mut self, cx: &mut Cx) {
         let bounds = self.window_bounds(cx);
+        // Once per open, not once per keystroke: see `palette_hidden`.
+        self.palette_hidden = self
+            .search
+            .hidden_documents(self.session.okf_analysis(), self.session.uml_analysis());
         let sections = self.build_palette_sections("");
         self.palette_query.clear();
         self.palette_sections = sections.clone();
@@ -384,15 +388,12 @@ impl App {
     fn build_palette_sections(&self, query: &str) -> Vec<PaletteSectionModel> {
         let scope = waml::search::QueryScope::default();
         let hits = self.search.query(query, &scope);
-        let hidden = self
-            .search
-            .hidden_documents(self.session.okf_analysis(), self.session.uml_analysis());
         let recents = self.palette_recents();
         crate::popup::palette::build_palette_model(
             query,
             &hits,
             &|hit| self.search.snippet(hit, 80),
-            &hidden,
+            &self.palette_hidden,
             &recents,
             self.search.status(),
         )
@@ -562,7 +563,16 @@ impl App {
             .as_ref()
             .map(|session| session.scope.clone())
             .unwrap_or_default();
-        let hits = self.search.query(&query, &scope);
+        // `QueryScope::document == None` means UNSCOPED to the index, but for
+        // the find strip it means "the active tab has no searchable document"
+        // (folder view, results tab, start screen). Searching the whole bundle
+        // there would report a bundle-wide count from a strip that says "find
+        // in document"; the spec's answer is `0 results`.
+        let hits = if scope.document.is_some() {
+            self.search.query(&query, &scope)
+        } else {
+            Vec::new()
+        };
         self.find = Some(SearchSession::new(query, hits, scope));
         self.apply_find_highlights(cx);
         self.push_find_model(cx);
@@ -614,8 +624,25 @@ impl App {
             }
         }
 
+        self.install_search_highlights(cx, text_ranges, model_keys);
+    }
+
+    /// Install a search decoration on every surface that can show one: BOTH
+    /// markdown surfaces -- the raw-source editor AND the reading viewer,
+    /// which is what `GenericOkfView` shows by default, so highlighting only
+    /// the editor lights nothing on a freshly-opened concept -- plus the
+    /// canvas spotlight. Whichever surface is not showing simply holds state
+    /// nothing draws.
+    fn install_search_highlights(
+        &mut self,
+        cx: &mut Cx,
+        text_ranges: Vec<TextRange>,
+        model_keys: std::collections::HashSet<String>,
+    ) {
         let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
         body.markdown_editor()
+            .set_search_highlights(cx, text_ranges.clone());
+        body.markdown_viewer()
             .set_search_highlights(cx, text_ranges);
 
         let spotlight = (!model_keys.is_empty()).then_some(model_keys);
@@ -624,6 +651,22 @@ impl App {
             .borrow_mut::<crate::canvas::ClassDiagramSurface>()
         {
             canvas.set_search_spotlight(cx, spotlight);
+        }
+    }
+
+    /// Drop every installed search decoration. The counterpart of
+    /// `install_search_highlights`: the markdown surfaces are SHARED between
+    /// documents, so a document switch must clear them or the previous
+    /// document's byte ranges stay lit over whatever loads next.
+    pub(super) fn clear_search_highlights(&mut self, cx: &mut Cx) {
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        body.markdown_editor().clear_search_highlights(cx);
+        body.markdown_viewer().clear_search_highlights(cx);
+        if let Some(mut canvas) = body
+            .canvas(cx)
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.set_search_spotlight(cx, None);
         }
     }
 
@@ -663,14 +706,7 @@ impl App {
             .widget(cx, ids!(find_strip))
             .as_find_strip()
             .close(cx);
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        body.markdown_editor().clear_search_highlights(cx);
-        if let Some(mut canvas) = body
-            .canvas(cx)
-            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
-        {
-            canvas.set_search_spotlight(cx, None);
-        }
+        self.clear_search_highlights(cx);
     }
 
     // ----------------------------------------------------------------
@@ -751,16 +787,7 @@ impl App {
                 }
             }
         }
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        body.markdown_editor()
-            .set_search_highlights(cx, text_ranges);
-        let spotlight = (!model_keys.is_empty()).then_some(model_keys);
-        if let Some(mut canvas) = body
-            .canvas(cx)
-            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
-        {
-            canvas.set_search_spotlight(cx, spotlight);
-        }
+        self.install_search_highlights(cx, text_ranges, model_keys);
     }
 
     /// F3/Shift+F3 (`shortcuts::SearchCommand::NextHit`/`PreviousHit`, when
@@ -802,14 +829,7 @@ impl App {
                 .mark_search_cursor(cx, &self.ui, tab_id, None);
         }
         self.session_search = None;
-        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
-        body.markdown_editor().clear_search_highlights(cx);
-        if let Some(mut canvas) = body
-            .canvas(cx)
-            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
-        {
-            canvas.set_search_spotlight(cx, None);
-        }
+        self.clear_search_highlights(cx);
         if self.find.is_some() {
             self.close_find_strip(cx);
         }
@@ -1662,14 +1682,17 @@ impl App {
             }
         }
 
-        if let Some((concept_id, target)) = outcome.reveal {
-            self.mark_session_landing(cx, &concept_id, &target);
-            self.pending_reveal = Some(PendingReveal { concept_id, target });
-        }
-
         if let Some(intent) = outcome.navigation {
             self.handle_navigation_intent(cx, intent);
             flow = ActionFlow::Consumed;
+        }
+
+        // AFTER the navigation above: a transition to a different document
+        // clears the shared markdown surfaces' search decoration, so the
+        // landing's own highlights must be installed on the far side of it.
+        if let Some((concept_id, target)) = outcome.reveal {
+            self.mark_session_landing(cx, &concept_id, &target);
+            self.pending_reveal = Some(PendingReveal { concept_id, target });
         }
 
         if let Some(key) = outcome.view_source {

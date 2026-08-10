@@ -3,13 +3,16 @@ use waml_markdown_editor::session::HostSnapshotCause;
 
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, HeaderViewAction,
-    ViewData, ViewOutcome, ViewReconcilePolicy,
+    RevealTarget, ViewData, ViewOutcome, ViewReconcilePolicy,
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
 use crate::source_view::SourceView;
 use crate::view_history::ViewAnchor;
+
+/// Breathing room left above a revealed match on the reading surface.
+const REVEAL_TOP_MARGIN: f64 = 48.0;
 
 pub struct GenericOkfView {
     /// The reading surface. A concept opens here.
@@ -165,6 +168,33 @@ impl DocView for GenericOkfView {
         crate::okf_documents::generic_okf_accent()
     }
 
+    /// A search hit's `TextSpan` must land on BOTH of this view's surfaces:
+    /// the reading viewer is what a concept opens on (so leaving it to
+    /// `SourceView::reveal` alone would highlight a surface nobody is
+    /// looking at), and the raw-source surface is one toggle away. A
+    /// `ModelElement` target is a canvas concept both text surfaces ignore
+    /// (spec §DocView::reveal).
+    fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &RevealTarget) {
+        let RevealTarget::TextSpan { start, end } = target else {
+            return;
+        };
+        let Ok(range) = waml_markdown_editor::syntax::TextRange::new(
+            waml_markdown_editor::syntax::TextSize::new(*start),
+            waml_markdown_editor::syntax::TextSize::new(*end),
+        ) else {
+            return;
+        };
+        let viewer = body.markdown_viewer();
+        viewer.set_search_highlights(cx, vec![range]);
+        // Scroll the reading surface to the match, the counterpart of the
+        // editor's `reveal_range` below. Measured from the LAST draw, so a
+        // hit in a document that has not drawn yet simply stays put.
+        if let Some(offset) = viewer.search_highlight_offset(cx) {
+            body.scroll_markdown_viewer_to(cx, offset - REVEAL_TOP_MARGIN);
+        }
+        self.source.reveal(cx, body, target);
+    }
+
     fn capture_anchor(&self, body: &BodyWidgets) -> ViewAnchor {
         self.source.capture_anchor(body)
     }
@@ -199,9 +229,25 @@ mod tests {
         let mut surface = cx.with_vm(View::script_new_with_default);
         surface.children.push((live_id!(editor), markdown));
         let surface = WidgetRef::new_with_inner(Box::new(surface));
+        // The reading surface, this view's DEFAULT destination -- a reveal
+        // that only reached the raw editor would light a surface the user is
+        // not looking at.
+        let viewer = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(waml_markdown_editor::reading::MarkdownViewer::script_new_with_default),
+        ));
+        let mut viewer_body = cx.with_vm(View::script_new_with_default);
+        viewer_body.children.push((live_id!(viewer), viewer));
+        let viewer_body = WidgetRef::new_with_inner(Box::new(viewer_body));
+        let mut viewer_surface = cx.with_vm(View::script_new_with_default);
+        viewer_surface
+            .children
+            .push((live_id!(viewer_body), viewer_body));
+        let viewer_surface = WidgetRef::new_with_inner(Box::new(viewer_surface));
         let mut root = cx.with_vm(View::script_new_with_default);
         root.children.push((live_id!(document_header), header));
         root.children.push((live_id!(markdown_surface), surface));
+        root.children
+            .push((live_id!(markdown_viewer_surface), viewer_surface));
         let ui = WidgetRef::new_with_inner(Box::new(root));
         let body = BodyWidgets::new(cx, &ui);
         (ui, body)
@@ -327,6 +373,53 @@ mod tests {
                 tooltip: "View rendered",
             })
         );
+    }
+
+    #[test]
+    fn reveal_lights_the_reading_surface_as_well_as_the_raw_source() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let mut view = generic_view();
+        assert!(!view.showing_source(), "a concept opens as rendered prose");
+        assert!(body.markdown_viewer().test_search_highlights().is_empty());
+
+        view.reveal(&mut cx, &body, &RevealTarget::TextSpan { start: 2, end: 7 });
+
+        let expected = waml_markdown_editor::syntax::TextRange::new(
+            waml_markdown_editor::syntax::TextSize::new(2),
+            waml_markdown_editor::syntax::TextSize::new(7),
+        )
+        .unwrap();
+        assert_eq!(
+            body.markdown_viewer().test_search_highlights(),
+            vec![expected],
+            "the surface a concept actually opens on must show the match"
+        );
+        assert_eq!(
+            body.markdown_editor().test_search_highlights(),
+            vec![expected],
+            "and the source surface, one toggle away, must agree"
+        );
+    }
+
+    #[test]
+    fn reveal_ignores_a_model_element_target() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let (_ui, body) = mounted_body(&mut cx);
+        let mut view = generic_view();
+
+        view.reveal(
+            &mut cx,
+            &body,
+            &RevealTarget::ModelElement {
+                key: "order".into(),
+            },
+        );
+
+        assert!(body.markdown_viewer().test_search_highlights().is_empty());
+        assert!(body.markdown_editor().test_search_highlights().is_empty());
     }
 
     #[test]

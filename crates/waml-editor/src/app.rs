@@ -33,6 +33,7 @@ use crate::search_session::SearchSession;
 use crate::search_state::SearchState;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
 use makepad_widgets::*;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use waml::view::chain::ChainLimits;
 use waml::view::mask::ProjectionMask;
@@ -863,6 +864,12 @@ pub struct App {
     /// its own (`PaletteRowKind::MoreText { omitted }`).
     #[rust]
     palette_query: String,
+    /// The projection-hidden document set for the OPEN palette, computed once
+    /// per open. `SearchState::hidden_documents` rebuilds the whole projected
+    /// tree; the tree cannot change while the palette holds the popup, so
+    /// recomputing it per keystroke is pure waste.
+    #[rust]
+    palette_hidden: HashSet<String>,
     #[rust]
     pending_anchor_restore: Option<PendingAnchorRestore>,
     /// Monotonic counter stamped onto each `PendingAnchorRestore` so a second
@@ -1153,14 +1160,19 @@ impl MatchEvent for App {
             let Some(expected_hash) = self.pending_boot_index_hash.take() else {
                 return;
             };
-            if !ok {
-                return;
-            }
-            let Ok(text) = std::str::from_utf8(body) else {
-                return;
+            let decoded = if ok {
+                std::str::from_utf8(body)
+                    .ok()
+                    .and_then(|text| waml::search::asset::decode(text, expected_hash).ok())
+            } else {
+                None
             };
-            if let Ok(index) = waml::search::asset::decode(text, expected_hash) {
-                self.search = SearchState::from_index(index);
+            match decoded {
+                Some(index) => self.search = SearchState::from_index(index),
+                // `open_bundle` deliberately skipped its local build while
+                // this fetch was in flight (decision 10), so the fallback has
+                // to run it now -- otherwise the bundle stays unsearchable.
+                None => self.rebuild_search_index(),
             }
             return;
         }
@@ -1193,9 +1205,12 @@ impl MatchEvent for App {
                 // reproduce to be accepted as this bundle's index, never a
                 // literal or a hash of the asset itself.
                 let expected_hash = waml::search::asset::bundle_hash(&bundle.to_pairs());
+                // BEFORE `open_bundle`: the whole point of the shipped asset
+                // is to skip the boot-time index build, and `open_bundle`
+                // only knows to skip it when the fetch is already in flight.
+                self.start_boot_index_fetch(cx, &url, expected_hash);
                 self.open_bundle(cx, bundle, "exported".to_string(), None);
                 self.show_editor(cx);
-                self.start_boot_index_fetch(cx, &url, expected_hash);
             }
             Err(e) => {
                 let message = format!("could not open {url}: {e}");
@@ -1235,11 +1250,14 @@ impl MatchEvent for App {
             return;
         }
         // Silent, same as a non-2xx response above: the index asset is a
-        // best-effort optimization over the `rebuild` `open_bundle` already
-        // performed, never a requirement, so a request that never landed a
-        // response is not a fault to surface.
+        // best-effort optimization over a local `rebuild`, never a
+        // requirement, so a request that never landed a response is not a
+        // fault to surface -- but `open_bundle` skipped its own build waiting
+        // for it, so the fallback build has to run here.
         if request_id == live_id!(boot_search_index) {
-            self.pending_boot_index_hash = None;
+            if self.pending_boot_index_hash.take().is_some() {
+                self.rebuild_search_index();
+            }
             return;
         }
         if request_id != live_id!(boot_bundle) {

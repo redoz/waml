@@ -244,6 +244,90 @@ fn close_clears_the_spotlight_and_highlights() {
     assert!(surface.search_spotlight().is_none());
 }
 
+/// The markdown editor and reading viewer are ONE shared surface per shell,
+/// so a highlight installed for one document must not survive into the next.
+#[test]
+fn switching_documents_clears_the_previous_documents_highlights() {
+    let (mut cx, mut app) = mounted_production_shell();
+    let source = waml::source::SourceBundle::try_from_pairs([
+        (
+            "order.md",
+            "---\ntype: Runbook\n---\n# Order\n\nOrder prose here.\n",
+        ),
+        (
+            "notes.md",
+            "---\ntype: Runbook\n---\n# Notes\n\nNotes prose here.\n",
+        ),
+    ])
+    .unwrap();
+    app.session.replace(source).unwrap();
+    let snapshot = app.session.snapshot();
+    app.search.rebuild(
+        &snapshot.source,
+        &snapshot.okf_analysis,
+        &snapshot.uml_analysis,
+    );
+    app.ensure_markdown_asset_host(crate::markdown_hosts::MarkdownAssetPolicy::BrowserBundle);
+    app.refresh_nav(&mut cx, true);
+    app.show_editor(&mut cx);
+    assert!(app.transition_document(&mut cx, "order", true));
+    draw_and_settle_focus(&mut cx, &app, dvec2(1280.0, 800.0));
+
+    dispatch(&mut cx, &mut app, &ctrl_f());
+    draw_and_settle_focus(&mut cx, &app, dvec2(1280.0, 800.0));
+    dispatch(&mut cx, &mut app, &text_input("order"));
+
+    let body = crate::doc_view::BodyWidgets::new(&mut cx, &app.ui);
+    assert!(
+        !body.markdown_editor().test_search_highlights().is_empty(),
+        "typing must light the open document first"
+    );
+    assert!(!body.markdown_viewer().test_search_highlights().is_empty());
+
+    app.transition_document(&mut cx, "notes", true);
+
+    assert!(
+        body.markdown_editor().test_search_highlights().is_empty(),
+        "order.md's byte ranges must not stay lit over notes.md"
+    );
+    assert!(body.markdown_viewer().test_search_highlights().is_empty());
+}
+
+/// A "find in document" strip over a tab that HAS no document must report
+/// nothing, not the bundle-wide count an unscoped `QueryScope` would return.
+#[test]
+fn typing_in_the_strip_over_a_tab_with_no_concept_reports_zero_results() {
+    let (mut cx, mut app) = production_app_with_order_classifier();
+    // The results tab is a real, focusable surface that carries no concept.
+    app.open_search_results(&mut cx, "order");
+    draw_and_settle_focus(&mut cx, &app, dvec2(1280.0, 800.0));
+    assert!(
+        app.documents
+            .active_tab()
+            .and_then(|tab| tab.concept_id())
+            .is_none(),
+        "fixture setup must land a tab with no concept"
+    );
+    assert!(
+        !app.search
+            .query("order", &waml::search::QueryScope::default())
+            .is_empty(),
+        "fixture must have bundle-wide hits, or the scoping proves nothing"
+    );
+
+    dispatch(&mut cx, &mut app, &ctrl_f());
+    draw_and_settle_focus(&mut cx, &app, dvec2(1280.0, 800.0));
+    dispatch(&mut cx, &mut app, &text_input("order"));
+
+    // The query really reached the session (otherwise "0 hits" would be
+    // vacuous), and it still answered with nothing.
+    assert_eq!(
+        app.find.as_ref().map(|session| session.query.as_str()),
+        Some("order")
+    );
+    assert_eq!(app.find.as_ref().map(|session| session.hits.len()), Some(0));
+}
+
 #[test]
 fn opening_the_strip_over_a_tab_with_no_concept_never_crashes() {
     let (mut cx, mut app) = mounted_production_shell();

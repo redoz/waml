@@ -127,7 +127,7 @@ fn setting_and_clearing_search_highlights_updates_the_installed_range_set() {
 }
 
 #[test]
-fn a_mounted_viewer_with_search_highlights_installed_still_draws_without_panicking() {
+fn a_mounted_viewer_paints_a_rect_over_each_matched_run() {
     let mut cx = Cx::new(Box::new(|_, _| {}));
     cx.init_cx_os();
     let ui = mounted_body(&mut cx);
@@ -181,9 +181,28 @@ fn a_mounted_viewer_with_search_highlights_installed_still_draws_without_panicki
     let flow = ui
         .widget(&cx, ids!(markdown_viewer_surface.viewer.flow_body))
         .as_text_flow();
-    let flow = flow.borrow().expect("the flow_body child must exist");
+    {
+        let flow = flow.borrow().expect("the flow_body child must exist");
+        assert!(
+            flow.text_len() > 0,
+            "a draw with highlights installed must still paint the document"
+        );
+    }
+
+    // The whole point of installing a highlight: the reading surface must
+    // resolve it to real geometry and paint over it, not silently no-op.
+    let rects = viewer.test_highlight_rects(&cx);
     assert!(
-        flow.text_len() > 0,
-        "a draw with highlights installed must still paint the document"
+        !rects.is_empty(),
+        "a highlight over drawn text must resolve to at least one rect"
     );
+    assert!(
+        rects
+            .iter()
+            .all(|rect| rect.size.x > 0.0 && rect.size.y > 0.0),
+        "every painted highlight rect must have real extent, got {rects:?}"
+    );
+
+    // And the reveal path's scroll target is derived from the same geometry.
+    assert!(viewer.search_highlight_offset(&cx).is_some());
 }

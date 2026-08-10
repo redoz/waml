@@ -600,6 +600,18 @@ impl App {
     /// open a model decoded from the URL fragment through exactly this path.
     /// Returns `false` if the replacement bundle cannot complete session
     /// analysis. Reading and source-bundle construction have already completed.
+    /// Build the bundle-wide text index from the live session. The normal
+    /// path on open, and the fallback whenever the export-time index asset
+    /// cannot be fetched, decoded, or hash-matched.
+    pub(super) fn rebuild_search_index(&mut self) {
+        let snapshot = self.session.snapshot();
+        self.search.rebuild(
+            &snapshot.source,
+            &snapshot.okf_analysis,
+            &snapshot.uml_analysis,
+        );
+    }
+
     pub(super) fn open_bundle(
         &mut self,
         cx: &mut Cx,
@@ -621,13 +633,17 @@ impl App {
         debug_assert_eq!(change.revision, self.session.revision());
         self.save_feedback.opened_replacement_bundle();
         self.sync_save_error(cx);
-        {
-            let snapshot = self.session.snapshot();
-            self.search.rebuild(
-                &snapshot.source,
-                &snapshot.okf_analysis,
-                &snapshot.uml_analysis,
-            );
+        if self.pending_boot_index_hash.is_some() {
+            // An export-time index asset for THIS bundle is already in flight
+            // (spec §Export-time index, decision 10). Building the index
+            // locally here and replacing it moments later would spend exactly
+            // the boot-time work the asset exists to skip; leave the index
+            // empty-and-`Building` (the palette says `indexing…`) until the
+            // asset lands, or until a fetch/decode/hash failure falls back to
+            // `rebuild_search_index`.
+            self.search = crate::search_state::SearchState::building();
+        } else {
+            self.rebuild_search_index();
         }
         // Retain the raw bundle so drag-to-place ops can re-author `## Layout`
         // in-memory: the diagram view emits `Op::PlaceSet`, the shell applies it

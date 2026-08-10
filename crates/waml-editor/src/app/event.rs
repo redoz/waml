@@ -198,17 +198,21 @@ impl App {
     /// lifecycle's per-document update, not a full rebuild.
     fn refresh_search_after_save(&mut self) {
         let snapshot = self.session.snapshot();
-        for &document in snapshot.affected_documents.iter() {
-            let Some(path) = self.session.document_path(document) else {
-                continue;
-            };
-            self.search.refresh_document(
-                path.as_str(),
-                &snapshot.source,
-                &snapshot.okf_analysis,
-                &snapshot.uml_analysis,
-            );
-        }
+        // ONE batched call: each per-document refresh re-extracts the whole
+        // bundle and rebuilds every posting list, so a save touching N
+        // documents must not run N of them.
+        let paths: Vec<_> = snapshot
+            .affected_documents
+            .iter()
+            .filter_map(|&document| self.session.document_path(document))
+            .collect();
+        let paths: Vec<&str> = paths.iter().map(|path| path.as_str()).collect();
+        self.search.refresh_documents(
+            &paths,
+            &snapshot.source,
+            &snapshot.okf_analysis,
+            &snapshot.uml_analysis,
+        );
     }
 
     pub(super) fn route_popup_event(&mut self, cx: &mut Cx, event: &Event) {
