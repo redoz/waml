@@ -126,6 +126,11 @@ mod uml_documents;
 mod view_bar;
 pub mod view_history;
 
+// Staged: consumers land with the header control (plan
+// 2026-08-11-viewer-font-size-control, Tasks 2/8/9 remove this).
+#[cfg_attr(not(test), allow(dead_code))]
+mod zoom;
+
 #[cfg(test)]
 mod script_gate;
 
