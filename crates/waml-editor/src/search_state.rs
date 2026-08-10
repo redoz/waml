@@ -68,9 +68,8 @@ impl SearchState {
         self.status = TextIndexStatus::Ready;
     }
 
-    /// Per-document refresh (document save), spec §Index lifecycle. Recomputes
-    /// fields for the whole bundle (cheap, decision 6) but only applies the
-    /// entry for `path` -- every other document's postings are untouched.
+    /// Per-document refresh (document save), spec §Index lifecycle. See
+    /// `refresh_documents` for what "per-document" actually costs.
     #[cfg(test)]
     pub fn refresh_document(
         &mut self,
@@ -82,10 +81,16 @@ impl SearchState {
         self.refresh_documents(std::slice::from_ref(&path), source, okf, uml);
     }
 
-    /// The batch form of `refresh_document`: one save can touch several
-    /// documents, and extracting the bundle (and reindexing) once per touched
-    /// path makes an N-document save cost N full bundle extractions plus N
-    /// full reindexes. Extract once, apply every path, reindex once.
+    /// The post-save refresh (spec §Index lifecycle): `paths` is what the
+    /// flush wrote, and an empty set is no work at all.
+    ///
+    /// Everything else is a full rebuild, deliberately. Extraction is
+    /// cross-document -- a relationship entry indexed under one document
+    /// embeds the OTHER endpoint's title (`search::extract`) -- so editing A
+    /// invalidates rows in every document that merely links to it. Applying
+    /// only `paths` left those rows stale (wrong search results) until the
+    /// next full rebuild, and saved nothing: the pass re-extracts the whole
+    /// bundle and reindexes every posting list either way.
     pub fn refresh_documents(
         &mut self,
         paths: &[&str],
@@ -96,19 +101,7 @@ impl SearchState {
         if paths.is_empty() {
             return;
         }
-        let mut extracted = extract_bundle(source, okf, uml);
-        let updates: Vec<(String, Option<_>)> = paths
-            .iter()
-            .map(|path| {
-                let fields = extracted
-                    .iter()
-                    .position(|fields| fields.path == *path)
-                    .map(|index| extracted.swap_remove(index));
-                ((*path).to_string(), fields)
-            })
-            .collect();
-        self.index.apply_document_updates(updates);
-        self.status = TextIndexStatus::Ready;
+        self.rebuild(source, okf, uml);
     }
 
     /// The palette's `indexing…` row (Task 10/11: `build_palette_model`'s
@@ -270,6 +263,63 @@ mod tests {
 
         assert!(!state.query("order", &QueryScope::default()).is_empty());
         assert!(!state.query("customer", &QueryScope::default()).is_empty());
+    }
+
+    /// Extraction is cross-document: `order.md`'s relationship entry carries
+    /// the OTHER endpoint's TITLE, so saving `customer.md` invalidates a row
+    /// indexed under a document the save never wrote. Restricting the refresh
+    /// to the saved paths left that row stale -- silently wrong results.
+    #[test]
+    fn refreshing_one_document_updates_the_rows_it_changed_in_another() {
+        const ORDER: &str = "---\ntype: uml.Class\n---\n# Order\n\n## Relationships\n- depends [Customer](./customer.md)\n";
+        let before = session_for(&[
+            ("order.md", ORDER),
+            (
+                "customer.md",
+                "---\ntype: uml.Class\ntitle: Customer\n---\n# Customer\n",
+            ),
+        ])
+        .snapshot();
+        let mut state = SearchState::empty();
+        state.rebuild(&before.source, &before.okf_analysis, &before.uml_analysis);
+        assert!(
+            state
+                .query("customer", &QueryScope::default())
+                .iter()
+                .any(|hit| hit.document == "order.md"),
+            "the fixture must index the relationship under order.md"
+        );
+
+        // The save renames the endpoint; only `customer.md` was written.
+        let after = session_for(&[
+            ("order.md", ORDER),
+            (
+                "customer.md",
+                "---\ntype: uml.Class\ntitle: Buyer\n---\n# Buyer\n",
+            ),
+        ])
+        .snapshot();
+        state.refresh_documents(
+            &["customer.md"],
+            &after.source,
+            &after.okf_analysis,
+            &after.uml_analysis,
+        );
+
+        let hits = state.query("buyer", &QueryScope::default());
+        assert!(
+            hits.iter().any(|hit| hit.document == "order.md"),
+            "order.md's relationship row must name the endpoint's new title, got {hits:?}"
+        );
+        assert!(
+            !state
+                .query("customer", &QueryScope::default())
+                .iter()
+                .any(|hit| hit.document == "order.md"
+                    && hit.group == waml::search::FieldGroup::Model),
+            "and must not still name the old one (the link TARGET keeps the \
+             old path, but that is a Structure entry, not the relationship)"
+        );
     }
 
     #[test]

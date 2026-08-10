@@ -109,35 +109,6 @@ impl MemSearchIndex {
         self.tokens_sorted.sort();
     }
 
-    /// Apply several per-document updates and reindex ONCE. `None` fields
-    /// remove the path. `update_document`/`remove_document` each rebuild every
-    /// posting list, so applying a multi-document save one call at a time
-    /// costs one full reindex per document; this is the batch form the editor's
-    /// post-save refresh uses.
-    pub fn apply_document_updates(
-        &mut self,
-        updates: impl IntoIterator<Item = (String, Option<DocumentFields>)>,
-    ) {
-        let mut touched = false;
-        for (path, fields) in updates {
-            touched = true;
-            // `doc_index` is only valid between reindexes and a removal below
-            // shifts positions, so resolve against `docs` directly.
-            let existing = self.docs.iter().position(|doc| doc.path == path);
-            match (fields, existing) {
-                (Some(fields), Some(pos)) => self.docs[pos] = fields,
-                (Some(fields), None) => self.docs.push(fields),
-                (None, Some(pos)) => {
-                    self.docs.remove(pos);
-                }
-                (None, None) => {}
-            }
-        }
-        if touched {
-            self.reindex();
-        }
-    }
-
     /// The source documents this index was built from, in build order.
     /// `pub(crate)` for `asset.rs`'s encoder -- nothing outside this crate
     /// (and nothing outside `search`, in spirit) should reach past the

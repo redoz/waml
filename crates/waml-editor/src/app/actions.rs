@@ -776,9 +776,38 @@ impl App {
     /// `apply_find_highlights` (Task 13) uses, filtered here to just this
     /// document since the session spans the whole bundle.
     fn apply_session_highlights(&mut self, cx: &mut Cx, concept_id: &str) {
-        let Some(session) = &self.session_search else {
+        let Some((text_ranges, model_keys)) = self.session_highlights_for(concept_id) else {
             return;
         };
+        self.install_search_highlights(cx, text_ranges, model_keys);
+    }
+
+    /// Re-light the session's matches in `concept_id`'s document AFTER its
+    /// reveal has landed. `DocView::reveal` installs the landed range as the
+    /// surfaces' ONLY search highlight (`set_search_highlights(cx,
+    /// vec![range])`), replacing the set `apply_session_highlights` installed
+    /// while the tab was still opening -- so without this the documented
+    /// "every other match in the open document is highlighted" never survives
+    /// to a frame. A no-op when the session found nothing in this document:
+    /// installing an empty set there would clear the reveal's own highlight.
+    pub(super) fn relight_session_highlights(&mut self, cx: &mut Cx, concept_id: &str) {
+        let Some((text_ranges, model_keys)) = self.session_highlights_for(concept_id) else {
+            return;
+        };
+        if text_ranges.is_empty() && model_keys.is_empty() {
+            return;
+        }
+        self.install_search_highlights(cx, text_ranges, model_keys);
+    }
+
+    /// The live session's `(text ranges, model keys)` inside `concept_id`'s
+    /// document. `None` with no live session at all.
+    #[allow(clippy::type_complexity)]
+    fn session_highlights_for(
+        &self,
+        concept_id: &str,
+    ) -> Option<(Vec<TextRange>, std::collections::HashSet<String>)> {
+        let session = self.session_search.as_ref()?;
         let mut text_ranges = Vec::new();
         let mut model_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
         for hit in &session.hits {
@@ -796,7 +825,7 @@ impl App {
                 }
             }
         }
-        self.install_search_highlights(cx, text_ranges, model_keys);
+        Some((text_ranges, model_keys))
     }
 
     /// F3/Shift+F3 (`shortcuts::SearchCommand::NextHit`/`PreviousHit`, when

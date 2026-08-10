@@ -494,7 +494,12 @@ impl App {
         }) {
             return;
         }
-        self.documents.reveal_active(cx, &self.ui, &pending.target);
+        if self.documents.reveal_active(cx, &self.ui, &pending.target) {
+            // The reveal just replaced the whole highlight set with the one
+            // landed range; put the session's other matches in this document
+            // back (spec §Search session).
+            self.relight_session_highlights(cx, &pending.concept_id);
+        }
     }
 
     pub(super) fn apply_pending_anchor_restore(&mut self, cx: &mut Cx) {

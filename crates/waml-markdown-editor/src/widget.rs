@@ -936,6 +936,11 @@ impl MarkdownEditor {
         self.redraw(cx);
     }
 
+    /// The currently installed search-highlight ranges, in install order.
+    pub fn search_highlights(&self) -> &[waml_syntax::TextRange] {
+        &self.search_highlights
+    }
+
     /// Drop the installed search highlights. A no-op (no redraw) when
     /// nothing is installed, so repeated clears from a debounced search
     /// query do not force needless work.
@@ -2677,6 +2682,14 @@ impl MarkdownEditorRef {
         if let Some(mut inner) = self.borrow_mut() {
             inner.clear_search_highlights(cx);
         }
+    }
+
+    /// The currently installed search-highlight ranges (empty when the ref
+    /// resolves to nothing).
+    pub fn search_highlights(&self) -> Vec<waml_syntax::TextRange> {
+        self.borrow()
+            .map(|inner| inner.search_highlights().to_vec())
+            .unwrap_or_default()
     }
 
     pub fn reveal_range(&self, cx: &mut Cx, range: waml_syntax::TextRange) {

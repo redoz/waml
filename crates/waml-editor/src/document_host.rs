@@ -266,6 +266,14 @@ impl DocumentHost {
         document: OpenDocument,
     ) -> bool {
         if let Some(id) = self.tab_id_for_locator(&location.document) {
+            // `document` is a LIVE re-run of the query, not a rebuild of what
+            // the tab already shows: merely activating the open tab would
+            // leave the previous run's rows on screen while the caller
+            // (`App::open_search_results`) has already installed a session
+            // over THESE hits, and that session's flat index would then mark
+            // a row from a different list. `ReopenInPlace` is the one command
+            // that swaps a view behind an already-open tab.
+            self.transition(cx, ui, session, DocumentCommand::ReopenInPlace { document });
             self.transition(cx, ui, session, DocumentCommand::Activate(id));
         } else {
             self.transition(
@@ -812,6 +820,60 @@ mod tests {
             host.views.get(&tab_id).map(|view| view.identity()),
             Some(DocViewIdentity::GenericOkf),
             "the view was replaced, not discarded",
+        );
+    }
+
+    /// The search-results tab's `OpenDocument` is a LIVE re-run of the query
+    /// (`App::open_search_results` builds it, then installs a session over
+    /// exactly those hits). Re-running the same query must therefore land the
+    /// freshly built view: activating the open tab and dropping the document
+    /// leaves the previous run's rows on screen while the session's flat
+    /// index resolves against a different row list.
+    #[test]
+    fn restore_location_with_document_installs_the_freshly_built_view() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = WidgetRef::default();
+        let session = EditorSession::default();
+        let mut host = DocumentHost::default();
+
+        let stale = prepared_with_identity(
+            "search-order",
+            NavCategory::OkfDocument,
+            DocViewIdentity::GenericOkf,
+            Rc::new(Cell::new(0)),
+            Rc::new(RefCell::new(ProbeLifecycle::default())),
+        );
+        let tab_id = stale.tab_id;
+        let location = ViewLocation {
+            document: stale.locator.clone(),
+            anchor: ViewAnchor::None,
+        };
+        host.transition(
+            &mut cx,
+            &ui,
+            &session,
+            DocumentCommand::Open {
+                document: stale,
+                persistent: true,
+            },
+        );
+
+        let fresh = prepared_with_identity(
+            "search-order",
+            NavCategory::OkfDocument,
+            DocViewIdentity::SearchResults,
+            Rc::new(Cell::new(0)),
+            Rc::new(RefCell::new(ProbeLifecycle::default())),
+        );
+        assert!(host.restore_location_with_document(&mut cx, &ui, &session, &location, fresh));
+
+        assert_eq!(host.tabs().len(), 1, "no second tab for the same query");
+        assert_eq!(host.active_id(), tab_id, "and it is the active one");
+        assert_eq!(
+            host.views.get(&tab_id).map(|view| view.identity()),
+            Some(DocViewIdentity::SearchResults),
+            "the freshly built view must replace the previous run's",
         );
     }
 

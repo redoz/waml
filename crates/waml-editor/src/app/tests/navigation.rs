@@ -2809,6 +2809,63 @@ fn f3_advances_past_hits_that_share_one_reveal_target() {
     assert_eq!(app.session_search.as_ref().unwrap().cursor, Some(1));
 }
 
+/// `mark_session_landing` lights every match the session found in the
+/// landing document, but the pending reveal that always follows it installs
+/// the landed range as the surface's ONLY highlight -- so the documented
+/// "every other match in the open document is highlighted" only survives to
+/// a frame if the reveal is followed by a re-light.
+#[test]
+fn a_landed_reveal_keeps_the_sessions_other_matches_in_that_document_lit() {
+    let (mut cx, mut app) = rebuilt_search_app();
+    mount_markdown_surface(&mut cx, &mut app);
+    let hit = |start: u32, end: u32| waml::search::Hit {
+        document: "sales/customer.md".to_string(),
+        concept_id: Some("sales/customer".to_string()),
+        group: waml::search::FieldGroup::Prose,
+        target: waml::search::HitTarget::TextSpan {
+            start,
+            end,
+            line: 0,
+        },
+        entry: 0,
+        score: 1.0,
+    };
+    app.session_search = Some(crate::search_session::SearchSession::new(
+        "details".to_string(),
+        vec![hit(4, 8), hit(20, 24)],
+        waml::search::QueryScope::default(),
+    ));
+
+    // Land on the first hit, the way a results-tab row click does.
+    let first = app.session_search.as_ref().unwrap().hits[0].clone();
+    let (navigation, reveal) = crate::search_results_view::navigation_for_hit(&first);
+    app.apply_view_outcome(
+        &mut cx,
+        crate::doc_view::ViewOutcome {
+            navigation: Some(navigation),
+            reveal,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        app.documents.active_tab().and_then(|tab| tab.concept_id()),
+        Some("sales/customer")
+    );
+
+    app.apply_pending_reveal(&mut cx);
+
+    let highlights = app
+        .ui
+        .widget(&cx, ids!(markdown_surface.editor))
+        .as_markdown_editor()
+        .search_highlights();
+    assert_eq!(
+        highlights.len(),
+        2,
+        "the reveal must not narrow the session's highlights down to the landed range, got {highlights:?}"
+    );
+}
+
 #[test]
 fn esc_ends_the_live_session_and_further_f3_is_a_no_op() {
     let (mut cx, mut app) = rebuilt_search_app();

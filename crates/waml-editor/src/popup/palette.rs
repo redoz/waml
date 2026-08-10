@@ -162,7 +162,13 @@ pub fn build_palette_model(
         }];
     }
 
-    if hits.is_empty() {
+    // `TextIndexStatus::Building` means the index is EMPTY on purpose (the
+    // export-time asset is still in flight, `SearchState::building`), so every
+    // query has zero hits while it lasts. Reporting "No results" there would
+    // make the `indexing…` row -- which exists for exactly this state
+    // (decision 6/10) -- unreachable, so fall through to the section builder
+    // below, which emits it under TEXT and still appends the escalate row.
+    if hits.is_empty() && text_status != TextIndexStatus::Building {
         return vec![PaletteSectionModel {
             title: String::new(),
             count: 0,
@@ -385,6 +391,70 @@ fn activatable_positions(
 /// Whether a laid-out row lands entirely inside the card's row-list budget.
 fn fits(entry: &PaletteLayoutRow, list_height: f64) -> bool {
     entry.top + entry.height <= list_height
+}
+
+/// Total height of the laid-out row list (`0.0` for no sections).
+fn sections_height(sections: &[PaletteSectionModel]) -> f64 {
+    palette_layout(sections)
+        .last()
+        .map(|row| row.top + row.height)
+        .unwrap_or(0.0)
+}
+
+/// Drop one row from `section`, keeping its `MoreText` overflow row LAST (and
+/// crediting the dropped row to it) so the section still names what it is
+/// hiding. `false` when there was nothing left to drop.
+fn drop_one_row(section: &mut PaletteSectionModel) -> bool {
+    let len = section.rows.len();
+    if len == 0 {
+        return false;
+    }
+    let overflow_last = matches!(section.rows[len - 1].kind, PaletteRowKind::MoreText { .. });
+    if overflow_last && len >= 2 {
+        section.rows.remove(len - 2);
+        let last = section.rows.last_mut().expect("len >= 2 before the remove");
+        if let PaletteRowKind::MoreText { omitted } = &mut last.kind {
+            *omitted += 1;
+            last.title = format!("+ {omitted} more");
+        }
+    } else {
+        section.rows.pop();
+    }
+    true
+}
+
+/// Trim `sections` to what the card's row-list budget can actually paint,
+/// dropping rows from the LAST hit section backwards and leaving the final
+/// section whole. That final section is the trailing "Search all text for …"
+/// escalate row -- the only documented route from the palette to the results
+/// tab -- and the card neither scrolls nor clips, so without this a
+/// four-section model on a short window pushes it past the budget where it is
+/// neither painted nor armable (`activatable_positions`/`fits` drop it) and
+/// `ArrowUp` wraps onto an unrelated row that commits a different action.
+fn trim_sections_to_fit(sections: &mut Vec<PaletteSectionModel>, list_height: f64) {
+    if list_height <= 0.0 {
+        return;
+    }
+    while sections_height(sections) > list_height {
+        // Never the last section: it is the one this trim exists to protect.
+        let Some(index) = sections
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(1)
+            .find(|(_, section)| !section.rows.is_empty())
+            .map(|(index, _)| index)
+        else {
+            // Only the final section is left and it still overflows: a card
+            // too short for a single row, nothing more to give.
+            return;
+        };
+        drop_one_row(&mut sections[index]);
+        if sections[index].rows.is_empty() {
+            // An empty section would still cost its header row.
+            sections.remove(index);
+        }
+    }
 }
 
 /// The full card height `sections` would take: the query row, top/bottom
@@ -658,15 +728,28 @@ impl PalettePopup {
         self.rect.size.y
     }
 
-    fn set_sections_inner(&mut self, sections: Vec<PaletteSectionModel>) {
-        self.layout_rows = palette_layout(&sections);
+    /// Title of the row a keyboard/mouse selection currently sits on.
+    #[cfg(test)]
+    pub(crate) fn test_armed_row_title(&self) -> Option<String> {
+        let &(section, row) = self.activatable.get(self.armed?)?;
+        Some(self.sections.get(section)?.rows.get(row)?.title.clone())
+    }
+
+    fn set_sections_inner(&mut self, mut sections: Vec<PaletteSectionModel>) {
         // Resize to THIS model before deriving the row budget from the rect:
         // the card the opener sized is the empty-query recents card, and
         // `list_height` (draw + hit-test + keyboard) reads the rect, so
         // leaving it frozen clips every later query to the recents' height.
         if self.max_height > 0.0 {
+            // A model taller than the space the opener measured loses rows
+            // from its hit sections, never the trailing escalate row.
+            trim_sections_to_fit(
+                &mut sections,
+                self.max_height - PALETTE_QUERY_H - PALETTE_PAD_V * 2.0,
+            );
             self.rect.size.y = content_height(&sections).min(self.max_height);
         }
+        self.layout_rows = palette_layout(&sections);
         self.activatable = activatable_positions(&sections, &self.layout_rows, self.list_height());
         self.armed = if self.activatable.is_empty() {
             None
@@ -1415,6 +1498,173 @@ mod tests {
         palette.set_sections(&mut cx, small);
         assert_eq!(palette.test_card_height(), small_height);
         assert_eq!(palette.test_activatable_len(), 1);
+    }
+
+    /// `SearchState::building()` installs an EMPTY index, so every query
+    /// while the boot-time asset is in flight has zero hits. The `indexing…`
+    /// row exists for exactly that state, so it -- not "No results" -- is
+    /// what the palette must show.
+    #[test]
+    fn a_building_index_reports_indexing_rather_than_no_results() {
+        let sections = build_palette_model(
+            "payment",
+            &[],
+            &no_snippet,
+            &HashSet::new(),
+            &[],
+            TextIndexStatus::Building,
+        );
+
+        let rows: Vec<&PaletteRow> = sections.iter().flat_map(|s| s.rows.iter()).collect();
+        assert!(
+            rows.iter()
+                .any(|row| matches!(row.kind, PaletteRowKind::Indexing)),
+            "expected the indexing row, got {rows:?}"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|row| matches!(row.kind, PaletteRowKind::NoResults { .. })),
+            "a building index is not a no-results answer"
+        );
+        assert!(matches!(
+            sections.last().expect("a trailing section").rows[0].kind,
+            PaletteRowKind::Escalate { .. }
+        ));
+    }
+
+    /// A four-section model is far taller than a short window's card, and the
+    /// card neither scrolls nor clips -- so the trim must come out of the hit
+    /// sections and leave the trailing escalate row whole.
+    #[test]
+    fn trimming_a_too_tall_model_keeps_the_trailing_escalate_row() {
+        let mut sections = vec![
+            PaletteSectionModel {
+                title: "CONCEPTS".to_string(),
+                count: 9,
+                rows: filler_rows(6),
+            },
+            PaletteSectionModel {
+                title: "DOCUMENTS".to_string(),
+                count: 6,
+                rows: filler_rows(6),
+            },
+            PaletteSectionModel {
+                title: String::new(),
+                count: 1,
+                rows: vec![PaletteRow {
+                    kind: PaletteRowKind::Escalate {
+                        query: "q".to_string(),
+                        total: 15,
+                    },
+                    title: "Search all".to_string(),
+                    detail: String::new(),
+                    hit: None,
+                    hidden: false,
+                }],
+            },
+        ];
+        // Room for two headers and three rows.
+        let list_height = PALETTE_HEADER_H * 2.0 + PALETTE_ROW_H * 3.0;
+
+        trim_sections_to_fit(&mut sections, list_height);
+
+        assert!(sections_height(&sections) <= list_height);
+        let last = sections.last().expect("the escalate section survives");
+        assert!(matches!(last.rows[0].kind, PaletteRowKind::Escalate { .. }));
+        assert_eq!(last.rows.len(), 1);
+    }
+
+    /// Dropping a row from a capped section credits it to that section's
+    /// `+ N more` row rather than losing the overflow marker.
+    #[test]
+    fn trimming_a_capped_section_keeps_its_overflow_row_last() {
+        let mut section = PaletteSectionModel {
+            title: "TEXT".to_string(),
+            count: 5,
+            rows: {
+                let mut rows = filler_rows(2);
+                rows.push(PaletteRow {
+                    kind: PaletteRowKind::MoreText { omitted: 3 },
+                    title: "+ 3 more".to_string(),
+                    detail: String::new(),
+                    hit: None,
+                    hidden: false,
+                });
+                rows
+            },
+        };
+
+        assert!(drop_one_row(&mut section));
+
+        assert_eq!(section.rows.len(), 2);
+        assert_eq!(section.rows[0].title, "row 0");
+        assert!(matches!(
+            section.rows[1].kind,
+            PaletteRowKind::MoreText { omitted: 4 }
+        ));
+        assert_eq!(section.rows[1].title, "+ 4 more");
+    }
+
+    /// The `waml-ui-test` `escalate_to_results_tab` driver presses ArrowUp to
+    /// reach the always-last escalate row. On a window too short for the
+    /// whole model that row must still be armable -- not dropped past the
+    /// budget while ArrowUp wraps onto an unrelated row committing a
+    /// different action.
+    #[test]
+    fn arrow_up_reaches_the_escalate_row_on_a_card_too_short_for_the_model() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let mut palette = cx.with_vm(PalettePopup::script_new_with_default);
+
+        let empty = build_palette_model(
+            "",
+            &[],
+            &no_snippet,
+            &HashSet::new(),
+            &[],
+            TextIndexStatus::Ready,
+        );
+        // Room for the query row, the paddings, and exactly four rows.
+        let max_height = PALETTE_QUERY_H + PALETTE_PAD_V * 2.0 + PALETTE_ROW_H * 4.0;
+        palette.open_palette(
+            &mut cx,
+            Rect {
+                pos: dvec2(0.0, 80.0),
+                size: dvec2(560.0, content_height(&empty)),
+            },
+            max_height,
+            empty,
+        );
+
+        let hits: Vec<SearchHit> = (0..12)
+            .map(|i| hit("a.md", FieldGroup::Names, model(&format!("c{i}"))))
+            .chain((0..12).map(|i| hit("a.md", FieldGroup::Names, span(i))))
+            .chain((0..12).map(|i| hit("a.md", FieldGroup::Prose, span(i))))
+            .chain((0..12).map(|i| hit("a.md", FieldGroup::Structure, span(i))))
+            .collect();
+        palette.set_sections(
+            &mut cx,
+            build_palette_model(
+                "term",
+                &hits,
+                &no_snippet,
+                &HashSet::new(),
+                &[],
+                TextIndexStatus::Ready,
+            ),
+        );
+
+        let arrow_up = Event::KeyDown(KeyEvent {
+            key_code: KeyCode::ArrowUp,
+            ..Default::default()
+        });
+        palette.handle(&mut cx, &arrow_up);
+
+        assert_eq!(
+            palette.test_armed_row_title().as_deref(),
+            Some("Search all text for \"term\" \u{2014} 48 results"),
+            "ArrowUp must wrap onto the escalate row"
+        );
     }
 
     /// The snippet callback is a per-hit scan of the hit's document, so it
