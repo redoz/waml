@@ -10,6 +10,8 @@ use makepad_widgets::*;
 pub(in crate::canvas::class) struct ClassDrawResources<'a> {
     pub(in crate::canvas::class) bg: &'a mut DrawColor,
     pub(in crate::canvas::class) node: &'a mut DrawColor,
+    pub(in crate::canvas::class) use_case_ellipse: &'a mut DrawColor,
+    pub(in crate::canvas::class) actor_line: &'a mut DrawColor,
     pub(in crate::canvas::class) group: &'a mut DrawColor,
     pub(in crate::canvas::class) group_border: &'a mut DrawColor,
     pub(in crate::canvas::class) group_dashed: &'a mut DrawColor,

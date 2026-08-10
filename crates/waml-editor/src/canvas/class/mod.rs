@@ -1,6 +1,8 @@
 mod interaction;
 mod placement;
 mod render;
+pub use render::use_case_groups::{commands as use_case_group_commands, UseCaseGroupCommand};
+pub use render::use_case_nodes::{commands as use_case_node_commands, UseCaseNodeCommand};
 mod selection;
 pub(crate) mod use_case_geometry;
 pub(crate) mod visual;

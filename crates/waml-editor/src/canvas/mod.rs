@@ -9,6 +9,9 @@ pub use class::use_case_geometry::{
 pub use class::visual::{
     GroupVisualKind, NodeVisualKind, StructuralVisualKind, StructuralVisualPolicy,
 };
+pub use class::{
+    use_case_group_commands, use_case_node_commands, UseCaseGroupCommand, UseCaseNodeCommand,
+};
 mod geometry;
 mod linework;
 // `pub`: `crates/waml-editor/src/bin/node_editor_harness.rs` registers

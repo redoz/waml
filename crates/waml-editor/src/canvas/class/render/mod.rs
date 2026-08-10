@@ -6,6 +6,8 @@ mod nodes;
 mod overlays;
 mod primitives;
 mod relations;
+pub mod use_case_groups;
+pub mod use_case_nodes;
 
 use super::{placement::PlacementSnapshot, selection::SelectionSnapshot};
 use crate::{canvas::viewport::ViewportSnapshot, scene::Scene};

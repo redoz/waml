@@ -263,6 +263,31 @@ script_mod! {
         }
     }
 
+    mod.draw.UseCaseEllipse = mod.draw.DrawColor{
+        stroke_w: uniform(1.4)
+        pixel: fn() {
+            let p = (self.pos - vec2(0.5, 0.5)) * 2.0
+            let radius = length(p)
+            let width_scale = min(self.rect_size.x, self.rect_size.y)
+            let alpha = clamp((self.stroke_w * 2.0 / width_scale - abs(radius - 1.0)) * width_scale, 0.0, 1.0)
+            return vec4(self.color.x, self.color.y, self.color.z, self.color.w * alpha)
+        }
+    }
+
+    mod.draw.ActorLine = mod.draw.DrawColor{
+        from: uniform(vec2(0.0, 0.0))
+        to: uniform(vec2(1.0, 1.0))
+        stroke_w: uniform(1.4)
+        pixel: fn() {
+            let p = self.pos * self.rect_size
+            let delta = self.to - self.from
+            let t = clamp(dot(p - self.from, delta) / max(dot(delta, delta), 0.0001), 0.0, 1.0)
+            let distance = length(p - (self.from + delta * t))
+            let alpha = clamp(self.stroke_w + 0.5 - distance, 0.0, 1.0)
+            return vec4(self.color.x, self.color.y, self.color.z, self.color.w * alpha)
+        }
+    }
+
     mod.widgets.ClassDiagramSurface = set_type_default() do mod.widgets.ClassDiagramSurfaceBase{
         width: Fill
         height: Fill
@@ -278,6 +303,8 @@ script_mod! {
         draw_group_title_dim +: { color: atlas.text_dim }
         // Node card: the shared node material preset. Only its fill differs.
         draw_node: mod.draw.NodeSurface{ color: atlas.field_bg }
+        draw_use_case_ellipse: mod.draw.UseCaseEllipse{ color: atlas.text }
+        draw_actor_line: mod.draw.ActorLine{ color: atlas.text }
         draw_edge_down: mod.draw.EdgeLine{ color: atlas.text_dim }
         // Rounded-corner pen; shares the edge line color so a fillet reads as part
         // of the same stroke.
@@ -394,6 +421,12 @@ pub struct ClassDiagramSurface {
     #[redraw]
     #[live]
     draw_node: DrawColor,
+    #[redraw]
+    #[live]
+    draw_use_case_ellipse: DrawColor,
+    #[redraw]
+    #[live]
+    draw_actor_line: DrawColor,
     #[redraw]
     #[live]
     draw_group: DrawColor,
@@ -689,6 +722,8 @@ impl Widget for ClassDiagramSurface {
             selection,
             draw_bg,
             draw_node,
+            draw_use_case_ellipse,
+            draw_actor_line,
             draw_group,
             draw_group_border,
             draw_group_dashed,
@@ -725,6 +760,8 @@ impl Widget for ClassDiagramSurface {
         let mut draws = ClassDrawResources {
             bg: draw_bg,
             node: draw_node,
+            use_case_ellipse: draw_use_case_ellipse,
+            actor_line: draw_actor_line,
             group: draw_group,
             group_border: draw_group_border,
             group_dashed: draw_group_dashed,

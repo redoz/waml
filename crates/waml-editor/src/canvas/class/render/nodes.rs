@@ -96,6 +96,15 @@ pub(super) fn draw_nodes(
         if !on_screen(screen, snapshot.viewport.view_rect) {
             continue;
         }
+        if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase
+            && matches!(
+                node.geometry,
+                crate::MeasuredNodeGeometry::Actor(_) | crate::MeasuredNodeGeometry::UseCase(_)
+            )
+        {
+            super::use_case_nodes::draw(cx, snapshot, draws, node);
+            continue;
+        }
         draws.node.set_uniform(
             cx,
             live_id!(selected),
