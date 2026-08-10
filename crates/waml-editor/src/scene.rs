@@ -2489,6 +2489,7 @@ mod tests {
         diagram.layout = Vec::new();
         diagram.groups = vec![DiagramGroup {
             name: "Ordering".into(),
+            role: waml::model::DiagramGroupRole::Generic,
             members: vec!["order".into(), "customer".into()],
             children: Vec::new(),
         }];
@@ -2529,11 +2530,13 @@ mod tests {
         diagram.groups = vec![
             DiagramGroup {
                 name: "Ordering".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["order".into(), "customer".into()],
                 children: Vec::new(),
             },
             DiagramGroup {
                 name: "Payments".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["customer".into(), "payment-gateway".into()],
                 children: Vec::new(),
             },
@@ -2561,9 +2564,11 @@ mod tests {
         let mut nested = diagram.clone();
         nested.groups = vec![DiagramGroup {
             name: "Ordering".into(),
+            role: waml::model::DiagramGroupRole::Generic,
             members: vec!["order".into(), "customer".into()],
             children: vec![DiagramGroup {
                 name: "Inner".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["customer".into()],
                 children: Vec::new(),
             }],
@@ -2595,11 +2600,13 @@ mod tests {
         diagram.groups = vec![
             DiagramGroup {
                 name: "Big".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["order".into(), "customer".into()],
                 children: Vec::new(),
             },
             DiagramGroup {
                 name: "Small".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["customer".into()],
                 children: Vec::new(),
             },
@@ -2633,11 +2640,13 @@ mod tests {
         diagram.groups = vec![
             DiagramGroup {
                 name: "Left".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["order".into(), "ghost".into()],
                 children: Vec::new(),
             },
             DiagramGroup {
                 name: "Right".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["customer".into(), "ghost".into()],
                 children: Vec::new(),
             },
@@ -2668,11 +2677,13 @@ mod tests {
         diagram.groups = vec![
             DiagramGroup {
                 name: "Ghost".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["not-a-node".into()],
                 children: Vec::new(),
             },
             DiagramGroup {
                 name: "Ordering".into(),
+                role: waml::model::DiagramGroupRole::Generic,
                 members: vec!["order".into(), "customer".into()],
                 children: Vec::new(),
             },

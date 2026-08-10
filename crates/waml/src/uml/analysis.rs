@@ -792,6 +792,18 @@ fn analysis_metadata(
         let projection = reuse.cloned().unwrap_or_else(|| Arc::new(diagram.clone()));
         diagram_projections.insert(Arc::<str>::from(diagram.key.as_str()), projection);
     }
+    if let Some(previous) = previous {
+        for diagram in &previous.projection.diagrams {
+            if stale_diagrams.contains(&diagram.key)
+                && !diagram_projections.contains_key(diagram.key.as_str())
+            {
+                if let Some(retained) = previous.diagram(&diagram.key) {
+                    diagram_projections
+                        .insert(Arc::<str>::from(diagram.key.as_str()), retained.clone());
+                }
+            }
+        }
+    }
 
     let projection_freshness = islands
         .values()
@@ -1661,6 +1673,293 @@ fn relationship_end_verdict(
     }
 }
 
+fn use_case_member_kind(
+    declared: &DeclaredBundle,
+    concept_paths: &BTreeMap<String, String>,
+    context: &DomainAnalysisContext<'_>,
+    key: &str,
+) -> super::use_case::UseCaseMemberKind {
+    use super::use_case::UseCaseMemberKind;
+    match context
+        .okf
+        .concept(key)
+        .map(|concept| crate::model::ElementType::parse(&concept.ty))
+    {
+        Some(crate::model::ElementType::Uml(crate::model::UmlMetaclass::Actor)) => {
+            UseCaseMemberKind::Actor
+        }
+        Some(crate::model::ElementType::Uml(crate::model::UmlMetaclass::UseCase)) => {
+            UseCaseMemberKind::UseCase
+        }
+        Some(crate::model::ElementType::Uml(crate::model::UmlMetaclass::Note)) => {
+            UseCaseMemberKind::Note
+        }
+        Some(crate::model::ElementType::Uml(crate::model::UmlMetaclass::Package))
+            if package_contains_only_actors_and_notes(
+                declared,
+                concept_paths,
+                context,
+                key,
+                &mut BTreeSet::new(),
+            ) =>
+        {
+            UseCaseMemberKind::ActorPackage
+        }
+        _ => UseCaseMemberKind::Incompatible,
+    }
+}
+
+fn package_contains_only_actors_and_notes(
+    declared: &DeclaredBundle,
+    concept_paths: &BTreeMap<String, String>,
+    context: &DomainAnalysisContext<'_>,
+    key: &str,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    if !visiting.insert(key.to_string()) {
+        return false;
+    }
+    let Some(package) = declared.concept(key) else {
+        visiting.remove(key);
+        return false;
+    };
+    let path = concept_paths
+        .get(key)
+        .map(String::as_str)
+        .unwrap_or_default();
+    let mut has_actor = false;
+    let mut compatible = true;
+    for member in package.members.iter() {
+        let crate::uml::DeclaredField::Valid { value, .. } = &member.target else {
+            continue;
+        };
+        let target = crate::okf::resolve_href(path, value);
+        match context
+            .okf
+            .concept(&target)
+            .map(|concept| crate::model::ElementType::parse(&concept.ty))
+        {
+            Some(crate::model::ElementType::Uml(crate::model::UmlMetaclass::Actor)) => {
+                has_actor = true;
+            }
+            Some(crate::model::ElementType::Uml(crate::model::UmlMetaclass::Note)) => {}
+            Some(crate::model::ElementType::Uml(crate::model::UmlMetaclass::Package)) => {
+                let nested = package_contains_only_actors_and_notes(
+                    declared,
+                    concept_paths,
+                    context,
+                    &target,
+                    visiting,
+                );
+                has_actor |= nested;
+                compatible &= nested;
+            }
+            Some(_) => compatible = false,
+            None => {}
+        }
+    }
+    visiting.remove(key);
+    compatible && has_actor
+}
+
+fn use_case_group_input(
+    declared: &DeclaredBundle,
+    concept_paths: &BTreeMap<String, String>,
+    context: &DomainAnalysisContext<'_>,
+    group: &crate::uml::DeclaredMemberGroup,
+    path: &str,
+    claimed: &BTreeSet<&str>,
+    depth: usize,
+) -> Option<super::use_case::UseCaseGroupInput> {
+    let name = match &group.name {
+        crate::uml::DeclaredField::Absent if depth == 0 => return None,
+        crate::uml::DeclaredField::Absent => String::new(),
+        crate::uml::DeclaredField::Valid { value, .. } => value.clone(),
+        crate::uml::DeclaredField::Incomplete { .. }
+        | crate::uml::DeclaredField::Invalid { .. } => return None,
+    };
+    let mut members = group
+        .members
+        .iter()
+        .filter_map(|member| match &member.target {
+            crate::uml::DeclaredField::Valid { value, .. } => {
+                let target = crate::okf::resolve_href(path, value);
+                claimed.contains(target.as_str()).then(|| {
+                    let kind = use_case_member_kind(declared, concept_paths, context, &target);
+                    (target, kind)
+                })
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    members.extend(group.inline_instances.iter().filter_map(
+        |inline| match inline_instance_validity(inline, path, claimed) {
+            InlineInstanceValidity::Valid(ValidInlineInstance { name, .. }) => Some((
+                format!("{}#{name}", crate::okf::id_of(path)),
+                super::use_case::UseCaseMemberKind::Incompatible,
+            )),
+            InlineInstanceValidity::Invalid | InlineInstanceValidity::Unresolved => None,
+        },
+    ));
+    Some(super::use_case::UseCaseGroupInput {
+        name,
+        depth,
+        members,
+        children: group
+            .children
+            .iter()
+            .filter_map(|child| {
+                use_case_group_input(
+                    declared,
+                    concept_paths,
+                    context,
+                    child,
+                    path,
+                    claimed,
+                    depth + 1,
+                )
+            })
+            .collect(),
+    })
+}
+
+fn apply_use_case_roles(
+    group: &mut crate::model::DiagramGroup,
+    input: &super::use_case::UseCaseGroupInput,
+) {
+    group.role = super::use_case::classify_group(input)
+        .role
+        .expect("validated use-case group must have a role");
+    for (child, child_input) in group.children.iter_mut().zip(&input.children) {
+        apply_use_case_roles(child, child_input);
+    }
+}
+
+fn report_use_case_violation(
+    context: &DomainAnalysisContext<'_>,
+    path: &str,
+    syntax: &SyntaxNode<UmlLanguage>,
+    violation: &super::use_case::UseCaseViolation,
+) -> Result<Diagnostic, AnalysisError> {
+    use super::use_case::UseCaseViolation;
+    let (code, message) = match violation {
+        UseCaseViolation::InvalidGroup { group, reason } => (
+            crate::diagnostic::DiagCode::InvalidUseCaseGroup,
+            format!("use-case group '{group}' is invalid: {reason}"),
+        ),
+        UseCaseViolation::ActorInsideBoundary { group, member } => (
+            crate::diagnostic::DiagCode::ActorInsideSystemBoundary,
+            format!("actor '{member}' is inside system boundary '{group}'"),
+        ),
+        UseCaseViolation::EmptyBand { group } => (
+            crate::diagnostic::DiagCode::EmptyUseCaseBand,
+            format!("use-case band '{group}' has no use case"),
+        ),
+    };
+    declared_diagnostic(context, path, syntax, code, message, false)
+}
+
+fn collect_group_members(
+    group: &super::use_case::UseCaseGroupInput,
+    members: &mut BTreeSet<String>,
+) {
+    members.extend(group.members.iter().map(|(member, _)| member.clone()));
+    for child in &group.children {
+        collect_group_members(child, members);
+    }
+}
+
+fn project_use_case_groups(
+    context: &DomainAnalysisContext<'_>,
+    declared: &DeclaredBundle,
+    concept_paths: &BTreeMap<String, String>,
+    concept: &crate::uml::DeclaredConcept,
+    path: &str,
+    claimed: &BTreeSet<&str>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Option<Vec<crate::model::DiagramGroup>>, AnalysisError> {
+    let mut valid = true;
+    let mut projected = Vec::new();
+    let mut boundary_counts = BTreeMap::<String, usize>::new();
+    for group in concept.member_groups.iter() {
+        let Some(input) =
+            use_case_group_input(declared, concept_paths, context, group, path, claimed, 0)
+        else {
+            continue;
+        };
+        let verdict = super::use_case::classify_group(&input);
+        if !verdict.violations.is_empty() {
+            valid = false;
+            for violation in &verdict.violations {
+                diagnostics.push(report_use_case_violation(
+                    context,
+                    path,
+                    group.syntax.syntax(),
+                    violation,
+                )?);
+            }
+            continue;
+        }
+        if verdict.role == Some(crate::model::DiagramGroupRole::SystemBoundary) {
+            let mut members = BTreeSet::new();
+            collect_group_members(&input, &mut members);
+            for member in members {
+                if use_case_member_kind(declared, concept_paths, context, &member)
+                    == super::use_case::UseCaseMemberKind::UseCase
+                {
+                    *boundary_counts.entry(member).or_default() += 1;
+                }
+            }
+        }
+        if let Some(mut group) = lower_member_group(group, path, claimed, &concept.concept_id) {
+            apply_use_case_roles(&mut group, &input);
+            projected.push(group);
+        }
+    }
+
+    let mut use_cases = BTreeMap::<String, &crate::uml::DeclaredMember>::new();
+    for member in concept.members.iter() {
+        let crate::uml::DeclaredField::Valid { value, .. } = &member.target else {
+            continue;
+        };
+        let target = crate::okf::resolve_href(path, value);
+        if claimed.contains(target.as_str())
+            && use_case_member_kind(declared, concept_paths, context, &target)
+                == super::use_case::UseCaseMemberKind::UseCase
+        {
+            use_cases.entry(target).or_insert(member);
+        }
+    }
+    for (use_case, member) in use_cases {
+        match boundary_counts.get(&use_case).copied().unwrap_or_default() {
+            0 => {
+                valid = false;
+                diagnostics.push(declared_diagnostic(
+                    context,
+                    path,
+                    member.syntax.syntax(),
+                    crate::diagnostic::DiagCode::UseCaseOutsideSystemBoundary,
+                    format!("use case '{use_case}' is outside a system boundary"),
+                    false,
+                )?);
+            }
+            1 => {}
+            _ => {
+                valid = false;
+                diagnostics.push(declared_diagnostic(
+                    context,
+                    path,
+                    member.syntax.syntax(),
+                    crate::diagnostic::DiagCode::UseCaseInMultipleSystemBoundaries,
+                    format!("use case '{use_case}' is in more than one system boundary"),
+                    false,
+                )?);
+            }
+        }
+    }
+    Ok(valid.then_some(projected))
+}
+
 fn declared_projection(
     context: &DomainAnalysisContext<'_>,
     declared: &DeclaredBundle,
@@ -1801,11 +2100,35 @@ fn declared_projection(
                     true,
                 )?);
             }
-            let groups = concept
-                .member_groups
-                .iter()
-                .filter_map(|group| lower_member_group(group, &path, &claimed, &concept.concept_id))
-                .collect();
+            let groups = match kind {
+                crate::model::DiagramKind::Class => concept
+                    .member_groups
+                    .iter()
+                    .filter_map(|group| {
+                        lower_member_group(group, &path, &claimed, &concept.concept_id)
+                    })
+                    .collect(),
+                crate::model::DiagramKind::UseCase => {
+                    let Some(groups) = project_use_case_groups(
+                        context,
+                        declared,
+                        concept_paths,
+                        concept,
+                        &path,
+                        &claimed,
+                        diagnostics,
+                    )?
+                    else {
+                        continue;
+                    };
+                    groups
+                }
+                crate::model::DiagramKind::Activity
+                | crate::model::DiagramKind::StateMachine
+                | crate::model::DiagramKind::Sequence => unreachable!(
+                    "structural diagram branch only accepts class and use-case diagrams"
+                ),
+            };
             model.diagrams.push(crate::model::Diagram {
                 key: concept.concept_id.clone(),
                 title: okf
@@ -2580,6 +2903,7 @@ fn lower_member_group(
         .collect::<Vec<_>>();
     Some(crate::model::DiagramGroup {
         name,
+        role: crate::model::DiagramGroupRole::Generic,
         members,
         children: group
             .children

@@ -1111,6 +1111,7 @@ mod tests {
             .expect("mini has the orders-diagram");
         diagram.groups.push(DiagramGroup {
             name: "Sales".to_string(),
+            role: waml::model::DiagramGroupRole::Generic,
             members: vec![order, customer],
             children: Vec::new(),
         });

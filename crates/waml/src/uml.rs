@@ -14,6 +14,7 @@ pub(crate) mod sequence;
 pub mod syntax;
 pub mod vocabulary;
 pub use complete::{completions, expectation_at, Completion, CompletionKind, Expectation};
+pub(crate) mod use_case;
 pub use format::{ActionContext, FormatError, Formatter};
 pub use ops::{
     Batch, DiagramDisplaySet, FieldEdit, NameSpec, Op, TraceEdit, TraceSpec, TransitionSelector,

@@ -300,7 +300,7 @@ pub fn resolve(diagram: &Diagram) -> (Scene, Vec<Diagnostic>) {
 #[cfg(test)]
 mod tests {
     use super::resolve;
-    use crate::model::{Diagram, DiagramGroup, DiagramKind};
+    use crate::model::{Diagram, DiagramGroup, DiagramGroupRole, DiagramKind};
     use crate::solve::{BoxId, BoxKind};
 
     fn diagram(groups: Vec<DiagramGroup>, layout: Vec<crate::layout::LayoutStatement>) -> Diagram {
@@ -321,9 +321,11 @@ mod tests {
         let d = diagram(
             vec![DiagramGroup {
                 name: "Users".into(),
+                role: DiagramGroupRole::Generic,
                 members: vec!["customer".into(), "account".into()],
                 children: vec![DiagramGroup {
                     name: "VIP".into(),
+                    role: DiagramGroupRole::Generic,
                     members: vec!["platinum".into()],
                     children: vec![],
                 }],
@@ -383,11 +385,13 @@ mod tests {
             vec![
                 DiagramGroup {
                     name: "Users".into(),
+                    role: DiagramGroupRole::Generic,
                     members: vec!["customer".into(), "account".into()],
                     children: vec![],
                 },
                 DiagramGroup {
                     name: "Orders".into(),
+                    role: DiagramGroupRole::Generic,
                     members: vec!["order".into()],
                     children: vec![],
                 },
@@ -456,11 +460,13 @@ mod tests {
             vec![
                 DiagramGroup {
                     name: "Lines".into(),
+                    role: DiagramGroupRole::Generic,
                     members: vec!["order-line".into()],
                     children: vec![],
                 },
                 DiagramGroup {
                     name: "Notes".into(),
+                    role: DiagramGroupRole::Generic,
                     members: vec!["note".into()],
                     children: vec![],
                 },
@@ -502,11 +508,13 @@ mod tests {
             vec![
                 DiagramGroup {
                     name: "A".into(),
+                    role: DiagramGroupRole::Generic,
                     members: vec!["shared".into()],
                     children: vec![],
                 },
                 DiagramGroup {
                     name: "B".into(),
+                    role: DiagramGroupRole::Generic,
                     members: vec!["shared".into()],
                     children: vec![],
                 },
@@ -552,6 +560,7 @@ mod tests {
         let d = diagram(
             vec![DiagramGroup {
                 name: "G".into(),
+                role: DiagramGroupRole::Generic,
                 members: vec!["a".into(), "b".into()],
                 children: vec![],
             }],
@@ -583,6 +592,7 @@ mod tests {
             description: None,
             groups: vec![DiagramGroup {
                 name: "".into(),
+                role: DiagramGroupRole::Generic,
                 members: vec!["tables/order".into()],
                 children: vec![],
             }],
@@ -617,6 +627,7 @@ mod tests {
         let d = diagram(
             vec![DiagramGroup {
                 name: "".into(),
+                role: DiagramGroupRole::Generic,
                 members: vec!["tables/order".into()],
                 children: vec![],
             }],
@@ -647,6 +658,7 @@ mod tests {
         let d = diagram(
             vec![DiagramGroup {
                 name: "".into(),
+                role: DiagramGroupRole::Generic,
                 members: vec!["tables/order".into(), "shop/order".into()],
                 children: vec![],
             }],

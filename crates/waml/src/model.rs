@@ -1146,10 +1146,20 @@ pub struct Node {
 }
 
 /// A resolved membership group in a diagram (heading text + resolved keys).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum DiagramGroupRole {
+    Generic,
+    ExternalActors,
+    SystemBoundary,
+    Band,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DiagramGroup {
     pub name: String,
+    pub role: DiagramGroupRole,
     pub members: Vec<String>,
     pub children: Vec<DiagramGroup>,
 }
