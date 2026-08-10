@@ -22,7 +22,7 @@ pub use repair::repair_actions;
 pub use selector::{RelationshipSelector, Selector};
 
 pub type Projection = crate::model::Model;
-pub use analysis::{analyze, Analysis};
+pub use analysis::{analyze, Analysis, TraceRecord};
 pub use declared::{
     expected_for_slot, DeclaredAttribute, DeclaredBinding, DeclaredBundle, DeclaredConcept,
     DeclaredEndpointRef, DeclaredField, DeclaredFlowNode, DeclaredFlowTrace, DeclaredFlowTransition,

@@ -49,6 +49,52 @@ fn prepared_two_document_fixture(revision: u64) -> PreparedCandidate {
     )
 }
 
+#[test]
+fn transition_trace_indexes_refresh_after_target_fragment_changes() {
+    let baseline_source = SourceBundle::try_from_pairs([
+        (
+            "behavior.md",
+            "---\ntype: uml.StateMachine\ntitle: Behavior\n---\n# Behavior\n\n## Nodes\n\n### Idle\n- on `go` transitions to Done traces [CLAIM](./contract.md#claim) traces [External](https://example.com/spec)\n\n### Done\n",
+        ),
+        ("contract.md", "# Contract\n"),
+    ])
+    .unwrap();
+    let baseline = prepared(baseline_source.clone(), None, 70);
+    let edge_key = baseline.uml().projection.flow_edges[0].key.clone();
+
+    let outgoing = baseline.uml().traces_from(&edge_key);
+    assert_eq!(outgoing.len(), 2);
+    assert_eq!(outgoing[0].label, "CLAIM");
+    assert_eq!(outgoing[0].trace_index, 0);
+    assert!(matches!(
+        outgoing[1].target,
+        waml::model::TraceTarget::Https { .. }
+    ));
+    assert!(baseline
+        .uml()
+        .traces_to("contract", Some("claim"))
+        .is_empty());
+
+    let edited_source = replace_document(
+        &baseline_source,
+        SourceDocument::new(path("contract.md"), "# Contract\n\n## Claim\n".into()),
+    )
+    .unwrap();
+    let current = prepared(
+        edited_source,
+        Some(PreviousAnalyses {
+            okf: baseline.okf(),
+            uml: baseline.uml(),
+        }),
+        71,
+    );
+
+    let incoming = current.uml().traces_to("contract", Some("claim"));
+    assert_eq!(incoming.len(), 1);
+    assert_eq!(incoming[0].flow_edge_key, edge_key);
+    assert_eq!(incoming[0].behavior, "behavior");
+}
+
 fn edit_context(candidate: &PreparedCandidate) -> EditContext<'_> {
     EditContext {
         source: candidate.source(),

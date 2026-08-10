@@ -49,7 +49,21 @@ pub struct Analysis {
     projection_freshness: BTreeMap<SyntaxIdentity, ProjectionFreshness>,
     diagram_projections: BTreeMap<Arc<str>, Arc<crate::model::Diagram>>,
     revisioned_diagnostics: Arc<[RevisionedDiagnostic]>,
+    trace_records: Vec<TraceRecord>,
+    trace_outgoing: BTreeMap<String, std::ops::Range<usize>>,
+    trace_incoming: BTreeMap<(String, Option<String>), Vec<usize>>,
     session_revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TraceRecord {
+    pub behavior: String,
+    pub flow_edge_key: String,
+    pub trace_index: usize,
+    pub label: String,
+    pub href: String,
+    pub target: crate::model::TraceTarget,
+    pub source: crate::model::TraceSource,
 }
 
 pub struct UmlIslandSyntaxSnapshot {
@@ -170,6 +184,32 @@ impl Analysis {
 
     pub fn revisioned_diagnostics(&self) -> &[RevisionedDiagnostic] {
         &self.revisioned_diagnostics
+    }
+
+    pub fn traces_from(&self, flow_edge_key: &str) -> &[TraceRecord] {
+        self.trace_outgoing
+            .get(flow_edge_key)
+            .map_or(&[], |range| &self.trace_records[range.clone()])
+    }
+
+    pub fn traces_to(&self, concept_id: &str, fragment: Option<&str>) -> Vec<&TraceRecord> {
+        let mut indices = if let Some(fragment) = fragment {
+            self.trace_incoming
+                .get(&(concept_id.to_owned(), Some(fragment.to_owned())))
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            self.trace_incoming
+                .iter()
+                .filter(|((target, _), _)| target == concept_id)
+                .flat_map(|(_, indices)| indices.iter().copied())
+                .collect()
+        };
+        indices.sort_unstable();
+        indices
+            .into_iter()
+            .map(|index| &self.trace_records[index])
+            .collect()
     }
 
     pub fn referrers(&self, target: &str) -> Vec<String> {
@@ -487,6 +527,7 @@ pub fn analyze(
     }
     validate_declared_semantics(&context, &declared, &concept_paths, &mut diagnostics)?;
     let projection = declared_projection(&context, &declared, &concept_paths, &mut diagnostics)?;
+    let (trace_records, trace_outgoing, trace_incoming) = trace_indexes(&projection);
     let metadata = analysis_metadata(
         &context,
         previous,
@@ -508,8 +549,62 @@ pub fn analyze(
         projection_freshness: metadata.projection_freshness,
         diagram_projections: metadata.diagram_projections,
         revisioned_diagnostics: metadata.revisioned_diagnostics,
+        trace_records,
+        trace_outgoing,
+        trace_incoming,
         session_revision: context.session_revision,
     })
+}
+
+type TraceIncoming = BTreeMap<(String, Option<String>), Vec<usize>>;
+
+fn trace_indexes(
+    projection: &super::Projection,
+) -> (
+    Vec<TraceRecord>,
+    BTreeMap<String, std::ops::Range<usize>>,
+    TraceIncoming,
+) {
+    let mut records = Vec::new();
+    let mut outgoing = BTreeMap::new();
+    let mut incoming = BTreeMap::new();
+    for edge in &projection.flow_edges {
+        let start = records.len();
+        for (trace_index, trace) in edge.traces.iter().enumerate() {
+            let record_index = records.len();
+            match &trace.target {
+                crate::model::TraceTarget::InternalDocument { concept_id } => {
+                    incoming
+                        .entry((concept_id.clone(), None))
+                        .or_insert_with(Vec::new)
+                        .push(record_index);
+                }
+                crate::model::TraceTarget::InternalFragment {
+                    concept_id,
+                    fragment,
+                } => {
+                    incoming
+                        .entry((concept_id.clone(), Some(fragment.clone())))
+                        .or_insert_with(Vec::new)
+                        .push(record_index);
+                }
+                crate::model::TraceTarget::Https { .. }
+                | crate::model::TraceTarget::Unresolved { .. }
+                | crate::model::TraceTarget::Invalid { .. } => {}
+            }
+            records.push(TraceRecord {
+                behavior: edge.behavior.clone(),
+                flow_edge_key: edge.key.clone(),
+                trace_index,
+                label: trace.label.clone(),
+                href: trace.href.clone(),
+                target: trace.target.clone(),
+                source: trace.source.clone(),
+            });
+        }
+        outgoing.insert(edge.key.clone(), start..records.len());
+    }
+    (records, outgoing, incoming)
 }
 
 /// Recovers the authoritative syntax tree for one UML island, reusing the

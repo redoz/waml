@@ -169,7 +169,7 @@ impl LspAnalysisState {
                             ..heading.content_range.end().to_usize(),
                     )
                     .unwrap_or("");
-                heading_slug(text) == heading_slug(fragment)
+                waml::okf::fragment_slug(text) == waml::okf::fragment_slug(fragment)
             }),
             None => target_markdown.queries().headings().next(),
         }?;
@@ -450,17 +450,6 @@ fn normalized_physical(path: &Path) -> PathBuf {
     PathBuf::from(path.to_string_lossy().replace('\\', "/"))
 }
 
-fn heading_slug(value: &str) -> String {
-    value
-        .trim()
-        .trim_start_matches('#')
-        .trim()
-        .to_lowercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
 fn completion_item_kind(kind: CompletionKind) -> lsp::CompletionItemKind {
     match kind {
         CompletionKind::Keyword => lsp::CompletionItemKind::KEYWORD,
@@ -471,7 +460,6 @@ fn completion_item_kind(kind: CompletionKind) -> lsp::CompletionItemKind {
         CompletionKind::Name => lsp::CompletionItemKind::VARIABLE,
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
