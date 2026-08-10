@@ -199,6 +199,7 @@ pub fn completions(
     let concept_id = crate::okf::id_of(version.path().as_str());
     if let Some(concept) = context.uml().declared.concept(&concept_id) {
         candidates.extend(in_document_refs(&expectation, concept));
+        candidates.extend(type_driven(&expectation, &context, concept, version.path()));
     }
     candidates.extend(link_targets(&expectation, &context, version.path()));
     // Later slices append further providers here; each is selected on the slot
@@ -573,4 +574,90 @@ fn relative_href(from: &crate::source::BundlePath, to: &crate::source::BundlePat
     }
     href.push_str(to.as_str());
     href
+}
+
+/// Whether `expectation`'s operand sits in a `Slot`'s name half rather than
+/// its value half. `simple_item`/`classifier_tokens` (parser.rs) lex a
+/// slot's name and value as flat `IdentifierToken` siblings of the same
+/// `Slot` node -- neither gets its own wrapping node -- so the two are told
+/// apart only by position relative to the slot's `ColonToken` sibling.
+/// Absent entirely (an empty bullet has no colon at all, so the parser lays
+/// a single placeholder `IdentifierToken` directly) means there is nothing
+/// to be but the name.
+fn is_slot_name_position(expectation: &Expectation) -> bool {
+    if expectation.slot != UmlSyntaxKind::Slot {
+        return false;
+    }
+    let mut past_colon = false;
+    for child in expectation.node.children() {
+        if let SyntaxElement::Token(token) = &child {
+            if *token == expectation.operand {
+                return !past_colon;
+            }
+            if token.kind() == UmlSyntaxKind::ColonToken {
+                past_colon = true;
+            }
+        }
+    }
+    true
+}
+
+/// The classifier a concept's own `## Slots` describe: the target of an
+/// `instance of` relationship declared in its `## Relationships`, resolved
+/// the same way `SlotUnknownAttribute`'s own check resolves it (see the
+/// first loop over `concept.slots` in `analysis.rs`). `None` when there is
+/// no such relationship, or it does not resolve, which is the ordinary case
+/// in a plain classifier document -- a slot position offers nothing there.
+fn instance_of_classifier(
+    concept: &DeclaredConcept,
+    from: &crate::source::BundlePath,
+) -> Option<String> {
+    concept.relationships.iter().find_map(|relationship| {
+        let DeclaredField::Valid { value: kind, .. } = &relationship.kind else {
+            return None;
+        };
+        if *kind != crate::model::RelationshipKind::InstanceOf {
+            return None;
+        }
+        let DeclaredField::Valid { value: href, .. } = &relationship.target else {
+            return None;
+        };
+        Some(crate::okf::resolve_href(from.as_str(), href))
+    })
+}
+
+/// Slot names from the concept's own classifier's attributes -- the accept
+/// set `SlotUnknownAttribute` already computes for `concept.slots` against an
+/// `instance of` relationship. The value half is not offered: an empty slot
+/// value ("- status: |") never gets a token at all, missing or otherwise, so
+/// there is no position to hang a value provider on -- see
+/// `a_slot_value_is_not_yet_a_completion_position` in
+/// `uml_completion_locator.rs`.
+fn type_driven(
+    expectation: &Expectation,
+    context: &ActionContext<'_>,
+    concept: &DeclaredConcept,
+    from: &crate::source::BundlePath,
+) -> Vec<Completion> {
+    if expectation.token != UmlSyntaxKind::IdentifierToken || !is_slot_name_position(expectation) {
+        return Vec::new();
+    }
+    let Some(classifier) = instance_of_classifier(concept, from) else {
+        return Vec::new();
+    };
+    let Some(target) = context.uml().projection.node(&classifier) else {
+        return Vec::new();
+    };
+    let replace = expectation.prefix;
+    target
+        .attributes
+        .iter()
+        .map(|attribute| Completion {
+            label: Arc::from(attribute.name.as_str()),
+            insert: Arc::from(attribute.name.as_str()),
+            kind: CompletionKind::Field,
+            detail: Some(Arc::from(attribute.ty.name.as_str())),
+            replace,
+        })
+        .collect()
 }

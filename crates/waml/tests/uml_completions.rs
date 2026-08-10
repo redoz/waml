@@ -355,3 +355,55 @@ fn a_stale_session_revision_is_an_error_before_any_candidate_is_computed() {
         Err(waml::action::ActionError::MismatchedAnalysisRevision { .. })
     ));
 }
+
+const TYPED: [(&str, &str); 2] = [
+    (
+        "order.md",
+        "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n## Attributes\n\n- status: Status\n- total: Number\n",
+    ),
+    (
+        "status.md",
+        "---\ntype: uml.Enum\ntitle: Status\n---\n# Status\n\n## Values\n\n- Draft\n- Placed\n",
+    ),
+];
+
+fn typed_labels(marked: &str) -> Vec<(String, CompletionKind)> {
+    let offset = marked.find('|').expect("the case must place a cursor");
+    let text = marked.replacen('|', "", 1);
+    let mut pairs = vec![("doc.md", text.as_str())];
+    pairs.extend(TYPED);
+    let candidate =
+        prepare_candidate(SourceBundle::try_from_pairs(pairs).unwrap(), None, 6).unwrap();
+    let id = candidate
+        .okf()
+        .catalog
+        .id_for_path(&BundlePath::parse("doc.md").unwrap())
+        .unwrap();
+    completions(
+        ActionContext::from_prepared(&candidate).unwrap(),
+        id,
+        TextSize::try_from_usize(offset).unwrap(),
+    )
+    .unwrap()
+    .into_iter()
+    .map(|completion| (completion.label.to_string(), completion.kind))
+    .collect()
+}
+
+#[test]
+fn an_empty_slot_offers_the_instance_of_classifiers_attributes() {
+    // The document is itself the instance -- `## Slots` are its own, and the
+    // classifier they're checked against comes from `## Relationships`'
+    // `instance of`, mirroring `tests/fixtures/parser-platform/object.md`.
+    let offered = typed_labels(concat!(
+        "---\ntype: uml.InstanceSpecification\ntitle: O\n---\n# O\n\n",
+        "## Slots\n\n- |\n\n## Relationships\n\n- instance of [Order](./order.md)\n"
+    ));
+    let fields = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Field)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(fields.contains(&"status"), "{fields:?}");
+    assert!(fields.contains(&"total"), "{fields:?}");
+}

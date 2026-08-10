@@ -148,3 +148,33 @@ fn an_empty_bullet_in_messages_locates_the_message_source_not_the_fragment_kind(
         Some((UmlSyntaxKind::MessageSource, UmlSyntaxKind::SourceToken))
     );
 }
+
+#[test]
+fn a_slot_value_is_not_yet_a_completion_position() {
+    // KNOWN GAP: `simple_item` (parser.rs) only lays a placeholder
+    // `IdentifierToken` when the whole bullet body is empty -- the slot NAME
+    // half, `- |`, which is why `an_empty_slot_bullet_locates_the_slot_name`
+    // below works. Once a name and a colon are present, the remainder of the
+    // line is lexed by `classifier_tokens`, which produces nothing at all
+    // when there is no more text -- so an empty value ("- status: |") never
+    // gets a token, missing or otherwise, and the locator finds nothing.
+    // Task 12 in the plan drops the value half of type-driven completions for
+    // this reason; the name half still lands.
+    let located = locate(concat!(
+        "---\ntype: uml.InstanceSpecification\ntitle: O\n---\n# O\n\n",
+        "## Slots\n\n- [A](./a.md) as a\n  - status: |\n"
+    ));
+    assert_eq!(located, None);
+}
+
+#[test]
+fn an_empty_slot_bullet_locates_the_slot_name() {
+    let located = locate(concat!(
+        "---\ntype: uml.InstanceSpecification\ntitle: O\n---\n# O\n\n",
+        "## Slots\n\n- [A](./a.md) as a\n  - |\n"
+    ));
+    assert_eq!(
+        located.map(|(slot, token, _)| (slot, token)),
+        Some((UmlSyntaxKind::Slot, UmlSyntaxKind::IdentifierToken))
+    );
+}
