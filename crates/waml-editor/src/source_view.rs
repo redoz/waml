@@ -1568,7 +1568,7 @@ mod tests {
         let editor = body.markdown_editor();
         editor.set_paint_evidence_enabled(true);
         let authored = concat!(
-            "---\ntype: Runbook\n---\n",
+            "---\ntype: uml.ClassDiagram\n---\n",
             "# [Runbook](target)\n\n",
             "`code`\n\n",
             "> quote\n\n",
@@ -1690,7 +1690,20 @@ mod tests {
             .map(|command| command.translated(mounted.pos + gutter))
             .collect::<Vec<_>>();
         let painted_commands = editor.test_painted_commands();
-        assert_eq!(painted_commands, expected_commands);
+        if painted_commands != expected_commands {
+            let mismatch = painted_commands
+                .iter()
+                .zip(&expected_commands)
+                .position(|(painted, expected)| painted != expected)
+                .unwrap_or_else(|| painted_commands.len().min(expected_commands.len()));
+            panic!(
+                "first command mismatch at {mismatch}: painted={:?}, expected={:?}; counts painted={}, expected={}",
+                painted_commands.get(mismatch),
+                expected_commands.get(mismatch),
+                painted_commands.len(),
+                expected_commands.len(),
+            );
+        }
         let painted_layers = painted_commands
             .iter()
             .map(DrawCommand::layer)
@@ -1737,6 +1750,186 @@ mod tests {
                         && (painted.y - (local.y + mounted.pos.y)).abs() < 1.0e-4
                 })
             }));
+    }
+
+    #[test]
+    fn mounted_diagnostic_draw_translates_warning_and_embedded_state_once() {
+        use waml_markdown_editor::presentation::{DecorationRole, PresentedDiagnosticSeverity};
+
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let body = BodyWidgets::new(&mut cx, &ui);
+        let editor = body.markdown_editor();
+        editor.set_paint_evidence_enabled(true);
+        let authored = "---\ntype: Runbook\n---\n# Runbook\n\n![loading](loading.svg)\n";
+        let mut host = crate::editor_session::EditorSession::default();
+        host.replace(SourceBundle::try_from_pairs([("runbook.md", authored)]).unwrap())
+            .unwrap();
+        let snapshot = host.snapshot();
+        let mut view = source_view("runbook");
+        view.install_snapshot(&mut cx, &body, &snapshot, HostSnapshotCause::InitialLoad);
+        let SourceViewState::Ready(ready) = &mut view.state else {
+            panic!("the source view must retain its ready presentation");
+        };
+        let image_id = ready
+            .plan
+            .items
+            .iter()
+            .find_map(|item| match item {
+                PresentationItem::EmbeddedBlock { id, .. } => Some(*id),
+                _ => None,
+            })
+            .expect("the fixture must contain an embedded block");
+        let assets = Arc::new(EmbeddedAssetFrame {
+            revision: ready.plan.revision,
+            items: Arc::from([(image_id, EmbeddedState::Loading)]),
+        });
+        let layout_document = Arc::new(
+            build_layout_document(
+                &ready.plan,
+                &ready.styles,
+                &waml_markdown_editor::presentation::EmbeddedMeasurements::default(),
+            )
+            .unwrap(),
+        );
+        editor.install_presentation(
+            &mut cx,
+            InstalledPresentation::new(
+                ready.plan.clone(),
+                ready.styles.clone(),
+                layout_document,
+                ready.diagnostics.clone(),
+                assets.clone(),
+            )
+            .unwrap(),
+            LayoutChangeCause::InitialLoad,
+        );
+        let mounted = Rect {
+            pos: dvec2(280.0, 40.0),
+            size: dvec2(600.0, 1000.0),
+        };
+        draw_markdown_widget_at(&mut cx, &ui, &mut ready.session, mounted);
+        let frame = PresentationFrame {
+            revision: ready.plan.revision,
+            layout: editor
+                .frame_layout()
+                .expect("the mounted draw installs a frame"),
+            active_owners: ready
+                .plan
+                .active_owners(ready.session.selections().primary().cursor.offset),
+            diagnostics: ready.diagnostics.clone(),
+            assets,
+        };
+        let local = build_draw_commands(
+            &frame,
+            &ready.plan,
+            &ready.styles,
+            ready.session.selections(),
+            ready.session.ime(),
+        )
+        .unwrap();
+        let painted = editor.test_painted_commands();
+        let offset = mounted.pos + dvec2(editor.test_gutter_width(&mut cx, &ready.session), 0.0);
+
+        let local_warning = local
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::Decoration {
+                    rects,
+                    role: DecorationRole::DiagnosticUnderline(PresentedDiagnosticSeverity::Warning),
+                    ..
+                } => Some(rects),
+                _ => None,
+            })
+            .expect("the local frame must contain a warning underline");
+        let painted_warnings = painted
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::Decoration {
+                    rects,
+                    role: DecorationRole::DiagnosticUnderline(PresentedDiagnosticSeverity::Warning),
+                    ..
+                } => Some(rects),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(painted_warnings.len(), 1);
+        assert_eq!(
+            painted_warnings[0].as_ref(),
+            local_warning
+                .iter()
+                .copied()
+                .map(|rect| Rect {
+                    pos: rect.pos + offset,
+                    ..rect
+                })
+                .collect::<Vec<_>>()
+        );
+
+        let local_message = local
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::DiagnosticMessage {
+                    line,
+                    rect,
+                    text,
+                    severity,
+                } => Some((*line, *rect, text.clone(), *severity)),
+                _ => None,
+            })
+            .expect("the local frame must contain a diagnostic message");
+        let painted_messages = painted
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::DiagnosticMessage {
+                    line,
+                    rect,
+                    text,
+                    severity,
+                } => Some((*line, *rect, text.clone(), *severity)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(painted_messages.len(), 1);
+        assert_eq!(painted_messages[0].0, local_message.0);
+        assert_eq!(painted_messages[0].1.pos, local_message.1.pos + offset);
+        assert_eq!(painted_messages[0].2, local_message.2);
+        assert_eq!(painted_messages[0].3, local_message.3);
+
+        let local_embedded = local
+            .iter()
+            .find_map(|command| match command {
+                DrawCommand::EmbeddedBlock {
+                    rect,
+                    state: EmbeddedState::Loading,
+                    ..
+                } => Some(*rect),
+                _ => None,
+            })
+            .expect("the local frame must contain the loading block");
+        let painted_embedded = painted
+            .iter()
+            .filter_map(|command| match command {
+                DrawCommand::EmbeddedBlock {
+                    rect,
+                    state: EmbeddedState::Loading,
+                    ..
+                } => Some(*rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            painted_embedded,
+            vec![Rect {
+                pos: local_embedded.pos + offset,
+                ..local_embedded
+            }]
+        );
+        assert_eq!(
+            editor.test_painted_embedded_states(),
+            vec![EmbeddedState::Loading]
+        );
     }
 
     #[test]
