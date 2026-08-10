@@ -9,11 +9,23 @@ pub(crate) enum UseCaseMemberKind {
     Incompatible,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UseCaseMemberSource {
+    Declared(usize),
+    Inline(usize),
+}
+
+pub(crate) struct UseCaseMemberInput {
+    pub name: String,
+    pub kind: UseCaseMemberKind,
+    pub source: UseCaseMemberSource,
+}
+
 pub(crate) struct UseCaseGroupInput {
     pub name: String,
     pub path: Vec<usize>,
     pub depth: usize,
-    pub members: Vec<(String, UseCaseMemberKind)>,
+    pub members: Vec<UseCaseMemberInput>,
     pub children: Vec<UseCaseGroupInput>,
 }
 
@@ -34,11 +46,13 @@ pub(crate) enum UseCaseViolation {
         group: String,
         path: Vec<usize>,
         member: String,
+        source: UseCaseMemberSource,
     },
     ActorInsideBoundary {
         group: String,
         path: Vec<usize>,
         member: String,
+        source: UseCaseMemberSource,
     },
     EmptyBand {
         group: String,
@@ -55,9 +69,9 @@ pub(crate) fn classify_group(input: &UseCaseGroupInput) -> UseCaseGroupVerdict {
 }
 
 fn classify_top_level(input: &UseCaseGroupInput) -> UseCaseGroupVerdict {
-    let has_actor = input.members.iter().any(|(_, kind)| {
+    let has_actor = input.members.iter().any(|member| {
         matches!(
-            kind,
+            member.kind,
             UseCaseMemberKind::Actor | UseCaseMemberKind::ActorPackage
         )
     });
@@ -65,9 +79,9 @@ fn classify_top_level(input: &UseCaseGroupInput) -> UseCaseGroupVerdict {
 
     if !is_system_boundary_candidate && has_actor {
         let mut violations = Vec::new();
-        for (member, kind) in &input.members {
+        for member in &input.members {
             if !matches!(
-                kind,
+                member.kind,
                 UseCaseMemberKind::Actor
                     | UseCaseMemberKind::Note
                     | UseCaseMemberKind::ActorPackage
@@ -75,7 +89,8 @@ fn classify_top_level(input: &UseCaseGroupInput) -> UseCaseGroupVerdict {
                 violations.push(UseCaseViolation::IncompatibleMember {
                     group: input.name.clone(),
                     path: input.path.clone(),
-                    member: member.clone(),
+                    member: member.name.clone(),
+                    source: member.source,
                 });
             }
         }
@@ -108,13 +123,14 @@ fn classify_top_level(input: &UseCaseGroupInput) -> UseCaseGroupVerdict {
     }
 
     let mut violations = Vec::new();
-    for (member, kind) in &input.members {
-        match kind {
+    for member in &input.members {
+        match member.kind {
             UseCaseMemberKind::Actor | UseCaseMemberKind::ActorPackage => {
                 violations.push(UseCaseViolation::ActorInsideBoundary {
                     group: input.name.clone(),
                     path: input.path.clone(),
-                    member: member.clone(),
+                    member: member.name.clone(),
+                    source: member.source,
                 });
             }
             UseCaseMemberKind::UseCase | UseCaseMemberKind::Note => {}
@@ -122,7 +138,8 @@ fn classify_top_level(input: &UseCaseGroupInput) -> UseCaseGroupVerdict {
                 violations.push(UseCaseViolation::IncompatibleMember {
                     group: input.name.clone(),
                     path: input.path.clone(),
-                    member: member.clone(),
+                    member: member.name.clone(),
+                    source: member.source,
                 });
             }
         }
@@ -144,20 +161,21 @@ fn classify_band(input: &UseCaseGroupInput) -> UseCaseGroupVerdict {
     let has_use_case = input
         .members
         .iter()
-        .any(|(_, kind)| *kind == UseCaseMemberKind::UseCase);
+        .any(|member| member.kind == UseCaseMemberKind::UseCase);
     if !has_use_case {
         violations.push(UseCaseViolation::EmptyBand {
             group: input.name.clone(),
             path: input.path.clone(),
         });
     }
-    for (member, kind) in &input.members {
-        match kind {
+    for member in &input.members {
+        match member.kind {
             UseCaseMemberKind::Actor | UseCaseMemberKind::ActorPackage => {
                 violations.push(UseCaseViolation::ActorInsideBoundary {
                     group: input.name.clone(),
                     path: input.path.clone(),
-                    member: member.clone(),
+                    member: member.name.clone(),
+                    source: member.source,
                 });
             }
             UseCaseMemberKind::UseCase | UseCaseMemberKind::Note => {}
@@ -165,7 +183,8 @@ fn classify_band(input: &UseCaseGroupInput) -> UseCaseGroupVerdict {
                 violations.push(UseCaseViolation::IncompatibleMember {
                     group: input.name.clone(),
                     path: input.path.clone(),
-                    member: member.clone(),
+                    member: member.name.clone(),
+                    source: member.source,
                 });
             }
         }
@@ -188,6 +207,6 @@ fn group_contains_use_case(input: &UseCaseGroupInput) -> bool {
     input
         .members
         .iter()
-        .any(|(_, kind)| *kind == UseCaseMemberKind::UseCase)
+        .any(|member| member.kind == UseCaseMemberKind::UseCase)
         || input.children.iter().any(group_contains_use_case)
 }

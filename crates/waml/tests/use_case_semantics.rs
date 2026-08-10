@@ -635,3 +635,76 @@ fn incompatible_member_diagnostic_points_to_the_member_target() {
         "./account.md",
     );
 }
+
+#[test]
+fn incompatible_inline_instance_diagnostic_points_to_the_instance_name() {
+    let body = "\n## Members\n\n### People\n- [Buyer](./buyer.md)\n- instance of [Account](./account.md) as primary\n";
+    let source = document("uml.UseCaseDiagram", "Use cases", body);
+    let found = candidate(
+        body,
+        &[
+            ("buyer.md", "uml.Actor", "Buyer"),
+            ("account.md", "uml.Class", "Account"),
+        ],
+    );
+    let diagnostics = use_case_diagnostics(&found);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_diagnostic_provenance(
+        diagnostics[0],
+        &source,
+        DiagCode::InvalidUseCaseGroup,
+        "use-case group 'People' has incompatible member 'diagram#primary'",
+        10,
+        (41, 48),
+        "primary",
+    );
+}
+
+#[test]
+fn duplicate_actor_diagnostics_point_to_each_reference() {
+    let body = "\n## Members\n\n### Checkout\n- [Buyer one](./buyer.md)\n- [Pay](./pay.md)\n- [Buyer two](./buyer.md)\n";
+    let source = document("uml.UseCaseDiagram", "Use cases", body);
+    let found = candidate(
+        body,
+        &[
+            ("buyer.md", "uml.Actor", "Buyer"),
+            ("pay.md", "uml.UseCase", "Pay"),
+        ],
+    );
+    let diagnostics = use_case_diagnostics(&found);
+
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+    for (diagnostic, ranged) in diagnostics.iter().zip(["./buyer.md", "./buyer.md"]) {
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.code, DiagCode::ActorInsideSystemBoundary);
+        assert_eq!(
+            diagnostic.message,
+            "actor 'buyer' is inside system boundary 'Checkout'"
+        );
+        assert_eq!(diagnostic.file, "diagram.md");
+        let expected_start = if diagnostic.line == 9 {
+            source.find(ranged).unwrap()
+        } else {
+            source.rfind(ranged).unwrap()
+        };
+        assert_eq!(
+            diagnostic.range,
+            Some(
+                TextRange::new(
+                    TextSize::new(expected_start as u32),
+                    TextSize::new((expected_start + ranged.len()) as u32),
+                )
+                .unwrap()
+            )
+        );
+    }
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.line)
+            .collect::<Vec<_>>(),
+        [9, 11]
+    );
+    assert_ne!(diagnostics[0].range, diagnostics[1].range);
+}

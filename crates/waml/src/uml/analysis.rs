@@ -1779,26 +1779,40 @@ fn use_case_group_input(
     let mut members = group
         .members
         .iter()
-        .filter_map(|member| match &member.target {
+        .enumerate()
+        .filter_map(|(index, member)| match &member.target {
             crate::uml::DeclaredField::Valid { value, .. } => {
                 let target = crate::okf::resolve_href(path, value);
                 claimed.contains(target.as_str()).then(|| {
                     let kind = use_case_member_kind(declared, concept_paths, context, &target);
-                    (target, kind)
+                    super::use_case::UseCaseMemberInput {
+                        name: target,
+                        kind,
+                        source: super::use_case::UseCaseMemberSource::Declared(index),
+                    }
                 })
             }
             _ => None,
         })
         .collect::<Vec<_>>();
-    members.extend(group.inline_instances.iter().filter_map(
-        |inline| match inline_instance_validity(inline, path, claimed) {
-            InlineInstanceValidity::Valid(ValidInlineInstance { name, .. }) => Some((
-                format!("{}#{name}", crate::okf::id_of(path)),
-                super::use_case::UseCaseMemberKind::Incompatible,
-            )),
-            InlineInstanceValidity::Invalid | InlineInstanceValidity::Unresolved => None,
-        },
-    ));
+    members.extend(
+        group
+            .inline_instances
+            .iter()
+            .enumerate()
+            .filter_map(
+                |(index, inline)| match inline_instance_validity(inline, path, claimed) {
+                    InlineInstanceValidity::Valid(ValidInlineInstance { name, .. }) => {
+                        Some(super::use_case::UseCaseMemberInput {
+                            name: format!("{}#{name}", crate::okf::id_of(path)),
+                            kind: super::use_case::UseCaseMemberKind::Incompatible,
+                            source: super::use_case::UseCaseMemberSource::Inline(index),
+                        })
+                    }
+                    InlineInstanceValidity::Invalid | InlineInstanceValidity::Unresolved => None,
+                },
+            ),
+    );
     Some(super::use_case::UseCaseGroupInput {
         name,
         path: group_path.clone(),
@@ -1873,21 +1887,23 @@ fn report_use_case_violation(
         UseCaseViolation::IncompatibleMember {
             group: group_name,
             member,
+            source,
             ..
         } => (
             crate::diagnostic::DiagCode::InvalidUseCaseGroup,
             format!("use-case group '{group_name}' has incompatible member '{member}'"),
-            declared_member_target_range(declared_group, authored_path, member)
+            declared_member_target_range(declared_group, authored_path, member, *source)
                 .unwrap_or(heading_range),
         ),
         UseCaseViolation::ActorInsideBoundary {
             group: group_name,
             member,
+            source,
             ..
         } => (
             crate::diagnostic::DiagCode::ActorInsideSystemBoundary,
             format!("actor '{member}' is inside system boundary '{group_name}'"),
-            declared_member_target_range(declared_group, authored_path, member)
+            declared_member_target_range(declared_group, authored_path, member, *source)
                 .unwrap_or(heading_range),
         ),
         UseCaseViolation::EmptyBand {
@@ -1917,22 +1933,36 @@ fn declared_member_target_range(
     group: &crate::uml::DeclaredMemberGroup,
     authored_path: &str,
     target: &str,
+    source: super::use_case::UseCaseMemberSource,
 ) -> Option<TextRange> {
-    group.members.iter().find_map(|member| {
-        let crate::uml::DeclaredField::Valid { value, .. } = &member.target else {
-            return None;
-        };
-        (crate::okf::resolve_href(authored_path, value) == target)
-            .then(|| member.syntax.target_token().map(|token| token.range()))
-            .flatten()
-    })
+    match source {
+        super::use_case::UseCaseMemberSource::Declared(index) => {
+            let member = group.members.get(index)?;
+            let crate::uml::DeclaredField::Valid { value, .. } = &member.target else {
+                return None;
+            };
+            (crate::okf::resolve_href(authored_path, value) == target)
+                .then(|| member.syntax.target_token().map(|token| token.range()))
+                .flatten()
+        }
+        super::use_case::UseCaseMemberSource::Inline(index) => {
+            let inline = group.inline_instances.get(index)?;
+            Some(
+                inline
+                    .syntax
+                    .name_token()
+                    .map(|token| trimmed_token_range(&token))
+                    .unwrap_or_else(|| inline.syntax.syntax().range()),
+            )
+        }
+    }
 }
 
 fn collect_group_members(
     group: &super::use_case::UseCaseGroupInput,
     members: &mut BTreeSet<String>,
 ) {
-    members.extend(group.members.iter().map(|(member, _)| member.clone()));
+    members.extend(group.members.iter().map(|member| member.name.clone()));
     for child in &group.children {
         collect_group_members(child, members);
     }
