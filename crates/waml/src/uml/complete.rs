@@ -78,11 +78,25 @@ pub fn expectation_at(tree: &SyntaxTree<UmlLanguage>, offset: TextSize) -> Optio
     // is itself a completion candidate counts here -- the cursor merely
     // touching the end of a fixed keyword (e.g. `as|` with no space) is not
     // "typing into" that keyword, so it falls through to the next rule.
+    //
+    // A token can also be present-but-empty rather than missing: `relationship_link`
+    // always lays down a real (non-missing) `LinkTargetToken` once it sees a
+    // balanced `[...](...)`, even when nothing sits between the parens yet --
+    // unlike most other slots, which stay `missing_token` until something is
+    // typed. For that zero-width case there is no "left of the token" to be
+    // strictly past, so the position is a match exactly at the token's own
+    // (single) offset.
     let typed = tokens.iter().find(|token| {
-        COMPLETION_TOKENS.contains(&token.kind())
-            && !token.flags().is_missing()
-            && token.trimmed_range().start().to_usize() < offset.to_usize()
-            && offset.to_usize() <= token.trimmed_range().end().to_usize()
+        if !COMPLETION_TOKENS.contains(&token.kind()) || token.flags().is_missing() {
+            return false;
+        }
+        let range = token.trimmed_range();
+        if range.start() == range.end() {
+            range.start().to_usize() == offset.to_usize()
+        } else {
+            range.start().to_usize() < offset.to_usize()
+                && offset.to_usize() <= range.end().to_usize()
+        }
     });
     if let Some(token) = typed {
         return expectation(token.clone(), token.trimmed_range());
@@ -186,6 +200,7 @@ pub fn completions(
     if let Some(concept) = context.uml().declared.concept(&concept_id) {
         candidates.extend(in_document_refs(&expectation, concept));
     }
+    candidates.extend(link_targets(&expectation, &context, version.path()));
     // Later slices append further providers here; each is selected on the slot
     // and token kinds alone, so adding a family is a new function and a match
     // arm and the locator never changes.
@@ -463,4 +478,99 @@ fn in_document_refs(expectation: &Expectation, concept: &DeclaredConcept) -> Vec
         }
         _ => Vec::new(),
     }
+}
+
+/// Documents from the OKF catalog, filtered by what the enclosing section
+/// accepts. Insert the bundle-relative path, label with the document title,
+/// reusing the resolution `UnresolvedTarget` already performs so a chosen path
+/// round-trips.
+fn link_targets(
+    expectation: &Expectation,
+    context: &ActionContext<'_>,
+    from: &crate::source::BundlePath,
+) -> Vec<Completion> {
+    if expectation.token != UmlSyntaxKind::LinkTargetToken {
+        return Vec::new();
+    }
+    let wants_classifier = matches!(
+        section_of(&expectation.node),
+        Some(UmlSyntaxKind::LifelinesSection) | Some(UmlSyntaxKind::MembersSection)
+    );
+    let mut out = Vec::new();
+    for document in context.okf().catalog.documents().values() {
+        let path = document.path();
+        if path == from {
+            continue;
+        }
+        let Some(concept) = context
+            .okf()
+            .bundle
+            .concept(&crate::okf::id_of(path.as_str()))
+        else {
+            continue;
+        };
+        let element_type = crate::model::ElementType::parse(&concept.ty);
+        if wants_classifier && !element_type.is_classifier() {
+            continue;
+        }
+        let href = relative_href(from, path);
+        // Round-trip guard: only offer a path that resolves back to this
+        // document, so a candidate can never produce UnresolvedTarget.
+        if crate::okf::resolve_href(from.as_str(), &href) != crate::okf::id_of(path.as_str()) {
+            continue;
+        }
+        let label = concept
+            .title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| path.as_str());
+        out.push(Completion {
+            label: Arc::from(label),
+            insert: Arc::from(href.as_str()),
+            kind: CompletionKind::Link,
+            detail: Some(Arc::from(path.as_str())),
+            replace: expectation.prefix,
+        });
+    }
+    out
+}
+
+/// The WAML section a node sits in, or `None` for a node outside one.
+fn section_of(node: &SyntaxNode<UmlLanguage>) -> Option<UmlSyntaxKind> {
+    let mut current = Some(node.clone());
+    while let Some(candidate) = current {
+        if matches!(
+            candidate.kind(),
+            UmlSyntaxKind::AttributesSection
+                | UmlSyntaxKind::ValuesSection
+                | UmlSyntaxKind::SlotsSection
+                | UmlSyntaxKind::RelationshipsSection
+                | UmlSyntaxKind::MembersSection
+                | UmlSyntaxKind::LayoutSection
+                | UmlSyntaxKind::FlowSection
+                | UmlSyntaxKind::LifelinesSection
+                | UmlSyntaxKind::MessagesSection
+                | UmlSyntaxKind::GatesSection
+        ) {
+            return Some(candidate.kind());
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+/// A bundle-relative href from `from` to `to`, in the `./name.md` form the
+/// corpus already uses.
+fn relative_href(from: &crate::source::BundlePath, to: &crate::source::BundlePath) -> String {
+    let depth = from.as_str().matches('/').count();
+    let mut href = String::new();
+    if depth == 0 {
+        href.push_str("./");
+    } else {
+        for _ in 0..depth {
+            href.push_str("../");
+        }
+    }
+    href.push_str(to.as_str());
+    href
 }

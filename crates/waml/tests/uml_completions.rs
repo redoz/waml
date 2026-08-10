@@ -299,6 +299,55 @@ fn layout_offers_diagram_member_names() {
 }
 
 #[test]
+fn a_link_target_offers_catalog_documents_labelled_by_title() {
+    let offered = labels(&sequence("## Lifelines\n\n- [Buyer](|)\n"));
+    let links = offered
+        .iter()
+        .filter(|(_, kind)| *kind == CompletionKind::Link)
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(links.contains(&"A"), "{links:?}");
+    assert!(links.contains(&"B"), "{links:?}");
+    assert!(
+        !links.contains(&"S"),
+        "a document must not link to itself: {links:?}"
+    );
+}
+
+#[test]
+fn a_link_target_inserts_a_bundle_relative_path_that_round_trips() {
+    let marked = sequence("## Lifelines\n\n- [Buyer](|)\n");
+    let offset = marked.find('|').unwrap();
+    let text = marked.replacen('|', "", 1);
+    let candidate = prepared(&text, 3);
+    let offered = completions(
+        ActionContext::from_prepared(&candidate).unwrap(),
+        document(&candidate),
+        TextSize::try_from_usize(offset).unwrap(),
+    )
+    .unwrap();
+    let chosen = offered
+        .iter()
+        .find(|completion| completion.label.as_ref() == "A")
+        .expect("A is offered");
+    let mut applied = text.clone();
+    applied.replace_range(
+        chosen.replace.start().to_usize()..chosen.replace.end().to_usize(),
+        &chosen.insert,
+    );
+    let reanalyzed = prepared(&applied, 4);
+    assert!(
+        reanalyzed
+            .uml()
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != waml::diagnostic::DiagCode::UnresolvedTarget),
+        "{:?} in {applied}",
+        reanalyzed.uml().diagnostics
+    );
+}
+
+#[test]
 fn a_stale_session_revision_is_an_error_before_any_candidate_is_computed() {
     let candidate = prepared("---\ntype: uml.Class\n---\n# C\n", 3);
     assert!(matches!(
