@@ -11,7 +11,7 @@ use crate::diagram_display::resolve_display;
 use crate::diagram_properties::{DiagramPropertiesAction, DiagramPropertiesWidgetRefExt};
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, PopupRequest,
-    ViewData, ViewOutcome, ViewReconcilePolicy,
+    RevealTarget, ViewData, ViewOutcome, ViewReconcilePolicy,
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icons::Icon;
@@ -1024,6 +1024,21 @@ impl DocView for ClassDiagramView {
         }
     }
 
+    /// A search hit lands on a classifier: select its node and frame it
+    /// (spec §DocView::reveal). `TextSpan` targets don't apply to a canvas
+    /// view and are ignored.
+    fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &RevealTarget) {
+        let RevealTarget::ModelElement { key } = target else {
+            return;
+        };
+        if let Some(mut canvas) = body
+            .canvas_ref()
+            .borrow_mut::<crate::canvas::ClassDiagramSurface>()
+        {
+            canvas.reveal_by_key(cx, key);
+        }
+    }
+
     fn restore_anchor(
         &mut self,
         cx: &mut Cx,
@@ -1063,8 +1078,10 @@ mod tests {
         ClassDiagramMode, ClassDiagramView, DiagramRefresh,
     };
     use crate::canvas::ConstraintVisibility;
+    use crate::diagram_display::resolve_display;
     use crate::diagram_properties::DiagramPropertiesAction;
     use crate::doc_view::{BodyChrome, DocView, ViewOutcome, ViewReconcilePolicy};
+    use crate::scene::build_scene;
     use crate::tool_dock::{Tool, ToolDockAction};
     use crate::view_bar::{ViewBarAction, ViewOption};
     use crate::view_history::ViewAnchor;
@@ -1072,6 +1089,7 @@ mod tests {
         live_id, Area, Cx, DrawList, LiveId, RectArea, ScriptApply, ScriptNew, ScriptVm,
         ScriptVmCx, Trigger, Walk, Widget, WidgetNode, WidgetRef, WidgetUid,
     };
+    use std::collections::HashSet;
     use std::path::Path;
     use waml::analysis::ProjectionFreshness;
     use waml::model::CardinalityVisibility;
@@ -1807,6 +1825,109 @@ mod tests {
             .borrow::<crate::view_bar::ViewBar>()
             .unwrap()
             .fit_to_selection_enabled_for_test());
+    }
+
+    #[test]
+    fn reveal_model_element_selects_and_centres_the_camera_on_the_node() {
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = crate::doc_view::BodyWidgets::new(cx, &ui);
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
+        let source = crate::load::read_bundle(&dir).unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+        let mut view = ClassDiagramView::new("orders-diagram".into());
+        view.sync(
+            cx,
+            &body,
+            crate::doc_view::ViewData {
+                source: &source,
+                okf_analysis: &okf_analysis,
+                uml_analysis: &uml_analysis,
+                revision,
+            },
+        );
+
+        view.reveal(
+            cx,
+            &body,
+            &crate::doc_view::RevealTarget::ModelElement {
+                key: "customer".into(),
+            },
+        );
+
+        let ViewAnchor::Diagram {
+            selected_key,
+            camera,
+        } = view.capture_anchor(&body)
+        else {
+            panic!("reveal on a class diagram view must leave a Diagram anchor");
+        };
+        assert_eq!(selected_key.as_deref(), Some("customer"));
+
+        let model = &uml_analysis.projection;
+        let diagram = model
+            .diagrams
+            .iter()
+            .find(|d| d.key == "orders-diagram")
+            .expect("mini fixture must have the orders-diagram");
+        let (scene, _diags) = build_scene(
+            model,
+            diagram,
+            resolve_display(&diagram.display),
+            &HashSet::new(),
+        );
+        let node_rect = scene
+            .nodes
+            .iter()
+            .find(|n| n.key == "customer")
+            .expect("mini fixture's orders-diagram must contain a customer node")
+            .rect;
+        assert_eq!(camera.zoom, 1.5);
+        assert_eq!(camera.pan_x, node_rect.x + node_rect.w * 0.5);
+        assert_eq!(camera.pan_y, node_rect.y + node_rect.h * 0.5);
+    }
+
+    #[test]
+    fn reveal_ignores_a_text_span_target() {
+        let mut vm = crate::script_gate::boot_test_vm();
+        let ui = test_body(&mut vm);
+        let cx = vm.cx_mut();
+        let body = crate::doc_view::BodyWidgets::new(cx, &ui);
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mini");
+        let source = crate::load::read_bundle(&dir).unwrap();
+        let prepared = waml::analysis::prepare_candidate(source, None, 1).unwrap();
+        let (source, okf_analysis, uml_analysis, revision) = prepared.into_parts();
+        let mut view = ClassDiagramView::new("orders-diagram".into());
+        view.sync(
+            cx,
+            &body,
+            crate::doc_view::ViewData {
+                source: &source,
+                okf_analysis: &okf_analysis,
+                uml_analysis: &uml_analysis,
+                revision,
+            },
+        );
+
+        view.reveal(
+            cx,
+            &body,
+            &crate::doc_view::RevealTarget::TextSpan { start: 0, end: 4 },
+        );
+
+        assert_eq!(
+            view.capture_anchor(&body),
+            ViewAnchor::Diagram {
+                selected_key: None,
+                camera: body
+                    .canvas_ref()
+                    .borrow::<crate::canvas::ClassDiagramSurface>()
+                    .unwrap()
+                    .camera_anchor(),
+            }
+        );
     }
 
     #[test]

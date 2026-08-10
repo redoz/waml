@@ -56,6 +56,10 @@ pub(crate) struct SelectionState {
     selected_index: Option<usize>,
     constraint_visibility: ConstraintVisibility,
     conflict_focus_keys: Option<HashSet<String>>,
+    /// Search spotlight (spec §DocView::reveal, canvas spotlight): nodes NOT
+    /// in this set dim at draw time, composed with (not replacing) the
+    /// existing focus/conflict mute. `None` is "no spotlight active".
+    search_spotlight: Option<HashSet<String>>,
     show_hidden_borders: bool,
     lifts: BTreeMap<String, LiftTween>,
     lift_last_time: f64,
@@ -68,6 +72,7 @@ pub(crate) struct SelectionSnapshot {
     pub(crate) selected_index: Option<usize>,
     pub(crate) constraint_visibility: ConstraintVisibility,
     pub(crate) conflict_focus_keys: Option<HashSet<String>>,
+    pub(crate) search_spotlight: Option<HashSet<String>>,
     pub(crate) show_hidden_borders: bool,
     pub(crate) lifts: BTreeMap<String, f64>,
 }
@@ -85,6 +90,7 @@ impl Default for SelectionState {
             selected_index: None,
             constraint_visibility: ConstraintVisibility::Selected,
             conflict_focus_keys: None,
+            search_spotlight: None,
             show_hidden_borders: false,
             lifts: BTreeMap::new(),
             lift_last_time: 0.0,
@@ -126,6 +132,7 @@ impl SelectionState {
             SelectionPolicy::Clear => {
                 self.clear();
                 self.conflict_focus_keys = None;
+                self.search_spotlight = None;
             }
             SelectionPolicy::Preserve => {
                 let key = self.selected_key.clone();
@@ -135,12 +142,17 @@ impl SelectionState {
                     }
                     None => self.selected_index = None,
                 }
+                let node_keys: HashSet<&str> = nodes.iter().map(|node| node.key.as_str()).collect();
                 if let Some(keys) = &mut self.conflict_focus_keys {
-                    let node_keys: HashSet<&str> =
-                        nodes.iter().map(|node| node.key.as_str()).collect();
                     keys.retain(|key| node_keys.contains(key.as_str()));
                     if keys.is_empty() {
                         self.conflict_focus_keys = None;
+                    }
+                }
+                if let Some(keys) = &mut self.search_spotlight {
+                    keys.retain(|key| node_keys.contains(key.as_str()));
+                    if keys.is_empty() {
+                        self.search_spotlight = None;
                     }
                 }
             }
@@ -230,6 +242,14 @@ impl SelectionState {
             .filter(|keys| !keys.is_empty());
     }
 
+    pub(crate) fn set_search_spotlight(&mut self, keys: Option<HashSet<String>>) {
+        self.search_spotlight = keys.filter(|keys| !keys.is_empty());
+    }
+
+    pub(crate) fn search_spotlight(&self) -> Option<&HashSet<String>> {
+        self.search_spotlight.as_ref()
+    }
+
     pub(crate) fn set_show_hidden_borders(&mut self, on: bool) {
         self.show_hidden_borders = on;
     }
@@ -240,6 +260,7 @@ impl SelectionState {
             selected_index: self.selected_index,
             constraint_visibility: self.constraint_visibility,
             conflict_focus_keys: self.conflict_focus_keys.clone(),
+            search_spotlight: self.search_spotlight.clone(),
             show_hidden_borders: self.show_hidden_borders,
             lifts: self
                 .lifts
@@ -345,6 +366,43 @@ mod tests {
         state.reconcile(&nodes(&["a", "b"]), SelectionPolicy::Preserve);
         assert_eq!(
             state.snapshot().conflict_focus_keys,
+            Some(HashSet::from(["a".to_string()])),
+        );
+    }
+
+    #[test]
+    fn search_spotlight_round_trips_and_an_empty_set_clears_it() {
+        let mut state = SelectionState::default();
+        assert_eq!(state.search_spotlight(), None);
+
+        state.set_search_spotlight(Some(HashSet::from(["a".to_string()])));
+        assert_eq!(
+            state.search_spotlight(),
+            Some(&HashSet::from(["a".to_string()]))
+        );
+        assert_eq!(
+            state.snapshot().search_spotlight,
+            Some(HashSet::from(["a".to_string()]))
+        );
+
+        state.set_search_spotlight(Some(HashSet::new()));
+        assert_eq!(state.search_spotlight(), None);
+
+        state.set_search_spotlight(Some(HashSet::from(["a".to_string()])));
+        state.set_search_spotlight(None);
+        assert_eq!(state.search_spotlight(), None);
+    }
+
+    #[test]
+    fn stale_search_spotlight_keys_are_removed_on_reconcile() {
+        let mut state = SelectionState::default();
+        state.set_search_spotlight(Some(HashSet::from([
+            "a".to_string(),
+            "missing".to_string(),
+        ])));
+        state.reconcile(&nodes(&["a", "b"]), SelectionPolicy::Preserve);
+        assert_eq!(
+            state.snapshot().search_spotlight,
             Some(HashSet::from(["a".to_string()])),
         );
     }

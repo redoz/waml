@@ -30,6 +30,14 @@ fn node_focus_state(
     }
 }
 
+/// Whether the search spotlight (spec §DocView::reveal, canvas spotlight)
+/// dims `key`: `None` means no spotlight is active (never dims); `Some(lit)`
+/// dims every node NOT in `lit`. Composed with -- not replacing -- the
+/// existing focus-mute below, at the same node-draw site.
+fn node_spotlight_dimmed(key: &str, spotlight: Option<&HashSet<String>>) -> bool {
+    spotlight.is_some_and(|lit| !lit.contains(key))
+}
+
 fn desaturate(color: Vec4) -> Vec4 {
     let luminance = color.x * 0.299 + color.y * 0.587 + color.z * 0.114;
     vec4(luminance, luminance, luminance, color.w)
@@ -93,7 +101,8 @@ pub(super) fn draw_nodes(
             &[snapshot.selection.lift_for(&node.key) as f32],
         );
         let focus = node_focus_state(&node.key, selected_key, &focus_keys);
-        let muted = focus_active && !focus.coloured();
+        let muted = (focus_active && !focus.coloured())
+            || node_spotlight_dimmed(&node.key, snapshot.selection.search_spotlight.as_ref());
         draws
             .node
             .set_uniform(cx, live_id!(grey), &[if muted { 1.0 } else { 0.0 }]);
@@ -273,5 +282,17 @@ mod tests {
         let outsider = node_focus_state("archive", Some("order"), &focus);
         assert_eq!(outsider, FocusState::default());
         assert!(!outsider.coloured());
+    }
+
+    #[test]
+    fn spotlight_dims_nodes_outside_the_lit_set_and_clearing_restores() {
+        let lit: HashSet<String> = ["order".to_string()].into_iter().collect();
+
+        assert!(!node_spotlight_dimmed("order", Some(&lit)));
+        assert!(node_spotlight_dimmed("archive", Some(&lit)));
+
+        // Clearing the spotlight (`None`) dims nothing.
+        assert!(!node_spotlight_dimmed("order", None));
+        assert!(!node_spotlight_dimmed("archive", None));
     }
 }

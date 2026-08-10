@@ -645,6 +645,46 @@ impl BehaviorSurface {
         }
     }
 
+    /// Resolve a plain element key against this scene's OWN geometry --
+    /// lifeline id, flow node key, message id, or fragment id, in that
+    /// priority order -- and select it (`DocView::reveal`,
+    /// `RevealTarget::ModelElement`). `reveal` only carries the raw key
+    /// string, never the model `subject_for_target`/`target_for_subject`
+    /// need, so this resolves directly against the drawn scene instead. A
+    /// key this scene doesn't recognise deselects rather than leaving a
+    /// stale highlight.
+    pub(crate) fn select_by_key(&mut self, cx: &mut Cx, key: &str) {
+        let target = match &self.scene {
+            BehaviorScene::Empty { .. } => None,
+            BehaviorScene::Flow { nodes, .. } => nodes
+                .iter()
+                .find(|node| node.key == key)
+                .map(|node| BehaviorTarget::FlowNode(node.key.clone())),
+            BehaviorScene::Interaction {
+                lifelines,
+                messages,
+                fragments,
+                ..
+            } => lifelines
+                .iter()
+                .find(|lifeline| lifeline.id == key)
+                .map(|lifeline| BehaviorTarget::Lifeline(lifeline.id.clone()))
+                .or_else(|| {
+                    messages
+                        .iter()
+                        .find(|message| message.id == key)
+                        .map(|message| BehaviorTarget::Message(message.id.clone()))
+                })
+                .or_else(|| {
+                    fragments
+                        .iter()
+                        .find(|fragment| fragment.id == key)
+                        .map(|fragment| BehaviorTarget::Fragment(fragment.id.clone()))
+                }),
+        };
+        self.select_target(cx, target);
+    }
+
     /// `Esc` clears the selection (spec §5.2).
     pub(crate) fn clear_selection(&mut self, cx: &mut Cx) {
         if self.selected.is_some() {
@@ -782,6 +822,28 @@ mod tests {
         // it maps to is still INSIDE the node, so only containment can reject
         // it.
         assert_eq!(hover_target_at(&scene, snapshot, dvec2(100.0, 50.0)), None);
+    }
+
+    /// `select_by_key` resolves against the scene's own geometry -- it never
+    /// sees a model -- so a flow node's own key must select it, and a key the
+    /// scene doesn't recognise must deselect rather than leave a stale
+    /// highlight.
+    #[test]
+    fn select_by_key_resolves_flow_node_ids_and_clears_on_an_unknown_key() {
+        use makepad_widgets::ScriptNew;
+        let mut vm = crate::script_gate::boot_test_vm();
+        let mut surface = BehaviorSurface::script_new(&mut vm);
+        let cx = vm.cx_mut();
+        surface.set_scene(cx, flow_scene());
+
+        surface.select_by_key(cx, "n1");
+        assert_eq!(
+            surface.selected_target(),
+            Some(&BehaviorTarget::FlowNode("n1".into()))
+        );
+
+        surface.select_by_key(cx, "missing");
+        assert_eq!(surface.selected_target(), None);
     }
 
     /// Every camera mutation funnels through `apply_viewport_effects`, so that

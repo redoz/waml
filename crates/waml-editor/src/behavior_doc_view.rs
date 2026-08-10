@@ -10,8 +10,8 @@ use crate::canvas::{
     FlowOffPageGeo, FragmentGeo, LifelineGeo, MessageGeo, OperandGeo,
 };
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
-    ViewReconcilePolicy,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, RevealTarget,
+    ViewData, ViewOutcome, ViewReconcilePolicy,
 };
 use crate::editor_session::{EditorSessionSnapshot, SessionChange};
 use crate::icons::Icon;
@@ -1084,6 +1084,22 @@ impl DocView for BehaviorDocView {
             .borrow_mut::<crate::inspector_panel::Inspector>()
         {
             inspector.set_subject(cx, &waml::model::Model::default(), Subject::None);
+        }
+    }
+
+    /// A search hit lands on a participant, message, or fragment: select it
+    /// on this document's own canvas (spec §DocView::reveal). `TextSpan`
+    /// targets don't apply to a canvas view and are ignored.
+    fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &RevealTarget) {
+        let RevealTarget::ModelElement { key } = target else {
+            return;
+        };
+        if let Some(mut canvas) = body
+            .behavior_canvas(cx)
+            .borrow_mut::<crate::canvas::BehaviorSurface>()
+        {
+            canvas.select_by_key(cx, key);
+            canvas.fit_to_selection(cx);
         }
     }
 }

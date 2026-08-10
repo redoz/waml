@@ -2,7 +2,8 @@
 //! without-picker, no tool dock). Real behavior lands in Task 4.
 
 use crate::doc_view::{
-    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, ViewData, ViewOutcome,
+    BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, RevealTarget,
+    ViewData, ViewOutcome,
 };
 use crate::document::NavCategory;
 use crate::icons::Icon;
@@ -151,5 +152,12 @@ impl DocView for ClassifierPreviewView {
 
     fn tab_accent(&self) -> Option<Vec4> {
         crate::accent::tree_kind_color(self.category)
+    }
+
+    /// This tab already IS a fixed focus on `self.key` (spec
+    /// §DocView::reveal): a matching hit needs no further action, and a
+    /// `TextSpan`/mismatched key doesn't apply to a canvas-only preview.
+    fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &RevealTarget) {
+        let _ = (cx, body, target);
     }
 }

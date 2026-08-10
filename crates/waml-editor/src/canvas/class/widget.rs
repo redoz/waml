@@ -24,6 +24,7 @@ use crate::popup::base::PopupItem;
 use crate::scene::{bounding_box, Scene};
 use makepad_widgets::event::{TouchPoint, TouchState, TouchUpdateEvent};
 use makepad_widgets::*;
+use std::collections::HashSet;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -1008,6 +1009,58 @@ impl ClassDiagramSurface {
         self.draw_bg.redraw(cx);
     }
 
+    /// Light `lit` nodes and dim the rest (spec: search spotlight). Composes
+    /// with -- doesn't replace -- selection/hover/conflict-focus state: it is
+    /// applied as one more dimming factor at node-draw time
+    /// (`render::nodes::node_spotlight_dimmed`), exactly where the existing
+    /// focus-mute already dims unrelated nodes. `None` clears. Repaints.
+    ///
+    /// No production caller yet -- the search session that drives this from
+    /// live query results lands in a later plan task (mirrors `RevealTarget`
+    /// in `doc_view.rs`).
+    #[allow(dead_code)]
+    pub fn set_search_spotlight(&mut self, cx: &mut Cx, lit: Option<HashSet<String>>) {
+        self.selection.set_search_spotlight(lit);
+        self.draw_bg.redraw(cx);
+    }
+
+    /// The active spotlight set, for tests. See `set_search_spotlight`.
+    #[allow(dead_code)]
+    pub fn search_spotlight(&self) -> Option<&HashSet<String>> {
+        self.selection.search_spotlight()
+    }
+
+    /// Select `key` and pan/zoom the camera to frame it (`DocView::reveal`,
+    /// `RevealTarget::ModelElement`). Unlike `fit_to_selection` -- which
+    /// glides and is a no-op until the canvas has drawn at least once and
+    /// knows its own size -- this sets the camera immediately via
+    /// `restore_camera_anchor`, the same instant-set path view-history
+    /// restore uses, so it also works on a canvas that hasn't drawn yet.
+    /// Centres on the node's own rect (the viewport width isn't known here)
+    /// at a fixed close-in zoom, matching the classifier-focus tab's 1.5x. A
+    /// key absent from the current scene selects nothing and leaves the
+    /// camera alone.
+    pub fn reveal_by_key(&mut self, cx: &mut Cx, key: &str) {
+        self.select_by_key(cx, key);
+        let Some(rect) = self
+            .scene
+            .nodes
+            .iter()
+            .find(|node| node.key == key)
+            .map(|node| node.rect)
+        else {
+            return;
+        };
+        self.restore_camera_anchor(
+            cx,
+            crate::view_history::DiagramCameraAnchor {
+                pan_x: rect.x + rect.w * 0.5,
+                pan_y: rect.y + rect.h * 0.5,
+                zoom: 1.5,
+            },
+        );
+    }
+
     /// Zoom by `factor` about the VIEWPORT CENTRE (spec §4). Deliberately
     /// unlike the scroll path, which anchors at the cursor: a button press has
     /// no cursor to honour, so holding the middle of the canvas stable is the
@@ -1563,6 +1616,54 @@ mod tests {
                 surface.selection.selected_key().map(str::to_owned),
                 selected_before
             );
+        }
+
+        #[test]
+        fn search_spotlight_round_trips_through_the_public_api_and_clears() {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = surface_with_live_dial(&mut vm);
+            let cx = vm.cx_mut();
+
+            assert_eq!(surface.search_spotlight(), None);
+
+            surface.set_search_spotlight(cx, Some(HashSet::from(["old-subject".to_string()])));
+            assert_eq!(
+                surface.search_spotlight(),
+                Some(&HashSet::from(["old-subject".to_string()]))
+            );
+
+            surface.set_search_spotlight(cx, None);
+            assert_eq!(surface.search_spotlight(), None);
+        }
+
+        #[test]
+        fn reveal_by_key_selects_and_centres_the_camera_on_the_node_rect() {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = surface_with_live_dial(&mut vm);
+            let cx = vm.cx_mut();
+
+            // node("old-reference", .., x: 120.0) with the fixture's fixed
+            // w: 80.0, h: 60.0, y: 0.0 -> centre (160.0, 30.0).
+            surface.reveal_by_key(cx, "old-reference");
+
+            assert_eq!(surface.selected_key(), Some("old-reference"));
+            let camera = surface.camera_anchor();
+            assert_eq!(camera.zoom, 1.5);
+            assert_eq!(camera.pan_x, 160.0);
+            assert_eq!(camera.pan_y, 30.0);
+        }
+
+        #[test]
+        fn reveal_by_key_is_a_camera_no_op_for_an_unknown_key() {
+            let mut vm = crate::script_gate::boot_test_vm();
+            let mut surface = surface_with_live_dial(&mut vm);
+            let cx = vm.cx_mut();
+            let camera_before = surface.camera_anchor();
+
+            surface.reveal_by_key(cx, "missing");
+
+            assert_eq!(surface.selected_key(), None);
+            assert_eq!(surface.camera_anchor(), camera_before);
         }
 
         #[test]
