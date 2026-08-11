@@ -296,6 +296,17 @@ impl DocumentHeaderState {
         true
     }
 
+    /// Forget what was pushed into the trailing button children, so the next
+    /// chrome push re-applies instead of comparing equal and returning early.
+    /// Called when `Apply::Reload` rebuilds those children from the DSL (see
+    /// the `ScriptHook` impl); `segments` survives because this widget paints
+    /// the breadcrumb itself rather than pushing it into a child.
+    fn invalidate_pushed_children(&mut self) {
+        self.right_dock = None;
+        self.view_toggle = None;
+        self.zoom = None;
+    }
+
     /// Width the trailing buttons reserve on the right of the header.
     fn trailing_buttons_width(&self) -> f64 {
         let mut width = 0.0;
@@ -329,7 +340,7 @@ impl DocumentHeaderState {
     }
 }
 
-#[derive(Script, ScriptHook, Widget)]
+#[derive(Script, Widget)]
 pub struct DocumentHeader {
     #[deref]
     view: View,
@@ -347,6 +358,34 @@ pub struct DocumentHeader {
     draw_rect: Rect,
     #[rust]
     right_button_uid: Option<WidgetUid>,
+}
+
+/// `state`'s three button fields are a memo of **what this widget last pushed
+/// into its children**, and every setter early-returns when the incoming value
+/// matches it. `Apply::Reload` (what `cx.request_live_edit()` runs -- the theme
+/// toggle) rebuilds those children straight from the DSL, where each trailing
+/// button is `visible: false`. Nothing was pushed into the new children, so a
+/// surviving memo is simply WRONG: the next chrome push compares equal, returns
+/// early, and the view toggle and zoom cluster stay invisible while the
+/// breadcrumb (painted by this widget from the same state) carries on as if
+/// nothing happened.
+///
+/// Clearing the memo on reload restores the invariant rather than papering over
+/// it -- no caller has to remember to re-push, because "I have pushed nothing"
+/// is now the truth the setters compare against. `segments` is deliberately
+/// kept: this widget draws those itself, so the reload did not discard them.
+impl ScriptHook for DocumentHeader {
+    fn on_after_apply(
+        &mut self,
+        _vm: &mut ScriptVm,
+        apply: &Apply,
+        _scope: &mut Scope,
+        _value: ScriptValue,
+    ) {
+        if matches!(apply, Apply::Reload) {
+            self.state.invalidate_pushed_children();
+        }
+    }
 }
 
 impl Widget for DocumentHeader {
@@ -1009,6 +1048,34 @@ mod tests {
                 "hit for visible segment {index}"
             );
         }
+    }
+
+    #[test]
+    fn a_live_reload_makes_the_next_chrome_push_reapply_the_buttons() {
+        let mut state = DocumentHeaderState::for_test(Vec::new(), None, Vec::new());
+        let toggle = HeaderViewAction {
+            icon: Icon::Code,
+            tooltip: "View source",
+        };
+        assert!(state.replace_view_toggle(Some(toggle)));
+        assert!(state.replace_zoom(Some(110)));
+        assert!(state.replace_right_dock(Some(Icon::PanelRight)));
+
+        // Steady state: re-pushing the same chrome is a deliberate no-op, so
+        // an unchanged document does not thrash the header every sync.
+        assert!(!state.replace_view_toggle(Some(toggle)));
+        assert!(!state.replace_zoom(Some(110)));
+        assert!(!state.replace_right_dock(Some(Icon::PanelRight)));
+
+        // `Apply::Reload` rebuilt the children from the DSL, where they are
+        // `visible: false`. Without invalidation the no-ops above would leave
+        // the view toggle and the zoom cluster permanently invisible while the
+        // breadcrumb kept drawing.
+        state.invalidate_pushed_children();
+
+        assert!(state.replace_view_toggle(Some(toggle)));
+        assert!(state.replace_zoom(Some(110)));
+        assert!(state.replace_right_dock(Some(Icon::PanelRight)));
     }
 
     #[test]
