@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use waml::host::confine::{self, ConfineError, SymlinkPolicy};
 use waml::source::SourceBundle;
 
@@ -12,6 +11,38 @@ pub(crate) fn save_bundle_atomic(
     root: &Path,
     baseline: &SourceBundle,
     current: &SourceBundle,
+) -> io::Result<()> {
+    save_bundle_atomic_with_commit(root, baseline, current, commit_dirty_writes)
+}
+
+/// The real commit step: `DeletePolicy::Refuse` -- the editor never intends
+/// deletions here (the full-bundle check in `save_bundle_atomic_with_commit`
+/// already refused any dropped path before planning even starts), but this
+/// keeps that guarantee enforced at the point of mutation too, not just at
+/// the top of the function.
+fn commit_dirty_writes(
+    root: &Path,
+    old: &[(String, String)],
+    new: &[(String, String)],
+) -> io::Result<Vec<String>> {
+    waml::host::persist::write_back_with_policy(
+        root,
+        old,
+        new,
+        waml::host::persist::DeletePolicy::Refuse,
+    )
+}
+
+/// `save_bundle_atomic`'s planning logic, parameterized over the commit step
+/// so tests can inject filesystem faults into the real `host::persist`
+/// transaction through `waml::host::persist::test_support` (Task 12 of the
+/// waml-cli-logic-seam plan, Decision 2's fault-injection seam) without
+/// duplicating this planning logic.
+fn save_bundle_atomic_with_commit(
+    root: &Path,
+    baseline: &SourceBundle,
+    current: &SourceBundle,
+    commit: impl FnOnce(&Path, &[(String, String)], &[(String, String)]) -> io::Result<Vec<String>>,
 ) -> io::Result<()> {
     let root = root.canonicalize()?;
     if !root.is_dir() {
@@ -99,15 +130,28 @@ pub(crate) fn save_bundle_atomic(
         }
     }
 
-    for write in pending {
-        // This final read narrows, but cannot eliminate, the filesystem TOCTOU
-        // window between validation and atomic replacement. Preventing that
-        // fully requires directory-handle-relative APIs unavailable in std.
-        recheck_confinement(&root, &write.relative)?;
-        if disk_state(&root, &write.target, write.baseline, write.desired)? == DiskState::NeedsWrite
-        {
-            write_atomic(&write.parent, &write.target, write.desired.as_bytes())?;
+    // The disk_state re-screen above is the last read before mutation; what
+    // used to be a third, per-write re-check immediately before each
+    // individual replacement is retired in favour of one journaled
+    // transaction (Task 12 of the waml-cli-logic-seam plan, Decision 3). The
+    // window this widens -- an external edit landing after the screen above
+    // but before this transaction's rename -- is bounded by the transaction's
+    // duration and is accepted in exchange for atomic all-or-nothing commit:
+    // a mid-save failure now rolls every write back instead of leaving a
+    // half-written bundle. `write_back_with_policy`'s own target resolution
+    // (inside its staging pass, right before any rename) still re-confines
+    // every path through `confine::resolve_under`, so a concurrent link swap
+    // is still caught -- only the *content* re-check is what disappears.
+    if !pending.is_empty() {
+        let mut old_pairs = Vec::with_capacity(pending.len());
+        let mut new_pairs = Vec::with_capacity(pending.len());
+        for write in &pending {
+            if let Some(baseline) = write.baseline {
+                old_pairs.push((write.relative.clone(), baseline.to_owned()));
+            }
+            new_pairs.push((write.relative.clone(), write.desired.to_owned()));
         }
+        commit(&root, &old_pairs, &new_pairs)?;
     }
 
     Ok(())
@@ -291,74 +335,19 @@ fn save_conflict(target: &Path, reason: &str) -> io::Error {
     )
 }
 
-fn write_atomic(parent: &Path, target: &Path, contents: &[u8]) -> io::Result<()> {
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-
-    let (temp, mut file) = loop {
-        let nonce = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-        let temp = parent.join(format!(".waml-save-{}-{nonce}.tmp", std::process::id()));
-        match OpenOptions::new().write(true).create_new(true).open(&temp) {
-            Ok(file) => break (temp, file),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
-        }
-    };
-
-    let result = (|| {
-        file.write_all(contents)?;
-        file.sync_all()?;
-        drop(file);
-        replace_file(&temp, target)
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
-}
-
-#[cfg(not(windows))]
-fn replace_file(temp: &Path, target: &Path) -> io::Result<()> {
-    fs::rename(temp, target)
-}
-
-#[cfg(windows)]
-fn replace_file(temp: &Path, target: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn MoveFileExW(existing: *const u16, replacement: *const u16, flags: u32) -> i32;
-    }
-
-    let existing: Vec<_> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
-    let replacement: Vec<_> = target.as_os_str().encode_wide().chain(Some(0)).collect();
-    let result = unsafe {
-        MoveFileExW(
-            existing.as_ptr(),
-            replacement.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{save_bundle_atomic as save_source_bundle_atomic, save_ticket_atomic};
+    use super::{
+        save_bundle_atomic as save_source_bundle_atomic, save_bundle_atomic_with_commit,
+        save_ticket_atomic,
+    };
     use std::path::{Path, PathBuf};
     use std::sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU32, AtomicUsize, Ordering},
         Arc,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
+    use waml::host::persist::{test_support, DeletePolicy, FsOps};
     use waml::source::SourceBundle;
     use waml_syntax::{SourceText, TextChange, TextRange, TextSize};
 
@@ -375,6 +364,47 @@ mod tests {
         let current =
             SourceBundle::try_from_pairs(current.iter().cloned()).map_err(invalid_source)?;
         save_source_bundle_atomic(root, &baseline, &current)
+    }
+
+    /// Runs the real planning logic of `save_bundle_atomic` but routes the
+    /// commit step through `waml::host::persist::test_support`, injecting
+    /// `ops` into the same `host::persist` transaction the production save
+    /// path uses (Task 12 of the waml-cli-logic-seam plan, Decision 2's
+    /// fault-injection seam) instead of duplicating the planning logic.
+    fn save_bundle_atomic_with_ops(
+        root: &Path,
+        baseline: &[(String, String)],
+        current: &[(String, String)],
+        ops: &impl FsOps,
+    ) -> std::io::Result<()> {
+        let invalid_source = |error: waml::source::SourceError| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
+        };
+        let baseline =
+            SourceBundle::try_from_pairs(baseline.iter().cloned()).map_err(invalid_source)?;
+        let current =
+            SourceBundle::try_from_pairs(current.iter().cloned()).map_err(invalid_source)?;
+        save_bundle_atomic_with_commit(root, &baseline, &current, |root, old, new| {
+            test_support::write_back_with_ops_and_policy(root, old, new, DeletePolicy::Refuse, ops)
+        })
+    }
+
+    struct FailRenamesAt {
+        at: &'static [usize],
+        calls: AtomicUsize,
+    }
+
+    impl FsOps for FailRenamesAt {
+        fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+            let call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
+            if self.at.contains(&call) {
+                Err(std::io::Error::other(format!(
+                    "injected rename failure at call {call}"
+                )))
+            } else {
+                std::fs::rename(from, to)
+            }
+        }
     }
 
     struct TempDir(PathBuf);
@@ -757,6 +787,108 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert_eq!(std::fs::read_to_string(target).unwrap(), "loaded");
+    }
+
+    /// Task 12 of the waml-cli-logic-seam plan: `save_bundle_atomic` no
+    /// longer writes file-by-file -- it commits every dirty file through one
+    /// `host::persist` transaction. A failure partway through that
+    /// transaction must roll back everything already written, not just leave
+    /// a half-saved bundle.
+    #[test]
+    fn mid_save_rename_failure_on_second_dirty_file_rolls_first_back_to_baseline() {
+        let temp = TempDir::new();
+        std::fs::write(temp.path().join("a.md"), "before-a").unwrap();
+        std::fs::write(temp.path().join("b.md"), "before-b").unwrap();
+        let baseline = vec![
+            ("a.md".into(), "before-a".into()),
+            ("b.md".into(), "before-b".into()),
+        ];
+        let current = vec![
+            ("a.md".into(), "after-a".into()),
+            ("b.md".into(), "after-b".into()),
+        ];
+
+        // Call 1-2 write a.md (backup rename, then content rename); call 3 is
+        // the first rename touching b.md (its backup rename) -- failing there
+        // means b.md is never touched at all, and only a.md's completed write
+        // needs rolling back.
+        let fault = FailRenamesAt {
+            at: &[3],
+            calls: AtomicUsize::new(0),
+        };
+        let error =
+            save_bundle_atomic_with_ops(temp.path(), &baseline, &current, &fault).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("injected rename failure at call 3"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("a.md")).unwrap(),
+            "before-a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("b.md")).unwrap(),
+            "before-b"
+        );
+    }
+
+    /// Mirrors `host::persist`'s own
+    /// `rollback_failure_retains_a_reported_recovery_journal` test, but
+    /// through `waml-editor`'s real save path, to prove the fault-injection
+    /// seam (Decision 2) actually wires into the transaction `save_bundle_atomic`
+    /// uses in production.
+    #[test]
+    fn rollback_failure_reports_the_retained_recovery_journal_path() {
+        let temp = TempDir::new();
+        std::fs::write(temp.path().join("a.md"), "before-a").unwrap();
+        std::fs::write(temp.path().join("b.md"), "before-b").unwrap();
+        let baseline = vec![
+            ("a.md".into(), "before-a".into()),
+            ("b.md".into(), "before-b".into()),
+        ];
+        let current = vec![
+            ("a.md".into(), "after-a".into()),
+            ("b.md".into(), "after-b".into()),
+        ];
+
+        // Call 4 is b.md's content rename -- failing it triggers rollback of
+        // both journaled entries. Call 8 is a.md's backup-restore during that
+        // rollback -- failing it too makes the rollback itself fail, which
+        // must surface the recovery journal's path instead of silently
+        // losing it.
+        let fault = FailRenamesAt {
+            at: &[4, 8],
+            calls: AtomicUsize::new(0),
+        };
+        let error =
+            save_bundle_atomic_with_ops(temp.path(), &baseline, &current, &fault).unwrap_err();
+
+        assert!(
+            error.to_string().contains(
+                "failed to write b.md: injected rename failure at call 4; rollback failed:"
+            ),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("recovery journal retained at "),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("b.md")).unwrap(),
+            "before-b"
+        );
+        let journal = std::fs::read_dir(temp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(".waml-cli-"))
+            })
+            .expect("failed rollback must retain its recovery journal");
+        assert!(journal.exists());
     }
 
     #[cfg(windows)]

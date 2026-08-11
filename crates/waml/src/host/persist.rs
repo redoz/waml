@@ -14,6 +14,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::confine::{self, ConfineError, SymlinkPolicy};
 
+/// Whether a transaction may delete entries present in `old` but absent from
+/// `new`. `Transact` (the default, via [`write_back`]) deletes them as part
+/// of the same transaction. `Refuse` fails the whole transaction before any
+/// staging happens if `old` contains a path `new` does not -- the guarantee
+/// `waml-editor`'s atomic save relies on, with its existing refusal message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeletePolicy {
+    Refuse,
+    Transact,
+}
+
 /// Write only changed/added entries; delete entries dropped from the bundle.
 /// Returns a human list of what happened.
 pub fn write_back(
@@ -21,11 +32,23 @@ pub fn write_back(
     old: &[(String, String)],
     new: &[(String, String)],
 ) -> std::io::Result<Vec<String>> {
+    write_back_with_policy(root, old, new, DeletePolicy::Transact)
+}
+
+/// Like [`write_back`], but with an explicit [`DeletePolicy`]. See
+/// `DeletePolicy::Refuse` for the guarantee `waml-editor`'s atomic save
+/// relies on.
+pub fn write_back_with_policy(
+    root: &Path,
+    old: &[(String, String)],
+    new: &[(String, String)],
+    policy: DeletePolicy,
+) -> std::io::Result<Vec<String>> {
     #[cfg(debug_assertions)]
     if let Some(ops) = DebugFaultFs::from_env()? {
-        return write_back_with_ops(root, old, new, &ops);
+        return write_back_with_ops(root, old, new, policy, &ops);
     }
-    write_back_with_ops(root, old, new, &RealFs)
+    write_back_with_ops(root, old, new, policy, &RealFs)
 }
 
 #[doc(hidden)]
@@ -119,10 +142,17 @@ fn write_back_with_ops(
     root: &Path,
     old: &[(String, String)],
     new: &[(String, String)],
+    policy: DeletePolicy,
     ops: &impl FsOps,
 ) -> std::io::Result<Vec<String>> {
     let om: BTreeMap<&str, &str> = old.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
     let nm: BTreeMap<&str, &str> = new.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    if policy == DeletePolicy::Refuse && om.keys().any(|logical| !nm.contains_key(logical)) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "removing bundle files is not supported by atomic save",
+        ));
+    }
     let root = root.canonicalize()?;
     if !root.is_dir() {
         return Err(std::io::Error::new(
@@ -541,7 +571,17 @@ pub mod test_support {
         new: &[(String, String)],
         ops: &impl FsOps,
     ) -> std::io::Result<Vec<String>> {
-        super::write_back_with_ops(root, old, new, ops)
+        super::write_back_with_ops(root, old, new, DeletePolicy::Transact, ops)
+    }
+
+    pub fn write_back_with_ops_and_policy(
+        root: &Path,
+        old: &[(String, String)],
+        new: &[(String, String)],
+        policy: DeletePolicy,
+        ops: &impl FsOps,
+    ) -> std::io::Result<Vec<String>> {
+        super::write_back_with_ops(root, old, new, policy, ops)
     }
 }
 
@@ -764,7 +804,14 @@ mod tests {
             ("z/new.md".to_owned(), "cannot write".to_owned()),
         ];
 
-        let error = write_back_with_ops(&temp.0, &old, &new, &FailRename::new(4)).unwrap_err();
+        let error = write_back_with_ops(
+            &temp.0,
+            &old,
+            &new,
+            DeletePolicy::Transact,
+            &FailRename::new(4),
+        )
+        .unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::Other);
         assert_eq!(
@@ -790,7 +837,14 @@ mod tests {
         ];
         let new = vec![("a.md".to_owned(), "after".to_owned())];
 
-        let error = write_back_with_ops(&temp.0, &old, &new, &FailRename::new(4)).unwrap_err();
+        let error = write_back_with_ops(
+            &temp.0,
+            &old,
+            &new,
+            DeletePolicy::Transact,
+            &FailRename::new(4),
+        )
+        .unwrap_err();
 
         assert_eq!(error.kind(), std::io::ErrorKind::Other);
         assert_eq!(
@@ -836,7 +890,8 @@ mod tests {
         ];
 
         let fault = RequireRollbackDisplacement::new(readonly.clone());
-        let error = write_back_with_ops(&temp.0, &old, &new, &fault).unwrap_err();
+        let error =
+            write_back_with_ops(&temp.0, &old, &new, DeletePolicy::Transact, &fault).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -887,7 +942,8 @@ mod tests {
         ];
 
         let fault = RequireRollbackDisplacement::new(readonly.clone());
-        let error = write_back_with_ops(&temp.0, &old, &new, &fault).unwrap_err();
+        let error =
+            write_back_with_ops(&temp.0, &old, &new, DeletePolicy::Transact, &fault).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -933,6 +989,7 @@ mod tests {
             &temp.0,
             &old,
             &new,
+            DeletePolicy::Transact,
             &FailRenames {
                 at: &[3, 4],
                 calls: AtomicUsize::new(0),
@@ -988,7 +1045,8 @@ mod tests {
         let old = vec![("a.md".to_owned(), "before".to_owned())];
         let new = vec![("a.md".to_owned(), "after".to_owned())];
 
-        let touched = write_back_with_ops(&temp.0, &old, &new, &FailCleanup).unwrap();
+        let touched =
+            write_back_with_ops(&temp.0, &old, &new, DeletePolicy::Transact, &FailCleanup).unwrap();
 
         assert_eq!(touched.len(), 2, "{touched:?}");
         assert_eq!(touched[0], "wrote a.md");
@@ -1001,6 +1059,47 @@ mod tests {
             "{touched:?}"
         );
         assert_eq!(fs::read_to_string(&target).unwrap(), "after");
+    }
+
+    /// `DeletePolicy::Refuse` (Task 12 of the waml-cli-logic-seam plan) fails
+    /// before any staging directory is created, with the exact message
+    /// `waml-editor`'s atomic save relied on before it adopted this
+    /// transaction.
+    #[test]
+    fn refuse_policy_rejects_a_dropped_path_before_staging() {
+        let temp = TempDir::new();
+        fs::write(temp.0.join("a.md"), "before").unwrap();
+        let old = vec![("a.md".to_owned(), "before".to_owned())];
+        let new: Vec<(String, String)> = vec![];
+
+        let error = write_back_with_policy(&temp.0, &old, &new, DeletePolicy::Refuse).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "removing bundle files is not supported by atomic save"
+        );
+        assert_eq!(fs::read_to_string(temp.0.join("a.md")).unwrap(), "before");
+        assert_eq!(directory_entries(&temp.0), ["a.md"]);
+    }
+
+    /// `DeletePolicy::Refuse` still allows plain updates/adds -- only a path
+    /// dropped from `new` is refused.
+    #[test]
+    fn refuse_policy_allows_updates_and_adds() {
+        let temp = TempDir::new();
+        fs::write(temp.0.join("a.md"), "before").unwrap();
+        let old = vec![("a.md".to_owned(), "before".to_owned())];
+        let new = vec![
+            ("a.md".to_owned(), "after".to_owned()),
+            ("b.md".to_owned(), "new".to_owned()),
+        ];
+
+        let touched = write_back_with_policy(&temp.0, &old, &new, DeletePolicy::Refuse).unwrap();
+
+        assert_eq!(touched, ["wrote a.md", "wrote b.md"]);
+        assert_eq!(fs::read_to_string(temp.0.join("a.md")).unwrap(), "after");
+        assert_eq!(fs::read_to_string(temp.0.join("b.md")).unwrap(), "new");
     }
 
     #[test]
