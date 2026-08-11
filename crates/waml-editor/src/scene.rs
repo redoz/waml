@@ -560,6 +560,7 @@ fn entangled_group_pairs(
 struct SceneRoutePolicy<'a> {
     hard_obstacles: &'a [Rect],
     cost: &'a route::RouteCost,
+    route: &'a route::RoutePolicy,
 }
 
 #[allow(clippy::type_complexity)]
@@ -618,12 +619,13 @@ fn route_with_groups(
         .iter()
         .map(|(source, target)| (source.clone(), target.clone(), None, None))
         .collect::<Vec<_>>();
-    let routes = route::route_keyed_with(
+    let routes = route::route_keyed_with_policy(
         &boxes,
         &rect_map,
         &keyed,
         &SolveConfig::default(),
         policy.cost,
+        policy.route,
     );
     (routes, rect_map, boxes)
 }
@@ -639,6 +641,35 @@ fn diagram_route_cost(kind: waml::model::DiagramKind) -> route::RouteCost {
     } else {
         route::RouteCost::default()
     }
+}
+
+fn use_case_route_policy(diagram: &Diagram) -> route::RoutePolicy {
+    fn collect(groups: &[DiagramGroup], rail_nodes: &mut std::collections::BTreeSet<BoxId>) {
+        for group in groups {
+            if group.role == waml::model::DiagramGroupRole::ExternalActors {
+                rail_nodes.extend(group.members.iter().cloned().map(BoxId::Node));
+            }
+            collect(&group.children, rail_nodes);
+        }
+    }
+
+    let mut rail_nodes = std::collections::BTreeSet::new();
+    collect(&diagram.groups, &mut rail_nodes);
+    route::RoutePolicy {
+        adjacency_aware: diagram.kind == waml::model::DiagramKind::UseCase,
+        rail_nodes,
+    }
+}
+
+fn visible_use_case_heading_obstacles(diagram: &Diagram, groups: &[SolvedGroup]) -> Vec<Rect> {
+    project_use_case_scene_groups(diagram, groups)
+        .into_iter()
+        // External actor groups are semantic rails only. The use-case group
+        // renderer emits no frame or heading command for this role, so there is
+        // no visible strip to obstruct. Boundaries and bands render headings.
+        .filter(|group| group.role != waml::model::DiagramGroupRole::ExternalActors)
+        .map(|group| group.heading_bounds)
+        .collect()
 }
 
 /// Order-independent key for an unordered box pair (local twin of
@@ -790,15 +821,12 @@ fn stress_layout(
         })
         .collect();
     let hard_obstacles = if diagram.kind == waml::model::DiagramKind::UseCase {
-        project_use_case_scene_groups(diagram, &groups)
-            .into_iter()
-            .filter(|group| group.role != waml::model::DiagramGroupRole::ExternalActors)
-            .map(|group| group.heading_bounds)
-            .collect::<Vec<_>>()
+        visible_use_case_heading_obstacles(diagram, &groups)
     } else {
         Vec::new()
     };
     let route_cost = diagram_route_cost(diagram.kind);
+    let route_policy = use_case_route_policy(diagram);
     let (routes, rect_map, boxes) = route_with_groups(
         &keys,
         &rects,
@@ -809,6 +837,7 @@ fn stress_layout(
         &SceneRoutePolicy {
             hard_obstacles: &hard_obstacles,
             cost: &route_cost,
+            route: &route_policy,
         },
     );
 
@@ -1155,18 +1184,19 @@ pub fn build_scene(
     // desynced, degrading to a plain placement pass.
     let requests = crate::edge_labels::label_requests_with_policy(&edges, &display, policy);
     let mut routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
-    let unresolved = waml::solve::place_labels_with_reroute_cost(
+    let _reroute_unresolved = waml::solve::place_labels_with_reroute_policy(
         &mut solved,
         &routing.context(&SolveConfig::default()),
         &mut routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
         diagram_route_cost(diagram.kind),
+        &use_case_route_policy(diagram),
     );
     // A reroute moves polylines, and the scene draws from `edges`, not from
     // `solved.routes`.
-    for (edge, points) in edges.iter_mut().zip(routes) {
-        edge.points = points;
+    for (edge, points) in edges.iter_mut().zip(&routes) {
+        edge.points.clone_from(points);
     }
     for (edge, (source_key, target_key)) in edges.iter_mut().zip(&edge_endpoint_keys) {
         if edge.points.len() < 2 {
@@ -1178,6 +1208,13 @@ pub fn build_scene(
             waml::solve::route::clip_route_endpoints(&mut edge.points, source_port, target_port);
         }
     }
+    let final_routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|edge| edge.points.clone()).collect();
+    let unresolved = waml::solve::place_labels_final(
+        &mut solved,
+        &final_routes,
+        &requests,
+        &waml::solve::label::LabelConfig::default(),
+    );
     debug_assert!(
         unresolved.is_empty(),
         "edge labels with no position at all: {unresolved:?}"
@@ -2738,6 +2775,7 @@ mod tests {
             &SceneRoutePolicy {
                 hard_obstacles: &[],
                 cost: &route::RouteCost::default(),
+                route: &route::RoutePolicy::default(),
             },
         );
 
@@ -3442,6 +3480,7 @@ mod tests {
                     &SceneRoutePolicy {
                         hard_obstacles: &[],
                         cost: &route::RouteCost::default(),
+                        route: &route::RoutePolicy::default(),
                     },
                 );
 

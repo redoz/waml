@@ -226,6 +226,18 @@ pub struct RouteCost {
     pub label_pressure: f64,
 }
 
+/// Deterministic routing behavior that is independent of numeric A* weights.
+///
+/// The default keeps the established generic router behavior. Use-case scenes
+/// opt into adjacency ordering and lane separation explicitly, and name the
+/// nodes that own an outside rail. This prevents a cost tuning change from
+/// silently changing ports, edge order, or the final nudge phase.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoutePolicy {
+    pub adjacency_aware: bool,
+    pub rail_nodes: BTreeSet<BoxId>,
+}
+
 impl Default for RouteCost {
     fn default() -> Self {
         RouteCost {
@@ -287,9 +299,22 @@ pub fn route_keyed_with(
     _cfg: &SolveConfig,
     cost: &RouteCost,
 ) -> Vec<Route> {
+    route_keyed_with_policy(boxes, rects, edges, _cfg, cost, &RoutePolicy::default())
+}
+
+/// `route_keyed_with` with explicit non-cost routing behavior.
+#[inline(never)]
+pub fn route_keyed_with_policy(
+    boxes: &[Box],
+    rects: &BTreeMap<BoxId, Rect>,
+    edges: &[KeyedEdge],
+    _cfg: &SolveConfig,
+    cost: &RouteCost,
+    policy: &RoutePolicy,
+) -> Vec<Route> {
     let membership = build_membership(boxes);
-    let port_slots = if cost.crossing > 0.0 {
-        stable_port_slots(rects, edges)
+    let port_slots = if policy.adjacency_aware {
+        stable_port_slots(rects, edges, &policy.rail_nodes)
     } else {
         BTreeMap::new()
     };
@@ -307,7 +332,7 @@ pub fn route_keyed_with(
         .collect();
     all_obstacles.sort_by(|a, b| a.id.cmp(&b.id)); // deterministic order
     let mut edge_order = (0..edges.len()).collect::<Vec<_>>();
-    if cost.crossing > 0.0 {
+    if policy.adjacency_aware {
         edge_order.sort_by(|&a, &b| {
             let endpoint_key = |edge_index: usize| {
                 let (source, target, _, _) = &edges[edge_index];
@@ -418,7 +443,7 @@ pub fn route_keyed_with(
         .into_iter()
         .map(|(_, route, obstacles)| (route, obstacles))
         .unzip();
-    if cost.crossing <= 0.0 {
+    if !policy.adjacency_aware {
         hub_spread(&mut routes, rects);
         nudge(&mut routes);
     } else {
@@ -458,13 +483,8 @@ fn preferred_side(from: Rect, toward: Rect) -> Side {
 fn stable_port_slots(
     rects: &BTreeMap<BoxId, Rect>,
     edges: &[KeyedEdge],
+    rail_nodes: &BTreeSet<BoxId>,
 ) -> BTreeMap<(usize, bool), PortSlot> {
-    let leftmost_center = rects
-        .iter()
-        .filter(|(id, _)| matches!(id, BoxId::Node(_)))
-        .map(|(_, rect)| rect.x + rect.w / 2.0)
-        .min_by(f64::total_cmp)
-        .unwrap_or(0.0);
     let mut groups: BTreeMap<(BoxId, Side), Vec<PortIncident>> = BTreeMap::new();
     for (edge_index, (source, target, _, _)) in edges.iter().enumerate() {
         let Some((_, _, source_rect, target_rect)) = routable(rects, source, target) else {
@@ -474,15 +494,17 @@ fn stable_port_slots(
             (source, target, source_rect, target_rect, true),
             (target, source, target_rect, source_rect, false),
         ] {
-            let endpoint_center_x = endpoint_rect.x + endpoint_rect.w / 2.0;
             let other_center = (
                 other_rect.x + other_rect.w / 2.0,
                 other_rect.y + other_rect.h / 2.0,
             );
-            let side = if (endpoint_center_x - leftmost_center).abs() < 1e-9
-                && other_center.0 > endpoint_center_x
-            {
-                Side::Right
+            let side = if rail_nodes.contains(endpoint) {
+                let endpoint_center_x = endpoint_rect.x + endpoint_rect.w / 2.0;
+                if other_center.0 >= endpoint_center_x {
+                    Side::Right
+                } else {
+                    Side::Left
+                }
             } else {
                 preferred_side(endpoint_rect, other_rect)
             };
@@ -1207,6 +1229,7 @@ fn astar(
     let pressured =
         cost.label_pressure > 0.0 && label_size.is_some_and(|(w, h)| w > 0.0 || h > 0.0);
     let mut band_cache: BTreeMap<(usize, usize), f64> = BTreeMap::new();
+    let mut crossing_cache: BTreeMap<(usize, usize), usize> = BTreeMap::new();
 
     let mut srt = sources.to_vec();
     srt.sort_unstable();
@@ -1246,8 +1269,11 @@ fn astar(
                 0.0
             };
             let crossing = if cost.crossing > 0.0 {
-                cost.crossing
-                    * prior_route_crossings(prior_routes, ovg.verts[v], ovg.verts[w]) as f64
+                let key = (v.min(w), v.max(w));
+                let count = *crossing_cache.entry(key).or_insert_with(|| {
+                    prior_route_crossings(prior_routes, ovg.verts[v], ovg.verts[w])
+                });
+                cost.crossing * count as f64
             } else {
                 0.0
             };

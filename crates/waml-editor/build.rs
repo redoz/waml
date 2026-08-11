@@ -10,6 +10,14 @@ fn main() {
 
 #[cfg(windows)]
 fn configure_windows_stack() {
+    // The native editor solves diagrams on the Makepad UI thread. The exact
+    // Browser and Tooling use-case documents overflow MSVC's 1 MiB executable
+    // stack while the obstacle graph and bounded A* searches are live, even
+    // after the large solve phases are kept out of line. An 8 MiB reserve is
+    // the Windows Rust toolchain's conventional executable-stack size and was
+    // verified by launching all three real documents through run.ps1. This
+    // changes virtual address reservation only; committed pages still grow on
+    // demand. Other targets retain their platform defaults.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {

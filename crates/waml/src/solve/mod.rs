@@ -445,6 +445,27 @@ pub fn place_labels_with_reroute_cost(
     cfg: &label::LabelConfig,
     base_cost: route::RouteCost,
 ) -> Vec<label::LabelRequest> {
+    place_labels_with_reroute_policy(
+        solved,
+        routing,
+        routes,
+        requests,
+        cfg,
+        base_cost,
+        &route::RoutePolicy::default(),
+    )
+}
+
+/// Label placement and bounded rerouting with an explicit route policy.
+pub fn place_labels_with_reroute_policy(
+    solved: &mut Solved,
+    routing: &RoutingContext,
+    routes: &mut [Vec<(f64, f64)>],
+    requests: &[label::LabelRequest],
+    cfg: &label::LabelConfig,
+    base_cost: route::RouteCost,
+    route_policy: &route::RoutePolicy,
+) -> Vec<label::LabelRequest> {
     // Only the ROUTES move here, never the nodes or groups the labels dodge.
     let obstacles = label_obstacles(solved);
     let original: Vec<Vec<(f64, f64)>> = routes.to_vec();
@@ -514,8 +535,14 @@ pub fn place_labels_with_reroute_cost(
             keyed[edge_idx].3 = label_sizes.get(&pos).copied();
         }
 
-        let replayed =
-            route::route_keyed_with(routing.boxes, routing.rects, &keyed, routing.cfg, &cost);
+        let replayed = route::route_keyed_with_policy(
+            routing.boxes,
+            routing.rects,
+            &keyed,
+            routing.cfg,
+            &cost,
+            route_policy,
+        );
         if replayed.len() != routes.len() {
             break; // the router disagrees with `order`: leave the routes alone
         }
@@ -551,9 +578,65 @@ pub fn place_labels_with_reroute_cost(
     best_placement.unplaced
 }
 
+/// Place labels against the exact polylines a frontend will draw.
+///
+/// Use this after frontend-specific endpoint clipping. It does not reroute, so
+/// the saved attachment points, tangents, collisions, and leaders all describe
+/// the final visible geometry.
+pub fn place_labels_final(
+    solved: &mut Solved,
+    routes: &[Vec<(f64, f64)>],
+    requests: &[label::LabelRequest],
+    cfg: &label::LabelConfig,
+) -> Vec<label::LabelRequest> {
+    let obstacles = label_obstacles(solved);
+    let placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
+    solved.label_leaders = placement
+        .placed
+        .iter()
+        .filter(|label| label.leader.is_some())
+        .count();
+    solved.labels = placement.placed;
+    placement.unplaced
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_label_placement_uses_the_clipped_terminal_segment() {
+        let mut solved = Solved {
+            nodes: BTreeMap::new(),
+            groups: vec![],
+            flags: BTreeMap::new(),
+            routes: vec![],
+            labels: vec![],
+            label_reroutes: 0,
+            label_leaders: 0,
+        };
+        let routes = vec![vec![(40.0, 0.0), (100.0, 0.0)]];
+        let requests = vec![label::LabelRequest {
+            edge: 0,
+            slot: label::LabelSlot::TerminalFrom,
+            text: "role".into(),
+        }];
+
+        let unresolved = place_labels_final(
+            &mut solved,
+            &routes,
+            &requests,
+            &label::LabelConfig::default(),
+        );
+
+        assert!(unresolved.is_empty());
+        assert_eq!(solved.labels.len(), 1);
+        assert!(
+            solved.labels[0].attach.0 >= 40.0,
+            "terminal label must attach after the clipped endpoint: {:?}",
+            solved.labels[0]
+        );
+    }
 
     fn route_points(solved: &Solved) -> Vec<Vec<(f64, f64)>> {
         solved.routes.iter().map(|r| r.points.clone()).collect()
