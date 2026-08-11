@@ -7,7 +7,8 @@ use std::rc::Rc;
 
 use makepad_widgets::*;
 
-use crate::book_model::{build_book, BookModel};
+use crate::book_model::{build_book, BookModel, BookSection};
+use crate::book_surface::BookSurfaceWidgetRefExt;
 use crate::doc_view::{
     BodyChrome, BodyWidgets, DocView, DocViewIdentity, DocumentHeaderChrome, HeaderViewAction,
     ViewData, ViewOutcome,
@@ -15,6 +16,8 @@ use crate::doc_view::{
 use crate::editor_session::EditorSessionSnapshot;
 use crate::icon_button::IconButtonWidgetRefExt;
 use crate::icons::Icon;
+use crate::navigation::{NavigationIntent, NavigationTarget, OpenDisposition};
+use waml::view::row::RowTarget;
 
 pub struct BookView {
     directory: String,
@@ -120,7 +123,21 @@ impl DocView for BookView {
                 ..ViewOutcome::default()
             };
         }
-        // Task 6: link/open-full clicks. Task 8: fold marking.
+        // A Link row or a diagram's open-full affordance -- both route
+        // through the SAME navigation path a tree click takes.
+        let book = body.book_view_widget().as_book_surface();
+        let clicked = book
+            .link_clicked(actions)
+            .or_else(|| book.open_full_clicked(actions));
+        if let (Some(index), Some(model)) = (clicked, self.model.as_ref()) {
+            if let Some(section) = model.sections.get(index) {
+                return ViewOutcome {
+                    navigation: navigation_for_section(section),
+                    ..ViewOutcome::default()
+                };
+            }
+        }
+        // Task 8: fold marking.
         ViewOutcome::default()
     }
 
@@ -141,6 +158,29 @@ impl DocView for BookView {
             },
         }
     }
+}
+
+/// One section's click destination, through the SAME navigation path a tree
+/// click takes -- the book adds no second way to open things (spec: "opens
+/// that concept's own tab through the existing navigation path"). `Virtual`
+/// targets (none exist in the book model today) have nothing to navigate
+/// to.
+pub(crate) fn navigation_for_section(section: &BookSection) -> Option<NavigationIntent> {
+    let target = match &section.target {
+        RowTarget::Concept(id) => NavigationTarget::Document {
+            concept_id: id.clone(),
+            surface: None,
+            fragment: None,
+        },
+        RowTarget::Folder(address) => NavigationTarget::Directory {
+            address: address.clone(),
+        },
+        RowTarget::Virtual => return None,
+    };
+    Some(NavigationIntent::Resolved {
+        target,
+        disposition: OpenDisposition::Preview,
+    })
 }
 
 #[cfg(test)]
@@ -192,5 +232,48 @@ mod tests {
             Rc::as_ptr(view.model().unwrap()),
             "same revision, same model"
         );
+    }
+
+    fn built_model() -> BookModel {
+        let mut session = crate::editor_session::EditorSession::default();
+        session.replace(book_source()).unwrap();
+        build_book(
+            &session.snapshot(),
+            "/guide",
+            waml::view::chain::ChainLimits::default(),
+            &waml::view::mask::ProjectionMask::default(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_link_section_navigates_to_its_own_rows_tab() {
+        let model = built_model();
+        let inner = model.sections.iter().find(|s| s.title == "Inner").unwrap();
+        let Some(NavigationIntent::Resolved {
+            target,
+            disposition,
+        }) = navigation_for_section(inner)
+        else {
+            panic!("a link section must resolve to a navigation");
+        };
+        assert!(matches!(
+            target,
+            NavigationTarget::Directory { ref address } if address == "/guide/inner"
+        ));
+        assert_eq!(disposition, OpenDisposition::Preview);
+    }
+
+    #[test]
+    fn open_full_on_a_diagram_section_navigates_to_the_concept() {
+        let model = built_model();
+        let flow = model.sections.iter().find(|s| s.title == "Flow").unwrap();
+        let Some(NavigationIntent::Resolved { target, .. }) = navigation_for_section(flow) else {
+            panic!("a diagram section must resolve to a navigation");
+        };
+        assert!(matches!(
+            target,
+            NavigationTarget::Document { ref concept_id, .. } if concept_id == "guide/flow"
+        ));
     }
 }

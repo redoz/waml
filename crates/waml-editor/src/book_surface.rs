@@ -5,21 +5,54 @@
 //! goes stale after a `Size::Fill` sibling, which would corrupt the
 //! measured-height cache.
 //!
-//! Only Prose/Diagram sections hold a live child widget (a bare placeholder
-//! `View` here; Task 6 swaps it for the real `MarkdownViewer`/
-//! `ClassDiagramSurface`). Heading and Link sections draw immediate-mode,
-//! the same hand-drawn style `tree_row_draw.rs` uses for tree rows, and are
-//! positioned from this widget's own `heights`/`tops` -- not from the
-//! turtle -- so the offset math stays in one place (`book_layout.rs`).
+//! Only Prose/Diagram sections hold a live child widget: a `MarkdownViewer`
+//! fed the compiled `ReadingDocument`, or a `ClassDiagramSurface` given the
+//! built `Scene` with interaction off. Heading and Link sections draw
+//! immediate-mode, the same hand-drawn style `tree_row_draw.rs` uses for
+//! tree rows, and are positioned from this widget's own `heights`/`tops` --
+//! not from the turtle -- so the offset math stays in one place
+//! (`book_layout.rs`). A diagram's "open full" affordance and every Link
+//! row are ALSO hand-drawn (no real button/row widget), so their hit rects
+//! are cached every draw pass (the `folder_list.rs` `row_rects` pattern)
+//! and hit-tested directly in `handle_event`.
 
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use makepad_widgets::*;
+use waml_markdown_editor::reading::{MarkdownViewer, MarkdownViewerWidgetRefExt};
 
 use crate::book_model::{BookModel, BookSection, LinkReason, SectionBody};
 use crate::icons::{Icon, IconSet};
 use waml::view::row::RowId;
+
+/// A hand-drawn clickable region the pointer can be over: a Link row or a
+/// diagram's open-full affordance. Distinct from [`BookSurfaceAction`] (the
+/// action a CLICK emits) because hover needs to compare "is this the same
+/// target as last frame", not just "did a click land".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BookHoverTarget {
+    Link(usize),
+    OpenFull(usize),
+}
+
+/// Emitted when the reader clicks a hand-drawn Link row or a diagram's
+/// open-full affordance -- both index `BookModel::sections` (the same
+/// indices `set_model` was last given). `BookView::handle` maps either
+/// through `navigation_for_section`. `FoldMoved` is Task 8's (scrolling the
+/// book marks the current tree row); declared here so the enum is stable
+/// across both tasks.
+#[derive(Clone, Debug, Default)]
+pub enum BookSurfaceAction {
+    #[default]
+    None,
+    LinkClicked(usize),
+    OpenFullClicked(usize),
+    // Consumed by Task 8 (scrolling the book marks the current tree row),
+    // which constructs it and removes this allow.
+    #[allow(dead_code)]
+    FoldMoved(usize),
+}
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -43,8 +76,18 @@ script_mod! {
         }
         // Colour-only holder (never drawn): the immediate-mode link glyph
         // copies `color` from this per draw, the `FolderRow` pattern -- no
-        // RGBA crosses Rust.
+        // RGBA crosses Rust. Also tints the diagram caption's open-full
+        // glyph -- both are muted affordance icons.
         draw_link_icon +: { color: atlas.text_dim }
+        // A diagram section's caption-strip title, above its live embed.
+        draw_caption +: {
+            color: atlas.text
+            text_style: fonts.text_label
+        }
+        // Hover wash for a Link row or the diagram open-full affordance,
+        // painted BENEATH the row's own glyph/text -- the `tree_panel.rs`
+        // `draw_hover` pattern (flat, full-bleed, no corner radius).
+        draw_row_hover +: { color: atlas.hover }
         // The hairline under a heading row.
         draw_rule +: { color: atlas.text_dim }
         // The scroll bar, drawn from this widget's own offset (the
@@ -68,6 +111,8 @@ const HEADING_LEFT: f64 = 8.0;
 const HEADING_TOP_PAD: f64 = 14.0;
 const LINK_ICON_SIZE: f64 = 14.0;
 const LINK_LEFT: f64 = 8.0;
+/// Side of the diagram caption's open-full glyph square.
+const OPEN_FULL_ICON_SIZE: f64 = 16.0;
 
 #[derive(Script, ScriptHook, Widget)]
 pub struct BookSurface {
@@ -83,6 +128,12 @@ pub struct BookSurface {
     draw_link: DrawText,
     #[live]
     draw_link_icon: DrawColor,
+    /// A diagram section's caption-strip title.
+    #[live]
+    draw_caption: DrawText,
+    /// Hover wash under a Link row or the diagram open-full affordance.
+    #[live]
+    draw_row_hover: DrawColor,
     #[live]
     draw_rule: DrawColor,
     #[live]
@@ -120,6 +171,19 @@ pub struct BookSurface {
     /// `scroll_grab`.
     #[rust]
     scroll_grab: Option<f64>,
+    /// Absolute rects of the currently-drawn Link rows, indexed by section
+    /// index, rebuilt every draw pass -- `folder_list.rs`'s `row_rects`
+    /// pattern, since these rows are hand-drawn, not real child widgets.
+    #[rust]
+    link_rects: Vec<(usize, Rect)>,
+    /// Absolute rects of the currently-drawn diagram open-full affordance,
+    /// same shape as `link_rects`.
+    #[rust]
+    open_full_rects: Vec<(usize, Rect)>,
+    /// The clickable target under the pointer, if any -- drives the hover
+    /// cursor and the row/button hover wash. `None` off any clickable rect.
+    #[rust]
+    hovered: Option<BookHoverTarget>,
 }
 
 impl Widget for BookSurface {
@@ -151,10 +215,37 @@ impl Widget for BookSurface {
                     }
                     return;
                 }
+                // Hover cursor + wash for the hand-drawn Link rows and the
+                // diagram open-full affordance -- neither is a real child
+                // widget, so this widget hit-tests its own cached rects.
+                let target = self.hover_target_at(e.abs);
+                if self.hovered != target {
+                    self.hovered = target;
+                    if target.is_some() {
+                        crate::cursor::hover_in(cx, MouseCursor::Hand);
+                    } else {
+                        crate::cursor::hover_out(cx);
+                    }
+                    self.view.redraw(cx);
+                }
             }
             Event::MouseUp(e) if e.button.is_primary() && self.scroll_grab.is_some() => {
                 self.scroll_grab = None;
                 return;
+            }
+            // A release over a hand-drawn Link row or a diagram's open-full
+            // affordance -- both index `BookModel::sections`, mirroring how
+            // `folder_list.rs` emits `FolderListViewAction` off cached rects.
+            Event::MouseUp(e) if e.button.is_primary() => {
+                let uid = self.widget_uid();
+                if let Some(index) = hit_row(&self.link_rects, e.abs) {
+                    cx.widget_action(uid, BookSurfaceAction::LinkClicked(index));
+                    return;
+                }
+                if let Some(index) = hit_row(&self.open_full_rects, e.abs) {
+                    cx.widget_action(uid, BookSurfaceAction::OpenFullClicked(index));
+                    return;
+                }
             }
             _ => {}
         }
@@ -181,6 +272,12 @@ impl Widget for BookSurface {
 
         cx.push_clip_rect(rect);
 
+        // Rebuilt every pass: only currently-visible rows/buttons are
+        // clickable, and the loop below repopulates exactly those that draw
+        // this frame (`folder_list.rs`'s `row_rects` reset).
+        self.link_rects.clear();
+        self.open_full_rects.clear();
+
         let mut remeasured = false;
         if let Some(model) = self.model.clone() {
             for (index, section) in model.sections.iter().enumerate() {
@@ -197,9 +294,9 @@ impl Widget for BookSurface {
                 match &section.body {
                     SectionBody::Heading => self.draw_heading_row(cx, section, section_rect),
                     SectionBody::Link { reason } => {
-                        self.draw_link_row(cx, section, reason, section_rect)
+                        self.draw_link_row(cx, index, section, reason, section_rect)
                     }
-                    SectionBody::Prose { .. } | SectionBody::Diagram { .. } => {
+                    SectionBody::Prose { .. } => {
                         if let Some(child) = self.live.get(&index) {
                             let _ = child.draw_walk(cx, scope, Walk::abs_rect(section_rect));
                             let drawn = child.area().rect(cx).size.y;
@@ -209,6 +306,25 @@ impl Widget for BookSurface {
                                 self.measured.insert(section.row_id.clone(), drawn);
                                 remeasured = true;
                             }
+                        }
+                    }
+                    SectionBody::Diagram { .. } => {
+                        // Fixed height by design (the embed cap, not the
+                        // child's natural size): the caption strip plus
+                        // whatever remains of `section_rect` for the canvas,
+                        // never re-measured.
+                        let caption_h = crate::book_layout::DIAGRAM_CAPTION_HEIGHT.min(height);
+                        let caption_rect = Rect {
+                            pos: section_rect.pos,
+                            size: dvec2(section_rect.size.x, caption_h),
+                        };
+                        self.draw_diagram_caption(cx, index, section, caption_rect);
+                        let canvas_rect = Rect {
+                            pos: dvec2(section_rect.pos.x, section_rect.pos.y + caption_h),
+                            size: dvec2(section_rect.size.x, (height - caption_h).max(0.0)),
+                        };
+                        if let Some(child) = self.live.get(&index) {
+                            let _ = child.draw_walk(cx, scope, Walk::abs_rect(canvas_rect));
                         }
                     }
                 }
@@ -289,16 +405,35 @@ impl BookSurface {
         }
     }
 
-    /// The shell holds a PLACEHOLDER child per Prose/Diagram section (a bare
-    /// `View`) so the virtualization tests exercise real child lifecycle
-    /// now; Task 6 swaps the placeholders for `MarkdownViewer`/
-    /// `ClassDiagramSurface`. Heading and Link sections never hold a child
-    /// -- they draw immediate-mode.
+    /// The live child for a Prose/Diagram section: a `MarkdownViewer` fed
+    /// the compiled `ReadingDocument` (the exact `install_document` call
+    /// `reading_view.rs` makes), or a `ClassDiagramSurface` given the built
+    /// `Scene` with interaction off -- the surface fits the scene to
+    /// whatever rect it is drawn at, so the fixed embed height needs no new
+    /// canvas code. Heading and Link sections never hold a child -- they
+    /// draw immediate-mode.
     fn make_child(&self, cx: &mut Cx, section: &BookSection) -> Option<WidgetRef> {
         match &section.body {
-            SectionBody::Prose { .. } | SectionBody::Diagram { .. } => Some(
-                WidgetRef::new_with_inner(Box::new(cx.with_vm(View::script_new_with_default))),
-            ),
+            SectionBody::Prose { document, source } => {
+                let child = WidgetRef::new_with_inner(Box::new(
+                    cx.with_vm(MarkdownViewer::script_new_with_default),
+                ));
+                child
+                    .as_markdown_viewer()
+                    .install_document(cx, document.clone(), source.clone());
+                Some(child)
+            }
+            SectionBody::Diagram { scene, .. } => {
+                let child = WidgetRef::new_with_inner(Box::new(
+                    cx.with_vm(crate::canvas::ClassDiagramSurface::script_new_with_default),
+                ));
+                if let Some(mut canvas) = child.borrow_mut::<crate::canvas::ClassDiagramSurface>() {
+                    canvas.set_scene(cx, (**scene).clone());
+                    // Read-only embed: interaction stays off in Phase 1.
+                    canvas.set_interaction_enabled(cx, false);
+                }
+                Some(child)
+            }
             SectionBody::Heading | SectionBody::Link { .. } => None,
         }
     }
@@ -310,6 +445,48 @@ impl BookSurface {
         let mut indices: Vec<usize> = self.live.keys().copied().collect();
         indices.sort_unstable();
         indices
+    }
+
+    // Test accessor: the live children themselves, sorted by section index
+    // -- lets a test assert WHICH widget type backs each kind of section.
+    #[cfg(test)]
+    pub(crate) fn live_children_for_test(&self) -> Vec<(usize, WidgetRef)> {
+        let mut items: Vec<(usize, WidgetRef)> =
+            self.live.iter().map(|(i, w)| (*i, w.clone())).collect();
+        items.sort_by_key(|(i, _)| *i);
+        items
+    }
+
+    fn hover_target_at(&self, pos: DVec2) -> Option<BookHoverTarget> {
+        if let Some(index) = hit_row(&self.link_rects, pos) {
+            return Some(BookHoverTarget::Link(index));
+        }
+        hit_row(&self.open_full_rects, pos).map(BookHoverTarget::OpenFull)
+    }
+
+    fn actions_action(&self, actions: &Actions) -> BookSurfaceAction {
+        actions
+            .find_widget_action(self.widget_uid())
+            .map(|item| item.cast())
+            .unwrap_or_default()
+    }
+
+    /// The section index a Link row was clicked on this pass, if any.
+    /// `BookView::handle` maps it through `navigation_for_section`.
+    pub fn link_clicked(&self, actions: &Actions) -> Option<usize> {
+        match self.actions_action(actions) {
+            BookSurfaceAction::LinkClicked(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// The section index a diagram's open-full affordance was clicked on
+    /// this pass, if any. Same navigation mapping as `link_clicked`.
+    pub fn open_full_clicked(&self, actions: &Actions) -> Option<usize> {
+        match self.actions_action(actions) {
+            BookSurfaceAction::OpenFullClicked(i) => Some(i),
+            _ => None,
+        }
     }
 
     // Consumed by Task 7 (a tree click reveals a book section), which
@@ -410,10 +587,14 @@ impl BookSurface {
     fn draw_link_row(
         &mut self,
         cx: &mut Cx2d,
+        index: usize,
         section: &BookSection,
         reason: &LinkReason,
         rect: Rect,
     ) {
+        if self.hovered == Some(BookHoverTarget::Link(index)) {
+            self.draw_row_hover.draw_abs(cx, rect);
+        }
         let indent = section.depth as f64 * DEPTH_INDENT;
         let icon_x = (rect.pos.x + LINK_LEFT + indent).round();
         let icon_y = (rect.pos.y + (rect.size.y - LINK_ICON_SIZE) / 2.0).round();
@@ -434,6 +615,59 @@ impl BookSurface {
         let text_y = (rect.pos.y + (rect.size.y - size.height as f64) / 2.0).round();
         self.draw_link
             .draw_abs(cx, dvec2(text_x, text_y), &section.title);
+        // The whole row is clickable, not just the icon/text run -- a
+        // generous hit target, and it matches the rect the hover wash
+        // painted above.
+        self.link_rects.push((index, rect));
+    }
+
+    /// The strip above a live diagram embed: the section title left, a
+    /// small "open full" affordance right (`Icon::ArrowRight` -- the
+    /// catalog has no dedicated external-link glyph yet). Clicking it opens
+    /// the concept's own tab through `book_view::navigation_for_section`,
+    /// exactly like a Link row; the hit rect is cached the same way.
+    fn draw_diagram_caption(
+        &mut self,
+        cx: &mut Cx2d,
+        index: usize,
+        section: &BookSection,
+        rect: Rect,
+    ) {
+        if self.hovered == Some(BookHoverTarget::OpenFull(index)) {
+            self.draw_row_hover.draw_abs(cx, rect);
+        }
+        let text_x = (rect.pos.x + HEADING_LEFT).round();
+        let size = self
+            .draw_caption
+            .layout(cx, 0.0, 0.0, None, false, Align::default(), &section.title)
+            .size_in_lpxs;
+        let text_y = (rect.pos.y + (rect.size.y - size.height as f64) / 2.0).round();
+        self.draw_caption
+            .draw_abs(cx, dvec2(text_x, text_y), &section.title);
+
+        let button_rect = Rect {
+            pos: dvec2(
+                rect.pos.x + rect.size.x - OPEN_FULL_ICON_SIZE - LINK_LEFT,
+                (rect.pos.y + (rect.size.y - OPEN_FULL_ICON_SIZE) / 2.0).round(),
+            ),
+            size: dvec2(OPEN_FULL_ICON_SIZE, OPEN_FULL_ICON_SIZE),
+        };
+        self.icons
+            .draw(cx, Icon::ArrowRight, button_rect, self.draw_link_icon.color);
+        self.open_full_rects.push((index, button_rect));
+    }
+}
+
+impl BookSurfaceRef {
+    /// See [`BookSurface::link_clicked`].
+    pub fn link_clicked(&self, actions: &Actions) -> Option<usize> {
+        self.borrow().and_then(|inner| inner.link_clicked(actions))
+    }
+
+    /// See [`BookSurface::open_full_clicked`].
+    pub fn open_full_clicked(&self, actions: &Actions) -> Option<usize> {
+        self.borrow()
+            .and_then(|inner| inner.open_full_clicked(actions))
     }
 }
 
@@ -445,6 +679,13 @@ fn link_icon(reason: &LinkReason) -> Icon {
         LinkReason::NestedBook => Icon::Book,
         LinkReason::UnrenderedSurface(_) | LinkReason::CompileFailed(_) => Icon::FileText,
     }
+}
+
+/// The first (index, rect) in `rects` containing `pos`. Shared by hover
+/// hit-testing and click hit-testing so both agree on the exact same
+/// regions.
+fn hit_row(rects: &[(usize, Rect)], pos: DVec2) -> Option<usize> {
+    rects.iter().find(|(_, r)| r.contains(pos)).map(|(i, _)| *i)
 }
 
 #[cfg(test)]
@@ -534,5 +775,79 @@ mod tests {
         assert!(book.scroll() > 0.0);
         book.reconcile_live(&mut cx, 600.0);
         assert!(!book.live_section_indices().is_empty());
+    }
+
+    /// The Task 2 fixture: a book with a prose section (Intro), a diagram
+    /// section (Flow), a nested plain folder (Deep -> Leaf, prose), and a
+    /// nested book (Inner, a Link). Duplicated from `book_model.rs`'s
+    /// `book_source` -- test modules may not import each other's.
+    fn guide_model() -> Rc<crate::book_model::BookModel> {
+        let mut session = crate::editor_session::EditorSession::default();
+        session
+            .replace(
+                waml::source::SourceBundle::try_from_pairs([
+                    (
+                        "index.md",
+                        "# Root\n\n* [Guide](guide/)\n* [Loose](loose.md)\n",
+                    ),
+                    (
+                        "guide/index.md",
+                        "---\nview: book\n---\n# Guide\n\n* [Intro](intro.md)\n* [Flow](flow.md)\n* [Deep](deep/)\n* [Inner](inner/)\n",
+                    ),
+                    ("guide/intro.md", "# Intro\n\nSome prose.\n"),
+                    (
+                        "guide/flow.md",
+                        "---\ntype: uml.ClassDiagram\ntitle: Flow\n---\n# Flow\n",
+                    ),
+                    ("guide/deep/index.md", "# Deep\n\n* [Leaf](leaf.md)\n"),
+                    ("guide/deep/leaf.md", "# Leaf\n"),
+                    (
+                        "guide/inner/index.md",
+                        "---\nview: book\n---\n# Inner\n\n* [Nested](nested.md)\n",
+                    ),
+                    ("guide/inner/nested.md", "# Nested\n"),
+                    ("loose.md", "# Loose\n"),
+                ])
+                .unwrap(),
+            )
+            .unwrap();
+        Rc::new(
+            crate::book_model::build_book(
+                &session.snapshot(),
+                "/guide",
+                waml::view::chain::ChainLimits::default(),
+                &waml::view::mask::ProjectionMask::default(),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn live_children_match_their_section_kind() {
+        // Same headless construction as the tests above, over the Task 2
+        // fixture (prose + diagram + heading + link). After reconcile_live
+        // at the top: the prose sections' children borrow as
+        // MarkdownViewer, the diagram section's as ClassDiagramSurface, and
+        // Heading/Link sections hold no child (they are immediate-mode
+        // rows).
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let mut book = surface(&mut cx);
+        book.set_model(&mut cx, guide_model());
+        book.reconcile_live(&mut cx, 2000.0);
+        let live = book.live_children_for_test();
+        let viewer_count = live
+            .iter()
+            .filter(|(_, w)| {
+                w.borrow::<waml_markdown_editor::reading::MarkdownViewer>()
+                    .is_some()
+            })
+            .count();
+        let canvas_count = live
+            .iter()
+            .filter(|(_, w)| w.borrow::<crate::canvas::ClassDiagramSurface>().is_some())
+            .count();
+        assert!(viewer_count >= 2, "Intro and Leaf are prose");
+        assert_eq!(canvas_count, 1, "Flow is the one diagram embed");
     }
 }
