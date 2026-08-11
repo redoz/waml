@@ -141,6 +141,14 @@ impl DocView for GenericOkfView {
         self.source.route_editor_event(cx, ui, event);
     }
 
+    fn on_activate(&mut self, cx: &mut Cx, body: &BodyWidgets) {
+        let _ = body;
+        #[cfg(target_arch = "wasm32")]
+        self.reading.on_activate(cx);
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = cx;
+    }
+
     fn handle(
         &mut self,
         cx: &mut Cx,

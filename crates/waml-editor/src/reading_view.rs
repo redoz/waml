@@ -56,6 +56,15 @@ impl<T> DeferredFrameSlot<T> {
         }
     }
 
+    fn invalidate(&mut self) {
+        self.token = None;
+    }
+
+    fn reactivate(&mut self, has_work: bool, make_token: impl FnOnce() -> T) {
+        self.invalidate();
+        self.arm(has_work, make_token);
+    }
+
     #[cfg(test)]
     fn token(&self) -> Option<&T> {
         self.token.as_ref()
@@ -314,6 +323,12 @@ impl ReadingView {
         )
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn on_activate(&mut self, cx: &mut Cx) {
+        self.next_frame
+            .reactivate(self.lease.has_deferred_work(), || cx.new_next_frame());
+    }
+
     #[cfg(test)]
     pub(crate) fn extensions_pending_for_test(&self) -> usize {
         self.states.pending_count()
@@ -440,6 +455,29 @@ mod tests {
         assert!(slot.take_if(|token| *token == 1));
         slot.arm(true, || 2);
         assert_eq!(slot.token(), Some(&2));
+    }
+
+    #[test]
+    fn returning_after_a_lost_frame_rearms_and_completes_deferred_work() {
+        let mut slot = DeferredFrameSlot::default();
+        let mut pending = 1;
+        slot.arm(pending > 0, || 1_u64);
+        assert_eq!(slot.token(), Some(&1));
+
+        // The view becomes inactive. DocumentHost does not route token 1's
+        // event to it, so the slot cannot consume the token.
+        slot.reactivate(pending > 0, || 2);
+        assert_eq!(
+            slot.token(),
+            Some(&2),
+            "reactivation must replace the token whose event was lost"
+        );
+
+        assert!(slot.take_if(|token| *token == 2));
+        pending -= 1;
+        slot.arm(pending > 0, || 3);
+        assert_eq!(pending, 0);
+        assert_eq!(slot.token(), None);
     }
 
     #[test]
