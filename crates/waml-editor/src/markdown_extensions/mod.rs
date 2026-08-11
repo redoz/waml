@@ -134,6 +134,21 @@ struct QueuedRender {
     request: BlockExtensionRequest,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+struct NativeInflight {
+    key: (MarkdownExtensionLeaseId, BlockExtensionRequestId),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeInflight {
+    fn from_queued(queued: &QueuedRender) -> Self {
+        Self {
+            key: (queued.lease, queued.request.request_id),
+        }
+    }
+}
+
 pub struct EditorMarkdownExtensionHost {
     renderers: BTreeMap<Arc<str>, Arc<dyn FencedBlockRenderer>>,
     completed: BTreeMap<(MarkdownExtensionLeaseId, BlockExtensionRequestId), BlockExtensionEvent>,
@@ -150,6 +165,8 @@ pub struct EditorMarkdownExtensionHost {
     native_spawner: NativeSpawner,
     #[cfg(not(target_arch = "wasm32"))]
     native_workers: Vec<Option<Sender<QueuedRender>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    native_inflight: Vec<Option<NativeInflight>>,
     #[cfg(not(target_arch = "wasm32"))]
     native_idle: VecDeque<usize>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -236,6 +253,7 @@ impl EditorMarkdownExtensionHost {
             wake_ui,
             native_spawner,
             native_workers: (0..NATIVE_RENDER_CONCURRENCY).map(|_| None).collect(),
+            native_inflight: (0..NATIVE_RENDER_CONCURRENCY).map(|_| None).collect(),
             native_idle: VecDeque::new(),
             native_active: 0,
             native_queue: VecDeque::new(),
@@ -334,6 +352,7 @@ impl EditorMarkdownExtensionHost {
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(worker) = worker {
                 self.native_active = self.native_active.saturating_sub(1);
+                self.native_inflight[worker] = None;
                 if self.native_workers[worker].is_some() {
                     self.native_idle.push_back(worker);
                 }
@@ -390,6 +409,7 @@ impl EditorMarkdownExtensionHost {
         match self.try_start_native(queued) {
             NativeDispatch::Handled => {}
             NativeDispatch::NoCapacity(queued) => {
+                self.prune_native_queue();
                 if self.native_queue.len() < NATIVE_RENDER_QUEUE_CAPACITY {
                     self.native_queue.push_back(queued);
                 } else {
@@ -409,9 +429,11 @@ impl EditorMarkdownExtensionHost {
                 let Some(sender) = self.native_workers[worker].as_ref().cloned() else {
                     continue;
                 };
+                let inflight = NativeInflight::from_queued(&queued);
                 match sender.send(queued) {
                     Ok(()) => {
                         self.native_active += 1;
+                        self.native_inflight[worker] = Some(inflight);
                         return NativeDispatch::Handled;
                     }
                     Err(error) => {
@@ -464,11 +486,7 @@ impl EditorMarkdownExtensionHost {
     #[cfg(not(target_arch = "wasm32"))]
     fn dispatch_native_queue(&mut self) {
         while let Some(queued) = self.native_queue.pop_front() {
-            let key = (queued.lease, queued.request.request_id);
-            if !self.render_is_live(key, &queued.request) {
-                if self.render_should_retire(key) {
-                    self.retire(key);
-                }
+            if self.discard_native_queue_entry(&queued) {
                 continue;
             }
             match self.try_start_native(queued) {
@@ -479,6 +497,33 @@ impl EditorMarkdownExtensionHost {
                 }
             }
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn prune_native_queue(&mut self) {
+        let mut queued = std::mem::take(&mut self.native_queue);
+        while let Some(render) = queued.pop_front() {
+            if !self.discard_native_queue_entry(&render) {
+                self.native_queue.push_back(render);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn discard_native_queue_entry(&mut self, queued: &QueuedRender) -> bool {
+        let key = (queued.lease, queued.request.request_id);
+        if self.render_is_live(key, &queued.request) {
+            return false;
+        }
+        let same_key_is_active = self
+            .native_inflight
+            .iter()
+            .flatten()
+            .any(|inflight| inflight.key == key);
+        if self.render_should_retire(key) && !same_key_is_active {
+            self.retire(key);
+        }
+        true
     }
 
     fn close_lease(&mut self, lease: MarkdownExtensionLeaseId) {
@@ -1071,6 +1116,39 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn canceled_full_queue_accepts_and_renders_a_replacement_before_release() {
+        let renderer = Arc::new(BlockingRenderer::default());
+        let shared = native_host(renderer.clone());
+        let mut lease = EditorMarkdownExtensionHost::open_lease(&shared);
+
+        for id in 500..568 {
+            lease.request(request(id, "mermaid", "cold"));
+        }
+        wait_until(|| renderer.started().len() == 4);
+        for id in 504..568 {
+            lease.cancel(BlockExtensionRequestId(id));
+        }
+        lease.request(request(568, "mermaid", "replacement"));
+        let before_release = lease.drain_events();
+        renderer.release_all();
+
+        let completed = drain_native_until_idle(&mut lease, &shared);
+
+        assert!(before_release.is_empty());
+        assert_eq!(completed.len(), 5);
+        assert!(completed.iter().any(|event| matches!(
+            event,
+            BlockExtensionEvent::Ready {
+                request_id: BlockExtensionRequestId(568),
+                svg,
+                ..
+            } if svg.data.as_ref() == b"replacement"
+        )));
+        assert!(renderer.started().contains(&BlockExtensionRequestId(568)));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn canceled_native_queue_entry_never_renders() {
         let renderer = Arc::new(BlockingRenderer::default());
         let shared = native_host(renderer.clone());
@@ -1197,6 +1275,30 @@ mod tests {
             thread::yield_now();
         }
         events
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn drain_native_until_idle(
+        host: &mut impl MarkdownBlockExtensionHost,
+        shared: &SharedMarkdownExtensionHost,
+    ) -> Vec<BlockExtensionEvent> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut events = Vec::new();
+        loop {
+            events.extend(host.drain_events());
+            let native_idle = {
+                let host = shared.borrow();
+                host.native_active == 0 && host.native_queue.is_empty()
+            };
+            if native_idle {
+                return events;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native renderer did not become idle"
+            );
+            thread::yield_now();
+        }
     }
 
     fn wait_until(mut condition: impl FnMut() -> bool) {
