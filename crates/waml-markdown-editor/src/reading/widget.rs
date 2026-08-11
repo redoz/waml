@@ -804,6 +804,16 @@ fn primary_modifier(cx: &Cx, event: &Event) -> bool {
     let Event::Scroll(e) = event else {
         return false;
     };
+    // Trackpad momentum keeps delivering deltas for about a second after the
+    // fingers lift. Zooming on those walks the ladder to an end stop with the
+    // hand already off the trackpad, so only finger-driven deltas count.
+    if matches!(
+        e.phase,
+        makepad_widgets::event::ScrollPhase::Momentum
+            | makepad_widgets::event::ScrollPhase::MomentumEnded
+    ) {
+        return false;
+    }
     let macos = matches!(cx.os_type(), OsType::Macos);
     zoom_wheel_modifier(e.modifiers, macos)
 }

@@ -3203,6 +3203,15 @@ fn primary_modifier(cx: &Cx, event: &Event) -> bool {
     let Event::Scroll(e) = event else {
         return false;
     };
+    // See the reading view's copy: momentum deltas arrive after the fingers
+    // lift and would walk the ladder on their own.
+    if matches!(
+        e.phase,
+        makepad_widgets::event::ScrollPhase::Momentum
+            | makepad_widgets::event::ScrollPhase::MomentumEnded
+    ) {
+        return false;
+    }
     let macos = matches!(cx.os_type(), OsType::Macos);
     zoom_wheel_modifier(e.modifiers, macos)
 }

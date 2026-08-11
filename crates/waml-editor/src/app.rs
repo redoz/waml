@@ -32,7 +32,7 @@ use crate::project_settings::DockWidths;
 use crate::search_session::SearchSession;
 use crate::search_state::SearchState;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
-use crate::zoom::WheelAccumulator;
+use crate::zoom::{WheelAccumulator, ZoomState, ZoomTarget};
 use makepad_widgets::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -797,6 +797,15 @@ pub struct App {
     /// source editor into whole zoom-ladder steps (Task 10).
     #[rust]
     wheel_zoom: WheelAccumulator,
+    /// The zoom target the accumulator above is currently banking deltas for.
+    /// A change resets it, so a sub-threshold nudge in one surface cannot step
+    /// the ladder in another.
+    #[rust]
+    wheel_zoom_target: Option<ZoomTarget>,
+    /// Live zoom percent per target. Memory is the truth; `config` is
+    /// write-through persistence (see `zoom::ZoomState`).
+    #[rust]
+    zoom_state: ZoomState,
     /// Scope state for the tree panel; the app owns it and rebuilds `NavView`
     /// on every change (see `nav.rs`).
     #[rust]
