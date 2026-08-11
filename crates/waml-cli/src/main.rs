@@ -1152,7 +1152,7 @@ fn run_export_site(dir: &PathBuf, out: &Path, force: bool) -> i32 {
     // `build_search_index_asset_for_envelope`. Search on the exported site
     // still sees exactly what the export shipped, no more (spec
     // §Export-time index boundary rule).
-    let search_index = match commands::build_search_index_asset_for_envelope(&bundle) {
+    let search_index = match waml::search::export::build_search_index_asset_for_envelope(&bundle) {
         Ok(bytes) => bytes,
         Err(error) => {
             eprintln!("waml: {error}");

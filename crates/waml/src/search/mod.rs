@@ -3,6 +3,7 @@
 //! re-exported from this module, never on a backend's internals.
 
 pub mod asset;
+pub mod export;
 pub mod extract;
 pub mod index;
 pub mod query;
