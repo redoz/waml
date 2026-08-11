@@ -587,8 +587,20 @@ pub enum ViewReconcilePolicy {
 /// Task 6); `SearchResultsView` (Task 9) is the first producer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RevealTarget {
-    TextSpan { start: u32, end: u32 },
-    ModelElement { key: String },
+    TextSpan {
+        start: u32,
+        end: u32,
+    },
+    ModelElement {
+        key: String,
+    },
+    /// A projected row inside a composite surface (the book): scroll that
+    /// row's section to the fold. Minted by the view that owns the rows
+    /// (`DocView::reveal_target_for`), because only it knows which RowIds it
+    /// is showing; every other view keeps its no-op `reveal` default.
+    Row {
+        id: waml::view::row::RowId,
+    },
 }
 
 #[allow(dead_code)]
@@ -703,6 +715,16 @@ pub trait DocView {
     /// unchanged.
     fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &RevealTarget) {
         let _ = (cx, body, target);
+    }
+
+    /// Translate a navigation target into a reveal THIS view can service, or
+    /// `None` to let the ordinary open path run. Only the book answers today
+    /// (a tree click on a section scrolls instead of opening -- spec
+    /// decision 4); the default keeps every other view's click behavior
+    /// byte-for-byte unchanged.
+    fn reveal_target_for(&self, target: &waml::view::row::RowTarget) -> Option<RevealTarget> {
+        let _ = target;
+        None
     }
 
     /// Mirror the live bundle-wide search session's cursor (Task 14, spec

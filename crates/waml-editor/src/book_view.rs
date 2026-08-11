@@ -141,6 +141,39 @@ impl DocView for BookView {
         ViewOutcome::default()
     }
 
+    /// A tree click on a row this book is showing scrolls to it instead of
+    /// opening a tab (spec decision 4: the tree stays one tree). Matching is
+    /// by `RowTarget` -- the same identity the tree row carries -- so a row
+    /// outside this book falls through to the ordinary open path.
+    fn reveal_target_for(&self, target: &RowTarget) -> Option<crate::doc_view::RevealTarget> {
+        let model = self.model.as_ref()?;
+        model
+            .sections
+            .iter()
+            .find(|section| &section.target == target)
+            .map(|section| crate::doc_view::RevealTarget::Row {
+                id: section.row_id.clone(),
+            })
+    }
+
+    fn reveal(&mut self, cx: &mut Cx, body: &BodyWidgets, target: &crate::doc_view::RevealTarget) {
+        let crate::doc_view::RevealTarget::Row { id } = target else {
+            return; // text/model reveals do not apply to a book
+        };
+        let Some(model) = self.model.as_ref() else {
+            return;
+        };
+        let Some(index) = model.sections.iter().position(|s| &s.row_id == id) else {
+            return;
+        };
+        if let Some(mut widget) = body
+            .book_view_widget()
+            .borrow_mut::<crate::book_surface::BookSurface>()
+        {
+            widget.scroll_to_section(cx, index);
+        }
+    }
+
     fn chrome(&self) -> BodyChrome {
         BodyChrome {
             tool_dock: false,

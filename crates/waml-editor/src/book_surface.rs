@@ -489,9 +489,6 @@ impl BookSurface {
         }
     }
 
-    // Consumed by Task 7 (a tree click reveals a book section), which
-    // removes this allow.
-    #[allow(dead_code)]
     pub fn scroll_to_section(&mut self, cx: &mut Cx, index: usize) {
         if let Some(&top) = self.tops.get(index) {
             self.scroll = top;

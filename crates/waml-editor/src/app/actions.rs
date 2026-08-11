@@ -1078,8 +1078,38 @@ impl App {
         let Some(intent) = intent else {
             return ActionFlow::Continue;
         };
+        if let crate::navigation::NavigationIntent::Resolved { target, .. } = &intent {
+            if self.try_reveal_in_active_book(cx, target) {
+                return ActionFlow::Consumed;
+            }
+        }
         self.handle_navigation_intent(cx, intent);
         ActionFlow::Consumed
+    }
+
+    /// The tree-click intercept (spec: "the tree stays one tree"): when the
+    /// ACTIVE view can show the clicked row in place, scroll it there instead
+    /// of opening a tab. Sits in the tree's own action handler, NOT in
+    /// navigate_with, so palette commits, markdown links, and breadcrumbs
+    /// keep opening tabs while a book is active.
+    pub(super) fn try_reveal_in_active_book(
+        &mut self,
+        cx: &mut Cx,
+        target: &crate::navigation::NavigationTarget,
+    ) -> bool {
+        let row_target = match target {
+            crate::navigation::NavigationTarget::Document { concept_id, .. } => {
+                waml::view::row::RowTarget::Concept(concept_id.clone())
+            }
+            crate::navigation::NavigationTarget::Directory { address } => {
+                waml::view::row::RowTarget::Folder(address.clone())
+            }
+            crate::navigation::NavigationTarget::ExternalUrl(_) => return false,
+        };
+        let Some(reveal) = self.documents.active_reveal_for_target(&row_target) else {
+            return false;
+        };
+        self.documents.reveal_active(cx, &self.ui, &reveal)
     }
 
     fn handle_tree_projection_menu(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {

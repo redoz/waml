@@ -3112,3 +3112,78 @@ fn refreshing_folder_tabs_rebuilds_an_open_book_tab_in_place() {
         waml::view::surface::SurfaceId::book()
     );
 }
+
+#[test]
+fn a_tree_click_on_a_section_of_the_active_book_reveals_instead_of_opening() {
+    let (mut cx, mut app) = book_navigation_app();
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/guide".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    let tabs_before = app.documents.tabs().len();
+    let handled = app.try_reveal_in_active_book(
+        &mut cx,
+        &NavigationTarget::Document {
+            concept_id: "guide/intro".to_string(),
+            surface: None,
+            fragment: None,
+        },
+    );
+    assert!(handled, "a section concept must resolve to a reveal");
+    assert_eq!(app.documents.tabs().len(), tabs_before, "no new tab");
+    assert_eq!(
+        app.documents.active_tab().unwrap().locator().surface,
+        waml::view::surface::SurfaceId::book(),
+        "the book stays active"
+    );
+}
+
+#[test]
+fn a_tree_click_outside_the_active_book_still_opens_a_tab() {
+    let (mut cx, mut app) = book_navigation_app();
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/guide".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    let handled = app.try_reveal_in_active_book(
+        &mut cx,
+        &NavigationTarget::Document {
+            concept_id: "plain/note".to_string(),
+            surface: None,
+            fragment: None,
+        },
+    );
+    assert!(
+        !handled,
+        "a non-section target falls through to the open path"
+    );
+}
+
+#[test]
+fn a_tree_click_reveals_nothing_when_a_folder_listing_is_active() {
+    let (mut cx, mut app) = book_navigation_app();
+    assert!(app.navigate_with(
+        &mut cx,
+        NavigationTarget::Directory {
+            address: "/plain".to_string()
+        },
+        crate::navigation::OpenDisposition::Preview,
+        &mut FakeBrowser::default(),
+    ));
+    assert!(!app.try_reveal_in_active_book(
+        &mut cx,
+        &NavigationTarget::Document {
+            concept_id: "plain/note".to_string(),
+            surface: None,
+            fragment: None,
+        },
+    ));
+}

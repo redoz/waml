@@ -305,6 +305,19 @@ impl DocumentHost {
         }
     }
 
+    /// Ask the ACTIVE view whether it can show `target` in place instead of
+    /// the app opening a tab for it (Task 7's tree-click intercept). Only the
+    /// book answers today; every other view's `reveal_target_for` default
+    /// returns `None`, which keeps its click behavior unchanged.
+    pub fn active_reveal_for_target(
+        &self,
+        target: &waml::view::row::RowTarget,
+    ) -> Option<RevealTarget> {
+        self.views
+            .get(&self.tabs.active)
+            .and_then(|view| view.reveal_target_for(target))
+    }
+
     /// Mirror the live search session's cursor into `tab_id`'s view (Task 14)
     /// -- NOT necessarily the active tab: F3 traversal keeps walking after
     /// the results tab itself is no longer showing, and Esc must still be
