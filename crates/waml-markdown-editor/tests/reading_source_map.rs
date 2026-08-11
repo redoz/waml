@@ -5,6 +5,7 @@
 //! plus structural newlines it injects itself. Anything that carries a viewer
 //! selection back to the editor has to translate.
 
+use makepad_widgets::{dvec2, Rect};
 use waml_markdown_editor::reading::SourceMap;
 use waml_syntax::{TextRange, TextSize};
 
@@ -80,8 +81,33 @@ fn a_span_entirely_inside_a_gap_has_no_source_span() {
 #[test]
 fn clear_resets_the_map() {
     let mut map = map();
+    map.push_visual(
+        range(20, 40),
+        Rect {
+            pos: dvec2(10.0, 12.0),
+            size: dvec2(80.0, 40.0),
+        },
+    );
     map.clear();
     assert!(map.is_empty());
+    assert!(map.visual_rects_for_source(range(20, 40)).is_empty());
+}
+
+#[test]
+fn a_visual_rectangle_maps_every_overlapping_hit_to_the_full_source_unit() {
+    // A diagram has one visual rectangle, but every hit inside its fenced
+    // source must highlight the complete visual unit.
+    let mut map = SourceMap::default();
+    let fence = range(10, 50);
+    let rect = Rect {
+        pos: dvec2(30.0, 40.0),
+        size: dvec2(200.0, 100.0),
+    };
+    map.push_visual(fence, rect);
+
+    assert_eq!(map.visual_rects_for_source(range(20, 21)), vec![rect]);
+    assert_eq!(map.visual_source_at(dvec2(100.0, 80.0)), Some(fence));
+    assert_eq!(map.visual_source_at(dvec2(5.0, 5.0)), None);
 }
 
 #[test]

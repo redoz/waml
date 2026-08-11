@@ -9,20 +9,23 @@
 //! itself, which would mean two independent parses of one document, and it
 //! cannot see `MarkdownDialect`.
 
-use std::{ops::Range, sync::Arc};
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
+use makepad_widgets::event::TouchState;
 use makepad_widgets::*;
 use waml_syntax::{TextRange, TextSize};
 
-use crate::presentation::{FontSizeRole, TextRole};
+use crate::presentation::{FontSizeRole, PresentationItemId, TextRole};
 
 use super::{
     bullet::{bullet_shape_for_level, DrawReadingBullet},
-    ReadingBlock, ReadingBlockKind, ReadingDocument, ReadingPiece,
+    BlockExtensionFrame, BlockExtensionState, FencedBlockExtension, ReadingBlock, ReadingBlockKind,
+    ReadingDocument, ReadingPiece, RenderedBlockSvg,
 };
 
 /// Turtle units are logical pixels; font sizes are points.
 const LPXS_PER_PT: f64 = 96.0 / 72.0;
+const LOADING_HEIGHT: f64 = 72.0;
 
 script_mod! {
     use mod.prelude.widgets_internal.*
@@ -100,12 +103,14 @@ pub struct SourceMap {
     /// source range to the pixels it occupies -- what
     /// `MarkdownViewer::draw_search_highlights` paints over.
     runs: Vec<(TextRange, Range<usize>)>,
+    visuals: Vec<(TextRange, Rect)>,
 }
 
 impl SourceMap {
     pub fn clear(&mut self) {
         self.pieces.clear();
         self.runs.clear();
+        self.visuals.clear();
     }
 
     pub fn push(&mut self, flow: Range<usize>, source: Option<TextRange>) {
@@ -132,8 +137,29 @@ impl SourceMap {
             .collect()
     }
 
+    pub fn push_visual(&mut self, source: TextRange, rect: Rect) {
+        if rect.size.x > 0.0 && rect.size.y > 0.0 {
+            self.visuals.push((source, rect));
+        }
+    }
+
+    pub fn visual_rects_for_source(&self, source: TextRange) -> Vec<Rect> {
+        self.visuals
+            .iter()
+            .filter(|(visual, _)| visual.end() > source.start() && visual.start() < source.end())
+            .map(|(_, rect)| *rect)
+            .collect()
+    }
+
+    pub fn visual_source_at(&self, point: DVec2) -> Option<TextRange> {
+        self.visuals
+            .iter()
+            .rev()
+            .find_map(|(source, rect)| rect.contains(point).then_some(*source))
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.pieces.is_empty()
+        self.pieces.is_empty() && self.visuals.is_empty()
     }
 
     /// The source offset a flow index points at. An index inside a structural
@@ -238,7 +264,13 @@ pub struct MarkdownViewer {
     #[rust]
     source: Option<Arc<str>>,
     #[rust]
+    extensions: Option<Arc<BlockExtensionFrame>>,
+    #[rust]
     source_map: SourceMap,
+    #[rust]
+    images: BTreeMap<PresentationItemId, ImageRef>,
+    #[rust]
+    visual_source: Option<TextRange>,
     /// Source ranges the active search query hit (spec §DocView::reveal),
     /// installed by `set_search_highlights`. Mapped through `source_map` at
     /// paint time -- stale once the document changes underneath them, same
@@ -267,12 +299,21 @@ impl MarkdownViewer {
         cx: &mut Cx,
         document: Arc<ReadingDocument>,
         source: Arc<str>,
+        extensions: Arc<BlockExtensionFrame>,
     ) {
+        self.images.retain(|item, _| {
+            extensions
+                .items
+                .iter()
+                .any(|(live_item, _)| live_item == item)
+        });
         self.document = Some(document);
         self.source = Some(source);
+        self.extensions = Some(extensions);
         self.source_map.clear();
         // The old document's drawn height says nothing about the new one.
         self.content_height = 0.0;
+        self.visual_source = None;
         self.redraw(cx);
     }
 
@@ -400,10 +441,12 @@ impl MarkdownViewer {
     /// Window-space rects of every installed highlight, from the LAST draw's
     /// recorded run areas. Empty before the first draw of a document.
     fn highlight_rects(&self, cx: &Cx) -> Vec<Rect> {
-        self.search_highlights
-            .iter()
-            .flat_map(|highlight| self.source_rects(cx, *highlight))
-            .collect()
+        let mut rects = Vec::new();
+        for highlight in self.search_highlights.iter() {
+            rects.extend(self.source_map.visual_rects_for_source(*highlight));
+            rects.extend(self.source_rects(cx, *highlight));
+        }
+        rects
     }
 
     /// The link destination under `point`, if any. Window-space point in,
@@ -440,14 +483,20 @@ impl MarkdownViewer {
     fn content_top(&self, cx: &Cx) -> Option<f64> {
         let flow_ref = self.flow(cx);
         let flow = flow_ref.borrow()?;
-        flow.areas_tracker
+        let text_top = flow
+            .areas_tracker
             .areas
             .iter()
             .map(|area| area.rect(cx))
             .filter(|rect| rect.size.y > 0.0)
             .fold(None, |acc: Option<f64>, rect| {
                 Some(acc.map_or(rect.pos.y, |top| top.min(rect.pos.y)))
-            })
+            });
+        self.source_map
+            .visuals
+            .iter()
+            .map(|(_, rect)| rect.pos.y)
+            .fold(text_top, |acc, y| Some(acc.map_or(y, |top| top.min(y))))
     }
 
     /// Draws one piece and records its flow span. `TextFlow::draw_text` trims
@@ -550,6 +599,185 @@ impl MarkdownViewer {
         );
         map.push_run(before..after, range, area_start..area_end);
         *first_on_line = false;
+    }
+
+    fn draw_code_block(
+        &mut self,
+        cx: &mut Cx2d,
+        block: &ReadingBlock,
+        source: &str,
+        error_line: Option<&str>,
+    ) -> Option<Rect> {
+        let flow_ref = self.flow(cx);
+        let mut flow = flow_ref.borrow_mut()?;
+        flow.begin_code(cx);
+        let fixed_scale = flow.fixed_font_size_scale;
+        flow.push_size_rel_scale(fixed_scale);
+        flow.fixed.push();
+        let mut first_on_line = true;
+        for piece in &block.pieces {
+            Self::draw_piece_wrapped(
+                &mut flow,
+                &mut self.source_map,
+                cx,
+                source,
+                piece,
+                &mut first_on_line,
+                false,
+                self.link_color,
+            );
+        }
+        if let Some(error_line) = error_line {
+            let before = flow.text_len();
+            flow.new_line_collapsed(cx);
+            flow.draw_text(cx, error_line);
+            let after = flow.text_len();
+            self.source_map.push(before..after, None);
+        }
+        flow.fixed.pop();
+        flow.font_sizes.pop();
+        let before = flow.text_len();
+        flow.end_code(cx);
+        let after = flow.text_len();
+        self.source_map.push(before..after, None);
+        let rect = flow.draw_block.draw_vars.area.rect(cx);
+        (rect.size.x > 0.0 && rect.size.y > 0.0).then_some(rect)
+    }
+
+    fn extension_state(&self, item: PresentationItemId) -> BlockExtensionState {
+        self.extensions
+            .as_ref()
+            .and_then(|frame| {
+                frame
+                    .items
+                    .iter()
+                    .find(|(candidate, _)| *candidate == item)
+                    .map(|(_, state)| state.clone())
+            })
+            .unwrap_or(BlockExtensionState::Loading)
+    }
+
+    fn extension_error_line(extension: &FencedBlockExtension, message: &str) -> String {
+        let message = message
+            .lines()
+            .next()
+            .map(str::trim)
+            .filter(|message| !message.is_empty())
+            .unwrap_or("rendering failed");
+        let mut language = extension.language.chars();
+        let language = language
+            .next()
+            .map(|first| first.to_uppercase().chain(language).collect::<String>())
+            .unwrap_or_else(|| "extension".to_owned());
+        format!("Cannot render {language}: {message}")
+    }
+
+    fn draw_extension_fallback(
+        &mut self,
+        cx: &mut Cx2d,
+        block: &ReadingBlock,
+        extension: &FencedBlockExtension,
+        source: &str,
+        message: &str,
+    ) {
+        let line = Self::extension_error_line(extension, message);
+        if let Some(rect) = self.draw_code_block(cx, block, source, Some(&line)) {
+            self.source_map.push_visual(extension.source_range, rect);
+        }
+    }
+
+    fn draw_ready_extension(
+        &mut self,
+        cx: &mut Cx2d,
+        extension: &FencedBlockExtension,
+        svg: &RenderedBlockSvg,
+    ) -> Result<Rect, ()> {
+        let (logical_width, logical_height) = svg.logical_size;
+        if !logical_width.is_finite()
+            || !logical_height.is_finite()
+            || logical_width <= 0.0
+            || logical_height <= 0.0
+        {
+            return Err(());
+        }
+        let available_width = cx
+            .peek_walk_turtle(Walk {
+                width: Size::fill(),
+                height: Size::fit(),
+                ..Walk::default()
+            })
+            .size
+            .x;
+        if !available_width.is_finite() || available_width <= 0.0 {
+            return Err(());
+        }
+
+        let image = if let Some(image) = self.images.get(&extension.id) {
+            image.clone()
+        } else {
+            let widget =
+                WidgetRef::new_with_inner(Box::new(cx.with_vm(Image::script_new_with_default)));
+            let image = widget.as_image();
+            self.images.insert(extension.id, image.clone());
+            image
+        };
+        image
+            .load_svg_from_shared_data(cx, svg.data.clone())
+            .map_err(|_| ())?;
+
+        let scale = (available_width / logical_width).min(1.0);
+        let width = logical_width * scale;
+        let height = logical_height * scale;
+        let walk = Walk {
+            width: Size::Fixed(width),
+            height: Size::Fixed(height),
+            margin: Inset {
+                left: ((available_width - width) * 0.5).max(0.0),
+                ..Inset::default()
+            },
+            ..Walk::default()
+        };
+        let rect = cx.peek_walk_turtle(walk);
+        if let Some(mut inner) = image.borrow_mut() {
+            inner.draw_walk_image(cx, walk);
+        } else {
+            return Err(());
+        }
+        Ok(rect)
+    }
+
+    fn draw_extension(
+        &mut self,
+        cx: &mut Cx2d,
+        block: &ReadingBlock,
+        extension: &FencedBlockExtension,
+        source: &str,
+    ) {
+        match self.extension_state(extension.id) {
+            BlockExtensionState::Loading => {
+                let rect = cx.walk_turtle(Walk {
+                    width: Size::fill(),
+                    height: Size::Fixed(LOADING_HEIGHT),
+                    ..Walk::default()
+                });
+                self.source_map.push_visual(extension.source_range, rect);
+            }
+            BlockExtensionState::Ready(svg) => {
+                match self.draw_ready_extension(cx, extension, &svg) {
+                    Ok(rect) => self.source_map.push_visual(extension.source_range, rect),
+                    Err(()) => self.draw_extension_fallback(
+                        cx,
+                        block,
+                        extension,
+                        source,
+                        "rendered image is invalid",
+                    ),
+                }
+            }
+            BlockExtensionState::Failed(message) => {
+                self.draw_extension_fallback(cx, block, extension, source, &message);
+            }
+        }
     }
 
     fn draw_block(&mut self, cx: &mut Cx2d, block: &ReadingBlock, source: &str) {
@@ -685,31 +913,16 @@ impl MarkdownViewer {
                 return;
             }
             ReadingBlockKind::Code => {
-                flow.begin_code(cx);
-                // Mono runs visually larger at equal nominal size; code
-                // blocks drop to the fixed scale like inline code does.
-                let fixed_scale = flow.fixed_font_size_scale;
-                flow.push_size_rel_scale(fixed_scale);
-                flow.fixed.push();
-                let mut first_on_line = true;
-                for piece in &block.pieces {
-                    Self::draw_piece_wrapped(
-                        &mut flow,
-                        &mut self.source_map,
-                        cx,
-                        source,
-                        piece,
-                        &mut first_on_line,
-                        false,
-                        self.link_color,
-                    );
-                }
-                flow.fixed.pop();
-                flow.font_sizes.pop();
-                let before = flow.text_len();
-                flow.end_code(cx);
-                let after = flow.text_len();
-                self.source_map.push(before..after, None);
+                drop(flow);
+                self.draw_code_block(cx, block, source, None);
+                self.draw_children(cx, block, source);
+                return;
+            }
+            ReadingBlockKind::FencedExtension(ref extension) => {
+                drop(flow);
+                self.draw_extension(cx, block, extension, source);
+                self.draw_children(cx, block, source);
+                return;
             }
             ReadingBlockKind::ThematicBreak => {
                 flow.sep(cx);
@@ -912,6 +1125,18 @@ impl Widget for MarkdownViewer {
         }
         // Selection, copy and point_to_index are TextFlow's, not ours.
         self.view.handle_event(cx, event, scope);
+        let finger_down = match event {
+            Event::MouseDown(event) if event.button.is_primary() => Some(event.abs),
+            Event::TouchUpdate(event) => event
+                .touches
+                .iter()
+                .find(|touch| matches!(touch.state, TouchState::Start))
+                .map(|touch| touch.abs),
+            _ => None,
+        };
+        if let Some(abs) = finger_down {
+            self.visual_source = self.source_map.visual_source_at(abs);
+        }
     }
 }
 
@@ -1067,9 +1292,15 @@ pub fn caret_for_span(span: Option<TextRange>) -> TextSize {
 }
 
 impl MarkdownViewerRef {
-    pub fn install_document(&self, cx: &mut Cx, document: Arc<ReadingDocument>, source: Arc<str>) {
+    pub fn install_document(
+        &self,
+        cx: &mut Cx,
+        document: Arc<ReadingDocument>,
+        source: Arc<str>,
+        extensions: Arc<BlockExtensionFrame>,
+    ) {
         if let Some(mut inner) = self.borrow_mut() {
-            inner.install_document(cx, document, source);
+            inner.install_document(cx, document, source, extensions);
         }
     }
 
@@ -1116,8 +1347,12 @@ impl MarkdownViewerRef {
         let inner = self.borrow()?;
         let flow = inner.flow(cx);
         let flow = flow.borrow()?;
-        let (start, end) = flow.selection_range()?;
-        inner.source_map.source_span(start..end)
+        if let Some((start, end)) = flow.selection_range() {
+            if let Some(source) = inner.source_map.source_span(start..end) {
+                return Some(source);
+            }
+        }
+        inner.visual_source
     }
 
     /// The caret a source handoff carries into the editor.

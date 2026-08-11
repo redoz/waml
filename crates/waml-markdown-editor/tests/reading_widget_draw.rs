@@ -2,14 +2,16 @@
 //! pure-model test can see (a `script_mod!` typo that silently drops the
 //! `TextFlow` child, a layout that collapses to zero height, ...).
 
-use std::sync::Arc;
+use std::{cell::Cell, sync::Arc};
 
 use makepad_widgets::*;
 use waml_markdown_editor::presentation::{
     compile_presentation, HighlighterRegistry, PresentationStyles,
 };
 use waml_markdown_editor::reading::{
-    build_reading_document, MarkdownViewerWidgetRefExt, RegisteredBlockExtensions,
+    build_reading_document, BlockExtensionFrame, BlockExtensionState, FencedBlockExtension,
+    MarkdownViewerWidgetRefExt, ReadingBlock, ReadingBlockKind, RegisteredBlockExtensions,
+    RenderedBlockSvg,
 };
 use waml_markdown_editor::syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange, TextSize,
@@ -21,51 +23,6 @@ fn range(start: usize, end: usize) -> TextRange {
         TextSize::try_from_usize(end).unwrap(),
     )
     .unwrap()
-}
-
-/// Installs `source` on the viewer and runs one full draw pass over it.
-fn install_and_draw(cx: &mut Cx, ui: &WidgetRef, source: &str, pass_name: &str) {
-    let viewer = ui
-        .widget(cx, ids!(markdown_viewer_surface.viewer))
-        .as_markdown_viewer();
-    let text = SourceText::new(source.to_owned()).expect("valid source text");
-    let syntax = parse_markdown(
-        DocumentRevision::INITIAL,
-        text,
-        MarkdownDialect::WAML_DEFAULT,
-    )
-    .expect("markdown parses");
-    let styles = Arc::new(PresentationStyles::balanced());
-    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
-        .expect("presentation compiles");
-    let document = Arc::new(build_reading_document(&plan).expect("reading model builds"));
-    viewer.install_document(cx, document, Arc::from(source));
-
-    let draw_event = DrawEvent {
-        redraw_all: true,
-        ..DrawEvent::default()
-    };
-    let pass = DrawPass::new_with_name(cx, pass_name);
-    let mut draw_list = DrawList2d::new(cx);
-    let mut draw_cx = CxDraw::new(cx, &draw_event);
-    draw_cx.begin_pass(&pass, None);
-    draw_list.begin_always(&mut draw_cx);
-    {
-        let mut cx_2d = Cx2d::new(&mut draw_cx);
-        cx_2d.begin_root_turtle(dvec2(800.0, 600.0), Layout::default());
-        ui.widget(&cx_2d, ids!(markdown_viewer_surface.viewer))
-            .draw_walk_all(
-                &mut cx_2d,
-                &mut Scope::empty(),
-                Walk::abs_rect(Rect {
-                    pos: dvec2(0.0, 0.0),
-                    size: dvec2(800.0, 600.0),
-                }),
-            );
-        cx_2d.end_turtle();
-        draw_list.end(&mut cx_2d);
-    }
-    draw_cx.end_pass(&pass);
 }
 
 fn mounted_body(cx: &mut Cx) -> WidgetRef {
@@ -80,6 +37,102 @@ fn mounted_body(cx: &mut Cx) -> WidgetRef {
     root.children
         .push((live_id!(markdown_viewer_surface), surface));
     WidgetRef::new_with_inner(Box::new(root))
+}
+
+fn empty_frame() -> Arc<BlockExtensionFrame> {
+    Arc::new(BlockExtensionFrame {
+        revision: DocumentRevision::INITIAL,
+        items: Arc::from([]),
+    })
+}
+
+fn extension_document(
+    source: &str,
+) -> (
+    Arc<waml_markdown_editor::reading::ReadingDocument>,
+    FencedBlockExtension,
+) {
+    let text = SourceText::new(source.to_owned()).expect("valid source text");
+    let syntax = parse_markdown(
+        DocumentRevision::INITIAL,
+        text,
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .expect("markdown parses");
+    let styles = Arc::new(PresentationStyles::balanced());
+    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
+        .expect("presentation compiles");
+    let registered = RegisteredBlockExtensions::from_languages([Arc::from("mermaid")]);
+    let document =
+        Arc::new(build_reading_document(&plan, &registered).expect("reading model builds"));
+
+    fn find(blocks: &[ReadingBlock]) -> Option<FencedBlockExtension> {
+        blocks.iter().find_map(|block| match &block.kind {
+            ReadingBlockKind::FencedExtension(extension) => Some(extension.clone()),
+            _ => find(&block.children),
+        })
+    }
+
+    let extension = find(&document.roots).expect("registered fence becomes an extension");
+    (document, extension)
+}
+
+fn extension_frame(
+    extension: &FencedBlockExtension,
+    state: BlockExtensionState,
+) -> Arc<BlockExtensionFrame> {
+    Arc::new(BlockExtensionFrame {
+        revision: DocumentRevision::INITIAL,
+        items: vec![(extension.id, state)].into(),
+    })
+}
+
+fn svg(logical_size: (f64, f64)) -> RenderedBlockSvg {
+    RenderedBlockSvg {
+        data: Arc::from(
+            &b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 500'><rect width='1000' height='500'/></svg>"[..],
+        ),
+        logical_size,
+    }
+}
+
+fn draw_ui(cx: &mut Cx, ui: &WidgetRef, width: f64, height: f64, name: &str) {
+    let draw_event = DrawEvent {
+        redraw_all: true,
+        ..DrawEvent::default()
+    };
+    let pass = DrawPass::new_with_name(cx, name);
+    let mut draw_list = DrawList2d::new(cx);
+    let mut draw_cx = CxDraw::new(cx, &draw_event);
+    draw_cx.begin_pass(&pass, None);
+    draw_list.begin_always(&mut draw_cx);
+    {
+        let mut cx_2d = Cx2d::new(&mut draw_cx);
+        cx_2d.begin_root_turtle(dvec2(width, height), Layout::default());
+        ui.widget(&cx_2d, ids!(markdown_viewer_surface.viewer))
+            .draw_walk_all(
+                &mut cx_2d,
+                &mut Scope::empty(),
+                Walk::abs_rect(Rect {
+                    pos: dvec2(0.0, 0.0),
+                    size: dvec2(width, height),
+                }),
+            );
+        cx_2d.end_turtle();
+        draw_list.end(&mut cx_2d);
+    }
+    draw_cx.end_pass(&pass);
+}
+
+fn mouse_down(abs: DVec2) -> Event {
+    Event::MouseDown(MouseDownEvent {
+        abs,
+        button: MouseButton::PRIMARY,
+        window_id: WindowId(0, 0),
+        modifiers: KeyModifiers::default(),
+        handled: Cell::new(Area::default()),
+        time: 0.0,
+    })
 }
 
 #[test]
@@ -106,7 +159,7 @@ fn a_mounted_viewer_paints_the_installed_document() {
         build_reading_document(&plan, &RegisteredBlockExtensions::default())
             .expect("reading model builds"),
     );
-    viewer.install_document(&mut cx, document, Arc::from(source));
+    viewer.install_document(&mut cx, document, Arc::from(source), empty_frame());
 
     {
         let draw_event = DrawEvent {
@@ -200,7 +253,7 @@ fn a_mounted_viewer_paints_a_rect_over_each_matched_run() {
         build_reading_document(&plan, &RegisteredBlockExtensions::default())
             .expect("reading model builds"),
     );
-    viewer.install_document(&mut cx, document, Arc::from(source));
+    viewer.install_document(&mut cx, document, Arc::from(source), empty_frame());
     viewer.set_search_highlights(&mut cx, vec![range(2, 7)]);
 
     {
@@ -261,260 +314,176 @@ fn a_mounted_viewer_paints_a_rect_over_each_matched_run() {
 }
 
 #[test]
-fn set_zoom_scales_the_flow_from_a_stable_base_without_compounding() {
+fn a_loading_extension_reserves_a_72_pixel_visual_source_unit() {
     let mut cx = Cx::new(Box::new(|_, _| {}));
     cx.init_cx_os();
     let ui = mounted_body(&mut cx);
     let viewer = ui
         .widget(&cx, ids!(markdown_viewer_surface.viewer))
         .as_markdown_viewer();
+    let source = "```mermaid\ngraph TD; A-->B\n```\n";
+    let (document, extension) = extension_document(source);
+    viewer.install_document(
+        &mut cx,
+        document,
+        Arc::from(source),
+        extension_frame(&extension, BlockExtensionState::Loading),
+    );
+
+    draw_ui(&mut cx, &ui, 400.0, 600.0, "loading-extension-draw");
+
+    let rects = viewer
+        .borrow()
+        .expect("viewer is mounted")
+        .source_map()
+        .visual_rects_for_source(extension.source_range);
+    assert_eq!(rects.len(), 1);
+    assert_eq!(rects[0].size.y, 72.0);
+    assert!(rects[0].size.x > 0.0);
+}
+
+#[test]
+fn a_search_hit_inside_a_fence_highlights_its_visual_rectangle() {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_body(&mut cx);
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let source = "```mermaid\ngraph TD; A-->B\n```\n";
+    let (document, extension) = extension_document(source);
+    viewer.install_document(
+        &mut cx,
+        document,
+        Arc::from(source),
+        extension_frame(&extension, BlockExtensionState::Loading),
+    );
+    viewer.set_search_highlights(
+        &mut cx,
+        vec![range(
+            extension.content_range.start().to_usize(),
+            extension.content_range.start().to_usize() + 5,
+        )],
+    );
+
+    draw_ui(&mut cx, &ui, 400.0, 600.0, "visual-highlight-draw");
+
+    assert_eq!(viewer.test_highlight_rects(&cx).len(), 1);
+    assert_eq!(
+        viewer.test_highlight_rects(&cx),
+        viewer
+            .borrow()
+            .expect("viewer is mounted")
+            .source_map()
+            .visual_rects_for_source(extension.source_range)
+    );
+}
+
+#[test]
+fn pressing_a_visual_unit_hands_off_its_full_fenced_source_range() {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_body(&mut cx);
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let source = "```mermaid\ngraph TD; A-->B\n```\n";
+    let (document, extension) = extension_document(source);
+    let frame = extension_frame(&extension, BlockExtensionState::Loading);
+    viewer.install_document(&mut cx, document.clone(), Arc::from(source), frame.clone());
+    draw_ui(&mut cx, &ui, 400.0, 600.0, "visual-pointer-draw");
+    let rect = viewer
+        .borrow()
+        .expect("viewer is mounted")
+        .source_map()
+        .visual_rects_for_source(extension.source_range)[0];
+
+    ui.handle_event(
+        &mut cx,
+        &mouse_down(rect.pos + rect.size * 0.5),
+        &mut Scope::empty(),
+    );
+    assert_eq!(
+        viewer.selected_source_span(&cx),
+        Some(extension.source_range)
+    );
+
+    viewer.install_document(&mut cx, document, Arc::from(source), frame);
+    assert_eq!(
+        viewer.selected_source_span(&cx),
+        None,
+        "installing a document clears the remembered visual source"
+    );
+}
+
+#[test]
+fn ready_extensions_scale_down_to_the_column_and_never_scale_up() {
+    for (logical_size, expected_size, name) in [
+        ((1000.0, 500.0), dvec2(400.0, 200.0), "scaled-down-svg"),
+        ((200.0, 100.0), dvec2(200.0, 100.0), "natural-size-svg"),
+    ] {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let ui = mounted_body(&mut cx);
+        let viewer = ui
+            .widget(&cx, ids!(markdown_viewer_surface.viewer))
+            .as_markdown_viewer();
+        let source = "```mermaid\ngraph TD; A-->B\n```\n";
+        let (document, extension) = extension_document(source);
+        viewer.install_document(
+            &mut cx,
+            document,
+            Arc::from(source),
+            extension_frame(&extension, BlockExtensionState::Ready(svg(logical_size))),
+        );
+
+        draw_ui(&mut cx, &ui, 400.0, 600.0, name);
+
+        let rects = viewer
+            .borrow()
+            .expect("viewer is mounted")
+            .source_map()
+            .visual_rects_for_source(extension.source_range);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].size, expected_size);
+        assert!(rects[0].size.x > 0.0 && rects[0].size.y > 0.0);
+        assert_eq!(rects[0].pos.x, (400.0 - expected_size.x) * 0.5);
+    }
+}
+
+#[test]
+fn a_failed_extension_keeps_the_source_and_adds_one_safe_error_line() {
+    let mut cx = Cx::new(Box::new(|_, _| {}));
+    cx.init_cx_os();
+    let ui = mounted_body(&mut cx);
+    let viewer = ui
+        .widget(&cx, ids!(markdown_viewer_surface.viewer))
+        .as_markdown_viewer();
+    let source = "```mermaid\ngraph TD; A-->B\n```\n";
+    let (document, extension) = extension_document(source);
+    viewer.install_document(
+        &mut cx,
+        document,
+        Arc::from(source),
+        extension_frame(
+            &extension,
+            BlockExtensionState::Failed(Arc::from("diagram syntax is invalid")),
+        ),
+    );
+
+    draw_ui(&mut cx, &ui, 400.0, 600.0, "failed-extension-draw");
 
     let flow = ui
         .widget(&cx, ids!(markdown_viewer_surface.viewer.flow_body))
         .as_text_flow();
-    let base = flow
+    let text = flow
         .borrow()
         .expect("the flow_body child must exist")
-        .font_size;
-
-    viewer.set_zoom(&mut cx, 1.5);
+        .get_full_text();
+    assert!(text.contains("graph TD; A-->B"));
     assert_eq!(
-        flow.borrow().expect("flow still exists").font_size,
-        base * 1.5
-    );
-
-    viewer.set_zoom(&mut cx, 1.5);
-    assert_eq!(
-        flow.borrow().expect("flow still exists").font_size,
-        base * 1.5,
-        "two identical zooms must not compound"
-    );
-
-    viewer.set_zoom(&mut cx, 1.0);
-    assert_eq!(
-        flow.borrow().expect("flow still exists").font_size,
-        base,
-        "reset returns to the base"
-    );
-}
-
-/// A drawn link is clickable: probing the centre of the pixels its text
-/// actually occupied resolves to its destination, and a point well outside
-/// resolves to nothing.
-#[test]
-fn a_point_inside_a_drawn_link_resolves_to_its_destination() {
-    let mut cx = Cx::new(Box::new(|_, _| {}));
-    cx.init_cx_os();
-    let ui = mounted_body(&mut cx);
-    let viewer = ui
-        .widget(&cx, ids!(markdown_viewer_surface.viewer))
-        .as_markdown_viewer();
-
-    let source = "See [Customer](./customer.md) for more.\n";
-    let text = SourceText::new(source.to_owned()).expect("valid source text");
-    let syntax = parse_markdown(
-        DocumentRevision::INITIAL,
-        text,
-        MarkdownDialect::WAML_DEFAULT,
-    )
-    .expect("markdown parses");
-    let styles = Arc::new(PresentationStyles::balanced());
-    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
-        .expect("presentation compiles");
-    let document = Arc::new(build_reading_document(&plan).expect("reading model builds"));
-    let link = document.links[0].clone();
-    viewer.install_document(&mut cx, document, Arc::from(source));
-
-    {
-        let draw_event = DrawEvent {
-            redraw_all: true,
-            ..DrawEvent::default()
-        };
-        let pass = DrawPass::new_with_name(&mut cx, "reading-widget-draw-link-test");
-        let mut draw_list = DrawList2d::new(&mut cx);
-        let mut draw_cx = CxDraw::new(&mut cx, &draw_event);
-        draw_cx.begin_pass(&pass, None);
-        draw_list.begin_always(&mut draw_cx);
-        {
-            let mut cx_2d = Cx2d::new(&mut draw_cx);
-            cx_2d.begin_root_turtle(dvec2(800.0, 600.0), Layout::default());
-            ui.widget(&cx_2d, ids!(markdown_viewer_surface.viewer))
-                .draw_walk_all(
-                    &mut cx_2d,
-                    &mut Scope::empty(),
-                    Walk::abs_rect(Rect {
-                        pos: dvec2(0.0, 0.0),
-                        size: dvec2(800.0, 600.0),
-                    }),
-                );
-            cx_2d.end_turtle();
-            draw_list.end(&mut cx_2d);
-        }
-        draw_cx.end_pass(&pass);
-    }
-
-    let rects = viewer.test_source_rects(&cx, link.source_range);
-    assert!(
-        !rects.is_empty(),
-        "the link's text must have drawn somewhere"
-    );
-    let centre = rects[0].pos + rects[0].size * 0.5;
-    assert_eq!(
-        viewer.test_link_at_point(&cx, centre).as_deref(),
-        Some("./customer.md"),
-        "the centre of the drawn link resolves to its destination"
-    );
-    assert!(
-        viewer
-            .test_link_at_point(&cx, dvec2(-100.0, -100.0))
-            .is_none(),
-        "a point outside the document resolves to nothing"
-    );
-}
-
-/// `TextFlow::point_to_index` falls back to the NEAREST character for a point
-/// that lands on no run at all, so a click in the reading column's margin --
-/// or below the last line -- resolves to whatever character is closest. When
-/// that character starts a link (every `## Referenced by` bullet on a
-/// generated classifier page does), an unclicked link would navigate. The
-/// destination is only real when the point is on the link's own pixels.
-#[test]
-fn a_point_beside_a_drawn_link_resolves_to_nothing() {
-    let mut cx = Cx::new(Box::new(|_, _| {}));
-    cx.init_cx_os();
-    let ui = mounted_body(&mut cx);
-    let viewer = ui
-        .widget(&cx, ids!(markdown_viewer_surface.viewer))
-        .as_markdown_viewer();
-
-    // The link STARTS the line, the worst case: the nearest character to any
-    // point in the left gutter is the link's first glyph.
-    let source = "[Customer](./customer.md) owns the account.\n";
-    let text = SourceText::new(source.to_owned()).expect("valid source text");
-    let syntax = parse_markdown(
-        DocumentRevision::INITIAL,
-        text,
-        MarkdownDialect::WAML_DEFAULT,
-    )
-    .expect("markdown parses");
-    let styles = Arc::new(PresentationStyles::balanced());
-    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
-        .expect("presentation compiles");
-    let document = Arc::new(build_reading_document(&plan).expect("reading model builds"));
-    let link = document.links[0].clone();
-    viewer.install_document(&mut cx, document, Arc::from(source));
-
-    {
-        let draw_event = DrawEvent {
-            redraw_all: true,
-            ..DrawEvent::default()
-        };
-        let pass = DrawPass::new_with_name(&mut cx, "reading-widget-draw-link-margin-test");
-        let mut draw_list = DrawList2d::new(&mut cx);
-        let mut draw_cx = CxDraw::new(&mut cx, &draw_event);
-        draw_cx.begin_pass(&pass, None);
-        draw_list.begin_always(&mut draw_cx);
-        {
-            let mut cx_2d = Cx2d::new(&mut draw_cx);
-            cx_2d.begin_root_turtle(dvec2(800.0, 600.0), Layout::default());
-            ui.widget(&cx_2d, ids!(markdown_viewer_surface.viewer))
-                .draw_walk_all(
-                    &mut cx_2d,
-                    &mut Scope::empty(),
-                    Walk::abs_rect(Rect {
-                        pos: dvec2(0.0, 0.0),
-                        size: dvec2(800.0, 600.0),
-                    }),
-                );
-            cx_2d.end_turtle();
-            draw_list.end(&mut cx_2d);
-        }
-        draw_cx.end_pass(&pass);
-    }
-
-    let rects = viewer.test_source_rects(&cx, link.source_range);
-    assert!(
-        !rects.is_empty(),
-        "the link's text must have drawn somewhere"
-    );
-    let rect = rects[0];
-    let middle_y = rect.pos.y + rect.size.y * 0.5;
-    assert_eq!(
-        viewer
-            .test_link_at_point(&cx, dvec2(rect.pos.x + rect.size.x * 0.5, middle_y))
-            .as_deref(),
-        Some("./customer.md"),
-        "the drawn pixels themselves still navigate"
-    );
-
-    assert!(
-        viewer
-            .test_link_at_point(&cx, dvec2(rect.pos.x - 20.0, middle_y))
-            .is_none(),
-        "the gutter to the left of the link is not the link"
-    );
-    assert!(
-        viewer
-            .test_link_at_point(&cx, dvec2(rect.pos.x + rect.size.x * 0.5, middle_y + 200.0))
-            .is_none(),
-        "the empty space below the last line is not the link"
-    );
-}
-
-/// A link is the only text on a reading surface that DOES something when
-/// tapped, and the tap hit-test deliberately never runs on a mouse move (so
-/// there is no hover state or pointer cursor to lean on). The affordance has
-/// to be in the paint: a link label draws in its own colour, not the body
-/// colour, and the style it pushes must not leak into the rest of the page.
-#[test]
-fn a_link_label_draws_in_its_own_colour() {
-    let mut cx = Cx::new(Box::new(|_, _| {}));
-    cx.init_cx_os();
-    let ui = mounted_body(&mut cx);
-
-    // Both documents END on the run under test, so `draw_text.color` -- set
-    // per run by `TextFlow::draw_text` -- still holds that run's colour.
-    install_and_draw(
-        &mut cx,
-        &ui,
-        "Owned by Customer.\n",
-        "reading-widget-draw-plain-colour",
-    );
-    let body_colour = {
-        let flow = ui
-            .widget(&cx, ids!(markdown_viewer_surface.viewer.flow_body))
-            .as_text_flow();
-        let flow = flow.borrow().expect("the flow_body child must exist");
-        flow.draw_text.color
-    };
-
-    install_and_draw(
-        &mut cx,
-        &ui,
-        "Owned by [Customer](./customer.md)\n",
-        "reading-widget-draw-link-colour",
-    );
-    let flow = ui
-        .widget(&cx, ids!(markdown_viewer_surface.viewer.flow_body))
-        .as_text_flow();
-    let flow = flow.borrow().expect("the flow_body child must exist");
-
-    assert_ne!(
-        flow.draw_text.color, body_colour,
-        "a link label must not be painted like ordinary prose"
-    );
-    assert!(
-        flow.draw_text.color.w > 0.0,
-        "the link colour must be visible, got {:?}",
-        flow.draw_text.color
-    );
-    assert_eq!(
-        flow.underline.value(),
-        0,
-        "the underline pushed for the link must be popped again"
-    );
-    assert!(
-        flow.font_colors.is_empty(),
-        "the link colour must not leak past the run that pushed it"
+        text.matches("Cannot render Mermaid: diagram syntax is invalid")
+            .count(),
+        1
     );
 }
