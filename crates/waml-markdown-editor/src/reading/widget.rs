@@ -777,9 +777,80 @@ impl Widget for MarkdownViewer {
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        // Ctrl/Cmd+wheel steps the zoom ladder instead of scrolling (plan
+        // 2026-08-11-viewer-font-size-control, Task 10). Checked BEFORE the
+        // `TextFlow` delegation below: `event.hits` claims a scroll (sets
+        // `handled_y`) the instant the hit-test passes, and the parent
+        // `ScrollYView` applies wheel scroll only after this widget has run
+        // and bails when the axis is already claimed -- so a plain wheel
+        // must never reach `hits` here, only a modifier-held one.
+        if primary_modifier(cx, event) {
+            if let Hit::FingerScroll(fs) = event.hits(cx, self.view.area()) {
+                cx.widget_action(
+                    self.widget_uid(),
+                    MarkdownViewerAction::ZoomWheel { delta: fs.scroll.y },
+                );
+                return;
+            }
+        }
         // Selection, copy and point_to_index are TextFlow's, not ours.
         self.view.handle_event(cx, event, scope);
     }
+}
+
+/// Whether `event` is a wheel scroll held with the platform's zoom modifier
+/// (Cmd on macOS, Ctrl elsewhere), with no other modifier fighting it.
+fn primary_modifier(cx: &Cx, event: &Event) -> bool {
+    let Event::Scroll(e) = event else {
+        return false;
+    };
+    let macos = matches!(cx.os_type(), OsType::Macos);
+    zoom_wheel_modifier(e.modifiers, macos)
+}
+
+/// The modifier predicate itself, pure and unit-tested on its own -- the
+/// `Event`/`Cx` wrapper above needs a live widget tree to exercise.
+fn zoom_wheel_modifier(modifiers: KeyModifiers, macos: bool) -> bool {
+    if macos {
+        modifiers.logo && !modifiers.control
+    } else {
+        modifiers.control && !modifiers.logo
+    }
+}
+
+#[cfg(test)]
+mod zoom_wheel_modifier_tests {
+    use super::*;
+
+    fn modifiers(control: bool, logo: bool) -> KeyModifiers {
+        KeyModifiers {
+            control,
+            logo,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn non_macos_wants_control_without_logo() {
+        assert!(zoom_wheel_modifier(modifiers(true, false), false));
+        assert!(!zoom_wheel_modifier(modifiers(false, false), false));
+        assert!(!zoom_wheel_modifier(modifiers(true, true), false));
+    }
+
+    #[test]
+    fn macos_wants_logo_without_control() {
+        assert!(zoom_wheel_modifier(modifiers(false, true), true));
+        assert!(!zoom_wheel_modifier(modifiers(false, false), true));
+        assert!(!zoom_wheel_modifier(modifiers(true, true), true));
+    }
+}
+
+/// Actions `MarkdownViewer` posts for its host to route.
+#[derive(Clone, Debug)]
+pub enum MarkdownViewerAction {
+    /// A Ctrl/Cmd-held wheel over the viewer; `delta` is the raw
+    /// `ScrollEvent::scroll.y` (negative = wheel up = zoom in).
+    ZoomWheel { delta: f64 },
 }
 
 /// The caret a source handoff should carry into the editor: the start of the
@@ -801,6 +872,15 @@ impl MarkdownViewerRef {
     /// deliberately reads the same as "not yet drawn".
     pub fn content_height(&self) -> f64 {
         self.borrow().map_or(0.0, |inner| inner.content_height())
+    }
+
+    /// The wheel delta of a `ZoomWheel` action posted by this widget, if
+    /// `actions` carries one.
+    pub fn zoom_wheel(&self, actions: &Actions) -> Option<f64> {
+        let item = actions.find_widget_action(self.widget_uid())?;
+        match item.action.downcast_ref::<MarkdownViewerAction>()? {
+            MarkdownViewerAction::ZoomWheel { delta } => Some(*delta),
+        }
     }
 
     pub fn selected_source_span(&self, cx: &Cx) -> Option<TextRange> {

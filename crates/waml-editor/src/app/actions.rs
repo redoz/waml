@@ -14,14 +14,16 @@ enum ObserverHandler {
     ConflictList,
     Inspector,
     FindStrip,
+    WheelZoom,
 }
 
-const OBSERVER_ORDER: [ObserverHandler; 5] = [
+const OBSERVER_ORDER: [ObserverHandler; 6] = [
     ObserverHandler::CaptionAndDocks,
     ObserverHandler::PopupResults,
     ObserverHandler::ConflictList,
     ObserverHandler::Inspector,
     ObserverHandler::FindStrip,
+    ObserverHandler::WheelZoom,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +101,7 @@ impl App {
                 ObserverHandler::ConflictList => self.observe_conflict_list(cx, actions),
                 ObserverHandler::Inspector => self.observe_inspector(cx, actions),
                 ObserverHandler::FindStrip => self.observe_find_strip(cx, actions),
+                ObserverHandler::WheelZoom => self.observe_wheel_zoom(cx, actions),
             }
         }
 
@@ -1316,6 +1319,32 @@ impl App {
         true
     }
 
+    /// Ctrl/Cmd+wheel over the reading view or the source editor (Task 10):
+    /// each surface claims the scroll and posts its own `ZoomWheel` action
+    /// (see `MarkdownViewer::handle_event` /
+    /// `MarkdownEditor::handle_event_with_session`) instead of scrolling;
+    /// feed the delta through the shared accumulator and step the ladder for
+    /// every whole rung it reports.
+    fn observe_wheel_zoom(&mut self, cx: &mut Cx, actions: &Actions) {
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        let delta = body
+            .markdown_viewer()
+            .zoom_wheel(actions)
+            .or_else(|| waml_markdown_editor::widget::MarkdownEditorRef::zoom_wheel(actions));
+        let Some(delta) = delta else {
+            return;
+        };
+        let count = self.wheel_zoom.add(delta);
+        let command = if count < 0 {
+            crate::shortcuts::ZoomCommand::In
+        } else {
+            crate::shortcuts::ZoomCommand::Out
+        };
+        for _ in 0..count.unsigned_abs() {
+            self.apply_zoom_command(cx, command);
+        }
+    }
+
     fn handle_diagram_switcher(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {
         let clicked = self
             .ui
@@ -2078,6 +2107,7 @@ mod tests {
                 ObserverHandler::ConflictList,
                 ObserverHandler::Inspector,
                 ObserverHandler::FindStrip,
+                ObserverHandler::WheelZoom,
             ]
         );
     }

@@ -102,6 +102,12 @@ pub enum MarkdownEditorAction {
         id: LayoutElementId,
         event: EmbeddedBlockEvent,
     },
+    /// A Ctrl/Cmd-held wheel over the editor (plan
+    /// 2026-08-11-viewer-font-size-control, Task 10); `delta` is the raw
+    /// `ScrollEvent::scroll.y` (negative = wheel up = zoom in).
+    ZoomWheel {
+        delta: f64,
+    },
     Error(MarkdownEditorError),
     #[default]
     None,
@@ -1062,6 +1068,18 @@ impl MarkdownEditor {
                 if let Some(input) = key_input(*event) {
                     return self.handle_input_with_session(cx, session, input);
                 }
+            }
+        }
+        // Ctrl/Cmd+wheel steps the zoom ladder instead of scrolling (plan
+        // 2026-08-11-viewer-font-size-control, Task 10). Checked BEFORE
+        // `scroll_bars` sees the event: `event.hits` claims a scroll
+        // (`handled_y`) the instant the hit-test passes, so a plain wheel
+        // must never reach `hits` here, only a modifier-held one.
+        if primary_modifier(cx, event) {
+            if let Hit::FingerScroll(fs) = event.hits(cx, self.scroll_bars.area()) {
+                return Ok(vec![self.make_action(MarkdownEditorAction::ZoomWheel {
+                    delta: fs.scroll.y,
+                })]);
             }
         }
         let scroll_actions = self
@@ -3024,6 +3042,13 @@ impl MarkdownEditorRef {
         })
     }
 
+    pub fn zoom_wheel(actions: &Actions) -> Option<f64> {
+        find_action(actions, |action| match action {
+            MarkdownEditorAction::ZoomWheel { delta } => Some(*delta),
+            _ => None,
+        })
+    }
+
     pub fn set_completions(&self, cx: &mut Cx, completion: Option<CompletionSession>) {
         if let Some(mut editor) = self.borrow_mut() {
             editor.set_completions(cx, completion);
@@ -3170,6 +3195,53 @@ fn find_action<T>(
 
 fn has_action(actions: &Actions, predicate: impl Fn(&MarkdownEditorAction) -> bool) -> bool {
     find_action(actions, |action| predicate(action).then_some(())).is_some()
+}
+
+/// Whether `event` is a wheel scroll held with the platform's zoom modifier
+/// (Cmd on macOS, Ctrl elsewhere), with no other modifier fighting it.
+fn primary_modifier(cx: &Cx, event: &Event) -> bool {
+    let Event::Scroll(e) = event else {
+        return false;
+    };
+    let macos = matches!(cx.os_type(), OsType::Macos);
+    zoom_wheel_modifier(e.modifiers, macos)
+}
+
+/// The modifier predicate itself, pure and unit-tested on its own -- the
+/// `Event`/`Cx` wrapper above needs a live widget tree to exercise.
+fn zoom_wheel_modifier(modifiers: KeyModifiers, macos: bool) -> bool {
+    if macos {
+        modifiers.logo && !modifiers.control
+    } else {
+        modifiers.control && !modifiers.logo
+    }
+}
+
+#[cfg(test)]
+mod zoom_wheel_modifier_tests {
+    use super::*;
+
+    fn modifiers(control: bool, logo: bool) -> KeyModifiers {
+        KeyModifiers {
+            control,
+            logo,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn non_macos_wants_control_without_logo() {
+        assert!(zoom_wheel_modifier(modifiers(true, false), false));
+        assert!(!zoom_wheel_modifier(modifiers(false, false), false));
+        assert!(!zoom_wheel_modifier(modifiers(true, true), false));
+    }
+
+    #[test]
+    fn macos_wants_logo_without_control() {
+        assert!(zoom_wheel_modifier(modifiers(false, true), true));
+        assert!(!zoom_wheel_modifier(modifiers(false, false), true));
+        assert!(!zoom_wheel_modifier(modifiers(true, true), true));
+    }
 }
 
 #[cfg(test)]

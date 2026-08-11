@@ -32,6 +32,7 @@ use crate::project_settings::DockWidths;
 use crate::search_session::SearchSession;
 use crate::search_state::SearchState;
 use crate::view_history::{HistoryDirection, ViewAnchor, ViewHistory, ViewLocation};
+use crate::zoom::WheelAccumulator;
 use makepad_widgets::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -792,6 +793,10 @@ pub struct App {
     /// interaction and maps it to the tint the logo renders. See `fps_meter.rs`.
     #[rust]
     fps_meter: FpsMeter,
+    /// Accumulates Ctrl/Cmd-held wheel deltas from the reading view and the
+    /// source editor into whole zoom-ladder steps (Task 10).
+    #[rust]
+    wheel_zoom: WheelAccumulator,
     /// Scope state for the tree panel; the app owns it and rebuilds `NavView`
     /// on every change (see `nav.rs`).
     #[rust]

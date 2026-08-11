@@ -54,6 +54,38 @@ pub(crate) fn scale(percent: u32) -> f64 {
     percent as f64 / 100.0
 }
 
+/// A wheel event's worth of scroll delta needed before it steps one rung on
+/// the ladder. Trackpad two-finger scrolls arrive as many small deltas; a
+/// physical wheel notch is usually ~120 units. Chosen so a comfortable
+/// two-finger nudge steps one rung, not a flurry of them.
+const WHEEL_STEP: f64 = 40.0;
+
+/// Accumulates signed wheel deltas from `Event::Scroll` into whole-rung zoom
+/// steps. `add` returns the signed count of rungs to step: negative for
+/// zoom-IN (wheel up / negative `scroll.y`), positive for zoom-OUT. A
+/// direction change (the running total and the new delta disagree in sign)
+/// discards the stale residual first, so a quick reversal doesn't carry over
+/// spurious momentum from the other direction.
+#[derive(Default)]
+pub(crate) struct WheelAccumulator {
+    accumulated: f64,
+}
+
+impl WheelAccumulator {
+    pub(crate) fn add(&mut self, delta: f64) -> i32 {
+        if delta == 0.0 {
+            return 0;
+        }
+        if self.accumulated != 0.0 && self.accumulated.signum() != delta.signum() {
+            self.accumulated = 0.0;
+        }
+        self.accumulated += delta;
+        let steps = (self.accumulated / WHEEL_STEP).trunc();
+        self.accumulated -= steps * WHEEL_STEP;
+        steps as i32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +115,15 @@ mod tests {
         assert_eq!(scale(100), 1.0);
         assert_eq!(scale(50), 0.5);
         assert_eq!(scale(175), 1.75);
+    }
+
+    #[test]
+    fn accumulator_steps_once_per_threshold_and_resets_on_direction_change() {
+        let mut acc = WheelAccumulator::default();
+        assert_eq!(acc.add(-15.0), 0);
+        assert_eq!(acc.add(-30.0), -1); // crossed 40 upward-zoom
+        assert_eq!(acc.add(-80.0), -2); // big flick: two rungs
+        assert_eq!(acc.add(10.0), 0); // direction change resets, no step
+        assert_eq!(acc.add(35.0), 1);
     }
 }
