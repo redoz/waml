@@ -6,6 +6,13 @@ use waml_markdown_editor::{
     input::{EditorInput, ScrollState},
     layout::{CaretStop, GlyphCluster, LayoutSnapshot, VisualLine},
     motion::{LayoutChangeCause, MotionConfig, MotionController, MotionCutReason},
+    presentation::{compile_presentation, HighlighterRegistry, PresentationStyles},
+    reading::{
+        build_reading_document, BlockExtensionAppearance, BlockExtensionEvent,
+        BlockExtensionEventOutcome, BlockExtensionRequest, BlockExtensionRequestId,
+        BlockExtensionState, BlockExtensionStates, MarkdownBlockExtensionHost, ReadingBlock,
+        ReadingDocument, RegisteredBlockExtensions, RenderedBlockSvg,
+    },
     selection::{Affinity, TextPosition},
     session::{HostSnapshotCause, HostSyncOutcome, MarkdownDocumentSession},
     widget::{MarkdownEditor, MarkdownEditorRef, MarkdownEditorWidgetRefExt},
@@ -70,6 +77,81 @@ fn mounted(text: &str) -> (Cx, MarkdownEditorRef, MarkdownDocumentSession) {
     .unwrap();
     let session = MarkdownDocumentSession::new(Arc::new(MarkdownDocumentSnapshot::new(syntax)));
     (cx, editor, session)
+}
+
+#[derive(Default)]
+struct RecordingExtensionHost {
+    requests: Vec<BlockExtensionRequest>,
+    canceled: Vec<BlockExtensionRequestId>,
+    events: Vec<BlockExtensionEvent>,
+}
+
+impl MarkdownBlockExtensionHost for RecordingExtensionHost {
+    fn request(&mut self, request: BlockExtensionRequest) {
+        self.requests.push(request);
+    }
+
+    fn cancel(&mut self, request_id: BlockExtensionRequestId) {
+        self.canceled.push(request_id);
+    }
+
+    fn drain_events(&mut self) -> Vec<BlockExtensionEvent> {
+        std::mem::take(&mut self.events)
+    }
+}
+
+fn mermaid_reading_document(source: &str, revision: DocumentRevision) -> ReadingDocument {
+    let syntax = parse_markdown(
+        revision,
+        SourceText::new(source.to_owned()).unwrap(),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let plan = compile_presentation(
+        &syntax,
+        &PresentationStyles::balanced(),
+        &HighlighterRegistry::default(),
+    )
+    .unwrap();
+    build_reading_document(
+        &plan,
+        &RegisteredBlockExtensions::from_languages([Arc::from("mermaid")]),
+    )
+    .unwrap()
+}
+
+fn has_visible_text(blocks: &[ReadingBlock], source: &str, expected: &str) -> bool {
+    blocks.iter().any(|block| {
+        block.pieces.iter().any(|piece| {
+            piece.emit
+                && source
+                    .get(piece.range.start().to_usize()..piece.range.end().to_usize())
+                    .is_some_and(|text| text.contains(expected))
+        }) || has_visible_text(&block.children, source, expected)
+    })
+}
+
+fn ready_event(request: &BlockExtensionRequest) -> BlockExtensionEvent {
+    BlockExtensionEvent::Ready {
+        request_id: request.request_id,
+        revision: request.revision,
+        item: request.item,
+        source_range: request.source_range,
+        svg: RenderedBlockSvg {
+            data: Arc::from(&b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"[..]),
+            logical_size: (120.0, 80.0),
+        },
+    }
+}
+
+fn failed_event(request: &BlockExtensionRequest) -> BlockExtensionEvent {
+    BlockExtensionEvent::Failed {
+        request_id: request.request_id,
+        revision: request.revision,
+        item: request.item,
+        source_range: request.source_range,
+        message: Arc::from("invalid Mermaid"),
+    }
 }
 
 // Scenario: NATIVE-023
@@ -157,4 +239,128 @@ fn external_replacement_maps_selection_and_scroll_and_cuts_motion() {
     );
     assert!(!frame.active);
     assert_eq!(frame.cut_reason, Some(MotionCutReason::ExternalReplacement));
+}
+
+#[test]
+fn mermaid_fences_move_from_loading_to_ready_or_failed_without_changing_source() {
+    let source = "Before.\n\n```mermaid\nflowchart LR\n    A --> B\n```\n\nBetween.\n\n```MERMAID\nflowchart LR\n    A -->\n```\n\nAfter.\n";
+    let revision = DocumentRevision::new(11);
+    let document = mermaid_reading_document(source, revision);
+    let source_bytes = source.as_bytes().to_vec();
+    let shared_source: Arc<str> = Arc::from(source);
+    let mut host = RecordingExtensionHost::default();
+    let mut states = BlockExtensionStates::default();
+
+    states.reconcile(
+        &mut host,
+        revision,
+        &document,
+        shared_source.clone(),
+        BlockExtensionAppearance::Light,
+    );
+
+    assert_eq!(host.requests.len(), 2);
+    assert_eq!(states.pending_count(), 2);
+    assert!(states
+        .frame(revision)
+        .items
+        .iter()
+        .all(|(_, state)| matches!(state, BlockExtensionState::Loading)));
+    let ready = ready_event(&host.requests[0]);
+    let failed = failed_event(&host.requests[1]);
+    assert_eq!(
+        states.apply_event(ready),
+        BlockExtensionEventOutcome::Applied
+    );
+    assert_eq!(
+        states.apply_event(failed),
+        BlockExtensionEventOutcome::Applied
+    );
+
+    let frame = states.frame(revision);
+    assert_eq!(states.pending_count(), 0);
+    assert_eq!(
+        frame
+            .items
+            .iter()
+            .filter(|(_, state)| matches!(state, BlockExtensionState::Ready(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        frame
+            .items
+            .iter()
+            .filter(|(_, state)| matches!(state, BlockExtensionState::Failed(_)))
+            .count(),
+        1
+    );
+    assert_eq!(shared_source.as_bytes(), source_bytes);
+    for prose in ["Before.", "Between.", "After."] {
+        assert!(has_visible_text(&document.roots, source, prose));
+    }
+}
+
+#[test]
+fn a_new_mermaid_revision_cancels_old_work_and_rejects_its_event() {
+    let old_revision = DocumentRevision::new(21);
+    let new_revision = DocumentRevision::new(22);
+    let old_source = "```mermaid\nflowchart LR\n    Old --> Ready\n```\n";
+    let new_source = "```mermaid\nflowchart LR\n    New -->\n```\n";
+    let old_document = mermaid_reading_document(old_source, old_revision);
+    let new_document = mermaid_reading_document(new_source, new_revision);
+    let mut host = RecordingExtensionHost::default();
+    let mut states = BlockExtensionStates::default();
+    states.reconcile(
+        &mut host,
+        old_revision,
+        &old_document,
+        Arc::from(old_source),
+        BlockExtensionAppearance::Light,
+    );
+    let old_request = host.requests[0].clone();
+
+    states.reconcile(
+        &mut host,
+        new_revision,
+        &new_document,
+        Arc::from(new_source),
+        BlockExtensionAppearance::Light,
+    );
+    let new_request = host.requests[1].clone();
+
+    assert_eq!(host.canceled, vec![old_request.request_id]);
+    assert_eq!(
+        states.apply_event(ready_event(&old_request)),
+        BlockExtensionEventOutcome::IgnoredStale
+    );
+    assert_eq!(
+        states.apply_event(failed_event(&new_request)),
+        BlockExtensionEventOutcome::Applied
+    );
+    assert!(matches!(
+        states.frame(new_revision).items.as_ref(),
+        [(_, BlockExtensionState::Failed(_))]
+    ));
+}
+
+#[test]
+fn a_non_mermaid_fence_never_requests_the_extension_host() {
+    let source = "Before.\n\n```rust\nfn main() {}\n```\n\nAfter.\n";
+    let revision = DocumentRevision::new(31);
+    let document = mermaid_reading_document(source, revision);
+    let mut host = RecordingExtensionHost::default();
+    let mut states = BlockExtensionStates::default();
+
+    states.reconcile(
+        &mut host,
+        revision,
+        &document,
+        Arc::from(source),
+        BlockExtensionAppearance::Dark,
+    );
+
+    assert!(host.requests.is_empty());
+    assert_eq!(states.pending_count(), 0);
+    assert!(states.frame(revision).items.is_empty());
 }

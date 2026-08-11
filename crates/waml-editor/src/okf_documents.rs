@@ -6,6 +6,17 @@ use crate::view_history::DocumentLocator;
 use makepad_widgets::Vec4;
 use waml::view::surface::SurfaceId;
 
+thread_local! {
+    /// All generic Markdown documents on the UI thread share the renderer
+    /// cache. Each `ReadingView` still owns a separate lease and request set.
+    static MARKDOWN_EXTENSIONS: crate::markdown_extensions::SharedMarkdownExtensionHost =
+        crate::markdown_extensions::EditorMarkdownExtensionHost::shared();
+}
+
+fn markdown_extensions() -> crate::markdown_extensions::SharedMarkdownExtensionHost {
+    MARKDOWN_EXTENSIONS.with(Clone::clone)
+}
+
 pub fn generic_okf_accent() -> Option<Vec4> {
     Some(crate::accent::bucket_color(
         crate::node_style::AccentBucket::None,
@@ -61,6 +72,7 @@ pub fn open_with_asset_host(
             crate::generic_okf_view::GenericOkfView::new_with_asset_host(
                 concept_id.to_string(),
                 assets.clone(),
+                markdown_extensions(),
                 emphasis,
             ),
         ),
