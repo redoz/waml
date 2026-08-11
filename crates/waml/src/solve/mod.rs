@@ -270,6 +270,8 @@ pub struct SolvedRouting {
     pub boxes: Vec<Box>,
     pub rects: BTreeMap<BoxId, Rect>,
     pub edges: Vec<(BoxId, BoxId, Option<String>)>,
+    /// Frontend-projected solid rectangles used by both routing and labels.
+    pub hard_obstacles: Vec<Rect>,
 }
 
 impl SolvedRouting {
@@ -321,7 +323,7 @@ pub fn connected_label_widths(
 /// The hard-obstacle set `place_labels_with_reroute` places
 /// against: every solved node, plus each group's title strip (its interior is
 /// not solid -- a group legitimately holds edges and their labels).
-fn label_obstacles(solved: &Solved) -> label::Obstacles {
+fn label_obstacles_with(solved: &Solved, extra_hard: &[Rect]) -> label::Obstacles {
     label::Obstacles {
         hard: solved
             .nodes
@@ -337,6 +339,7 @@ fn label_obstacles(solved: &Solved) -> label::Obstacles {
                         ..g.rect
                     }),
             )
+            .chain(extra_hard.iter().copied())
             .collect(),
     }
 }
@@ -360,6 +363,13 @@ pub struct RoutingContext<'a> {
     pub rects: &'a BTreeMap<BoxId, Rect>,
     pub edges: &'a [(BoxId, BoxId, Option<String>)],
     pub cfg: &'a SolveConfig,
+}
+
+/// Route behavior and frontend-projected obstacles reused by label rerouting.
+pub struct LabelRoutingPolicy<'a> {
+    pub cost: route::RouteCost,
+    pub route: &'a route::RoutePolicy,
+    pub hard_obstacles: &'a [Rect],
 }
 
 /// How badly a placement went, smaller is better: labels with no route at all
@@ -451,8 +461,11 @@ pub fn place_labels_with_reroute_cost(
         routes,
         requests,
         cfg,
-        base_cost,
-        &route::RoutePolicy::default(),
+        &LabelRoutingPolicy {
+            cost: base_cost,
+            route: &route::RoutePolicy::default(),
+            hard_obstacles: &[],
+        },
     )
 }
 
@@ -463,11 +476,10 @@ pub fn place_labels_with_reroute_policy(
     routes: &mut [Vec<(f64, f64)>],
     requests: &[label::LabelRequest],
     cfg: &label::LabelConfig,
-    base_cost: route::RouteCost,
-    route_policy: &route::RoutePolicy,
+    policy: &LabelRoutingPolicy,
 ) -> Vec<label::LabelRequest> {
     // Only the ROUTES move here, never the nodes or groups the labels dodge.
-    let obstacles = label_obstacles(solved);
+    let obstacles = label_obstacles_with(solved, policy.hard_obstacles);
     let original: Vec<Vec<(f64, f64)>> = routes.to_vec();
     let mut placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
 
@@ -486,7 +498,7 @@ pub fn place_labels_with_reroute_policy(
 
     let cost = route::RouteCost {
         label_pressure: REROUTE_LABEL_PRESSURE,
-        ..base_cost
+        ..policy.cost
     };
     let mut best_score = placement_score(&placement);
     let mut best_routes = original.clone();
@@ -541,7 +553,7 @@ pub fn place_labels_with_reroute_policy(
             &keyed,
             routing.cfg,
             &cost,
-            route_policy,
+            policy.route,
         );
         if replayed.len() != routes.len() {
             break; // the router disagrees with `order`: leave the routes alone
@@ -588,8 +600,9 @@ pub fn place_labels_final(
     routes: &[Vec<(f64, f64)>],
     requests: &[label::LabelRequest],
     cfg: &label::LabelConfig,
+    hard_obstacles: &[Rect],
 ) -> Vec<label::LabelRequest> {
-    let obstacles = label_obstacles(solved);
+    let obstacles = label_obstacles_with(solved, hard_obstacles);
     let placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
     solved.label_leaders = placement
         .placed
@@ -627,6 +640,7 @@ mod tests {
             &routes,
             &requests,
             &label::LabelConfig::default(),
+            &[],
         );
 
         assert!(unresolved.is_empty());
@@ -652,7 +666,7 @@ mod tests {
         requests: &[label::LabelRequest],
         cfg: &label::LabelConfig,
     ) -> Vec<label::LabelRequest> {
-        let obstacles = label_obstacles(solved);
+        let obstacles = label_obstacles_with(solved, &[]);
         let placement = label::place_with_leaders(routes, requests, &obstacles, cfg);
         solved.label_leaders = placement
             .placed

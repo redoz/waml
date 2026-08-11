@@ -861,6 +861,7 @@ fn stress_layout(
         boxes,
         rects: rect_map,
         edges: route_edges.into_iter().map(|(s, t)| (s, t, None)).collect(),
+        hard_obstacles,
     };
 
     // Entanglement is diagnostic-only, re-derived straight from the raw,
@@ -1190,8 +1191,11 @@ pub fn build_scene(
         &mut routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
-        diagram_route_cost(diagram.kind),
-        &use_case_route_policy(diagram),
+        &waml::solve::LabelRoutingPolicy {
+            cost: diagram_route_cost(diagram.kind),
+            route: &use_case_route_policy(diagram),
+            hard_obstacles: &routing.hard_obstacles,
+        },
     );
     // A reroute moves polylines, and the scene draws from `edges`, not from
     // `solved.routes`.
@@ -1214,6 +1218,7 @@ pub fn build_scene(
         &final_routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
+        &routing.hard_obstacles,
     );
     debug_assert!(
         unresolved.is_empty(),
@@ -1637,6 +1642,28 @@ mod tests {
                         group.title
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn real_editor_workflow_labels_avoid_every_visible_heading_strip() {
+        fn overlaps(a: Rect, b: Rect) -> bool {
+            a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+        }
+
+        let scene = editor_workflow_scene();
+        for label in &scene.labels {
+            for group in &scene.use_case_groups {
+                if group.role == waml::model::DiagramGroupRole::ExternalActors {
+                    continue;
+                }
+                assert!(
+                    !overlaps(label.rect, group.heading_bounds),
+                    "label {:?} overlaps visible heading {:?}",
+                    label.text,
+                    group.title
+                );
             }
         }
     }
