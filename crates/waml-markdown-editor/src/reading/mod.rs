@@ -8,10 +8,16 @@
 //! the other's layout engine, motion, selection, input or IME.
 
 pub mod bullet;
+pub mod extensions;
 pub mod model;
 pub mod widget;
 
 pub use bullet::{bullet_shape_for_level, BulletShape, DrawReadingBullet};
+pub use extensions::{
+    BlockExtensionAppearance, BlockExtensionEvent, BlockExtensionEventOutcome, BlockExtensionFrame,
+    BlockExtensionRequest, BlockExtensionRequestId, BlockExtensionState, BlockExtensionStates,
+    FencedBlockExtension, MarkdownBlockExtensionHost, RegisteredBlockExtensions, RenderedBlockSvg,
+};
 pub use model::{
     build_reading_document, ReadingBlock, ReadingBlockKind, ReadingDocument, ReadingError,
     ReadingLink, ReadingPiece,

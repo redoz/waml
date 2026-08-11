@@ -12,12 +12,15 @@ use std::sync::Arc;
 
 use waml_syntax::{TextRange, TextSize};
 
-use crate::presentation::{
-    BlockDecorationKind, PresentationBlockKind, PresentationItem, PresentationPlan, TextRole,
-    TextStyle,
+use crate::{
+    presentation::{
+        BlockDecorationKind, EmbeddedBlockRole, PresentationBlockKind, PresentationItem,
+        PresentationItemId, PresentationPlan, PresentationRole, TextRole, TextStyle,
+    },
+    reading::{FencedBlockExtension, RegisteredBlockExtensions},
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadingBlockKind {
     Paragraph,
     Heading(u8),
@@ -30,6 +33,7 @@ pub enum ReadingBlockKind {
     TableCell { column: u32 },
     Image,
     ThematicBreak,
+    FencedExtension(FencedBlockExtension),
 }
 
 /// One text run of a block, in source order.
@@ -188,7 +192,10 @@ fn walk(blocks: &[ReadingBlock], expected: &mut TextSize) -> Result<(), ReadingE
 /// attached to the deepest block whose source range contains it; a piece
 /// inside no block becomes its own synthetic `Paragraph` so the partition
 /// stays complete (blank lines and inter-block whitespace take this path).
-pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument, ReadingError> {
+pub fn build_reading_document(
+    plan: &PresentationPlan,
+    extensions: &RegisteredBlockExtensions,
+) -> Result<ReadingDocument, ReadingError> {
     // 0. One pass over the items collects every ListBullet range, so the
     //    per-run and per-block "is this a bullet?" checks are set lookups
     //    rather than rescans of the whole item list.
@@ -205,7 +212,7 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
             }
         }
         let level = list_depth(plan, index);
-        kinds.push(match block.kind {
+        kinds.push(match &block.kind {
             // The compiler models a `---` as a Paragraph block carrying a
             // ThematicRule decoration; the reading view re-types it so the
             // rule is drawn instead of an invisible suppressed paragraph.
@@ -216,9 +223,9 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
                     ReadingBlockKind::Paragraph
                 }
             }
-            PresentationBlockKind::Heading(level) => ReadingBlockKind::Heading(level),
+            PresentationBlockKind::Heading(level) => ReadingBlockKind::Heading(*level),
             PresentationBlockKind::ListItem { marker_range } => {
-                let is_bullet = bullet_ranges.contains(&range_key(marker_range));
+                let is_bullet = bullet_ranges.contains(&range_key(*marker_range));
                 if is_bullet {
                     ReadingBlockKind::BulletItem { level }
                 } else {
@@ -226,11 +233,32 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
                 }
             }
             PresentationBlockKind::Quote => ReadingBlockKind::Quote,
-            PresentationBlockKind::Code { .. } => ReadingBlockKind::Code,
-            PresentationBlockKind::Table { columns } => ReadingBlockKind::Table { columns },
+            PresentationBlockKind::Code { fence } => match fence {
+                Some(fence)
+                    if fence
+                        .language
+                        .as_deref()
+                        .is_some_and(|language| extensions.contains(language)) =>
+                {
+                    ReadingBlockKind::FencedExtension(FencedBlockExtension {
+                        id: PresentationItemId {
+                            owner: block.owner,
+                            role: PresentationRole::Embedded(EmbeddedBlockRole::FencedExtension),
+                            fragment_ordinal: 0,
+                        },
+                        language: fence.language.clone().expect("checked above"),
+                        source_range: block.source_range,
+                        content_range: fence.content_range,
+                    })
+                }
+                _ => ReadingBlockKind::Code,
+            },
+            PresentationBlockKind::Table { columns } => {
+                ReadingBlockKind::Table { columns: *columns }
+            }
             PresentationBlockKind::TableRow => ReadingBlockKind::TableRow,
             PresentationBlockKind::TableCell { column, .. } => {
-                ReadingBlockKind::TableCell { column }
+                ReadingBlockKind::TableCell { column: *column }
             }
             PresentationBlockKind::Image => ReadingBlockKind::Image,
         });
@@ -285,7 +313,7 @@ pub fn build_reading_document(plan: &PresentationPlan) -> Result<ReadingDocument
             .map(|child| assemble(*child, kinds, buckets, children, ranges))
             .collect::<Vec<_>>();
         ReadingBlock {
-            kind: kinds[index],
+            kind: kinds[index].clone(),
             source_range: ranges[index],
             pieces: std::mem::take(&mut buckets[index]),
             children: kids,

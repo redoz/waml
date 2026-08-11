@@ -124,6 +124,7 @@ pub enum BlockDecorationRole {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EmbeddedBlockRole {
     Image,
+    FencedExtension,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

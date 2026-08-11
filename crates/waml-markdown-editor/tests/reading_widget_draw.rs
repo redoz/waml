@@ -8,7 +8,9 @@ use makepad_widgets::*;
 use waml_markdown_editor::presentation::{
     compile_presentation, HighlighterRegistry, PresentationStyles,
 };
-use waml_markdown_editor::reading::{build_reading_document, MarkdownViewerWidgetRefExt};
+use waml_markdown_editor::reading::{
+    build_reading_document, MarkdownViewerWidgetRefExt, RegisteredBlockExtensions,
+};
 use waml_markdown_editor::syntax::{
     parse_markdown, DocumentRevision, MarkdownDialect, SourceText, TextRange, TextSize,
 };
@@ -100,7 +102,10 @@ fn a_mounted_viewer_paints_the_installed_document() {
     let styles = Arc::new(PresentationStyles::balanced());
     let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
         .expect("presentation compiles");
-    let document = Arc::new(build_reading_document(&plan).expect("reading model builds"));
+    let document = Arc::new(
+        build_reading_document(&plan, &RegisteredBlockExtensions::default())
+            .expect("reading model builds"),
+    );
     viewer.install_document(&mut cx, document, Arc::from(source));
 
     {
@@ -191,7 +196,10 @@ fn a_mounted_viewer_paints_a_rect_over_each_matched_run() {
     let styles = Arc::new(PresentationStyles::balanced());
     let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
         .expect("presentation compiles");
-    let document = Arc::new(build_reading_document(&plan).expect("reading model builds"));
+    let document = Arc::new(
+        build_reading_document(&plan, &RegisteredBlockExtensions::default())
+            .expect("reading model builds"),
+    );
     viewer.install_document(&mut cx, document, Arc::from(source));
     viewer.set_search_highlights(&mut cx, vec![range(2, 7)]);
 

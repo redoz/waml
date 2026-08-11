@@ -5,13 +5,31 @@
 //! `PresentationPlan::validate_source_partition` enforces, and it is what
 //! makes "everything drawn maps back to source" checkable.
 
+use std::sync::Arc;
 use waml_markdown_editor::presentation::{
-    compile_presentation, HighlighterRegistry, PresentationStyles, TextRole,
+    compile_presentation, HighlighterRegistry, PresentationBlockKind, PresentationPlan,
+    PresentationStyles, TextRole,
 };
-use waml_markdown_editor::reading::{build_reading_document, ReadingBlockKind, ReadingDocument};
+
+use waml_markdown_editor::presentation::{EmbeddedBlockRole, PresentationRole};
+use waml_markdown_editor::reading::{
+    build_reading_document, ReadingBlockKind, ReadingDocument, RegisteredBlockExtensions,
+};
 use waml_markdown_editor::syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
 
 fn document(source: &str) -> ReadingDocument {
+    document_with_extensions(source, RegisteredBlockExtensions::default())
+}
+
+fn document_with_extensions(
+    source: &str,
+    extensions: RegisteredBlockExtensions,
+) -> ReadingDocument {
+    let plan = plan(source);
+    build_reading_document(&plan, &extensions).expect("reading model builds")
+}
+
+fn plan(source: &str) -> Arc<PresentationPlan> {
     let text = SourceText::new(source).expect("valid source");
     let syntax = parse_markdown(
         DocumentRevision::INITIAL,
@@ -20,9 +38,8 @@ fn document(source: &str) -> ReadingDocument {
     )
     .expect("markdown parses");
     let styles = PresentationStyles::balanced();
-    let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
-        .expect("presentation compiles");
-    build_reading_document(&plan).expect("reading model builds")
+    compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
+        .expect("presentation compiles")
 }
 
 fn kinds(doc: &ReadingDocument) -> Vec<ReadingBlockKind> {
@@ -31,7 +48,7 @@ fn kinds(doc: &ReadingDocument) -> Vec<ReadingBlockKind> {
         out: &mut Vec<ReadingBlockKind>,
     ) {
         for block in blocks {
-            out.push(block.kind);
+            out.push(block.kind.clone());
             walk(&block.children, out);
         }
     }
@@ -294,4 +311,62 @@ fn a_link_is_found_by_any_offset_inside_its_source_range() {
 fn a_document_without_links_carries_none() {
     let doc = document("# Title\n\nJust prose.\n");
     assert!(doc.links.is_empty());
+}
+
+#[test]
+fn registered_fence_languages_become_fenced_extensions_case_insensitively() {
+    let extensions = RegisteredBlockExtensions::from_languages([Arc::from("mermaid")]);
+    for language in ["mermaid", "MERMAID", "MeRmAiD"] {
+        let source = format!("```{language}\ngraph TD; A-->B\n```\n");
+        let plan = plan(&source);
+        let code = plan
+            .blocks
+            .iter()
+            .find(|block| matches!(block.kind, PresentationBlockKind::Code { .. }))
+            .expect("a fenced code block");
+        let doc = build_reading_document(&plan, &extensions).expect("reading model builds");
+        let block = doc
+            .roots
+            .iter()
+            .find(|block| matches!(block.kind, ReadingBlockKind::FencedExtension(_)))
+            .expect("a registered fence becomes an extension block");
+        let ReadingBlockKind::FencedExtension(extension) = &block.kind else {
+            panic!("registered fence becomes an extension")
+        };
+        assert_eq!(extension.source_range, code.source_range);
+        assert_eq!(
+            &source[extension.content_range.start().to_usize()
+                ..extension.content_range.end().to_usize()],
+            "graph TD; A-->B\n"
+        );
+        assert_eq!(
+            extension.id,
+            waml_markdown_editor::presentation::PresentationItemId {
+                owner: code.owner,
+                role: PresentationRole::Embedded(EmbeddedBlockRole::FencedExtension),
+                fragment_ordinal: 0,
+            }
+        );
+        doc.validate_source_partition()
+            .expect("the source partition stays exact");
+    }
+}
+
+#[test]
+fn unregistered_or_non_fenced_code_stays_code() {
+    let registered = RegisteredBlockExtensions::from_languages([Arc::from("mermaid")]);
+    for source in [
+        "```rust\nlet x = 1;\n```\n",
+        "```mermaid-js\ngraph TD; A-->B\n```\n",
+        "```\ngraph TD; A-->B\n```\n",
+        "    graph TD; A-->B\n",
+    ] {
+        let doc = document_with_extensions(source, registered.clone());
+        assert!(kinds(&doc).contains(&ReadingBlockKind::Code));
+    }
+    let doc = document_with_extensions(
+        "```mermaid\ngraph TD; A-->B\n```\n",
+        RegisteredBlockExtensions::default(),
+    );
+    assert!(kinds(&doc).contains(&ReadingBlockKind::Code));
 }

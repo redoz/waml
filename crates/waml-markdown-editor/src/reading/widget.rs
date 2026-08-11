@@ -779,14 +779,14 @@ impl MarkdownViewer {
     fn draw_siblings(&mut self, cx: &mut Cx2d, blocks: &[ReadingBlock], source: &str) {
         for (index, block) in blocks.iter().enumerate() {
             if index > 0 {
-                self.block_gap(cx, self.gap_before_em(block.kind));
+                self.block_gap(cx, self.gap_before_em(&block.kind));
             }
             self.draw_block(cx, block, source);
         }
     }
 
     /// The gap a block wants above itself, in ems of the body size.
-    fn gap_before_em(&self, kind: ReadingBlockKind) -> f64 {
+    fn gap_before_em(&self, kind: &ReadingBlockKind) -> f64 {
         match kind {
             ReadingBlockKind::Heading(_) => self.heading_gap_em,
             ReadingBlockKind::BulletItem { .. } | ReadingBlockKind::OrderedItem { .. } => {

@@ -3,7 +3,9 @@
 use waml_markdown_editor::presentation::{
     compile_presentation, HighlighterRegistry, PresentationStyles,
 };
-use waml_markdown_editor::reading::{build_reading_document, ReadingBlock};
+use waml_markdown_editor::reading::{
+    build_reading_document, ReadingBlock, RegisteredBlockExtensions,
+};
 use waml_markdown_editor::syntax::{parse_markdown, DocumentRevision, MarkdownDialect, SourceText};
 
 #[test]
@@ -19,7 +21,8 @@ fn heading_marks_and_frontmatter_never_reach_rendered_text() {
     let styles = PresentationStyles::balanced();
     let plan = compile_presentation(&syntax, &styles, &HighlighterRegistry::default())
         .expect("presentation compiles");
-    let doc = build_reading_document(&plan).expect("reading model builds");
+    let doc = build_reading_document(&plan, &RegisteredBlockExtensions::default())
+        .expect("reading model builds");
 
     fn walk(blocks: &[ReadingBlock], source: &str, rendered: &mut String) {
         for block in blocks {
