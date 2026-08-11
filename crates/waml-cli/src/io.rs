@@ -5,23 +5,10 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use waml::bundle_envelope::split_bundle;
+use waml::bundle_envelope::expand_text;
 use waml::host::ingest::{ingest_markdown, IngestError, IngestErrorKind, IngestOptions};
 
 use crate::commands::IndexChange;
-
-/// Expand a valid Bundle Envelope v1 or retain the input as one plain document.
-pub fn expand_text(display_path: &str, text: &str) -> std::io::Result<Vec<(String, String)>> {
-    match split_bundle(text).map_err(|source| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("{display_path}: {source}"),
-        )
-    })? {
-        Some(parts) => Ok(parts),
-        None => Ok(vec![(display_path.to_owned(), text.to_owned())]),
-    }
-}
 
 /// Recursively collect `.md` files under the given files/directories.
 ///
@@ -1131,65 +1118,6 @@ mod tests {
         let dir = fixture("mini");
         let bundle = read_bundle_rooted(&[dir.join("order.md")], false).unwrap();
         assert_eq!(bundle[0].0, "order.md");
-    }
-
-    #[test]
-    fn expands_v1_envelope_into_docs() {
-        let nonce = "0000000000000000000000000000000a";
-        let blob = format!(
-            "<!-- waml/1 part {nonce} a/one.md -->\n# One\n<!-- waml/1 part {nonce} a/two.md -->\n# Two\n"
-        );
-        let docs = expand_text("stdin", &blob).unwrap();
-        assert_eq!(docs.len(), 2);
-        assert_eq!(docs[0], ("a/one.md".into(), "# One\n".into()));
-        assert_eq!(docs[1], ("a/two.md".into(), "# Two\n".into()));
-    }
-
-    #[test]
-    fn plain_and_legacy_text_use_the_physical_display_path() {
-        for text in ["# Order\n", "before\n<!-- a/one.md -->\nafter\n"] {
-            assert_eq!(
-                expand_text("shop/order.md", text).unwrap(),
-                vec![("shop/order.md".into(), text.into())]
-            );
-        }
-    }
-
-    #[test]
-    fn malformed_envelope_includes_the_physical_input_name() {
-        let error = expand_text(
-            "imports/orders.bundle.md",
-            "<!-- waml/2 part 0000000000000000000000000000000a x.md -->\n",
-        )
-        .unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-        let message = error.to_string();
-        assert!(message.contains("imports/orders.bundle.md"), "{message}");
-        assert!(
-            message.contains("unsupported WAML bundle envelope version 2"),
-            "{message}"
-        );
-    }
-
-    #[test]
-    fn stray_comment_doc_is_one_doc() {
-        // A single .md doc that happens to contain a lone, non-marker HTML
-        // comment (e.g. a review note) must not be split apart: it must
-        // come back as exactly one doc, keyed by its real display path,
-        // with the full content — including the unresolved relationship
-        // section that follows the stray comment — intact.
-        let text = "---\ntype: uml.Class\ntitle: Order\n---\n# Order\n\n<!-- reviewed: needs follow-up -->\n\n## Relationships\n- depends [Ghost](./ghost.md)\n";
-        let docs = expand_text("shop/order.md", text).unwrap();
-        assert_eq!(
-            docs.len(),
-            1,
-            "a stray non-.md comment must not split the document"
-        );
-        assert_eq!(docs[0].0, "shop/order.md");
-        assert_eq!(
-            docs[0].1, text,
-            "content must be kept intact, nothing discarded"
-        );
     }
 
     #[test]

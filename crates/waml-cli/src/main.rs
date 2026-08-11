@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use waml::analysis::{prepare_candidate, PreviousAnalyses};
-use waml::bundle_envelope::encode_bundle_envelope;
+use waml::bundle_envelope::{
+    encode_bundle_envelope, is_ts_export_name, render_bundle_json, render_bundle_ts,
+};
 use waml::edit::{EditBatch, EditContext};
 use waml::multiplicity::Multiplicity;
 use waml::uml::FieldEdit;
@@ -1084,7 +1086,7 @@ fn run_bundle(
         }
         // The name is interpolated verbatim into `export const {name}`;
         // anything but an identifier would become injected TypeScript.
-        (BundleFormat::Ts, Some(name)) if !commands::is_ts_export_name(&name) => {
+        (BundleFormat::Ts, Some(name)) if !is_ts_export_name(&name) => {
             eprintln!("waml: --export-name must be a valid identifier, got {name:?}");
             return 2;
         }
@@ -1098,8 +1100,8 @@ fn run_bundle(
         }
     };
     let rendered = match format {
-        BundleFormat::Json => commands::render_bundle_json(&bundle),
-        BundleFormat::Ts => commands::render_bundle_ts(&bundle, &export_name.unwrap()),
+        BundleFormat::Json => render_bundle_json(&bundle),
+        BundleFormat::Ts => render_bundle_ts(&bundle, &export_name.unwrap()),
     };
     match out {
         Some(path) => {

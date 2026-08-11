@@ -11,12 +11,13 @@ regex.workspace = true
 miniz_oxide.workspace = true
 ttf-parser.workspace = true
 serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 url = { workspace = true }
 waml-syntax = { path = "../waml-syntax" }
 
 [features]
 default = []
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:serde_json"]
 test-support = []
 
 [dev-dependencies]
