@@ -93,6 +93,13 @@ pub enum SectionBody {
 pub enum LinkReason {
     UnrenderedSurface(String),
     NestedBook,
+    /// This folder was already inlined earlier in the walk -- a legitimate
+    /// DAG (two rows linking the same folder) or a middleware cycle back to
+    /// an ancestor. Inlining it again would duplicate sections (or never
+    /// terminate), but a bare Heading whose children silently vanish would
+    /// violate "never a silently blank section" -- so the repeat degrades to
+    /// a Link the reader can still follow to the folder's own tab.
+    AlreadyInlined,
     CompileFailed(String),
 }
 
@@ -168,13 +175,28 @@ fn walk(
             }
             _ => false,
         };
-        let body = body_for(
+        let mut body = body_for(
             snapshot,
             row.surface.as_ref().map(|s| s.as_str()),
             &row.target,
             nested_book,
             diagnostics,
         );
+        // A folder this walk already inlined (see `LinkReason::AlreadyInlined`)
+        // must not keep a Heading whose children silently fail to appear:
+        // degrade the repeat to a Link, mirroring the nested-book posture.
+        // The depth-cap case is deliberately NOT degraded -- a folder at the
+        // cap keeps its heading by design, and is never inserted into
+        // `visited`, so a later link to it can still inline it.
+        if matches!(body, SectionBody::Heading) {
+            if let RowTarget::Folder(address) = &row.target {
+                if visited.contains(address) {
+                    body = SectionBody::Link {
+                        reason: LinkReason::AlreadyInlined,
+                    };
+                }
+            }
+        }
         let descend = matches!(body, SectionBody::Heading);
         sections.push(BookSection {
             row_id: row.id.clone(),
@@ -433,6 +455,45 @@ mod tests {
                 reason: LinkReason::CompileFailed(_)
             }
         ));
+    }
+
+    #[test]
+    fn an_already_inlined_folder_degrades_to_a_link_not_a_childless_heading() {
+        // A repeat occurrence of a folder must degrade VISIBLY to an
+        // already-inlined Link -- never a Heading whose children silently
+        // vanish (the walk-wide `visited` set is a cycle guard, not a
+        // license to blank a section). No shipped middleware can point two
+        // rows at one folder today -- rows come from a folder's own
+        // subdirectories -- so, like `body_for`'s unknown-surface arm, this
+        // drives the seam directly: `visited` pre-seeded with the child
+        // folder's address is exactly the state a second occurrence (a
+        // future redirecting middleware, or a cycle back to an ancestor)
+        // walks in with.
+        let snapshot = snapshot_of(book_source());
+        let registry = crate::folder_projection::core_registry();
+        let mut sections = Vec::new();
+        let mut diagnostics = Vec::new();
+        let mut visited = HashSet::from(["/guide".to_string(), "/guide/deep".to_string()]);
+        walk(
+            &snapshot,
+            &registry,
+            "/guide",
+            0,
+            ChainLimits::default(),
+            &ProjectionMask::default(),
+            &mut visited,
+            &mut sections,
+            &mut diagnostics,
+        );
+        let deep = sections.iter().find(|s| s.title == "Deep").unwrap();
+        assert!(
+            matches!(&deep.body, SectionBody::Link { reason } if *reason == LinkReason::AlreadyInlined),
+            "the repeat is a followable Link, not a childless heading"
+        );
+        assert!(
+            !sections.iter().any(|s| s.title == "Leaf"),
+            "nothing beneath the repeat inlines"
+        );
     }
 
     #[test]

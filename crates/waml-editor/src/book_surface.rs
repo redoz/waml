@@ -187,6 +187,11 @@ pub struct BookSurface {
     /// cursor and the row/button hover wash. `None` off any clickable rect.
     #[rust]
     hovered: Option<BookHoverTarget>,
+    /// The hand-drawn target the current primary press started on, if any --
+    /// a release only clicks when it lands on the same target. `None` when
+    /// no press is in flight (or the press started off any clickable rect).
+    #[rust]
+    pressed: Option<BookHoverTarget>,
 }
 
 impl Widget for BookSurface {
@@ -197,9 +202,11 @@ impl Widget for BookSurface {
         // primary press on the thumb starts a drag tracked by the pointer's
         // offset from the thumb top, a move maps the pointer back to a
         // scroll offset, and the release ends it. Each returns early so the
-        // same press is not also read as a wheel/row event below.
+        // same press is not also read as a wheel/row event below. The press
+        // respects `e.handled` so a popup that already claimed it (popups
+        // stamp MouseDown/MouseMove) cannot also start a thumb drag.
         match event {
-            Event::MouseDown(e) if e.button.is_primary() => {
+            Event::MouseDown(e) if e.button.is_primary() && e.handled.get().is_empty() => {
                 if let Some(thumb) = self.thumb_rect() {
                     if thumb.contains(e.abs) {
                         self.scroll_grab = Some(e.abs.y - thumb.pos.y);
@@ -219,53 +226,83 @@ impl Widget for BookSurface {
                     }
                     return;
                 }
-                // Hover cursor + wash for the hand-drawn Link rows and the
-                // diagram open-full affordance -- neither is a real child
-                // widget, so this widget hit-tests its own cached rects.
-                let target = self.hover_target_at(e.abs);
-                if self.hovered != target {
-                    self.hovered = target;
-                    if target.is_some() {
-                        crate::cursor::hover_in(cx, MouseCursor::Hand);
-                    } else {
-                        crate::cursor::hover_out(cx);
-                    }
-                    self.view.redraw(cx);
-                }
             }
             Event::MouseUp(e) if e.button.is_primary() && self.scroll_grab.is_some() => {
                 self.scroll_grab = None;
                 return;
             }
-            // A release over a hand-drawn Link row or a diagram's open-full
-            // affordance -- both index `BookModel::sections`, mirroring how
-            // `folder_list.rs` emits `FolderListViewAction` off cached rects.
-            Event::MouseUp(e) if e.button.is_primary() => {
-                let uid = self.widget_uid();
-                if let Some(index) = hit_row(&self.link_rects, e.abs) {
-                    cx.widget_action(uid, BookSurfaceAction::LinkClicked(index));
-                    return;
-                }
-                if let Some(index) = hit_row(&self.open_full_rects, e.abs) {
-                    cx.widget_action(uid, BookSurfaceAction::OpenFullClicked(index));
-                    return;
-                }
-            }
             _ => {}
         }
 
-        // Wheel/trackpad scroll. This widget owns the offset and clamps it,
-        // so a fling past either end simply stops rather than stranding the
-        // sections.
-        if let Hit::FingerScroll(fe) = event.hits_with_capture_overload(cx, self.view.area(), true)
-        {
-            let before = self.scroll;
-            self.set_scroll(before + fe.scroll.y);
-            if self.scroll != before {
-                self.emit_fold_crossing(cx);
-                self.reconcile_live(cx, self.last_viewport);
-                self.view.redraw(cx);
+        // Everything else -- clicks on the hand-drawn Link rows and the
+        // diagram open-full affordance, hover, and wheel scroll -- routes
+        // through the hits system, the same machinery real tree/folder rows
+        // sit behind. Unlike the raw Mouse events above, hits respect
+        // `e.handled` (a press a popup already claimed never reaches here),
+        // clip every test to the view's own rect (a cached row rect can
+        // extend past the viewport, since the draw loop culls only fully
+        // invisible sections), and deliver a FingerUp only to the widget
+        // whose FingerDown captured the pointer -- so a click that started
+        // on a popup or another widget can never release into a navigation
+        // here. Scroll keeps its capture_overload, as before, so a fling
+        // over child content still reaches this owner of the offset.
+        let hit = if matches!(event, Event::Scroll(_)) {
+            event.hits_with_capture_overload(cx, self.view.area(), true)
+        } else {
+            event.hits(cx, self.view.area())
+        };
+        match hit {
+            Hit::FingerDown(fe) if fe.is_primary_hit() => {
+                // Arm the press: a release only clicks when it lands on the
+                // SAME hand-drawn target it started on -- the real-button
+                // contract, and (with `set_model` clearing `pressed`) the
+                // guard against a release hit-testing rects cached for a
+                // model that was swapped out mid-click.
+                self.pressed = self.hover_target_at(fe.abs);
             }
+            Hit::FingerUp(fe) if fe.is_primary_hit() => {
+                let pressed = self.pressed.take();
+                if fe.is_over {
+                    if let Some(target) = self.hover_target_at(fe.abs) {
+                        if pressed == Some(target) {
+                            let uid = self.widget_uid();
+                            match target {
+                                BookHoverTarget::Link(index) => {
+                                    cx.widget_action(uid, BookSurfaceAction::LinkClicked(index));
+                                }
+                                BookHoverTarget::OpenFull(index) => {
+                                    cx.widget_action(
+                                        uid,
+                                        BookSurfaceAction::OpenFullClicked(index),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Hover cursor + wash for the hand-drawn rows -- none is a real
+            // child widget, so this widget hit-tests its own cached rects.
+            Hit::FingerHoverIn(fe) | Hit::FingerHoverOver(fe) => {
+                let target = self.hover_target_at(fe.abs);
+                self.update_hover(cx, target);
+            }
+            Hit::FingerHoverOut(_) => {
+                self.update_hover(cx, None);
+            }
+            // Wheel/trackpad scroll. This widget owns the offset and clamps
+            // it, so a fling past either end simply stops rather than
+            // stranding the sections.
+            Hit::FingerScroll(fe) => {
+                let before = self.scroll;
+                self.set_scroll(before + fe.scroll.y);
+                if self.scroll != before {
+                    self.emit_fold_crossing(cx);
+                    self.reconcile_live(cx, self.last_viewport);
+                    self.view.redraw(cx);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -376,13 +413,23 @@ impl Widget for BookSurface {
 impl BookSurface {
     pub fn set_model(&mut self, cx: &mut Cx, model: Rc<BookModel>) {
         self.live.clear(); // children are per-section; a swap re-creates lazily
-                           // A rebuild of the SAME book keeps the reader's place (the clamp
-                           // below); a DIFFERENT book must not inherit it -- this widget is the
-                           // one shared body every book tab draws on, so without this reset a
-                           // nested book opened from deep in `/guide` would start at `/guide`'s
-                           // offset, and `last_marked` would index the previous model's
-                           // sections. `measured` deliberately survives either way: it is keyed
-                           // by `RowId`, which is collision-free across books.
+                           // The cached hit rects -- and any hover/press armed on them -- index
+                           // the OLD model's sections. A click or hover landing between this
+                           // swap and the next draw must not hit-test them: `.get` would keep it
+                           // from panicking, but it would silently act on the wrong section.
+        self.link_rects.clear();
+        self.open_full_rects.clear();
+        self.pressed = None;
+        if self.hovered.take().is_some() {
+            crate::cursor::hover_out(cx);
+        }
+        // A rebuild of the SAME book keeps the reader's place (the clamp
+        // below); a DIFFERENT book must not inherit it -- this widget is the
+        // one shared body every book tab draws on, so without this reset a
+        // nested book opened from deep in `/guide` would start at `/guide`'s
+        // offset, and `last_marked` would index the previous model's
+        // sections. `measured` deliberately survives either way: it is keyed
+        // by `RowId`, which is collision-free across books.
         if self
             .model
             .as_ref()
@@ -504,10 +551,33 @@ impl BookSurface {
     }
 
     fn hover_target_at(&self, pos: DVec2) -> Option<BookHoverTarget> {
+        // The cached rects are pushed UNCLIPPED (the draw loop culls only
+        // fully invisible sections, so a half-scrolled row's rect extends
+        // past the viewport into whatever chrome sits above or below it);
+        // the viewport clip that bounds what is painted must equally bound
+        // what is clickable and hoverable.
+        if !self.viewport_rect.contains(pos) {
+            return None;
+        }
         if let Some(index) = hit_row(&self.link_rects, pos) {
             return Some(BookHoverTarget::Link(index));
         }
         hit_row(&self.open_full_rects, pos).map(BookHoverTarget::OpenFull)
+    }
+
+    /// One place the hover state changes: keeps the cursor's
+    /// hover_in/hover_out strictly paired and redraws only on a real change.
+    fn update_hover(&mut self, cx: &mut Cx, target: Option<BookHoverTarget>) {
+        if self.hovered == target {
+            return;
+        }
+        self.hovered = target;
+        if target.is_some() {
+            crate::cursor::hover_in(cx, MouseCursor::Hand);
+        } else {
+            crate::cursor::hover_out(cx);
+        }
+        self.view.redraw(cx);
     }
 
     fn actions_action(&self, actions: &Actions) -> BookSurfaceAction {
@@ -547,7 +617,20 @@ impl BookSurface {
 
     pub fn scroll_to_section(&mut self, cx: &mut Cx, index: usize) {
         if let Some(&top) = self.tops.get(index) {
-            self.scroll = top;
+            // Clamped like every reader-driven path: a trailing section
+            // cannot put its top at the fold without scrolling past the
+            // book's end -- blank viewport below the last row, and a
+            // scrollbar thumb drawn past its track (`progress > 1.0`) that
+            // the next wheel tick would visibly snap back.
+            self.set_scroll(top);
+            // The reveal moved the fold, so sync the change gate to wherever
+            // the fold actually landed (== `index`, except in the clamped
+            // trailing case, where it is the section genuinely at the fold)
+            // WITHOUT emitting: echoing a mark back at the tree row the
+            // reader just clicked would be noise, and leaving the gate stale
+            // would make the reader's next small scroll inside the revealed
+            // section re-pulse that same row.
+            self.last_marked = self.current_section_index();
             self.reconcile_live(cx, self.last_viewport);
             self.view.redraw(cx);
         }
@@ -764,6 +847,9 @@ impl BookSurfaceRef {
 fn link_icon(reason: &LinkReason) -> Icon {
     match reason {
         LinkReason::NestedBook => Icon::Book,
+        // An already-inlined folder is still a folder: the row leads to its
+        // directory tab, so it wears the tree's folder glyph.
+        LinkReason::AlreadyInlined => Icon::Folder,
         LinkReason::UnrenderedSurface(_) | LinkReason::CompileFailed(_) => Icon::FileText,
     }
 }
@@ -844,8 +930,55 @@ mod tests {
         cx.init_cx_os();
         let mut book = surface(&mut cx);
         book.set_model(&mut cx, model());
+        // A real viewport, so the end stop exists: this test's promise holds
+        // for any section whose top lies BEFORE that stop (here: 5 of 40);
+        // a trailing section clamps instead -- pinned separately by
+        // `a_reveal_of_a_trailing_section_clamps_to_the_books_end`.
+        book.reconcile_live(&mut cx, 600.0);
         book.scroll_to_section(&mut cx, 5);
         assert_eq!(book.current_section_index(), Some(5));
+    }
+
+    #[test]
+    fn a_reveal_of_a_trailing_section_clamps_to_the_books_end() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let mut book = surface(&mut cx);
+        book.set_model(&mut cx, model());
+        book.reconcile_live(&mut cx, 600.0); // a real viewport, so the end exists
+        book.scroll_to_section(&mut cx, 39);
+        let content: f64 = book.heights.iter().sum();
+        let max = (content - 600.0).max(0.0);
+        assert!(
+            book.tops[39] > max,
+            "fixture: the last section's top lies past the end stop"
+        );
+        assert_eq!(
+            book.scroll(),
+            max,
+            "the reveal scrolls as far as possible, never past the book's end"
+        );
+        // The gate synced to the section genuinely at the fold, so the
+        // reader's next gate check does not spuriously mark.
+        assert!(!book.take_fold_moved_for_test());
+    }
+
+    #[test]
+    fn a_reveal_syncs_the_fold_gate_without_marking() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let mut book = surface(&mut cx);
+        book.set_model(&mut cx, model());
+        // The reader scrolls and is marked at section 2...
+        book.set_scroll(book.tops[2]);
+        assert!(book.take_fold_moved_for_test());
+        // ...then clicks a tree row: the reveal itself must not mark, and
+        // must not leave the gate stale either -- the next gate check (the
+        // reader's first scroll tick inside the revealed section) must not
+        // re-pulse the row that was just clicked.
+        book.scroll_to_section(&mut cx, 10);
+        assert_eq!(book.current_section_index(), Some(10));
+        assert!(!book.take_fold_moved_for_test(), "no echo after a reveal");
     }
 
     #[test]
@@ -855,7 +988,11 @@ mod tests {
         let mut book = surface(&mut cx);
         book.set_model(&mut cx, model());
         assert_eq!(book.current_section_index(), Some(0));
-        book.scroll_to_section(&mut cx, 3);
+        // Reader movement is simulated with the same clamped setter the
+        // wheel/scrollbar paths use -- `scroll_to_section` is the tree->book
+        // reveal, which deliberately syncs the gate without marking (pinned
+        // by `a_reveal_syncs_the_fold_gate_without_marking`).
+        book.set_scroll(book.tops[3]);
         assert_eq!(book.current_section_index(), Some(3));
         // The change gate: the SAME index twice must not re-emit. Asserted
         // through the widget's own gate accessor rather than the action
@@ -933,17 +1070,14 @@ mod tests {
         // Same directory: a rebuild keeps the reader's place...
         book.set_model(&mut cx, model());
         assert_eq!(book.scroll(), place);
-        // ...and the fold gate keeps its memory across the rebuild.
-        assert!(
-            book.take_fold_moved_for_test(),
-            "the deep scroll marks once"
-        );
+        // ...and the gate the reveal synced survives it: no mark without
+        // fresh reader movement.
         assert!(!book.take_fold_moved_for_test());
         // A DIFFERENT directory: fresh book, top of the page, gate re-armed.
         book.set_model(&mut cx, guide_model());
         assert_eq!(book.scroll(), 0.0, "a different book starts at its top");
         assert_eq!(book.current_section_index(), Some(0));
-        book.scroll_to_section(&mut cx, 1);
+        book.set_scroll(book.tops[1]);
         assert!(
             book.take_fold_moved_for_test(),
             "the first crossing in a new book must mark"
