@@ -61,27 +61,34 @@ the tree's context menu, which cannot currently talk about folders.
 
 ## Design
 
-### 1. The tree's context menu must be able to name a folder
+### 1. Close the right-click asymmetry
 
-Today the secondary-button path in `tree_panel.rs` fires only for
-concept-carrying rows, and says so:
+Directory rows are already equal citizens on the **left-click** path.
+`row_navigation` takes `is_directory` first and returns
+`NavigationTarget::Directory { address }`; the row already carries both
+`address` and `is_directory`, and directories open through the same
+`NavigationIntent` machinery as everything else.
+
+The **right-click** path is the one place that never got that treatment:
 
 > Secondary button over a row: the node context menu. Openable,
 > concept-carrying rows only — `App` dispatches the menu against a concept id,
 > which no directory row has.
 
-`ProjectTreeAction::ContextMenu { key: String, anchor }` carries a concept id,
-and `App::handle_tree_context_menu` dispatches on it. A directory row has no
-concept id, so it is filtered out at the source.
+It reads `row.concept_id` and drops the row entirely when there isn't one, so
+a directory row cannot open a menu even though the data to describe it is
+sitting in the same struct.
 
-The change: `ContextMenu` carries the row's **target** (`RowTarget`) rather than
-a bare concept-id string, so a directory row can open a menu that knows which
-directory it is over. Concept rows keep their existing behavior and menu; the
-node menu's dispatch reads the concept id back out of the target.
+The change is to make the secondary path speak the same vocabulary the primary
+path already speaks: `ProjectTreeAction::ContextMenu` carries a
+`NavigationTarget` (the tree's own currency, and what `row_navigation` already
+produces) instead of a bare concept-id string. `App::handle_tree_context_menu`
+then matches on it — `Document` keeps today's node menu and today's behavior,
+`Directory` gets the folder menu below.
 
-This is the seam that must be cut cleanly, because every future per-row action
-(and Phase 2 will want several) arrives through it. A `RowTarget` is the
-identity the rest of the system already uses.
+This is not a new abstraction; it is deleting a filter and reusing the type
+next to it. It is worth doing properly rather than special-casing a folder
+branch, because every future per-row action arrives through this same arm.
 
 ### 2. A folder row gets a folder menu
 
@@ -136,8 +143,10 @@ sees such a folder consistently; it must **not** become a conditional inside
 
 Headless, in the shell-test style the book tasks used:
 
-- A secondary press over a directory row emits a `ContextMenu` naming that
-  directory; over a concept row it still emits one naming that concept.
+- A secondary press over a directory row emits a `ContextMenu` carrying
+  `NavigationTarget::Directory` for that address; over a concept row it still
+  emits one carrying `NavigationTarget::Document` for that concept, and the
+  node menu it opens is unchanged.
 - Committing **Read as scroll** on a folder row opens a document whose locator
   is that folder's book locator, and whose tab id differs from the folder
   listing's.
@@ -152,7 +161,7 @@ pointer is, reads correctly, and that the glyph is the right one.
 
 ## Adjacent, deliberately not in this spec
 
-The `RowTarget`-vs-`RowId` reveal bug (a concept linked under two folders
+The reveal-identity bug (a concept linked under two folders
 captures tree clicks meant for its other row) touches the same navigation path
 and was triaged as a bug, not a design question. It should be fixed, but it is
 independent of this feature and should not ride along silently — it either gets
