@@ -432,7 +432,7 @@ fn main() {
                     std::process::exit(2);
                 }
             };
-            let plan = match commands::plan_fmt(&bundle.files) {
+            let plan = match waml::fmt::plan_fmt(&bundle.files) {
                 Ok(plan) => plan,
                 Err(error) => {
                     eprintln!("waml: {error}");
