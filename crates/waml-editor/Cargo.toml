@@ -9,6 +9,7 @@ description = "Native, read-only GPU viewer for WAML/OKF diagrams."
 
 [dependencies]
 waml = { path = "../waml", features = ["serde"] }
+waml-ops-dto = { path = "../waml-ops-dto" }
 waml-markdown-editor = { path = "../waml-markdown-editor" }
 # Pinned to a fork of makepad/makepad@dev (redoz/makepad, branch `waml` -- the
 # single integration line every fork change lands on from here; it was cut at

@@ -2747,6 +2747,7 @@ dependencies = [
  "url",
  "waml",
  "waml-markdown-editor",
+ "waml-ops-dto",
  "waml-syntax",
  "waml-ui-test",
  "winresource",

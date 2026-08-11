@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use waml_ops_dto::DocumentWrite;
 
 use crate::editor_session::SaveTicket;
 
@@ -14,23 +15,11 @@ use crate::editor_session::SaveTicket;
 // save backend; it is headless-testable and pinned in-file, but a native
 // build never calls it above the wasm `cfg` seam.
 
-/// One document write, spelled exactly as `waml-cli`'s `serve::state::DocumentWrite`
-/// deserializes it -- the two crates share no dependency edge, so
-/// `the_editor_wire_shape_round_trips` in `waml-cli` pins both to this
-/// spelling.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct DocumentWriteWire {
-    path: String,
-    baseline: Option<String>,
-    desired: String,
-}
-
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, Serialize)]
 struct DocumentsRequestWire {
     revision: u64,
-    writes: Vec<DocumentWriteWire>,
+    writes: Vec<DocumentWrite>,
 }
 
 /// Build the `POST /api/documents` request body for `ticket` at `revision`,
@@ -54,7 +43,7 @@ pub(crate) fn documents_request(ticket: &SaveTicket, revision: u64) -> Result<St
         if baseline_text == Some(desired) {
             continue;
         }
-        writes.push(DocumentWriteWire {
+        writes.push(DocumentWrite {
             path: path.to_string(),
             baseline: baseline_text.map(str::to_string),
             desired: desired.to_string(),

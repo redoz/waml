@@ -23,6 +23,16 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// One document write in a `POST /api/documents` request. `baseline: None`
+/// means the caller believes this is a new file; the server's bundle is the
+/// authority for the check either way.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DocumentWrite {
+    pub path: String,
+    pub baseline: Option<String>,
+    pub desired: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op")]
 pub enum OpDto {

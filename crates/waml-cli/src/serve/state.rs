@@ -210,15 +210,10 @@ impl ServeState {
     }
 }
 
-/// One document write in a `POST /api/documents` request. `baseline: None`
-/// means the caller believes this is a new file; the server's bundle is the
-/// authority for the check either way.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DocumentWrite {
-    pub path: String,
-    pub baseline: Option<String>,
-    pub desired: String,
-}
+/// One document write in a `POST /api/documents` request, now shared via
+/// `waml-ops-dto` so `waml-editor`'s API save backend and this server agree
+/// on one wire shape (see `waml-editor`'s `api_save.rs`).
+pub use waml_ops_dto::DocumentWrite;
 
 /// Why an `apply_ops`/`apply_documents` call did not land.
 #[derive(Debug)]
@@ -287,10 +282,10 @@ mod tests {
         assert_eq!(reproduced.to_pairs(), state.prepared.source().to_pairs());
     }
 
-    /// `waml-cli` and `waml-editor` share no dependency edge, so their two
-    /// `DocumentWrite`/`documents_request` spellings can only be pinned to one
-    /// wire shape by literal JSON like this -- the shape
-    /// `crates/waml-editor/src/api_save.rs`'s `documents_request` builds.
+    /// `DocumentWrite` now lives in `waml-ops-dto`, shared by this server and
+    /// `waml-editor`'s `api_save.rs`; this literal JSON is a regression pin
+    /// on the shared type's serde output rather than the only thing tying
+    /// the two spellings together.
     #[test]
     fn the_editor_wire_shape_round_trips() {
         let json = r##"{
