@@ -135,7 +135,6 @@ script_mod! {
         bar_in: uniform(vec4(0.0, 0.0, 0.0, 0.0))
         bar_out: uniform(vec4(0.0, 0.0, 0.0, 0.0))
         pixel: fn() {
-            let dpi = max(1.0, self.draw_pass.dpi_factor)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             // Same coverage correction as `EdgeLine`: restore the sqrt(2) the
             // fork's `antialias()` drops, and grow every shape by the half pixel
@@ -145,7 +144,7 @@ script_mod! {
             // The arc band's half-width is the QUANTISED bar half-width, not the
             // raw `thickness * 0.5` the CPU used to hand over: a fractional lpx
             // half-width drew a soft 1.5px corner into a crisp 3px bar.
-            let hw = self.pen_dev(self.pen_w) * 0.5 / dpi
+            let hw = self.pen_hw(self.pen_w)
             // Fillet arc band = annulus (outer disc minus inner disc). Built with
             // shape METHODS only -- assigning sdf.shape/dist directly from a pixel fn
             // silently fails this fork's shader VM, so there's no manual `min`.
@@ -275,9 +274,15 @@ script_mod! {
             let p = self.pos * self.rect_size
             let sdf = Sdf2d.viewport(p)
             sdf.aa = sdf.aa * self.pen_aa(1.0)
-            let sw = self.pen_sw(self.pen_w)
-            sdf.rect(sw, sw, self.rect_size.x - sw * 2.0, self.rect_size.y - sw * 2.0)
-            sdf.stroke(self.color, sw)
+            // Two different half-widths, exactly as `AccentFrame` does it: the
+            // SHAPE insets by half the quantised ink (`pen_hw`), which centres
+            // the ink on the hull; the STROKE takes `pen_sw`, whose extra half
+            // device pixel is the antialias bias. Insetting by `pen_sw` instead
+            // put the boundary a half pixel off and smeared a hairline hull
+            // across two rows at 50% coverage each.
+            let hw = self.pen_hw(self.pen_w)
+            sdf.rect(hw, hw, self.rect_size.x - hw * 2.0, self.rect_size.y - hw * 2.0)
+            sdf.stroke(self.color, self.pen_sw(self.pen_w))
             return sdf.result
         }
     }
@@ -288,8 +293,10 @@ script_mod! {
             let p = self.pos * self.rect_size
             let sdf = Sdf2d.viewport(p)
             sdf.aa = sdf.aa * self.pen_aa(1.0)
+            // Shape by `pen_hw`, stroke by `pen_sw` -- see `GroupBorder`.
+            let hw = self.pen_hw(self.pen_w)
             let sw = self.pen_sw(self.pen_w)
-            sdf.rect(sw, sw, self.rect_size.x - sw * 2.0, self.rect_size.y - sw * 2.0)
+            sdf.rect(hw, hw, self.rect_size.x - hw * 2.0, self.rect_size.y - hw * 2.0)
             // 50% duty cycle with ~1px of antialiasing on BOTH dash edges.
             // `d` is the symmetric triangle-wave distance to the nearest dash
             // centre in PIXELS (the same `abs(fract(..) - 0.5) * period` idiom

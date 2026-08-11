@@ -220,10 +220,15 @@ script_mod! {
             // stroke_scale` is 1.0 give or take one ULP, and an unbiased
             // rounding term would land exactly on an integer and flip on that
             // ULP. See that module for the full story.
-            let bw_dev = self.pen_dev(1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected))
+            // ONE binding, handed to both: the device width the shape is inset
+            // by and the half-width its stroke inks at have to be the same
+            // border. Spelled twice, editing one silently desynchronises the
+            // geometry from the ink.
+            let bw = 1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected)
+            let bw_dev = self.pen_dev(bw)
             // `stroke` takes a half-width. The extra half device pixel moves
             // its antialias ramp away from the crisp border samples.
-            let sw = self.pen_sw(1.5 * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected))
+            let sw = self.pen_sw(bw)
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             // Sdf2d's coverage is `clamp(-dist * aa)` with `aa = 1 /
             // length(vec2(|dFdx|, |dFdy|))`, and for a quad whose local units
@@ -435,9 +440,13 @@ mod tests {
             "let ba = mix(self.bloom * glow, {SURFACE_SEL_BLOOM_A:.2}, self.selected)"
         )));
         assert!(code.contains(&format!(
-            "let bw_dev = self.pen_dev({SURFACE_BORDER_PX} * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected))"
+            "let bw = {SURFACE_BORDER_PX} * self.zoom * self.stroke_scale * mix(1.0, 1.5, self.selected)"
         )));
-        assert!(code.contains("let sw = self.pen_sw("));
+        // Both derive from that ONE binding: the width the border's geometry is
+        // inset by and the half-width its stroke inks at are the same border,
+        // so neither may carry its own copy of the expression.
+        assert!(code.contains("let bw_dev = self.pen_dev(bw)"));
+        assert!(code.contains("let sw = self.pen_sw(bw)"));
         assert!(code.contains("sdf.aa = sdf.aa * self.pen_aa(self.screen_space)"));
         assert!(code.contains("let accent = mix(a, vec3(alum, alum, alum), self.grey)"));
         assert!(code.contains("let orgb = accent * balpha"));

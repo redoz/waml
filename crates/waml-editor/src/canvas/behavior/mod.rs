@@ -149,9 +149,14 @@ script_mod! {
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             sdf.aa = sdf.aa * self.pen_aa(1.0)
-            let sw = self.pen_sw(self.pen_w)
-            sdf.rect(sw, sw, self.rect_size.x - sw * 2.0, self.rect_size.y - sw * 2.0)
-            sdf.stroke(self.color, sw)
+            // The SHAPE insets by half the quantised ink (`pen_hw`); only the
+            // STROKE takes `pen_sw`, whose extra half device pixel is the
+            // antialias bias. Insetting by `pen_sw` shifted the border a half
+            // pixel off its ink and rendered the LIGHT rung's two device pixels
+            // as a 1px core plus two 50% fringes instead of two crisp rows.
+            let hw = self.pen_hw(self.pen_w)
+            sdf.rect(hw, hw, self.rect_size.x - hw * 2.0, self.rect_size.y - hw * 2.0)
+            sdf.stroke(self.color, self.pen_sw(self.pen_w))
             return sdf.result
         }
     }
@@ -169,7 +174,11 @@ script_mod! {
         pixel: fn() {
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
             sdf.aa = sdf.aa * self.pen_aa(1.0)
-            let inset = self.pen_sw(self.pen_w)
+            // Geometry by `pen_hw`, stroke by `pen_sw` -- see
+            // `InteractionFrameBorder`. The two were one binding, which made
+            // the plate's own outline the antialias-biased half-width and cost
+            // it the crisp edge the quantiser had already earned.
+            let inset = self.pen_hw(self.pen_w)
             let w = self.rect_size.x - inset
             let h = self.rect_size.y - inset
             let notch = min(h * 0.45, w * 0.5)
@@ -180,7 +189,7 @@ script_mod! {
             sdf.line_to(inset, h)
             sdf.close_path()
             sdf.fill_keep(self.color)
-            sdf.stroke(self.border_col, inset)
+            sdf.stroke(self.border_col, self.pen_sw(self.pen_w))
             return sdf.result
         }
     }

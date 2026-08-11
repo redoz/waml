@@ -146,10 +146,10 @@ pub(in crate::canvas) fn band_at(a: DVec2, b: DVec2, pen: Pen, dpi: f64) -> Rect
 
 /// The quad for a shape whose OUTLINE a pen strokes -- frames, group hulls,
 /// fragment plates -- with its edges pulled onto the device grid, and
-/// guaranteed wide enough that the shader's `pen_sw` inset cannot invert it.
+/// guaranteed wide enough that the shader's `pen_hw` inset cannot invert it.
 ///
 /// NOT for a quad that IS the ink. The `2 * pen` floor below is the room a
-/// `pen_sw` inset needs on BOTH sides of the shape; applied to a rect that is
+/// `pen_hw` inset needs on BOTH sides of the shape; applied to a rect that is
 /// itself a `pen.width()`-thick fill it doubles the rung -- [`fill`] is that
 /// caller's helper.
 pub(in crate::canvas) fn outline(cx: &Cx2d, rect: Rect, pen: Pen) -> Rect {
@@ -221,9 +221,22 @@ script_mod! {
             return max(1.0, floor(w * dpi + 0.501))
         }
 
+        // Half the quantised ink, in lpx. This is what an OUTLINE pen insets
+        // its SHAPE by -- a frame, a hull, a fragment plate -- so the shape
+        // boundary lands where the ink is centred: a pixel CENTRE for an odd
+        // device width, a pixel boundary for an even one. `pen_sw` is not that
+        // number: its extra half device pixel is an antialias bias, and
+        // insetting by it shifts the boundary a half pixel off, which splits a
+        // hairline hull across two rows at 50% coverage instead of inking one
+        // solid row.
+        pen_hw: fn(w: float) -> float {
+            let dpi = max(1.0, self.draw_pass.dpi_factor)
+            return max(1.0, floor(w * dpi + 0.501)) * 0.5 / dpi
+        }
+
         // Half-width plus the half device pixel that moves an SDF stroke's
         // antialias ramp off the crisp border samples. This is what `sdf.stroke`
-        // wants.
+        // wants -- and ONLY what `sdf.stroke` wants; geometry takes `pen_hw`.
         pen_sw: fn(w: float) -> float {
             let dpi = max(1.0, self.draw_pass.dpi_factor)
             return (max(1.0, floor(w * dpi + 0.501)) * 0.5 + 0.5) / dpi
@@ -378,6 +391,13 @@ mod tests {
             cad.contains(PEN_AA_FACTOR),
             "CadPen must restore the sqrt(2) the fork's antialias() drops"
         );
+        // The outline inset is half the QUANTISED ink with NO antialias bias in
+        // it -- distinct from `pen_sw`, which is that half PLUS the bias.
+        assert!(
+            cad.contains("pen_hw: fn(w: float) -> float"),
+            "CadPen must offer the unbiased half-width an outline insets by"
+        );
+        assert!(cad.contains("floor(w * dpi + 0.501)) * 0.5 / dpi"));
     }
 
     /// The guard above can only fail if it reads the shader and nothing else.
@@ -410,6 +430,166 @@ mod tests {
                 "{label}: pen_sw already halves the rung -- pass the whole pen_w"
             );
         }
+    }
+
+    /// The names of every `mod.draw.<X> = mod.draw.CadPen{` block in `src`, so
+    /// a guard over "every pen" cannot go stale the moment one is added.
+    fn cad_pen_names(src: &str) -> Vec<String> {
+        src.lines()
+            .filter_map(|line| {
+                let rest = line.trim().strip_prefix("mod.draw.")?;
+                let (name, _) = rest.split_once(" = mod.draw.CadPen{")?;
+                Some(name.to_string())
+            })
+            .collect()
+    }
+
+    /// The bindings a pen block assigns straight from `self.pen_sw(..)`.
+    fn pen_sw_bindings(block: &str) -> Vec<String> {
+        block
+            .lines()
+            .filter_map(|line| {
+                let (name, _) = line
+                    .trim()
+                    .strip_prefix("let ")?
+                    .split_once(" = self.pen_sw(")?;
+                Some(name.trim().to_string())
+            })
+            .collect()
+    }
+
+    /// `block` with its `pen_sw` bindings and every `sdf.stroke( .. )` call cut
+    /// out, each bounded to its own parentheses. What is left is the pen's
+    /// GEOMETRY.
+    fn geometry_of(block: &str) -> String {
+        let bound = block
+            .lines()
+            .filter(|line| !line.contains(" = self.pen_sw("))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut out = String::new();
+        let mut rest = bound.as_str();
+        while let Some(at) = rest.find("sdf.stroke(") {
+            out.push_str(&rest[..at]);
+            let after = &rest[at + "sdf.stroke(".len()..];
+            let mut depth = 1usize;
+            let mut end = after.len();
+            for (offset, ch) in after.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = offset + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest = &after[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// Whether `code` uses `name` as a whole identifier, so a binding called
+    /// `sw` is not "found" inside some other word.
+    fn mentions(code: &str, name: &str) -> bool {
+        let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        code.match_indices(name).any(|(at, _)| {
+            !ident(code[..at].chars().next_back()) && !ident(code[at + name.len()..].chars().next())
+        })
+    }
+
+    /// The pen files: every `CadPen`-derived shader in the tree lives in one of
+    /// these three.
+    fn pen_files() -> [(&'static str, &'static str); 3] {
+        [
+            ("class/widget.rs", include_str!("class/widget.rs")),
+            ("behavior/mod.rs", include_str!("behavior/mod.rs")),
+            ("frame.rs", include_str!("../frame.rs")),
+        ]
+    }
+
+    /// `pen_sw` is a STROKE half-width: on top of half the quantised ink it
+    /// carries the extra half device pixel that moves `stroke`'s antialias ramp
+    /// off the crisp border samples. Insetting a SHAPE by it lands the shape
+    /// boundary on a device-pixel BOUNDARY instead of a pixel CENTRE, and
+    /// `stroke`'s `clamp(-(|dist| - sw) * dpi)` coverage then splits a HAIRLINE
+    /// hull across two rows at 50% each rather than inking one solid row --
+    /// softer than the pre-plan `inset = stroke_w * 0.5`, and the exact
+    /// double-row smear this module exists to remove. The inset an outline pen
+    /// wants is half the QUANTISED INK, which is `pen_hw`.
+    ///
+    /// So: a `pen_sw` value may appear only inside `sdf.stroke(..)`. Nothing
+    /// else in the suite can see this -- a pixel fn does not run headless -- so
+    /// without this guard the geometry defect ships gate-green.
+    #[test]
+    fn a_pen_sw_value_is_only_ever_a_stroke_half_width() {
+        let mut checked = 0usize;
+        for (label, src) in pen_files() {
+            let names = cad_pen_names(src);
+            assert!(!names.is_empty(), "{label}: expected a CadPen-derived pen");
+            for name in names {
+                let block = pen_source(src, &name);
+                if !block.contains("self.pen_sw(") {
+                    continue;
+                }
+                checked += 1;
+                let geometry = geometry_of(&block);
+                for binding in pen_sw_bindings(&block) {
+                    assert!(
+                        !mentions(&geometry, &binding),
+                        "{label}: `{name}` shapes its geometry with `{binding}`, \
+                         a pen_sw half-width -- geometry insets by `pen_hw`"
+                    );
+                }
+                // ...and the same call made inline, outside a stroke.
+                assert!(
+                    !geometry.contains("self.pen_sw("),
+                    "{label}: `{name}` calls pen_sw outside `sdf.stroke` -- \
+                     geometry insets by `pen_hw`"
+                );
+            }
+        }
+        // A guard that inspects no pen at all guards nothing.
+        assert!(checked > 0, "expected at least one pen that strokes");
+    }
+
+    /// The guard above can only earn its keep if it would actually fire.
+    #[test]
+    fn the_outline_inset_guard_sees_a_shape_inset_by_a_half_width() {
+        let bad = "pixel: fn() {\n\
+             let sw = self.pen_sw(self.pen_w)\n\
+             sdf.rect(sw, sw, self.rect_size.x - sw * 2.0, self.rect_size.y - sw * 2.0)\n\
+             sdf.stroke(self.color, sw)\n\
+             }";
+        assert_eq!(pen_sw_bindings(bad), ["sw"]);
+        assert!(mentions(&geometry_of(bad), "sw"), "the guard must flag it");
+
+        // The same misuse spelled inline, which leaves no binding to flag.
+        let inline = "pixel: fn() {\n\
+             sdf.rect(self.pen_sw(self.pen_w), 0.0, 4.0, 4.0)\n\
+             sdf.stroke(self.color, self.pen_sw(self.pen_w))\n\
+             }";
+        assert!(pen_sw_bindings(inline).is_empty());
+        assert!(geometry_of(inline).contains("self.pen_sw("));
+
+        // ...and clears the correct shape, whose stroke half-width rides a
+        // MULTI-LINE `sdf.stroke` call (`GroupDashed`'s shape).
+        let good = "pixel: fn() {\n\
+             let hw = self.pen_hw(self.pen_w)\n\
+             let sw = self.pen_sw(self.pen_w)\n\
+             sdf.rect(hw, hw, self.rect_size.x - hw * 2.0, self.rect_size.y - hw * 2.0)\n\
+             sdf.stroke(\n\
+             vec4(self.color.x, self.color.y, self.color.z, self.color.w * mask),\n\
+             sw\n\
+             )\n\
+             }";
+        assert!(!mentions(&geometry_of(good), "sw"), "{}", geometry_of(good));
+        // Whole-identifier, so `hw` is not read out of `bw_dev`-style words.
+        assert!(!mentions("let bw_dev = 1.0\nlet swirl = bw_dev", "sw"));
     }
 
     #[test]
@@ -562,7 +742,7 @@ mod tests {
     #[test]
     fn the_card_border_is_the_light_rung() {
         let src = include_str!("../frame.rs");
-        let expected = format!("self.pen_dev({} * self.zoom", Pen::LIGHT.width());
+        let expected = format!("let bw = {} * self.zoom", Pen::LIGHT.width());
         assert!(
             src.contains(&expected),
             "AccentFrame's border literal must track Pen::LIGHT ({})",
