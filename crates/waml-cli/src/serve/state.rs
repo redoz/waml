@@ -12,7 +12,6 @@ use waml::diagnostic::Diagnostic;
 use waml::edit::{EditBatch, EditContext};
 use waml::source::SourceBundle;
 
-use crate::commands;
 use crate::io;
 use crate::ops_dto::{to_batch, OpDto};
 use crate::serve::paths;
@@ -66,7 +65,7 @@ impl ServeState {
     /// shapes `waml check` renders, no display-path remapping (serve
     /// speaks bundle-relative paths directly).
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
-        commands::diagnostics(&self.prepared, &std::collections::BTreeMap::new())
+        waml::validate::diagnostics(&self.prepared, &std::collections::BTreeMap::new())
     }
 
     /// Apply a batch of ops (`POST /api/ops`): revision-checked, all or

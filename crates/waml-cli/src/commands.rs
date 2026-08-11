@@ -1,6 +1,6 @@
 use serde::Serialize;
 use waml::action::SyntaxChangeBatch;
-use waml::analysis::{prepare_candidate, PreparedCandidate, PreviousAnalyses};
+use waml::analysis::{prepare_candidate, PreviousAnalyses};
 use waml::diagnostic::{Diagnostic, Severity};
 use waml::edit::{EditBatch, EditContext};
 use waml::index_md::reindex_source;
@@ -180,11 +180,6 @@ pub enum IndexChange {
     Remove { path: String },
 }
 
-pub fn prepare(files: &[(String, String)]) -> Result<PreparedCandidate, String> {
-    let source = SourceBundle::try_from_pairs(files.iter().cloned()).map_err(|e| e.to_string())?;
-    prepare_candidate(source, None, 0).map_err(|e| e.to_string())
-}
-
 /// Build the export-time search-index asset for `files` (spec: `waml export
 /// site`'s static bundle also ships its index). The index is built from
 /// exactly the pairs `files` holds -- the same pairs that go into
@@ -192,7 +187,7 @@ pub fn prepare(files: &[(String, String)]) -> Result<PreparedCandidate, String> 
 /// the export shipped, and `bundle_hash(files)` is what a boot-time decode
 /// must reproduce to accept the asset.
 pub fn build_search_index_asset(files: &[(String, String)]) -> Result<Vec<u8>, String> {
-    let prepared = prepare(files)?;
+    let prepared = waml::validate::prepare(files)?;
     let fields =
         waml::search::extract::extract_bundle(prepared.source(), prepared.okf(), prepared.uml());
     let index = waml::search::MemSearchIndex::build(fields);
@@ -243,7 +238,7 @@ pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, Stri
         planning_files.push((planning_path, text.clone()));
     }
 
-    let prepared = prepare(&planning_files)?;
+    let prepared = waml::validate::prepare(&planning_files)?;
     let before: std::collections::BTreeMap<String, String> =
         prepared.source().to_pairs().into_iter().collect();
     let mut after: std::collections::BTreeMap<String, String> = reindex_source(prepared.source())
@@ -300,26 +295,8 @@ pub fn plan_indexes(files: &[(String, String)]) -> Result<Vec<IndexChange>, Stri
     Ok(changes)
 }
 
-pub fn diagnostics(
-    candidate: &PreparedCandidate,
-    display_paths: &std::collections::BTreeMap<String, String>,
-) -> Vec<Diagnostic> {
-    candidate
-        .uml()
-        .diagnostics
-        .iter()
-        .cloned()
-        .map(|mut diagnostic| {
-            if let Some(display) = display_paths.get(&diagnostic.file) {
-                diagnostic.file.clone_from(display);
-            }
-            diagnostic
-        })
-        .collect()
-}
-
 pub fn plan_fmt(files: &[(String, String)]) -> Result<Vec<FmtResult>, String> {
-    let prepared = prepare(files)?;
+    let prepared = waml::validate::prepare(files)?;
     let action_context = ActionContext::from_prepared(&prepared).map_err(|e| e.to_string())?;
     let mut candidate_pairs: std::collections::BTreeMap<String, String> =
         prepared.source().to_pairs().into_iter().collect();
@@ -378,7 +355,7 @@ pub fn plan_fmt(files: &[(String, String)]) -> Result<Vec<FmtResult>, String> {
         1,
     )
     .map_err(|e| e.to_string())?;
-    let diagnostics = diagnostics(&validated, &std::collections::BTreeMap::new());
+    let diagnostics = waml::validate::diagnostics(&validated, &std::collections::BTreeMap::new());
     Ok(files
         .iter()
         .map(|(path, original)| {

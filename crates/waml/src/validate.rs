@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    analysis::prepare_candidate,
+    analysis::{prepare_candidate, PreparedCandidate},
     diagnostic::Diagnostic,
     source::{BundlePath, SourceBundle},
 };
@@ -40,6 +40,18 @@ pub fn validate(bundle: &[(String, String)]) -> Vec<Diagnostic> {
     let Ok(candidate) = prepare_candidate(source, None, 0) else {
         return Vec::new();
     };
+    diagnostics(&candidate, &display_paths)
+}
+
+pub fn prepare(files: &[(String, String)]) -> Result<PreparedCandidate, String> {
+    let source = SourceBundle::try_from_pairs(files.iter().cloned()).map_err(|e| e.to_string())?;
+    prepare_candidate(source, None, 0).map_err(|e| e.to_string())
+}
+
+pub fn diagnostics(
+    candidate: &PreparedCandidate,
+    display_paths: &BTreeMap<String, String>,
+) -> Vec<Diagnostic> {
     candidate
         .uml()
         .diagnostics

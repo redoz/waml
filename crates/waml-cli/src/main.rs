@@ -381,14 +381,14 @@ fn main() {
                     std::process::exit(2);
                 }
             };
-            let prepared = match commands::prepare(&bundle.files) {
+            let prepared = match waml::validate::prepare(&bundle.files) {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     eprintln!("waml: {error}");
                     std::process::exit(2);
                 }
             };
-            let diags = commands::diagnostics(&prepared, &bundle.display_paths);
+            let diags = waml::validate::diagnostics(&prepared, &bundle.display_paths);
             let out = match format {
                 Format::Human => commands::render_human(&diags),
                 Format::Json => commands::render_json(&diags),
@@ -976,7 +976,7 @@ fn run_show(slug: &str, q: &QueryArgs) -> i32 {
             return 2;
         }
     };
-    let prepared = match commands::prepare(&bundle) {
+    let prepared = match waml::validate::prepare(&bundle) {
         Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("waml: {error}");
@@ -1045,7 +1045,7 @@ fn run_refs(slug: &str, q: &QueryArgs) -> i32 {
             return 2;
         }
     };
-    let prepared = match commands::prepare(&bundle) {
+    let prepared = match waml::validate::prepare(&bundle) {
         Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("waml: {error}");
@@ -1186,7 +1186,7 @@ fn run_list(ty: &Option<String>, q: &QueryArgs) -> i32 {
             return 2;
         }
     };
-    let prepared = match commands::prepare(&bundle) {
+    let prepared = match waml::validate::prepare(&bundle) {
         Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("waml: {error}");
