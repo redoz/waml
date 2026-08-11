@@ -7,7 +7,7 @@ use std::path::Path;
 // The shared ingest walker reads the local filesystem, which the wasm build
 // does not have; the wasm build fetches its bundle over HTTP instead.
 #[cfg(not(target_arch = "wasm32"))]
-use waml::host::ingest::{ingest_markdown, IngestError, IngestErrorKind, IngestOptions};
+use waml::host::ingest::{ingest_markdown, rooted_key, triage, IngestError, IngestOptions};
 use waml::source::{SourceBundle, SourceError};
 
 #[derive(Debug)]
@@ -71,28 +71,12 @@ fn read_bundle_with(
         std::slice::from_ref(&dir.to_path_buf()),
         &IngestOptions::default(),
     );
-    let mut fatal = None;
-    for error in ingested.errors {
-        if error.kind == IngestErrorKind::LinkSkipped {
-            report_skipped_link(&error);
-        } else if fatal.is_none() {
-            fatal = Some(error);
-        }
-    }
-    if let Some(error) = fatal {
-        return Err(LoadError::Io(std::io::Error::other(error.to_string())));
-    }
+    triage(ingested.errors, report_skipped_link)
+        .map_err(|error| LoadError::Io(std::io::Error::other(error.to_string())))?;
     let out: Vec<(String, String)> = ingested
         .files
         .into_iter()
-        .map(|(path, text)| {
-            let rel = path
-                .strip_prefix(dir)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            (rel, text)
-        })
+        .map(|(path, text)| (rooted_key(dir, &path), text))
         .collect();
     Ok(SourceBundle::try_from_pairs(out)?)
 }

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use waml::bundle_envelope::expand_text;
-use waml::host::ingest::{ingest_markdown, IngestError, IngestErrorKind, IngestOptions};
+use waml::host::ingest::{ingest_markdown, rooted_key, triage, IngestError, IngestOptions};
 use waml::index_md::IndexChange;
 
 /// Recursively collect `.md` files under the given files/directories.
@@ -30,17 +30,7 @@ fn collect_md_with(
     report_skipped_link: &mut dyn FnMut(&IngestError),
 ) -> std::io::Result<Vec<PathBuf>> {
     let ingested = ingest_markdown(paths, &IngestOptions::default());
-    let mut fatal = None;
-    for error in ingested.errors {
-        if error.kind == IngestErrorKind::LinkSkipped {
-            report_skipped_link(&error);
-        } else if fatal.is_none() {
-            fatal = Some(error);
-        }
-    }
-    if let Some(error) = fatal {
-        return Err(ingest_error_to_io(error));
-    }
+    triage(ingested.errors, report_skipped_link).map_err(ingest_error_to_io)?;
     Ok(ingested
         .files
         .into_iter()
@@ -98,11 +88,11 @@ pub fn read_analysis_bundle(paths: &[PathBuf], stdin: bool) -> std::io::Result<I
     let mut display_paths = BTreeMap::new();
     for file in &files {
         let text = fs::read_to_string(file)?;
-        let rel = root
-            .as_ref()
-            .and_then(|r| file.strip_prefix(r).ok())
-            .unwrap_or(file);
-        let expanded = expand_text(&path_key(rel), &text)?;
+        let key = match &root {
+            Some(root) => rooted_key(root, file),
+            None => path_key(file),
+        };
+        let expanded = expand_text(&key, &text)?;
         let display = file.to_string_lossy().into_owned();
         for (path, _) in &expanded {
             display_paths.insert(path.clone(), display.clone());
@@ -171,8 +161,7 @@ pub fn read_physical_bundle(paths: &[PathBuf]) -> std::io::Result<PhysicalBundle
     let mut files = Vec::with_capacity(physical.len());
     let mut display_paths = BTreeMap::new();
     for path in physical {
-        let relative = path.strip_prefix(&root).unwrap_or(&path);
-        let logical = path_key(relative);
+        let logical = rooted_key(&root, &path);
         display_paths.insert(logical.clone(), path.to_string_lossy().into_owned());
         files.push((logical, fs::read_to_string(path)?));
     }

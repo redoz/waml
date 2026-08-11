@@ -318,6 +318,40 @@ fn is_dot_dir(path: &Path) -> bool {
         .is_some_and(|name| name.starts_with('.'))
 }
 
+/// Sort [`Ingested::errors`] into the shared ingest-error policy: a
+/// [`IngestErrorKind::LinkSkipped`] entry is a clean skip, not a failure -- it
+/// is reported through `report_skipped_link` and the walk is considered to
+/// have otherwise succeeded. Every other error is fatal; the *first* one is
+/// returned (matching the pre-unification walkers' fail-fast behavior), and
+/// any remaining errors are dropped rather than accumulated, since the caller
+/// is about to abort.
+pub fn triage(
+    errors: Vec<IngestError>,
+    report_skipped_link: &mut dyn FnMut(&IngestError),
+) -> Result<(), IngestError> {
+    let mut fatal = None;
+    for error in errors {
+        if error.kind == IngestErrorKind::LinkSkipped {
+            report_skipped_link(&error);
+        } else if fatal.is_none() {
+            fatal = Some(error);
+        }
+    }
+    match fatal {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Key `file` relative to `root`, the identity every bundle document is keyed
+/// by: strip the root prefix where `file` is inside it, then normalize `\` to
+/// `/` so the same bundle keys identically on every platform. Falls back to
+/// `file` itself, still normalized, when it is not inside `root`.
+pub fn rooted_key(root: &Path, file: &Path) -> String {
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    relative.to_string_lossy().replace('\\', "/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,5 +435,53 @@ mod tests {
         assert!(result.files.is_empty());
         assert_eq!(result.errors.len(), 1);
         assert_eq!(result.errors[0].kind, IngestErrorKind::NotUtf8);
+    }
+
+    fn ingest_err(kind: IngestErrorKind, path: &str) -> IngestError {
+        IngestError {
+            path: PathBuf::from(path),
+            kind,
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn triage_sinks_skipped_links_and_returns_ok() {
+        let errors = vec![
+            ingest_err(IngestErrorKind::LinkSkipped, "a"),
+            ingest_err(IngestErrorKind::LinkSkipped, "b"),
+        ];
+        let mut skipped = Vec::new();
+        let result = triage(errors, &mut |error| skipped.push(error.path.clone()));
+        assert!(result.is_ok());
+        assert_eq!(skipped, [PathBuf::from("a"), PathBuf::from("b")]);
+    }
+
+    #[test]
+    fn triage_returns_the_first_non_skip_error_and_still_sinks_skips_before_it() {
+        let errors = vec![
+            ingest_err(IngestErrorKind::LinkSkipped, "skipped"),
+            ingest_err(IngestErrorKind::ReadFile, "first-fatal"),
+            ingest_err(IngestErrorKind::NotUtf8, "second-fatal"),
+        ];
+        let mut skipped = Vec::new();
+        let result = triage(errors, &mut |error| skipped.push(error.path.clone()));
+        let error = result.expect_err("a non-skip error must be returned");
+        assert_eq!(error.path, PathBuf::from("first-fatal"));
+        assert_eq!(skipped, [PathBuf::from("skipped")]);
+    }
+
+    #[test]
+    fn rooted_key_strips_the_root_and_normalizes_separators() {
+        let root = Path::new("C:\\bundle");
+        let file = Path::new("C:\\bundle\\nested\\a.md");
+        assert_eq!(rooted_key(root, file), "nested/a.md");
+    }
+
+    #[test]
+    fn rooted_key_falls_back_to_the_normalized_file_when_not_inside_root() {
+        let root = Path::new("C:\\bundle");
+        let file = Path::new("D:\\other\\a.md");
+        assert_eq!(rooted_key(root, file), "D:\\other\\a.md".replace('\\', "/"));
     }
 }
