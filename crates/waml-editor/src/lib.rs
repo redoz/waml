@@ -82,6 +82,7 @@ mod markdown_analysis;
 // Dead-code checked on native (the gate target); the wasm build never reaches
 // the native filesystem plumbing in here (2026-08-04, review M-8 -- this
 // replaced an unconditional module-wide `#[allow(dead_code)]`).
+mod markdown_extensions;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod markdown_hosts;
 #[cfg(not(target_arch = "wasm32"))]
