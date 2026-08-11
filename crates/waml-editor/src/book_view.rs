@@ -198,6 +198,11 @@ impl DocView for BookView {
                     icon: Icon::Folder,
                     tooltip: "View folder listing",
                 }),
+                // Book mode is prose and would read well zoomed, but the
+                // font-size control's approved scope is the reading view and
+                // the source editor only. Opting in here is a deliberate
+                // follow-up, not something to acquire by landing next to it.
+                zoom: None,
             },
         }
     }
