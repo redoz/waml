@@ -739,7 +739,7 @@ impl MarkdownViewer {
         };
         let rect = cx.peek_walk_turtle(walk);
         if let Some(mut inner) = image.borrow_mut() {
-            inner.draw_walk_image(cx, walk);
+            let _ = inner.draw_walk_image(cx, walk);
         } else {
             return Err(());
         }
