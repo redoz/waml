@@ -112,6 +112,20 @@ impl App {
             }
         }
 
+        // Zoom chords (spec §Inputs): consumed ONLY while a zoomable view is
+        // active, so with a diagram focused the chord falls through
+        // untouched and reaches whatever the platform default is.
+        if let Event::KeyDown(ke) = event {
+            let macos = matches!(cx.os_type(), OsType::Macos);
+            if let Some(command) =
+                crate::shortcuts::zoom_command_for(ke.key_code, ke.modifiers, macos)
+            {
+                if self.apply_zoom_command(cx, command) {
+                    return true;
+                }
+            }
+        }
+
         // Tool-dock hotkeys (V/N/C): global, visual-only mode switch. Only
         // live while nothing holds key focus, so they don't fight with the
         // inspector's inline-edit text entry.

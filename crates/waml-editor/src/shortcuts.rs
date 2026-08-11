@@ -75,7 +75,6 @@ pub(crate) fn history_command_for(
 /// matching the two functions above; shift is legal only on Equals because
 /// '+' IS Shift+'='. Dispatched by `App::handle_global_shortcuts`, consumed
 /// only while a zoomable view is active.
-#[cfg_attr(not(test), allow(dead_code))] // wired by Task 9
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ZoomCommand {
     In,
@@ -83,7 +82,6 @@ pub(crate) enum ZoomCommand {
     Reset,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // wired by Task 9
 pub(crate) fn zoom_command_for(
     key: KeyCode,
     modifiers: KeyModifiers,

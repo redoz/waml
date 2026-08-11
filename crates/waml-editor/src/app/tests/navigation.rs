@@ -2158,6 +2158,60 @@ fn document_header_source_generic_start_source_sequence_has_no_stale_state() {
 }
 
 #[test]
+fn zoom_command_with_no_document_is_not_consumed() {
+    // Fresh shell, nothing open: the diagram-focused guarantee -- with no
+    // zoomable chrome active, `apply_zoom_command` must fall through so the
+    // chord reaches whatever the platform default would otherwise be.
+    let (mut cx, mut app) = mounted_production_shell();
+    assert!(!app.apply_zoom_command(&mut cx, crate::shortcuts::ZoomCommand::In));
+}
+
+#[test]
+fn zoom_command_steps_the_active_view_and_pushes_the_header() {
+    let (mut cx, mut app) = navigation_app();
+    let generic = crate::okf_documents::open(app.session.okf_analysis(), "sales/order")
+        .expect("generic document exists");
+    app.documents.transition(
+        &mut cx,
+        &app.ui,
+        &app.session,
+        DocumentCommand::Open {
+            document: generic,
+            persistent: false,
+        },
+    );
+    app.sync_document_shell(&mut cx);
+
+    // Pin the starting rung so the assertion below is independent of
+    // whatever this machine's real `~/.waml/editor.json` currently holds,
+    // and restore it afterwards -- `crate::config::reading_zoom`/
+    // `set_reading_zoom` are the real (non-test-injectable) disk seam, not
+    // the `load_from`/`store_to` temp-dir seam `config::tests` uses.
+    let original = crate::config::reading_zoom();
+    crate::config::set_reading_zoom(crate::zoom::ZOOM_DEFAULT);
+
+    let consumed = app.apply_zoom_command(&mut cx, crate::shortcuts::ZoomCommand::In);
+
+    let expected = crate::zoom::zoom_in(crate::zoom::ZOOM_DEFAULT);
+    let restore = || crate::config::set_reading_zoom(original);
+    assert!(consumed, "a Reading-zoom chrome must consume the command");
+    if crate::config::reading_zoom() != expected {
+        restore();
+        panic!(
+            "expected reading zoom {expected}, got {}",
+            crate::config::reading_zoom()
+        );
+    }
+    let header = app.ui.widget(&cx, ids!(document_header));
+    let pushed = header
+        .borrow::<crate::document_header::DocumentHeader>()
+        .expect("test document header is mounted")
+        .test_zoom();
+    restore();
+    assert_eq!(pushed, Some(expected));
+}
+
+#[test]
 fn a_second_rapid_back_traversal_does_not_corrupt_the_intermediate_history_entry() {
     let (mut cx, mut app) = navigation_app_with_active_order();
     for concept_id in ["sales/customer", "sales/next"] {

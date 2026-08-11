@@ -579,6 +579,15 @@ impl DocumentHeader {
         self.state.view_toggle
     }
 
+    /// Test-only probe for the zoom percent last pushed via `set_zoom`, so
+    /// App-level tests can assert the chord/button apply path without
+    /// routing through the real (non-test-injectable) `crate::config` disk
+    /// seam.
+    #[cfg(test)]
+    pub(crate) fn test_zoom(&self) -> Option<u32> {
+        self.state.zoom
+    }
+
     #[cfg(test)]
     pub(crate) fn test_mount_view_action_button(&mut self, button: WidgetRef) {
         self.view.children.push((live_id!(view_button), button));

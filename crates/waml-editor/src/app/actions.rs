@@ -1247,8 +1247,73 @@ impl App {
                 }
                 ActionFlow::Consumed
             }
+            Some(crate::document_header::DocumentHeaderAction::Zoom(zoom_action)) => {
+                let command = match zoom_action {
+                    crate::font_size_control::FontSizeControlAction::ZoomIn => {
+                        crate::shortcuts::ZoomCommand::In
+                    }
+                    crate::font_size_control::FontSizeControlAction::ZoomOut => {
+                        crate::shortcuts::ZoomCommand::Out
+                    }
+                    crate::font_size_control::FontSizeControlAction::Reset => {
+                        crate::shortcuts::ZoomCommand::Reset
+                    }
+                };
+                self.apply_zoom_command(cx, command);
+                ActionFlow::Consumed
+            }
             _ => ActionFlow::Continue,
         }
+    }
+
+    /// One apply path for buttons, chords, and (Task 10) the wheel: compute
+    /// -> persist -> apply to the view -> push back to the control. Returns
+    /// whether a zoomable target was active (the chrome declares `zoom`),
+    /// which is how callers decide whether to consume a chord.
+    pub(super) fn apply_zoom_command(
+        &mut self,
+        cx: &mut Cx,
+        command: crate::shortcuts::ZoomCommand,
+    ) -> bool {
+        let Some(target) = self.documents.active_chrome().document_header.zoom else {
+            return false;
+        };
+        let current = match target {
+            crate::zoom::ZoomTarget::Reading => crate::config::reading_zoom(),
+            crate::zoom::ZoomTarget::Source => crate::config::source_zoom(),
+        };
+        let next = match command {
+            crate::shortcuts::ZoomCommand::In => crate::zoom::zoom_in(current),
+            crate::shortcuts::ZoomCommand::Out => crate::zoom::zoom_out(current),
+            crate::shortcuts::ZoomCommand::Reset => crate::zoom::ZOOM_DEFAULT,
+        };
+        if next == current {
+            // Leaning on Ctrl+- at the bottom rung (or Ctrl+0 already at
+            // 100%) must not rewrite the config file per keypress -- but the
+            // chord is still consumed so it doesn't fall through.
+            return true;
+        }
+        match target {
+            crate::zoom::ZoomTarget::Reading => crate::config::set_reading_zoom(next),
+            crate::zoom::ZoomTarget::Source => crate::config::set_source_zoom(next),
+        }
+        let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+        match target {
+            crate::zoom::ZoomTarget::Reading => body
+                .markdown_viewer()
+                .set_zoom(cx, crate::zoom::scale(next)),
+            crate::zoom::ZoomTarget::Source => body
+                .markdown_editor()
+                .set_font_scale(cx, crate::zoom::scale(next)),
+        }
+        if let Some(mut header) = self
+            .ui
+            .widget(cx, ids!(document_header))
+            .borrow_mut::<crate::document_header::DocumentHeader>()
+        {
+            header.set_zoom(cx, Some(next));
+        }
+        true
     }
 
     fn handle_diagram_switcher(&mut self, cx: &mut Cx, actions: &Actions) -> ActionFlow {

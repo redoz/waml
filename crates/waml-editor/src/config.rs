@@ -363,7 +363,6 @@ pub fn set_theme(mode: ThemeMode) {
 
 /// Persist the reading-view zoom, preserving the rest of the config.
 /// Best-effort -- a write failure is logged and swallowed.
-#[allow(dead_code)] // consumed by Task 8 (readers) / Task 9 (setters)
 pub fn set_reading_zoom(percent: u32) {
     let mut config: EditorConfig = load(EDITOR_FILE);
     config.version = EDITOR_VERSION;
@@ -375,7 +374,6 @@ pub fn set_reading_zoom(percent: u32) {
 
 /// Persist the markdown source-editor zoom, preserving the rest of the
 /// config. Best-effort -- a write failure is logged and swallowed.
-#[allow(dead_code)] // consumed by Task 8 (readers) / Task 9 (setters)
 pub fn set_source_zoom(percent: u32) {
     let mut config: EditorConfig = load(EDITOR_FILE);
     config.version = EDITOR_VERSION;
