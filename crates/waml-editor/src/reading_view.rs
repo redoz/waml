@@ -10,7 +10,7 @@ use std::sync::Arc;
 use makepad_widgets::*;
 use waml_markdown_editor::presentation::{compile_presentation, PresentationStyles};
 use waml_markdown_editor::reading::{
-    build_reading_document, ReadingDocument, RegisteredBlockExtensions,
+    build_reading_document, BlockExtensionFrame, ReadingDocument, RegisteredBlockExtensions,
 };
 
 use crate::doc_view::BodyWidgets;
@@ -86,7 +86,15 @@ impl ReadingView {
             .installed_source()
             .is_some_and(|installed| Arc::ptr_eq(&installed, &source));
         if !mine_is_up {
-            viewer.install_document(cx, document, source);
+            viewer.install_document(
+                cx,
+                document,
+                source,
+                Arc::new(BlockExtensionFrame {
+                    revision: self.revision.expect("document has a revision"),
+                    items: Arc::from([]),
+                }),
+            );
         }
     }
 
@@ -96,7 +104,8 @@ impl ReadingView {
         let Some((_document, syntax)) = SourceView::resolve_document(snapshot, &self.key) else {
             return;
         };
-        if self.revision == Some(syntax.revision()) {
+        let revision = syntax.revision();
+        if self.revision == Some(revision) {
             return;
         }
         let styles = Arc::new(PresentationStyles::balanced());
@@ -124,7 +133,7 @@ impl ReadingView {
             }
         };
         let source: Arc<str> = Arc::from(syntax.text().shared().as_str());
-        self.revision = Some(syntax.revision());
+        self.revision = Some(revision);
         self.document = Some(Arc::new(document));
         self.source = Some(source);
     }
