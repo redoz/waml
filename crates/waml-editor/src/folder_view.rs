@@ -449,6 +449,7 @@ impl DocView for FolderView {
                 breadcrumb: true,
                 right_dock: None,
                 view_toggle: None,
+                zoom: None,
             },
         }
     }

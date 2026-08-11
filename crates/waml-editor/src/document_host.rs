@@ -723,6 +723,7 @@ mod tests {
                     breadcrumb: false,
                     right_dock: None,
                     view_toggle: None,
+                    zoom: None,
                 },
             }
         }

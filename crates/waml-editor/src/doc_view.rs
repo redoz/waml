@@ -764,6 +764,9 @@ pub struct DocumentHeaderChrome {
     pub right_dock: Option<Icon>,
     /// The active document's destination action in the trailing button row.
     pub view_toggle: Option<HeaderViewAction>,
+    /// Which zoomable surface (if any) this view's body owns; `None` hides
+    /// the `[-][%][+]` control and reserves no width (spec §Which view).
+    pub zoom: Option<crate::zoom::ZoomTarget>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -786,6 +789,7 @@ impl BodyChrome {
             breadcrumb: false,
             right_dock: None,
             view_toggle: None,
+            zoom: None,
         },
     };
 }
@@ -833,6 +837,7 @@ mod tests {
                     breadcrumb: true,
                     right_dock: Some(Icon::PanelRight),
                     view_toggle: None,
+                    zoom: None,
                 },
             }
         );
@@ -846,6 +851,7 @@ mod tests {
                     breadcrumb: true,
                     right_dock: Some(Icon::PanelRight),
                     view_toggle: None,
+                    zoom: None,
                 },
             }
         );
@@ -862,6 +868,7 @@ mod tests {
                         icon: Icon::Eye,
                         tooltip: "Use layout emphasis",
                     }),
+                    zoom: Some(crate::zoom::ZoomTarget::Source),
                 },
             }
         );
@@ -878,6 +885,7 @@ mod tests {
                         icon: Icon::Code,
                         tooltip: "View source",
                     }),
+                    zoom: Some(crate::zoom::ZoomTarget::Reading),
                 },
             }
         );

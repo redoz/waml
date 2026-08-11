@@ -8,9 +8,6 @@ pub(crate) const ZOOM_LADDER: [u32; 10] = [50, 67, 75, 90, 100, 110, 125, 150, 1
 pub(crate) const ZOOM_DEFAULT: u32 = 100;
 
 /// Which surface a zoom target applies to.
-// Staged: consumed by Task 8's chrome projection (plan
-// 2026-08-11-viewer-font-size-control).
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ZoomTarget {
     Reading,

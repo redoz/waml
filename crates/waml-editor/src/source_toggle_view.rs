@@ -213,6 +213,11 @@ impl<V: DocView> DocView for SourceToggleView<V> {
                 tooltip: "View source",
             }
         });
+        // The diagram face keeps its own zoom (none, per spec §Scope); the
+        // source face is the shared markdown editor, same as SourceView.
+        chrome.document_header.zoom = self
+            .showing_source
+            .then_some(crate::zoom::ZoomTarget::Source);
         chrome
     }
 
@@ -343,6 +348,7 @@ mod tests {
                     icon: Icon::Code,
                     tooltip: "View source",
                 }),
+                zoom: None,
             }
         );
     }
@@ -364,6 +370,7 @@ mod tests {
                     icon: Icon::Eye,
                     tooltip: "View rendered",
                 }),
+                zoom: Some(crate::zoom::ZoomTarget::Source),
             }
         );
         view.toggle_for_test();
@@ -374,6 +381,7 @@ mod tests {
                 tooltip: "View source",
             })
         );
+        assert_eq!(view.chrome().document_header.zoom, None);
     }
 
     #[test]

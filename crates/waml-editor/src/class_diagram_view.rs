@@ -988,6 +988,7 @@ impl DocView for ClassDiagramView {
                     breadcrumb: true,
                     right_dock: None,
                     view_toggle: None,
+                    zoom: None,
                 },
             }
         } else {
@@ -999,6 +1000,7 @@ impl DocView for ClassDiagramView {
                     breadcrumb: true,
                     right_dock: Some(Icon::PanelRight),
                     view_toggle: None,
+                    zoom: None,
                 },
             }
         }
@@ -1284,6 +1286,7 @@ mod tests {
                     breadcrumb: true,
                     right_dock: None,
                     view_toggle: None,
+                    zoom: None,
                 },
             }
         );
@@ -1336,6 +1339,7 @@ mod tests {
                     breadcrumb: true,
                     right_dock: Some(crate::icons::Icon::PanelRight),
                     view_toggle: None,
+                    zoom: None,
                 },
             }
         );

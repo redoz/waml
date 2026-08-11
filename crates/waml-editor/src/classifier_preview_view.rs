@@ -146,6 +146,7 @@ impl DocView for ClassifierPreviewView {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
                 view_toggle: None,
+                zoom: None,
             },
         }
     }

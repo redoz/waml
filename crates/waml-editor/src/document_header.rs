@@ -504,7 +504,6 @@ impl DocumentHeader {
     /// `Some(percent)` shows the `[-][percent%][+]` cluster (pushing the
     /// percent and end-of-ladder dimming to it); `None` hides it and
     /// reserves no width. See `crate::zoom` for the ladder walk used here.
-    #[cfg_attr(not(test), allow(dead_code))] // consumed by Task 8
     pub fn set_zoom(&mut self, cx: &mut Cx, percent: Option<u32>) {
         if !self.state.replace_zoom(percent) {
             return;

@@ -160,6 +160,11 @@ impl DocView for GenericOkfView {
                         tooltip: "View source",
                     }
                 }),
+                zoom: Some(if self.reading.showing_source() {
+                    crate::zoom::ZoomTarget::Source
+                } else {
+                    crate::zoom::ZoomTarget::Reading
+                }),
             },
         }
     }
@@ -292,6 +297,25 @@ mod tests {
         );
         view.toggle_source();
         assert!(!view.showing_source(), "and puts it back");
+    }
+
+    #[test]
+    fn chrome_zoom_target_follows_the_source_toggle() {
+        let mut view = generic_view();
+        assert_eq!(
+            view.chrome().document_header.zoom,
+            Some(crate::zoom::ZoomTarget::Reading)
+        );
+        view.toggle_source();
+        assert_eq!(
+            view.chrome().document_header.zoom,
+            Some(crate::zoom::ZoomTarget::Source)
+        );
+        view.toggle_source();
+        assert_eq!(
+            view.chrome().document_header.zoom,
+            Some(crate::zoom::ZoomTarget::Reading)
+        );
     }
 
     #[test]
@@ -438,6 +462,7 @@ mod tests {
                         icon: Icon::Code,
                         tooltip: "View source",
                     }),
+                    zoom: Some(crate::zoom::ZoomTarget::Reading),
                 },
             }
         );

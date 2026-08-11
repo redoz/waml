@@ -338,7 +338,6 @@ pub(crate) fn snapped_zoom(raw: u32) -> u32 {
 /// Persisted reading-view zoom (100 when the file is missing, malformed, or
 /// predates the field). Snapped to the ladder so a hand-edited file cannot
 /// strand the control on an unsteppable value.
-#[allow(dead_code)] // consumed by Task 8 (readers) / Task 9 (setters)
 pub fn reading_zoom() -> u32 {
     let config: EditorConfig = load(EDITOR_FILE);
     snapped_zoom(config.reading_zoom)
@@ -346,7 +345,6 @@ pub fn reading_zoom() -> u32 {
 
 /// Persisted markdown source-editor zoom (100 when the file is missing,
 /// malformed, or predates the field). Snapped to the ladder.
-#[allow(dead_code)] // consumed by Task 8 (readers) / Task 9 (setters)
 pub fn source_zoom() -> u32 {
     let config: EditorConfig = load(EDITOR_FILE);
     snapped_zoom(config.source_zoom)

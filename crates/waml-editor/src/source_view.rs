@@ -668,6 +668,7 @@ impl DocView for SourceView {
                 breadcrumb: true,
                 right_dock: Some(Icon::PanelRight),
                 view_toggle: Some(self.emphasis_action()),
+                zoom: Some(crate::zoom::ZoomTarget::Source),
             },
         }
     }

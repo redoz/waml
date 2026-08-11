@@ -1980,6 +1980,7 @@ fn document_header_projection_keeps_icon_when_breadcrumb_is_missing() {
         breadcrumb: true,
         right_dock: Some(Icon::PanelRight),
         view_toggle: None,
+        zoom: None,
     };
     let (segments, icon, view_toggle) = project_document_header(chrome, None);
 
@@ -2002,6 +2003,7 @@ fn document_header_projection_obeys_breadcrumb_flag_and_hidden_chrome() {
         breadcrumb: false,
         right_dock: Some(Icon::PanelRight),
         view_toggle: None,
+        zoom: None,
     };
     assert_eq!(
         project_document_header(icon_only, Some(vec![segment.clone()])),
@@ -2012,6 +2014,7 @@ fn document_header_projection_obeys_breadcrumb_flag_and_hidden_chrome() {
         breadcrumb: true,
         right_dock: None,
         view_toggle: None,
+        zoom: None,
     };
     assert_eq!(
         project_document_header(breadcrumb, Some(vec![segment.clone()])),

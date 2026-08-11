@@ -871,6 +871,11 @@ impl App {
             None
         };
         let (segments, right_dock, view_toggle) = project_document_header(chrome, breadcrumb);
+        let zoom_target = chrome.zoom;
+        let zoom_percent = zoom_target.map(|t| match t {
+            crate::zoom::ZoomTarget::Reading => crate::config::reading_zoom(),
+            crate::zoom::ZoomTarget::Source => crate::config::source_zoom(),
+        });
         if let Some(mut header) = self
             .ui
             .widget(cx, ids!(document_header))
@@ -879,6 +884,22 @@ impl App {
             header.set_segments(cx, segments);
             header.set_right_dock(cx, right_dock);
             header.set_view_toggle(cx, view_toggle);
+            header.set_zoom(cx, zoom_percent);
+        }
+        // Apply the persisted zoom to the owning surface so a freshly
+        // opened/toggled document comes up at its persisted size. Both
+        // setters are cheap no-ops when the value is unchanged (Task 4
+        // captures a stable base; Task 5 returns early on equal scale).
+        if let (Some(target), Some(percent)) = (zoom_target, zoom_percent) {
+            let body = crate::doc_view::BodyWidgets::new(cx, &self.ui);
+            match target {
+                crate::zoom::ZoomTarget::Reading => body
+                    .markdown_viewer()
+                    .set_zoom(cx, crate::zoom::scale(percent)),
+                crate::zoom::ZoomTarget::Source => body
+                    .markdown_editor()
+                    .set_font_scale(cx, crate::zoom::scale(percent)),
+            }
         }
         self.sync_history_controls(cx);
         if let Some(mut tree) = self
