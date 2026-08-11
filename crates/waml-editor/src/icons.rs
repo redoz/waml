@@ -1966,6 +1966,59 @@ script_mod! {
         }
     }
 
+    // Faithful port of resources/icons/a-arrow-up.svg via scripts/gen-icon.py.
+    // Lucide's own font-size pair (tagged "font size" upstream): a letter A
+    // beside an up/down arrow. A magnifier reads as "zoom the view", which is
+    // what the canvas does; this is type size.
+    mod.draw.IconAArrowUp = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.5833, s * 0.4583)
+            sdf.line_to(s * 0.7500, s * 0.2917)
+            sdf.line_to(s * 0.9167, s * 0.4583)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7500, s * 0.6667)
+            sdf.line_to(s * 0.7500, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.0833, s * 0.6667)
+            sdf.line_to(s * 0.2516, s * 0.2629)
+            sdf.arc_to(s * 0.2709, s * 0.2709, s * 0.0208, -2.7466, -0.3950)
+            sdf.line_to(s * 0.4583, s * 0.6667)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1377, s * 0.5417)
+            sdf.line_to(s * 0.4040, s * 0.5417)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
+    // Faithful port of resources/icons/a-arrow-down.svg via scripts/gen-icon.py.
+    mod.draw.IconAArrowDown = mod.draw.DrawColor{
+        pixel: fn() {
+            let s = self.rect_size.x
+            let w = s * 0.068
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.move_to(s * 0.5833, s * 0.5000)
+            sdf.line_to(s * 0.7500, s * 0.6667)
+            sdf.line_to(s * 0.9167, s * 0.5000)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.7500, s * 0.6667)
+            sdf.line_to(s * 0.7500, s * 0.2917)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.0833, s * 0.6667)
+            sdf.line_to(s * 0.2516, s * 0.2629)
+            sdf.arc_to(s * 0.2709, s * 0.2709, s * 0.0208, -2.7466, -0.3950)
+            sdf.line_to(s * 0.4583, s * 0.6667)
+            sdf.stroke(self.color, w)
+            sdf.move_to(s * 0.1377, s * 0.5417)
+            sdf.line_to(s * 0.4040, s * 0.5417)
+            sdf.stroke(self.color, w)
+            return sdf.result
+        }
+    }
+
     // Faithful port of resources/icons/frame.svg via scripts/gen-icon.py.
     // Faithful port of resources/icons/frame.svg via scripts/gen-icon.py.
     mod.draw.IconFrame = mod.draw.DrawColor{
@@ -4418,6 +4471,8 @@ script_mod! {
         chart_no_axes_gantt: mod.draw.IconChartNoAxesGantt{ color: atlas.accent }
         eye_closed: mod.draw.IconEyeClosed{ color: atlas.accent }
         eye_dashed: mod.draw.IconEyeDashed{ color: atlas.accent }
+        a_arrow_up: mod.draw.IconAArrowUp{ color: atlas.accent }
+        a_arrow_down: mod.draw.IconAArrowDown{ color: atlas.accent }
     }
 }
 
@@ -4692,6 +4747,10 @@ pub struct IconSet {
     pub eye_closed: DrawColor,
     #[live]
     pub eye_dashed: DrawColor,
+    #[live]
+    pub a_arrow_up: DrawColor,
+    #[live]
+    pub a_arrow_down: DrawColor,
 }
 
 impl IconSet {
@@ -4831,6 +4890,8 @@ impl IconSet {
             Icon::ChartNoAxesGantt => &mut self.chart_no_axes_gantt,
             Icon::EyeClosed => &mut self.eye_closed,
             Icon::EyeDashed => &mut self.eye_dashed,
+            Icon::AArrowUp => &mut self.a_arrow_up,
+            Icon::AArrowDown => &mut self.a_arrow_down,
         }
     }
 
@@ -4984,12 +5045,14 @@ pub enum Icon {
     ChartNoAxesGantt,
     EyeClosed,
     EyeDashed,
+    AArrowUp,
+    AArrowDown,
 }
 
 impl Icon {
     /// Every glyph, in field order. The single source of glyph identity; the
     /// `icon_harness` proof grid iterates this.
-    pub const ALL: [Icon; 132] = [
+    pub const ALL: [Icon; 134] = [
         Icon::Package,
         Icon::Message,
         Icon::PackagePlus,
@@ -5122,6 +5185,8 @@ impl Icon {
         Icon::ChartNoAxesGantt,
         Icon::EyeClosed,
         Icon::EyeDashed,
+        Icon::AArrowUp,
+        Icon::AArrowDown,
     ];
 
     /// The `icon_harness` display slug (the Lucide source name), preserved
@@ -5260,6 +5325,8 @@ impl Icon {
             Icon::ChartNoAxesGantt => "chart-no-axes-gantt",
             Icon::EyeClosed => "eye-closed",
             Icon::EyeDashed => "eye-dashed",
+            Icon::AArrowUp => "a-arrow-up",
+            Icon::AArrowDown => "a-arrow-down",
         }
     }
 }
@@ -5269,8 +5336,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_all_has_132_entries() {
-        assert_eq!(Icon::ALL.len(), 132);
+    fn icon_all_has_134_entries() {
+        assert_eq!(Icon::ALL.len(), 134);
     }
 
     // ------------------------------------------------------------------
@@ -5481,14 +5548,23 @@ mod tests {
         assert_eq!(Icon::ChartNoAxesGantt.label(), "chart-no-axes-gantt");
     }
 
-    /// The tree panel's partial/fully-masked projection glyphs, appended last
-    /// on the same rule.
+    /// The tree panel's partial/fully-masked projection glyphs, appended on
+    /// the same rule.
     #[test]
-    fn the_projection_eye_pair_closes_the_catalog_with_its_lucide_slugs() {
+    fn the_projection_eye_pair_keeps_its_catalog_index_and_lucide_slugs() {
         assert_eq!(Icon::ALL[130], Icon::EyeClosed);
         assert_eq!(Icon::ALL[131], Icon::EyeDashed);
         assert_eq!(Icon::EyeClosed.label(), "eye-closed");
         assert_eq!(Icon::EyeDashed.label(), "eye-dashed");
+    }
+
+    /// The header font-size control's pair, appended last on the same rule.
+    #[test]
+    fn the_font_size_pair_closes_the_catalog_with_its_lucide_slugs() {
+        assert_eq!(Icon::ALL[132], Icon::AArrowUp);
+        assert_eq!(Icon::ALL[133], Icon::AArrowDown);
+        assert_eq!(Icon::AArrowUp.label(), "a-arrow-up");
+        assert_eq!(Icon::AArrowDown.label(), "a-arrow-down");
     }
 
     #[test]
@@ -5510,7 +5586,7 @@ mod tests {
             assert!(!l.is_empty(), "empty label for {icon:?}");
             assert!(seen.insert(l), "duplicate label {l:?}");
         }
-        assert_eq!(seen.len(), 132);
+        assert_eq!(seen.len(), 134);
     }
 
     #[test]

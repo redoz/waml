@@ -149,6 +149,13 @@ pub const ICON_GROUPS: &[(&str, &[IconEntry])] = &[
         &[ie!(ArrowUp, "Find strip: previous match (Shift+Enter)")],
     ),
     (
+        "DOCUMENT HEADER",
+        &[
+            ie!(AArrowUp, "Increase prose size"),
+            ie!(AArrowDown, "Decrease prose size"),
+        ],
+    ),
+    (
         "VIEW BAR",
         &[
             ie!(ZoomIn, "Zoom in"),

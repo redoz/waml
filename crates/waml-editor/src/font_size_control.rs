@@ -192,12 +192,15 @@ impl FontSizeControl {
             self.buttons_ready = true;
             let zoom_out = self.view.widget(cx, ids!(zoom_out_button)).as_icon_button();
             self.zoom_out_uid = Some(zoom_out.widget_uid());
-            zoom_out.set_icon(cx, Icon::ZoomOut);
+            // Lucide's font-size pair (a letter A with an arrow), not the
+            // magnifiers: a magnifier reads as "zoom the view", which is what
+            // the canvas surfaces do. This control changes type size.
+            zoom_out.set_icon(cx, Icon::AArrowDown);
             zoom_out.set_action_tag(live_id!(zoom_out));
 
             let zoom_in = self.view.widget(cx, ids!(zoom_in_button)).as_icon_button();
             self.zoom_in_uid = Some(zoom_in.widget_uid());
-            zoom_in.set_icon(cx, Icon::ZoomIn);
+            zoom_in.set_icon(cx, Icon::AArrowUp);
             zoom_in.set_action_tag(live_id!(zoom_in));
 
             changed = true;
