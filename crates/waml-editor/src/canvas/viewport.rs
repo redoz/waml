@@ -37,13 +37,9 @@ impl Camera {
     /// The inverse zoom a frame multiplies its stroke by to cancel the camera,
     /// so linework holds one screen-space weight. `1/zoom` is a CAMERA fact --
     /// a pen never sees it. Lived on the deleted `*LineworkMetrics` types,
-    /// which carried it as their one real field.
-    ///
-    /// `#[allow(dead_code)]`: unused until the plan's Task 9 rewires
-    /// `LineworkMetrics`/`BehaviorLineworkMetrics`'s `frame_stroke_scale`
-    /// callers onto this method and deletes those types -- remove the allow
-    /// there, in the same commit that adds the real caller.
-    #[allow(dead_code)]
+    /// which carried it as their one real field; both canvases now push it
+    /// straight from here (`class/render/nodes.rs`,
+    /// `behavior/render/interaction.rs`).
     pub(crate) fn stroke_scale(&self) -> f32 {
         (1.0 / self.zoom) as f32
     }

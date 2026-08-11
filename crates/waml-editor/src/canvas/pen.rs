@@ -54,12 +54,21 @@ pub(in crate::canvas) fn band_is_horizontal(a: DVec2, b: DVec2) -> bool {
     (a.x - b.x).abs() >= (a.y - b.y).abs()
 }
 
-/// Whole device pixels a rung resolves to, at `dpi`. The Rust mirror of
-/// `CadPen::pen_dev`, and the ONE flat-fill quantiser: every snapper below and
-/// every plain `DrawColor` quad that has to match a shader-inked stroke goes
-/// through this rather than restating the `+ 0.501` rounding term.
+/// Whole device pixels a logical width resolves to, at `dpi`. The Rust mirror
+/// of `CadPen::pen_dev`, and the ONE flat-fill quantiser: every flat-fill
+/// snapper below ([`fill_band_at`], [`fill_at`]) goes through this rather than
+/// restating the `+ 0.501` rounding term.
+///
+/// [`outline_at`] deliberately does not: an outline quad is a SHAPE, whose two
+/// edges each belong on the device grid, not a rung whose thickness is the ink.
+fn quantise_px(lpx: f64, dpi: f64) -> f64 {
+    (lpx * dpi + 0.501).floor().max(1.0)
+}
+
+/// [`quantise_px`] with a rung's width in it -- the number a plain `DrawColor`
+/// quad has to match to line up with a shader-inked stroke of the same pen.
 pub(in crate::canvas) fn ink_px(pen: Pen, dpi: f64) -> f64 {
-    (pen.width() * dpi + 0.501).floor().max(1.0)
+    quantise_px(pen.width(), dpi)
 }
 
 /// The quad a FLAT FILL inks a stroke from `a` to `b` inside -- this one IS the
@@ -152,20 +161,34 @@ fn outline_at(rect: Rect, pen: Pen, dpi: f64) -> Rect {
 }
 
 /// The quad for a rect that IS the ink: a flat `DrawColor` fill already sized
-/// from `pen.width()`. Its edges go on the device grid and nothing else --
-/// specifically, it is never widened to the `2 * pen` an inset stroke needs,
-/// only kept off zero by the one device pixel a stroke may not round away to.
-/// It takes no `Pen` for exactly that reason: the rung is already IN the rect.
+/// from `pen.width()`. It is never widened to the `2 * pen` an inset stroke
+/// needs, only kept off zero by the one device pixel a stroke may not round
+/// away to. It takes no `Pen` for exactly that reason: the rung is already IN
+/// the rect, and goes through [`quantise_px`] like every other flat fill.
 pub(in crate::canvas) fn fill(cx: &Cx2d, rect: Rect) -> Rect {
     fill_at(rect, cx.current_dpi_factor())
 }
 
 fn fill_at(rect: Rect, dpi: f64) -> Rect {
-    snap_rect_at(rect, 1.0, dpi)
+    // The SIZE is quantised, not the far edge rounded: rounding both edges
+    // independently makes a rung whose `w * dpi` is not an integer gain or
+    // lose a device pixel with its subpixel phase, so two rails of one ghost
+    // box, or two dividers in one card, could land at different weights. The
+    // origin still snaps to the grid, so both edges do too.
+    let x0 = (rect.pos.x * dpi).round();
+    let y0 = (rect.pos.y * dpi).round();
+    Rect {
+        pos: dvec2(x0 / dpi, y0 / dpi),
+        size: dvec2(
+            quantise_px(rect.size.x, dpi) / dpi,
+            quantise_px(rect.size.y, dpi) / dpi,
+        ),
+    }
 }
 
 /// Both edges of `rect` onto the device grid, keeping it at least `floor_px`
-/// device pixels on each axis.
+/// device pixels on each axis. An outline's own snapper: what matters for a
+/// shape is where its edges land, so both are rounded independently.
 fn snap_rect_at(rect: Rect, floor_px: f64, dpi: f64) -> Rect {
     let floor_px = floor_px.max(1.0);
     let x0 = (rect.pos.x * dpi).round();
@@ -220,6 +243,7 @@ script_mod! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
     /// The rounding term in the device quantiser. `0.501`, not `0.5`: `w`
     /// reaches the shader through an f32 round-trip, and a one-ULP shortfall on
@@ -661,6 +685,71 @@ mod tests {
         }
     }
 
+    /// A flat fill inks ONE width wherever it lands. The pre-plan snapper
+    /// rounded both edges independently, so a rung whose `w * dpi` is not an
+    /// integer picked up or lost a device pixel with its subpixel phase:
+    /// `Pen::LIGHT` origin-overlay rails at dpi 1 rendered 2 px at y 100.0 and
+    /// 1 px at y 100.8, so two rails of the same ghost box could differ in
+    /// weight. That per-element lottery is the thing this module exists to
+    /// remove, so a fill quantises its extent through `ink_px` like every
+    /// other snapper here.
+    #[test]
+    fn a_flat_fill_inks_one_width_at_every_subpixel_phase() {
+        for dpi in [1.0, 1.25, 1.5, 2.0] {
+            for pen in [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR] {
+                let ink = ink_px(pen, dpi);
+                for phase in [100.0, 100.2, 100.5, 100.8, 100.9] {
+                    let rail = fill_at(
+                        Rect {
+                            pos: dvec2(10.0, phase),
+                            size: dvec2(240.0, pen.width()),
+                        },
+                        dpi,
+                    );
+                    assert!(
+                        (rail.size.y * dpi - ink).abs() <= 1e-9,
+                        "pen {} at dpi {dpi}, y {phase}: inked {} device px, not {ink}",
+                        pen.width(),
+                        rail.size.y * dpi
+                    );
+                    let stem = fill_at(
+                        Rect {
+                            pos: dvec2(phase, 10.0),
+                            size: dvec2(pen.width(), 240.0),
+                        },
+                        dpi,
+                    );
+                    assert!(
+                        (stem.size.x * dpi - ink).abs() <= 1e-9,
+                        "pen {} at dpi {dpi}, x {phase}: inked {} device px, not {ink}",
+                        pen.width(),
+                        stem.size.x * dpi
+                    );
+                }
+            }
+        }
+    }
+
+    /// A fill and a filled band are the same quantiser seen from two sides: a
+    /// rect sized at a rung must ink exactly what a band drawn along that rung
+    /// inks, or a card divider stops matching the connector it meets.
+    #[test]
+    fn a_fill_and_a_filled_band_agree_on_the_rung() {
+        for dpi in [1.0, 1.25, 1.5, 2.0] {
+            for pen in [Pen::HAIRLINE, Pen::LIGHT, Pen::REGULAR] {
+                let band = fill_band_at(dvec2(4.0, 30.4), dvec2(64.0, 30.4), pen, dpi);
+                let fill = fill_at(
+                    Rect {
+                        pos: dvec2(4.0, 30.4),
+                        size: dvec2(60.0, pen.width()),
+                    },
+                    dpi,
+                );
+                assert!((band.size.y - fill.size.y).abs() <= 1e-9);
+            }
+        }
+    }
+
     /// The flat-fill band snapper, exercised through the function the behavior
     /// canvas actually calls -- not a re-derivation of its arithmetic.
     #[test]
@@ -689,6 +778,121 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The argument list of every `callee(` call in `src`, bounded to that
+    /// call's own parentheses so a later `.width()` on the following line
+    /// cannot be read as one of its arguments.
+    fn call_args(src: &str, callee: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut rest = src;
+        while let Some(at) = rest.find(callee) {
+            let after = &rest[at + callee.len()..];
+            let mut depth = 1usize;
+            let mut end = after.len();
+            for (offset, ch) in after.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = offset;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            args.push(after[..end].to_string());
+            rest = &after[end..];
+        }
+        args
+    }
+
+    /// Spellings that say "this rect IS the ink": a rect whose size comes from
+    /// a stroke weight is a flat fill, and belongs to `fill`, never `outline`.
+    const INK_SIZED: [&str; 2] = [".width()", "thickness"];
+
+    fn outline_offenders(label: &str, src: &str) -> (usize, Vec<String>) {
+        let mut calls = 0usize;
+        let mut offenders = Vec::new();
+        for callee in ["pen::outline(", "outline_at("] {
+            for args in call_args(src, callee) {
+                calls += 1;
+                if let Some(ink) = INK_SIZED.iter().find(|ink| args.contains(**ink)) {
+                    offenders.push(format!("{label}: `{callee}..{ink}..`"));
+                }
+            }
+        }
+        (calls, offenders)
+    }
+
+    fn canvas_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("read_dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                canvas_sources(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// `outline` snaps a SHAPE's edges and floors it at the `2 * pen` room an
+    /// inset stroke needs on both sides; `fill` snaps a rect that IS the ink.
+    /// Handing a flat fill to `outline` therefore doubles its rung -- card
+    /// dividers 1 -> 2 device px, origin rails 1.5 -> 3, ghost rails 2 -> 4 --
+    /// which is exactly the defect commit 87c81586 had to fix. The contract
+    /// lives only in prose otherwise, so pin it at the CALL SITES: nothing may
+    /// hand `outline` a rect sized from a stroke weight.
+    #[test]
+    fn no_flat_fill_is_routed_through_the_outline_snapper() {
+        let canvas = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/canvas");
+        let mut files = Vec::new();
+        canvas_sources(&canvas, &mut files);
+        assert!(
+            !files.is_empty(),
+            "expected canvas sources under {canvas:?}"
+        );
+
+        let mut calls = 0usize;
+        let mut offenders = Vec::new();
+        for path in &files {
+            // The definition site: its own tests call `outline_at` on rects
+            // built to prove the floor, which is the point there.
+            if path.file_name().and_then(|n| n.to_str()) == Some("pen.rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(path).expect("read canvas source");
+            let (found, mut bad) = outline_offenders(&path.display().to_string(), &src);
+            calls += found;
+            offenders.append(&mut bad);
+        }
+        assert!(
+            offenders.is_empty(),
+            "a rect sized from a pen belongs to `pen::fill`, not `pen::outline`:\n{}",
+            offenders.join("\n")
+        );
+        // A guard that finds no call sites at all guards nothing.
+        assert!(calls > 0, "expected at least one `pen::outline` call site");
+    }
+
+    /// The guard above can only earn its keep if it would actually fire.
+    #[test]
+    fn the_outline_guard_sees_a_rect_sized_from_a_pen() {
+        let flat_fill = "let bad = pen::outline(\n    cx,\n    Rect {\n        pos: p,\n        \
+             size: dvec2(w, pen.width()),\n    },\n    pen,\n);\nlet w = pen.width();";
+        let (calls, offenders) = outline_offenders("fake.rs", flat_fill);
+        assert_eq!(calls, 1);
+        assert_eq!(offenders.len(), 1, "the guard must flag a pen-sized rect");
+
+        // ...and bounded to the call's own parens: the `pen.width()` on the
+        // line AFTER the shape call below is not one of its arguments.
+        let shape = "let ok = pen::outline(cx, world_rect_to_screen(v, r), pen);\n\
+             draws.frame.set_uniform(cx, live_id!(pen_w), &[pen.width() as f32]);";
+        let (calls, offenders) = outline_offenders("fake.rs", shape);
+        assert_eq!(calls, 1);
+        assert!(offenders.is_empty(), "{offenders:?}");
     }
 
     #[test]
