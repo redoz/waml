@@ -137,7 +137,17 @@ impl DocView for BookView {
                 };
             }
         }
-        // Task 8: fold marking.
+        // The fold crossed into another section: mirror it onto the tree as
+        // a MARK (`tree_mark`), not a navigation -- the shell scrolls and
+        // pulses the row without opening anything or consuming the event.
+        if let (Some(index), Some(model)) = (book.fold_moved(actions), self.model.as_ref()) {
+            if let Some(section) = model.sections.get(index) {
+                return ViewOutcome {
+                    tree_mark: navigation_target_for(&section.target),
+                    ..ViewOutcome::default()
+                };
+            }
+        }
         ViewOutcome::default()
     }
 
@@ -193,25 +203,31 @@ impl DocView for BookView {
     }
 }
 
-/// One section's click destination, through the SAME navigation path a tree
-/// click takes -- the book adds no second way to open things (spec: "opens
-/// that concept's own tab through the existing navigation path"). `Virtual`
-/// targets (none exist in the book model today) have nothing to navigate
-/// to.
-pub(crate) fn navigation_for_section(section: &BookSection) -> Option<NavigationIntent> {
-    let target = match &section.target {
-        RowTarget::Concept(id) => NavigationTarget::Document {
+/// The `NavigationTarget` a row's `RowTarget` names -- the identity shared
+/// by "open this section's tab" (`navigation_for_section`) and "mark this
+/// section's tree row" (`ViewOutcome::tree_mark`), so both directions of
+/// tree<->book sync agree on what a section IS. `Virtual` targets (none
+/// exist in the book model today) name nothing.
+pub(crate) fn navigation_target_for(target: &RowTarget) -> Option<NavigationTarget> {
+    match target {
+        RowTarget::Concept(id) => Some(NavigationTarget::Document {
             concept_id: id.clone(),
             surface: None,
             fragment: None,
-        },
-        RowTarget::Folder(address) => NavigationTarget::Directory {
+        }),
+        RowTarget::Folder(address) => Some(NavigationTarget::Directory {
             address: address.clone(),
-        },
-        RowTarget::Virtual => return None,
-    };
+        }),
+        RowTarget::Virtual => None,
+    }
+}
+
+/// One section's click destination, through the SAME navigation path a tree
+/// click takes -- the book adds no second way to open things (spec: "opens
+/// that concept's own tab through the existing navigation path").
+pub(crate) fn navigation_for_section(section: &BookSection) -> Option<NavigationIntent> {
     Some(NavigationIntent::Resolved {
-        target,
+        target: navigation_target_for(&section.target)?,
         disposition: OpenDisposition::Preview,
     })
 }

@@ -39,18 +39,15 @@ enum BookHoverTarget {
 /// Emitted when the reader clicks a hand-drawn Link row or a diagram's
 /// open-full affordance -- both index `BookModel::sections` (the same
 /// indices `set_model` was last given). `BookView::handle` maps either
-/// through `navigation_for_section`. `FoldMoved` is Task 8's (scrolling the
-/// book marks the current tree row); declared here so the enum is stable
-/// across both tasks.
+/// through `navigation_for_section`. `FoldMoved` carries the section the
+/// fold just crossed into -- emitted per CROSSING, never per scroll tick
+/// (the `last_marked` gate) -- and becomes a tree mark, not a navigation.
 #[derive(Clone, Debug, Default)]
 pub enum BookSurfaceAction {
     #[default]
     None,
     LinkClicked(usize),
     OpenFullClicked(usize),
-    // Consumed by Task 8 (scrolling the book marks the current tree row),
-    // which constructs it and removes this allow.
-    #[allow(dead_code)]
     FoldMoved(usize),
 }
 
@@ -171,6 +168,12 @@ pub struct BookSurface {
     /// `scroll_grab`.
     #[rust]
     scroll_grab: Option<f64>,
+    /// The last section index `FoldMoved` was emitted for -- the change gate
+    /// that keeps the mark per-crossing rather than per scroll tick. `None`
+    /// until the reader's first scroll, so opening a book does not pulse the
+    /// tree unprompted.
+    #[rust]
+    last_marked: Option<usize>,
     /// Absolute rects of the currently-drawn Link rows, indexed by section
     /// index, rebuilt every draw pass -- `folder_list.rs`'s `row_rects`
     /// pattern, since these rows are hand-drawn, not real child widgets.
@@ -210,6 +213,7 @@ impl Widget for BookSurface {
                     let before = self.scroll;
                     self.set_scroll(self.scroll_for_thumb_y(e.abs.y - grab));
                     if self.scroll != before {
+                        self.emit_fold_crossing(cx);
                         self.reconcile_live(cx, self.last_viewport);
                         self.view.redraw(cx);
                     }
@@ -258,6 +262,7 @@ impl Widget for BookSurface {
             let before = self.scroll;
             self.set_scroll(before + fe.scroll.y);
             if self.scroll != before {
+                self.emit_fold_crossing(cx);
                 self.reconcile_live(cx, self.last_viewport);
                 self.view.redraw(cx);
             }
@@ -489,6 +494,16 @@ impl BookSurface {
         }
     }
 
+    /// The section index a reader-driven scroll (wheel or scrollbar drag)
+    /// just crossed into, if any. `BookView::handle` maps it to a tree mark
+    /// (`ViewOutcome::tree_mark`), never a navigation.
+    pub fn fold_moved(&self, actions: &Actions) -> Option<usize> {
+        match self.actions_action(actions) {
+            BookSurfaceAction::FoldMoved(i) => Some(i),
+            _ => None,
+        }
+    }
+
     pub fn scroll_to_section(&mut self, cx: &mut Cx, index: usize) {
         if let Some(&top) = self.tops.get(index) {
             self.scroll = top;
@@ -497,11 +512,40 @@ impl BookSurface {
         }
     }
 
-    // Consumed by Task 8 (scrolling the book marks the current tree row),
-    // which removes this allow.
-    #[allow(dead_code)]
     pub(crate) fn current_section_index(&self) -> Option<usize> {
         crate::book_layout::current_section(&self.tops, self.scroll)
+    }
+
+    /// The change gate the reader-scroll paths and the test accessor share:
+    /// `Some(index)` exactly when the section at the fold differs from the
+    /// last one marked, advancing the marker as it fires. One shared gate is
+    /// what makes `FoldMoved` per-crossing, never per scroll tick.
+    ///
+    /// Deliberately NOT run by `scroll_to_section`: that is the tree->book
+    /// direction, and echoing a mark back at the tree row the reader just
+    /// clicked would be noise.
+    fn fold_crossing(&mut self) -> Option<usize> {
+        let current = self.current_section_index();
+        if current == self.last_marked {
+            return None;
+        }
+        self.last_marked = current;
+        current
+    }
+
+    fn emit_fold_crossing(&mut self, cx: &mut Cx) {
+        if let Some(index) = self.fold_crossing() {
+            cx.widget_action(self.widget_uid(), BookSurfaceAction::FoldMoved(index));
+        }
+    }
+
+    /// Test probe over the SAME gate `emit_fold_crossing` fires through --
+    /// headless tests have no action collection loop to observe `FoldMoved`
+    /// on, so they drive the fold with `scroll_to_section` and ask the gate
+    /// directly.
+    #[cfg(test)]
+    pub(crate) fn take_fold_moved_for_test(&mut self) -> bool {
+        self.fold_crossing().is_some()
     }
 
     // Test accessor.
@@ -666,6 +710,11 @@ impl BookSurfaceRef {
         self.borrow()
             .and_then(|inner| inner.open_full_clicked(actions))
     }
+
+    /// See [`BookSurface::fold_moved`].
+    pub fn fold_moved(&self, actions: &Actions) -> Option<usize> {
+        self.borrow().and_then(|inner| inner.fold_moved(actions))
+    }
 }
 
 /// The leading glyph for a degraded (Link) section, chosen from why it
@@ -756,6 +805,25 @@ mod tests {
         book.set_model(&mut cx, model());
         book.scroll_to_section(&mut cx, 5);
         assert_eq!(book.current_section_index(), Some(5));
+    }
+
+    #[test]
+    fn crossing_a_section_boundary_updates_the_current_section_once() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        cx.init_cx_os();
+        let mut book = surface(&mut cx);
+        book.set_model(&mut cx, model());
+        assert_eq!(book.current_section_index(), Some(0));
+        book.scroll_to_section(&mut cx, 3);
+        assert_eq!(book.current_section_index(), Some(3));
+        // The change gate: the SAME index twice must not re-emit. Asserted
+        // through the widget's own gate accessor rather than the action
+        // queue -- headless tests have no action collection loop.
+        assert!(book.take_fold_moved_for_test(), "first crossing marks");
+        assert!(
+            !book.take_fold_moved_for_test(),
+            "no re-mark without movement"
+        );
     }
 
     #[test]

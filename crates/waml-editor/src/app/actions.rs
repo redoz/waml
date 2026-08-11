@@ -1797,6 +1797,20 @@ impl App {
             flow = ActionFlow::Consumed;
         }
 
+        // The book's scroll position mirrored onto the tree: the existing
+        // reveal path already owns unfold + scroll-into-view + the pulse.
+        if let Some(target) = outcome.tree_mark {
+            if let Some(mut panel) = self
+                .ui
+                .widget(cx, ids!(project_tree))
+                .borrow_mut::<crate::tree_panel::ProjectTree>()
+            {
+                panel.reveal_target(cx, &target);
+            }
+            // Deliberately no flow change: marking is a mirror, not a claim
+            // on the event.
+        }
+
         // AFTER the navigation above: a transition to a different document
         // clears the shared markdown surfaces' search decoration, so the
         // landing's own highlights must be installed on the far side of it.

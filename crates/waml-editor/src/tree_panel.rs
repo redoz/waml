@@ -1143,6 +1143,14 @@ impl ProjectTree {
         self.layout.is_folder_open(key)
     }
 
+    /// The row key the reveal pulse is currently armed on, if any. Test-only
+    /// reader for the app suite, which asserts a `tree_mark` outcome reached
+    /// this panel's reveal path.
+    #[cfg(test)]
+    pub(crate) fn test_reveal_key(&self) -> Option<&str> {
+        self.reveal_key.as_deref()
+    }
+
     fn update_reveal_pulse(&mut self, cx: &mut Cx, time: f64) {
         if self.reveal_started_at < 0.0 {
             self.reveal_started_at = time;

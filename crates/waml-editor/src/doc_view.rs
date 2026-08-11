@@ -442,6 +442,11 @@ pub struct ViewOutcome {
     /// express this (the Directory arm chain-routes back to the book), so
     /// like `view_source` it names the surface explicitly.
     pub open_folder_listing: Option<String>,
+    /// Mark this target's row in the tree (scroll-into-view + pulse) WITHOUT
+    /// opening anything -- the book's scroll position mirrored onto the table
+    /// of contents. A side effect, not a navigation: the shell must not
+    /// consume the event for it.
+    pub tree_mark: Option<crate::navigation::NavigationTarget>,
 }
 
 /// A popup a view wants placed. The view describes it; the shell computes window

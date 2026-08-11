@@ -3187,3 +3187,33 @@ fn a_tree_click_reveals_nothing_when_a_folder_listing_is_active() {
         },
     ));
 }
+
+#[test]
+fn a_tree_mark_outcome_scrolls_and_pulses_the_tree_row() {
+    let (mut cx, mut app) = book_navigation_app();
+    // `navigation_app` mounted a real `ProjectTree`, but its view was built
+    // from the session BEFORE `book_navigation_app` swapped the source;
+    // rebuild it so the panel's roots list the book's rows.
+    app.refresh_nav(&mut cx, false);
+
+    let outcome = crate::doc_view::ViewOutcome {
+        tree_mark: Some(NavigationTarget::Document {
+            concept_id: "guide/intro".to_string(),
+            surface: None,
+            fragment: None,
+        }),
+        ..Default::default()
+    };
+    let flow = app.apply_view_outcome(&mut cx, outcome);
+    assert_eq!(
+        flow,
+        super::super::actions::ActionFlow::Continue,
+        "marking is a mirror, not a claim on the event"
+    );
+
+    let panel = app.ui.widget(&cx, ids!(project_tree));
+    let reveal = panel
+        .borrow::<crate::tree_panel::ProjectTree>()
+        .and_then(|p| p.test_reveal_key().map(str::to_string));
+    assert!(reveal.is_some(), "the tree's reveal pulse path is armed");
+}
