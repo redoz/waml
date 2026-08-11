@@ -84,8 +84,11 @@ script_mod! {
             // whole-pixel offset keeps the band there too.
             let ox = floor((self.rect_size.x - tx) * 0.5 * dpi + 0.5) / dpi
             let oy = floor((self.rect_size.y - ty) * 0.5 * dpi + 0.5) / dpi
-            // Grow by the half pixel Sdf2d's ramp is missing, exactly as before.
-            sdf.rect(ox - 0.5, oy - 0.5, tx + 1.0, ty + 1.0)
+            // Grow by the half DEVICE pixel Sdf2d's ramp is missing. `pen_bias`,
+            // not a bare `0.5`: the sdf works in lpx, so a literal half is a
+            // half device pixel only at dpi 1.
+            let bias = self.pen_bias()
+            sdf.rect(ox - bias, oy - bias, tx + bias * 2.0, ty + bias * 2.0)
             // One ink at every zoom. CAD linework is defined by its weight, not
             // by the camera: an edge that darkened as you zoomed out made the
             // same relationship read as two different strokes, which is exactly
@@ -145,11 +148,15 @@ script_mod! {
             // raw `thickness * 0.5` the CPU used to hand over: a fractional lpx
             // half-width drew a soft 1.5px corner into a crisp 3px bar.
             let hw = self.pen_hw(self.pen_w)
+            // Half a device pixel in lpx -- a bare `0.5` would be a half
+            // LOGICAL pixel, which over-grows the corner at dpi > 1 and makes
+            // it read heavier than the bars it joins. See `EdgeLine`.
+            let bias = self.pen_bias()
             // Fillet arc band = annulus (outer disc minus inner disc). Built with
             // shape METHODS only -- assigning sdf.shape/dist directly from a pixel fn
             // silently fails this fork's shader VM, so there's no manual `min`.
-            sdf.circle(self.center.x, self.center.y, self.radius + hw + 0.5)
-            sdf.circle(self.center.x, self.center.y, self.radius - hw - 0.5)
+            sdf.circle(self.center.x, self.center.y, self.radius + hw + bias)
+            sdf.circle(self.center.x, self.center.y, self.radius - hw - bias)
             sdf.subtract()
             // Gate to the quarter facing the vertex: intersect with the quadrant
             // rect. Both bounding rays are axis-aligned for an orthogonal bend, so a
@@ -160,8 +167,8 @@ script_mod! {
             sdf.intersect()
             // Union the two bar stubs; each `rect` mins into `sdf.shape`, so the
             // arc-to-bar joints are interior to one filled shape (solid, no AA seam).
-            sdf.rect(self.bar_in.x - 0.5, self.bar_in.y - 0.5, self.bar_in.z + 1.0, self.bar_in.w + 1.0)
-            sdf.rect(self.bar_out.x - 0.5, self.bar_out.y - 0.5, self.bar_out.z + 1.0, self.bar_out.w + 1.0)
+            sdf.rect(self.bar_in.x - bias, self.bar_in.y - bias, self.bar_in.z + bias * 2.0, self.bar_in.w + bias * 2.0)
+            sdf.rect(self.bar_out.x - bias, self.bar_out.y - bias, self.bar_out.z + bias * 2.0, self.bar_out.w + bias * 2.0)
             sdf.fill(self.color)
             return sdf.result
         }

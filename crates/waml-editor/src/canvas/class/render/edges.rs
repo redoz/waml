@@ -49,8 +49,11 @@ pub(super) fn draw_edges(
     let camera = snapshot.viewport.camera;
     let rect = snapshot.viewport.view_rect;
     let pen = Pen::REGULAR;
-    // `edge_thickness` (deleted with `LineworkMetrics`) was always exactly
-    // `Pen::REGULAR.width()`, so `pen.width()` is the identical value here.
+    // NOT a like-for-like swap: `edge_thickness` (deleted with
+    // `LineworkMetrics`) was 3.0, and `Pen::REGULAR` is 2.0. Class edges
+    // getting lighter is the headline intended visual change of the pen
+    // ladder, not a regression -- `r_base` below drops 6.0 -> 4.0 with it. Do
+    // not "restore" either.
     let thickness = if snapshot.scene.visual_kind == crate::StructuralVisualKind::UseCase {
         0.75
     } else {

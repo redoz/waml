@@ -170,19 +170,41 @@ pub(in crate::canvas) fn fill(cx: &Cx2d, rect: Rect) -> Rect {
 }
 
 fn fill_at(rect: Rect, dpi: f64) -> Rect {
-    // The SIZE is quantised, not the far edge rounded: rounding both edges
-    // independently makes a rung whose `w * dpi` is not an integer gain or
-    // lose a device pixel with its subpixel phase, so two rails of one ghost
-    // box, or two dividers in one card, could land at different weights. The
-    // origin still snaps to the grid, so both edges do too.
+    // The two axes of a rail are different things and get different treatment.
+    //
+    // THIN axis (the rung): the SIZE is quantised, not the far edge rounded.
+    // Rounding both edges independently makes a rung whose `w * dpi` is not an
+    // integer gain or lose a device pixel with its subpixel phase, so two rails
+    // of one ghost box, or two dividers in one card, could land at different
+    // weights.
+    //
+    // LONG axis (the run): the far EDGE is rounded. Quantising this size too
+    // rounded the length independently of where the rail started, so a rail
+    // could stop a device pixel short of where its own rect ended -- leaving a
+    // notch at every corner of a placement overlay, and card dividers that fall
+    // short of the card edge. A run has no rung to preserve; what matters is
+    // that it reaches the thing it is supposed to meet.
     let x0 = (rect.pos.x * dpi).round();
     let y0 = (rect.pos.y * dpi).round();
+    let run = |start: f64, pos: f64, size: f64| (((pos + size) * dpi).round() - start).max(1.0);
+    // A square is its own thin axis either way; the tie goes to quantising, so
+    // a nub keeps the exact rung it was sized from.
+    let (w, h) = if rect.size.x > rect.size.y {
+        (
+            run(x0, rect.pos.x, rect.size.x),
+            quantise_px(rect.size.y, dpi),
+        )
+    } else if rect.size.y > rect.size.x {
+        (
+            quantise_px(rect.size.x, dpi),
+            run(y0, rect.pos.y, rect.size.y),
+        )
+    } else {
+        (quantise_px(rect.size.x, dpi), quantise_px(rect.size.y, dpi))
+    };
     Rect {
         pos: dvec2(x0 / dpi, y0 / dpi),
-        size: dvec2(
-            quantise_px(rect.size.x, dpi) / dpi,
-            quantise_px(rect.size.y, dpi) / dpi,
-        ),
+        size: dvec2(w / dpi, h / dpi),
     }
 }
 
@@ -240,6 +262,23 @@ script_mod! {
         pen_sw: fn(w: float) -> float {
             let dpi = max(1.0, self.draw_pass.dpi_factor)
             return (max(1.0, floor(w * dpi + 0.501)) * 0.5 + 0.5) / dpi
+        }
+
+        // Half a DEVICE pixel, expressed in lpx -- the amount a filled SHAPE
+        // must grow by to make up the bias Sdf2d's ramp is missing.
+        //
+        // The literal `0.5` this replaced was a half LOGICAL pixel, which is
+        // only the same thing at dpi 1. At dpi 2 it grew a shape by a whole
+        // device pixel per side, so a REGULAR edge inked `pen_dev + 2` device
+        // px with a 50%-coverage fringe while `pen::fill_band` inked exactly
+        // `pen_dev` on the behavior canvas -- the two canvases this pen system
+        // exists to unify, disagreeing at HiDPI.
+        //
+        // Only for shapes grown by geometry. A STROKE takes its bias through
+        // `pen_sw`, which already divides by dpi.
+        pen_bias: fn() -> float {
+            let dpi = max(1.0, self.draw_pass.dpi_factor)
+            return 0.5 / dpi
         }
 
         // Sdf2d coverage is `clamp(-dist * aa)` with `aa = 1 /
@@ -859,6 +898,81 @@ mod tests {
                         "pen {} at dpi {dpi} inked {thick_px} device px, \
                          which is fatter than its rung",
                         pen.width()
+                    );
+                }
+            }
+        }
+    }
+
+    /// A rail must REACH the rail it turns into. Quantising the long axis'
+    /// size (rather than rounding its far edge) rounded a run independently of
+    /// where it started, so a rail could stop a device pixel short of its own
+    /// rect: at dpi 1 with x 10.4 and width 100.4 the top rail spanned 10..110
+    /// while the right rail sat at 109..111, leaving a notch at the corner of
+    /// every placement overlay -- and card dividers falling short of the card
+    /// edge for the same reason.
+    #[test]
+    fn the_rails_of_one_box_meet_at_its_corners() {
+        let pen = Pen::LIGHT;
+        let t = pen.width();
+        for dpi in [1.0, 1.25, 1.5, 2.0] {
+            for (x, y, w, h) in [
+                (10.4, 20.3, 100.4, 60.7),
+                (10.0, 20.0, 100.0, 60.0),
+                (10.9, 20.6, 100.1, 60.2),
+            ] {
+                let top = fill_at(
+                    Rect {
+                        pos: dvec2(x, y),
+                        size: dvec2(w, t),
+                    },
+                    dpi,
+                );
+                let bottom = fill_at(
+                    Rect {
+                        pos: dvec2(x, y + h - t),
+                        size: dvec2(w, t),
+                    },
+                    dpi,
+                );
+                let left = fill_at(
+                    Rect {
+                        pos: dvec2(x, y),
+                        size: dvec2(t, h),
+                    },
+                    dpi,
+                );
+                let right = fill_at(
+                    Rect {
+                        pos: dvec2(x + w - t, y),
+                        size: dvec2(t, h),
+                    },
+                    dpi,
+                );
+                // Each rail's LONG axis must land on the box edge it runs to.
+                // The thin axis is deliberately not asserted here: a rung
+                // quantises UP (LIGHT is 1.5 lpx but 2 device px at dpi 1)
+                // while the caller insets by the unquantised width, so the far
+                // rail can overhang the box by a device pixel. That is a
+                // separate defect, in the callers' inset, not in this snapper.
+                let far_x = |r: Rect| (r.pos.x + r.size.x) * dpi;
+                let far_y = |r: Rect| (r.pos.y + r.size.y) * dpi;
+                let box_right = ((x + w) * dpi).round();
+                let box_bottom = ((y + h) * dpi).round();
+                for (rail, name) in [(top, "top"), (bottom, "bottom")] {
+                    assert!(
+                        (far_x(rail) - box_right).abs() <= 1e-9,
+                        "dpi {dpi} at ({x}, {y}): the {name} rail ends at {}, \
+                         but the box's right edge is {box_right}",
+                        far_x(rail)
+                    );
+                }
+                for (rail, name) in [(left, "left"), (right, "right")] {
+                    assert!(
+                        (far_y(rail) - box_bottom).abs() <= 1e-9,
+                        "dpi {dpi} at ({x}, {y}): the {name} rail ends at {}, \
+                         but the box's bottom edge is {box_bottom}",
+                        far_y(rail)
                     );
                 }
             }
