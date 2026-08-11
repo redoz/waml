@@ -166,9 +166,17 @@ fn index_bundle<'a>(
 
 fn validate_relative_path(relative: &Path) -> io::Result<()> {
     if relative.as_os_str().is_empty()
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
+        || relative.components().any(|component| match component {
+            // A colon inside a name is an NTFS alternate-data-stream write
+            // (`a:b.md`), not a file the user can see; reject it everywhere
+            // so bundles behave identically across platforms. This mirrors
+            // `BundlePath::parse` (the authoritative upper layer, which
+            // already rejects any colon) and the CLI's `validate_relative`
+            // (`waml-cli/src/io.rs`) — a defense layer that silently
+            // disagreed with the layer above it would be worse than none.
+            Component::Normal(name) => name.to_string_lossy().contains(':'),
+            _ => true,
+        })
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -449,6 +457,32 @@ mod tests {
             std::fs::read_to_string(temp.path().join("nested/diagram.md")).unwrap(),
             "authored"
         );
+    }
+
+    #[test]
+    fn colon_segments_are_rejected_by_validate_relative_path() {
+        use super::validate_relative_path;
+
+        assert_eq!(
+            validate_relative_path(Path::new("ab:c.md"))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            validate_relative_path(Path::new("nested/ab:c.md"))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn colon_free_segments_still_pass_validate_relative_path() {
+        use super::validate_relative_path;
+
+        assert!(validate_relative_path(Path::new("abc.md")).is_ok());
+        assert!(validate_relative_path(Path::new("nested/abc.md")).is_ok());
     }
 
     #[test]
