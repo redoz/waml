@@ -5,6 +5,9 @@ use crate::source::{BundlePath, SourceBundle, SourceDocument, SourceError};
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ingest;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod persist;
+
 #[derive(Debug)]
 pub enum HostIngressError {
     ExistingDocument { path: BundlePath },

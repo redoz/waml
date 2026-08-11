@@ -10,6 +10,7 @@ use waml::analysis::{prepare_candidate, PreparedCandidate, PreviousAnalyses};
 use waml::bundle_envelope::encode_bundle_envelope;
 use waml::diagnostic::Diagnostic;
 use waml::edit::{EditBatch, EditContext};
+use waml::host::persist;
 use waml::source::SourceBundle;
 
 use crate::io;
@@ -111,7 +112,7 @@ impl ServeState {
             paths::safe_join(&self.root, path).map_err(ApplyFailure::Confinement)?;
         }
 
-        io::write_back(&self.root, &old_pairs, &new_pairs).map_err(|error| {
+        persist::write_back(&self.root, &old_pairs, &new_pairs).map_err(|error| {
             ApplyFailure::Io(format!("could not write bundle changes: {error}"))
         })?;
 
@@ -200,7 +201,7 @@ impl ServeState {
         .map_err(|error| ApplyFailure::Invalid(error.to_string()))?;
 
         let new_pairs = validated.source().to_pairs();
-        io::write_back(&self.root, &old_pairs, &new_pairs).map_err(|error| {
+        persist::write_back(&self.root, &old_pairs, &new_pairs).map_err(|error| {
             ApplyFailure::Io(format!("could not write bundle changes: {error}"))
         })?;
 
