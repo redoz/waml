@@ -15,7 +15,7 @@ use waml_markdown_editor::reading::{
 };
 
 use super::{
-    cache::{CacheKey, MermaidCache},
+    cache::{lock_cache, CacheKey, MermaidCache},
     error::MermaidRenderError,
     BlockRenderResult,
 };
@@ -41,7 +41,7 @@ impl MermaidRenderer {
         request: &BlockExtensionRequest,
     ) -> Option<BlockRenderResult> {
         let key = CacheKey::from_request(request);
-        self.cache.lock().expect("Mermaid cache poisoned").get(&key)
+        lock_cache(&self.cache).get(&key)
     }
 
     pub(in crate::markdown_extensions) fn render_and_cache(
@@ -49,7 +49,7 @@ impl MermaidRenderer {
         request: &BlockExtensionRequest,
     ) -> BlockRenderResult {
         let key = CacheKey::from_request(request);
-        if let Some(hit) = self.cache.lock().expect("Mermaid cache poisoned").get(&key) {
+        if let Some(hit) = lock_cache(&self.cache).get(&key) {
             return hit;
         }
 
@@ -57,7 +57,7 @@ impl MermaidRenderer {
         self.uncached_renders.fetch_add(1, Ordering::Relaxed);
         let rendered = render_uncached(request);
 
-        let mut cache = self.cache.lock().expect("Mermaid cache poisoned");
+        let mut cache = lock_cache(&self.cache);
         if let Some(winner) = cache.get(&key) {
             return winner;
         }

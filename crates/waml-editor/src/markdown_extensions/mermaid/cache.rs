@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use waml_markdown_editor::reading::{
@@ -80,6 +80,13 @@ pub(super) struct MermaidCache {
     successful_svg_bytes: usize,
 }
 
+pub(super) fn lock_cache(cache: &Mutex<MermaidCache>) -> MutexGuard<'_, MermaidCache> {
+    match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 impl MermaidCache {
     pub(super) fn get(&mut self, key: &CacheKey) -> Option<BlockRenderResult> {
         let result = self.entries.get(key)?.clone();
@@ -145,7 +152,10 @@ fn successful_svg_len(result: &BlockRenderResult) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        sync::{Arc, Mutex},
+        thread,
+    };
 
     use waml_markdown_editor::{
         presentation::{EmbeddedBlockRole, PresentationItemId, PresentationRole},
@@ -157,7 +167,7 @@ mod tests {
     };
     use waml_syntax::SyntaxIdentity;
 
-    use super::{CacheKey, MermaidCache, CACHE_MAX_ENTRIES, CACHE_MAX_SVG_BYTES};
+    use super::{lock_cache, CacheKey, MermaidCache, CACHE_MAX_ENTRIES, CACHE_MAX_SVG_BYTES};
 
     fn request(content: &str, appearance: BlockExtensionAppearance) -> BlockExtensionRequest {
         BlockExtensionRequest {
@@ -317,5 +327,25 @@ mod tests {
 
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.successful_svg_bytes(), 20);
+    }
+
+    #[test]
+    fn poisoned_mutex_recovers_the_existing_cache_and_accepts_later_entries() {
+        let cache = Arc::new(Mutex::new(MermaidCache::default()));
+        let poisoned = cache.clone();
+        let first = CacheKey::from_request(&request("first", BlockExtensionAppearance::Light));
+        let first_for_worker = first.clone();
+        let worker = thread::spawn(move || {
+            let mut guard = poisoned.lock().unwrap();
+            guard.insert(first_for_worker, rendered(4));
+            panic!("poison the Mermaid cache")
+        });
+        assert!(worker.join().is_err());
+        let second = CacheKey::from_request(&request("second", BlockExtensionAppearance::Dark));
+
+        let mut recovered = lock_cache(&cache);
+        assert!(recovered.get(&first).is_some());
+        recovered.insert(second.clone(), rendered(8));
+        assert!(recovered.get(&second).is_some());
     }
 }
