@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use makepad_widgets::{looks_like_svg, makepad_draw::svg::parse_svg};
+use makepad_widgets::{
+    looks_like_svg, makepad_draw::svg::parse_svg, makepad_html::parse_html, InternLiveId, LiveId,
+};
 use merman::svg::{
     HeadlessError, HeadlessRenderer, HostTheme, HostThemePreset, Presentation,
     RenderResourceProfile,
@@ -78,11 +80,7 @@ pub(super) fn render_uncached(request: &BlockExtensionRequest) -> BlockRenderRes
         BlockExtensionAppearance::Light => HostThemePreset::EditorLight,
         BlockExtensionAppearance::Dark => HostThemePreset::EditorDark,
     };
-    let diagram_id = format!(
-        "waml-mermaid-{}-{}",
-        request.item.owner.get(),
-        request.item.fragment_ordinal
-    );
+    let diagram_id = CacheKey::from_request(request).diagram_id();
     let renderer = HeadlessRenderer::new()
         .with_presentation(Presentation::new().with_theme(HostTheme::from_preset(preset)))
         .with_resource_profile(RenderResourceProfile::Constrained)
@@ -153,7 +151,6 @@ fn validate_svg_safety(svg: &str) -> Result<(), MermaidRenderError> {
         }
     }
 
-    validate_css_urls(&lower)?;
     let mut cursor = 0;
     while let Some(relative_start) = lower[cursor..].find('<') {
         let start = cursor + relative_start;
@@ -164,23 +161,166 @@ fn validate_svg_safety(svg: &str) -> Result<(), MermaidRenderError> {
         validate_tag(&lower[start + 1..end])?;
         cursor = end + 1;
     }
+    validate_decoded_svg_values(svg)?;
     Ok(())
 }
 
-fn validate_css_urls(lower: &str) -> Result<(), MermaidRenderError> {
-    let mut remainder = lower;
-    while let Some(start) = remainder.find("url(") {
-        let value_start = start + "url(".len();
-        let Some(relative_end) = remainder[value_start..].find(')') else {
-            return Err(MermaidRenderError::UnsafeSvg);
-        };
-        let value = remainder[value_start..value_start + relative_end]
-            .trim()
-            .trim_matches(['\'', '"']);
-        if !value.starts_with('#') {
+fn validate_decoded_svg_values(svg: &str) -> Result<(), MermaidRenderError> {
+    let mut errors = None;
+    let document = parse_html(svg, &mut errors, InternLiveId::No);
+    if errors.as_ref().is_some_and(|errors| !errors.is_empty()) {
+        return Err(MermaidRenderError::InvalidSvg);
+    }
+
+    let style_tag = LiveId::from_str_lc("style");
+    let xml_base = LiveId::from_str_lc("xml:base");
+    let uri_attributes = [
+        LiveId::from_str_lc("href"),
+        LiveId::from_str_lc("xlink:href"),
+        LiveId::from_str_lc("src"),
+    ];
+    let mut walker = document.new_walker();
+    while !walker.done() {
+        if let Some(tag) = walker.open_tag_lc() {
+            let mut attributes = document.new_walker_with_index(walker.index() + 1);
+            while let Some((name, value)) = attributes.while_attr_lc() {
+                if name == xml_base {
+                    return Err(MermaidRenderError::UnsafeSvg);
+                }
+                validate_css_urls(value)?;
+                if uri_attributes.contains(&name) {
+                    validate_fragment_reference(value)?;
+                }
+            }
+            if tag == style_tag {
+                if let Some(style) = walker.find_text() {
+                    validate_css_urls(style)?;
+                }
+            }
+        }
+        walker.walk();
+    }
+    Ok(())
+}
+
+fn validate_css_urls(css: &str) -> Result<(), MermaidRenderError> {
+    let normalized = normalize_css_escapes(css)?;
+    if normalized.contains("@import") {
+        return Err(MermaidRenderError::UnsafeSvg);
+    }
+
+    let bytes = normalized.as_bytes();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if !is_css_identifier_byte(bytes[cursor]) {
+            cursor += 1;
+            continue;
+        }
+        let start = cursor;
+        while cursor < bytes.len() && is_css_identifier_byte(bytes[cursor]) {
+            cursor += 1;
+        }
+        if &normalized[start..cursor] != "url" {
+            continue;
+        }
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'(') {
+            continue;
+        }
+        cursor += 1;
+        let value_start = cursor;
+        while cursor < bytes.len() && bytes[cursor] != b')' {
+            cursor += 1;
+        }
+        if cursor == bytes.len() {
             return Err(MermaidRenderError::UnsafeSvg);
         }
-        remainder = &remainder[value_start + relative_end + 1..];
+        validate_fragment_reference(&normalized[value_start..cursor])?;
+        cursor += 1;
+    }
+    Ok(())
+}
+
+fn normalize_css_escapes(css: &str) -> Result<String, MermaidRenderError> {
+    let mut normalized = String::with_capacity(css.len());
+    let mut characters = css.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            normalized.push(character.to_ascii_lowercase());
+            continue;
+        }
+
+        let Some(next) = characters.peek().copied() else {
+            return Err(MermaidRenderError::UnsafeSvg);
+        };
+        if matches!(next, '\n' | '\r' | '\u{000c}') {
+            characters.next();
+            if next == '\r' && characters.peek() == Some(&'\n') {
+                characters.next();
+            }
+            continue;
+        }
+        if next.is_ascii_hexdigit() {
+            let mut value = 0_u32;
+            let mut digits = 0;
+            while digits < 6 {
+                let Some(hex) = characters.peek().copied() else {
+                    break;
+                };
+                let Some(digit) = hex.to_digit(16) else {
+                    break;
+                };
+                characters.next();
+                value = value * 16 + digit;
+                digits += 1;
+            }
+            if characters
+                .peek()
+                .is_some_and(|character| character.is_ascii_whitespace())
+            {
+                let whitespace = characters.next();
+                if whitespace == Some('\r') && characters.peek() == Some(&'\n') {
+                    characters.next();
+                }
+            }
+            let Some(decoded) = char::from_u32(value).filter(|decoded| *decoded != '\0') else {
+                return Err(MermaidRenderError::UnsafeSvg);
+            };
+            normalized.push(decoded.to_ascii_lowercase());
+            continue;
+        }
+
+        characters.next();
+        normalized.push(next.to_ascii_lowercase());
+    }
+    Ok(normalized)
+}
+
+fn is_css_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+}
+
+fn validate_fragment_reference(value: &str) -> Result<(), MermaidRenderError> {
+    let value = value.trim();
+    let value = if value.len() >= 2
+        && matches!(value.as_bytes()[0], b'\'' | b'"')
+        && value.as_bytes()[0] == value.as_bytes()[value.len() - 1]
+    {
+        value[1..value.len() - 1].trim()
+    } else {
+        value
+    };
+    let Some(fragment) = value.strip_prefix('#') else {
+        return Err(MermaidRenderError::UnsafeSvg);
+    };
+    if fragment.is_empty()
+        || fragment
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(MermaidRenderError::UnsafeSvg);
     }
     Ok(())
 }
@@ -394,6 +534,48 @@ mod tests {
     }
 
     #[test]
+    fn entity_encoded_css_url_is_rejected_after_xml_decoding() {
+        let svg =
+            r#"<svg width="10" height="10"><style>.x{fill:u&#x72;l(https://evil/x)}</style></svg>"#;
+
+        assert_eq!(
+            validate_svg(svg.to_owned()),
+            Err(MermaidRenderError::UnsafeSvg)
+        );
+    }
+
+    #[test]
+    fn entity_encoded_attribute_url_is_rejected_after_xml_decoding() {
+        let svg = r#"<svg width="10" height="10"><rect fill="u&#x72;l(https://evil/x)" /></svg>"#;
+
+        assert_eq!(
+            validate_svg(svg.to_owned()),
+            Err(MermaidRenderError::UnsafeSvg)
+        );
+    }
+
+    #[test]
+    fn css_escaped_url_function_is_rejected_after_normalization() {
+        let svg =
+            r#"<svg width="10" height="10"><style>.x{fill:u\72l(https://evil/x)}</style></svg>"#;
+
+        assert_eq!(
+            validate_svg(svg.to_owned()),
+            Err(MermaidRenderError::UnsafeSvg)
+        );
+    }
+
+    #[test]
+    fn xml_base_cannot_redirect_a_local_fragment() {
+        let svg = r##"<svg width="10" height="10" xml:base="https://evil/"><a href="#node"><rect id="node" width="10" height="10" /></a></svg>"##;
+
+        assert_eq!(
+            validate_svg(svg.to_owned()),
+            Err(MermaidRenderError::UnsafeSvg)
+        );
+    }
+
+    #[test]
     fn same_document_fragment_references_remain_valid() {
         let svg = r##"<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="paint" /></defs><a href="#node"><rect id="node" width="10" height="10" fill="url(#paint)" /></a></svg>"##;
 
@@ -457,6 +639,32 @@ A-->B"#;
 
         assert_eq!(first_result, second_result);
         assert_eq!(renderer.uncached_render_count(), 1);
+    }
+
+    #[test]
+    fn identical_keys_emit_identical_uncached_svg_across_items() {
+        let first = request("flowchart TD\nA-->B", BlockExtensionAppearance::Light);
+        let mut second = first.clone();
+        second.item.owner = SyntaxIdentity::from_raw_for_test(500);
+        second.item.fragment_ordinal = 91;
+
+        let first_svg = render_uncached(&first).expect("first fixture must render");
+        let second_svg = render_uncached(&second).expect("second fixture must render");
+
+        assert_eq!(first_svg, second_svg);
+    }
+
+    #[test]
+    fn concurrent_identical_keys_emit_the_same_uncached_svg() {
+        let first = request("flowchart TD\nA-->B", BlockExtensionAppearance::Dark);
+        let mut second = first.clone();
+        second.item.owner = SyntaxIdentity::from_raw_for_test(700);
+        second.item.fragment_ordinal = 19;
+
+        let first_worker = std::thread::spawn(move || render_uncached(&first));
+        let second_worker = std::thread::spawn(move || render_uncached(&second));
+
+        assert_eq!(first_worker.join().unwrap(), second_worker.join().unwrap());
     }
 
     #[test]

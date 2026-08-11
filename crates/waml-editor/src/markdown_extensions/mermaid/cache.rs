@@ -31,6 +31,46 @@ impl CacheKey {
             merman_version: MERMAN_VERSION,
         }
     }
+
+    pub(super) fn diagram_id(&self) -> String {
+        format!("waml-mermaid-{:032x}", self.stable_digest())
+    }
+
+    fn stable_digest(&self) -> u128 {
+        const FNV_OFFSET_BASIS: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+        const FNV_PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
+
+        let mut digest = FNV_OFFSET_BASIS;
+        update_digest(
+            &mut digest,
+            &(self.content.len() as u64).to_le_bytes(),
+            FNV_PRIME,
+        );
+        update_digest(&mut digest, self.content.as_bytes(), FNV_PRIME);
+        update_digest(
+            &mut digest,
+            &[match self.appearance {
+                BlockExtensionAppearance::Light => 0,
+                BlockExtensionAppearance::Dark => 1,
+            }],
+            FNV_PRIME,
+        );
+        update_digest(&mut digest, &self.adapter_schema.to_le_bytes(), FNV_PRIME);
+        update_digest(
+            &mut digest,
+            &(self.merman_version.len() as u64).to_le_bytes(),
+            FNV_PRIME,
+        );
+        update_digest(&mut digest, self.merman_version.as_bytes(), FNV_PRIME);
+        digest
+    }
+}
+
+fn update_digest(digest: &mut u128, bytes: &[u8], prime: u128) {
+    for byte in bytes {
+        *digest ^= u128::from(*byte);
+        *digest = digest.wrapping_mul(prime);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -168,6 +208,36 @@ mod tests {
             CacheKey::from_request(&light),
             CacheKey::from_request(&dark)
         );
+    }
+
+    #[test]
+    fn diagram_id_is_stable_for_the_full_cache_key() {
+        let first = request("flowchart TD\nA-->B", BlockExtensionAppearance::Light);
+        let mut same_key = first.clone();
+        same_key.item.owner = SyntaxIdentity::from_raw_for_test(99);
+        same_key.item.fragment_ordinal = 31;
+        let different_source = request("flowchart TD\nA-->C", BlockExtensionAppearance::Light);
+        let different_theme = request("flowchart TD\nA-->B", BlockExtensionAppearance::Dark);
+
+        let first_key = CacheKey::from_request(&first);
+        let first_id = first_key.diagram_id();
+        assert_eq!(first_id, CacheKey::from_request(&same_key).diagram_id());
+        assert_ne!(
+            first_id,
+            CacheKey::from_request(&different_source).diagram_id()
+        );
+        assert_ne!(
+            first_id,
+            CacheKey::from_request(&different_theme).diagram_id()
+        );
+
+        let mut different_schema = first_key.clone();
+        different_schema.adapter_schema += 1;
+        assert_ne!(first_id, different_schema.diagram_id());
+
+        let mut different_renderer = first_key;
+        different_renderer.merman_version = "different-renderer";
+        assert_ne!(first_id, different_renderer.diagram_id());
     }
 
     #[test]
