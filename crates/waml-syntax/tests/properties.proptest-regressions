@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 13fd08b32ab48557e2e25f23586d32c223ee664f47151492f9e110a358d48464 # shrinks to first = 220, second = 221, fragment_index = 2
+cc 315ecab3e2d39cca16005a8afd87c9854a50f29f12ab2d48facf952a32e5a605 # shrinks to edits = [(61, 194, 3), (119, 254, 107), (6, 10, 60), (219, 247, 108), (178, 187, 0)]

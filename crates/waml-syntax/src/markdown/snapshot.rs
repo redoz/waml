@@ -472,6 +472,7 @@ pub fn reparse_markdown(
         &restored_tree,
         &map,
     )?;
+    let restored_root = super::reparse::restamp_inline_owners(&restored_root)?;
     tree = Arc::new(SyntaxTree::new(
         restored_root,
         Arc::from(restored_tree.diagnostics()),

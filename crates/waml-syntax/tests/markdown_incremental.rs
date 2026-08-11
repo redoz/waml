@@ -484,6 +484,71 @@ fn renamed_definition_invalidates_old_backlinks() {
 }
 
 #[test]
+fn block_merging_edit_restamps_reused_link_owners() {
+    // This fails if incremental reuse keeps a link's owner annotation pointing
+    // at the block the link used to live in. Deleting the last line's tail
+    // (`z\n`) lets the blank line behind it terminate the first paragraph
+    // instead of separating two, so both reference uses end up in one
+    // paragraph. Each reused link still named its own dead paragraph, and
+    // `reference_backlinks` reported two owners where a full parse reports one.
+    let old = "# M\n\n[id]: /one\n\na [x][id]\nzz\n\nb [y][id]\n";
+    let new = "# M\n\n[id]: /one\n\na [x][id]\nz\nb [y][id]\n";
+    let cut = old.find("zz").unwrap() + 1;
+    let previous = parse_markdown(
+        DocumentRevision::INITIAL,
+        text(old),
+        MarkdownDialect::WAML_DEFAULT,
+    )
+    .unwrap();
+    let update = reparse_markdown(
+        &previous,
+        DocumentRevision::new(1),
+        text(new),
+        &[TextChange {
+            old_range: range(cut, cut + 2),
+            replacement: Arc::from(""),
+        }],
+    )
+    .unwrap();
+
+    assert_snapshot_matches_full_oracle(&update.snapshot, new);
+    let paragraph = update
+        .snapshot
+        .tree()
+        .root()
+        .children()
+        .filter_map(|child| match child {
+            SyntaxElement::Node(node)
+                if node.kind() == waml_syntax::OkfMarkdownSyntaxKind::Paragraph =>
+            {
+                Some(node)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paragraph.len(),
+        1,
+        "the edit merges both uses into one block"
+    );
+    let owner = waml_syntax::syntax_identity(&paragraph[0]).unwrap();
+    assert_eq!(
+        update.snapshot.queries().reference_backlinks("id").as_ref(),
+        &[owner],
+        "every reused link names its surviving block"
+    );
+    assert_eq!(
+        update
+            .snapshot
+            .queries()
+            .links()
+            .map(|link| link.identity)
+            .collect::<Vec<_>>(),
+        vec![owner, owner]
+    );
+}
+
+#[test]
 fn definition_change_does_not_mask_named_bridge_fallback() {
     // This fails if reference handling replaces a bridge Full outcome.
     let old = "---\n---\n\n[id]: /one\n\nuse [x][id]\n";

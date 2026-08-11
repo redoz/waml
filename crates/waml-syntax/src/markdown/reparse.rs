@@ -351,6 +351,113 @@ fn replace_identity_at_path(
         .map_err(|_| ParseError::WidthOverflow)
 }
 
+/// Re-stamps every link's owner annotation with the identity of the inline
+/// root that actually contains it in `root`.
+///
+/// A link's owner annotation names its containing block, and reference
+/// backlinks are keyed by that identity. Incremental reuse keeps a link's green
+/// node verbatim — deliberately, so link identities stay stable — and the owner
+/// annotation rides along. When an edit merges two blocks (deleting the last
+/// line of a paragraph so the blank line behind it becomes that paragraph's
+/// terminator), the surviving inline root has one identity but the reused links
+/// still name the two dead ones, so `reference_backlinks` reports two owners
+/// where a full parse reports one.
+pub(crate) fn restamp_inline_owners(
+    root: &GreenNode<OkfMarkdownLanguage>,
+) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
+    restamp_node(root, None)
+}
+
+/// The blocks `inline::rebuild` hands to the inline phase as an owner.
+fn is_inline_root(kind: OkfMarkdownSyntaxKind) -> bool {
+    matches!(
+        kind,
+        OkfMarkdownSyntaxKind::Paragraph
+            | OkfMarkdownSyntaxKind::ListItem
+            | OkfMarkdownSyntaxKind::AtxHeading
+            | OkfMarkdownSyntaxKind::SetextHeading
+            | OkfMarkdownSyntaxKind::TableCell
+    )
+}
+
+fn green_identity_data(node: &GreenNode<OkfMarkdownLanguage>) -> Option<Arc<str>> {
+    let mut annotations = node
+        .annotations()
+        .iter()
+        .filter(|annotation| annotation.kind() == "waml.markdown.identity");
+    let annotation = annotations.next()?;
+    if annotations.next().is_some() {
+        return None;
+    }
+    annotation.data().map(Arc::from)
+}
+
+fn restamp_node(
+    node: &GreenNode<OkfMarkdownLanguage>,
+    owner: Option<&Arc<str>>,
+) -> Result<GreenNode<OkfMarkdownLanguage>, ParseError> {
+    let own_identity = is_inline_root(node.kind())
+        .then(|| green_identity_data(node))
+        .flatten();
+    let owner = own_identity.as_ref().or(owner);
+    let mut annotations = None;
+    if matches!(
+        node.kind(),
+        OkfMarkdownSyntaxKind::Link
+            | OkfMarkdownSyntaxKind::Image
+            | OkfMarkdownSyntaxKind::Autolink
+    ) {
+        if let Some(owner) = owner {
+            let stale = node.annotations().iter().any(|annotation| {
+                annotation.kind() == super::inline::owner_annotation()
+                    && annotation.data() != Some(owner.as_ref())
+            });
+            if stale {
+                annotations = Some(
+                    node.annotations()
+                        .iter()
+                        .map(|annotation| {
+                            if annotation.kind() == super::inline::owner_annotation() {
+                                crate::SyntaxAnnotation::new(
+                                    annotation.id(),
+                                    annotation.kind().to_owned(),
+                                    Some(owner.clone()),
+                                )
+                            } else {
+                                annotation.clone()
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
+    let mut changed = annotations.is_some();
+    let mut children = Vec::with_capacity(node.children().len());
+    for child in node.children() {
+        match child {
+            GreenElement::Node(child_node) => {
+                let restamped = restamp_node(child_node, owner)?;
+                changed |= !Arc::ptr_eq(child_node, &restamped);
+                children.push(GreenElement::Node(restamped));
+            }
+            GreenElement::Token(_) => children.push(child.clone()),
+        }
+    }
+    if !changed {
+        return Ok(node.clone());
+    }
+    GreenFactory::new()
+        .node_with_annotations(
+            node.kind(),
+            children,
+            annotations
+                .map(Arc::from)
+                .unwrap_or_else(|| node.annotations().into()),
+        )
+        .map_err(|_| ParseError::WidthOverflow)
+}
+
 fn collect_reusable(
     node: &GreenNode<OkfMarkdownLanguage>,
     start: TextSize,
