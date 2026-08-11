@@ -126,9 +126,7 @@ pub(crate) struct ZoomState {
 impl ZoomState {
     pub(crate) fn get(&mut self, target: ZoomTarget) -> u32 {
         match target {
-            ZoomTarget::Reading => *self
-                .reading
-                .get_or_insert_with(crate::config::reading_zoom),
+            ZoomTarget::Reading => *self.reading.get_or_insert_with(crate::config::reading_zoom),
             ZoomTarget::Source => *self.source.get_or_insert_with(crate::config::source_zoom),
         }
     }
