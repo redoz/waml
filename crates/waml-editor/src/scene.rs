@@ -557,7 +557,13 @@ fn entangled_group_pairs(
 /// Split out of `stress_layout` so containment-aware routing is testable
 /// against hand-placed geometry (the stress solve's own placement is not
 /// controllable enough to stage a crossing).
+struct SceneRoutePolicy<'a> {
+    hard_obstacles: &'a [Rect],
+    cost: &'a route::RouteCost,
+}
+
 #[allow(clippy::type_complexity)]
+#[inline(never)]
 fn route_with_groups(
     keys: &[String],
     rects: &[Rect],
@@ -565,6 +571,7 @@ fn route_with_groups(
     group_specs: &[stress::GroupSpec],
     group_depths: &[u8],
     route_edges: &[(BoxId, BoxId)],
+    policy: &SceneRoutePolicy,
 ) -> (
     Vec<waml::solve::Route>,
     std::collections::BTreeMap<BoxId, Rect>,
@@ -578,6 +585,9 @@ fn route_with_groups(
         .collect();
     for (i, hull) in hulls.iter().enumerate() {
         rect_map.insert(BoxId::Group(i as u32), *hull);
+    }
+    for (i, obstacle) in policy.hard_obstacles.iter().enumerate() {
+        rect_map.insert(BoxId::Inline(i as u32), *obstacle);
     }
 
     // One `Box` per group (flat: `GroupSpec::members` already includes every
@@ -604,8 +614,31 @@ fn route_with_groups(
         })
         .collect();
 
-    let routes = route::route(&boxes, &rect_map, route_edges, &SolveConfig::default());
+    let keyed = route_edges
+        .iter()
+        .map(|(source, target)| (source.clone(), target.clone(), None, None))
+        .collect::<Vec<_>>();
+    let routes = route::route_keyed_with(
+        &boxes,
+        &rect_map,
+        &keyed,
+        &SolveConfig::default(),
+        policy.cost,
+    );
     (routes, rect_map, boxes)
+}
+
+const USE_CASE_CROSSING_PENALTY: f64 = 2048.0;
+
+fn diagram_route_cost(kind: waml::model::DiagramKind) -> route::RouteCost {
+    if kind == waml::model::DiagramKind::UseCase {
+        route::RouteCost {
+            crossing: USE_CASE_CROSSING_PENALTY,
+            ..route::RouteCost::default()
+        }
+    } else {
+        route::RouteCost::default()
+    }
 }
 
 /// Order-independent key for an unordered box pair (local twin of
@@ -646,6 +679,7 @@ fn connected_pairs(edges: &[(BoxId, BoxId)]) -> std::collections::BTreeSet<(BoxI
 /// land on `layout_constrained`'s own extra-var space, which starts after
 /// EVERY id (including the appended ones).
 #[allow(clippy::type_complexity)]
+#[inline(never)]
 fn stress_layout(
     diagram: &Diagram,
     compiled: &constrain::Compiled,
@@ -744,17 +778,9 @@ fn stress_layout(
         .map(|e| (BoxId::Node(e.source.clone()), BoxId::Node(e.target.clone())))
         .collect();
     let group_depths: Vec<u8> = compiled.group_meta.iter().map(|(_, d, _)| *d).collect();
-    let (routes, rect_map, boxes) = route_with_groups(
-        &keys,
-        &rects,
-        &hulls,
-        &compiled.group_specs,
-        &group_depths,
-        &route_edges,
-    );
-
     let groups: Vec<SolvedGroup> = hulls
-        .into_iter()
+        .iter()
+        .copied()
         .zip(compiled.group_meta.iter())
         .map(|(rect, (title, depth, shape))| SolvedGroup {
             rect,
@@ -763,6 +789,28 @@ fn stress_layout(
             depth: *depth,
         })
         .collect();
+    let hard_obstacles = if diagram.kind == waml::model::DiagramKind::UseCase {
+        project_use_case_scene_groups(diagram, &groups)
+            .into_iter()
+            .filter(|group| group.role != waml::model::DiagramGroupRole::ExternalActors)
+            .map(|group| group.heading_bounds)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let route_cost = diagram_route_cost(diagram.kind);
+    let (routes, rect_map, boxes) = route_with_groups(
+        &keys,
+        &rects,
+        &hulls,
+        &compiled.group_specs,
+        &group_depths,
+        &route_edges,
+        &SceneRoutePolicy {
+            hard_obstacles: &hard_obstacles,
+            cost: &route_cost,
+        },
+    );
 
     let mut flags: BTreeMap<String, FlagSet> = BTreeMap::new();
     for (key, flag) in keys.iter().take(n).zip(compiled.flags.iter()) {
@@ -935,6 +983,7 @@ fn fallback_route(source: Rect, target: Rect) -> Vec<(f64, f64)> {
 }
 
 /// Solve `diagram` against `model` and flatten the result into a `Scene`.
+#[inline(never)]
 pub fn build_scene(
     model: &Model,
     diagram: &Diagram,
@@ -1091,17 +1140,6 @@ pub fn build_scene(
                 points,
             });
             edge_endpoint_keys.push((e.source.clone(), e.target.clone()));
-            if let Some(edge) = edges.last_mut() {
-                let source_toward = (target.x + target.w / 2.0, target.y + target.h / 2.0);
-                let target_toward = (source.x + source.w / 2.0, source.y + source.h / 2.0);
-                if let Some(port) = ports.get(&e.source) {
-                    edge.points[0] = waml::solve::route::boundary_port(port, source_toward);
-                }
-                if let Some(port) = ports.get(&e.target) {
-                    let last = edge.points.len() - 1;
-                    edge.points[last] = waml::solve::route::boundary_port(port, target_toward);
-                }
-            }
         }
     }
 
@@ -1117,12 +1155,13 @@ pub fn build_scene(
     // desynced, degrading to a plain placement pass.
     let requests = crate::edge_labels::label_requests_with_policy(&edges, &display, policy);
     let mut routes: Vec<Vec<(f64, f64)>> = edges.iter().map(|e| e.points.clone()).collect();
-    let unresolved = waml::solve::place_labels_with_reroute(
+    let unresolved = waml::solve::place_labels_with_reroute_cost(
         &mut solved,
         &routing.context(&SolveConfig::default()),
         &mut routes,
         &requests,
         &waml::solve::label::LabelConfig::default(),
+        diagram_route_cost(diagram.kind),
     );
     // A reroute moves polylines, and the scene draws from `edges`, not from
     // `solved.routes`.
@@ -1133,14 +1172,10 @@ pub fn build_scene(
         if edge.points.len() < 2 {
             continue;
         }
-        let source_toward = edge.points[1];
-        let target_toward = edge.points[edge.points.len() - 2];
-        if let Some(port) = ports.get(source_key) {
-            edge.points[0] = waml::solve::route::boundary_port(port, source_toward);
-        }
-        if let Some(port) = ports.get(target_key) {
-            let last = edge.points.len() - 1;
-            edge.points[last] = waml::solve::route::boundary_port(port, target_toward);
+        if let (Some(source_port), Some(target_port)) =
+            (ports.get(source_key), ports.get(target_key))
+        {
+            waml::solve::route::clip_route_endpoints(&mut edge.points, source_port, target_port);
         }
     }
     debug_assert!(
@@ -1476,6 +1511,202 @@ pub fn bounding_box(scene: &Scene) -> Option<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn real_use_case_scene(title: &str) -> Scene {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/waml");
+        let model = crate::load::load_model(&root).unwrap();
+        let diagram = model
+            .diagrams
+            .iter()
+            .find(|diagram| diagram.title == title)
+            .unwrap();
+        build_scene(
+            &model,
+            diagram,
+            test_display(),
+            &std::collections::HashSet::new(),
+        )
+        .0
+    }
+
+    fn editor_workflow_scene() -> Scene {
+        real_use_case_scene("Editor Workflows")
+    }
+
+    fn proper_segment_crossing(a: (f64, f64), b: (f64, f64), c: (f64, f64), d: (f64, f64)) -> bool {
+        fn orient(a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> f64 {
+            (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+        }
+        let (o1, o2, o3, o4) = (
+            orient(a, b, c),
+            orient(a, b, d),
+            orient(c, d, a),
+            orient(c, d, b),
+        );
+        o1 * o2 < -1e-6 && o3 * o4 < -1e-6
+    }
+
+    fn route_crossings(scene: &Scene) -> usize {
+        let mut count = 0;
+        for i in 0..scene.edges.len() {
+            for j in (i + 1)..scene.edges.len() {
+                let left_edge = &scene.edges[i];
+                let right_edge = &scene.edges[j];
+                if [left_edge.source, left_edge.target].iter().any(|endpoint| {
+                    *endpoint == right_edge.source || *endpoint == right_edge.target
+                }) {
+                    continue;
+                }
+                for left in scene.edges[i].points.windows(2) {
+                    for right in scene.edges[j].points.windows(2) {
+                        count += usize::from(proper_segment_crossing(
+                            left[0], left[1], right[0], right[1],
+                        ));
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn real_editor_workflow_has_at_most_four_route_crossings() {
+        let scene = editor_workflow_scene();
+        let crossings = route_crossings(&scene);
+        assert!(crossings <= 4, "Editor Workflows has {crossings} crossings");
+    }
+
+    #[test]
+    fn real_editor_workflow_routes_avoid_every_heading_strip() {
+        fn cuts(rect: Rect, a: (f64, f64), b: (f64, f64)) -> bool {
+            let min_x = a.0.min(b.0);
+            let max_x = a.0.max(b.0);
+            let min_y = a.1.min(b.1);
+            let max_y = a.1.max(b.1);
+            min_x < rect.x + rect.w && max_x > rect.x && min_y < rect.y + rect.h && max_y > rect.y
+        }
+        let scene = editor_workflow_scene();
+        for edge in &scene.edges {
+            for segment in edge.points.windows(2) {
+                for group in &scene.use_case_groups {
+                    if group.role == waml::model::DiagramGroupRole::ExternalActors {
+                        continue;
+                    }
+                    assert!(
+                        !cuts(group.heading_bounds, segment[0], segment[1]),
+                        "edge {:?}->{:?} crosses heading {:?}",
+                        edge.source,
+                        edge.target,
+                        group.title
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn real_editor_workflow_routes_are_orthogonal() {
+        let scene = editor_workflow_scene();
+        for edge in &scene.edges {
+            for segment in edge.points.windows(2) {
+                assert!(
+                    (segment[0].0 - segment[1].0).abs() < 1e-6
+                        || (segment[0].1 - segment[1].1).abs() < 1e-6,
+                    "diagonal route segment: {:?}",
+                    segment
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_real_use_case_document_has_bounded_orthogonal_routes() {
+        for title in [
+            "Editor Workflows",
+            "Browser and Publishing Workflows",
+            "Tooling Workflows",
+        ] {
+            let scene = real_use_case_scene(title);
+            for edge in &scene.edges {
+                assert!(
+                    edge.points.len() <= 32,
+                    "{title} route has {} points: {:?}",
+                    edge.points.len(),
+                    edge.points
+                );
+                for segment in edge.points.windows(2) {
+                    assert!(
+                        (segment[0].0 - segment[1].0).abs() < 1e-6
+                            || (segment[0].1 - segment[1].1).abs() < 1e-6,
+                        "{title} diagonal route segment: {segment:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn actor_fanout_terminal_segments_are_orthogonal_and_distinct() {
+        let scene = editor_workflow_scene();
+        for actor in ["author", "reader"] {
+            let actor_rect = scene
+                .nodes
+                .iter()
+                .find(|node| node.key.ends_with(actor))
+                .map(|node| node.rect)
+                .unwrap();
+            let mut ports = Vec::new();
+            for edge in &scene.edges {
+                let endpoint = if edge_endpoint_key(&scene, edge, true)
+                    .is_some_and(|key| key.ends_with(actor))
+                {
+                    Some((edge.points[0], edge.points[1]))
+                } else if edge_endpoint_key(&scene, edge, false)
+                    .is_some_and(|key| key.ends_with(actor))
+                {
+                    let last = edge.points.len() - 1;
+                    Some((edge.points[last], edge.points[last - 1]))
+                } else {
+                    None
+                };
+                if let Some((port, neighbour)) = endpoint {
+                    assert!(
+                        (port.0 - neighbour.0).abs() < 0.0001
+                            || (port.1 - neighbour.1).abs() < 0.0001,
+                        "{actor} route leaves diagonally: {port:?} -> {neighbour:?}"
+                    );
+                    assert!(
+                        neighbour.0 >= actor_rect.x + actor_rect.w / 2.0,
+                        "{actor} route leaves away from the system boundary: {port:?} -> {neighbour:?}"
+                    );
+                    ports.push(port);
+                }
+            }
+            ports.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+            ports.dedup();
+            assert!(ports.len() >= 4, "{actor} fanout collapsed to {ports:?}");
+        }
+    }
+
+    fn edge_endpoint_key<'a>(scene: &'a Scene, edge: &SceneEdge, source: bool) -> Option<&'a str> {
+        let rect = if source { edge.source } else { edge.target };
+        scene
+            .nodes
+            .iter()
+            .find(|node| node.rect == rect)
+            .map(|node| node.key.as_str())
+    }
+
+    #[test]
+    fn real_editor_workflow_geometry_is_stable_across_repeated_solves() {
+        let first = editor_workflow_scene();
+        for _ in 0..5 {
+            let next = editor_workflow_scene();
+            assert_eq!(next.nodes, first.nodes);
+            assert_eq!(next.edges, first.edges);
+            assert_eq!(next.labels, first.labels);
+        }
+    }
 
     #[test]
     fn real_editor_workflow_scene_preserves_nested_band_roles_and_titles() {
@@ -2504,6 +2735,10 @@ mod tests {
             &specs,
             &[0],
             &route_edges,
+            &SceneRoutePolicy {
+                hard_obstacles: &[],
+                cost: &route::RouteCost::default(),
+            },
         );
 
         assert!(
@@ -3204,6 +3439,10 @@ mod tests {
                     &compiled.group_specs,
                     &depths,
                     &route_edges,
+                    &SceneRoutePolicy {
+                        hard_obstacles: &[],
+                        cost: &route::RouteCost::default(),
+                    },
                 );
 
                 let centers: Vec<(f64, f64)> = rects

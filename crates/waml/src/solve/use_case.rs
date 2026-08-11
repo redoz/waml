@@ -64,6 +64,7 @@ pub fn defaults(
     }
 }
 
+#[inline(never)]
 pub fn resolve_use_case(
     diagram: &Diagram,
     relationships: &[(BoxId, BoxId)],
@@ -152,7 +153,7 @@ fn stable_band_order(
         .iter()
         .enumerate()
         .map(|(index, key)| {
-            let adjacent_actor = relationships
+            let mut adjacent_actors = relationships
                 .iter()
                 .filter_map(|(a, b)| match (a, b) {
                     (BoxId::Node(left), BoxId::Node(right)) if left == key => actor_rank.get(right),
@@ -160,13 +161,29 @@ fn stable_band_order(
                     _ => None,
                 })
                 .copied()
-                .min()
-                .unwrap_or(usize::MAX);
-            (key.clone(), adjacent_actor, index)
+                .collect::<Vec<_>>();
+            adjacent_actors.sort_unstable();
+            adjacent_actors.dedup();
+            let rank_sum = adjacent_actors
+                .iter()
+                .map(|rank| *rank as u128)
+                .sum::<u128>();
+            (key.clone(), adjacent_actors, rank_sum, index)
         })
         .collect::<Vec<_>>();
-    indexed.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.0.cmp(&b.0)));
-    indexed.into_iter().map(|(key, _, _)| key).collect()
+    indexed.sort_by(|a, b| {
+        match (a.1.is_empty(), b.1.is_empty()) {
+            (false, true) => std::cmp::Ordering::Less,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, false) => (a.2 * b.1.len() as u128)
+                .cmp(&(b.2 * a.1.len() as u128))
+                .then(a.1.cmp(&b.1)),
+            (true, true) => std::cmp::Ordering::Equal,
+        }
+        .then(a.3.cmp(&b.3))
+        .then(a.0.cmp(&b.0))
+    });
+    indexed.into_iter().map(|(key, _, _, _)| key).collect()
 }
 
 fn add_member_constraints(

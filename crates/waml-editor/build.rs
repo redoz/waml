@@ -5,7 +5,20 @@
 // waml mark instead of Makepad's stock glyph. No-op on every other platform.
 fn main() {
     embed_icon();
+    configure_windows_stack();
 }
+
+#[cfg(windows)]
+fn configure_windows_stack() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!("cargo:rustc-link-arg-bin=waml-editor=/STACK:8388608");
+    }
+}
+
+#[cfg(not(windows))]
+fn configure_windows_stack() {}
 
 // `winresource` is a `cfg(windows)` build-dependency, so it only exists on a
 // Windows *host*. Gate the reference to it with the same host cfg or the crate

@@ -83,16 +83,17 @@ pub(super) fn draw_edges(
             && screen.len() >= 2
         {
             draws.actor_line.color = draws.edge.color;
-            let geometry =
-                dash_segment_geometry(screen[0], screen[screen.len() - 1], thickness, dpi, 0.0);
-            draws
-                .actor_line
-                .set_uniform(cx, live_id!(from), &geometry.from);
-            draws.actor_line.set_uniform(cx, live_id!(to), &geometry.to);
-            draws
-                .actor_line
-                .set_uniform(cx, live_id!(stroke_w), &[thickness as f32]);
-            draws.actor_line.draw_abs(cx, geometry.quad);
+            for segment in screen.windows(2) {
+                let geometry = dash_segment_geometry(segment[0], segment[1], thickness, dpi, 0.0);
+                draws
+                    .actor_line
+                    .set_uniform(cx, live_id!(from), &geometry.from);
+                draws.actor_line.set_uniform(cx, live_id!(to), &geometry.to);
+                draws
+                    .actor_line
+                    .set_uniform(cx, live_id!(stroke_w), &[thickness as f32]);
+                draws.actor_line.draw_abs(cx, geometry.quad);
+            }
             continue;
         }
         let mut radius = vec![0.0f64; n];

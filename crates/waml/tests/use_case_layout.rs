@@ -126,6 +126,81 @@ fn relationship_adjacency_reorders_only_members_and_is_deterministic() {
 }
 
 #[test]
+fn shared_actor_adjacency_sits_between_single_actor_members() {
+    let diagram = diagram(
+        "\n## Members\n\n### Actors\n- [Primary](./primary.md)\n- [Secondary](./secondary.md)\n\n### Boundary\n\n#### Work\n- [Shared](./shared.md)\n- [Secondary only](./secondary-only.md)\n- [Primary only](./primary-only.md)\n",
+        &[
+            ("primary.md", "uml.Actor"),
+            ("secondary.md", "uml.Actor"),
+            ("shared.md", "uml.UseCase"),
+            ("secondary-only.md", "uml.UseCase"),
+            ("primary-only.md", "uml.UseCase"),
+        ],
+    );
+    let relationships = vec![
+        (
+            BoxId::Node("primary-only".into()),
+            BoxId::Node("primary".into()),
+        ),
+        (BoxId::Node("shared".into()), BoxId::Node("primary".into())),
+        (
+            BoxId::Node("shared".into()),
+            BoxId::Node("secondary".into()),
+        ),
+        (
+            BoxId::Node("secondary-only".into()),
+            BoxId::Node("secondary".into()),
+        ),
+    ];
+
+    let scene = resolve_use_case(&diagram, &relationships).0;
+
+    assert!(scene.constraints.contains(&Constraint::Place {
+        a: BoxId::Node("primary-only".into()),
+        b: BoxId::Node("shared".into()),
+        dir: Direction::LeftOf,
+    }));
+    assert!(scene.constraints.contains(&Constraint::Place {
+        a: BoxId::Node("shared".into()),
+        b: BoxId::Node("secondary-only".into()),
+        dir: Direction::LeftOf,
+    }));
+}
+
+#[test]
+fn disconnected_direct_boundary_members_stay_in_the_boundary() {
+    let diagram = diagram(
+        "\n## Members\n\n### Boundary\n- [Direct orphan](./direct-orphan.md)\n\n#### Connected band\n- [Connected](./connected.md)\n",
+        &[
+            ("direct-orphan.md", "uml.UseCase"),
+            ("connected.md", "uml.UseCase"),
+        ],
+    );
+    let relationships = [(
+        BoxId::Node("connected".into()),
+        BoxId::Node("direct-orphan".into()),
+    )];
+
+    let scene = resolve_use_case(&diagram, &relationships).0;
+    let boundary = scene
+        .boxes
+        .iter()
+        .find(|item| item.id == BoxId::Group(0))
+        .unwrap();
+    let band = scene
+        .boxes
+        .iter()
+        .find(|item| item.id == BoxId::Group(1))
+        .unwrap();
+
+    assert!(boundary
+        .children
+        .contains(&BoxId::Node("direct-orphan".into())));
+    assert!(boundary.children.contains(&BoxId::Group(1)));
+    assert!(band.children.contains(&BoxId::Node("connected".into())));
+}
+
+#[test]
 fn large_band_uses_a_balanced_stable_grid() {
     let diagram = diagram(
         "\n## Members\n\n### Boundary\n\n#### Work\n- [A](./a.md)\n- [B](./b.md)\n- [C](./c.md)\n- [D](./d.md)\n- [E](./e.md)\n- [F](./f.md)\n",

@@ -424,6 +424,27 @@ pub fn place_labels_with_reroute(
     requests: &[label::LabelRequest],
     cfg: &label::LabelConfig,
 ) -> Vec<label::LabelRequest> {
+    place_labels_with_reroute_cost(
+        solved,
+        routing,
+        routes,
+        requests,
+        cfg,
+        route::RouteCost::default(),
+    )
+}
+
+/// `place_labels_with_reroute` with an explicit base route cost. Callers that
+/// opt into crossing-aware routing use the same policy when a label requests a
+/// replay; all existing callers keep byte-identical default geometry.
+pub fn place_labels_with_reroute_cost(
+    solved: &mut Solved,
+    routing: &RoutingContext,
+    routes: &mut [Vec<(f64, f64)>],
+    requests: &[label::LabelRequest],
+    cfg: &label::LabelConfig,
+    base_cost: route::RouteCost,
+) -> Vec<label::LabelRequest> {
     // Only the ROUTES move here, never the nodes or groups the labels dodge.
     let obstacles = label_obstacles(solved);
     let original: Vec<Vec<(f64, f64)>> = routes.to_vec();
@@ -444,7 +465,7 @@ pub fn place_labels_with_reroute(
 
     let cost = route::RouteCost {
         label_pressure: REROUTE_LABEL_PRESSURE,
-        ..route::RouteCost::default()
+        ..base_cost
     };
     let mut best_score = placement_score(&placement);
     let mut best_routes = original.clone();
@@ -689,6 +710,38 @@ mod tests {
             "the blocked edge should have moved"
         );
         assert_eq!(before.len(), c.solved.routes.len());
+    }
+
+    #[test]
+    fn crossing_aware_label_reroute_is_bounded_and_deterministic() {
+        let solve = || {
+            let mut c = crowded_scene_where_one_label_cannot_fit();
+            let requests = crowded_label_requests();
+            let unresolved = place_labels_with_reroute_cost(
+                &mut c.solved,
+                &RoutingContext {
+                    boxes: &c.boxes,
+                    rects: &c.rects,
+                    edges: &c.edges,
+                    cfg: &SolveConfig::default(),
+                },
+                &mut c.routes,
+                &requests,
+                &crowded_label_config(),
+                route::RouteCost {
+                    crossing: 2_048.0,
+                    ..route::RouteCost::default()
+                },
+            );
+            assert!(unresolved.is_empty(), "the label must still be drawn");
+            assert_eq!(c.solved.label_reroutes, 1);
+            (c.solved.routes, c.solved.labels)
+        };
+
+        let first = solve();
+        for _ in 0..5 {
+            assert_eq!(solve(), first);
+        }
     }
 
     #[test]

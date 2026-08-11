@@ -90,6 +90,45 @@ pub fn boundary_port(geometry: &PortGeometry, toward: (f64, f64)) -> (f64, f64) 
     }
 }
 
+/// Clip both endpoints to measured node geometry without introducing a
+/// diagonal terminal segment. The rectangular attachment point becomes a
+/// short routing rail. This preserves the router's stable side and lane while
+/// the visible endpoint moves to an actor figure or an ellipse.
+pub fn clip_route_endpoints(
+    points: &mut Vec<(f64, f64)>,
+    source: &PortGeometry,
+    target: &PortGeometry,
+) {
+    fn clip_start(points: &mut Vec<P>, geometry: &PortGeometry) {
+        if points.len() < 2 {
+            return;
+        }
+        let old = points[0];
+        let neighbour = points[1];
+        let port = boundary_port(geometry, neighbour);
+        let horizontal = (old.1 - neighbour.1).abs() < 1e-9;
+        let vertical = (old.0 - neighbour.0).abs() < 1e-9;
+        let mut prefix = vec![port];
+        if horizontal {
+            prefix.push((old.0, port.1));
+            prefix.push(old);
+        } else if vertical {
+            prefix.push((port.0, old.1));
+            prefix.push(old);
+        } else {
+            prefix.push((neighbour.0, port.1));
+        }
+        prefix.extend_from_slice(&points[1..]);
+        *points = simplify(prefix);
+    }
+
+    clip_start(points, source);
+    points.reverse();
+    clip_start(points, target);
+    points.reverse();
+    *points = simplify(std::mem::take(points));
+}
+
 fn rectangle_port(rect: Rect, toward: (f64, f64)) -> (f64, f64) {
     let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
     let mut delta = (toward.0 - center.0, toward.1 - center.1);
@@ -178,6 +217,9 @@ pub struct RouteCost {
     pub length: f64,
     /// Cost per direction change.
     pub bend: f64,
+    /// Cost for crossing one segment of a route that was selected earlier in
+    /// the same deterministic routing pass. Zero keeps legacy geometry.
+    pub crossing: f64,
     /// Cost per unit of label band that collides with a hard obstacle. Zero in
     /// `Default`, and applied only to edges that actually carry a label, so
     /// unlabelled edges route byte-identically to before this existed.
@@ -189,6 +231,7 @@ impl Default for RouteCost {
         RouteCost {
             length: 1.0,
             bend: BEND_PENALTY,
+            crossing: 0.0,
             label_pressure: 0.0,
         }
     }
@@ -236,6 +279,7 @@ pub fn routable_edge_indices(
 /// to keep clear beside it (`None` for an unlabelled edge). It is a full
 /// `(width, height)`: a label needs its HEIGHT of clearance beside a horizontal
 /// run but its WIDTH beside a vertical one.
+#[inline(never)]
 pub fn route_keyed_with(
     boxes: &[Box],
     rects: &BTreeMap<BoxId, Rect>,
@@ -244,6 +288,11 @@ pub fn route_keyed_with(
     cost: &RouteCost,
 ) -> Vec<Route> {
     let membership = build_membership(boxes);
+    let port_slots = if cost.crossing > 0.0 {
+        stable_port_slots(rects, edges)
+    } else {
+        BTreeMap::new()
+    };
     // P-3: the full obstacle candidate list (every leaf + every group, sorted
     // by id) is invariant across edges, so build it ONCE per solve and mask it
     // per edge instead of walking `rects` and re-sorting for every edge. A
@@ -257,8 +306,48 @@ pub fn route_keyed_with(
         })
         .collect();
     all_obstacles.sort_by(|a, b| a.id.cmp(&b.id)); // deterministic order
-    let mut routes: Vec<Route> = Vec::new();
-    for (s, t, key, label_size) in edges {
+    let mut edge_order = (0..edges.len()).collect::<Vec<_>>();
+    if cost.crossing > 0.0 {
+        edge_order.sort_by(|&a, &b| {
+            let endpoint_key = |edge_index: usize| {
+                let (source, target, _, _) = &edges[edge_index];
+                let empty = Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                };
+                let source_rect = rects.get(source).copied().unwrap_or(empty);
+                let target_rect = rects.get(target).copied().unwrap_or(empty);
+                let source_center = (
+                    source_rect.x + source_rect.w / 2.0,
+                    source_rect.y + source_rect.h / 2.0,
+                );
+                let target_center = (
+                    target_rect.x + target_rect.w / 2.0,
+                    target_rect.y + target_rect.h / 2.0,
+                );
+                if source_center.0.total_cmp(&target_center.0).is_lt() {
+                    (source_center, target_center, source, target)
+                } else {
+                    (target_center, source_center, target, source)
+                }
+            };
+            let (al, ar, alk, ark) = endpoint_key(a);
+            let (bl, br, blk, brk) = endpoint_key(b);
+            al.1.total_cmp(&bl.1)
+                .then(al.0.total_cmp(&bl.0))
+                .then(alk.cmp(blk))
+                .then(ar.1.total_cmp(&br.1))
+                .then(ar.0.total_cmp(&br.0))
+                .then(ark.cmp(brk))
+                .then(a.cmp(&b))
+        });
+    }
+    let mut routed: Vec<(usize, Route, Vec<Rect>)> = Vec::new();
+    let mut prior_routes: Vec<Route> = Vec::new();
+    for edge_index in edge_order {
+        let (s, t, key, label_size) = &edges[edge_index];
         let Some((source, target, src, tgt)) = routable(rects, s, t) else {
             continue;
         };
@@ -272,27 +361,207 @@ pub fn route_keyed_with(
                 BoxId::Group(_) => {
                     !membership.is_member(&o.id, s) && !membership.is_member(&o.id, t)
                 }
-                BoxId::Inline(_) => false, // never an obstacle (matches leaf/group_obstacles)
+                // Caller-supplied inline rectangles are hard obstacles. They
+                // are not endpoints and get no group-membership exemption.
+                BoxId::Inline(_) => true,
             })
             .collect();
         let inflated: Vec<Rect> = obstacles
             .iter()
             .map(|o| inflate(o.rect, ROUTE_MARGIN))
             .collect();
-        let (ovg, srcv, tgtv) = build_ovg(&inflated, src, tgt);
+        let (ovg, src_all, tgt_all) = build_ovg(&inflated, src, tgt);
+        let source_slot = port_slots.get(&(edge_index, true)).copied();
+        let target_slot = port_slots.get(&(edge_index, false)).copied();
+        let src_side = side_candidates(&ovg, &src_all, &src, source_slot);
+        let tgt_side = side_candidates(&ovg, &tgt_all, &tgt, target_slot);
+        let src_assigned = assigned_candidates(&ovg, &src_all, &src, source_slot);
+        let tgt_assigned = assigned_candidates(&ovg, &tgt_all, &tgt, target_slot);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let points = astar(&ovg, &srcv, &tgtv, goal, cost, &inflated, *label_size)
-            .unwrap_or_else(|| fallback_l(src, tgt));
-        routes.push(Route {
+        let source_is_left = src.x + src.w / 2.0 <= tgt.x + tgt.w / 2.0;
+        let (relaxed_source, relaxed_target) = if source_is_left {
+            (src_side.as_slice(), tgt_all.as_slice())
+        } else {
+            (src_all.as_slice(), tgt_side.as_slice())
+        };
+        let attempts = [
+            (src_assigned.as_slice(), tgt_assigned.as_slice()),
+            (src_side.as_slice(), tgt_side.as_slice()),
+            (relaxed_source, relaxed_target),
+            (src_all.as_slice(), tgt_all.as_slice()),
+        ];
+        let environment = AstarEnvironment {
+            cost,
+            inflated: &inflated,
+            label_size: *label_size,
+            prior_routes: &prior_routes,
+        };
+        let mut points = None;
+        for (sources, targets) in attempts {
+            points = astar(&ovg, sources, targets, goal, &environment);
+            if points.is_some() {
+                break;
+            }
+        }
+        let points = points.unwrap_or_else(|| fallback_l(src, tgt));
+        let route = Route {
             points,
             source,
             target,
             key: key.clone(),
-        });
+        };
+        prior_routes.push(route.clone());
+        routed.push((edge_index, route, inflated));
     }
-    hub_spread(&mut routes, rects);
-    nudge(&mut routes);
+    routed.sort_by_key(|(edge_index, _, _)| *edge_index);
+    let (mut routes, route_obstacles): (Vec<_>, Vec<_>) = routed
+        .into_iter()
+        .map(|(_, route, obstacles)| (route, obstacles))
+        .unzip();
+    if cost.crossing <= 0.0 {
+        hub_spread(&mut routes, rects);
+        nudge(&mut routes);
+    } else {
+        nudge_crossing_safe(&mut routes, &route_obstacles);
+    }
     routes
+}
+
+#[derive(Clone, Copy)]
+struct PortSlot {
+    side: Side,
+    rank: usize,
+    count: usize,
+}
+
+type PortIncident = (usize, bool, f64, BoxId);
+
+fn preferred_side(from: Rect, toward: Rect) -> Side {
+    let from_center = (from.x + from.w / 2.0, from.y + from.h / 2.0);
+    let toward_center = (toward.x + toward.w / 2.0, toward.y + toward.h / 2.0);
+    let dx = toward_center.0 - from_center.0;
+    let dy = toward_center.1 - from_center.1;
+    if dx.abs() >= dy.abs() {
+        if dx >= 0.0 {
+            Side::Right
+        } else {
+            Side::Left
+        }
+    } else if dy >= 0.0 {
+        Side::Bottom
+    } else {
+        Side::Top
+    }
+}
+
+#[inline(never)]
+fn stable_port_slots(
+    rects: &BTreeMap<BoxId, Rect>,
+    edges: &[KeyedEdge],
+) -> BTreeMap<(usize, bool), PortSlot> {
+    let leftmost_center = rects
+        .iter()
+        .filter(|(id, _)| matches!(id, BoxId::Node(_)))
+        .map(|(_, rect)| rect.x + rect.w / 2.0)
+        .min_by(f64::total_cmp)
+        .unwrap_or(0.0);
+    let mut groups: BTreeMap<(BoxId, Side), Vec<PortIncident>> = BTreeMap::new();
+    for (edge_index, (source, target, _, _)) in edges.iter().enumerate() {
+        let Some((_, _, source_rect, target_rect)) = routable(rects, source, target) else {
+            continue;
+        };
+        for (endpoint, other, endpoint_rect, other_rect, is_source) in [
+            (source, target, source_rect, target_rect, true),
+            (target, source, target_rect, source_rect, false),
+        ] {
+            let endpoint_center_x = endpoint_rect.x + endpoint_rect.w / 2.0;
+            let other_center = (
+                other_rect.x + other_rect.w / 2.0,
+                other_rect.y + other_rect.h / 2.0,
+            );
+            let side = if (endpoint_center_x - leftmost_center).abs() < 1e-9
+                && other_center.0 > endpoint_center_x
+            {
+                Side::Right
+            } else {
+                preferred_side(endpoint_rect, other_rect)
+            };
+            let along = if matches!(side, Side::Left | Side::Right) {
+                other_center.1
+            } else {
+                other_center.0
+            };
+            groups.entry((endpoint.clone(), side)).or_default().push((
+                edge_index,
+                is_source,
+                along,
+                other.clone(),
+            ));
+        }
+    }
+    let mut slots = BTreeMap::new();
+    for ((_endpoint, side), mut incident) in groups {
+        incident.sort_by(|a, b| {
+            a.2.total_cmp(&b.2)
+                .then(a.3.cmp(&b.3))
+                .then(a.0.cmp(&b.0))
+                .then(a.1.cmp(&b.1))
+        });
+        let count = incident.len();
+        for (rank, (edge_index, is_source, _, _)) in incident.into_iter().enumerate() {
+            slots.insert((edge_index, is_source), PortSlot { side, rank, count });
+        }
+    }
+    slots
+}
+
+fn side_candidates(
+    ovg: &Ovg,
+    candidates: &[usize],
+    rect: &Rect,
+    slot: Option<PortSlot>,
+) -> Vec<usize> {
+    let Some(slot) = slot else {
+        return candidates.to_vec();
+    };
+    let mut side = candidates
+        .iter()
+        .copied()
+        .filter(|candidate| side_of(rect, ovg.verts[*candidate]) == Some(slot.side))
+        .collect::<Vec<_>>();
+    side.sort_by(|a, b| {
+        let pa = ovg.verts[*a];
+        let pb = ovg.verts[*b];
+        let aa = if matches!(slot.side, Side::Left | Side::Right) {
+            pa.1
+        } else {
+            pa.0
+        };
+        let bb = if matches!(slot.side, Side::Left | Side::Right) {
+            pb.1
+        } else {
+            pb.0
+        };
+        aa.total_cmp(&bb).then(a.cmp(b))
+    });
+    if side.is_empty() {
+        return candidates.to_vec();
+    }
+    side
+}
+
+fn assigned_candidates(
+    ovg: &Ovg,
+    candidates: &[usize],
+    rect: &Rect,
+    slot: Option<PortSlot>,
+) -> Vec<usize> {
+    let Some(slot) = slot else {
+        return candidates.to_vec();
+    };
+    let side = side_candidates(ovg, candidates, rect, Some(slot));
+    let center = ((slot.rank + 1) * side.len() / (slot.count + 1)).min(side.len() - 1);
+    vec![side[center]]
 }
 
 /// Transitive leaf membership per group, taken from the `Box` forest child
@@ -510,6 +779,7 @@ fn axis_coords(mut v: Vec<f64>) -> Vec<f64> {
 /// obstacle, in the same order as the obstacle list used to build `A*`'s
 /// blocked-fraction lookups downstream — callers that already inflate for
 /// `astar` pass that same `Vec<Rect>` in here rather than inflating again.
+#[inline(never)]
 fn build_ovg(inflated: &[Rect], src: Rect, tgt: Rect) -> (Ovg, Vec<usize>, Vec<usize>) {
     // Interesting coordinates: inflated obstacle borders + endpoint box borders
     // + endpoint box centre lines. The centre lines give the side-midpoint
@@ -880,18 +1150,49 @@ fn band_blocked_fraction(inflated: &[Rect], a: P, b: P, size: (f64, f64)) -> f64
     best
 }
 
+fn proper_crossing(a: P, b: P, c: P, d: P) -> bool {
+    fn orient(a: P, b: P, c: P) -> f64 {
+        (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+    }
+    let (o1, o2, o3, o4) = (
+        orient(a, b, c),
+        orient(a, b, d),
+        orient(c, d, a),
+        orient(c, d, b),
+    );
+    o1 * o2 < -1e-9 && o3 * o4 < -1e-9
+}
+
+fn prior_route_crossings(routes: &[Route], a: P, b: P) -> usize {
+    routes
+        .iter()
+        .flat_map(|route| route.points.windows(2))
+        .filter(|segment| proper_crossing(a, b, segment[0], segment[1]))
+        .count()
+}
+
+struct AstarEnvironment<'a> {
+    cost: &'a RouteCost,
+    inflated: &'a [Rect],
+    label_size: Option<(f64, f64)>,
+    prior_routes: &'a [Route],
+}
+
+#[inline(never)]
 fn astar(
     ovg: &Ovg,
     sources: &[usize],
     targets: &[usize],
     goal: P,
-    cost: &RouteCost,
-    inflated: &[Rect],
-    label_size: Option<(f64, f64)>,
+    environment: &AstarEnvironment,
 ) -> Option<Vec<P>> {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
 
+    let cost = environment.cost;
+    let inflated = environment.inflated;
+    let label_size = environment.label_size;
+    let prior_routes = environment.prior_routes;
     let n = ovg.verts.len();
     let state = |v: usize, d: u8| v * 3 + d as usize;
     let mut dist = vec![f64::INFINITY; n * 3];
@@ -944,7 +1245,13 @@ fn astar(
             } else {
                 0.0
             };
-            let ng = g + len * cost.length + bend + pressure;
+            let crossing = if cost.crossing > 0.0 {
+                cost.crossing
+                    * prior_route_crossings(prior_routes, ovg.verts[v], ovg.verts[w]) as f64
+            } else {
+                0.0
+            };
+            let ng = g + len * cost.length + bend + pressure + crossing;
             let ns = state(w, nd);
             if ng + 1e-9 < dist[ns] {
                 dist[ns] = ng;
@@ -985,6 +1292,10 @@ struct Seg {
 /// coordinate) into distinct parallel lines via an order-then-push sweep.
 /// Endpoints (first/last point of each route) are never moved.
 fn nudge(routes: &mut [Route]) {
+    nudge_with_gap(routes, NUDGE_GAP);
+}
+
+fn nudge_with_gap(routes: &mut [Route], gap: f64) {
     let mut chan_h: BTreeMap<i64, Vec<Seg>> = BTreeMap::new(); // key = quantized y
     let mut chan_v: BTreeMap<i64, Vec<Seg>> = BTreeMap::new(); // key = quantized x
     let q = |c: f64| (c * 1e6).round() as i64;
@@ -1028,6 +1339,7 @@ fn nudge(routes: &mut [Route]) {
         routes: &mut [Route],
         keys: &[(String, String)],
         horizontal: bool,
+        gap: f64,
     ) {
         for (key, mut segs) in chan {
             if segs.len() < 2 {
@@ -1041,9 +1353,9 @@ fn nudge(routes: &mut [Route]) {
             });
             let base = key as f64 / 1e6;
             let m = segs.len();
-            let start = base - (m as f64 - 1.0) * NUDGE_GAP / 2.0;
+            let start = base - (m as f64 - 1.0) * gap / 2.0;
             for (k, s) in segs.iter().enumerate() {
-                let coord = start + k as f64 * NUDGE_GAP;
+                let coord = start + k as f64 * gap;
                 if horizontal {
                     routes[s.ri].points[s.a].1 = coord;
                     routes[s.ri].points[s.b].1 = coord;
@@ -1054,8 +1366,46 @@ fn nudge(routes: &mut [Route]) {
             }
         }
     }
-    sweep(chan_h, routes, &keys, true);
-    sweep(chan_v, routes, &keys, false);
+    sweep(chan_h, routes, &keys, true, gap);
+    sweep(chan_v, routes, &keys, false, gap);
+}
+
+fn route_crossings(routes: &[Route]) -> usize {
+    let mut count = 0;
+    for (i, left) in routes.iter().enumerate() {
+        for right in &routes[i + 1..] {
+            for a in left.points.windows(2) {
+                for b in right.points.windows(2) {
+                    count += usize::from(proper_crossing(a[0], a[1], b[0], b[1]));
+                }
+            }
+        }
+    }
+    count
+}
+
+#[inline(never)]
+fn nudge_crossing_safe(routes: &mut [Route], obstacles: &[Vec<Rect>]) {
+    let mut separated = routes.to_vec();
+    nudge_with_gap(&mut separated, 12.0);
+    let mut crossings = route_crossings(routes);
+    for route_index in 0..routes.len() {
+        if separated[route_index]
+            .points
+            .windows(2)
+            .any(|segment| segment_blocked(&obstacles[route_index], segment[0], segment[1]))
+        {
+            continue;
+        }
+        let original = routes[route_index].clone();
+        routes[route_index] = separated[route_index].clone();
+        let candidate_crossings = route_crossings(routes);
+        if candidate_crossings <= crossings {
+            crossings = candidate_crossings;
+        } else {
+            routes[route_index] = original;
+        }
+    }
 }
 
 /// A side of a box's border, used for hub-attachment grouping.
@@ -1388,8 +1738,14 @@ mod tests {
         let tgt = r(300.0, 0.0, 100.0, 60.0);
         let (ovg, srcv, tgtv) = build_ovg(&[], src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let path =
-            astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default(), &[], None).expect("path exists");
+        let cost = RouteCost::default();
+        let environment = AstarEnvironment {
+            cost: &cost,
+            inflated: &[],
+            label_size: None,
+            prior_routes: &[],
+        };
+        let path = astar(&ovg, &srcv, &tgtv, goal, &environment).expect("path exists");
         assert!(
             path.len() >= 2,
             "path has at least two points, got {path:?}"
@@ -1429,8 +1785,14 @@ mod tests {
         let inflated = inflate(mid.rect, ROUTE_MARGIN);
         let (ovg, srcv, tgtv) = build_ovg(std::slice::from_ref(&inflated), src, tgt);
         let goal = (tgt.x + tgt.w / 2.0, tgt.y + tgt.h / 2.0);
-        let path =
-            astar(&ovg, &srcv, &tgtv, goal, &RouteCost::default(), &[], None).expect("path exists");
+        let cost = RouteCost::default();
+        let environment = AstarEnvironment {
+            cost: &cost,
+            inflated: &[],
+            label_size: None,
+            prior_routes: &[],
+        };
+        let path = astar(&ovg, &srcv, &tgtv, goal, &environment).expect("path exists");
         assert!(path.len() >= 4, "a detour has >= 4 points, got {path:?}");
         for w in path.windows(2) {
             assert!(
@@ -2384,7 +2746,13 @@ mod tests {
                 .iter()
                 .map(|o| inflate(o.rect, ROUTE_MARGIN))
                 .collect();
-            let points = astar(&ovg, &srcv, &tgtv, goal, cost, &inflated, *label_size)
+            let environment = AstarEnvironment {
+                cost,
+                inflated: &inflated,
+                label_size: *label_size,
+                prior_routes: &routes,
+            };
+            let points = astar(&ovg, &srcv, &tgtv, goal, &environment)
                 .unwrap_or_else(|| fallback_l(src, tgt));
             routes.push(Route {
                 points,

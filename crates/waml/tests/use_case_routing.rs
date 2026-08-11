@@ -1,5 +1,5 @@
 use waml::solve::{
-    route::{boundary_port, PortGeometry},
+    route::{boundary_port, clip_route_endpoints, PortGeometry},
     Rect,
 };
 
@@ -88,4 +88,38 @@ fn coincident_targets_choose_deterministic_shape_boundaries() {
         segments: vec![((20.0, 25.0), (80.0, 25.0))],
     };
     assert_eq!(boundary_port(&segment, (50.0, 25.0)), (50.0, 27.0));
+}
+
+#[test]
+fn measured_endpoint_clipping_keeps_terminal_segments_orthogonal() {
+    let actor = PortGeometry::Actor {
+        bounds: Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 180.0,
+            h: 110.0,
+        },
+        head_center: (90.0, 12.0),
+        head_radius: 10.0,
+        stroke_radius: 2.0,
+        segments: vec![((90.0, 24.0), (90.0, 72.0)), ((66.0, 44.0), (114.0, 44.0))],
+    };
+    let ellipse = PortGeometry::Ellipse(Rect {
+        x: 300.0,
+        y: 90.0,
+        w: 120.0,
+        h: 60.0,
+    });
+    let mut points: Vec<(f64, f64)> =
+        vec![(180.0, 80.0), (240.0, 80.0), (240.0, 120.0), (300.0, 120.0)];
+
+    clip_route_endpoints(&mut points, &actor, &ellipse);
+
+    for pair in points.windows(2) {
+        assert!(
+            (pair[0].0 - pair[1].0).abs() < 0.0001 || (pair[0].1 - pair[1].1).abs() < 0.0001,
+            "terminal clipping introduced a diagonal: {points:?}"
+        );
+    }
+    assert!(points.len() >= 4);
 }
