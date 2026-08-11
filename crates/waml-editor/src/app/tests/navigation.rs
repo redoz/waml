@@ -2096,7 +2096,7 @@ fn document_header_source_generic_start_source_sequence_has_no_stale_state() {
             .borrow::<crate::document_header::DocumentHeader>()
             .expect("test document header is mounted");
         assert_eq!(
-            header.action(std::slice::from_ref(&action)),
+            header.action(&cx, std::slice::from_ref(&action)),
             Some(crate::document_header::DocumentHeaderAction::ToggleRightDock)
         );
     }

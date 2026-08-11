@@ -1,5 +1,6 @@
 use crate::cursor;
 use crate::doc_view::HeaderViewAction;
+use crate::font_size_control::{FontSizeControlAction, FontSizeControlWidgetRefExt};
 use crate::icon_button::{IconButtonAction, IconButtonWidgetRefExt};
 use crate::icons::Icon;
 use crate::navigation::{BreadcrumbSegment, NavigationTarget};
@@ -73,9 +74,11 @@ script_mod! {
                 width: Fill
                 height: Fill
             }
-            // Trailing action buttons. `view_button` is the active document's
+            // Trailing action buttons. `font_size_control` is the browser-style
+            // zoom cluster (Task 7); `view_button` is the active document's
             // view action; `right_button` is the inspector dock toggle. More
             // document actions slot in here.
+            font_size_control := FontSizeControl {}
             view_button := IconButton {
                 visible: false
                 width: 30.0
@@ -91,6 +94,9 @@ script_mod! {
 }
 
 pub const DOCUMENT_HEADER_H: f64 = 30.0;
+/// Width the `FontSizeControl` cluster reserves: two 30px `IconButton`s plus
+/// the 44px percent slot (spec §Header layout).
+pub const FONT_SIZE_CONTROL_W: f64 = 104.0;
 const HEADER_PAD_X: f64 = 8.0;
 const SEGMENT_PAD_X: f64 = 6.0;
 const SEPARATOR_SLOT_W: f64 = 12.0;
@@ -101,6 +107,7 @@ const TEXT_DY: f64 = 1.0;
 pub enum DocumentHeaderAction {
     RevealInTree(NavigationTarget),
     ToggleRightDock,
+    Zoom(FontSizeControlAction),
 }
 
 pub struct DocumentHeaderLayout {
@@ -224,6 +231,10 @@ struct DocumentHeaderState {
     right_dock: Option<Icon>,
     /// The destination action supplied by the active document, when present.
     view_toggle: Option<HeaderViewAction>,
+    /// The active view's zoom percent, when it declares a zoom target
+    /// (`DocumentHeaderChrome::zoom`, Task 8). `None` hides the
+    /// `FontSizeControl` cluster and reserves no width.
+    zoom: Option<u32>,
     segment_rects: Vec<(usize, Rect)>,
     /// Keeps the header band mounted for an active document even before it has
     /// breadcrumbs, so the body does not reflow when they appear. The history
@@ -242,6 +253,7 @@ impl DocumentHeaderState {
             segments,
             right_dock,
             view_toggle: None,
+            zoom: None,
             segment_rects,
             document_active: false,
         }
@@ -274,9 +286,22 @@ impl DocumentHeaderState {
         true
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // consumed by DocumentHeader::set_zoom (Task 8)
+    fn replace_zoom(&mut self, zoom: Option<u32>) -> bool {
+        if self.zoom == zoom {
+            return false;
+        }
+        self.zoom = zoom;
+        self.segment_rects.clear();
+        true
+    }
+
     /// Width the trailing buttons reserve on the right of the header.
     fn trailing_buttons_width(&self) -> f64 {
         let mut width = 0.0;
+        if self.zoom.is_some() {
+            width += FONT_SIZE_CONTROL_W;
+        }
         if self.view_toggle.is_some() {
             width += DOCUMENT_HEADER_H;
         }
@@ -289,7 +314,7 @@ impl DocumentHeaderState {
     fn visible_height(&self) -> f64 {
         header_height_for_document(
             !self.segments.is_empty(),
-            self.right_dock.is_some() || self.view_toggle.is_some(),
+            self.right_dock.is_some() || self.view_toggle.is_some() || self.zoom.is_some(),
             self.document_active,
         )
     }
@@ -476,6 +501,30 @@ impl DocumentHeader {
         self.sync_content_layout(cx);
     }
 
+    /// `Some(percent)` shows the `[-][percent%][+]` cluster (pushing the
+    /// percent and end-of-ladder dimming to it); `None` hides it and
+    /// reserves no width. See `crate::zoom` for the ladder walk used here.
+    #[cfg_attr(not(test), allow(dead_code))] // consumed by Task 8
+    pub fn set_zoom(&mut self, cx: &mut Cx, percent: Option<u32>) {
+        if !self.state.replace_zoom(percent) {
+            return;
+        }
+
+        let control = self.view.widget(cx, ids!(font_size_control));
+        control.set_visible(cx, percent.is_some());
+        if let Some(percent) = percent {
+            if let Some(mut control) = control.as_font_size_control().borrow_mut() {
+                control.set_percent(cx, percent);
+                control.set_enabled_directions(
+                    cx,
+                    crate::zoom::zoom_in(percent) != percent,
+                    crate::zoom::zoom_out(percent) != percent,
+                );
+            }
+        }
+        self.sync_content_layout(cx);
+    }
+
     /// The active document's view action button, for click detection. Chrome
     /// projection owns its icon; the tooltip text it carries is currently
     /// unrendered (see `set_view_toggle`).
@@ -537,6 +586,13 @@ impl DocumentHeader {
     }
 
     #[cfg(test)]
+    pub(crate) fn test_mount_font_size_control(&mut self, control: WidgetRef) {
+        self.view
+            .children
+            .push((live_id!(font_size_control), control));
+    }
+
+    #[cfg(test)]
     pub(crate) fn test_right_dock_active(&self, cx: &mut Cx) -> Option<bool> {
         let button = self.view.widget(cx, ids!(right_button)).as_icon_button();
         let rect = button.rect(cx);
@@ -558,11 +614,21 @@ impl DocumentHeader {
         Some(was_active)
     }
 
-    pub fn action(&self, actions: &Actions) -> Option<DocumentHeaderAction> {
+    pub fn action(&self, cx: &Cx, actions: &Actions) -> Option<DocumentHeaderAction> {
         if let Some(item) = actions.find_widget_action(self.widget_uid()) {
             if let Some(action) = item.action.downcast_ref::<DocumentHeaderAction>() {
                 return Some(action.clone());
             }
+        }
+
+        if let Some(zoom_action) = self
+            .view
+            .widget(cx, ids!(font_size_control))
+            .as_font_size_control()
+            .borrow()
+            .and_then(|control| control.action(actions))
+        {
+            return Some(DocumentHeaderAction::Zoom(zoom_action));
         }
 
         let clicked = |uid: Option<WidgetUid>| {
@@ -715,6 +781,73 @@ mod tests {
         assert_eq!(with_button.visible_indices, vec![1, 2]);
         assert_eq!(with_button.segment_rects[0].1.pos.x, HEADER_PAD_X);
         assert_eq!(with_button.segment_rects[1].1.pos.x, 62.0);
+    }
+
+    #[test]
+    fn zoom_control_reserves_its_width_only_while_shown() {
+        let mut state = DocumentHeaderState::for_test(Vec::new(), None, Vec::new());
+        let base = state.trailing_buttons_width();
+        state.zoom = Some(100);
+        assert_eq!(state.trailing_buttons_width(), base + FONT_SIZE_CONTROL_W);
+        state.zoom = None;
+        assert_eq!(state.trailing_buttons_width(), base);
+    }
+
+    #[test]
+    fn breadcrumb_elision_honours_the_zoom_reservation() {
+        let without_zoom = layout_header(210.0, &[30.0, 30.0, 30.0], 30.0);
+        assert_eq!(without_zoom.visible_indices, vec![0, 1, 2]);
+
+        let with_zoom = layout_header(210.0, &[30.0, 30.0, 30.0], 30.0 + FONT_SIZE_CONTROL_W);
+        assert!(with_zoom.visible_indices.len() < without_zoom.visible_indices.len());
+        assert_eq!(with_zoom.visible_indices.last(), Some(&2));
+    }
+
+    #[test]
+    fn set_zoom_shows_and_hides_the_control_and_reserves_its_width() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        let mut header = cx.with_vm(DocumentHeader::script_new_with_default);
+        cx.new_draw_event = DrawEvent::default();
+
+        header.set_zoom(&mut cx, Some(125));
+        assert_eq!(header.state.zoom, Some(125));
+        assert!(
+            cx.new_draw_event.redraw_all,
+            "showing the control must invalidate the parent flow"
+        );
+
+        header.set_zoom(&mut cx, None);
+        assert_eq!(header.state.zoom, None);
+    }
+
+    #[test]
+    fn zoom_actions_funnel_through_the_header_action() {
+        let mut cx = Cx::new(Box::new(|_, _| {}));
+        // Force a real per-`Cx` widget tree (see `navigation_app` in
+        // `app/tests/mod.rs`): without this, `cx.widget_tree()` falls back to
+        // a process-wide `OnceLock` singleton shared by every test that never
+        // touches it, and widget-uid lookups against that shared tree race
+        // with whatever else in the binary is using it.
+        cx.widget_tree_mark_dirty(WidgetUid(0));
+        let control_ref = WidgetRef::new_with_inner(Box::new(
+            cx.with_vm(crate::font_size_control::FontSizeControl::script_new_with_default),
+        ));
+        let control_uid = control_ref.widget_uid();
+
+        let mut header = cx.with_vm(DocumentHeader::script_new_with_default);
+        header.test_mount_font_size_control(control_ref);
+
+        let action: Action = Box::new(WidgetAction {
+            data: None,
+            action: Box::new(FontSizeControlAction::Reset),
+            widget_uid: control_uid,
+            group: None,
+        });
+
+        assert_eq!(
+            header.action(&cx, std::slice::from_ref(&action)),
+            Some(DocumentHeaderAction::Zoom(FontSizeControlAction::Reset))
+        );
     }
 
     #[test]

@@ -186,7 +186,6 @@ impl Widget for FontSizeControl {
 impl FontSizeControl {
     /// Update the displayed percent, lazily wiring the two `IconButton`
     /// children (icon + action tag + recorded uid) on the first call.
-    #[cfg_attr(not(test), allow(dead_code))] // consumed by Task 7
     pub fn set_percent(&mut self, cx: &mut Cx, percent: u32) {
         let mut changed = false;
         if !self.buttons_ready {
@@ -218,7 +217,6 @@ impl FontSizeControl {
     /// Dim the button at either end of the zoom ladder the host has already
     /// resolved as exhausted (`crate::zoom::{zoom_in, zoom_out}` returning
     /// the same percent back).
-    #[cfg_attr(not(test), allow(dead_code))] // consumed by Task 7
     pub fn set_enabled_directions(&mut self, cx: &mut Cx, can_in: bool, can_out: bool) {
         self.can_zoom_in = can_in;
         self.can_zoom_out = can_out;
@@ -242,7 +240,6 @@ impl FontSizeControl {
 
     /// Same shape as `DocumentHeader::action`: an own-uid downcast for
     /// `Reset` first, then the two child `IconButton`s' tagged clicks.
-    #[cfg_attr(not(test), allow(dead_code))] // consumed by Task 7
     pub fn action(&self, actions: &Actions) -> Option<FontSizeControlAction> {
         if let Some(item) = actions.find_widget_action(self.widget_uid()) {
             if let Some(action) = item.action.downcast_ref::<FontSizeControlAction>() {

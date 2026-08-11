@@ -207,7 +207,7 @@ impl App {
             .ui
             .widget(cx, ids!(document_header))
             .borrow::<crate::document_header::DocumentHeader>()
-            .and_then(|header| header.action(actions));
+            .and_then(|header| header.action(cx, actions));
         if matches!(
             document_header_action,
             Some(crate::document_header::DocumentHeaderAction::ToggleRightDock)
@@ -1228,7 +1228,7 @@ impl App {
             .ui
             .widget(cx, ids!(document_header))
             .borrow::<crate::document_header::DocumentHeader>()
-            .and_then(|header| header.action(actions));
+            .and_then(|header| header.action(cx, actions));
         match action {
             Some(crate::document_header::DocumentHeaderAction::RevealInTree(target)) => {
                 let accepted = self
